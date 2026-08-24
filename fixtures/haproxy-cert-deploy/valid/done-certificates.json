@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cert_deploy",
+  "cluster": "alpha",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "target_certificates": [
+      {
+        "id": "example.com.pem",
+        "fingerprint_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    ],
+    "converged": true,
+    "override_used": false,
+    "initial_summary": {
+      "configured_nodes": 2,
+      "reachable_nodes": 2,
+      "valid_status_nodes": 2,
+      "vip_owner_count": 1,
+      "vip_owners": ["node-b"],
+      "vip_unknown_nodes": [],
+      "vip_state": "single_owner"
+    },
+    "final_summary": {
+      "configured_nodes": 2,
+      "reachable_nodes": 2,
+      "valid_status_nodes": 2,
+      "vip_owner_count": 1,
+      "vip_owners": ["node-b"],
+      "vip_unknown_nodes": [],
+      "vip_state": "single_owner"
+    },
+    "nodes": [
+      {
+        "name": "node-a",
+        "reachable": true,
+        "current_before": false,
+        "action": "deploy",
+        "outcome": "updated",
+        "verified": true,
+        "error": null
+      },
+      {
+        "name": "node-b",
+        "reachable": true,
+        "current_before": true,
+        "action": "skip",
+        "outcome": "current",
+        "verified": true,
+        "error": null
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

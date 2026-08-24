@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "partial",
+  "operation": "status",
+  "cluster": "alpha",
+  "request_id": "66666666-6666-4666-8666-666666666666",
+  "result": { "nodes": [], "summary": {} },
+  "warnings": [{ "code": "node_unreachable", "message": "Node unavailable" }],
+  "error": null
+}

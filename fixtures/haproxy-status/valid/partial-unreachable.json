@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "partial",
+  "operation": "status",
+  "cluster": "alpha",
+  "request_id": "22222222-2222-4222-8222-222222222222",
+  "result": {
+    "nodes": [
+      {
+        "name": "node-a",
+        "mgmt_host": "node-a.example.com",
+        "reachable": true,
+        "status_ok": true,
+        "status": {
+          "schema_version": 1,
+          "node": "node-a",
+          "cluster": "alpha",
+          "haproxy": { "active": true },
+          "keepalived": { "active": true, "state": "MASTER" },
+          "vip": {
+            "address": "192.0.2.10",
+            "interface": "eth0",
+            "owner": true
+          },
+          "ip_nonlocal_bind": true,
+          "release": {
+            "cluster": "alpha",
+            "version": 7,
+            "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "timestamp": "2026-08-24T08:00:00Z"
+          },
+          "config_validation": { "valid": null, "validated_at": null },
+          "stats_ok": true,
+          "runtime": { "version": "3.2.9", "uptime_sec": 3600 },
+          "certificates": []
+        },
+        "error": null
+      },
+      {
+        "name": "node-b",
+        "mgmt_host": "node-b.example.com",
+        "reachable": false,
+        "status_ok": false,
+        "status": null,
+        "error": {
+          "code": "ssh_unreachable",
+          "message": "SSH failed with exit 255",
+          "node": "node-b"
+        }
+      }
+    ],
+    "summary": {
+      "configured_nodes": 2,
+      "reachable_nodes": 1,
+      "valid_status_nodes": 1,
+      "vip_owner_count": 1,
+      "vip_owners": ["node-a"],
+      "vip_unknown_nodes": [],
+      "vip_state": "incomplete"
+    }
+  },
+  "warnings": [
+    {
+      "code": "node_unreachable",
+      "message": "Node status could not be collected",
+      "node": "node-b"
+    }
+  ],
+  "error": null
+}

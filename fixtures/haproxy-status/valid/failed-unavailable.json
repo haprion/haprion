@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "failed",
+  "operation": "status",
+  "cluster": "alpha",
+  "request_id": "44444444-4444-4444-8444-444444444444",
+  "result": {
+    "nodes": [
+      {
+        "name": "node-a",
+        "mgmt_host": "node-a.example.com",
+        "reachable": false,
+        "status_ok": false,
+        "status": null,
+        "error": {
+          "code": "ssh_unreachable",
+          "message": "SSH failed with exit 255",
+          "node": "node-a"
+        }
+      }
+    ],
+    "summary": {
+      "configured_nodes": 1,
+      "reachable_nodes": 0,
+      "valid_status_nodes": 0,
+      "vip_owner_count": 0,
+      "vip_owners": [],
+      "vip_unknown_nodes": [],
+      "vip_state": "incomplete"
+    }
+  },
+  "warnings": [
+    {
+      "code": "node_unreachable",
+      "message": "Node status could not be collected",
+      "node": "node-a"
+    }
+  ],
+  "error": {
+    "code": "status_unavailable",
+    "message": "No node returned usable status"
+  }
+}

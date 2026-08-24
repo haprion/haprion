@@ -1,0 +1,3 @@
+# Copy this file outside the repository and replace the example with private environment patterns.
+# CI must receive the private equivalent through a protected secret or private reusable workflow.
+organization-private-domain	(?i)\bprivate\.example\b

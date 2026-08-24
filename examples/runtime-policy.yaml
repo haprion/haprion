@@ -1,0 +1,5 @@
+schema_version: 1
+cluster_file: /srv/haproxy-manager/config/clusters.yaml
+config_root: /srv/haproxy-manager/config-repositories
+publish_root: /srv/haproxy-manager/published
+validation_certs_root: /srv/haproxy-manager/validation-certs

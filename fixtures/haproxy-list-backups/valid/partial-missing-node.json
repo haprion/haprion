@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "partial",
+  "operation": "list_backups",
+  "cluster": "alpha",
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "result": {
+    "limit": 10,
+    "nodes": [
+      {
+        "name": "node-a",
+        "available": true,
+        "latest_version": "2026-08-24_08-00-00",
+        "backups": [
+          {
+            "version": "2026-08-24_08-00-00",
+            "created_at": "2026-08-24T08:00:00Z",
+            "size_bytes": 24576,
+            "latest": true
+          }
+        ],
+        "error": null
+      },
+      {
+        "name": "node-b",
+        "available": false,
+        "latest_version": null,
+        "backups": [],
+        "error": {
+          "code": "backup_directory_missing",
+          "message": "Backup metadata is unavailable",
+          "node": "node-b"
+        }
+      }
+    ]
+  },
+  "warnings": [
+    {
+      "code": "backup_metadata_unavailable",
+      "message": "Backup metadata is unavailable for one node",
+      "node": "node-b"
+    }
+  ],
+  "error": null
+}

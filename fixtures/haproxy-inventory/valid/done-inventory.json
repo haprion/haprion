@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "inventory",
+  "cluster": "alpha",
+  "request_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "result": {
+    "version": 7,
+    "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "generated_at": "2026-08-24T08:05:00Z",
+    "proxies": [
+      {
+        "id": "proxy-example-web",
+        "name": "Example web",
+        "managed": true,
+        "source": "managed",
+        "protocol": "https",
+        "enabled": true,
+        "hostnames": ["app.example.com"],
+        "bind_ports": [443],
+        "backend_count": 2
+      },
+      {
+        "id": "unmanaged-legacy",
+        "name": "Legacy service",
+        "managed": false,
+        "source": "manual",
+        "protocol": "tcp",
+        "enabled": true,
+        "hostnames": [],
+        "bind_ports": [8443],
+        "backend_count": 1
+      }
+    ],
+    "reservations": {
+      "hostnames": ["reserved.example.com"],
+      "tcp_ports": [9443]
+    }
+  },
+  "warnings": [],
+  "error": null
+}

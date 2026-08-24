@@ -1,0 +1,92 @@
+# HAProxy Manager privilege contract v1
+
+This contract defines the target privilege boundary that Phase 1 implements. It is intentionally
+environment-neutral. Production account names, paths selected by runtime configuration, SSH keys,
+and sudoers output remain private deployment data.
+
+## Identities
+
+| Role | Production config group | sudo helpers | Private keys | Database write scope |
+|---|---|---|---|---|
+| web | no | none | none | validate requests and insert allowlisted jobs only |
+| worker | yes, read-only | exact mutation/completion helpers | none | claim, lease, state, result, audit |
+| poller | no | exact read-only metadata helpers | none | poll/cache/metrics only |
+| human operator | deployment policy | explicit wrappers and `sudoedit` policy | none directly | not used by app |
+
+No app identity owns or can read SSH private keys, certificate private keys, validation dummy-key
+material, secret files, or raw backup archives.
+
+## Filesystem boundary
+
+- Config repositories, published releases, and management configuration are root-owned and never
+  group-writable.
+- The worker may receive group read/traverse only where candidate construction or completion proof
+  requires it. Web and poller do not join that group.
+- Certificate distribution and raw backup trees are never made group-readable to an app identity.
+- Dev identities have no production config group membership and no read access to private
+  production trees.
+- Git uses explicit repository-specific `safe.directory` entries. Wildcard trust is forbidden.
+
+## Helper boundary
+
+Helpers are root-owned, not group/other writable, use absolute executables, a fixed environment,
+and fail closed. The target helper interface has no caller-selected filesystem path or shell text.
+
+Where sudoers argument matching would otherwise require a wildcard, the helper is invoked with no
+argv and reads one size-bounded JSON request from stdin. Sudoers uses the explicit no-argument
+form supported by the installed sudo version. The helper validates operation, cluster ID,
+request ID, expected target, and all enum values before looking up private paths from root-owned
+runtime configuration.
+
+Read-only helper classes:
+
+- status metadata
+- inventory metadata
+- version metadata
+- backup metadata, never archive contents or absolute paths
+- certificate metadata, never PEM or private paths
+
+Mutation helper classes:
+
+- candidate validation using root-only dummy certificate material
+- publish/commit/release
+- config deploy trigger
+- revert/publish
+- certificate deploy trigger
+- operation-specific completion proof
+
+Config deploy, certificate deploy, and status use separate root-owned SSH identities and separate
+node-side forced-command mappings. Every node-side sudo invocation uses `sudo -n` and an exact
+`NOPASSWD` command rule so a policy mismatch fails immediately instead of attempting an interactive
+password path.
+
+## Sudo policy
+
+- Web has no sudo rule.
+- Poller may invoke only read-only helpers.
+- Worker may invoke only named mutation/completion helpers required by its allowlisted operations.
+- No rule grants a shell, interpreter, editor, arbitrary executable, wildcard path, environment
+  preservation, or unrestricted command arguments.
+- Human `sudoedit` policy is separate from app sudoers and limited to declared config files.
+- DR/rebuild and certificate issuance/distribution remain separate operator policies.
+
+## Mandatory negative tests in Phase 1
+
+Run these tests as the real installed identities, not only through mocks:
+
+1. web cannot read config, published releases, cluster configuration, certificate material,
+   backup archives, secrets, or any management SSH key
+2. web cannot execute any management helper through sudo
+3. poller cannot read private trees or keys and cannot invoke a mutation helper
+4. worker cannot read any private key, PEM, secret, or raw backup archive
+5. worker cannot invoke an unlisted helper, pass argv to a no-argument helper, select a path, inject
+   `..`, use a symlink/special file, preserve environment, or reuse a request ID with another payload
+6. dev identity cannot read production config/published/management trees and is not in the
+   production config group
+7. helper files and their parent directories are root-owned and not group/other writable
+8. every helper rejects malformed, oversized, trailing, multi-document, and unknown-operation JSON
+9. deploy/status key identities map to the expected distinct forced commands on every node
+10. positive controls prove each role can perform exactly its intended operations
+
+R2 build-readiness freezes this target and audits the current source boundary. Phase 1 creates the
+identities/helpers/rules and must make all positive and negative tests pass before its gate closes.

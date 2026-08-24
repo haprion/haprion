@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/common.schema.json",
+  "title": "HAProxy Manager common contract definitions",
+  "$defs": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "cluster_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+    },
+    "request_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40,64}$"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["done", "partial", "failed", "blocked"]
+    },
+    "warning": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "node": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "details": {
+          "type": ["object", "null"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "node": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "details": {
+          "type": ["object", "null"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "envelope": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "ok",
+        "outcome",
+        "operation",
+        "cluster",
+        "request_id",
+        "result",
+        "warnings",
+        "error"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/schema_version" },
+        "ok": { "type": "boolean" },
+        "outcome": { "$ref": "#/$defs/outcome" },
+        "operation": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "cluster": {
+          "oneOf": [
+            { "$ref": "#/$defs/cluster_id" },
+            { "type": "null" }
+          ]
+        },
+        "request_id": { "$ref": "#/$defs/request_id" },
+        "warnings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/warning" }
+        },
+        "error": {
+          "oneOf": [
+            { "$ref": "#/$defs/error" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "outcome": { "const": "done" } },
+            "required": ["outcome"]
+          },
+          "then": {
+            "properties": {
+              "ok": { "const": true },
+              "error": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "outcome": { "const": "partial" } },
+            "required": ["outcome"]
+          },
+          "then": {
+            "properties": {
+              "ok": { "const": false },
+              "warnings": { "minItems": 1 },
+              "error": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "outcome": { "enum": ["failed", "blocked"] } },
+            "required": ["outcome"]
+          },
+          "then": {
+            "properties": {
+              "ok": { "const": false },
+              "error": { "$ref": "#/$defs/error" }
+            }
+          }
+        }
+      ],
+      "additionalProperties": true
+    },
+    "certificate": {
+      "type": "object",
+      "required": [
+        "id",
+        "fingerprint_sha256",
+        "common_name",
+        "sans",
+        "not_before",
+        "not_after",
+        "issuer",
+        "lifecycle",
+        "valid"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "fingerprint_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "common_name": { "type": ["string", "null"], "maxLength": 253 },
+        "sans": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 253 },
+          "uniqueItems": true
+        },
+        "not_before": { "$ref": "#/$defs/timestamp" },
+        "not_after": { "$ref": "#/$defs/timestamp" },
+        "issuer": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "lifecycle": { "type": "string", "enum": ["acme", "static"] },
+        "valid": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "node_reconcile_result": {
+      "type": "object",
+      "required": [
+        "name",
+        "reachable",
+        "current_before",
+        "action",
+        "outcome",
+        "verified",
+        "error"
+      ],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "reachable": { "type": "boolean" },
+        "current_before": { "type": ["boolean", "null"] },
+        "action": { "type": "string", "enum": ["skip", "deploy", "none"] },
+        "outcome": {
+          "type": "string",
+          "enum": ["current", "updated", "failed", "unavailable", "not_attempted"]
+        },
+        "verified": { "type": "boolean" },
+        "error": {
+          "oneOf": [
+            { "$ref": "#/$defs/error" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "publish",
+  "cluster": "alpha",
+  "request_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  "result": {
+    "changed": true,
+    "version": 8,
+    "hash": "dddddddddddddddddddddddddddddddddddddddd",
+    "published_at": "2026-08-24T09:00:00Z",
+    "comment": "Update example service",
+    "validation": {
+      "valid": true,
+      "issues": []
+    },
+    "deployment_required": true,
+    "next_command": "haproxy-deploy -c alpha"
+  },
+  "warnings": [],
+  "error": null
+}

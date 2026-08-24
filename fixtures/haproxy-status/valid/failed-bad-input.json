@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "failed",
+  "operation": "status",
+  "cluster": null,
+  "request_id": "33333333-3333-4333-8333-333333333333",
+  "result": null,
+  "warnings": [],
+  "error": {
+    "code": "bad_input",
+    "message": "A cluster is required"
+  }
+}

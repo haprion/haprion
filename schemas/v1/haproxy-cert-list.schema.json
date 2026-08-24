@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haproxy-cert-list.schema.json",
+  "title": "haproxy-cert-list JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "cert_list" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/cert_list_result" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "done" } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/cert_list_result" } } }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "deployable_certificate": {
+      "allOf": [
+        { "$ref": "common.schema.json#/$defs/certificate" },
+        {
+          "type": "object",
+          "required": ["referenced_by_cluster", "deployable", "validation_error"],
+          "properties": {
+            "referenced_by_cluster": { "type": "boolean" },
+            "deployable": { "type": "boolean" },
+            "validation_error": { "type": ["string", "null"], "maxLength": 2048 }
+          }
+        }
+      ]
+    },
+    "cert_list_result": {
+      "type": "object",
+      "required": ["certificates"],
+      "properties": {
+        "certificates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/deployable_certificate" }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

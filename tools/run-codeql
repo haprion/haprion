@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+base=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+codeql_bin=${CODEQL_BIN:-codeql}
+
+if [ "$#" -ne 1 ] || [ -z "$1" ]; then
+    echo "Usage: run-codeql <new-output-directory-outside-repository>" >&2
+    exit 64
+fi
+if ! command -v "$codeql_bin" >/dev/null 2>&1; then
+    echo "run-codeql: required CodeQL binary is missing: $codeql_bin" >&2
+    exit 2
+fi
+
+output=$1
+case "$output" in
+    "$base"|"$base"/*)
+        echo "run-codeql: output directory must be outside the repository" >&2
+        exit 64
+        ;;
+esac
+if [ -e "$output" ]; then
+    echo "run-codeql: output directory already exists: $output" >&2
+    exit 2
+fi
+
+mkdir -p "$output"
+"$codeql_bin" database create "$output/database" \
+    --language=python \
+    --source-root="$base" \
+    --threads=0
+"$codeql_bin" database analyze "$output/database" \
+    codeql/python-queries:codeql-suites/python-security-extended.qls \
+    --format=sarif-latest \
+    --output="$output/results.sarif" \
+    --sarif-add-baseline-file-info \
+    --threads=0
+python3 "$base/tools/check-codeql-sarif.py" "$output/results.sarif"

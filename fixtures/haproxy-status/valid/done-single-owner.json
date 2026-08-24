@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "status",
+  "cluster": "alpha",
+  "request_id": "11111111-1111-4111-8111-111111111111",
+  "result": {
+    "nodes": [
+      {
+        "name": "node-a",
+        "mgmt_host": "node-a.example.com",
+        "reachable": true,
+        "status_ok": true,
+        "status": {
+          "schema_version": 1,
+          "node": "node-a",
+          "cluster": "alpha",
+          "haproxy": { "active": true },
+          "keepalived": { "active": true, "state": "BACKUP" },
+          "vip": {
+            "address": "192.0.2.10",
+            "interface": "eth0",
+            "owner": false
+          },
+          "ip_nonlocal_bind": true,
+          "release": {
+            "cluster": "alpha",
+            "version": 7,
+            "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "timestamp": "2026-08-24T08:00:00Z"
+          },
+          "config_validation": {
+            "valid": true,
+            "validated_at": "2026-08-24T08:00:02Z"
+          },
+          "stats_ok": true,
+          "runtime": { "version": "3.2.9", "uptime_sec": 3600 },
+          "certificates": [
+            {
+              "id": "example.com.pem",
+              "fingerprint_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "common_name": "*.example.com",
+              "sans": ["*.example.com", "example.com"],
+              "not_before": "2026-08-01T00:00:00Z",
+              "not_after": "2026-11-01T00:00:00Z",
+              "issuer": "Example Test CA",
+              "lifecycle": "static",
+              "valid": true
+            }
+          ]
+        },
+        "error": null
+      },
+      {
+        "name": "node-b",
+        "mgmt_host": "node-b.example.com",
+        "reachable": true,
+        "status_ok": true,
+        "status": {
+          "schema_version": 1,
+          "node": "node-b",
+          "cluster": "alpha",
+          "haproxy": { "active": true },
+          "keepalived": { "active": true, "state": "MASTER" },
+          "vip": {
+            "address": "192.0.2.10",
+            "interface": "eth0",
+            "owner": true
+          },
+          "ip_nonlocal_bind": true,
+          "release": {
+            "cluster": "alpha",
+            "version": 7,
+            "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "timestamp": "2026-08-24T08:00:00Z"
+          },
+          "config_validation": {
+            "valid": true,
+            "validated_at": "2026-08-24T08:00:03Z"
+          },
+          "stats_ok": true,
+          "runtime": { "version": "3.2.9", "uptime_sec": 7200 },
+          "certificates": [
+            {
+              "id": "example.com.pem",
+              "fingerprint_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "common_name": "*.example.com",
+              "sans": ["*.example.com", "example.com"],
+              "not_before": "2026-08-01T00:00:00Z",
+              "not_after": "2026-11-01T00:00:00Z",
+              "issuer": "Example Test CA",
+              "lifecycle": "static",
+              "valid": true
+            }
+          ]
+        },
+        "error": null
+      }
+    ],
+    "summary": {
+      "configured_nodes": 2,
+      "reachable_nodes": 2,
+      "valid_status_nodes": 2,
+      "vip_owner_count": 1,
+      "vip_owners": ["node-b"],
+      "vip_unknown_nodes": [],
+      "vip_state": "single_owner"
+    }
+  },
+  "warnings": [],
+  "error": null
+}

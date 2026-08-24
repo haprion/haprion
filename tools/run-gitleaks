@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+base=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+gitleaks_bin=${GITLEAKS_BIN:-gitleaks}
+
+if ! command -v "$gitleaks_bin" >/dev/null 2>&1; then
+    echo "run-gitleaks: required Gitleaks binary is missing: $gitleaks_bin" >&2
+    exit 2
+fi
+
+"$gitleaks_bin" dir --redact --no-banner "$base"
+
+if git -C "$base" rev-parse --verify HEAD >/dev/null 2>&1; then
+    "$gitleaks_bin" git --redact --no-banner --log-opts="--all" "$base"
+else
+    echo "run-gitleaks: no commits yet; worktree scanned, history scan skipped"
+fi

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "list",
+  "cluster": "alpha",
+  "request_id": "88888888-8888-4888-8888-888888888888",
+  "result": {
+    "current_version": 7,
+    "total_versions": 7,
+    "versions": [
+      {
+        "version": 7,
+        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-08-24T08:00:00Z",
+        "comment": "Update example service",
+        "current": true
+      },
+      {
+        "version": 6,
+        "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "created_at": "2026-08-23T08:00:00Z",
+        "comment": "Add example service",
+        "current": false
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

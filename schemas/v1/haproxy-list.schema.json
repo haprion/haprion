@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haproxy-list.schema.json",
+  "title": "haproxy-list JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "list" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/list_result" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "done" } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/list_result" } } }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "version_entry": {
+      "type": "object",
+      "required": ["version", "hash", "created_at", "comment", "current"],
+      "properties": {
+        "version": { "$ref": "common.schema.json#/$defs/version" },
+        "hash": { "$ref": "common.schema.json#/$defs/hash" },
+        "created_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+        "comment": { "type": "string", "maxLength": 4096 },
+        "current": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "list_result": {
+      "type": "object",
+      "required": ["current_version", "total_versions", "versions"],
+      "properties": {
+        "current_version": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/version" },
+            { "type": "null" }
+          ]
+        },
+        "total_versions": { "type": "integer", "minimum": 0 },
+        "versions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/version_entry" }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

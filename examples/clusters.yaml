@@ -1,0 +1,20 @@
+schema_version: 1
+clusters:
+  alpha:
+    display_name: Alpha
+    vip: 192.0.2.20
+    config_path: /srv/haproxy-manager/config-repositories/alpha
+    publish_path: /srv/haproxy-manager/published/alpha
+    node_path: alpha
+    validation_certs: /srv/haproxy-manager/validation-certs
+    default_certificate: example.com
+    certificate_ids:
+      - example.com
+      - example.net
+    trusted_proxy_cidrs:
+      - 198.51.100.0/24
+    nodes:
+      - name: node-a
+        mgmt_host: node-a.example.com
+      - name: node-b
+        mgmt_host: node-b.example.com

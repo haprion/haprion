@@ -38,6 +38,23 @@ form supported by the installed sudo version. The helper validates operation, cl
 request ID, expected target, and all enum values before looking up private paths from root-owned
 runtime configuration.
 
+The common request document is exactly:
+
+```json
+{
+  "schema_version": 1,
+  "operation": "status",
+  "cluster": "alpha",
+  "request_id": "11111111-1111-4111-8111-111111111111",
+  "parameters": {}
+}
+```
+
+Each executable compiles in one expected operation and an exact allowlist plus validator for its
+operation-specific parameters. The protocol rejects argv, input over 64 KiB, invalid UTF-8,
+duplicate or unknown fields, multiple/trailing JSON documents, non-finite numbers, non-canonical
+request IDs, and unrecognised cluster-ID syntax before privileged state is consulted.
+
 Read-only helper classes:
 
 - status metadata

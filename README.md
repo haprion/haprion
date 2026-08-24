@@ -15,6 +15,7 @@ current foundation provides:
 - an initial privilege-boundary contract
 - generic configuration examples and contract fixtures
 - reusable result-envelope and cluster-lookup code
+- a strict, size-bounded JSON request protocol for exact privileged helpers
 - reproducible development, security, test, and package-build gates
 
 The next implementation stage adapts the existing management operations to these contracts one

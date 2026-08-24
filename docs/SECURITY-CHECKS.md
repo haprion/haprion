@@ -16,7 +16,9 @@ The repository has complementary gates. No single scanner replaces the others.
 
 The private denylist is never stored in this repository. Local runs provide its path through
 `HAPROXY_MANAGER_SECRET_RULES`. GitHub Actions reconstructs it in a mode-600 temporary file from
-the required repository secret `HAPROXY_MANAGER_DENYLIST`. A missing secret fails CI closed.
+the required repository secret `HAPROXY_MANAGER_DENYLIST`. The repository-secret value is the
+Base64 encoding of the complete file, used as a transport encoding so tabs and line endings remain
+exact. A missing or invalid value fails CI closed.
 
 ## Local quick gate
 

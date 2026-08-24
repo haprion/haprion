@@ -39,22 +39,19 @@ jobs:
         shell: bash
         env:
           HAPROXY_MANAGER_SECRET_RULES: ${{ runner.temp }}/haproxy-manager-private.rules
-          PRIVATE_DENYLIST: ${{ secrets.HAPROXY_MANAGER_DENYLIST }}
+          PRIVATE_DENYLIST_B64: ${{ secrets.HAPROXY_MANAGER_DENYLIST }}
         run: |
           set -euo pipefail
-          if [[ -z "${PRIVATE_DENYLIST}" ]]; then
+          if [[ -z "${PRIVATE_DENYLIST_B64}" ]]; then
             echo "CI: required repository secret HAPROXY_MANAGER_DENYLIST is missing" >&2
             exit 2
           fi
           umask 077
-          python - <<'PY'
-          import os
-          from pathlib import Path
-
-          Path(os.environ["HAPROXY_MANAGER_SECRET_RULES"]).write_text(
-              os.environ["PRIVATE_DENYLIST"], encoding="utf-8"
-          )
-          PY
+          if ! printf '%s' "${PRIVATE_DENYLIST_B64}" \
+              | base64 --decode > "${HAPROXY_MANAGER_SECRET_RULES}"; then
+            echo "CI: repository secret HAPROXY_MANAGER_DENYLIST is not valid Base64" >&2
+            exit 2
+          fi
 
       - name: Install locked project and Python checks
         shell: bash

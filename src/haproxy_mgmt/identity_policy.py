@@ -70,7 +70,7 @@ def render_sysusers(policy: IdentityPolicy) -> str:
     """Render app identities; human operator membership remains a separate admin action."""
 
     lines = [
-        "# Generated from a protected HAProxy Manager identity policy.",
+        "# Generated from the protected HAProxy Manager identity policy.",
         f"g {policy.config_group} -",
         f'u! {policy.web} - "HAProxy Manager web service" - /usr/sbin/nologin',
         f'u! {policy.worker} - "HAProxy Manager worker service" - /usr/sbin/nologin',

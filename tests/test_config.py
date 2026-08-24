@@ -52,6 +52,13 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "unknown field"), self.temporary_runtime(mutate):
             pass
 
+    def test_boolean_schema_version_is_rejected(self):
+        def mutate(data):
+            data["schema_version"] = True
+
+        with self.assertRaisesRegex(ConfigError, "schema_version"), self.temporary_runtime(mutate):
+            pass
+
     def test_path_escape_is_rejected(self):
         def mutate(data):
             data["clusters"]["alpha"]["config_path"] = "/var/tmp/outside"

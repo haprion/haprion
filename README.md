@@ -16,6 +16,8 @@ current foundation provides:
 - generic configuration examples and contract fixtures
 - reusable result-envelope and cluster-lookup code
 - a strict, size-bounded JSON request protocol for exact privileged helpers
+- a validated external identity policy that renders locked system-service accounts without
+  granting the web or poller config-group membership
 - reproducible development, security, test, and package-build gates
 
 The next implementation stage adapts the existing management operations to these contracts one

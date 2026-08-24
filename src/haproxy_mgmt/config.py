@@ -149,7 +149,8 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
         {"schema_version", "cluster_file", "config_root", "publish_root", "validation_certs_root"},
         "runtime policy",
     )
-    if data.get("schema_version") != 1:
+    schema_version = data.get("schema_version")
+    if type(schema_version) is not int or schema_version != 1:
         raise ConfigError("runtime policy schema_version must be 1")
     return PathPolicy(
         cluster_file=_absolute_path(
@@ -171,7 +172,8 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
 def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> RuntimeConfig:
     data = _secure_yaml(policy.cluster_file, require_secure=require_secure)
     _only_keys(data, {"schema_version", "clusters"}, "cluster configuration")
-    if data.get("schema_version") != 1:
+    schema_version = data.get("schema_version")
+    if type(schema_version) is not int or schema_version != 1:
         raise ConfigError("cluster configuration schema_version must be 1")
     raw_clusters = _mapping(data.get("clusters"), "clusters")
     if not raw_clusters:

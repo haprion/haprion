@@ -16,6 +16,19 @@ and sudoers output remain private deployment data.
 No app identity owns or can read SSH private keys, certificate private keys, validation dummy-key
 material, secret files, or raw backup archives.
 
+### Identity provisioning
+
+Account names are deployment data supplied in a protected identity-policy file. The
+`haproxy-render-sysusers --policy <file>` command validates that file and renders a declarative
+`sysusers.d` fragment. It creates three distinct, locked, no-login service accounts and the
+read-only production config group; only the worker receives supplementary membership in that
+group. Rendering does not modify the system.
+
+Human operator membership is deliberately absent from the generated fragment. It is a separate
+administrator action against an already existing human account, avoiding `sysusers.d` semantics
+that could implicitly create a missing local account. Applying the reviewed fragment and changing
+operator membership belong to deployment, not application runtime.
+
 ## Filesystem boundary
 
 - Config repositories, published releases, and management configuration are root-owned and never

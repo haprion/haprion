@@ -25,6 +25,7 @@ dev = [
 
 [project.scripts]
 haproxy-cluster-config = "haproxy_mgmt.cli.cluster_config:main"
+haproxy-render-sysusers = "haproxy_mgmt.cli.render_sysusers:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

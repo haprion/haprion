@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import stat
+import subprocess
+import sys
+import tempfile
+import unittest
+import zipfile
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+
+INSTALLER_PATH = Path(__file__).resolve().parents[1] / "tools" / "install-release.py"
+SPEC = spec_from_file_location("install_release", INSTALLER_PATH)
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError("cannot load release installer")
+install_release_module = module_from_spec(SPEC)
+SPEC.loader.exec_module(install_release_module)
+
+
+class InstallReleaseTests(unittest.TestCase):
+    def make_wheel(self, root: Path) -> tuple[Path, str]:
+        wheel = root / "haproxy_manager-0.1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as archive:
+            archive.writestr("haproxy_mgmt/__init__.py", "")
+            archive.writestr("haproxy_mgmt/cli/__init__.py", "")
+            archive.writestr(
+                "haproxy_mgmt/cli/example.py",
+                "def main():\n    return 0\n",
+            )
+            archive.writestr(
+                "haproxy_manager-0.1.0.dist-info/METADATA",
+                "Metadata-Version: 2.4\nName: haproxy-manager\nVersion: 0.1.0\n",
+            )
+            archive.writestr(
+                "haproxy_manager-0.1.0.dist-info/entry_points.txt",
+                "[console_scripts]\nhaproxy-example = haproxy_mgmt.cli.example:main\n",
+            )
+        digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        return wheel, digest
+
+    def test_installs_frozen_versioned_release_and_switches_current(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw).resolve()
+            wheel, digest = self.make_wheel(work)
+            target = work / "target"
+            release_id = install_release_module.install_release(
+                wheel=wheel,
+                expected_sha256=digest,
+                target=target,
+                python=Path(sys.executable),
+                require_root=False,
+            )
+
+            release = target / "releases" / release_id
+            self.assertEqual((target / "current").readlink(), Path("releases") / release_id)
+            metadata = json.loads((release / "INSTALLATION.json").read_text())
+            self.assertEqual(metadata["wheel_sha256"], digest)
+            self.assertEqual(metadata["entry_points"], ["haproxy-example"])
+            self.assertEqual(stat.S_IMODE(release.stat().st_mode), 0o555)
+            self.assertEqual(stat.S_IMODE((release / "bin/haproxy-example").stat().st_mode), 0o555)
+            self.assertEqual(
+                stat.S_IMODE((release / "lib/haproxy_mgmt/__init__.py").stat().st_mode), 0o444
+            )
+            launcher = (release / "bin/haproxy-example").read_text()
+            self.assertTrue(launcher.startswith(f"#!{sys.executable} -I\n"))
+            self.assertNotIn(str(INSTALLER_PATH.parents[1]), launcher)
+            subprocess.run(  # noqa: S603 - generated local test launcher
+                [str(release / "bin/haproxy-example")], check=True
+            )
+
+            for path in sorted(release.rglob("*"), reverse=True):
+                if path.is_dir():
+                    path.chmod(0o755)
+            release.chmod(0o755)
+
+    def test_rejects_hash_mismatch_and_unsafe_wheel_member(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw).resolve()
+            wheel, digest = self.make_wheel(work)
+            with self.assertRaisesRegex(install_release_module.InstallError, "does not match"):
+                install_release_module.install_release(
+                    wheel=wheel,
+                    expected_sha256="0" * 64,
+                    target=work / "target-a",
+                    python=Path(sys.executable),
+                    require_root=False,
+                )
+
+            with zipfile.ZipFile(wheel, "a") as archive:
+                archive.writestr("../escape", "bad")
+            unsafe_digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+            with self.assertRaisesRegex(install_release_module.InstallError, "unsafe path"):
+                install_release_module.install_release(
+                    wheel=wheel,
+                    expected_sha256=unsafe_digest,
+                    target=work / "target-b",
+                    python=Path(sys.executable),
+                    require_root=False,
+                )
+
+            self.assertNotEqual(digest, unsafe_digest)
+
+
+if __name__ == "__main__":
+    unittest.main()

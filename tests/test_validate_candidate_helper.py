@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -97,6 +98,18 @@ class ValidateCandidateHelperTests(unittest.TestCase):
         )
         self.assertEqual(code, 64)
         self.assertIn("no command-line arguments", stderr.getvalue())
+
+        process_stderr = io.StringIO()
+        with patch("sys.argv", ["haproxy-validate-candidate-helper", "--unexpected"]):
+            process_code = main(
+                input_stream=self.request(),
+                output_stream=io.StringIO(),
+                error_stream=process_stderr,
+                require_secure=False,
+                require_root=False,
+            )
+        self.assertEqual(process_code, 64)
+        self.assertIn("no command-line arguments", process_stderr.getvalue())
 
 
 if __name__ == "__main__":

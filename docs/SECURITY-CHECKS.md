@@ -14,6 +14,10 @@ The repository has complementary gates. No single scanner replaces the others.
 5. `tools/run-codeql` performs the heavier CodeQL Python `security-extended` analysis before the
    first push and before releases.
 
+A release wheel is installed only by `tools/install-release.py` with an explicitly supplied
+SHA-256 digest. The installer rejects path traversal, symlinks, special files and unexpected entry
+points before activating a root-owned, read-only release. See [`INSTALLATION.md`](INSTALLATION.md).
+
 The private denylist is never stored in this repository. Local runs provide its path through
 `HAPROXY_MANAGER_SECRET_RULES`. GitHub Actions reconstructs it in a mode-600 temporary file from
 the required repository secret `HAPROXY_MANAGER_DENYLIST`. The repository-secret value is the

@@ -20,6 +20,7 @@ current foundation provides:
   granting the web or poller config-group membership
 - a path-free candidate-validation helper foundation with deterministic hashing and a hardened
   transient-service sandbox
+- a hash-verified, versioned and immutable installation layout under `/opt/haproxy-mgmt`
 - reproducible development, security, test, and package-build gates
 
 The next implementation stage adapts the existing management operations to these contracts one
@@ -77,3 +78,6 @@ runs source and history secret scanning, Ruff, ShellCheck, actionlint, zizmor, s
 coverage, unit and frozen contract tests, an sdist/wheel smoke test, and dependency auditing.
 CodeQL is the heavier pre-push and release gate described in
 [`docs/SECURITY-CHECKS.md`](docs/SECURITY-CHECKS.md).
+
+Versioned installation and rollback under `/opt/haproxy-mgmt` are described in
+[`docs/INSTALLATION.md`](docs/INSTALLATION.md).

@@ -67,9 +67,10 @@ def main(
     output_stream = output_stream or sys.stdout
     error_stream = error_stream or sys.stderr
     input_stream = input_stream or sys.stdin.buffer
+    arguments = sys.argv[1:] if argv is None else argv
 
     try:
-        require_no_arguments(argv or [])
+        require_no_arguments(arguments)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError("candidate validation helper must run as root", exit_code=77)
         request = read_helper_request(

@@ -69,12 +69,18 @@ def load_identity_policy(path: Path, *, require_secure: bool = True) -> Identity
 def render_sysusers(policy: IdentityPolicy) -> str:
     """Render app identities; human operator membership remains a separate admin action."""
 
+    # Type "u", not "u!": both set an invalid password, but "u!" additionally
+    # marks the account expired, which makes PAM's account stage reject it. The
+    # app identities must pass that stage to reach their exact roothelpers
+    # through sudo. Remote login is denied explicitly in sshd configuration
+    # instead of as a side effect of an expiry flag; the accounts also keep an
+    # invalid password and a nologin shell.
     lines = [
         "# Generated from the protected HAProxy Manager identity policy.",
         f"g {policy.config_group} -",
-        f'u! {policy.web} - "HAProxy Manager web service" - /usr/sbin/nologin',
-        f'u! {policy.worker} - "HAProxy Manager worker service" - /usr/sbin/nologin',
-        f'u! {policy.poller} - "HAProxy Manager poller service" - /usr/sbin/nologin',
+        f'u {policy.web} - "HAProxy Manager web service" - /usr/sbin/nologin',
+        f'u {policy.worker} - "HAProxy Manager worker service" - /usr/sbin/nologin',
+        f'u {policy.poller} - "HAProxy Manager poller service" - /usr/sbin/nologin',
         f"m {policy.worker} {policy.config_group}",
         "",
     ]

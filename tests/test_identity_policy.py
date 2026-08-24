@@ -26,7 +26,10 @@ class IdentityPolicyTests(unittest.TestCase):
         self.assertEqual(policy.account("worker"), "svc-worker")
         rendered = render_sysusers(policy)
         self.assertIn("g svc-mgmt -\n", rendered)
-        self.assertIn('u! svc-web - "HAProxy Manager web service"', rendered)
+        self.assertIn('u svc-web - "HAProxy Manager web service"', rendered)
+        # "u!" would mark the accounts expired and break sudo for them (PAM
+        # account stage); remote login is denied in sshd configuration instead.
+        self.assertNotIn("u! ", rendered)
         self.assertIn("m svc-worker svc-mgmt\n", rendered)
         self.assertNotIn("m svc-web svc-mgmt", rendered)
         self.assertNotIn("m svc-poller svc-mgmt", rendered)

@@ -18,6 +18,8 @@ current foundation provides:
 - a strict, size-bounded JSON request protocol for exact privileged helpers
 - a validated external identity policy that renders locked system-service accounts without
   granting the web or poller config-group membership
+- a path-free candidate-validation helper foundation with deterministic hashing and a hardened
+  transient-service sandbox
 - reproducible development, security, test, and package-build gates
 
 The next implementation stage adapts the existing management operations to these contracts one

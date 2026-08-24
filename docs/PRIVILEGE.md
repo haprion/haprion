@@ -85,6 +85,21 @@ Mutation helper classes:
 - certificate deploy trigger
 - operation-specific completion proof
 
+### Candidate-validation helper
+
+Candidate validation accepts no argv and receives the complete candidate as a JSON `files` object.
+The only accepted paths are `haproxy.cfg`, one-level `conf.d/*.cfg`, and relative entries below
+`maps/`; certificate files are never caller input. The helper rejects absolute, normalised,
+escaping, special-purpose, oversized, NUL-containing, and unknown paths, then hashes and
+materialises the exact accepted bytes itself using exclusive no-follow file creation.
+
+Only configured certificate IDs receive copies of the dedicated validation PEM. Config references
+to the runtime HAProxy map and certificate prefixes are rewritten inside the private candidate.
+Validation runs through fixed `systemd-run` argv with no network, no capabilities, a read-only
+candidate bind and broad inaccessible private roots. The candidate and dummy PEM copies are
+removed before the helper returns; the caller receives only validity, bounded diagnostics and the
+candidate hash.
+
 Config deploy, certificate deploy, and status use separate root-owned SSH identities and separate
 node-side forced-command mappings. Every node-side sudo invocation uses `sudo -n` and an exact
 `NOPASSWD` command rule so a policy mismatch fails immediately instead of attempting an interactive

@@ -22,11 +22,13 @@ staged behind.
 
 from __future__ import annotations
 
-import subprocess
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+
+from haproxy_mgmt.git_command import GitError
+from haproxy_mgmt.git_command import git as _git
 
 #
 # The layers a human publish owns. Frozen: managed/ is deliberately absent.
@@ -60,26 +62,6 @@ class ConcurrentUpdate(PublishError):
 class Snapshot:
     tree: str
     unchanged: bool
-
-
-def _git(
-    repo: Path,
-    *args: str,
-    stdin: bytes | None = None,
-    env: dict[str, str] | None = None,
-    allow_failure: bool = False,
-) -> bytes:
-    completed = subprocess.run(  # noqa: S603 - argv is constructed here, never from input
-        ["/usr/bin/git", "-C", str(repo), *args],
-        input=stdin,
-        capture_output=True,
-        check=False,
-        env=env,
-    )
-    if completed.returncode != 0 and not allow_failure:
-        detail = completed.stderr.decode("utf-8", "replace").strip()
-        raise PublishError(f"git {args[0]} failed: {detail}", exit_code=70)
-    return completed.stdout
 
 
 def resolve_head(repo: Path) -> tuple[str, str]:
@@ -225,7 +207,7 @@ def commit_and_swap(
     commit = _git(repo, "commit-tree", tree, "-p", parent, "-m", message, env=env).decode().strip()
     try:
         _git(repo, "update-ref", branch, commit, parent)
-    except PublishError as exc:
+    except GitError as exc:
         raise ConcurrentUpdate(
             "the configuration changed while this version was being prepared. "
             "Nothing was published; check the current state and try again."

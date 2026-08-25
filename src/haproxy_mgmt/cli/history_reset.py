@@ -5,11 +5,18 @@ exactly as it is and becomes version 1. A command called "factory reset" would
 imply the opposite, and an operator reading it under pressure would be right to
 assume their configuration was about to be thrown away.
 
+This half is unprivileged. It reads the repository - which the management group
+can already read - to show what would be discarded, asks, and then hands a
+structured request to the root helper. The privileged half takes no arguments and
+believes nothing it is told about the repository; it reads everything again on
+its own side.
+
 Two confirmations, for two different mistakes
 ---------------------------------------------
 The yes/no question guards against running the command at all. The typed phrase
 guards against running it while distracted - it cannot be answered by reflex, and
-it cannot be answered by a key held down.
+it cannot be answered by a key held down. The phrase is then carried in the
+request, so the privileged half can refuse anything that was never confirmed.
 
 What it does and does not do
 ----------------------------
@@ -26,38 +33,62 @@ and `haproxy-config-status` keeps showing the difference until it is run.
 
 from __future__ import annotations
 
-import grp
-import os
+import json
 import subprocess
 import sys
+import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
-from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
-from haproxy_mgmt.history_reset import (
-    OWNER_GROUP,
-    ChangeOwner,
-    ResetError,
-    preview,
-    reset_history,
-)
-from haproxy_mgmt.history_reset import (
-    chown as default_chown,
-)
+from haproxy_mgmt.history_reset import ResetError, preview
 
 CONFIRMATION = "please reset me"
 BASELINE_MESSAGE = "Baseline after the build phase"
+OPERATION = "reset_history"
+
+CLUSTER_CONFIG = "/usr/local/lib/haproxy-mgmt/cluster-config"
+HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-history-reset-helper"
 PUBLISH = "/usr/local/bin/haproxy-publish"
+SUDO = "/usr/bin/sudo"
+
 USAGE = "Usage:\n  haproxy-history-reset -c <cluster>"
 
-#
-# Publishing is a separate program today - the shell command that owns the
-# published tree. Injected rather than called directly so the confirmation
-# behaviour can be exercised without publishing anything.
-#
+type RunHelper = Callable[[str, bytes], tuple[int, str, str]]
 type PublishCall = Callable[[str], int]
+
+
+def _config_path(cluster_id: str) -> Path:
+    """Ask the cluster-config helper, the one reader of the cluster definitions.
+
+    Resolved here rather than assumed from a naming convention: the layout is
+    configuration, and a second place that knows it is a second thing to keep in
+    step.
+    """
+
+    completed = subprocess.run(  # noqa: S603 - fixed path, fixed arguments
+        [CLUSTER_CONFIG, "-c", cluster_id, "--field", "config_path"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ResetError(f"unknown cluster '{cluster_id}'.", exit_code=64)
+    return Path(completed.stdout.strip())
+
+
+def _run_helper(cluster_id: str, request: bytes) -> tuple[int, str, str]:
+    completed = subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
+        [SUDO, "--", HELPER],
+        input=request,
+        capture_output=True,
+        check=False,
+    )
+    return (
+        completed.returncode,
+        completed.stdout.decode("utf-8", "replace"),
+        completed.stderr.decode("utf-8", "replace"),
+    )
 
 
 def _publish(cluster_id: str) -> int:
@@ -89,38 +120,26 @@ def _ask(reader: TextIO, writer: TextIO, question: str) -> str:
 def main(
     argv: list[str] | None = None,
     *,
-    policy_path: Path = DEFAULT_POLICY_PATH,
     stream_in: TextIO | None = None,
     stream_out: TextIO | None = None,
-    require_root: bool = True,
+    run_helper: RunHelper = _run_helper,
     publish: PublishCall = _publish,
-    change_owner: ChangeOwner = default_chown,
+    config_path: Callable[[str], Path] = _config_path,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     reader: TextIO = stream_in or sys.stdin
     writer: TextIO = stream_out or sys.stdout
     cluster_id = _parse(argv)
 
-    if require_root and os.geteuid() != 0:
-        writer.write("ERROR: this command rewrites root-owned directories. Run it with sudo.\n")
-        return 77
-
     try:
-        #
-        # The secure-permission checks and the root check answer the same
-        # question - is this really running as root against the real files - so
-        # they are relaxed together, never separately.
-        #
-        policy = load_policy(policy_path, require_secure=require_root)
-        cluster = load_runtime_config(policy, require_secure=require_root).cluster(cluster_id)
-        plan = preview(cluster_id, cluster.config_path)
-    except (ConfigError, ResetError) as exc:
+        plan = preview(cluster_id, config_path(cluster_id))
+    except ResetError as exc:
         writer.write(f"ERROR: {exc}\n")
-        return getattr(exc, "exit_code", 65)
+        return exc.exit_code
 
     writer.write(
         f"\nThis discards the version history for cluster '{cluster_id}'.\n\n"
-        f"  Configuration:      kept exactly as it is, and becomes version 1\n"
+        "  Configuration:      kept exactly as it is, and becomes version 1\n"
         f"  Version history:    {plan.versions} versions discarded\n"
         f"  Draft area:         {plan.draft}\n"
         f"  History:            {plan.history}\n\n"
@@ -132,38 +151,39 @@ def main(
         writer.write("Nothing was changed.\n")
         return 0
 
-    typed = _ask(reader, writer, f"Type '{CONFIRMATION}' to confirm: ")
-    if typed != CONFIRMATION:
+    if _ask(reader, writer, f"Type '{CONFIRMATION}' to confirm: ") != CONFIRMATION:
         writer.write("The phrase did not match. Nothing was changed.\n")
         return 0
 
-    try:
-        group_id = grp.getgrnam(OWNER_GROUP).gr_gid
-    except KeyError:
-        writer.write(
-            f"ERROR: the group '{OWNER_GROUP}' does not exist. The new history would be "
-            "unreadable to the management identity.\n"
-        )
-        return 78
+    request = json.dumps(
+        {
+            "schema_version": 1,
+            "operation": OPERATION,
+            "cluster": cluster_id,
+            "request_id": str(uuid.uuid4()),
+            "parameters": {"acknowledgement": CONFIRMATION},
+        }
+    ).encode()
 
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    code, out, err = run_helper(cluster_id, request)
+    if code != 0:
+        writer.write(err or f"ERROR: the reset failed with exit code {code}.\n")
+        return code
+
     try:
-        result = reset_history(
-            plan,
-            stamp=stamp,
-            message=BASELINE_MESSAGE,
-            group_id=group_id,
-            change_owner=change_owner,
+        result = json.loads(out)
+    except json.JSONDecodeError:
+        writer.write(
+            "ERROR: the reset reported success but its answer could not be read.\n"
+            "Check the cluster's state before doing anything else.\n"
         )
-    except ResetError as exc:
-        writer.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return 70
 
     writer.write(
         f"\nCluster '{cluster_id}' now starts at version 1.\n\n"
-        f"  Discarded:  {result.versions_discarded} versions\n"
-        f"  Kept:       {result.archived_history}\n"
-        f"              {result.archived_draft}\n\n"
+        f"  Discarded:  {result['versions_discarded']} versions\n"
+        f"  Kept:       {result['archived_history']}\n"
+        f"              {result['archived_draft']}\n\n"
     )
 
     #
@@ -175,9 +195,9 @@ def main(
     if published != 0:
         writer.write(
             "\nERROR: the reset succeeded but publishing version 1 did not.\n"
-            f"Until it does, this cluster's published release refers to a version that\n"
-            f"no longer exists. Fix the cause and run:\n\n"
-            f'  haproxy-publish -c {cluster_id} "Baseline after the build phase"\n'
+            "Until it does, this cluster's published release refers to a version that\n"
+            "no longer exists. Fix the cause and run:\n\n"
+            f'  haproxy-publish -c {cluster_id} "{BASELINE_MESSAGE}"\n'
         )
         return published
 

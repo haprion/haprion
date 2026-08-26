@@ -29,6 +29,7 @@ haproxy-render-sysusers = "haproxy_mgmt.cli.render_sysusers:main"
 haproxy-validate-candidate-helper = "haproxy_mgmt.cli.validate_candidate_helper:main"
 haproxy-history-reset = "haproxy_mgmt.cli.history_reset:main"
 haproxy-history-reset-helper = "haproxy_mgmt.cli.history_reset_helper:main"
+haproxy-publish-helper = "haproxy_mgmt.cli.publish_helper:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

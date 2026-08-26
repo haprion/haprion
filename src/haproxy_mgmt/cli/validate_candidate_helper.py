@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 import sys
-import tempfile
-from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
 from haproxy_mgmt.candidate_validation import (
+    DEFAULT_RUN_ROOT,
     MAX_CANDIDATE_BYTES,
-    ValidationResult,
-    materialize_candidate,
+    VALIDATION_CERTIFICATE,
+    SandboxValidator,
     parse_candidate,
+    prepare_run_root,
+    read_validation_certificate,
+    validate_candidate,
     validate_in_sandbox,
 )
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
@@ -22,34 +23,6 @@ from haproxy_mgmt.helper_protocol import (
     read_helper_request,
     require_no_arguments,
 )
-
-DEFAULT_RUN_ROOT = Path("/run/haproxy-manager-validation")
-VALIDATION_CERTIFICATE = "validation.pem"
-SandboxValidator = Callable[[Path, str], ValidationResult]
-
-
-def _secure_bytes(path: Path, *, require_secure: bool) -> bytes:
-    try:
-        metadata = path.lstat()
-    except OSError as exc:
-        raise ConfigError(f"cannot stat validation certificate: {exc}", exit_code=68) from exc
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise ConfigError("validation certificate must be a regular non-symlink", exit_code=68)
-    if require_secure and (metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) & 0o077):
-        raise ConfigError("validation certificate must be mode 600 root:root", exit_code=68)
-    try:
-        return path.read_bytes()
-    except OSError as exc:
-        raise ConfigError(f"cannot read validation certificate: {exc}", exit_code=68) from exc
-
-
-def _prepare_run_root(path: Path, *, require_secure: bool) -> None:
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    metadata = path.lstat()
-    if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
-        raise ConfigError("validation run root must be a non-symlink directory", exit_code=68)
-    if require_secure and (metadata.st_uid != 0 or stat.S_IMODE(metadata.st_mode) & 0o077):
-        raise ConfigError("validation run root must be mode 700 root:root", exit_code=68)
 
 
 def main(
@@ -84,20 +57,19 @@ def main(
         cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
             request.cluster
         )
-        certificate = _secure_bytes(
+        certificate = read_validation_certificate(
             cluster.validation_certs / VALIDATION_CERTIFICATE,
             require_secure=require_secure,
         )
-        _prepare_run_root(run_root, require_secure=require_secure)
-        with tempfile.TemporaryDirectory(prefix="request-", dir=run_root) as temporary:
-            candidate_root = Path(temporary) / "candidate"
-            materialize_candidate(
-                candidate,
-                candidate_root,
-                certificate_ids=cluster.certificate_ids,
-                validation_certificate=certificate,
-            )
-            result = validator(candidate_root, request.request_id)
+        prepare_run_root(run_root, require_secure=require_secure)
+        result = validate_candidate(
+            candidate,
+            run_root=run_root,
+            certificate_ids=cluster.certificate_ids,
+            validation_certificate=certificate,
+            request_id=request.request_id,
+            validator=validator,
+        )
     except (ConfigError, HelperProtocolError) as exc:
         print(f"ERROR: {exc}", file=error_stream)
         return exc.exit_code

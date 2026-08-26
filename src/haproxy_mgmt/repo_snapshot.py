@@ -213,3 +213,31 @@ def commit_and_swap(
             "Nothing was published; check the current state and try again."
         ) from exc
     return commit
+
+
+def count_versions(repo: Path, commit: str) -> int:
+    """The version number, counted out of the history rather than stored.
+
+    Identical to what `haproxy-publish-core` computes and writes into RELEASE.
+    There is no counter anywhere: the number IS the first-parent depth, which is
+    why starting over requires a new history rather than an assignment.
+    """
+
+    return int(_git(repo, "rev-list", "--first-parent", "--count", commit).decode().strip())
+
+
+def refresh_worktree_index(repo: Path, commit: str) -> None:
+    """Point the work tree's index at the version that was just recorded.
+
+    The candidate is built in an index of our own, so after the reference swap
+    the draft area's real index still describes the previous version - and every
+    later check, from `git status` to the reset command's refusal to run on
+    unpublished work, would read the draft as dirty when it is not.
+
+    The shell path did the same thing with `git reset --mixed` as its last act.
+    Only the index moves; no file in the draft area is written.
+    """
+
+    if _git(repo, "rev-parse", "--is-bare-repository").decode().strip() == "true":
+        return
+    _git(repo, "reset", "--quiet", "--mixed", commit)

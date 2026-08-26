@@ -46,7 +46,7 @@ FILE_MODE = 0o640
 type ChangeOwner = Callable[[Path, int, int], None]
 
 
-def _chown(path: Path, uid: int, gid: int) -> None:
+def default_change_owner(path: Path, uid: int, gid: int) -> None:
     os.chown(path, uid, gid, follow_symlinks=False)
 
 
@@ -111,7 +111,7 @@ def install_release(
     artifact: Mapping[str, bytes],
     metadata: ReleaseMetadata,
     group: str = PUBLISH_GROUP,
-    change_owner: ChangeOwner = _chown,
+    change_owner: ChangeOwner = default_change_owner,
 ) -> InstallResult:
     """Write the release and point `current` at it.
 

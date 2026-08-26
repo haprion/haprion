@@ -1,0 +1,367 @@
+"""The privileged half of `haproxy-publish`.
+
+Takes no arguments. What is published arrives as a structured request on stdin,
+for the reason PRIVILEGE.md gives and `haproxy-history-reset-helper` already
+follows: a sudoers rule that matched a cluster name would need a wildcard in
+argument matching, and wildcards there are forbidden. One no-argument rule
+covers every cluster, and adding a cluster does not touch sudoers.
+
+What crosses the boundary is the configuration BYTES, never a path and never a
+finished artifact. Root cannot be handed something to install:
+
+* it receives `core/` and `manual/` as files and builds the version itself
+* it derives the node artifact from the COMMITTED candidate with the same code
+  the caller uses, so "what was validated is what gets installed" is a property
+  of the construction rather than a promise
+* it validates in the same sandbox as `haproxy-validate-candidate-helper` - no
+  network, no capabilities, the candidate bound read-only - which is strictly
+  stronger than the shell path, where `haproxy -c` ran as root
+
+The order is the one the shell path established and is not free to change: the
+version is recorded only AFTER validation passes, and the reference moves by
+compare-and-swap against the head the caller measured. A candidate that changes
+nothing is reported rather than recorded.
+
+Nothing the caller says about the repository is believed. The paths, the current
+head, the version number and the author identity are all read again here.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path, PurePosixPath
+from typing import Any, BinaryIO, TextIO
+
+from haproxy_mgmt.candidate_validation import (
+    DEFAULT_RUN_ROOT,
+    MAX_CANDIDATE_BYTES,
+    MAX_CANDIDATE_FILES,
+    MAX_FILE_BYTES,
+    VALIDATION_CERTIFICATE,
+    SandboxValidator,
+    candidate_from_files,
+    prepare_run_root,
+    read_validation_certificate,
+    validate_candidate,
+    validate_in_sandbox,
+)
+from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
+from haproxy_mgmt.git_command import GitError
+from haproxy_mgmt.helper_protocol import (
+    HelperProtocolError,
+    JsonValue,
+    read_helper_request,
+    require_no_arguments,
+)
+from haproxy_mgmt.release_install import (
+    PUBLISH_GROUP,
+    ChangeOwner,
+    InstallError,
+    default_change_owner,
+    install_release,
+)
+from haproxy_mgmt.release_layout import LayoutError, ReleaseMetadata, build_node_artifact
+from haproxy_mgmt.repo_snapshot import (
+    SNAPSHOT_PREFIXES,
+    PublishError,
+    build_candidate_tree,
+    commit_and_swap,
+    count_versions,
+    read_tree_files,
+    refresh_worktree_index,
+    resolve_head,
+)
+
+OPERATION = "publish_version"
+PARAMETERS = frozenset({"files", "expected_head", "comment"})
+COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
+CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+#
+# The published contract caps a comment at 4096 characters. The same cap is
+# applied on the way in, so a comment that would be rejected when the version is
+# read back cannot be recorded in the first place.
+#
+MAX_COMMENT_BYTES = 4096
+
+TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def _repository_path(raw: str) -> str:
+    """A repository-relative path inside the layers a human publish owns.
+
+    Rejected rather than normalized. A path that has to be cleaned up before it
+    is safe is a path whose sender and receiver disagree about what it means.
+    """
+
+    path = PurePosixPath(raw)
+    if (
+        not raw
+        or path.is_absolute()
+        or str(path) != raw
+        or any(part in (".", "..") for part in path.parts)
+    ):
+        raise HelperProtocolError("the request contains an invalid relative path", exit_code=65)
+    if not raw.startswith(SNAPSHOT_PREFIXES):
+        raise HelperProtocolError(
+            f"'{raw}' is outside the layers this path publishes "
+            f"({', '.join(prefix.rstrip('/') for prefix in SNAPSHOT_PREFIXES)}).",
+            exit_code=65,
+        )
+    return raw
+
+
+def parse_files(raw_files: JsonValue) -> dict[str, bytes]:
+    """The `core/` and `manual/` bytes being published, decoded and bounded.
+
+    The limits are the candidate limits, deliberately: this is the same payload
+    seen one step earlier, before it has been collapsed into an artifact, and a
+    request that could not survive validation should not reach git either.
+    """
+
+    if not isinstance(raw_files, dict) or not raw_files:
+        raise HelperProtocolError("parameters.files must be a non-empty object", exit_code=65)
+    if len(raw_files) > MAX_CANDIDATE_FILES:
+        raise HelperProtocolError("the request contains too many files", exit_code=65)
+
+    files: dict[str, bytes] = {}
+    total = 0
+    for raw_path in sorted(raw_files):
+        content = raw_files[raw_path]
+        if not isinstance(raw_path, str) or not isinstance(content, str):
+            raise HelperProtocolError("paths and contents must be strings", exit_code=65)
+        path = _repository_path(raw_path)
+        encoded = content.encode("utf-8")
+        if b"\x00" in encoded:
+            raise HelperProtocolError("published files may not contain NUL", exit_code=65)
+        if len(encoded) > MAX_FILE_BYTES:
+            raise HelperProtocolError("the request contains an oversized file", exit_code=65)
+        total += len(encoded)
+        if total > MAX_CANDIDATE_BYTES:
+            raise HelperProtocolError("the request exceeds the total size limit", exit_code=65)
+        files[path] = encoded
+    return files
+
+
+def parse_comment(raw_comment: JsonValue) -> str:
+    """The message the version is recorded under.
+
+    Control characters are refused because the comment is shown back in version
+    listings and in the deployment output, and a comment able to redraw those is
+    a comment able to hide what was published.
+    """
+
+    if not isinstance(raw_comment, str) or not raw_comment.strip():
+        raise HelperProtocolError("parameters.comment must be a non-empty string", exit_code=65)
+    if len(raw_comment.encode("utf-8")) > MAX_COMMENT_BYTES:
+        raise HelperProtocolError("parameters.comment is too long", exit_code=65)
+    if CONTROL.search(raw_comment):
+        raise HelperProtocolError(
+            "parameters.comment may not contain control characters", exit_code=65
+        )
+    return raw_comment
+
+
+def parse_expected_head(raw_head: JsonValue) -> str:
+    if not isinstance(raw_head, str) or not COMMIT_ID.fullmatch(raw_head):
+        raise HelperProtocolError("parameters.expected_head must be a full commit ID", exit_code=65)
+    return raw_head
+
+
+def _response(
+    request_operation: str,
+    cluster: str,
+    request_id: str,
+    **fields: Any,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "operation": request_operation,
+        "cluster": cluster,
+        "request_id": request_id,
+        "changed": False,
+        "valid": True,
+        "diagnostics": "",
+        "candidate_sha256": None,
+        "version": None,
+        "commit": None,
+        "timestamp": None,
+        "release": None,
+        "already_current": False,
+        **fields,
+    }
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    policy_path: Path = DEFAULT_POLICY_PATH,
+    run_root: Path = DEFAULT_RUN_ROOT,
+    input_stream: BinaryIO | None = None,
+    output_stream: TextIO | None = None,
+    error_stream: TextIO | None = None,
+    require_secure: bool = True,
+    require_root: bool = True,
+    validator: SandboxValidator = validate_in_sandbox,
+    group: str = PUBLISH_GROUP,
+    change_owner: ChangeOwner = default_change_owner,
+    now: Callable[[], datetime] | None = None,
+) -> int:
+    output = output_stream or sys.stdout
+    errors = error_stream or sys.stderr
+    stream = input_stream or sys.stdin.buffer
+    arguments = sys.argv[1:] if argv is None else argv
+    clock = now or (lambda: datetime.now(UTC))
+
+    try:
+        require_no_arguments(arguments)
+        if require_root and os.geteuid() != 0:
+            raise HelperProtocolError("publish helper must run as root", exit_code=77)
+
+        request = read_helper_request(
+            stream,
+            expected_operation=OPERATION,
+            allowed_parameter_keys=PARAMETERS,
+            max_bytes=MAX_CANDIDATE_BYTES + 1024 * 1024,
+        )
+        files = parse_files(request.parameters.get("files"))
+        expected_head = parse_expected_head(request.parameters.get("expected_head"))
+        comment = parse_comment(request.parameters.get("comment"))
+
+        policy = load_policy(policy_path, require_secure=require_secure)
+        cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
+            request.cluster
+        )
+        repo = cluster.config_path
+
+        #
+        # 1. Where the repository actually is now. The caller measured the same
+        #    value before building its request; if the two disagree, something
+        #    was published or reverted in between and this candidate was built
+        #    on a starting point that no longer exists.
+        #
+        branch, head = resolve_head(repo)
+        if head != expected_head:
+            raise PublishError(
+                "the configuration changed after this candidate was prepared. "
+                "Nothing was published; run the command again so the candidate "
+                "is built on the current version.",
+                exit_code=75,
+            )
+
+        #
+        # 2. The candidate tree. managed/ is carried over from HEAD untouched.
+        #
+        snapshot = build_candidate_tree(repo, head, files)
+        if snapshot.unchanged:
+            json.dump(
+                _response(request.operation, request.cluster, request.request_id),
+                output,
+                sort_keys=True,
+            )
+            output.write("\n")
+            return 0
+
+        #
+        # 3. The artifact, derived here from the candidate tree - not received.
+        #
+        artifact = build_node_artifact(read_tree_files(repo, snapshot.tree))
+        candidate = candidate_from_files(artifact)
+
+        #
+        # 4. Validation, in the sandbox, on exactly those bytes.
+        #
+        certificate = read_validation_certificate(
+            cluster.validation_certs / VALIDATION_CERTIFICATE,
+            require_secure=require_secure,
+        )
+        prepare_run_root(run_root, require_secure=require_secure)
+        result = validate_candidate(
+            candidate,
+            run_root=run_root,
+            certificate_ids=cluster.certificate_ids,
+            validation_certificate=certificate,
+            request_id=request.request_id,
+            validator=validator,
+        )
+        if not result.valid:
+            json.dump(
+                _response(
+                    request.operation,
+                    request.cluster,
+                    request.request_id,
+                    valid=False,
+                    diagnostics=result.diagnostics,
+                    candidate_sha256=candidate.sha256,
+                ),
+                output,
+                sort_keys=True,
+            )
+            output.write("\n")
+            return 65
+
+        #
+        # 5. Only now is a version recorded, and only if nobody moved the branch
+        #    while the sandbox was running.
+        #
+        commit = commit_and_swap(
+            repo, branch=branch, tree=snapshot.tree, parent=head, message=comment
+        )
+        refresh_worktree_index(repo, commit)
+
+        #
+        # 6. Install the release the nodes fetch, named by the commit.
+        #
+        metadata = ReleaseMetadata(
+            cluster=request.cluster,
+            version=count_versions(repo, commit),
+            commit=commit,
+            timestamp=clock().strftime(TIMESTAMP_FORMAT),
+        )
+        installed = install_release(
+            cluster.publish_path,
+            node_path=cluster.node_path,
+            artifact=artifact,
+            metadata=metadata,
+            group=group,
+            change_owner=change_owner,
+        )
+    except (
+        ConfigError,
+        GitError,
+        HelperProtocolError,
+        InstallError,
+        LayoutError,
+        PublishError,
+    ) as exc:
+        print(f"ERROR: {exc}", file=errors)
+        return exc.exit_code
+
+    json.dump(
+        _response(
+            request.operation,
+            request.cluster,
+            request.request_id,
+            changed=True,
+            candidate_sha256=candidate.sha256,
+            diagnostics=result.diagnostics,
+            version=metadata.version,
+            commit=metadata.commit,
+            timestamp=metadata.timestamp,
+            release=str(installed.release),
+            already_current=installed.already_current,
+        ),
+        output,
+        sort_keys=True,
+    )
+    output.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

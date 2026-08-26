@@ -1,0 +1,236 @@
+"""`haproxy-publish` - save the draft area as a new version and publish it.
+
+The thin half. It runs entirely as the calling user and does only what an
+unprivileged caller can honestly do: check the arguments, look up the cluster,
+read the draft area, and hand a structured request to the root helper.
+
+Everything that decides what gets published happens on the other side. This half
+does not build the artifact, does not validate, does not create the version and
+does not write the release - and it is not trusted to have done any of it. The
+helper reads the repository again on its own.
+
+What is sent is the draft area's `core/` and `manual/`, chosen exactly the way
+the shell path chose them: `git ls-files --cached --others --exclude-standard`,
+so `.gitignore` still keeps a stray swap file or `.orig` out of a version.
+`managed/` is not sent; it belongs to the application and is carried over from
+the current version by the helper. Changes there are reported rather than
+silently dropped.
+
+`expected_head` is measured here and checked there. If the repository moves in
+between - a concurrent publish, a revert - the helper refuses and no version is
+created.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import uuid
+from collections.abc import Callable
+from pathlib import Path
+from typing import TextIO
+
+from haproxy_mgmt.git_command import GitError
+from haproxy_mgmt.git_command import git as _git
+from haproxy_mgmt.repo_health import describe_problem, is_repo_root
+from haproxy_mgmt.repo_snapshot import SNAPSHOT_PREFIXES, PublishError, resolve_head
+
+OPERATION = "publish_version"
+
+CLUSTER_CONFIG = "/usr/local/lib/haproxy-mgmt/cluster-config"
+HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-publish-helper"
+SUDO = "/usr/bin/sudo"
+
+USAGE = (
+    "Usage:\n"
+    "  haproxy-publish -c <cluster> <comment>\n"
+    "\n"
+    "Examples:\n"
+    '  haproxy-publish -c internal "Added serverxyz"\n'
+    '  haproxy-publish -c external "Added public service"\n'
+)
+
+type RunHelper = Callable[[bytes], tuple[int, str, str]]
+type ConfigPath = Callable[[str], Path]
+
+
+class CallerError(Exception):
+    def __init__(self, message: str, *, exit_code: int = 65):
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+def _config_path(cluster_id: str) -> Path:
+    completed = subprocess.run(  # noqa: S603 - fixed path, fixed arguments
+        [CLUSTER_CONFIG, "-c", cluster_id, "--field", "config_path"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise CallerError(f"unknown cluster '{cluster_id}'.", exit_code=64)
+    return Path(completed.stdout.strip())
+
+
+def _run_helper(request: bytes) -> tuple[int, str, str]:
+    completed = subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
+        [SUDO, "--", HELPER],
+        input=request,
+        capture_output=True,
+        check=False,
+    )
+    return (
+        completed.returncode,
+        completed.stdout.decode("utf-8", "replace"),
+        completed.stderr.decode("utf-8", "replace"),
+    )
+
+
+def _parse(argv: list[str]) -> tuple[str, str]:
+    if len(argv) < 3 or argv[0] not in ("-c", "--cluster"):
+        raise SystemExit(USAGE)
+    comment = " ".join(argv[2:]).strip()
+    if not comment:
+        raise SystemExit(USAGE)
+    return argv[1], comment
+
+
+def collect_layers(repo: Path) -> dict[str, str]:
+    """The draft area's `core/` and `manual/`, as git would stage them.
+
+    Tracked files plus untracked files that `.gitignore` does not exclude - the
+    same set `git add -A -- core manual` produced in the shell path. A tracked
+    file that has been deleted is simply absent from the result, and the helper
+    turns that absence into a deletion.
+    """
+
+    listing = _git(
+        repo,
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+        *(prefix.rstrip("/") for prefix in SNAPSHOT_PREFIXES),
+    ).decode()
+
+    files: dict[str, str] = {}
+    for relative in listing.split("\0"):
+        if not relative:
+            continue
+        path = repo / relative
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            files[relative] = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise CallerError(
+                f"'{relative}' cannot be read as UTF-8 text: {exc}\n"
+                "Configuration is text; remove or fix the file before publishing."
+            ) from exc
+
+    if not files:
+        raise CallerError(
+            f"there is nothing to publish in {repo}: "
+            f"{' and '.join(prefix.rstrip('/') for prefix in SNAPSHOT_PREFIXES)} are empty."
+        )
+    return files
+
+
+def _report_managed(repo: Path, writer: TextIO) -> None:
+    """Say plainly what is not part of this version, instead of dropping it."""
+
+    changed = _git(repo, "status", "--porcelain", "--", "managed").decode().strip()
+    if changed:
+        writer.write(
+            "NOTE: the following changes in managed/ are NOT part of this version:\n"
+            f"{changed}\n"
+            "managed/ is published by the application; this path publishes core/ and manual/.\n\n"
+        )
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    stream_out: TextIO | None = None,
+    run_helper: RunHelper = _run_helper,
+    config_path: ConfigPath = _config_path,
+) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    writer: TextIO = stream_out or sys.stdout
+    cluster_id, comment = _parse(argv)
+
+    try:
+        repo = config_path(cluster_id)
+        if not is_repo_root(repo):
+            writer.write(f"{describe_problem(cluster_id, repo)}\n")
+            return 68
+        _, expected_head = resolve_head(repo)
+        _report_managed(repo, writer)
+        files = collect_layers(repo)
+    except (CallerError, GitError, PublishError) as exc:
+        writer.write(f"ERROR: {exc}\n")
+        return exc.exit_code
+
+    request = json.dumps(
+        {
+            "schema_version": 1,
+            "operation": OPERATION,
+            "cluster": cluster_id,
+            "request_id": str(uuid.uuid4()),
+            "parameters": {
+                "files": files,
+                "expected_head": expected_head,
+                "comment": comment,
+            },
+        }
+    ).encode()
+
+    writer.write(f"Validating {cluster_id} ...\n")
+    code, out, err = run_helper(request)
+
+    try:
+        result = json.loads(out) if out else None
+    except json.JSONDecodeError:
+        result = None
+
+    if result is None:
+        #
+        # No answer to read. Whatever went wrong, the helper's own words are the
+        # best thing available - inventing a summary here would be guessing.
+        #
+        writer.write(err or f"ERROR: publishing failed with exit code {code}.\n")
+        return code or 70
+
+    if not result["valid"]:
+        writer.write(
+            f"\n{result['diagnostics']}\n"
+            "ERROR: the HAProxy configuration is invalid.\n"
+            "No version was created and nothing was published.\n"
+        )
+        return code or 65
+
+    if code != 0:
+        writer.write(err or f"ERROR: publishing failed with exit code {code}.\n")
+        return code
+
+    if not result["changed"]:
+        writer.write(f"No changes to publish for cluster '{cluster_id}'.\n")
+        return 0
+
+    writer.write(
+        "HAProxy configuration OK.\n\n"
+        f"Cluster '{cluster_id}' is published.\n\n"
+        f"  Version:  {result['version']}\n"
+        f"  Hash:     {result['commit']}\n"
+        f"  Release:  {result['release']}\n\n"
+        "No node deployment has run. Bring the nodes into step with:\n\n"
+        f"  haproxy-deploy -c {cluster_id}\n"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

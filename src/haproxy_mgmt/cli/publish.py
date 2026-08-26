@@ -188,7 +188,13 @@ def main(
         }
     ).encode()
 
-    writer.write(f"Validating {cluster_id} ...\n")
+    #
+    # "Checking", not "Validating". Validation happens on the far side and only
+    # when there is something to validate - the shell path printed its line
+    # after it knew that, and a progress line that claims work which did not
+    # happen is exactly the kind of output nobody can trust under pressure.
+    #
+    writer.write(f"Checking {cluster_id} ...\n")
     code, out, err = run_helper(request)
 
     try:

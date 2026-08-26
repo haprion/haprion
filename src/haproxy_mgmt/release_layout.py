@@ -44,6 +44,17 @@ MAP_LAYERS: tuple[tuple[str, str], ...] = (
 REQUIRED_FILES: tuple[str, ...] = ("core/haproxy.cfg", "manual/reservations.yaml")
 
 #
+# Directories the node layout always has, even when nothing lands in them.
+# `haproxy-publish-core` creates both with `mkdir -p` before it merges anything,
+# so a cluster with no map files still ships an empty `maps/`.
+#
+# Measured 2026-08-26: external is exactly that cluster. The step 1 parity check
+# compared FILES against a real release and could not see this - a directory is
+# not a file - so it took the end-to-end parity run to surface it.
+#
+NODE_DIRECTORIES: tuple[str, ...] = ("conf.d", "maps")
+
+#
 # managed/ is written by the application, not by a human, so it is held to a
 # stricter rule than the layers a person edits: nothing but generated .cfg files
 # and the directory placeholder may appear there.

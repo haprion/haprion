@@ -25,7 +25,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from haproxy_mgmt.release_layout import ReleaseMetadata, render_release_file
+from haproxy_mgmt.release_layout import NODE_DIRECTORIES, ReleaseMetadata, render_release_file
 
 #
 # The same constant lives in `haproxy-publish-core` and in
@@ -145,6 +145,14 @@ def install_release(
         stage = Path(tempfile.mkdtemp(dir=releases, prefix=f".{metadata.commit}."))
         try:
             node_root = stage / node_path
+            #
+            # Created before the files, and unconditionally: a cluster with no
+            # map files still ships an empty maps/, exactly as the shell path's
+            # `mkdir -p` did.
+            #
+            for node_directory in NODE_DIRECTORIES:
+                (node_root / node_directory).mkdir(parents=True, exist_ok=True)
+
             files = dict(artifact)
             files["RELEASE"] = render_release_file(metadata)
             for relative in sorted(files):

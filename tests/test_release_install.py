@@ -20,7 +20,7 @@ from haproxy_mgmt.release_install import (
     InstallError,
     install_release,
 )
-from haproxy_mgmt.release_layout import ReleaseMetadata
+from haproxy_mgmt.release_layout import NODE_DIRECTORIES, ReleaseMetadata
 
 ARTIFACT = {
     "haproxy.cfg": b"global\n  daemon\n",
@@ -45,6 +45,41 @@ class Recorder:
 
     def __call__(self, path: Path, uid: int, gid: int) -> None:
         self.calls.append((str(path), uid, gid))
+
+
+class EmptyDirectoryTests(unittest.TestCase):
+    """A cluster with no map files still ships an empty maps/.
+
+    Measured against the shell path on 2026-08-26: it creates conf.d and maps
+    with `mkdir -p` before merging, so external - which has no map files - has
+    always shipped an empty maps/. The step 1 parity check compared files and
+    could not see it.
+    """
+
+    def test_the_node_directories_exist_even_when_nothing_lands_in_them(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            publish = Path(raw) / "published"
+            recorder = Recorder()
+            result = install_release(
+                publish,
+                node_path=NODE_PATH,
+                artifact={"haproxy.cfg": b"global\n  daemon\n"},
+                metadata=metadata(),
+                group=grp.getgrgid(os.getgid()).gr_name,
+                change_owner=recorder,
+            )
+            node_root = result.release / NODE_PATH
+            for directory in NODE_DIRECTORIES:
+                self.assertTrue((node_root / directory).is_dir(), directory)
+                self.assertEqual((node_root / directory).stat().st_mode & 0o777, DIRECTORY_MODE)
+            #
+            # Ownership is applied while the release is still staged, so the
+            # recorded path ends with the node-relative one.
+            #
+            owned = [call[0] for call in recorder.calls if call[0].endswith(f"{NODE_PATH}/maps")]
+            self.assertEqual(
+                [(0, os.getgid())], [call[1:] for call in recorder.calls if call[0] in owned]
+            )
 
 
 class InstallFixture(unittest.TestCase):

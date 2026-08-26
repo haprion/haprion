@@ -215,17 +215,6 @@ def commit_and_swap(
     return commit
 
 
-def count_versions(repo: Path, commit: str) -> int:
-    """The version number, counted out of the history rather than stored.
-
-    Identical to what `haproxy-publish-core` computes and writes into RELEASE.
-    There is no counter anywhere: the number IS the first-parent depth, which is
-    why starting over requires a new history rather than an assignment.
-    """
-
-    return int(_git(repo, "rev-list", "--first-parent", "--count", commit).decode().strip())
-
-
 def refresh_worktree_index(repo: Path, commit: str) -> None:
     """Point the work tree's index at the version that was just recorded.
 

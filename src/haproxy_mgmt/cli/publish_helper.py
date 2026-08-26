@@ -71,11 +71,11 @@ from haproxy_mgmt.repo_snapshot import (
     PublishError,
     build_candidate_tree,
     commit_and_swap,
-    count_versions,
     read_tree_files,
     refresh_worktree_index,
     resolve_head,
 )
+from haproxy_mgmt.version_history import count_versions
 
 OPERATION = "publish_version"
 PARAMETERS = frozenset({"files", "expected_head", "comment"})

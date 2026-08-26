@@ -115,3 +115,14 @@ def describe_problem(cluster: str, repo: Path) -> str:
         )
 
     return f"ERROR: '{repo}' is not a usable configuration repository for cluster '{cluster}'."
+
+
+def unsaved_changes(repo: Path) -> str:
+    """What the draft area holds that is not in any version yet.
+
+    Empty means clean. Both publishing paths that rewrite history - reverting
+    and resetting - refuse on a non-empty answer, because whatever is here would
+    otherwise be swept into a version nobody reviewed, or overwritten by one.
+    """
+
+    return _git(repo, "status", "--porcelain").decode().strip()

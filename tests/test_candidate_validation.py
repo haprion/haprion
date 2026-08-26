@@ -63,7 +63,17 @@ class CandidateValidationTests(unittest.TestCase):
         )
         joined = " ".join(command)
         self.assertIn("CapabilityBoundingSet=", command)
-        self.assertIn("InaccessiblePaths=/boot /etc", joined)
+        self.assertIn("InaccessiblePaths=/boot /home", joined)
+        self.assertNotIn("/etc ", joined.split("InaccessiblePaths=")[1].split("--property")[0])
+        #
+        # /etc is an empty tmpfs holding exactly what parsing needs. Measured
+        # 2026-08-26: without these a real cluster configuration fails on
+        # "user haproxy", "group haproxy" and every errorfile.
+        #
+        self.assertIn("TemporaryFileSystem=/etc", joined)
+        for required in ("/etc/passwd", "/etc/group", "/etc/haproxy/errors"):
+            self.assertIn(f"BindReadOnlyPaths={required}", joined)
+        self.assertNotIn("/etc/haproxy/certs", joined)
         self.assertIn("BindReadOnlyPaths=/run/candidate:/candidate", joined)
 
 

@@ -172,8 +172,32 @@ def sandbox_command(candidate_root: Path, request_id: str) -> list[str]:
         "RestrictAddressFamilies=AF_UNIX",
         "IPAddressDeny=any",
         "UMask=0077",
-        "InaccessiblePaths=/boot /etc /home /media /mnt /opt /root /srv /var /apps /configs",
+        "InaccessiblePaths=/boot /home /media /mnt /opt /root /srv /var /apps /configs",
         "TemporaryFileSystem=/run",
+        #
+        # /etc is replaced rather than hidden. It used to be listed above as
+        # inaccessible, and that measured wrong against a real cluster
+        # configuration on 2026-08-26: every production config names
+        # "user haproxy", "group haproxy" and seven errorfile paths under
+        # /etc/haproxy/errors, so haproxy -c failed on all nine before it ever
+        # looked at what was being validated.
+        #
+        # An inaccessible /etc cannot be poked a hole in - the overmount has no
+        # paths inside it to bind onto - so the fix is an empty /etc containing
+        # exactly what parsing a configuration needs. That is strictly tighter
+        # than hiding /etc would have been if it had worked: nothing else in
+        # /etc exists at all, including /etc/haproxy/certs, which is what the
+        # substituted certificates under /candidate/certs are there to replace.
+        #
+        # The errorfiles are the manager host's copies, which is what the shell
+        # path validated against too. They are read-only and world readable.
+        #
+        "TemporaryFileSystem=/etc",
+        "BindReadOnlyPaths=-/etc/ld.so.cache",
+        "BindReadOnlyPaths=/etc/passwd",
+        "BindReadOnlyPaths=/etc/group",
+        "BindReadOnlyPaths=-/etc/nsswitch.conf",
+        "BindReadOnlyPaths=/etc/haproxy/errors",
         f"BindReadOnlyPaths={candidate_root}:/candidate",
     )
     command = [

@@ -58,8 +58,16 @@ class CandidateValidationTests(unittest.TestCase):
         command = sandbox_command(Path("/run/candidate"), "11111111-1111-4111-8111-111111111111")
         self.assertEqual(command[0], "/usr/bin/systemd-run")
         self.assertEqual(
-            command[-6:],
-            ["/usr/sbin/haproxy", "-c", "-f", "/candidate/haproxy.cfg", "-f", "/candidate/conf.d"],
+            command[-7:],
+            [
+                "/usr/sbin/haproxy",
+                "-c",
+                "-dr",
+                "-f",
+                "/candidate/haproxy.cfg",
+                "-f",
+                "/candidate/conf.d",
+            ],
         )
         joined = " ".join(command)
         self.assertIn("CapabilityBoundingSet=", command)
@@ -71,6 +79,11 @@ class CandidateValidationTests(unittest.TestCase):
         # "user haproxy", "group haproxy" and every errorfile.
         #
         self.assertIn("TemporaryFileSystem=/etc", joined)
+        #
+        # No network means no name resolution. The nodes check that themselves,
+        # with the resolver whose answer actually matters.
+        #
+        self.assertIn("-dr", command)
         for required in ("/etc/passwd", "/etc/group", "/etc/haproxy/errors"):
             self.assertIn(f"BindReadOnlyPaths={required}", joined)
         self.assertNotIn("/etc/haproxy/certs", joined)

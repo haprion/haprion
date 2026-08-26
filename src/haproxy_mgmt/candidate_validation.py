@@ -215,6 +215,26 @@ def sandbox_command(candidate_root: Path, request_id: str) -> list[str]:
         (
             "/usr/sbin/haproxy",
             "-c",
+            #
+            # Ignore server address resolution failures. The sandbox has no
+            # network at all, so every `server` line naming a hostname would
+            # otherwise fail here - measured against a production cluster on
+            # 2026-08-26, where a single backend server named by hostname was
+            # enough to fail the whole validation.
+            #
+            # Nothing is lost by this that was ever worth much. The shell path
+            # resolved those names on the MANAGER, which says nothing about
+            # whether the nodes can resolve them - and the nodes check for
+            # themselves: haproxy-pull-deploy runs `haproxy -c` before the
+            # symlink swap and again after it, and rolls back if either fails.
+            # That check runs with the node's own resolver, which is the only
+            # one whose answer matters.
+            #
+            # The alternative was to give this sandbox a network, and a parser
+            # reading an unreviewed candidate is exactly what should not have
+            # one.
+            #
+            "-dr",
             "-f",
             "/candidate/haproxy.cfg",
             "-f",

@@ -310,11 +310,71 @@ else
     fi
 fi
 
+step "Keys this node fetches with"
+
+#
+# Generated here, on the node, and never anywhere else: a private key that a
+# node authenticates with has no reason to exist on the management host, and
+# copying one there would make the management host able to impersonate a node.
+#
+# The public halves are printed for the operator to paste on the management
+# host, which is the mirror image of step 3 - and manual for the same reason.
+#
+generate_pull_key() {
+    local path="$1" comment="$2"
+    if [[ -f "$path" ]]; then
+        log "  ok       ${path}"
+        return
+    fi
+    install -o root -g root -m 700 -d "$(dirname "$path")"
+    ssh-keygen -t ed25519 -N "" -C "$comment" -f "$path" >/dev/null
+    chown root:root "$path" "${path}.pub"
+    chmod 600 "$path"
+    chmod 644 "${path}.pub"
+    log "  created  ${path}"
+}
+
+generate_pull_key "$NODE_CONFIG_PULL_KEY" "haproxy-manager config pull"
+[[ -n "${NODE_CERT_PULL_KEY:-}" ]] \
+    && generate_pull_key "$NODE_CERT_PULL_KEY" "haproxy-manager cert pull"
+
 echo
 log "step 4 done on this node"
+
+cat <<INTRO
+
+Two things left, both by hand, both on machines this node cannot write to.
+
+1. On THIS node: paste the authorized_keys lines printed by step 3.
+
+2. On the MANAGEMENT host: add the lines below. rrsync is what limits each key
+   to reading one tree - without it the forced command is a full rsync, which is
+   a shell in all but name.
+
+INTRO
+
+pub() { cut -d' ' -f1,2 < "$1"; }
+
+echo "  /home/${PULL_USER}/.ssh/authorized_keys    (owner ${PULL_USER}, mode 600)"
 echo
-echo "Still to do here, by hand:"
-echo "  * paste the authorized_keys lines printed by step 3"
+echo "restrict,command=\"rrsync -ro ${PUBLISH_ROOT}\" $(pub "${NODE_CONFIG_PULL_KEY}.pub")"
 echo
-echo "When every node is done, back on the management host:"
-echo "  ./05-verify answers.env"
+if [[ -n "${NODE_CERT_PULL_KEY:-}" && -n "${CERT_PULL_USER:-}" && -n "${CERTIFICATE_ROOT:-}" ]]; then
+    echo "  /home/${CERT_PULL_USER}/.ssh/authorized_keys   (owner ${CERT_PULL_USER}, mode 600)"
+    echo
+    echo "restrict,command=\"rrsync -ro ${CERTIFICATE_ROOT}\" $(pub "${NODE_CERT_PULL_KEY}.pub")"
+    echo
+fi
+
+cat <<'OUTRO'
+One line per NODE, not one per cluster: each node has its own key, so a node
+that is rebuilt or compromised is revoked on its own.
+
+Accept the management host's host key once from this node, as root, or the first
+fetch fails on an unknown host:
+
+  ssh -o StrictHostKeyChecking=ask <management-host> true
+
+When every node is done, back on the management host:
+  ./05-verify answers.env
+OUTRO

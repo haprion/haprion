@@ -16,7 +16,8 @@ source ./lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars CONFIG_ROOT PUBLISH_ROOT VALIDATION_ROOT CLUSTER_FILE CONFIG_GROUP CLUSTERS
+require_vars CONFIG_ROOT PUBLISH_ROOT VALIDATION_ROOT CLUSTER_FILE CONFIG_GROUP CLUSTERS \
+             PULL_USER
 
 for path in "$CONFIG_ROOT" "$PUBLISH_ROOT" "$VALIDATION_ROOT" "$CLUSTER_FILE"; do
     valid_abs_path "$path" || die "not an absolute path without '..': ${path}"
@@ -26,14 +27,55 @@ step "Configuration group"
 ensure_group "$CONFIG_GROUP"
 
 #
-# 0750 root:<group> throughout: the group reads and traverses, and writes
-# nothing. Publishing is a write into root-owned history and goes through a
-# helper, which is the whole reason the group can be read-only.
+# The accounts a NODE authenticates to when it fetches. They are reached only by
+# a key carrying a forced rrsync command, so like the node-side accounts they
+# need a real login shell: sshd runs a forced command through it.
+#
+step "Pull accounts"
+
+ensure_pull_account() {
+    local user="$1" purpose="$2"
+    if id -u "$user" >/dev/null 2>&1; then
+        log "  ok       ${user}  (${purpose})"
+    else
+        useradd --system --create-home --shell /bin/bash "$user"
+        passwd --lock "$user" >/dev/null
+        log "  created  ${user}  (${purpose})"
+    fi
+    ensure_dir "/home/${user}/.ssh" "${user}:${user}" 700
+    local keys="/home/${user}/.ssh/authorized_keys"
+    if [[ ! -f "$keys" ]]; then
+        install -o "$user" -g "$user" -m 600 /dev/null "$keys"
+        log "  created  ${keys}  (empty - step 4 prints what goes here)"
+    else
+        chown "${user}:${user}" "$keys"
+        chmod 600 "$keys"
+        log "  ok       ${keys}"
+    fi
+}
+
+command -v rrsync >/dev/null \
+    || warn "rrsync is not installed. It is what restricts a node to reading one
+  tree, and without it the pull accounts have no safe forced command."
+
+ensure_pull_account "$PULL_USER" "nodes fetch published releases"
+[[ -n "${CERT_PULL_USER:-}" ]] \
+    && ensure_pull_account "$CERT_PULL_USER" "nodes fetch certificates"
+
+#
+# 0750 root:<group> for the config trees: the group reads and traverses, and
+# writes nothing. Publishing is a write into root-owned history and goes through
+# a helper, which is the whole reason the group can be read-only.
+#
+# The published tree is the exception, and getting it wrong is not theoretical:
+# giving it to the config group instead of the pull account locks the NODES out
+# of the only tree they are supposed to read, and deploy stops working while
+# every permission still looks deliberate.
 #
 step "Directory trees"
 ensure_dir "$(dirname "$CLUSTER_FILE")" "root:${CONFIG_GROUP}" 750
 ensure_dir "$CONFIG_ROOT"     "root:${CONFIG_GROUP}" 750
-ensure_dir "$PUBLISH_ROOT"    "root:${CONFIG_GROUP}" 750
+ensure_dir "$PUBLISH_ROOT"    "root:${PULL_USER}"    750
 ensure_dir "$VALIDATION_ROOT" "root:root"            750
 ensure_dir "${VALIDATION_ROOT}/certs" "root:root"    700
 
@@ -97,8 +139,8 @@ for cluster in $(each_cluster); do
     find "$work" -type d -exec chmod 750 {} +
     find "$work" -type f -exec chmod 640 {} +
 
-    ensure_dir "${PUBLISH_ROOT}/${cluster}" "root:${CONFIG_GROUP}" 750
-    ensure_dir "${PUBLISH_ROOT}/${cluster}/releases" "root:${CONFIG_GROUP}" 750
+    ensure_dir "${PUBLISH_ROOT}/${cluster}" "root:${PULL_USER}" 750
+    ensure_dir "${PUBLISH_ROOT}/${cluster}/releases" "root:${PULL_USER}" 750
 done
 
 step "Git safe.directory"

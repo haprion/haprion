@@ -203,14 +203,31 @@ Four key pairs, each with exactly one job:
 | `id_ed25519_config_deploy` | `svc-trigger` on the node | trigger a configuration pull |
 | `id_ed25519_cert_deploy` | `svc-trigger` on the node | trigger a certificate pull |
 | `id_ed25519_node_status` | `svc-status` on the node | read node status |
-| the node's own pull key | `svc-pull` on the management host | fetch published releases |
+| the node's own config pull key | `svc-pull` on the management host | read the published tree |
+| the node's own cert pull key | `svc-cert-pull` on the management host | read the certificate tree |
 
 A key that can push configuration must not be able to push certificates, and neither may read
 status. Private keys are root-owned; no application identity can read any of them.
 
+**The node's keys are generated on the node, by step 4, and never leave it.** A private key a node
+authenticates with has no reason to exist on the management host; copying one there would make the
+management host able to impersonate a node. Step 4 prints the public halves and the exact
+`authorized_keys` lines for the management host, which is the mirror image of step 3.
+
+One line per node, not one per cluster. Each node has its own key, so a node that is rebuilt or
+compromised is revoked on its own.
+
 The pull direction is the mirror image: an account on the management host, restricted to an
 `rrsync`-style read-only export of the published tree, which the node authenticates to with its own
 key.
+
+`rrsync` is what makes that restriction real: the forced command is
+`rrsync -ro <tree>`, which allows a read-only rsync of exactly one directory and nothing else.
+Without it a forced `rsync` command is a shell in all but name.
+
+**The published tree belongs to the pull account, not to the config group.** Giving it to the
+config group looks reasonable and locks the nodes out of the only tree they are supposed to read —
+deploys then fail while every permission still looks deliberate.
 
 ### 1.7 Sudo rules
 
@@ -470,11 +487,6 @@ Do the last two on a cluster that carries no traffic if you have one.
 
 This guide is honest about its gaps rather than complete on paper:
 
-- **Node keys are assumed to exist.** The keys a node authenticates to the management host with —
-  `NODE_CONFIG_PULL_KEY` and `NODE_CERT_PULL_KEY` — are created when the node is built, not by
-  these scripts.
-- **The pull-side export** on the management host (the restricted `rsync` account the nodes
-  authenticate to) is described in shape only.
 - **Certificate distribution** is an interface this project consumes, not one it provides.
   Issuance is planned; renewal is deliberately out of scope and belongs to an ACME client.
 

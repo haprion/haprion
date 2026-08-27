@@ -71,8 +71,20 @@ class CandidateValidationTests(unittest.TestCase):
         )
         joined = " ".join(command)
         self.assertIn("CapabilityBoundingSet=", command)
-        self.assertIn("InaccessiblePaths=/boot /home", joined)
-        self.assertNotIn("/etc ", joined.split("InaccessiblePaths=")[1].split("--property")[0])
+        #
+        # An allowlist, not a denylist: the root is an empty tmpfs and only what
+        # parsing needs is bound back. A denylist of top-level directories is
+        # incomplete the moment a new one exists, and had to name the
+        # deployment's own trees in a public repository.
+        #
+        self.assertIn("TemporaryFileSystem=/:ro", joined)
+        self.assertIn("BindReadOnlyPaths=/usr", joined)
+        self.assertNotIn("InaccessiblePaths", joined)
+        #
+        # Nothing in here may name a real deployment's directories.
+        #
+        for private_tree in ("/apps", "/configs"):
+            self.assertNotIn(private_tree, joined)
         #
         # /etc is an empty tmpfs holding exactly what parsing needs. Measured
         # 2026-08-26: without these a real cluster configuration fails on

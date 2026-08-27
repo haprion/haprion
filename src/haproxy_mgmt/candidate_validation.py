@@ -172,7 +172,36 @@ def sandbox_command(candidate_root: Path, request_id: str) -> list[str]:
         "RestrictAddressFamilies=AF_UNIX",
         "IPAddressDeny=any",
         "UMask=0077",
-        "InaccessiblePaths=/boot /home /media /mnt /opt /root /srv /var /apps /configs",
+        #
+        # An empty root, with exactly what parsing a configuration needs bound
+        # back in. This used to be a denylist of top-level directories, which
+        # had two problems with one cause: it was incomplete by construction -
+        # a directory created next year is not in a list written this year - and
+        # the list had to name the deployment's own trees, in a repository that
+        # is meant to be public.
+        #
+        # An allowlist has neither problem. A path that is not listed does not
+        # exist inside the unit, whatever it is called. It is the same move
+        # already made for /etc below, for the same reason, and it is strictly
+        # tighter than the list it replaces.
+        #
+        # /usr carries the binary and its shared libraries. The merged-usr
+        # symlinks are bound separately: a tmpfs root has none of them, and the
+        # dynamic loader path compiled into the binary is absolute. They are
+        # optional binds because a system without merged /usr has them inside
+        # /usr already.
+        #
+        # Measured 2026-08-27 against both production clusters, including the
+        # one whose configuration names two certificates and a live map file:
+        # `haproxy -c` passes identically under this and under the denylist.
+        #
+        "TemporaryFileSystem=/:ro",
+        "BindReadOnlyPaths=/usr",
+        "BindReadOnlyPaths=-/lib",
+        "BindReadOnlyPaths=-/lib64",
+        "BindReadOnlyPaths=-/bin",
+        "BindReadOnlyPaths=-/sbin",
+        "TemporaryFileSystem=/tmp",
         "TemporaryFileSystem=/run",
         #
         # /etc is replaced rather than hidden. It used to be listed above as

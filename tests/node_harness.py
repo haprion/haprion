@@ -105,26 +105,15 @@ class FakeNode:
     def _certificates(self) -> Any:
         """What the node reports carrying, in the shape the status schema wants.
 
-        The metadata around the fingerprint is filled in with fixed values: the
-        deploy matrix compares fingerprints and nothing else, and inventing
-        plausible subjects and dates here would suggest this harness knows
-        something about certificates that it does not.
+        Identity and nothing else, per `carried_certificate` (B15): a node can
+        measure which file it has and what bytes are in it, and cannot know
+        where the certificate came from.
         """
 
         if self.certificates is None:
             return None
         return [
-            {
-                "id": identifier,
-                "fingerprint_sha256": fingerprint,
-                "common_name": None,
-                "sans": [],
-                "not_before": "2026-01-01T00:00:00+00:00",
-                "not_after": "2027-01-01T00:00:00+00:00",
-                "issuer": "harness",
-                "lifecycle": "static",
-                "valid": True,
-            }
+            {"id": identifier, "fingerprint_sha256": fingerprint, "valid": True}
             for identifier, fingerprint in self.certificates
         ]
 

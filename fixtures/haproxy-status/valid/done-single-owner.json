@@ -16,8 +16,13 @@
           "schema_version": 1,
           "node": "node-a",
           "cluster": "alpha",
-          "haproxy": { "active": true },
-          "keepalived": { "active": true, "state": "BACKUP" },
+          "haproxy": {
+            "active": true
+          },
+          "keepalived": {
+            "active": true,
+            "state": "BACKUP"
+          },
           "vip": {
             "address": "192.0.2.10",
             "interface": "eth0",
@@ -35,17 +40,14 @@
             "validated_at": "2026-08-24T08:00:02Z"
           },
           "stats_ok": true,
-          "runtime": { "version": "3.2.9", "uptime_sec": 3600 },
+          "runtime": {
+            "version": "3.2.9",
+            "uptime_sec": 3600
+          },
           "certificates": [
             {
-              "id": "example.com.pem",
+              "id": "example.com",
               "fingerprint_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-              "common_name": "*.example.com",
-              "sans": ["*.example.com", "example.com"],
-              "not_before": "2026-08-01T00:00:00Z",
-              "not_after": "2026-11-01T00:00:00Z",
-              "issuer": "Example Test CA",
-              "lifecycle": "static",
               "valid": true
             }
           ]
@@ -61,8 +63,13 @@
           "schema_version": 1,
           "node": "node-b",
           "cluster": "alpha",
-          "haproxy": { "active": true },
-          "keepalived": { "active": true, "state": "MASTER" },
+          "haproxy": {
+            "active": true
+          },
+          "keepalived": {
+            "active": true,
+            "state": "MASTER"
+          },
           "vip": {
             "address": "192.0.2.10",
             "interface": "eth0",
@@ -80,17 +87,14 @@
             "validated_at": "2026-08-24T08:00:03Z"
           },
           "stats_ok": true,
-          "runtime": { "version": "3.2.9", "uptime_sec": 7200 },
+          "runtime": {
+            "version": "3.2.9",
+            "uptime_sec": 7200
+          },
           "certificates": [
             {
-              "id": "example.com.pem",
+              "id": "example.com",
               "fingerprint_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-              "common_name": "*.example.com",
-              "sans": ["*.example.com", "example.com"],
-              "not_before": "2026-08-01T00:00:00Z",
-              "not_after": "2026-11-01T00:00:00Z",
-              "issuer": "Example Test CA",
-              "lifecycle": "static",
               "valid": true
             }
           ]
@@ -103,7 +107,9 @@
       "reachable_nodes": 2,
       "valid_status_nodes": 2,
       "vip_owner_count": 1,
-      "vip_owners": ["node-b"],
+      "vip_owners": [
+        "node-b"
+      ],
       "vip_unknown_nodes": [],
       "vip_state": "single_owner"
     }

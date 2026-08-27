@@ -202,7 +202,7 @@
         },
         "certificates": {
           "type": "array",
-          "items": { "$ref": "common.schema.json#/$defs/certificate" }
+          "items": { "$ref": "common.schema.json#/$defs/carried_certificate" }
         }
       },
       "additionalProperties": true

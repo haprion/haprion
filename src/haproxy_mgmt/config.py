@@ -30,6 +30,24 @@ class PathPolicy:
     config_root: Path
     publish_root: Path
     validation_certs_root: Path
+    deploy_identity: DeployIdentity | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DeployIdentity:
+    """Who the manager becomes to reach a node, and with which key.
+
+    Environment-specific, so it lives in configuration and never in code: the
+    account name and the key path identify a real installation, and a repository
+    that is going to be public must not carry either.
+
+    Optional in the policy. Every other command works without it, and a
+    deployment that needs it says exactly what is missing rather than failing on
+    a name that was compiled in.
+    """
+
+    user: str
+    key: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,11 +160,47 @@ def _host(value: str, location: str) -> str:
         return value
 
 
+USERNAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+
+
+def _deploy_identity(data: Mapping[str, Any]) -> DeployIdentity | None:
+    """The deploy identity, when the installation has declared one.
+
+    Absent is a valid policy: only the deploy path needs it, and requiring it
+    everywhere would mean a policy file that every other command rejects until
+    it is updated.
+    """
+
+    raw = data.get("deploy_identity")
+    if raw is None:
+        return None
+
+    entry = _mapping(raw, "runtime policy.deploy_identity")
+    _only_keys(entry, {"user", "key"}, "runtime policy.deploy_identity")
+    user = _required_string(entry, "user", "runtime policy.deploy_identity")
+    if not USERNAME.fullmatch(user):
+        raise ConfigError("runtime policy.deploy_identity.user is not a valid account name")
+    return DeployIdentity(
+        user=user,
+        key=_absolute_path(
+            _required_string(entry, "key", "runtime policy.deploy_identity"),
+            "runtime policy.deploy_identity.key",
+        ),
+    )
+
+
 def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True) -> PathPolicy:
     data = _secure_yaml(path, require_secure=require_secure)
     _only_keys(
         data,
-        {"schema_version", "cluster_file", "config_root", "publish_root", "validation_certs_root"},
+        {
+            "schema_version",
+            "cluster_file",
+            "config_root",
+            "publish_root",
+            "validation_certs_root",
+            "deploy_identity",
+        },
         "runtime policy",
     )
     schema_version = data.get("schema_version")
@@ -166,6 +220,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             _required_string(data, "validation_certs_root", "runtime policy"),
             "validation_certs_root",
         ),
+        deploy_identity=_deploy_identity(data),
     )
 
 

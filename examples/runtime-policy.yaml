@@ -3,3 +3,9 @@ cluster_file: /srv/haproxy-manager/config/clusters.yaml
 config_root: /srv/haproxy-manager/config-repositories
 publish_root: /srv/haproxy-manager/published
 validation_certs_root: /srv/haproxy-manager/validation-certs
+
+# Who the manager becomes to reach a node, and with which key. Optional: only
+# the deploy path uses it, and every other command works without it.
+deploy_identity:
+  user: svc-app
+  key: /root/.ssh/id_ed25519_example_deploy

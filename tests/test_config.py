@@ -122,3 +122,68 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeployIdentityTests(unittest.TestCase):
+    """The deploy identity, which is configuration and never code.
+
+    The account name and the key path identify a real installation, so they must
+    not be compiled in - a repository meant to be public cannot carry either.
+    """
+
+    def policy(self, root: Path, identity: object) -> Path:
+        body = {
+            "schema_version": 1,
+            "cluster_file": str(root / "clusters.yaml"),
+            "config_root": str(root / "config"),
+            "publish_root": str(root / "published"),
+            "validation_certs_root": str(root / "certs"),
+        }
+        if identity is not None:
+            body["deploy_identity"] = identity
+        path = root / "runtime-policy.yaml"
+        path.write_text(yaml.safe_dump(body), encoding="utf-8")
+        return path
+
+    def test_a_policy_without_one_is_valid(self) -> None:
+        #
+        # Every other command works without it. Requiring it everywhere would
+        # mean a policy file that all of them reject until it is updated.
+        #
+        with tempfile.TemporaryDirectory() as raw:
+            policy = load_policy(self.policy(Path(raw), None), require_secure=False)
+
+        self.assertIsNone(policy.deploy_identity)
+
+    def test_a_declared_identity_is_read(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = load_policy(
+                self.policy(Path(raw), {"user": "svc-app", "key": "/root/.ssh/id_ed25519_example"}),
+                require_secure=False,
+            )
+
+        assert policy.deploy_identity is not None
+        self.assertEqual(policy.deploy_identity.user, "svc-app")
+        self.assertEqual(policy.deploy_identity.key, Path("/root/.ssh/id_ed25519_example"))
+
+    def test_an_invalid_account_name_is_refused(self) -> None:
+        for user in ("", "Has Spaces", "root/../x", "a" * 40):
+            with tempfile.TemporaryDirectory() as raw, self.assertRaises(ConfigError):
+                load_policy(
+                    self.policy(Path(raw), {"user": user, "key": "/root/.ssh/id"}),
+                    require_secure=False,
+                )
+
+    def test_a_relative_key_path_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw, self.assertRaises(ConfigError):
+            load_policy(
+                self.policy(Path(raw), {"user": "svc-app", "key": ".ssh/id"}),
+                require_secure=False,
+            )
+
+    def test_an_unknown_field_in_the_identity_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw, self.assertRaises(ConfigError):
+            load_policy(
+                self.policy(Path(raw), {"user": "svc-app", "key": "/root/id", "port": 22}),
+                require_secure=False,
+            )

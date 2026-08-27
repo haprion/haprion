@@ -35,6 +35,8 @@ haproxy-revert = "haproxy_mgmt.cli.revert:main"
 haproxy-revert-helper = "haproxy_mgmt.cli.revert_helper:main"
 haproxy-list = "haproxy_mgmt.cli.list:main"
 haproxy-config-status = "haproxy_mgmt.cli.config_status:main"
+haproxy-deploy = "haproxy_mgmt.cli.deploy:main"
+haproxy-deploy-helper = "haproxy_mgmt.cli.deploy_helper:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

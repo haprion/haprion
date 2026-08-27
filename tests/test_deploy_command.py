@@ -1,0 +1,286 @@
+"""The two halves of the deploy command, and the seam between them.
+
+The loop itself is tested against the harness in test_deploy_run. What is tested
+here is the boundary: what the caller is allowed to say, what the privileged
+half refuses to be told, and where each decision is actually taken.
+
+The one property worth stating plainly, because it is the whole point of the
+split: the caller cannot influence which nodes are touched. It sends a cluster
+name and two booleans. The target, the status and the order are all resolved
+inside the boundary.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+import yaml
+
+from haproxy_mgmt.cli import deploy, deploy_helper
+from haproxy_mgmt.cluster_status import NodeStatus, parse_status
+from tests.node_harness import TARGET_HASH, pair
+
+BASE = Path(__file__).resolve().parents[1]
+REQUEST_ID = "44444444-4444-4444-8444-444444444444"
+
+
+def request(cluster: str = "alpha", **parameters: bool) -> bytes:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "operation": "deploy_cluster",
+            "cluster": cluster,
+            "request_id": REQUEST_ID,
+            "parameters": parameters,
+        }
+    ).encode()
+
+
+class HelperFixture(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.cluster = pair()
+        self.triggered: list[str] = []
+
+    def runtime(self, *, published_hash: str | None = TARGET_HASH) -> Path:
+        config_root = self.root / "config"
+        publish_root = self.root / "published"
+        cert_root = self.root / "certs"
+        for directory in (config_root, publish_root, cert_root):
+            directory.mkdir(parents=True, exist_ok=True)
+        (cert_root / "validation.pem").write_text("dummy PEM\n", encoding="utf-8")
+        (config_root / "alpha").mkdir(exist_ok=True)
+
+        clusters = yaml.safe_load((BASE / "examples/clusters.yaml").read_text())
+        entry = clusters["clusters"]["alpha"]
+        entry["config_path"] = str(config_root / "alpha")
+        entry["publish_path"] = str(publish_root / "alpha")
+        entry["validation_certs"] = str(cert_root)
+        (self.root / "clusters.yaml").write_text(yaml.safe_dump(clusters), encoding="utf-8")
+
+        if published_hash is not None:
+            release = publish_root / "alpha" / "current" / entry["node_path"]
+            release.mkdir(parents=True, exist_ok=True)
+            (release / "RELEASE").write_text(
+                f"schema=1\ncluster=alpha\nversion=8\nhash={published_hash}\n"
+                "timestamp=2026-01-02T03:04:05+00:00\n",
+                encoding="utf-8",
+            )
+
+        policy_path = self.root / "runtime-policy.yaml"
+        policy_path.write_text(
+            yaml.safe_dump(
+                {
+                    "schema_version": 1,
+                    "cluster_file": str(self.root / "clusters.yaml"),
+                    "config_root": str(config_root),
+                    "publish_root": str(publish_root),
+                    "validation_certs_root": str(cert_root),
+                }
+            ),
+            encoding="utf-8",
+        )
+        return policy_path
+
+    def run_helper(
+        self, payload: bytes, *, policy_path: Path | None = None
+    ) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+
+        def read_status():  # type: ignore[no-untyped-def]
+            return parse_status(self.cluster.read_status())
+
+        def trigger(node: NodeStatus) -> int:
+            self.triggered.append(node.name)
+            return self.cluster.trigger(node.name)
+
+        code = deploy_helper.main(
+            [],
+            policy_path=policy_path or self.runtime(),
+            input_stream=io.BytesIO(payload),
+            output_stream=out,
+            error_stream=err,
+            require_secure=False,
+            require_root=False,
+            lock_root=self.root / "locks",
+            status_reader=read_status,
+            node_trigger=trigger,
+        )
+        return code, out.getvalue(), err.getvalue()
+
+
+class HelperBoundaryTests(HelperFixture):
+    def test_the_helper_refuses_command_line_arguments(self) -> None:
+        err = io.StringIO()
+        code = deploy_helper.main(
+            ["-c", "alpha"],
+            input_stream=io.BytesIO(b""),
+            output_stream=io.StringIO(),
+            error_stream=err,
+            require_root=False,
+        )
+
+        self.assertEqual(code, 64)
+        self.assertIn("accepts no command-line arguments", err.getvalue())
+
+    def test_the_helper_refuses_a_request_for_another_operation(self) -> None:
+        payload = json.dumps(
+            {
+                "schema_version": 1,
+                "operation": "publish_version",
+                "cluster": "alpha",
+                "request_id": REQUEST_ID,
+                "parameters": {},
+            }
+        ).encode()
+
+        code, _, err = self.run_helper(payload)
+
+        self.assertEqual(code, 64)
+        self.assertIn("operation is not allowed", err)
+
+    def test_the_helper_refuses_an_unknown_parameter(self) -> None:
+        payload = json.dumps(
+            {
+                "schema_version": 1,
+                "operation": "deploy_cluster",
+                "cluster": "alpha",
+                "request_id": REQUEST_ID,
+                "parameters": {"nodes": ["node-a"]},
+            }
+        ).encode()
+
+        code, _, err = self.run_helper(payload)
+
+        #
+        # The caller must not be able to name nodes. If it could, the boundary
+        # would only be moving the decision, not protecting it.
+        #
+        self.assertEqual(code, 65)
+        self.assertIn("unknown field(s): nodes", err)
+        self.assertEqual(self.triggered, [])
+
+    def test_the_helper_refuses_a_non_boolean_option(self) -> None:
+        code, _, err = self.run_helper(request(allow_vip_unknown="yes"))  # type: ignore[arg-type]
+
+        self.assertEqual(code, 65)
+        self.assertIn("allow_vip_unknown must be a boolean", err)
+
+    def test_an_unknown_cluster_is_refused_inside_the_boundary_too(self) -> None:
+        code, _, err = self.run_helper(request(cluster="gamma"))
+
+        self.assertEqual(code, 64)
+        self.assertIn("gamma", err)
+        self.assertEqual(self.triggered, [])
+
+
+class HelperBehaviourTests(HelperFixture):
+    def test_the_rollout_is_streamed_and_the_nodes_are_ordered(self) -> None:
+        code, shown, _ = self.run_helper(request())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(self.triggered, ["node-b", "node-a"])
+        self.assertIn("=== Deploy: node-b ===", shown)
+        self.assertIn("RESULT: OK", shown)
+
+    def test_the_target_comes_from_the_published_tree_not_the_request(self) -> None:
+        #
+        # Both nodes already run the published hash, so a target resolved inside
+        # the boundary means nothing is touched. A caller cannot ask for a
+        # different one - there is no field for it.
+        #
+        for node in self.cluster.nodes:
+            node.release_hash = TARGET_HASH
+
+        code, shown, _ = self.run_helper(request())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(self.triggered, [])
+        self.assertIn("already runs this version", shown)
+
+    def test_json_mode_prints_one_document_and_no_progress(self) -> None:
+        code, shown, _ = self.run_helper(request(json=True))
+
+        payload = json.loads(shown)
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["operation"], "deploy")
+        self.assertEqual(payload["outcome"], "done")
+        self.assertEqual(payload["request_id"], REQUEST_ID)
+        self.assertNotIn("=== Deploy", shown)
+
+    def test_a_second_deploy_is_refused_while_one_is_running(self) -> None:
+        from haproxy_mgmt.cluster_lock import hold
+
+        with hold("alpha", root=self.root / "locks"):
+            code, _, err = self.run_helper(request())
+
+        self.assertEqual(code, 75)
+        self.assertIn("another operation is already running", err)
+        self.assertEqual(self.triggered, [])
+
+    def test_the_override_reaches_the_decision(self) -> None:
+        self.cluster.node("node-a").owns_vip = None
+
+        blocked, _, _ = self.run_helper(request())
+        self.assertEqual(blocked, 65)
+
+        self.cluster = pair()
+        self.cluster.node("node-a").owns_vip = None
+        allowed, shown, _ = self.run_helper(request(allow_vip_unknown=True))
+
+        self.assertEqual(allowed, 0)
+        self.assertIn("explicit CLI override accepted", shown)
+
+
+class CallerTests(unittest.TestCase):
+    def test_the_caller_sends_only_a_cluster_and_two_booleans(self) -> None:
+        sent: list[bytes] = []
+
+        class Completed:
+            returncode = 0
+
+        def fake_run(command, input, check):  # type: ignore[no-untyped-def]
+            sent.append(input)
+            return Completed()
+
+        original = deploy.subprocess.run
+        deploy.subprocess.run = fake_run  # type: ignore[assignment]
+        original_lookup = deploy._config_path
+        deploy._config_path = lambda cluster: Path("/configs/haproxy/alpha")  # type: ignore[assignment]
+        try:
+            code = deploy.main(["-c", "alpha", "--allow-vip-unknown"])
+        finally:
+            deploy.subprocess.run = original  # type: ignore[assignment]
+            deploy._config_path = original_lookup  # type: ignore[assignment]
+
+        payload = json.loads(sent[0])
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["operation"], "deploy_cluster")
+        self.assertEqual(payload["cluster"], "alpha")
+        self.assertEqual(payload["parameters"], {"allow_vip_unknown": True, "json": False})
+
+    def test_the_argument_contract(self) -> None:
+        from contextlib import redirect_stdout
+
+        for argv in (
+            [],
+            ["alpha"],
+            ["-c"],
+            ["-c", "alpha", "--force"],
+            ["-c", "alpha", "--json", "--json"],
+        ):
+            shown = io.StringIO()
+            with self.assertRaises(SystemExit) as raised, redirect_stdout(shown):
+                deploy.main(argv)
+            self.assertEqual(raised.exception.code, 64, argv)
+            self.assertEqual(shown.getvalue(), deploy.USAGE)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -61,6 +61,19 @@ def version_commit(repo: Path, version: int) -> str | None:
     return listing[version - 1]
 
 
+def current_version(repo: Path) -> VersionSummary:
+    """The most recently saved version - the one a publish would build on.
+
+    HEAD is read with `rev-parse` rather than through `resolve_head`, which
+    refuses a detached HEAD because publishing has a branch to move. Reporting
+    has nothing to move, and a repository in an odd state is exactly when its
+    status has to still answer.
+    """
+
+    commit = _git(repo, "rev-parse", "HEAD").decode().strip()
+    return version_summary(repo, count_versions(repo), commit)
+
+
 def version_summary(repo: Path, version: int, commit: str) -> VersionSummary:
     """What the operator is shown before approving a revert."""
 

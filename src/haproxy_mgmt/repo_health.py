@@ -21,6 +21,7 @@ sharing code across the privilege boundary.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from haproxy_mgmt.git_command import git as _git
@@ -126,3 +127,49 @@ def unsaved_changes(repo: Path) -> str:
     """
 
     return _git(repo, "status", "--porcelain").decode().strip()
+
+
+@dataclass(frozen=True, slots=True)
+class PendingChange:
+    """One file in the draft area that is not in any version yet."""
+
+    path: str
+    kind: str
+
+
+def pending_changes(repo: Path, *paths: str) -> tuple[PendingChange, ...]:
+    """What is waiting under `paths`, in the words an operator uses.
+
+    `--untracked-files=all` is not optional: without it a new directory
+    collapses into a single `manual/conf.d/` line, and the person reading the
+    status cannot see which files are actually waiting.
+
+    The three kinds are the shell command's, derived from the same two status
+    characters. Anything that is neither new nor deleted reads as changed -
+    including a rename, which git reports as one entry and which "changed"
+    describes accurately enough for someone who is not being shown git
+    vocabulary at all.
+    """
+
+    shown = _git(
+        repo,
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+        *paths,
+    ).decode()
+
+    changes: list[PendingChange] = []
+    for line in shown.splitlines():
+        if not line:
+            continue
+        state = line[:2]
+        if state == "??":
+            kind = "new"
+        elif state in (" D", "D "):
+            kind = "deleted"
+        else:
+            kind = "changed"
+        changes.append(PendingChange(path=line[3:], kind=kind))
+    return tuple(changes)

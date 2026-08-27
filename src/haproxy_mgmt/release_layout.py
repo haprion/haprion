@@ -154,6 +154,28 @@ def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:
     return artifact
 
 
+def parse_release_file(text: str) -> dict[str, str]:
+    """The RELEASE stamp read back, beside the code that writes it.
+
+    One file, one schema. The published stamp has two readers - the node that
+    pulls it and the status command that reports it - and a second, private
+    idea of its shape here is the drift that makes them disagree about what is
+    published while both look correct.
+
+    Deliberately tolerant, in the same way the shell command's `sed` was:
+    unknown keys are kept, lines without `=` are ignored, and a missing key is
+    the caller's problem rather than an error. A stamp written by a newer
+    version must not make an older status command refuse to answer.
+    """
+
+    fields: dict[str, str] = {}
+    for line in text.splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            fields[key.strip()] = value.strip()
+    return fields
+
+
 def render_release_file(metadata: ReleaseMetadata) -> bytes:
     """The RELEASE stamp, written at the level a node pulls.
 

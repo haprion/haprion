@@ -49,7 +49,13 @@ from haproxy_mgmt.envelope import Message, envelope
 type ReadStatus = Callable[[], ClusterStatus]
 type TriggerNode = Callable[[NodeStatus], int]
 
+#
+# The default operation name in the envelope. Certificate runs pass their own:
+# the loop is shared, the two frozen contracts are not, and a cert_deploy result
+# that announced itself as a deploy would validate against the wrong schema.
+#
 OPERATION = "deploy"
+CERT_OPERATION = "cert_deploy"
 
 #
 # A stop that is not a refusal: the run did what it could and something is left
@@ -89,6 +95,7 @@ class DeployReport:
     target: Target | None
     override_used: bool
     initial_summary: Mapping[str, Any]
+    operation: str = OPERATION
     final_summary: Mapping[str, Any] | None = None
     nodes: dict[str, NodeReport] = field(default_factory=dict)
     warnings: list[Message] = field(default_factory=list)
@@ -124,7 +131,7 @@ class DeployReport:
                 ),
             )
         return envelope(
-            operation=OPERATION,
+            operation=self.operation,
             outcome=self.outcome.value,
             cluster=cluster,
             result=self.result(),
@@ -191,6 +198,7 @@ def run(
     *,
     target: Target | None = None,
     allow_vip_unknown: bool = False,
+    operation: str = OPERATION,
 ) -> DeployRun:
     """Reconcile the cluster and report, in text as it goes and in a result."""
 
@@ -201,6 +209,7 @@ def run(
             target=target,
             override_used=allow_vip_unknown,
             initial_summary={},
+            operation=operation,
             outcome=Outcome.BLOCKED,
             error=Message(code="status_unavailable", message=str(exc)),
         )
@@ -211,6 +220,7 @@ def run(
         target=target,
         override_used=allow_vip_unknown,
         initial_summary=status.summary,
+        operation=operation,
         nodes=_initial_reports(status, target),
     )
     writer.write(_state_line("Initial status", status))

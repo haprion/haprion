@@ -64,6 +64,14 @@ class FakeNode:
     #
     answers: str = "status"
     reload_fails: bool = False
+    #
+    # (id, fingerprint) pairs the node is carrying. None models a node that
+    # answers without mentioning certificates at all - which is what every real
+    # node does today, because the node-side status script hardcodes an empty
+    # list (Ö6/Ö7). The two are different states and the matrix treats them
+    # differently, so both have to be representable here.
+    #
+    certificates: tuple[tuple[str, str], ...] | None = ()
 
     def status(self) -> Any:
         if self.answers == "null":
@@ -91,8 +99,34 @@ class FakeNode:
             "config_validation": {"valid": True, "validated_at": "2026-01-02T03:04:05+00:00"},
             "stats_ok": True,
             "runtime": {"version": "3.2.1", "uptime_sec": 3600},
-            "certificates": [],
+            "certificates": self._certificates(),
         }
+
+    def _certificates(self) -> Any:
+        """What the node reports carrying, in the shape the status schema wants.
+
+        The metadata around the fingerprint is filled in with fixed values: the
+        deploy matrix compares fingerprints and nothing else, and inventing
+        plausible subjects and dates here would suggest this harness knows
+        something about certificates that it does not.
+        """
+
+        if self.certificates is None:
+            return None
+        return [
+            {
+                "id": identifier,
+                "fingerprint_sha256": fingerprint,
+                "common_name": None,
+                "sans": [],
+                "not_before": "2026-01-01T00:00:00+00:00",
+                "not_after": "2027-01-01T00:00:00+00:00",
+                "issuer": "harness",
+                "lifecycle": "static",
+                "valid": True,
+            }
+            for identifier, fingerprint in self.certificates
+        ]
 
 
 @dataclass
@@ -108,6 +142,12 @@ class FakeCluster:
     # "the peer goes away". This is how a mid-run change is provoked.
     #
     on_deploy: Callable[[FakeCluster, FakeNode], None] | None = None
+    #
+    # When set, a trigger installs these certificates on the node instead of
+    # moving it to a release. That is the whole difference between the two
+    # operations from a node's point of view.
+    #
+    target_certificates: tuple[tuple[str, str], ...] | None = None
     reads: int = field(default=0, init=False)
     triggered: list[str] = field(default_factory=list, init=False)
 
@@ -210,7 +250,10 @@ class FakeCluster:
             #
             return TRIGGER_RELOAD_FAILED
 
-        node.release_hash = self.target_hash
+        if self.target_certificates is None:
+            node.release_hash = self.target_hash
+        else:
+            node.certificates = self.target_certificates
         if self.on_deploy is not None:
             self.on_deploy(self, node)
         return TRIGGER_OK

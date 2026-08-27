@@ -234,8 +234,6 @@ The scripts are in [`install/node/`](../install/node/) and are installed by
 layout and the sudo rules. This section explains what they do and why; run the script rather than
 following it by hand.
 
-One exception remains: `haproxy-state-export` is not in the repository yet. See
-[What is still missing](#what-is-still-missing).
 
 ### 2.1 HAProxy and keepalived baseline
 
@@ -348,7 +346,7 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 | `haproxy-cert-pull` | fetches the requested certificates, validates them, installs, reloads |
 | `haproxy-node-status` | reports version, health, carried certificates and keepalived state |
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
-| `haproxy-state-export` | collects node state for backup |
+| `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
 
 Two of these deserve attention:
 
@@ -463,10 +461,6 @@ Do the last two on a cluster that carries no traffic if you have one.
 
 This guide is honest about its gaps rather than complete on paper:
 
-- **`haproxy-state-export` is not in the repository.** The other five node scripts are in
-  [`install/node/`](../install/node/) and carry nothing environment-specific; this one still has a
-  hardcoded list of local accounts and untranslated comments. Backups are driven from the
-  management host, so a node comes up without it.
 - **Node keys are assumed to exist.** The keys a node authenticates to the management host with —
   `NODE_CONFIG_PULL_KEY` and `NODE_CERT_PULL_KEY` — are created when the node is built, not by
   these scripts.

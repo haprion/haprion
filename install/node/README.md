@@ -9,6 +9,7 @@
 | `haproxy-cert-pull` | fetches the requested certificates, validates them, installs, reloads |
 | `haproxy-node-status` | reports version, health, carried certificates and keepalived state |
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
+| `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
 
 ## Nothing environment-specific is compiled in
 
@@ -38,11 +39,10 @@ maintained as three separate copies that differed only in one line — the
 publication path — and each copy looked perfectly correct on its own. That is
 the kind of drift that survives for years.
 
-## What is not here yet
+## Nothing is missing any more
 
-`haproxy-state-export`, which collects node state for backup. It still carries a
-hardcoded list of local accounts from the environment it grew up in, and three
-untranslated comment lines. It needs the same treatment the others got before it
-can be published; until then it is installed by hand.
-
-Backups are driven from the management host, so a node comes up fine without it.
+`haproxy-state-export` was the last one out. It carried a hardcoded list of local
+accounts — real operator names, which is why it could not be published — and that
+list is now `BACKUP_ACCOUNTS` in `node.conf`. The hardcoded version had a second
+problem the accounts hid: an account added after it was written was silently left
+out of every backup.

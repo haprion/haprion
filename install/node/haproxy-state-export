@@ -1,0 +1,192 @@
+#!/bin/bash
+#
+# Collect this node's permanent state and write it to stdout as a gzipped tar.
+#
+# Run by the backup account through an exact sudo rule, so the management host
+# can pull a node's state without holding a login on it. Everything it collects
+# is what a rebuild needs to recreate this node exactly: identity, network,
+# service configuration, SSH host keys and the local accounts.
+#
+# It writes to stdout and touches nothing on the node. The archive contains
+# password hashes and private SSH keys, so it is stored root-only on the
+# management side - see docs/INSTALLATION.md.
+#
+set -euo pipefail
+
+umask 077
+
+#
+# Which local accounts belong to this node is deployment data, not something to
+# compile in. The list used to be hardcoded, which meant the script named real
+# operator accounts and could not be published - and quietly missed any account
+# added after it was written.
+#
+NODE_CONF="/etc/haproxy-manager/node.conf"
+
+[[ -r "$NODE_CONF" ]] || {
+    echo "ERROR: ${NODE_CONF} is missing. Run install/04-node-prepare." >&2
+    exit 78
+}
+# shellcheck source=/dev/null
+source "$NODE_CONF"
+
+[[ -n "${BACKUP_ACCOUNTS:-}" ]] || {
+    echo "ERROR: BACKUP_ACCOUNTS is not set in ${NODE_CONF}" >&2
+    exit 78
+}
+
+TMPDIR="$(mktemp -d /tmp/haproxy-state-export.XXXXXX)"
+trap 'rm -rf "$TMPDIR"' EXIT
+
+ROOTFS="$TMPDIR/rootfs"
+META="$TMPDIR/meta"
+
+mkdir -p "$ROOTFS" "$META"
+
+copy_path() {
+    local src="$1"
+
+    if [[ -e "$src" || -L "$src" ]]; then
+        local dst="$ROOTFS$src"
+        mkdir -p "$(dirname "$dst")"
+        cp -a -- "$src" "$dst"
+    fi
+}
+
+# ------------------------------------------------------------
+# Node-specific configuration
+# ------------------------------------------------------------
+
+copy_path /etc/hostname
+copy_path /etc/hosts
+
+copy_path /etc/keepalived/keepalived.conf
+copy_path /etc/default/keepalived
+
+copy_path /etc/netplan
+
+#
+# The whole directory rather than one file. A single named file goes missing the
+# day someone renames it, and the rename is exactly the change a restore would
+# need to reproduce.
+#
+copy_path /etc/sysctl.d
+
+copy_path /etc/systemd/system/haproxy.service.d
+
+copy_path /etc/default/haproxy
+
+copy_path /etc/sudoers.d
+
+# What this node believes about itself: its cluster, its management host, and
+# the account and key it fetches configuration with.
+copy_path "$NODE_CONF"
+
+# ------------------------------------------------------------
+# SSH server and this node's SSH identity
+# ------------------------------------------------------------
+
+copy_path /etc/ssh/sshd_config
+copy_path /etc/ssh/sshd_config.d
+
+for f in /etc/ssh/ssh_host_*; do
+    [[ -e "$f" ]] && copy_path "$f"
+done
+
+# ------------------------------------------------------------
+# SSH state for the accounts that have any
+# ------------------------------------------------------------
+
+copy_path /root/.ssh
+
+for user in $BACKUP_ACCOUNTS; do
+    if getent passwd "$user" >/dev/null; then
+        home="$(getent passwd "$user" | cut -d: -f6)"
+        copy_path "$home/.ssh"
+    fi
+done
+
+# ------------------------------------------------------------
+# Local management and recovery scripts
+# ------------------------------------------------------------
+
+copy_path /usr/local/sbin/haproxy-pull-deploy
+copy_path /usr/local/sbin/haproxy-cert-pull
+copy_path /usr/local/sbin/haproxy-cert-trigger
+copy_path /usr/local/sbin/haproxy-node-status
+copy_path /usr/local/sbin/haproxy-keepalived-state
+copy_path /usr/local/sbin/haproxy-state-export
+
+# A finished appliance has cloud-init disabled; its absence is itself a finding.
+copy_path /etc/cloud/cloud-init.disabled
+
+# ------------------------------------------------------------
+# Metadata
+# ------------------------------------------------------------
+
+date --iso-8601=seconds > "$META/backup-created.txt"
+
+hostname > "$META/hostname.txt"
+hostname -f > "$META/fqdn.txt"
+
+cp /etc/os-release "$META/os-release"
+
+ip -brief address > "$META/ip-addresses.txt"
+ip route > "$META/routes.txt"
+
+{
+    for user in $BACKUP_ACCOUNTS; do
+        if getent passwd "$user" >/dev/null; then
+            getent passwd "$user"
+        fi
+    done
+} > "$META/users.txt"
+
+{
+    for user in $BACKUP_ACCOUNTS; do
+        if getent passwd "$user" >/dev/null; then
+            id "$user"
+        fi
+    done
+} > "$META/groups.txt"
+
+{
+    for group in $BACKUP_ACCOUNTS ${BACKUP_GROUPS:-}; do
+        if getent group "$group" >/dev/null; then
+            getent group "$group"
+        fi
+    done
+} | sort -u > "$META/group-definitions.txt"
+
+#
+# Password hashes, so a rebuilt node has the same local accounts rather than
+# accounts that merely have the same names. This is why the archive is stored
+# root-only on the management side.
+#
+{
+    for user in $BACKUP_ACCOUNTS; do
+        if getent passwd "$user" >/dev/null; then
+            getent shadow "$user" || true
+        fi
+    done
+} > "$META/shadow.txt"
+
+apt-mark showmanual | sort > "$META/packages.txt"
+
+dpkg-query -W -f='${binary:Package}\t${Version}\n' \
+    | sort > "$META/package-versions.txt"
+
+{
+    for service in haproxy keepalived ssh qemu-guest-agent; do
+        echo "[$service]"
+        echo "enabled=$(systemctl is-enabled "$service" 2>/dev/null || true)"
+        echo "active=$(systemctl is-active "$service" 2>/dev/null || true)"
+        echo
+    done
+} > "$META/services.txt"
+
+# ------------------------------------------------------------
+# Write the backup as a gzipped tar stream on stdout
+# ------------------------------------------------------------
+
+tar --numeric-owner -C "$TMPDIR" -czf - rootfs meta

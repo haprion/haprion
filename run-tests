@@ -33,7 +33,8 @@ shellcheck -x "$base/run-checks" "$base/run-tests" "$base/tools/install-actionli
     "$base/install/node/haproxy-pull-deploy" \
     "$base/install/node/haproxy-cert-pull" \
     "$base/install/node/haproxy-cert-trigger" \
-    "$base/install/node/haproxy-keepalived-state"
+    "$base/install/node/haproxy-keepalived-state" \
+    "$base/install/node/haproxy-state-export"
 actionlint "$base/.github/workflows"/*.yml
 zizmor --pedantic "$base/.github/workflows"
 mypy

@@ -29,17 +29,13 @@ require_vars TRIGGER_USER STATUS_USER BACKUP_USER PULL_USER MANAGER_HOST \
 SBIN="/usr/local/sbin"
 NODE_CONF="/etc/haproxy-manager/node.conf"
 
-#
-# haproxy-state-export is deliberately not in this list yet: it still carries a
-# hardcoded account list from the environment it grew up in. Backups are taken
-# from the management host and do not block bringing a node up.
-#
 SCRIPTS=(
     haproxy-pull-deploy
     haproxy-cert-pull
     haproxy-cert-trigger
     haproxy-node-status
     haproxy-keepalived-state
+    haproxy-state-export
 )
 
 step "Service accounts"
@@ -163,7 +159,12 @@ MANAGER=\"${MANAGER_HOST}\"
 # Where this node fetches its published configuration from.
 CONFIG_PULL_USER=\"${PULL_USER}\"
 CONFIG_PULL_KEY=\"${NODE_CONFIG_PULL_KEY}\"
-CONFIG_REMOTE_PATH=\"${CLUSTER}/current/${node_path}/\""
+CONFIG_REMOTE_PATH=\"${CLUSTER}/current/${node_path}/\"
+
+# Local accounts and groups a state backup captures. A rebuilt node with no way
+# to log in is not a restored node, so operator accounts belong here too.
+BACKUP_ACCOUNTS=\"${TRIGGER_USER} ${STATUS_USER} ${BACKUP_USER}${OPERATOR_ACCOUNTS:+ ${OPERATOR_ACCOUNTS}}\"
+BACKUP_GROUPS=\"${EXTRA_BACKUP_GROUPS:-}\""
 
 if [[ -n "${CERT_PULL_USER:-}" ]]; then
     require_vars NODE_CERT_PULL_KEY
@@ -182,7 +183,7 @@ install_file "$NODE_CONF" root:root 600 "$node_conf"
 step "Sudo rules"
 
 #
-# Exactly three rules, each naming one absolute command. The forced commands run
+# Four rules, each naming one absolute command. The forced commands run
 # with `sudo -n`, so a mismatch fails immediately instead of trying to prompt for
 # a password down a connection that has no terminal.
 #

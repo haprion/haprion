@@ -41,16 +41,25 @@ SCRIPTS=(
 step "Service accounts"
 
 #
-# Locked, no-login accounts with a home directory only so authorized_keys has
-# somewhere to live. None of them may run a shell: every one of them is reached
-# by a key with a forced command.
+# System accounts with a home directory only so authorized_keys has somewhere to
+# live, and with a real shell - which looks wrong and is not.
+#
+# sshd runs a forced command through the account's login shell. Give these
+# accounts /usr/sbin/nologin and every forced command stops working: the node
+# refuses configuration pulls, certificate pulls and status requests, and the
+# only symptom is the nologin message where output was expected.
+#
+# What constrains these accounts is not the shell. It is that each key carries
+# `restrict` and its own forced command, so a session cannot run anything else,
+# and that their sudo rules name exact absolute commands. Neither has a password.
 #
 ensure_account() {
     local user="$1"
     if id -u "$user" >/dev/null 2>&1; then
         log "  ok       ${user}"
     else
-        useradd --system --create-home --shell /usr/sbin/nologin "$user"
+        useradd --system --create-home --shell /bin/bash "$user"
+        passwd --lock "$user" >/dev/null
         log "  created  ${user}"
     fi
     ensure_dir "/home/${user}/.ssh" "${user}:${user}" 700

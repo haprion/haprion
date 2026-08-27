@@ -323,13 +323,22 @@ hand.
 
 ### 2.2 Node accounts
 
-Three locked service accounts, identical on every node:
+Three service accounts, identical on every node. They are system accounts with no password, a home
+directory for `authorized_keys`, and — deliberately — a real login shell:
 
 | Account | Reached by | May run |
 |---|---|---|
 | `svc-trigger` | the management host's deploy and cert-deploy keys | the pull scripts, through forced commands |
 | `svc-backup` | the management host's backup path | the state export |
 | `svc-status` | the management host's status key | the node status reporter, read-only |
+
+**The shell looks like a mistake and is not.** sshd runs a forced command through the account's
+login shell, so `nologin` here does not harden anything — it stops every forced command from
+working, and the only symptom is a nologin message where output was expected.
+
+What constrains these accounts is that each key carries `restrict` and its own forced command, so a
+session cannot run anything else, and that their sudo rules name exact absolute commands. Neither
+depends on the shell.
 
 Each key in the account's `authorized_keys` carries its **own** forced command and the `restrict`
 option. One key, one command: a shared forced command would make the keys interchangeable and

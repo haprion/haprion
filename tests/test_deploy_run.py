@@ -15,7 +15,12 @@ import unittest
 
 from haproxy_mgmt import deploy_run
 from haproxy_mgmt.cluster_status import NodeStatus, parse_status
+from haproxy_mgmt.deploy_run import DeployReport, Target
 from tests.node_harness import OLD_HASH, TARGET_HASH, FakeCluster, FakeNode, pair
+
+TARGET = Target(version=8, hash=TARGET_HASH)
+
+LAST_REPORT: list[DeployReport] = []
 
 
 def deploy(
@@ -24,6 +29,8 @@ def deploy(
     expected_hash: str | None = None,
     allow_vip_unknown: bool = False,
 ) -> tuple[int, str]:
+    """Run one deploy. The report is kept aside for the cases that inspect it."""
+
     out = io.StringIO()
 
     def read_status():  # type: ignore[no-untyped-def]
@@ -32,14 +39,15 @@ def deploy(
     def trigger(node: NodeStatus) -> int:
         return cluster.trigger(node.name)
 
-    code = deploy_run.run(
+    outcome = deploy_run.run(
         read_status,
         trigger,
         out,
-        expected_hash=expected_hash,
+        target=Target(version=8, hash=expected_hash) if expected_hash else None,
         allow_vip_unknown=allow_vip_unknown,
     )
-    return code, out.getvalue()
+    LAST_REPORT[:] = [outcome.report]
+    return outcome.exit_code, out.getvalue()
 
 
 class OrderingTests(unittest.TestCase):

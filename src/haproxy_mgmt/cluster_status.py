@@ -19,7 +19,7 @@ already knows how to handle.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from haproxy_mgmt.deploy_plan import ClusterObservation, NodeObservation, VipState
@@ -58,6 +58,14 @@ class ClusterStatus:
     vip_state: VipState
     vip_owners: tuple[str, ...]
     warnings: tuple[str, ...]
+    #
+    # The summary exactly as the status helper wrote it. A deploy result has to
+    # carry the initial and final summary, and the contract says they are the
+    # status command's summary object - so it is passed through rather than
+    # rebuilt. Rebuilding it would be a second derivation of the one thing both
+    # commands must agree on.
+    #
+    summary: Mapping[str, Any] = field(default_factory=dict)
 
     def observation(self) -> ClusterObservation:
         """The same reading, in the terms the deploy matrix decides in."""
@@ -159,4 +167,5 @@ def parse_status(payload: object) -> ClusterStatus:
         vip_state=vip_state,
         vip_owners=tuple(str(name) for name in owners) if isinstance(owners, Sequence) else (),
         warnings=tuple(str(item) for item in warnings) if isinstance(warnings, Sequence) else (),
+        summary=summary,
     )

@@ -14,6 +14,7 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from haproxy_mgmt.candidate_validation import ValidationResult
@@ -193,9 +194,11 @@ class RefusalTests(CallerFixture):
 
     def test_the_usage_contract_is_unchanged(self) -> None:
         for argv in ([], ["-c", "alpha"], ["alpha", "comment"], ["-c", "alpha", "   "]):
-            with self.assertRaises(SystemExit) as caught:
+            shown = io.StringIO()
+            with self.assertRaises(SystemExit) as caught, redirect_stdout(shown):
                 publish.main(argv, stream_out=io.StringIO())
-            self.assertIn("haproxy-publish -c <cluster>", str(caught.exception))
+            self.assertEqual(caught.exception.code, 64)
+            self.assertIn("haproxy-publish -c <cluster>", shown.getvalue())
 
     def test_a_comment_of_several_words_is_joined(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

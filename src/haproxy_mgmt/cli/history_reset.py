@@ -41,13 +41,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
+from haproxy_mgmt.cli.caller import config_path as _config_path
+from haproxy_mgmt.cli.caller import usage
 from haproxy_mgmt.history_reset import ResetError, preview
 
 CONFIRMATION = "please reset me"
 BASELINE_MESSAGE = "Baseline after the build phase"
 OPERATION = "reset_history"
 
-CLUSTER_CONFIG = "/usr/local/lib/haproxy-mgmt/cluster-config"
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-history-reset-helper"
 PUBLISH = "/usr/local/bin/haproxy-publish"
 SUDO = "/usr/bin/sudo"
@@ -56,25 +57,6 @@ USAGE = "Usage:\n  haproxy-history-reset -c <cluster>"
 
 type RunHelper = Callable[[str, bytes], tuple[int, str, str]]
 type PublishCall = Callable[[str], int]
-
-
-def _config_path(cluster_id: str) -> Path:
-    """Ask the cluster-config helper, the one reader of the cluster definitions.
-
-    Resolved here rather than assumed from a naming convention: the layout is
-    configuration, and a second place that knows it is a second thing to keep in
-    step.
-    """
-
-    completed = subprocess.run(  # noqa: S603 - fixed path, fixed arguments
-        [CLUSTER_CONFIG, "-c", cluster_id, "--field", "config_path"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise ResetError(f"unknown cluster '{cluster_id}'.", exit_code=64)
-    return Path(completed.stdout.strip())
 
 
 def _run_helper(cluster_id: str, request: bytes) -> tuple[int, str, str]:
@@ -100,7 +82,7 @@ def _publish(cluster_id: str) -> int:
 
 def _parse(argv: list[str]) -> str:
     if len(argv) != 2 or argv[0] not in ("-c", "--cluster"):
-        raise SystemExit(f"{USAGE}\n")
+        usage(USAGE)
     return argv[1]
 
 

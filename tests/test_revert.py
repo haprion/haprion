@@ -14,6 +14,7 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from haproxy_mgmt.candidate_validation import ValidationResult
@@ -291,10 +292,16 @@ class RefusalTests(RevertFixture):
             self.assertEqual(self.requests, [])
 
     def test_the_usage_contract_is_unchanged(self) -> None:
+        #
+        # Exit 64 and usage on stdout, both as the shell command did. The code
+        # is what a wrapper reads to tell a mistyped call from a failed one.
+        #
         for argv in ([], ["-c"], ["alpha"], ["-c", "alpha", "2", "3"]):
-            with self.assertRaises(SystemExit) as caught:
+            shown = io.StringIO()
+            with self.assertRaises(SystemExit) as caught, redirect_stdout(shown):
                 revert.main(argv, stream_out=io.StringIO())
-            self.assertIn("haproxy-revert -c <cluster>", str(caught.exception))
+            self.assertEqual(caught.exception.code, 64)
+            self.assertIn("haproxy-revert -c <cluster>", shown.getvalue())
 
     def test_the_helper_refuses_argv_and_a_non_root_caller(self) -> None:
         stderr = io.StringIO()

@@ -24,13 +24,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
+from haproxy_mgmt.cli.caller import CallerError, usage
+from haproxy_mgmt.cli.caller import config_path as _config_path
 from haproxy_mgmt.git_command import GitError
 from haproxy_mgmt.repo_health import describe_problem, is_repo_root, unsaved_changes
 from haproxy_mgmt.version_history import count_versions, version_commit, version_summary
 
 OPERATION = "revert_version"
 
-CLUSTER_CONFIG = "/usr/local/lib/haproxy-mgmt/cluster-config"
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-revert-helper"
 SUDO = "/usr/bin/sudo"
 
@@ -49,24 +50,6 @@ type RunHelper = Callable[[bytes], tuple[int, str, str]]
 type ConfigPath = Callable[[str], Path]
 
 
-class CallerError(Exception):
-    def __init__(self, message: str, *, exit_code: int = 65):
-        super().__init__(message)
-        self.exit_code = exit_code
-
-
-def _config_path(cluster_id: str) -> Path:
-    completed = subprocess.run(  # noqa: S603 - fixed path, fixed arguments
-        [CLUSTER_CONFIG, "-c", cluster_id, "--field", "config_path"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise CallerError(f"unknown cluster '{cluster_id}'.", exit_code=64)
-    return Path(completed.stdout.strip())
-
-
 def _run_helper(request: bytes) -> tuple[int, str, str]:
     completed = subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
         [SUDO, "--", HELPER],
@@ -83,7 +66,7 @@ def _run_helper(request: bytes) -> tuple[int, str, str]:
 
 def _parse(argv: list[str]) -> tuple[str, str | None]:
     if len(argv) not in (2, 3) or argv[0] not in ("-c", "--cluster"):
-        raise SystemExit(USAGE)
+        usage(USAGE)
     return argv[1], argv[2] if len(argv) == 3 else None
 
 

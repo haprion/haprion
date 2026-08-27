@@ -31,6 +31,16 @@ class PathPolicy:
     publish_root: Path
     validation_certs_root: Path
     deploy_identity: DeployIdentity | None = None
+    #
+    # The shared directory published certificates are distributed from, and the
+    # identity that triggers a certificate pull. Both optional for the same
+    # reason deploy_identity is: every other command works without them, and a
+    # policy file that every command rejected until certificate deployment was
+    # configured would be worse than one that says what is missing when it is
+    # needed.
+    #
+    certificate_root: Path | None = None
+    cert_deploy_identity: DeployIdentity | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,29 +173,40 @@ def _host(value: str, location: str) -> str:
 USERNAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 
 
-def _deploy_identity(data: Mapping[str, Any]) -> DeployIdentity | None:
-    """The deploy identity, when the installation has declared one.
+def _optional_root(data: Mapping[str, Any], key: str) -> Path | None:
+    """An absolute root the installation may or may not have declared."""
 
-    Absent is a valid policy: only the deploy path needs it, and requiring it
-    everywhere would mean a policy file that every other command rejects until
-    it is updated.
+    raw = data.get(key)
+    if raw is None:
+        return None
+    return _absolute_path(_required_string(data, key, "runtime policy"), key)
+
+
+def _deploy_identity(data: Mapping[str, Any], key: str) -> DeployIdentity | None:
+    """One trigger identity, when the installation has declared it.
+
+    Absent is a valid policy: only the path that uses it needs it, and requiring
+    it everywhere would mean a policy file that every other command rejects
+    until it is updated.
+
+    Config deployment and certificate deployment have separate identities on
+    purpose - that is how the installation is built, and it is what lets a key
+    that can push configuration be unable to push certificates.
     """
 
-    raw = data.get("deploy_identity")
+    raw = data.get(key)
     if raw is None:
         return None
 
-    entry = _mapping(raw, "runtime policy.deploy_identity")
-    _only_keys(entry, {"user", "key"}, "runtime policy.deploy_identity")
-    user = _required_string(entry, "user", "runtime policy.deploy_identity")
+    location = f"runtime policy.{key}"
+    entry = _mapping(raw, location)
+    _only_keys(entry, {"user", "key"}, location)
+    user = _required_string(entry, "user", location)
     if not USERNAME.fullmatch(user):
-        raise ConfigError("runtime policy.deploy_identity.user is not a valid account name")
+        raise ConfigError(f"{location}.user is not a valid account name")
     return DeployIdentity(
         user=user,
-        key=_absolute_path(
-            _required_string(entry, "key", "runtime policy.deploy_identity"),
-            "runtime policy.deploy_identity.key",
-        ),
+        key=_absolute_path(_required_string(entry, "key", location), f"{location}.key"),
     )
 
 
@@ -200,6 +221,8 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             "publish_root",
             "validation_certs_root",
             "deploy_identity",
+            "certificate_root",
+            "cert_deploy_identity",
         },
         "runtime policy",
     )
@@ -220,7 +243,9 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             _required_string(data, "validation_certs_root", "runtime policy"),
             "validation_certs_root",
         ),
-        deploy_identity=_deploy_identity(data),
+        deploy_identity=_deploy_identity(data, "deploy_identity"),
+        certificate_root=_optional_root(data, "certificate_root"),
+        cert_deploy_identity=_deploy_identity(data, "cert_deploy_identity"),
     )
 
 

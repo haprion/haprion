@@ -37,6 +37,8 @@ haproxy-list = "haproxy_mgmt.cli.list:main"
 haproxy-config-status = "haproxy_mgmt.cli.config_status:main"
 haproxy-deploy = "haproxy_mgmt.cli.deploy:main"
 haproxy-deploy-helper = "haproxy_mgmt.cli.deploy_helper:main"
+haproxy-cert-deploy = "haproxy_mgmt.cli.cert_deploy:main"
+haproxy-cert-deploy-helper = "haproxy_mgmt.cli.cert_deploy_helper:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -19,13 +19,14 @@ from referencing import Registry, Resource
 
 from haproxy_mgmt import deploy_run
 from haproxy_mgmt.cluster_status import NodeStatus, parse_status
-from haproxy_mgmt.deploy_run import DeployRun, Target
+from haproxy_mgmt.deploy_plan import ReleaseTarget, Target
+from haproxy_mgmt.deploy_run import DeployRun
 from tests.node_harness import TARGET_HASH, FakeCluster, pair
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
 DEPLOY_SCHEMA = "https://example.com/haproxy-manager/schemas/v1/haproxy-deploy.schema.json"
 
-TARGET = Target(version=8, hash=TARGET_HASH)
+TARGET = ReleaseTarget(version=8, hash=TARGET_HASH)
 
 
 def validator() -> Draft202012Validator:

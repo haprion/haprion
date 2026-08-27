@@ -17,68 +17,13 @@ import unittest
 
 from haproxy_mgmt.deploy_plan import (
     Action,
-    ClusterObservation,
-    NodeObservation,
     Outcome,
-    Progress,
+    ReleaseTarget,
     VipState,
     next_step,
-    record,
     warnings_for,
 )
-
-TARGET = "a" * 40
-BEHIND = "b" * 40
-
-
-def node(name: str, *, ok: bool = True, owner: bool | None = False, hash_: str | None = BEHIND):
-    return NodeObservation(name=name, status_ok=ok, owns_vip=owner, release_hash=hash_)
-
-
-def pair(vip_state: VipState, *nodes: NodeObservation) -> ClusterObservation:
-    return ClusterObservation(nodes=nodes, vip_state=vip_state)
-
-
-def drive(
-    observations: list[ClusterObservation],
-    *,
-    expected_hash: str | None = None,
-    allow_vip_unknown: bool = False,
-    fail_on: str | None = None,
-) -> tuple[list[str], Outcome, int]:
-    """Run the loop to its end. Returns (what happened, outcome, exit code).
-
-    Each entry is "deploy:<node>" or "skip:<node>", in the order decided - which
-    is the thing most of these cases are actually asserting about.
-    """
-
-    progress = Progress()
-    trace: list[str] = []
-    index = 0
-
-    while True:
-        observation = observations[min(index, len(observations) - 1)]
-        step = next_step(
-            observation,
-            progress,
-            expected_hash=expected_hash,
-            allow_vip_unknown=allow_vip_unknown,
-        )
-
-        if step.action in (Action.BLOCKED, Action.FINISHED):
-            assert step.outcome is not None
-            return trace, step.outcome, step.exit_code
-
-        assert step.node is not None
-        trace.append(f"{step.action.value}:{step.node}")
-        failed = step.action is Action.DEPLOY and step.node == fail_on
-        progress = record(progress, step, failed=failed)
-        if step.action is Action.DEPLOY:
-            #
-            # A deploy is a mutation, so the next question is asked of a fresh
-            # observation. A skip changed nothing and reuses this one.
-            #
-            index += 1
+from tests.plan_harness import BEHIND, TARGET, drive, node, pair
 
 
 class BothNodesReadableTests(unittest.TestCase):
@@ -289,7 +234,7 @@ class CurrentSkipTests(unittest.TestCase):
             node("node-b", owner=False, hash_=BEHIND),
         )
 
-        trace, outcome, code = drive([state, state], expected_hash=TARGET)
+        trace, outcome, code = drive([state, state], target=ReleaseTarget(version=8, hash=TARGET))
 
         self.assertEqual(trace, ["deploy:node-b", "skip:node-a"])
         self.assertIs(outcome, Outcome.DONE)
@@ -307,13 +252,13 @@ class CurrentSkipTests(unittest.TestCase):
             node("node-b", owner=False, hash_=TARGET),
         )
 
-        trace, outcome, code = drive([state], expected_hash=TARGET)
+        trace, outcome, code = drive([state], target=ReleaseTarget(version=8, hash=TARGET))
 
         self.assertEqual(trace, ["skip:node-b", "skip:node-a"])
         self.assertIs(outcome, Outcome.DONE)
         self.assertEqual(code, 0)
 
-    def test_without_an_expected_hash_nothing_is_skipped_as_current(self) -> None:
+    def test_without_a_target_nothing_is_skipped_as_current(self) -> None:
         state = pair(
             VipState.SINGLE_OWNER,
             node("node-a", owner=True, hash_=TARGET),

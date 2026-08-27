@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Protocol
 
 #
 # Exit codes, unchanged from the command this replaces: an operator and any
@@ -71,12 +72,19 @@ class Outcome(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class NodeObservation:
-    """One node as the last status read saw it."""
+    """One node as the last status read saw it.
+
+    `certificates` is what the node says it currently carries, as (id,
+    fingerprint) pairs in id order. `None` means the node did not report
+    certificates at all, which is not the same as reporting none: the first
+    cannot be compared against a target, the second compares as missing.
+    """
 
     name: str
     status_ok: bool
     owns_vip: bool | None = None
     release_hash: str | None = None
+    certificates: tuple[tuple[str, str], ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +107,99 @@ class ClusterObservation:
     @property
     def usable(self) -> tuple[NodeObservation, ...]:
         return tuple(node for node in self.nodes if node.status_ok)
+
+
+class Target(Protocol):
+    """What this run is reconciling the nodes towards.
+
+    The matrix in §6.3 does not care whether the thing being rolled out is a
+    configuration release or a set of certificates: the ordering rules, the
+    blocking rules, the skip-if-current rule and the partial semantics are the
+    same, and §6.4 says so in as many words. The frozen contract agrees - the
+    `cert_deploy` result reuses `node_reconcile_result` unchanged, and the
+    contract validator runs the same semantic check over both.
+
+    So the difference between the two operations is exactly this object: what
+    "already current" means, and what the run is aiming at. Everything else is
+    shared, which is the only way the two can be kept from drifting apart.
+    """
+
+    def is_current(self, node: NodeObservation) -> bool | None:
+        """Is this node already where it should be? None when it cannot be told.
+
+        None is deliberately distinct from False. False means the node is behind
+        and must be acted on; None means the node did not answer the question,
+        so it is neither skipped as current nor confirmed as verified.
+        """
+
+    def skip_reason(self, node: NodeObservation) -> str:
+        """What to say when the node is passed over as already current."""
+
+    def result_fields(self) -> dict[str, object]:
+        """The target's own words for the result envelope. Plain data, no I/O."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseTarget:
+    """The published configuration release this deploy is for."""
+
+    version: int
+    hash: str
+
+    def is_current(self, node: NodeObservation) -> bool | None:
+        return node.release_hash == self.hash
+
+    def skip_reason(self, node: NodeObservation) -> str:
+        return f"{node.name} already runs this version; nothing to do"
+
+    def result_fields(self) -> dict[str, object]:
+        return {"target": {"version": self.version, "hash": self.hash}}
+
+
+@dataclass(frozen=True, slots=True)
+class CertificateRef:
+    """One certificate the cluster references, and the bytes it should be."""
+
+    id: str
+    fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
+class CertificateTarget:
+    """The certificates this cluster references, and nothing else.
+
+    Only referenced certificates are compared, and a certificate the node
+    carries but the cluster does not reference is ignored rather than removed.
+    That is §6.4's rule and it is a safety property, not an omission: the
+    distribution directory is shared with other systems, so this command syncs
+    the smallest set that makes the cluster correct. Deleting key material a
+    node might still be serving on is a far worse failure than leaving a stale
+    file behind, and nothing here can tell the difference from the outside.
+    """
+
+    certificates: tuple[CertificateRef, ...]
+
+    def is_current(self, node: NodeObservation) -> bool | None:
+        if node.certificates is None:
+            #
+            # The node answered, but said nothing about certificates. Treated as
+            # unknown rather than as "carries none", because the second would
+            # make an unverifiable node look like a node that simply needs a
+            # push - and the push would then be reported as verified.
+            #
+            return None
+        carried = dict(node.certificates)
+        return all(carried.get(ref.id) == ref.fingerprint for ref in self.certificates)
+
+    def skip_reason(self, node: NodeObservation) -> str:
+        return f"{node.name} already has the referenced certificates; nothing to do"
+
+    def result_fields(self) -> dict[str, object]:
+        return {
+            "target_certificates": [
+                {"id": ref.id, "fingerprint_sha256": ref.fingerprint} for ref in self.certificates
+            ]
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,7 +332,7 @@ def next_step(
     observation: ClusterObservation,
     progress: Progress = NOTHING_DONE,
     *,
-    expected_hash: str | None = None,
+    target: Target | None = None,
     allow_vip_unknown: bool = False,
     target_moved: bool = False,
 ) -> Step:
@@ -241,9 +342,11 @@ def next_step(
     a stale observation is the one way to misuse it, and it is the thing the
     command this replaces got wrong.
 
-    `expected_hash` is the release the deploy is for. A node already running it
-    is skipped rather than redeployed, which is what makes a returning node cost
-    one deploy instead of two, and what makes a re-run after a partial safe.
+    `target` is what the run is reconciling towards - a release or a set of
+    certificates. A node already there is skipped rather than redeployed, which
+    is what makes a returning node cost one deploy instead of two, and what
+    makes a re-run after a partial safe. Passing none means nothing is ever
+    skipped as current, because there is nothing to compare against.
     """
 
     if progress.failed:
@@ -287,11 +390,11 @@ def next_step(
                 warnings=(f"{node.name} could not be read; its state is unverified",),
             )
 
-        if expected_hash is not None and node.release_hash == expected_hash:
+        if target is not None and target.is_current(node):
             return Step(
                 action=Action.SKIP,
                 node=node.name,
-                reason=f"{node.name} already runs this version; nothing to do",
+                reason=target.skip_reason(node),
             )
 
         return Step(action=Action.DEPLOY, node=node.name)

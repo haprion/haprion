@@ -46,7 +46,8 @@ from haproxy_mgmt.config import (
     load_policy,
     load_runtime_config,
 )
-from haproxy_mgmt.deploy_run import ReadStatus, Target, TriggerNode, run
+from haproxy_mgmt.deploy_plan import ReleaseTarget
+from haproxy_mgmt.deploy_run import ReadStatus, TriggerNode, run
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
     JsonValue,
@@ -124,7 +125,7 @@ def read_status(cluster_id: str, status_root: str = STATUS_ROOT) -> ClusterStatu
     return parse_status(payload)
 
 
-def read_target(publish_path: Path, node_path: str) -> Target | None:
+def read_target(publish_path: Path, node_path: str) -> ReleaseTarget | None:
     """The published release the nodes are supposed to be running.
 
     Read here rather than accepted from the caller: the target decides which
@@ -140,7 +141,7 @@ def read_target(publish_path: Path, node_path: str) -> Target | None:
     version, commit = fields.get("version"), fields.get("hash")
     if not version or not version.isdigit() or not commit:
         return None
-    return Target(version=int(version), hash=commit)
+    return ReleaseTarget(version=int(version), hash=commit)
 
 
 def trigger_node(node: NodeStatus, identity: DeployIdentity, writer: TextIO) -> int:

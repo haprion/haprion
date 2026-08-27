@@ -15,10 +15,11 @@ import unittest
 
 from haproxy_mgmt import deploy_run
 from haproxy_mgmt.cluster_status import NodeStatus, parse_status
-from haproxy_mgmt.deploy_run import DeployReport, Target
+from haproxy_mgmt.deploy_plan import ReleaseTarget
+from haproxy_mgmt.deploy_run import DeployReport
 from tests.node_harness import OLD_HASH, TARGET_HASH, FakeCluster, FakeNode, pair
 
-TARGET = Target(version=8, hash=TARGET_HASH)
+TARGET = ReleaseTarget(version=8, hash=TARGET_HASH)
 
 LAST_REPORT: list[DeployReport] = []
 
@@ -43,7 +44,7 @@ def deploy(
         read_status,
         trigger,
         out,
-        target=Target(version=8, hash=expected_hash) if expected_hash else None,
+        target=ReleaseTarget(version=8, hash=expected_hash) if expected_hash else None,
         allow_vip_unknown=allow_vip_unknown,
     )
     LAST_REPORT[:] = [outcome.report]

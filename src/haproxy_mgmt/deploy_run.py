@@ -39,6 +39,7 @@ from haproxy_mgmt.deploy_plan import (
     Action,
     Outcome,
     Step,
+    Target,
     next_step,
     record,
     warnings_for,
@@ -55,14 +56,6 @@ OPERATION = "deploy"
 # for a human to come back to.
 #
 EXIT_INCOMPLETE = 69
-
-
-@dataclass(frozen=True, slots=True)
-class Target:
-    """The published release this deploy is for."""
-
-    version: int
-    hash: str
 
 
 @dataclass
@@ -106,7 +99,7 @@ class DeployReport:
         if self.target is None:
             return None
         return {
-            "target": {"version": self.target.version, "hash": self.target.hash},
+            **self.target.result_fields(),
             "converged": self.outcome is Outcome.DONE,
             "override_used": self.override_used,
             "initial_summary": dict(self.initial_summary),
@@ -165,12 +158,16 @@ def _initial_reports(status: ClusterStatus, target: Target | None) -> dict[str, 
     """
 
     reports: dict[str, NodeReport] = {}
+    observed = {node.name: node for node in status.observation().nodes}
     for node in status.nodes:
         #
         # Unknown rather than False when there is nothing to compare against:
-        # no target given, or a node whose status could not be read.
+        # no target given, a node whose status could not be read, or a target
+        # the node did not answer about.
         #
-        current = None if target is None or not node.status_ok else node.release_hash == target.hash
+        current = (
+            None if target is None or not node.status_ok else target.is_current(observed[node.name])
+        )
         reports[node.name] = NodeReport(
             name=node.name,
             reachable=node.reachable,
@@ -196,8 +193,6 @@ def run(
     allow_vip_unknown: bool = False,
 ) -> DeployRun:
     """Reconcile the cluster and report, in text as it goes and in a result."""
-
-    expected_hash = target.hash if target is not None else None
 
     try:
         status = read_status()
@@ -241,7 +236,7 @@ def run(
         step = next_step(
             status.observation(),
             progress,
-            expected_hash=expected_hash,
+            target=target,
             allow_vip_unknown=allow_vip_unknown,
         )
 
@@ -296,7 +291,7 @@ def run(
 
         writer.write(_state_line("Post-deploy status", status))
 
-        landed = _verify(status, node_name, expected_hash)
+        landed = _verify(status, node_name, target)
         failed = code != 0 or landed is False
         progress = record(progress, step, failed=failed)
 
@@ -333,23 +328,25 @@ def run(
             entry.verified = bool(landed)
 
 
-def _verify(status: ClusterStatus, node_name: str, expected_hash: str | None) -> bool | None:
+def _verify(status: ClusterStatus, node_name: str, target: Target | None) -> bool | None:
     """Did the node land on the target? None when it cannot be told.
 
-    Cannot be told covers two cases that are both honest: no target was given,
-    so there is nothing to compare against, and the node stopped answering, so
-    the answer is unknown rather than negative.
+    Cannot be told covers three cases that are all honest: no target was given,
+    so there is nothing to compare against; the node stopped answering, so the
+    answer is unknown rather than negative; and the node answered without
+    mentioning what the target asks about.
     """
 
-    if expected_hash is None:
+    if target is None:
         return None
     try:
-        node = status.node(node_name)
+        status.node(node_name)
     except StatusError:
         return None
-    if not node.status_ok:
-        return None
-    return node.release_hash == expected_hash
+    for node in status.observation().nodes:
+        if node.name == node_name:
+            return None if not node.status_ok else target.is_current(node)
+    return None
 
 
 def _record_skip(report: DeployReport, step: Step) -> None:

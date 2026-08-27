@@ -49,6 +49,13 @@ class NodeStatus:
     owns_vip: bool | None
     release_hash: str | None
     error_code: str | None
+    #
+    # (id, fingerprint) pairs in id order, or None when the node said nothing
+    # about certificates at all. The distinction matters: a node that reports an
+    # empty list is missing every referenced certificate, while a node that
+    # reports nothing cannot be compared and must not be counted as verified.
+    #
+    certificates: tuple[tuple[str, str], ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +84,7 @@ class ClusterStatus:
                     status_ok=node.status_ok,
                     owns_vip=node.owns_vip,
                     release_hash=node.release_hash,
+                    certificates=node.certificates,
                 )
                 for node in self.nodes
             ),
@@ -100,6 +108,28 @@ def _text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _certificates(status: Mapping[str, Any]) -> tuple[tuple[str, str], ...] | None:
+    """What the node says it carries, or None when it did not say.
+
+    Entries without both an id and a fingerprint are dropped rather than
+    guessed at: a half-described certificate cannot be compared, and treating it
+    as present would let a node look current on bytes nobody checked.
+    """
+
+    entries = status.get("certificates")
+    if not isinstance(entries, list):
+        return None
+
+    pairs = []
+    for entry in entries:
+        item = _mapping(entry)
+        identifier = _text(item.get("id"))
+        fingerprint = _text(item.get("fingerprint_sha256"))
+        if identifier is not None and fingerprint is not None:
+            pairs.append((identifier, fingerprint))
+    return tuple(sorted(pairs))
+
+
 def _node(entry: Mapping[str, Any]) -> NodeStatus:
     status = _mapping(entry.get("status"))
     #
@@ -116,6 +146,7 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         status_ok=usable,
         owns_vip=owner if isinstance(owner, bool) else None,
         release_hash=_text(_mapping(status.get("release")).get("hash")),
+        certificates=_certificates(status),
         error_code=_text(_mapping(entry.get("error")).get("code"))
         or (None if usable else "node_status_invalid"),
     )

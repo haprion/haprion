@@ -24,6 +24,12 @@ from haproxy_mgmt.git_command import git as _git
 #
 DATE_FORMAT = "format:%Y-%m-%d %H:%M"
 
+#
+# How many versions a listing shows. The shell command showed ten, and an
+# operator reads the number of rows as "the recent ones", not as "all of them".
+#
+LIST_LIMIT = 10
+
 
 @dataclass(frozen=True, slots=True)
 class VersionSummary:
@@ -87,3 +93,49 @@ def restore_worktree(repo: Path, commit: str) -> None:
     if _git(repo, "rev-parse", "--is-bare-repository").decode().strip() == "true":
         return
     _git(repo, "reset", "--quiet", "--hard", commit)
+
+
+def recent_versions(repo: Path, limit: int = LIST_LIMIT) -> tuple[VersionSummary, ...]:
+    """The newest versions, newest first, numbered the way the operator counts.
+
+    The numbers are not read from the commits - there is nothing in a commit
+    that holds one. The newest commit's number is the depth of the history, and
+    each older first-parent commit is one less, which is the same arithmetic
+    `version_commit` does in the other direction.
+
+    Fields are separated by NUL rather than by a printable character, so a
+    comment cannot forge a field boundary. A subject holds no newline, so one
+    line is one version.
+    """
+
+    #
+    # A branch with no commit on it yet. `rev-list` fails outright there, so
+    # the state is recognised before it is counted rather than read out of a
+    # git error message.
+    #
+    if not _git(repo, "rev-parse", "--verify", "--quiet", "HEAD", allow_failure=True).strip():
+        return ()
+
+    total = count_versions(repo)
+    shown = _git(
+        repo,
+        "log",
+        f"-{limit}",
+        "--first-parent",
+        f"--date={DATE_FORMAT}",
+        "--pretty=tformat:%H%x00%ad%x00%s",
+    ).decode()
+
+    summaries: list[VersionSummary] = []
+    for offset, line in enumerate(shown.splitlines()):
+        commit, _, rest = line.partition("\0")
+        date, _, comment = rest.partition("\0")
+        summaries.append(
+            VersionSummary(
+                version=total - offset,
+                commit=commit,
+                date=date.strip(),
+                comment=comment,
+            )
+        )
+    return tuple(summaries)

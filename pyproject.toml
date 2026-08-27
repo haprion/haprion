@@ -33,6 +33,7 @@ haproxy-publish = "haproxy_mgmt.cli.publish:main"
 haproxy-publish-helper = "haproxy_mgmt.cli.publish_helper:main"
 haproxy-revert = "haproxy_mgmt.cli.revert:main"
 haproxy-revert-helper = "haproxy_mgmt.cli.revert_helper:main"
+haproxy-list = "haproxy_mgmt.cli.list:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

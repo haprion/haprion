@@ -1,0 +1,310 @@
+#!/bin/bash
+#
+# Step 4 of 5 - run this ON EACH NODE, not on the management host.
+#
+# Creates the node service accounts, the HAProxy release layout, the sudo rules
+# the forced commands need, and installs the node-side scripts from install/node.
+#
+# Copy this repository's install directory to the node, or run it from a checkout
+# there. It contacts nothing and downloads nothing.
+#
+#     sudo ./04-node-prepare answers.env <cluster-id>
+#
+# The cluster ID is needed because node status reports it and because the sudo
+# rule for status names it exactly.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=lib.sh
+source ./lib.sh
+
+need_root
+load_answers "${1:-}"
+CLUSTER="${2:-}"
+[[ -n "$CLUSTER" ]] || die "usage: $(basename "$0") <answers-file> <cluster-id>"
+valid_id "$CLUSTER" || die "invalid cluster id: ${CLUSTER}"
+require_vars TRIGGER_USER STATUS_USER BACKUP_USER PULL_USER MANAGER_HOST \
+             NODE_CONFIG_PULL_KEY PUBLISH_ROOT
+
+SBIN="/usr/local/sbin"
+NODE_CONF="/etc/haproxy-manager/node.conf"
+
+#
+# haproxy-state-export is deliberately not in this list yet: it still carries a
+# hardcoded account list from the environment it grew up in. Backups are taken
+# from the management host and do not block bringing a node up.
+#
+SCRIPTS=(
+    haproxy-pull-deploy
+    haproxy-cert-pull
+    haproxy-cert-trigger
+    haproxy-node-status
+    haproxy-keepalived-state
+)
+
+step "Service accounts"
+
+#
+# Locked, no-login accounts with a home directory only so authorized_keys has
+# somewhere to live. None of them may run a shell: every one of them is reached
+# by a key with a forced command.
+#
+ensure_account() {
+    local user="$1"
+    if id -u "$user" >/dev/null 2>&1; then
+        log "  ok       ${user}"
+    else
+        useradd --system --create-home --shell /usr/sbin/nologin "$user"
+        log "  created  ${user}"
+    fi
+    ensure_dir "/home/${user}/.ssh" "${user}:${user}" 700
+    local keys="/home/${user}/.ssh/authorized_keys"
+    if [[ ! -f "$keys" ]]; then
+        install -o "$user" -g "$user" -m 600 /dev/null "$keys"
+        log "  created  ${keys}  (empty - paste the lines from step 3)"
+    else
+        chown "${user}:${user}" "$keys"
+        chmod 600 "$keys"
+        log "  ok       ${keys}"
+    fi
+}
+
+ensure_account "$TRIGGER_USER"
+ensure_account "$STATUS_USER"
+ensure_account "$BACKUP_USER"
+
+step "HAProxy release layout"
+
+#
+# A deploy never edits the running configuration. It builds a new immutable
+# release directory, swaps `current` atomically, validates again through exactly
+# the paths systemd uses, and only then reloads. These symlinks are what make
+# that swap a single atomic operation instead of a file copy.
+#
+ensure_dir /etc/haproxy/releases root:root 755
+ensure_dir /etc/haproxy/certs    root:root 750
+ensure_dir /run/lock             root:root 755
+
+if [[ ! -e /etc/haproxy/current ]]; then
+    empty="/etc/haproxy/releases/00000000-000000"
+    ensure_dir "$empty" root:root 755
+    ensure_dir "${empty}/conf.d" root:root 755
+    ensure_dir "${empty}/maps" root:root 755
+    [[ -f "${empty}/haproxy.cfg" ]] || install -m 644 /dev/null "${empty}/haproxy.cfg"
+    ln -s "$empty" /etc/haproxy/current
+    log "  created  /etc/haproxy/current -> ${empty}"
+else
+    log "  ok       /etc/haproxy/current"
+fi
+
+link_into_current() {
+    local name="$1" path="/etc/haproxy/$1"
+    if [[ -L "$path" ]]; then
+        log "  ok       ${path}"
+        return
+    fi
+    if [[ -e "$path" ]]; then
+        warn "${path} exists and is not a symlink - not touching it"
+        warn "  move it aside, then run this step again"
+        return
+    fi
+    ln -s "current/${name}" "$path"
+    log "  created  ${path} -> current/${name}"
+}
+
+link_into_current haproxy.cfg
+link_into_current conf.d
+link_into_current maps
+
+step "Node scripts"
+
+missing=0
+for script in "${SCRIPTS[@]}"; do
+    if [[ ! -f "node/${script}" ]]; then
+        warn "node/${script} is not in this checkout"
+        missing=1
+    fi
+done
+[[ $missing -eq 0 ]] || die "node scripts are missing - see docs/INSTALLATION.md, 'What is still missing'"
+
+for script in "${SCRIPTS[@]}"; do
+    target="${SBIN}/${script}"
+    if [[ -f "$target" ]] && cmp -s "node/${script}" "$target"; then
+        chown root:root "$target"
+        chmod 755 "$target"
+        log "  ok       ${target}"
+        continue
+    fi
+    [[ -f "$target" ]] && cp -a "$target" "${target}.replaced-$(date +%Y%m%d-%H%M%S)"
+    install -o root -g root -m 755 "node/${script}" "$target"
+    log "  installed ${target}"
+done
+
+step "Node configuration"
+
+#
+# One root-owned file holds everything environment-specific the node scripts
+# need. Before this existed, the same script was maintained in three variants
+# that differed only in the publication path - which is exactly the kind of drift
+# that survives for years because each copy looks correct on its own.
+#
+node_path="$(cluster_value NODE_PATH "$CLUSTER")"
+[[ -n "$node_path" ]] || die "NODE_PATH_${CLUSTER} is not set in the answers file"
+
+node_conf="# Node configuration for haproxy-manager. Rendered by install/04-node-prepare.
+#
+# Read by the node-side scripts in /usr/local/sbin. Root-owned and not writable
+# by anyone else: it names the account and key used to fetch configuration, so
+# whoever can edit it can redirect this node to another source.
+
+CLUSTER=\"${CLUSTER}\"
+MANAGER=\"${MANAGER_HOST}\"
+
+# Where this node fetches its published configuration from.
+CONFIG_PULL_USER=\"${PULL_USER}\"
+CONFIG_PULL_KEY=\"${NODE_CONFIG_PULL_KEY}\"
+CONFIG_REMOTE_PATH=\"${CLUSTER}/current/${node_path}/\""
+
+if [[ -n "${CERT_PULL_USER:-}" ]]; then
+    require_vars NODE_CERT_PULL_KEY
+    node_conf+="
+
+# Where this node fetches certificates from. A separate account and key: a node
+# that may read configuration has no business reading certificates it was not
+# asked for.
+CERT_PULL_USER=\"${CERT_PULL_USER}\"
+CERT_PULL_KEY=\"${NODE_CERT_PULL_KEY}\""
+fi
+
+ensure_dir "$(dirname "$NODE_CONF")" root:root 755
+install_file "$NODE_CONF" root:root 600 "$node_conf"
+
+step "Sudo rules"
+
+#
+# Exactly three rules, each naming one absolute command. The forced commands run
+# with `sudo -n`, so a mismatch fails immediately instead of trying to prompt for
+# a password down a connection that has no terminal.
+#
+# The certificate rule allows arguments, and that is deliberate: the argument is
+# a list of certificate IDs, and sudoers cannot express "a list of validated
+# IDs" more strongly than a wildcard would. The real gate is validation in two
+# places - unprivileged in haproxy-cert-trigger, then again in the root helper.
+#
+sudoers="# Installed by install/04-node-prepare. Do not edit by hand.
+#
+# One rule per forced command. Each is an exact absolute path, and none of them
+# grants a shell, an interpreter, an editor or environment preservation.
+
+${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-pull-deploy
+${TRIGGER_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-cert-pull
+${STATUS_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-node-status -c ${CLUSTER} --json
+${BACKUP_USER} ALL=(root) NOPASSWD: ${SBIN}/haproxy-state-export"
+
+tmp="$(mktemp)"
+printf '%s\n' "$sudoers" > "$tmp"
+visudo -cqf "$tmp" || { rm -f "$tmp"; die "generated sudoers file is invalid - nothing installed"; }
+install -o root -g root -m 440 "$tmp" /etc/sudoers.d/haproxy-node
+rm -f "$tmp"
+log "  installed /etc/sudoers.d/haproxy-node"
+
+step "HAProxy baseline"
+
+#
+# Both nodes run HAProxy continuously; the virtual address decides which one
+# traffic reaches. That only works if the node NOT holding the address can still
+# bind it - otherwise HAProxy fails to start there, and the pair is a single node
+# with a spare that has never been proven to work.
+#
+sysctl_file="/etc/sysctl.d/60-haproxy.conf"
+sysctl_content="# Installed by install/04-node-prepare.
+#
+# Let HAProxy bind the virtual address on the node that does not currently own
+# it. Without this the standby node cannot start, and the failover it exists for
+# has never been exercised.
+net.ipv4.ip_nonlocal_bind = 1"
+
+install_file "$sysctl_file" root:root 644 "$sysctl_content"
+if [[ "$(sysctl -n net.ipv4.ip_nonlocal_bind)" != "1" ]]; then
+    sysctl -q -w net.ipv4.ip_nonlocal_bind=1
+    log "  applied  net.ipv4.ip_nonlocal_bind=1"
+else
+    log "  ok       net.ipv4.ip_nonlocal_bind=1"
+fi
+
+if systemctl is-enabled haproxy >/dev/null 2>&1; then
+    log "  ok       haproxy is enabled"
+else
+    warn "haproxy is not enabled on this node. This project manages HAProxy;"
+    warn "  it does not install it. Install and enable it before deploying."
+fi
+
+step "Keepalived"
+
+#
+# Three things are checked rather than written. Keepalived configuration carries
+# addresses, interfaces and a shared secret that this script has no business
+# guessing - but getting these wrong does not fail loudly, it just quietly makes
+# a deploy unsafe, so silence is not an option either.
+#
+KA_CONF="/etc/keepalived/keepalived.conf"
+
+if [[ ! -f "$KA_CONF" ]]; then
+    if [[ -n "$(cluster_value VIP "$CLUSTER")" ]]; then
+        warn "cluster ${CLUSTER} has a virtual address but keepalived is not"
+        warn "  configured on this node. See docs/INSTALLATION.md section 2.1"
+        warn "  for the configuration this project assumes, and why."
+    else
+        log "  skipped  cluster ${CLUSTER} has no virtual address"
+    fi
+else
+    if grep -q haproxy-keepalived-state "$KA_CONF"; then
+        log "  ok       notify lines present"
+    else
+        warn "keepalived does not notify the state helper. Add to the vrrp_instance:"
+        echo
+        echo "    notify_master \"${SBIN}/haproxy-keepalived-state MASTER\""
+        echo "    notify_backup \"${SBIN}/haproxy-keepalived-state BACKUP\""
+        echo "    notify_fault  \"${SBIN}/haproxy-keepalived-state FAULT\""
+        echo
+        warn "  Without them the management host cannot tell which node owns the"
+        warn "  address. A rollout then cannot deploy the owner last, which is the"
+        warn "  one thing keeping a bad configuration off the live node."
+    fi
+
+    if grep -qE '^\s*state\s+MASTER' "$KA_CONF"; then
+        warn "this node is configured as state MASTER."
+        warn "  Both nodes should be BACKUP with nopreempt, so a node that comes"
+        warn "  back after a failure does not take live traffic from its peer."
+    else
+        log "  ok       not configured as MASTER"
+    fi
+
+    if grep -qE '^\s*nopreempt' "$KA_CONF"; then
+        log "  ok       nopreempt is set"
+    else
+        warn "nopreempt is not set. A recovered node will take the address back,"
+        warn "  moving live traffic for no reason - typically mid-rebuild."
+    fi
+
+    #
+    # A clean reload does not necessarily produce a VRRP transition, so the file
+    # can be missing on a freshly provisioned node that is otherwise correct.
+    #
+    if [[ -f /run/haproxy/keepalived.state ]]; then
+        log "  ok       state file present  ($(cat /run/haproxy/keepalived.state))"
+    else
+        warn "/run/haproxy/keepalived.state does not exist yet. A config reload"
+        warn "  does not always produce a state transition - force one by"
+        warn "  restarting keepalived on this node once."
+    fi
+fi
+
+echo
+log "step 4 done on this node"
+echo
+echo "Still to do here, by hand:"
+echo "  * paste the authorized_keys lines printed by step 3"
+echo
+echo "When every node is done, back on the management host:"
+echo "  ./05-verify answers.env"

@@ -1,0 +1,161 @@
+#!/bin/bash
+#
+# Step 2 of 6 - management host: runtime policy, cluster definitions, validation
+# certificate.
+#
+# Renders the two configuration files from the answers file, so what the code
+# reads and what you reviewed cannot drift apart, and creates the validation-only
+# certificate if it is missing.
+#
+#     sudo ./02-manager-config answers.env
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=lib.sh
+source ./lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars CONFIG_ROOT PUBLISH_ROOT VALIDATION_ROOT CLUSTER_FILE CONFIG_GROUP \
+             CLUSTERS TRIGGER_USER KEY_DIR CONFIG_DEPLOY_KEY
+
+POLICY_FILE="/etc/haproxy-manager/runtime-policy.yaml"
+
+step "Cluster definitions"
+
+#
+# Built as text rather than with a YAML library: this script runs before the
+# application is necessarily installed, and adding a Python dependency to step 2
+# would mean the installation could not repair itself.
+#
+clusters_yaml="# Cluster definitions. Rendered by install/02-manager-config.
+#
+# Every path here must stay inside the roots named in runtime-policy.yaml. The
+# code refuses any path that escapes its root, so this file cannot widen the
+# boundary - only use it.
+
+schema_version: 1
+
+clusters:"
+
+for cluster in $(each_cluster); do
+    nodes="$(cluster_value NODES "$cluster")"
+    [[ -n "$nodes" ]] || die "NODES_${cluster} is not set"
+    node_path="$(cluster_value NODE_PATH "$cluster")"
+    [[ -n "$node_path" ]] || die "NODE_PATH_${cluster} is not set"
+    vip="$(cluster_value VIP "$cluster")"
+    cert_ids="$(cluster_value CERTIFICATE_IDS "$cluster")"
+    default_cert="$(cluster_value DEFAULT_CERTIFICATE "$cluster")"
+
+    display="$(tr '[:lower:]' '[:upper:]' <<<"${cluster:0:1}")${cluster:1}"
+
+    clusters_yaml+="
+  ${cluster}:
+    display_name: ${display}"
+    [[ -n "$vip" ]] && clusters_yaml+="
+    vip: ${vip}"
+    clusters_yaml+="
+    config_path: ${CONFIG_ROOT}/${cluster}
+    publish_path: ${PUBLISH_ROOT}/${cluster}
+    node_path: ${node_path}
+    nodes:"
+
+    for pair in $nodes; do
+        name="$(node_name "$pair")"
+        host="$(node_host "$pair")"
+        [[ "$name" != "$host" ]] || die "NODES_${cluster} entry '${pair}' is not name:hostname"
+        clusters_yaml+="
+      - name: ${name}
+        mgmt_host: ${host}"
+    done
+
+    clusters_yaml+="
+    validation_certs: ${VALIDATION_ROOT}/certs"
+
+    if [[ -n "$cert_ids" ]]; then
+        clusters_yaml+="
+    certificate_ids:"
+        for id in $cert_ids; do
+            clusters_yaml+="
+      - ${id}"
+        done
+        [[ -n "$default_cert" ]] && clusters_yaml+="
+    default_certificate: ${default_cert}"
+    fi
+done
+
+install_file "$CLUSTER_FILE" "root:${CONFIG_GROUP}" 640 "$clusters_yaml"
+
+step "Runtime policy"
+
+#
+# The outer security boundary. It names the roots every cluster path must stay
+# inside; the reader rejects unknown fields, is strict about ownership and mode,
+# and refuses a symlink.
+#
+policy="# Runtime policy. Rendered by install/02-manager-config.
+#
+# This is the outer path boundary, not a convenience file. Paths in
+# ${CLUSTER_FILE}
+# are refused if they fall outside the roots named here.
+#
+# Requirements the code enforces: root-owned, a regular file, not group- or
+# world-writable, at most 1 MiB, schema_version exactly 1.
+
+schema_version: 1
+
+cluster_file: ${CLUSTER_FILE}
+config_root: ${CONFIG_ROOT}
+publish_root: ${PUBLISH_ROOT}
+validation_certs_root: ${VALIDATION_ROOT}
+
+deploy_identity:
+  user: \"${TRIGGER_USER}\"
+  key: \"${KEY_DIR}/${CONFIG_DEPLOY_KEY}\""
+
+if [[ -n "${CERTIFICATE_ROOT:-}" ]]; then
+    require_vars CERT_DEPLOY_KEY
+    policy+="
+
+# Central certificate distribution. Shared with whatever issues certificates,
+# which is why certificate deploy syncs only what a cluster references.
+certificate_root: ${CERTIFICATE_ROOT}
+
+# A separate identity: a key that can push configuration must not be able to
+# push certificates.
+cert_deploy_identity:
+  user: \"${TRIGGER_USER}\"
+  key: \"${KEY_DIR}/${CERT_DEPLOY_KEY}\""
+fi
+
+ensure_dir "$(dirname "$POLICY_FILE")" "root:root" 755
+install_file "$POLICY_FILE" "root:root" 644 "$policy"
+
+step "Validation certificate"
+
+#
+# Candidate validation runs a real `haproxy -c`, so any configuration that names
+# a certificate needs certificate material present while it runs. This one is
+# self-signed, root-only, never deployed, and never leaves this host. It exists
+# so the real private key is not readable by the validating path.
+#
+cert="${VALIDATION_ROOT}/certs/validation.pem"
+if [[ -f "$cert" ]]; then
+    log "  ok       ${cert}"
+else
+    command -v openssl >/dev/null || die "openssl is needed to create the validation certificate"
+    tmp="$(mktemp -d)"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 36500 \
+        -keyout "${tmp}/key.pem" -out "${tmp}/cert.pem" \
+        -subj "/CN=haproxy-manager-validation" >/dev/null 2>&1
+    cat "${tmp}/cert.pem" "${tmp}/key.pem" > "$cert"
+    rm -rf "$tmp"
+    chown root:root "$cert"
+    chmod 600 "$cert"
+    log "  created  ${cert}"
+fi
+
+echo
+log "step 2 done"
+echo
+echo "Next: ./03-manager-keys answers.env"

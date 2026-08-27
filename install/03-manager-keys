@@ -1,0 +1,113 @@
+#!/bin/bash
+#
+# Step 3 of 6 - management host: SSH identities, and the lines to install on the
+# nodes.
+#
+# Generates the three management key pairs if they are missing, then prints the
+# exact authorized_keys lines for each node. The printing is deliberate: the
+# management host cannot write to a node - every management identity is a forced
+# command that can ask a node to pull and nothing else - so the public keys get
+# there by your hand, over your own login.
+#
+#     sudo ./03-manager-keys answers.env
+#     sudo ./03-manager-keys answers.env > keys.txt   # to paste from later
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=lib.sh
+source ./lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars KEY_DIR CONFIG_DEPLOY_KEY NODE_STATUS_KEY \
+             TRIGGER_USER STATUS_USER CLUSTERS
+
+step "Key pairs"
+
+ensure_dir "$KEY_DIR" "root:root" 700
+
+#
+# One key, one job. A key that can push configuration must not be able to push
+# certificates, and neither may read status. That separation is only real if the
+# node side gives each key its own forced command, which step 5 does.
+#
+generate_key() {
+    local name="$1" comment="$2" path="${KEY_DIR}/$1"
+    if [[ -f "$path" ]]; then
+        log "  ok       ${path}"
+        return
+    fi
+    ssh-keygen -t ed25519 -N "" -C "$comment" -f "$path" >/dev/null
+    chown root:root "$path" "${path}.pub"
+    chmod 600 "$path"
+    chmod 644 "${path}.pub"
+    log "  created  ${path}"
+}
+
+generate_key "$CONFIG_DEPLOY_KEY" "haproxy-manager config deploy"
+generate_key "$NODE_STATUS_KEY"   "haproxy-manager node status"
+[[ -n "${CERT_DEPLOY_KEY:-}" ]] && generate_key "$CERT_DEPLOY_KEY" "haproxy-manager cert deploy"
+
+step "Lines to install on the nodes"
+
+pub() { cut -d' ' -f1,2 < "${KEY_DIR}/$1.pub"; }
+
+#
+# restrict turns off everything: no port forwarding, no agent forwarding, no X11,
+# no pty, no user rc file. The forced command is then the only thing the key can
+# do. Both halves matter - a forced command without restrict still allows
+# forwarding, which is a way around it.
+#
+cat <<INTRO
+
+Each key below is restricted to exactly one command on the node. Install them as
+shown, one file per account, on EVERY node.
+
+There is no way to do this from here: no management identity can write to a node.
+Log in to each node yourself and paste.
+
+INTRO
+
+for cluster in $(each_cluster); do
+    nodes="$(cluster_value NODES "$cluster")"
+    for pair in $nodes; do
+        name="$(node_name "$pair")"
+        host="$(node_host "$pair")"
+        echo "--- ${name}  (${host}, cluster ${cluster}) ------------------------------"
+        echo
+        echo "  /home/${TRIGGER_USER}/.ssh/authorized_keys    (owner ${TRIGGER_USER}, mode 600)"
+        echo
+        echo "restrict,command=\"sudo -n /usr/local/sbin/haproxy-pull-deploy\" $(pub "$CONFIG_DEPLOY_KEY")"
+        if [[ -n "${CERT_DEPLOY_KEY:-}" ]]; then
+            echo "restrict,command=\"/usr/local/sbin/haproxy-cert-trigger\" $(pub "$CERT_DEPLOY_KEY")"
+        fi
+        echo
+        echo "  /home/${STATUS_USER}/.ssh/authorized_keys     (owner ${STATUS_USER}, mode 600)"
+        echo
+        echo "restrict,command=\"sudo -n /usr/local/sbin/haproxy-node-status -c ${cluster} --json\" $(pub "$NODE_STATUS_KEY")"
+        echo
+    done
+done
+
+cat <<'OUTRO'
+Two things to check after pasting, on every node:
+
+  * every key line starts with `restrict` and carries its OWN forced command.
+    Two keys sharing a command makes them interchangeable and undoes the
+    separation they exist for
+  * the certificate line goes through haproxy-cert-trigger, NOT straight to the
+    pull script. The wrapper is what validates the certificate IDs before
+    anything runs as root
+
+Then accept each node's host key once, from this host, as root:
+
+  ssh -o StrictHostKeyChecking=ask <node-hostname> true
+
+Every later connection uses StrictHostKeyChecking=yes, so this first acceptance
+is what makes them mean anything.
+OUTRO
+
+echo
+log "step 3 done"
+echo
+echo "Next, on each node: ./04-node-prepare answers.env <cluster-id>"

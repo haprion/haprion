@@ -1,0 +1,54 @@
+#!/bin/bash
+#
+# The forced command for the certificate trigger key.
+#
+# Runs unprivileged, as the trigger account. Its whole job is to turn the
+# client's requested command into a validated argument list and hand that to the
+# root helper - the escalation happens after the validation, not before it, so
+# root never parses anything a client sent.
+#
+# The root helper validates the same IDs again. That is deliberate: this wrapper
+# protects against a leaked trigger key, and the re-validation protects against
+# this wrapper being replaced or bypassed. Neither is redundant with the other.
+#
+# Why the arguments arrive this way at all: the client cannot run its own
+# command - `command=` in authorized_keys sees to that - so the request lands in
+# SSH_ORIGINAL_COMMAND, which is read here, while it is still unprivileged data
+# in an unprivileged process. The root helper never sees the variable: sudo's
+# env_reset strips it, and opening env_keep for it would let client-controlled
+# data into root's environment.
+#
+
+set -Eeuo pipefail
+
+HELPER="/usr/local/sbin/haproxy-cert-pull"
+MAX_CERTIFICATES=32
+
+# The same pattern the manager validates cluster configuration with. No path
+# separators, so an ID cannot name a file outside the distribution directory.
+ID_PATTERN='^[a-z0-9][a-z0-9._-]{0,254}$'
+
+fail() {
+    echo "ERROR: $*" >&2
+    exit 64
+}
+
+request="${SSH_ORIGINAL_COMMAND:-}"
+
+[[ -n "$request" ]] || fail "no certificate request was sent"
+
+# Word splitting is what is wanted here, and only here.
+read -r -a parts <<< "$request"
+
+[[ "${parts[0]:-}" == "cert-pull" ]] || fail "unknown request: ${parts[0]:-<empty>}"
+
+ids=("${parts[@]:1}")
+
+(( ${#ids[@]} > 0 )) || fail "no certificate IDs were requested"
+(( ${#ids[@]} <= MAX_CERTIFICATES )) || fail "too many certificate IDs requested"
+
+for id in "${ids[@]}"; do
+    [[ "$id" =~ $ID_PATTERN ]] || fail "invalid certificate ID"
+done
+
+exec sudo -n "$HELPER" "${ids[@]}"

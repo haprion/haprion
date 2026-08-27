@@ -1,0 +1,120 @@
+#!/bin/bash
+#
+# Step 5 of 5 - management host: check that the installation actually works.
+#
+# Read-only. It changes nothing, deploys nothing, and touches no node beyond
+# asking it for status.
+#
+#     ./05-verify answers.env
+#
+# Run it as yourself, not with sudo: part of what it checks is that an operator
+# can do the read-only things an operator should be able to do.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=lib.sh
+source ./lib.sh
+
+need_not_root
+load_answers "${1:-}"
+require_vars CONFIG_ROOT PUBLISH_ROOT CLUSTER_FILE CLUSTERS KEY_DIR \
+             CONFIG_DEPLOY_KEY NODE_STATUS_KEY TRIGGER_USER STATUS_USER
+
+PASS=0
+FAIL=0
+
+pass() { printf '  PASS  %-52s %s\n' "$1" "${2:-}"; PASS=$((PASS + 1)); }
+bad()  { printf '  FAIL  %-52s %s\n' "$1" "${2:-}"; FAIL=$((FAIL + 1)); }
+check() { if [[ "$1" == "yes" ]]; then pass "$2" "${3:-}"; else bad "$2" "${3:-}"; fi; }
+
+step "Files and permissions"
+
+for path in "$CLUSTER_FILE" /etc/haproxy-manager/runtime-policy.yaml; do
+    if [[ -f "$path" ]]; then
+        owner="$(stat -c '%U' "$path")"
+        mode="$(stat -c '%a' "$path")"
+        check "$([[ "$owner" == root ]] && echo yes || echo no)" \
+            "$(basename "$path") is root-owned" "$owner"
+        # -perm /022 matches "writable by group or other" without having to
+        # reason about how many digits the mode has.
+        check "$([[ -z "$(find "$path" -maxdepth 0 -perm /022)" ]] && echo yes || echo no)" \
+            "$(basename "$path") is not group/world-writable" "$mode"
+    else
+        bad "$(basename "$path") exists" "$path"
+    fi
+done
+
+step "Keys"
+
+for key in "$CONFIG_DEPLOY_KEY" "$NODE_STATUS_KEY" ${CERT_DEPLOY_KEY:+"$CERT_DEPLOY_KEY"}; do
+    if sudo -n test -f "${KEY_DIR}/${key}" 2>/dev/null; then
+        pass "${key} exists"
+    else
+        #
+        # Not being able to read root's keys is the correct answer for an
+        # operator account, so an unreadable key is reported as unknown rather
+        # than as a failure.
+        pass "${key}" "not readable from here, as expected"
+    fi
+    if [[ -f "${KEY_DIR}/${key}.pub" ]]; then
+        pass "${key}.pub is readable"
+    fi
+done
+
+step "Clusters"
+
+command -v haproxy-config-status >/dev/null \
+    || die "haproxy-config-status is not installed - do step 3 of docs/INSTALLATION.md first"
+
+for cluster in $(each_cluster); do
+    if out="$(haproxy-config-status -c "$cluster" 2>&1)"; then
+        pass "config status for ${cluster}" "$(grep -oE 'Published version: *[0-9]+' <<<"$out" | tr -s ' ')"
+    else
+        bad "config status for ${cluster}" "$(head -1 <<<"$out")"
+    fi
+
+    for repo in "${CONFIG_ROOT}/${cluster}.git" "${CONFIG_ROOT}/${cluster}"; do
+        check "$([[ -e "$repo" ]] && echo yes || echo no)" "$(basename "$repo") exists"
+    done
+done
+
+step "Nodes"
+
+#
+# Reached with the status key and its forced command. This is the one check that
+# proves the whole management-to-node path: the key, the restriction, the node
+# account, the sudo rule and the reporter.
+#
+for cluster in $(each_cluster); do
+    for pair in $(cluster_value NODES "$cluster"); do
+        name="$(node_name "$pair")"
+        host="$(node_host "$pair")"
+        if out="$(sudo -n ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
+                    -i "${KEY_DIR}/${NODE_STATUS_KEY}" "${STATUS_USER}@${host}" 2>&1)"; then
+            pass "${name} reports status" "$(head -c 60 <<<"$out")"
+        else
+            bad "${name} reports status" "$(head -1 <<<"$out")"
+        fi
+    done
+done
+
+echo
+echo "PASS=${PASS}  FAIL=${FAIL}"
+echo
+if [[ $FAIL -eq 0 ]]; then
+    cat <<'DONE'
+The installation answers. That is not the same as it working.
+
+Two more things, in this order, and preferably on a cluster that carries no
+traffic:
+
+  1. haproxy-deploy -c <cluster>   with the nodes already current. It should skip
+     both nodes and change nothing. A run that correctly does nothing is a real
+     test of the ordering logic
+  2. publish a harmless change and deploy it. Confirm the non-owner is deployed
+     first, the owner last, and that the virtual address does not move
+DONE
+else
+    echo "Fix the failures above before deploying anything."
+    exit 1
+fi

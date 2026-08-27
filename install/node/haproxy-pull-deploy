@@ -1,0 +1,172 @@
+#!/bin/bash
+
+set -Eeuo pipefail
+
+#
+# Everything environment-specific comes from one root-owned file, rendered at
+# install time. Nothing about this node's cluster, its management host or its
+# accounts is compiled in - that is what let three hand-maintained variants of
+# this script collapse into one.
+#
+NODE_CONF="/etc/haproxy-manager/node.conf"
+
+[[ -r "$NODE_CONF" ]] || {
+    echo "ERROR: ${NODE_CONF} is missing. Run install/04-node-prepare." >&2
+    exit 78
+}
+# shellcheck source=/dev/null
+source "$NODE_CONF"
+
+for required in MANAGER CONFIG_PULL_USER CONFIG_PULL_KEY CONFIG_REMOTE_PATH; do
+    [[ -n "${!required:-}" ]] || {
+        echo "ERROR: ${required} is not set in ${NODE_CONF}" >&2
+        exit 78
+    }
+done
+
+REMOTE_USER="$CONFIG_PULL_USER"
+REMOTE_PATH="$CONFIG_REMOTE_PATH"
+SSH_KEY="$CONFIG_PULL_KEY"
+
+HAPROXY_DIR="/etc/haproxy"
+RELEASE_DIR="${HAPROXY_DIR}/releases"
+CURRENT="${HAPROXY_DIR}/current"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+# Prevent two deploys from running at the same time
+exec 9>/run/lock/haproxy-deploy.lock
+if ! flock -n 9; then
+    log "ERROR: Another HAProxy deploy is already running."
+    exit 1
+fi
+
+STAGE="$(mktemp -d /tmp/haproxy-stage.XXXXXX)"
+VALIDATE="$(mktemp -d /tmp/haproxy-validate.XXXXXX)"
+
+cleanup() {
+    rm -rf "$STAGE" "$VALIDATE"
+}
+trap cleanup EXIT
+
+OLD_RELEASE="$(readlink -f "$CURRENT")"
+
+log "Fetching published configuration from ${MANAGER}..."
+
+rsync -a --delete \
+    -e "ssh -i ${SSH_KEY} -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes" \
+    "${REMOTE_USER}@${MANAGER}:${REMOTE_PATH}" \
+    "${STAGE}/"
+
+# Basic sanity checks
+if [[ ! -f "${STAGE}/haproxy.cfg" ]]; then
+    log "ERROR: haproxy.cfg is missing from the fetched configuration."
+    exit 1
+fi
+
+if [[ ! -d "${STAGE}/conf.d" ]]; then
+    log "ERROR: conf.d is missing from the fetched configuration."
+    exit 1
+fi
+
+if [[ ! -d "${STAGE}/maps" ]]; then
+    log "ERROR: maps is missing from the fetched configuration."
+    exit 1
+fi
+
+# Nothing changed?
+if diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
+    log "No change. No deploy or reload needed."
+    exit 0
+fi
+
+log "New configuration detected."
+
+#
+# Validate the candidate.
+#
+# The configuration uses absolute paths under /etc/haproxy/maps.
+# In the validation copy we therefore point those at the candidate's own maps.
+#
+cp -a "${STAGE}/." "${VALIDATE}/"
+
+while IFS= read -r -d '' file; do
+    sed -i "s#/etc/haproxy/maps/#${VALIDATE}/maps/#g" "$file"
+done < <(
+    grep -RIlZ '/etc/haproxy/maps/' \
+        --include='*.cfg' \
+        "$VALIDATE" || true
+)
+
+log "Validating candidate configuration..."
+
+if ! haproxy -c \
+    -f "${VALIDATE}/haproxy.cfg" \
+    -f "${VALIDATE}/conf.d"
+then
+    log "ERROR: Candidate configuration is invalid. The existing config is left untouched."
+    exit 1
+fi
+
+log "Candidate configuration OK."
+
+#
+# Create a new immutable release
+#
+RELEASE="${RELEASE_DIR}/$(date +%Y%m%d-%H%M%S)"
+
+mkdir -p "$RELEASE"
+cp -a "${STAGE}/." "${RELEASE}/"
+
+chown -R root:root "$RELEASE"
+find "$RELEASE" -type d -exec chmod 755 {} \;
+find "$RELEASE" -type f -exec chmod 644 {} \;
+
+#
+# Atomic swap of the current symlink
+#
+NEW_LINK="${HAPROXY_DIR}/current.new"
+
+rm -f "$NEW_LINK"
+ln -s "$RELEASE" "$NEW_LINK"
+mv -Tf "$NEW_LINK" "$CURRENT"
+
+log "current now points at $(readlink -f "$CURRENT")"
+
+#
+# Validate again through exactly the paths systemd uses.
+#
+if ! haproxy -c \
+    -f "${HAPROXY_DIR}/haproxy.cfg" \
+    -f "${HAPROXY_DIR}/conf.d"
+then
+    log "ERROR: Validation after activation failed. Rolling back."
+
+    rm -f "$NEW_LINK"
+    ln -s "$OLD_RELEASE" "$NEW_LINK"
+    mv -Tf "$NEW_LINK" "$CURRENT"
+
+    exit 1
+fi
+
+#
+# Reload
+#
+log "Reloading HAProxy..."
+
+if systemctl reload haproxy; then
+    log "Deploy complete."
+else
+    log "ERROR: HAProxy reload failed. Rolling back to ${OLD_RELEASE}."
+
+    rm -f "$NEW_LINK"
+    ln -s "$OLD_RELEASE" "$NEW_LINK"
+    mv -Tf "$NEW_LINK" "$CURRENT"
+
+    # Try to bring HAProxy back to the known-good config
+    systemctl reload haproxy || true
+
+    exit 1
+fi

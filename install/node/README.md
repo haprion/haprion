@@ -1,0 +1,48 @@
+# Node-side scripts
+
+`04-node-prepare` installs these to `/usr/local/sbin` on a node.
+
+| Script | What it does |
+|---|---|
+| `haproxy-pull-deploy` | fetches the published release, validates it, installs it, reloads once |
+| `haproxy-cert-trigger` | unprivileged wrapper: validates certificate IDs, then escalates |
+| `haproxy-cert-pull` | fetches the requested certificates, validates them, installs, reloads |
+| `haproxy-node-status` | reports version, health, carried certificates and keepalived state |
+| `haproxy-keepalived-state` | records the keepalived transition to a state file |
+
+## Nothing environment-specific is compiled in
+
+Everything a node needs to know about itself — its cluster, its management host,
+which account and key it fetches with — comes from one root-owned file,
+`/etc/haproxy-manager/node.conf`, rendered by `04-node-prepare`:
+
+```sh
+CLUSTER="alpha"
+MANAGER="mgr"
+CONFIG_PULL_USER="svc-pull"
+CONFIG_PULL_KEY="/root/.ssh/id_ed25519_config_pull"
+CONFIG_REMOTE_PATH="alpha/current/a/"
+CERT_PULL_USER="svc-cert-pull"
+CERT_PULL_KEY="/root/.ssh/id_ed25519_cert_pull"
+```
+
+A script that cannot read it, or finds a value missing, exits 78 (`EX_CONFIG`)
+rather than guessing.
+
+The file is mode 600 root-owned for a specific reason: it names the account and
+key this node fetches configuration with, so whoever can edit it can point the
+node at a different source.
+
+This matters more than it looks. Before it existed, `haproxy-pull-deploy` was
+maintained as three separate copies that differed only in one line — the
+publication path — and each copy looked perfectly correct on its own. That is
+the kind of drift that survives for years.
+
+## What is not here yet
+
+`haproxy-state-export`, which collects node state for backup. It still carries a
+hardcoded list of local accounts from the environment it grew up in, and three
+untranslated comment lines. It needs the same treatment the others got before it
+can be published; until then it is installed by hand.
+
+Backups are driven from the management host, so a node comes up fine without it.

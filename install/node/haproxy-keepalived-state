@@ -1,0 +1,22 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+STATE="${1:-}"
+
+case "$STATE" in
+    MASTER|BACKUP|FAULT)
+        ;;
+    *)
+        exit 64
+        ;;
+esac
+
+STATE_DIR="/run/haproxy"
+STATE_FILE="${STATE_DIR}/keepalived.state"
+TMP="${STATE_FILE}.$$"
+
+mkdir -p "$STATE_DIR"
+
+printf '%s\n' "$STATE" > "$TMP"
+chmod 644 "$TMP"
+mv -f "$TMP" "$STATE_FILE"

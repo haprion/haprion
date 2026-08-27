@@ -1,0 +1,62 @@
+#
+# Example keepalived configuration for one cluster of two nodes.
+#
+# Not installed by any script: it carries addresses, an interface name and a
+# shared secret that only you know. 04-node-prepare checks the three properties
+# below and complains if they are missing, rather than guessing at them.
+#
+# Copy to /etc/keepalived/keepalived.conf on BOTH nodes and change the three
+# marked lines per node.
+#
+# Why it looks like this is in docs/INSTALLATION.md, section 2.1. The short
+# version: a rollout deploys the address owner last, so that a bad configuration
+# breaks on the node not carrying traffic. That protection only exists if the
+# management host can tell who the owner is - which is what the notify_ lines
+# below provide - and it only stays true if a recovered node does not grab the
+# address back, which is what nopreempt provides.
+#
+
+vrrp_instance alpha {
+    #
+    # BACKUP on BOTH nodes. Not MASTER on either.
+    #
+    # With nopreempt, a node that comes back after a failure stays BACKUP even
+    # though its priority is higher. Priority still decides who takes the
+    # address on a cold start, when neither node holds it.
+    #
+    state             BACKUP
+    nopreempt
+
+    interface         eth0        # CHANGE: the interface carrying the VIP
+    virtual_router_id 51          # unique per VRRP domain on this segment
+    priority          100         # CHANGE: 100 on one node, 90 on the other
+    advert_int        1
+
+    #
+    # Unicast, not multicast. Multicast VRRP works until something on the path
+    # stops forwarding it, and then both nodes believe they are master and both
+    # answer for the same address.
+    #
+    unicast_src_ip    192.0.2.11  # CHANGE: this node's own address
+    unicast_peer {
+        192.0.2.12                # CHANGE: the other node's address
+    }
+
+    authentication {
+        auth_type PASS
+        auth_pass CHANGE-ME
+    }
+
+    virtual_ipaddress {
+        192.0.2.10                # CHANGE: the cluster's virtual address
+    }
+
+    #
+    # How the management host learns who owns the address. Without these the
+    # state file is never written, node status reports no owner, and a deploy
+    # has no way to order the nodes.
+    #
+    notify_master "/usr/local/sbin/haproxy-keepalived-state MASTER"
+    notify_backup "/usr/local/sbin/haproxy-keepalived-state BACKUP"
+    notify_fault  "/usr/local/sbin/haproxy-keepalived-state FAULT"
+}

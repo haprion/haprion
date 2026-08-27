@@ -1,0 +1,123 @@
+#!/bin/bash
+#
+# Step 1 of 6 - management host: group, directories, repositories.
+#
+# Creates the read-only configuration group, the directory trees, and one Git
+# repository per cluster. Writes no configuration and contacts no node.
+#
+# Safe to run again: everything it does is checked before it is done.
+#
+#     sudo ./01-manager-prepare answers.env
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=lib.sh
+source ./lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars CONFIG_ROOT PUBLISH_ROOT VALIDATION_ROOT CLUSTER_FILE CONFIG_GROUP CLUSTERS
+
+for path in "$CONFIG_ROOT" "$PUBLISH_ROOT" "$VALIDATION_ROOT" "$CLUSTER_FILE"; do
+    valid_abs_path "$path" || die "not an absolute path without '..': ${path}"
+done
+
+step "Configuration group"
+ensure_group "$CONFIG_GROUP"
+
+#
+# 0750 root:<group> throughout: the group reads and traverses, and writes
+# nothing. Publishing is a write into root-owned history and goes through a
+# helper, which is the whole reason the group can be read-only.
+#
+step "Directory trees"
+ensure_dir "$(dirname "$CLUSTER_FILE")" "root:${CONFIG_GROUP}" 750
+ensure_dir "$CONFIG_ROOT"     "root:${CONFIG_GROUP}" 750
+ensure_dir "$PUBLISH_ROOT"    "root:${CONFIG_GROUP}" 750
+ensure_dir "$VALIDATION_ROOT" "root:root"            750
+ensure_dir "${VALIDATION_ROOT}/certs" "root:root"    700
+
+step "Per-cluster repositories and release areas"
+for cluster in $(each_cluster); do
+    log "cluster ${cluster}"
+
+    bare="${CONFIG_ROOT}/${cluster}.git"
+    work="${CONFIG_ROOT}/${cluster}"
+
+    #
+    # Bare history plus a linked worktree. The worktree is what an operator
+    # edits; the history is authoritative and is never edited by hand. They are
+    # held together by a path reference in each direction, so restoring only one
+    # of them breaks the link - `git worktree repair` is the fix.
+    #
+    if [[ -d "${bare}/refs" ]]; then
+        log "  ok       ${bare}"
+    else
+        git init --bare --initial-branch=main "$bare" >/dev/null
+        log "  created  ${bare}"
+    fi
+    chown -R "root:${CONFIG_GROUP}" "$bare"
+    chmod -R g-w,o-rwx "$bare"
+
+    if [[ -e "${work}/.git" ]]; then
+        log "  ok       ${work}"
+    else
+        #
+        # A worktree needs a commit to attach to. An empty repository gets one,
+        # with the layout every cluster uses and a .gitignore, so the first real
+        # change is a diff rather than an import.
+        #
+        if ! git -C "$bare" rev-parse --verify HEAD >/dev/null 2>&1; then
+            seed="$(mktemp -d)"
+            mkdir -p "${seed}/core/conf.d" "${seed}/core/maps" \
+                     "${seed}/managed/generated" "${seed}/managed/objects" \
+                     "${seed}/manual/conf.d"
+            # Empty directories do not survive Git. A placeholder keeps the
+            # layout intact through clone, worktree and restore.
+            find "$seed" -type d -empty -exec touch {}/.gitkeep \;
+            printf '%s\n' '*.swp' '*~' '.#*' > "${seed}/.gitignore"
+            git -C "$seed" init --initial-branch=main >/dev/null
+            git -C "$seed" add -A
+            git -C "$seed" -c user.name=install -c user.email=install@localhost \
+                commit -m "Initial layout for cluster ${cluster}" >/dev/null
+            git -C "$seed" push --quiet "$bare" main
+            rm -rf "$seed"
+            log "  seeded   ${bare} with the initial layout"
+        fi
+        git -C "$bare" worktree add "$work" main >/dev/null
+        log "  created  ${work}"
+    fi
+
+    #
+    # `worktree add` recreates files as root:root and the directories have no
+    # setgid bit, so ownership has to be set explicitly afterwards. Measured,
+    # not assumed - it caught us once.
+    #
+    chown -R "root:${CONFIG_GROUP}" "$work"
+    find "$work" -type d -exec chmod 750 {} +
+    find "$work" -type f -exec chmod 640 {} +
+
+    ensure_dir "${PUBLISH_ROOT}/${cluster}" "root:${CONFIG_GROUP}" 750
+    ensure_dir "${PUBLISH_ROOT}/${cluster}/releases" "root:${CONFIG_GROUP}" 750
+done
+
+step "Git safe.directory"
+#
+# Explicit per-repository entries. A wildcard would make every repository on the
+# host trusted by root, which is exactly what this is protecting against.
+#
+for cluster in $(each_cluster); do
+    for repo in "${CONFIG_ROOT}/${cluster}.git" "${CONFIG_ROOT}/${cluster}"; do
+        if git config --global --get-all safe.directory 2>/dev/null | grep -qxF "$repo"; then
+            log "  ok       ${repo}"
+        else
+            git config --global --add safe.directory "$repo"
+            log "  added    ${repo}"
+        fi
+    done
+done
+
+echo
+log "step 1 done"
+echo
+echo "Next: ./02-manager-config answers.env"

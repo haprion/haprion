@@ -25,8 +25,9 @@ python3 "$base/tools/secret_scan.py" \
 ruff check "$base/src" "$base/tests" "$base/contract-tests" "$base/tools"
 ruff format --check "$base/src" "$base/tests" "$base/contract-tests" "$base/tools"
 # -x so the installation scripts' `source ./lib.sh` is followed rather than
-# reported as unreadable.
-shellcheck -x "$base/run-checks" "$base/run-tests" "$base/tools/install-actionlint" \
+# reported as unreadable, and -P SCRIPTDIR so it is looked up beside the script
+# that sources it rather than in whatever directory the gate was started from.
+shellcheck -x -P SCRIPTDIR "$base/run-checks" "$base/run-tests" "$base/tools/install-actionlint" \
     "$base/tools/install-gitleaks" "$base/tools/install-shellcheck" \
     "$base/tools/run-codeql" "$base/tools/run-gitleaks" \
     "$base/install/lib.sh" "$base/install"/[0-9][0-9]-* \

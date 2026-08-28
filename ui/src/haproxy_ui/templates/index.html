@@ -1,29 +1,159 @@
 {% extends "base.html" %}
+{% block title %}Dashboard — HAProxy Manager{% endblock %}
 {% block chrome %}
-<header>
-  <span class="name">HAProxy Manager</span>
-  <span class="who">
-    {{ username }} · {{ role }}
-    <form method="post" action="/logout" style="display:inline; margin-left:0.75rem;">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button class="quiet" type="submit">Sign out</button>
-    </form>
-  </span>
+<header class="app-header">
+  <div class="header-inner">
+    <a class="brand" href="/" aria-label="HAProxy Manager dashboard">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M6 8h13M6 16h20M6 24h13"></path>
+        <circle cx="22" cy="8" r="3"></circle>
+        <circle cx="10" cy="24" r="3"></circle>
+      </svg>
+      <span>HAProxy <strong>Manager</strong></span>
+    </a>
+
+    <nav class="primary-nav" aria-label="Primary navigation">
+      <a class="active" href="/" aria-current="page">Dashboard</a>
+    </nav>
+
+    <div class="header-actions">
+      <button class="icon-button theme-toggle" type="button" data-theme-toggle
+              aria-label="Change color theme" title="Change color theme">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"></path>
+          <circle cx="12" cy="12" r="4"></circle>
+        </svg>
+        <span data-theme-label>System</span>
+      </button>
+
+      <details class="account-menu">
+        <summary>
+          <span class="avatar" aria-hidden="true">{{ username[:1] | upper }}</span>
+          <span class="account-copy"><strong>{{ username }}</strong><small>{{ role }}</small></span>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg>
+        </summary>
+        <div class="account-popover">
+          <div class="account-popover-title">
+            <strong>{{ username }}</strong>
+            <span>{{ role }}</span>
+          </div>
+          <form method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="menu-button" type="submit">Sign out</button>
+          </form>
+        </div>
+      </details>
+    </div>
+  </div>
 </header>
 {% endblock %}
+
 {% block content %}
-<div class="panel">
-  <h1>Signed in</h1>
-  <dl class="facts">
-    <dt>Account</dt><dd>{{ username }}</dd>
-    <dt>Role</dt><dd>{{ role }}</dd>
-    <dt>Management writes</dt>
-    <dd>{{ "enabled" if management_writes else "disabled" }}</dd>
-  </dl>
-  <p class="note" style="margin-bottom:0;">
-    The read-only views arrive in the next phase. Management writes stay off
-    until the phase that turns them on, and switching them off is the documented
-    way back.
-  </p>
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">Overview</p>
+    <h1>Dashboard</h1>
+    <p>Live operational state from the management cache.</p>
+  </div>
+  <span class="mode-badge">
+    <span class="status-dot status-{{ 'warning' if management_writes else 'healthy' }}"></span>
+    {{ "Management enabled" if management_writes else "Read-only mode" }}
+  </span>
+</section>
+
+<section class="metric-grid" aria-label="Environment summary">
+  <article class="metric-card">
+    <span class="metric-icon metric-icon-cluster" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6" rx="2"></rect><rect x="4" y="14" width="16" height="6" rx="2"></rect><path d="M8 7h.01M8 17h.01M12 7h5M12 17h5"></path></svg>
+    </span>
+    <div><strong>{{ dashboard.clusters | selectattr('configured') | list | length }}</strong><span>Clusters</span></div>
+    <small>{{ dashboard.healthy_clusters }} healthy</small>
+  </article>
+  <article class="metric-card">
+    <span class="metric-icon metric-icon-node" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 9h.01M11 9h6M7 15h.01M11 15h6"></path></svg>
+    </span>
+    <div><strong>{{ dashboard.online_nodes }}<small>/{{ dashboard.total_nodes }}</small></strong><span>Nodes online</span></div>
+    <small>{{ dashboard.attention_clusters }} cluster(s) need review</small>
+  </article>
+  <article class="metric-card">
+    <span class="metric-icon metric-icon-vip" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"></circle><circle cx="19" cy="6" r="2"></circle><circle cx="19" cy="18" r="2"></circle><path d="M7 12h4a4 4 0 0 0 4-4V6M11 12a4 4 0 0 1 4 4v2"></path></svg>
+    </span>
+    <div><strong>{{ dashboard.active_vips }}</strong><span>Active VIPs</span></div>
+    <small>Single-owner state</small>
+  </article>
+  <article class="metric-card">
+    <span class="metric-icon metric-icon-release" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"></path><path d="m17 17 2 2 3-4"></path></svg>
+    </span>
+    <div><strong>{{ dashboard.converged_clusters }}</strong><span>Converged</span></div>
+    <small>Running target release</small>
+  </article>
+</section>
+
+<section class="section-heading">
+  <div><h2>Clusters</h2><p>Traffic, failover and release state at a glance.</p></div>
+</section>
+
+<div class="cluster-list">
+  {% for cluster in dashboard.clusters %}
+  <article class="cluster-card">
+    <header class="cluster-header">
+      <div class="cluster-identity">
+        <span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span>
+        <div>
+          <h3>{{ cluster.cluster }}</h3>
+          <p>{{ cluster.detail }}</p>
+        </div>
+      </div>
+      <div class="cluster-state">
+        <span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>
+        {% if cluster.observed_at %}
+        <time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>
+        {% else %}
+        <span class="observation-age">Never observed</span>
+        {% endif %}
+      </div>
+    </header>
+
+    <dl class="cluster-facts">
+      <div><dt>Nodes</dt><dd>{{ cluster.reachable_nodes }} / {{ cluster.configured_nodes }}</dd></div>
+      <div><dt>VIP owner</dt><dd>{{ cluster.vip }}</dd></div>
+      <div><dt>Target</dt><dd>{{ cluster.version }}</dd></div>
+      <div><dt>Release state</dt><dd>{{ cluster.release_state }}</dd></div>
+    </dl>
+
+    {% if cluster.nodes %}
+    <div class="table-scroll">
+      <table class="node-table">
+        <thead><tr><th>Node</th><th>Service</th><th>Failover</th><th>VIP</th><th>Release</th><th>Runtime</th></tr></thead>
+        <tbody>
+          {% for node in cluster.nodes %}
+          <tr>
+            <td data-label="Node"><strong>{{ node.name }}</strong><small>{{ node.management_host }}</small></td>
+            <td data-label="Service"><span class="inline-status"><span class="status-dot status-{{ node.tone }}"></span>{{ node.label }}</span><small>{{ node.detail }}</small></td>
+            <td data-label="Failover">{{ node.keepalived }}</td>
+            <td data-label="VIP">{{ node.vip }}</td>
+            <td data-label="Release"><span class="release-value">{{ node.version }}</span>{% if node.current is false %}<small class="warning-text">Behind target</small>{% endif %}</td>
+            <td data-label="Runtime">{{ node.runtime }}<small>Stats {{ node.stats | lower }}</small></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg>
+      <div><strong>No node status yet</strong><span>The dashboard will update after the poller records its first result.</span></div>
+    </div>
+    {% endif %}
+  </article>
+  {% else %}
+  <div class="empty-page">
+    <h2>No clusters configured</h2>
+    <p>Add a cluster to the platform configuration before starting the poller.</p>
+  </div>
+  {% endfor %}
 </div>
 {% endblock %}

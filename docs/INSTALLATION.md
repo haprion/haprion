@@ -518,6 +518,12 @@ interpreter — a virtual environment is not relocatable, and an interpreter und
 someone's home directory is invisible to a service running with `ProtectHome`.
 Both are checked before `current` is switched.
 
+The release is also compared with its source tree before activation. The check
+covers Python, templates, CSS and JavaScript; a build that reused an older local
+wheel or omitted a frontend asset is removed rather than activated. This keeps
+the visible interface under the same “a release is a commit” rule as its server
+code.
+
 ### 4.2 Identities
 
 Three service accounts, one per service, each with its own database role. A

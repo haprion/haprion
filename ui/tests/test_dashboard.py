@@ -1,0 +1,138 @@
+"""Dashboard semantics: health comes from nodes, never the envelope outcome."""
+
+from __future__ import annotations
+
+import json
+import unittest
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+from haproxy_ui.dashboard import build_dashboard, relative_age
+from haproxy_ui.db import ClusterStatus
+
+FIXTURES = Path(__file__).parents[2] / "fixtures" / "haproxy-status" / "valid"
+NOW = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
+
+
+def reading(name: str, *, age_seconds: int = 15, poll_error: str | None = None) -> ClusterStatus:
+    envelope: dict[str, Any] = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+    return ClusterStatus(
+        cluster=str(envelope.get("cluster") or "alpha"),
+        observed_at=NOW - timedelta(seconds=age_seconds),
+        outcome=str(envelope["outcome"]),
+        result=envelope.get("result") or {},
+        warnings=envelope.get("warnings") or [],
+        error=envelope.get("error"),
+        poll_error=poll_error,
+    )
+
+
+class HealthDerivation(unittest.TestCase):
+    def dashboard(self, status: ClusterStatus):
+        return build_dashboard(("alpha",), (status,), now=NOW, stale_after=timedelta(seconds=120))
+
+    def test_done_and_converged_is_only_green_when_node_services_are_healthy(self) -> None:
+        status = reading("done-single-owner.json")
+        result = dict(status.result)
+        nodes = [dict(node) for node in result["nodes"]]
+        nodes[0]["status"] = dict(nodes[0]["status"])
+        nodes[0]["status"]["haproxy"] = {"active": False}
+        result["nodes"] = nodes
+        dashboard = self.dashboard(
+            ClusterStatus(
+                cluster=status.cluster,
+                observed_at=status.observed_at,
+                outcome="done",
+                result=result,
+                warnings=[],
+                error=None,
+                poll_error=None,
+            )
+        )
+
+        cluster = dashboard.clusters[0]
+        self.assertEqual(cluster.tone, "critical")
+        self.assertEqual(cluster.nodes[0].label, "HAProxy stopped")
+        self.assertNotEqual(cluster.label, "Healthy")
+
+    def test_stats_failure_is_distinct_from_an_unreachable_node(self) -> None:
+        status = reading("done-single-owner.json")
+        result = dict(status.result)
+        nodes = [dict(node) for node in result["nodes"]]
+        nodes[0]["status"] = dict(nodes[0]["status"])
+        nodes[0]["status"]["stats_ok"] = False
+        result["nodes"] = nodes
+        cluster = self.dashboard(
+            ClusterStatus(
+                cluster=status.cluster,
+                observed_at=status.observed_at,
+                outcome=status.outcome,
+                result=result,
+                warnings=status.warnings,
+                error=status.error,
+                poll_error=None,
+            )
+        ).clusters[0]
+
+        self.assertEqual(cluster.label, "Degraded")
+        self.assertEqual(cluster.nodes[0].label, "Stats unavailable")
+        self.assertEqual(cluster.nodes[0].tone, "warning")
+
+        unreachable = self.dashboard(reading("partial-unreachable.json")).clusters[0]
+        self.assertEqual(unreachable.nodes[1].label, "Unreachable")
+        self.assertEqual(unreachable.nodes[1].tone, "critical")
+
+    def test_version_drift_is_visible_without_calling_the_cluster_unhealthy(self) -> None:
+        cluster = self.dashboard(reading("done-node-behind.json")).clusters[0]
+        self.assertEqual(cluster.label, "Degraded")
+        self.assertEqual(cluster.nodes[1].label, "Version drift")
+        self.assertEqual(cluster.version, "v7")
+
+    def test_old_data_cannot_remain_green(self) -> None:
+        cluster = self.dashboard(reading("done-single-owner.json", age_seconds=121)).clusters[0]
+        self.assertTrue(cluster.stale)
+        self.assertEqual(cluster.label, "Stale data")
+        self.assertEqual(cluster.tone, "warning")
+
+    def test_a_poller_failure_is_not_reported_as_a_cluster_answer(self) -> None:
+        cluster = self.dashboard(
+            reading("done-single-owner.json", poll_error="sudo refused")
+        ).clusters[0]
+        self.assertEqual(cluster.label, "Collection unavailable")
+        self.assertEqual(cluster.tone, "critical")
+
+
+class DashboardShape(unittest.TestCase):
+    def test_configured_cluster_without_a_row_is_kept_visible(self) -> None:
+        dashboard = build_dashboard(("alpha",), (), now=NOW, stale_after=timedelta(seconds=120))
+        self.assertEqual(len(dashboard.clusters), 1)
+        self.assertEqual(dashboard.clusters[0].label, "No data")
+
+    def test_a_removed_cluster_row_stays_visible_but_not_counted(self) -> None:
+        orphan = reading("done-single-owner.json")
+        orphan = ClusterStatus(
+            cluster="beta",
+            observed_at=orphan.observed_at,
+            outcome=orphan.outcome,
+            result=orphan.result,
+            warnings=orphan.warnings,
+            error=orphan.error,
+            poll_error=orphan.poll_error,
+        )
+        dashboard = build_dashboard(
+            ("alpha",), (orphan,), now=NOW, stale_after=timedelta(seconds=120)
+        )
+        self.assertEqual([cluster.cluster for cluster in dashboard.clusters], ["alpha", "beta"])
+        self.assertFalse(dashboard.clusters[1].configured)
+        self.assertEqual(dashboard.clusters[1].label, "Not configured")
+        self.assertEqual(dashboard.healthy_clusters, 0)
+
+    def test_relative_age_is_compact_and_never_negative(self) -> None:
+        self.assertEqual(relative_age(NOW - timedelta(seconds=4), NOW), "Just now")
+        self.assertEqual(relative_age(NOW - timedelta(minutes=4), NOW), "4m ago")
+        self.assertEqual(relative_age(NOW + timedelta(minutes=1), NOW), "Just now")
+
+
+if __name__ == "__main__":
+    unittest.main()

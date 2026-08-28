@@ -114,7 +114,8 @@ fi
 #
 step "Proving the release is the commit"
 tree_digest() {
-    ( cd "$1" && find . -type f \( -name '*.py' -o -name '*.html' \) \
+    ( cd "$1" && find . -type f \
+        \( -name '*.py' -o -name '*.html' -o -name '*.css' -o -name '*.js' \) \
         -not -path '*/__pycache__/*' -printf '%P\n' \
       | LC_ALL=C sort \
       | while read -r file; do printf '%s ' "$file"; sha256sum "$file" | cut -d' ' -f1; done \

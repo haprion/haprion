@@ -1,23 +1,34 @@
 {% extends "base.html" %}
 {% block title %}Sign in — HAProxy Manager{% endblock %}
+{% block body_class %}login-page{% endblock %}
+{% block main_class %}login-layout{% endblock %}
 {% block content %}
-<div class="panel" style="max-width: 22rem; margin: 3rem auto;">
-  <h1>HAProxy Manager</h1>
-  {#
-    One message for every way this can fail. Which of them happened is in the
-    audit trail, where it is useful, and not on this page, where it would tell
-    an attacker which usernames exist and which accounts are locked.
-  #}
-  {% if error %}<p class="error">{{ error }}</p>{% endif %}
-  <form method="post" action="/login" autocomplete="on">
+<section class="login-card" aria-labelledby="login-title">
+  <div class="login-brand">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <path d="M6 8h13M6 16h20M6 24h13"></path>
+      <circle cx="22" cy="8" r="3"></circle>
+      <circle cx="10" cy="24" r="3"></circle>
+    </svg>
+    <span>HAProxy <strong>Manager</strong></span>
+  </div>
+  <div class="login-copy">
+    <p class="eyebrow">Management console</p>
+    <h1 id="login-title">Welcome back</h1>
+    <p>Sign in to view cluster health and configuration state.</p>
+  </div>
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" action="/login" autocomplete="on" class="login-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label for="username">Username</label>
     <input id="username" name="username" type="text" maxlength="64" required autofocus
-           autocapitalize="none" autocorrect="off" spellcheck="false">
+           autocapitalize="none" autocorrect="off" spellcheck="false"
+           autocomplete="username">
     <label for="password">Password</label>
     <input id="password" name="password" type="password" required
            autocomplete="current-password">
-    <button type="submit">Sign in</button>
+    <button class="primary-button" type="submit">Sign in</button>
   </form>
-</div>
+  <p class="login-footnote">Access is restricted to authorised operators.</p>
+</section>
 {% endblock %}

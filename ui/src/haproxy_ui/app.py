@@ -23,12 +23,14 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from haproxy_ui import db, views
 from haproxy_ui.config import DEFAULT_CONFIG_PATH, Config
 from haproxy_ui.config import load as load_config
 
 CONFIG_PATH_VARIABLE = "HAPROXY_UI_CONFIG"
+STATIC_DIRECTORY = Path(__file__).parent / "static"
 
 logger = logging.getLogger("haproxy_ui")
 
@@ -60,6 +62,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     app = FastAPI(title="HAProxy Manager", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.config = settings
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIRECTORY)), name="static")
 
     #
     # Said out loud, every start, because a session cookie without Secure is a

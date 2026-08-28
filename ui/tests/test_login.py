@@ -99,6 +99,7 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haproxy_ui.db.touch_session"),
             mock.patch("haproxy_ui.db.revoke_session", side_effect=self._revoke),
             mock.patch("haproxy_ui.db.record_audit_event", side_effect=self._audit_event),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[]),
         ]
         for patch in self.patches:
             patch.start()
@@ -193,6 +194,21 @@ class SigningIn(LoginTestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("operator", page.text)
         self.assertIn("admin", page.text)
+        self.assertIn("Dashboard", page.text)
+        self.assertIn("Read-only mode", page.text)
+
+    def test_static_design_assets_are_local_and_served(self) -> None:
+        client = self.client()
+        page = client.get("/login")
+        self.assertIn('href="https://manager.example.com/static/app.css"', page.text)
+        self.assertIn('src="https://manager.example.com/static/theme.js"', page.text)
+        self.assertNotIn("cdn", page.text.lower())
+        stylesheet = client.get("/static/app.css")
+        script = client.get("/static/theme.js")
+        self.assertEqual(stylesheet.status_code, 200)
+        self.assertEqual(script.status_code, 200)
+        self.assertIn("--healthy", stylesheet.text)
+        self.assertIn("localStorage", script.text)
 
     def test_signing_in_over_plain_http_omits_secure_only_when_configured(self) -> None:
         client = TestClient(

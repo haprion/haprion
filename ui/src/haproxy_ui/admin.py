@@ -34,11 +34,16 @@ ADMIN_CONFIG_DIRECTORY = Path("/etc/haproxy-manager")
 ROLES = ("admin", "reader")
 
 #
-# Long rather than complex. Length is what actually costs an attacker something
-# against a memory-hard hash, while composition rules mostly produce one
-# predictable substitution per class and a password nobody can remember.
+# The NIST SP 800-63B floor, and no composition rules for the reason that
+# document gives: rules mostly produce one predictable substitution per class
+# and a password nobody can remember, while length is what actually costs an
+# attacker something against a memory-hard hash.
 #
-MINIMUM_PASSWORD_LENGTH = 12
+# Eight is a floor rather than a recommendation. Online guessing is already
+# bounded by the throttle; this number is what stands between a stolen database
+# dump and the accounts in it, together with Argon2id.
+#
+MINIMUM_PASSWORD_LENGTH = 8
 
 
 class AdminError(Exception):

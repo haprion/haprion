@@ -222,5 +222,14 @@ exec ${PLATFORM_ROOT}/current/venv/bin/haproxy-ui-user "\$@"
 EOF
 )"
 
+step "The rollback command"
+#
+# Installed as a rendered copy rather than a shim into `current`. A rollback
+# command that lives inside the release it is rolling away from is a command
+# that can be replaced by the very switch it is performing.
+#
+install_file /usr/local/sbin/haproxy-ui-rollback root:root 755 \
+    "$(sed -e "s|/apps/haproxy-manager|${PLATFORM_ROOT}|g" bin/haproxy-ui-rollback)"
+
 echo
 log "release ${release_id} is current"

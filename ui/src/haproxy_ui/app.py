@@ -94,7 +94,21 @@ def create_app(config: Config | None = None) -> FastAPI:
             with app.state.pool.connection() as connection:
                 identity, database = db.connected_identity(connection)
         except Exception as exc:  # noqa: BLE001 - any failure to reach the database is one answer
-            body["error"] = {"code": "database_unavailable", "message": str(exc)}
+            #
+            # The exception goes to the log, not to the caller. /healthz is
+            # unauthenticated and reachable through nginx, and a psycopg error
+            # names the socket, the role and whatever PostgreSQL wanted to say -
+            # which is a description of the inside of the machine handed to
+            # anyone who asks.
+            #
+            # The operator loses nothing: the detail is in the service log,
+            # where they are already looking when a health check goes red.
+            #
+            logger.warning("healthz: the database did not answer: %s", exc)
+            body["error"] = {
+                "code": "database_unavailable",
+                "message": "the database did not answer; the detail is in the service log",
+            }
             return JSONResponse(body, status_code=503)
 
         body.update({"ok": True, "identity": identity, "database": database})

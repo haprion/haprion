@@ -1,0 +1,113 @@
+#!/bin/bash
+#
+# Build and activate a release of the web interface.
+#
+#     sudo UV_BIN=/path/to/uv ./install-ui-release <answers-file> <source-tree>
+#
+# A release is a commit. The source tree must be a clean checkout, and the
+# release is named after the commit it was built from - so "which code is
+# running" is answerable by reading a symlink, and answerable the same way in a
+# year.
+#
+# The release directory holds one thing: a virtual environment with both
+# distributions installed non-editably. The plan sketched app/ beside venv/;
+# one directory that is replaced whole is simpler and cannot half-update.
+#
+# `current` is switched only after the new release has been started and has
+# answered. A release that cannot import its own dependencies must not become
+# the one a service restart would pick up.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+source_tree="${2:-}"
+require_vars PLATFORM_ROOT PLATFORM_GROUP WEB_USER
+
+[[ -n "$source_tree" ]] || die "usage: $(basename "$0") <answers-file> <source-tree>"
+[[ -d "${source_tree}/ui" ]] || die "not a source tree: ${source_tree}"
+
+uv="${UV_BIN:-}"
+[[ -n "$uv" && -x "$uv" ]] || die "set UV_BIN to the uv executable"
+
+step "Source tree"
+#
+# Refused rather than warned about. A release built from an edited tree is a
+# release nobody can reproduce, and the moment it is running in production the
+# question "what is in it" has no answer.
+#
+if [[ -n "$(git -C "$source_tree" status --porcelain)" ]]; then
+    die "the source tree has uncommitted changes. A release is a commit."
+fi
+commit="$(git -C "$source_tree" rev-parse --short=12 HEAD)"
+version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "${source_tree}/ui/pyproject.toml" | head -1)"
+[[ -n "$version" ]] || die "cannot read the version from ui/pyproject.toml"
+release_id="${version}-${commit}"
+log "  ok       ${release_id}"
+
+release="${PLATFORM_ROOT}/releases/${release_id}"
+
+step "Building"
+if [[ -d "$release" ]]; then
+    log "  ok       ${release} already exists"
+else
+    staging="$(mktemp -d "${PLATFORM_ROOT}/releases/.${commit}.XXXXXX")"
+    trap 'rm -rf -- "$staging"' EXIT
+    #
+    # --locked so the lockfile decides, and a stale lockfile fails instead of
+    # being refreshed underneath a release. --no-dev leaves the test and lint
+    # tooling out of something that only has to run. --no-editable so the
+    # installed code is a copy rather than a pointer into a working tree that
+    # can change after installation.
+    #
+    ( cd "${source_tree}/ui" \
+      && UV_PROJECT_ENVIRONMENT="${staging}/venv" "$uv" sync --locked --no-dev --no-editable )
+    mv "$staging" "$release"
+    trap - EXIT
+    log "  built    ${release}"
+fi
+
+step "Ownership"
+#
+# Root-owned and not writable by the account that runs it. A service that can
+# rewrite its own code turns any flaw that reaches the filesystem into a
+# permanent one.
+#
+chown -R "root:${PLATFORM_GROUP}" "$release"
+find "$release" -type d -exec chmod 750 {} +
+find "$release" -type f -exec chmod g-w,o-rwx {} +
+log "  ok       root:${PLATFORM_GROUP}, not group-writable"
+
+step "Proving the release before it becomes current"
+#
+# Imported as the account that will run it, from the release that is about to be
+# activated. A release that cannot import its own dependencies, or that the
+# service account cannot read, must not become the one a restart picks up - and
+# the only way to know is to try it as that user.
+#
+sudo -u "$WEB_USER" "${release}/venv/bin/python" -c \
+    'import haproxy_ui.app, haproxy_mgmt.cluster_status; print("imports ok")' \
+    || die "the release cannot be imported by ${WEB_USER}"
+log "  ok       ${WEB_USER} can import the release"
+
+step "Activating"
+link="${PLATFORM_ROOT}/current"
+if [[ "$(readlink -f "$link" 2>/dev/null || true)" == "$release" ]]; then
+    log "  ok       current already points at ${release_id}"
+else
+    previous="$(readlink -f "$link" 2>/dev/null || echo none)"
+    #
+    # Written beside and renamed over, so `current` is never briefly absent.
+    # A service restarting during the switch finds one release or the other,
+    # never nothing.
+    #
+    ln -sfn "$release" "${link}.new"
+    mv -T "${link}.new" "$link"
+    log "  switched current -> ${release_id}  (was $(basename "$previous"))"
+fi
+
+echo
+log "release ${release_id} is current"

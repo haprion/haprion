@@ -39,9 +39,23 @@ FORBIDDEN_BASENAMES = {
     "known_hosts",
 }
 FORBIDDEN_SUFFIXES = {".cer", ".crt", ".key", ".pem", ".p12", ".pfx"}
+#
+# The RFC 5737 documentation ranges, plus loopback.
+#
+# Loopback is here because the rule this scanner enforces is "no address out of
+# a real environment", and 127.0.0.0/8 is not out of any environment - it means
+# "this machine" wherever it is read. Excluding it forced documentation to be
+# wrong to pass: the web service binds loopback and nginx is the only thing that
+# reaches it, so an example that says otherwise teaches the wrong deployment,
+# and `localhost` is ambiguous for a listen address because it may resolve to
+# ::1 instead.
+#
+# Nothing else joins this list without the same argument. A private address is
+# still an address out of somebody's network, and RFC 1918 ranges stay refused.
+#
 DOCUMENTATION_NETWORKS = tuple(
     ipaddress.ip_network(network)
-    for network in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24")
+    for network in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "127.0.0.0/8")
 )
 IPV4_CANDIDATE = re.compile(r"(?<![0-9])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9])")
 

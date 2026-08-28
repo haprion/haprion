@@ -1,0 +1,57 @@
+[Unit]
+Description=HAProxy Manager web interface
+Documentation=file:///apps/haproxy-manager/current
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=haproxy-ui-web
+Group=haproxy-ui-web
+
+# The release, not a checkout. Switching `current` and restarting is the whole
+# deployment; rolling back is switching it and restarting again.
+Environment=HAPROXY_UI_CONFIG=/apps/haproxy-manager/config/ui.toml
+ExecStart=/apps/haproxy-manager/current/venv/bin/uvicorn \
+    --factory haproxy_ui.app:create_app \
+    --host 127.0.0.1 --port 8080 \
+    --no-server-header --proxy-headers --forwarded-allow-ips=127.0.0.1
+
+Restart=on-failure
+RestartSec=2
+
+# The service reads its configuration and its own release, and writes nothing to
+# the filesystem at all. Everything below says that in terms systemd enforces
+# rather than in terms the code promises.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+
+# AF_UNIX for the database socket, AF_INET for the port nginx connects to.
+# Nothing else - this process has no reason to open any other kind of socket.
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressAllow=localhost
+IPAddressDeny=any
+
+# It has no sudo rule and must never gain one. The engine's helpers are the
+# worker's business, and the worker is a different account.
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

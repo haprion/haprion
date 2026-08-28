@@ -76,6 +76,21 @@ ensure_dir "${PLATFORM_ROOT}/data/dumps" root:root              700
 #
 ensure_dir "${PLATFORM_ROOT}/data/logs"  root:root              750
 
+#
+# Written from the example only if it is absent. A configuration file that an
+# installation rewrites on every run is one nobody dares edit.
+#
+step "Configuration"
+config="${PLATFORM_ROOT}/config/ui.toml"
+if [[ -f "$config" ]]; then
+    chown "root:${PLATFORM_GROUP}" "$config"
+    chmod 640 "$config"
+    log "  ok       ${config}"
+else
+    install -o root -g "$PLATFORM_GROUP" -m 640 examples/ui.toml.example "$config"
+    log "  created  ${config}  (from the example - review it)"
+fi
+
 step "Release layout"
 if [[ -L "${PLATFORM_ROOT}/current" ]]; then
     log "  ok       ${PLATFORM_ROOT}/current -> $(readlink "${PLATFORM_ROOT}/current")"

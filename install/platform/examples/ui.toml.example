@@ -1,0 +1,28 @@
+# Configuration for the web interface.
+#
+# Root-owned, readable by the platform group, and never writable by the accounts
+# that read it: every value here is a decision the deployment made, not state a
+# running service can rewrite.
+#
+# management_writes comes FIRST. A bare key written after a table belongs to
+# that table in TOML, so the same line below [listen] would silently become
+# listen.management_writes and read as absent - which looks exactly like writes
+# being disabled.
+
+# Phase 4 installs the platform read-only. Turning this on is what enables the
+# job path, and turning it off is the documented rollback for it: no build, no
+# deploy, back to a read-only interface.
+management_writes = false
+
+[database]
+# Connections use the local socket and peer authentication. There is no user and
+# no password here, and no place to put one: each service account is named after
+# its database role, so the kernel establishes who is connecting.
+name = "haproxy_ui"
+socket_directory = "/var/run/postgresql"
+
+[listen]
+# Bound to loopback. Nginx terminates TLS and is the only thing that reaches
+# this port; the interface is never exposed directly.
+host = "127.0.0.1"
+port = 8080

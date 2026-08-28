@@ -29,7 +29,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napp_session\napp_user\naudit_event'
+expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\njob'
 actual_tables="$(run -c "select tablename from pg_tables
                           where schemaname = 'public' order by 1")"
 if [[ "$actual_tables" == "$expected_tables" ]]; then
@@ -52,7 +52,11 @@ app_web	app_session	UPDATE	last_seen_at, revoked_at
 app_web	app_user	SELECT	disabled, id, password_hash, role, username, username_normalised
 app_web	audit_event	INSERT	action, actor, cluster, detail, request_id
 app_web	audit_event	SELECT	action, actor, at, cluster, detail, id, request_id
+app_web	job	INSERT	cluster, operation, payload
+app_web	job	SELECT	cluster, created_at, exit_code, finished_at, id, operation, outcome, payload, request_id, result, started_at, state, stderr_excerpt
 app_worker	audit_event	INSERT	action, actor, cluster, detail, request_id
+app_worker	job	SELECT	claim_token, cluster, created_at, exit_code, finished_at, id, lease_until, operation, outcome, payload, request_id, result, started_at, state, stderr_excerpt, worker_id
+app_worker	job	UPDATE	claim_token, exit_code, finished_at, lease_until, outcome, result, started_at, state, stderr_excerpt, worker_id
 EOF
 )
 actual_grants="$(run -c "
@@ -76,9 +80,21 @@ fi
 # wrong: a role that can edit the audit trail, or write a table it only reads.
 #
 step "What the roles must not be able to do"
+#
+# Each probe runs inside a transaction that is rolled back, so a check that
+# unexpectedly SUCCEEDS reports the failure without leaving the row it managed
+# to write. A verification that dirties the thing it verifies is one nobody runs
+# twice.
+#
 refuse() {
     local user="$1" description="$2" sql="$3"
-    if sudo -u "$user" psql -d "$DB_NAME" -qtAX -c "$sql" >/dev/null 2>&1; then
+    #
+    # ON_ERROR_STOP is what makes this test mean anything. Without it psql
+    # reports a failed statement on stderr and still exits 0, so every refusal
+    # below would pass whether or not the database refused.
+    #
+    if sudo -u "$user" psql -d "$DB_NAME" -qtAX -v ON_ERROR_STOP=1 \
+            -c "begin; ${sql}; rollback" >/dev/null 2>&1; then
         fail "${user} ${description}"
     else
         log "  ok       ${user} ${description}"
@@ -100,6 +116,103 @@ refuse "$POLLER_USER" "cannot read accounts" \
        "select id from app_user"
 refuse "$POLLER_USER" "cannot write the audit trail" \
        "insert into audit_event (action) values ('probe')"
+
+#
+# The job table is where a web intrusion is bounded. Each of these is a way the
+# boundary could be lost while the application still looked correct.
+#
+refuse "$WEB_USER"    "cannot queue a job as already running" \
+       "insert into job (operation, cluster, payload, state)
+        values ('deploy', 'alpha', '{}'::jsonb, 'running')"
+refuse "$WEB_USER"    "cannot choose a job's request id" \
+       "insert into job (operation, cluster, payload, request_id)
+        values ('deploy', 'alpha', '{}'::jsonb, gen_random_uuid())"
+refuse "$WEB_USER"    "cannot write a job result" \
+       "insert into job (operation, cluster, payload, result)
+        values ('deploy', 'alpha', '{}'::jsonb, '{}'::jsonb)"
+refuse "$WEB_USER"    "cannot grant itself a lease" \
+       "insert into job (operation, cluster, payload, lease_until)
+        values ('deploy', 'alpha', '{}'::jsonb, now())"
+refuse "$WEB_USER"    "cannot update a job row" \
+       "update job set state = 'done'"
+refuse "$WEB_USER"    "cannot queue an operation outside the allowlist" \
+       "insert into job (operation, cluster, payload)
+        values ('rm-rf', 'alpha', '{}'::jsonb)"
+refuse "$POLLER_USER" "cannot write a job row" \
+       "insert into job (operation, cluster, payload)
+        values ('deploy', 'alpha', '{}'::jsonb)"
+refuse "$POLLER_USER" "cannot read jobs" \
+       "select id from job"
+
+#
+# The half that keeps the half above honest. Every refusal would also pass if
+# the web role could write nothing at all, so the suite has to prove that the
+# thing it is bounding actually works - otherwise a broken grant reads as
+# perfect security.
+#
+step "What the roles must be able to do"
+allow() {
+    local user="$1" description="$2" sql="$3" expected="$4"
+    local got
+    if ! got="$(sudo -u "$user" psql -d "$DB_NAME" -qtAX -v ON_ERROR_STOP=1 \
+                -c "begin; ${sql}; rollback" 2>&1)"; then
+        fail "${user} ${description}: ${got}"
+        return
+    fi
+    if [[ -n "$expected" && "$got" != *"$expected"* ]]; then
+        fail "${user} ${description}: got '${got}', expected '${expected}'"
+        return
+    fi
+    log "  ok       ${user} ${description}"
+}
+
+#
+# The row comes back stating what the database decided rather than what the
+# caller asked for: pending, a request ID and a creation time none of which the
+# web role holds insert on.
+#
+allow "$WEB_USER" "can queue a job, which the database marks pending" \
+      "insert into job (operation, cluster, payload)
+       values ('deploy', 'alpha', '{\"probe\": true}'::jsonb)
+       returning state" \
+      "pending"
+
+allow "$WEB_USER" "receives a request id it did not choose" \
+      "insert into job (operation, cluster, payload)
+       values ('deploy', 'alpha', '{}'::jsonb)
+       returning request_id is not null" \
+      "t"
+
+#
+# The claim, exactly as the worker will write it, against however many pending
+# jobs there are - usually none. PostgreSQL checks column privileges when it
+# plans the statement, not when it finds a row, so this proves the worker may
+# write every column the claim touches without needing a row to exist and
+# without leaving one behind.
+#
+allow "$WORKER_USER" "may run the claim as written" \
+      "update job set state = 'running',
+                      claim_token = gen_random_uuid(),
+                      worker_id = 'probe',
+                      started_at = statement_timestamp(),
+                      lease_until = statement_timestamp() + interval '30 seconds'
+        where id = (select id from job
+                     where state = 'pending'
+                     order by created_at, id
+                     limit 1
+                       for update skip locked)" \
+      ""
+
+#
+# The double-clicked button. The first insert succeeds and the second must be
+# refused by the partial unique index, so the pair fails as a whole - which is
+# what the caller sees as a conflict instead of a second rollout.
+#
+refuse "$WEB_USER" "cannot queue a second active job for one cluster" \
+       "insert into job (operation, cluster, payload)
+        values ('deploy', 'alpha', '{}'::jsonb);
+        insert into job (operation, cluster, payload)
+        values ('deploy', 'alpha', '{}'::jsonb)"
 
 echo
 if (( failures )); then

@@ -49,13 +49,13 @@ psql_super() { sudo -u postgres psql -v ON_ERROR_STOP=1 -qtAX "$@"; }
 step "Contract roles"
 ensure_group_role() {
     local role="$1" purpose="$2"
-    if [[ "$(psql_super -c "select 1 from pg_roles where rolname = '${role}'")" == "1" ]]; then
-        log "  ok       ${role}  (${purpose})"
-    else
-        psql_super -c "create role \"${role}\" with nologin nosuperuser nocreatedb
-                       nocreaterole noinherit noreplication nobypassrls"
+    if [[ "$(psql_super -c "select 1 from pg_roles where rolname = '${role}'")" != "1" ]]; then
+        psql_super -c "create role \"${role}\" with nologin"
         log "  created  ${role}  (${purpose})"
     fi
+    psql_super -c "alter role \"${role}\" with nologin nosuperuser nocreatedb
+                   nocreaterole noinherit noreplication nobypassrls"
+    log "  ok       ${role}  (${purpose})"
 }
 
 ensure_group_role app_web    "sessions, audit, and queueing a job"
@@ -65,22 +65,46 @@ ensure_group_role app_poller "writes cached status and metrics"
 step "Login roles"
 ensure_login_role() {
     local role="$1" contract="$2"
-    if [[ "$(psql_super -c "select 1 from pg_roles where rolname = '${role}'")" == "1" ]]; then
-        log "  ok       ${role}"
-    else
-        #
-        # INHERIT, and exactly one group each. Inheritance is what makes the
-        # contract role usable without every query starting with SET ROLE; one
-        # membership is what keeps "inherits" from meaning "inherits things
-        # nobody granted it".
-        #
-        psql_super -c "create role \"${role}\" with login inherit nosuperuser nocreatedb
+    if [[ "$(psql_super -c "select 1 from pg_roles where rolname = '${role}'")" != "1" ]]; then
+        psql_super -c "create role \"${role}\" with login nosuperuser nocreatedb
                        nocreaterole noreplication nobypassrls"
         log "  created  ${role}"
     fi
+
+    #
+    # Attributes are set on every run, not only at creation, because "the role
+    # exists" is not "the role is correct" - the same distinction ensure_dir
+    # makes for directories, and skipping it here cost an afternoon.
+    #
+    # It cost it in the quietest possible way: a role left NOINHERIT inherits
+    # nothing from its contract role, so every negative check passes and the
+    # application simply cannot work. A privilege test that only asks what a
+    # role must NOT do reads a role with no privileges at all as perfect.
+    #
+    # INHERIT, with exactly one membership each. Inheritance is what makes the
+    # contract role usable without every query starting with SET ROLE; one
+    # membership is what keeps "inherits" from meaning "inherits things nobody
+    # granted it".
+    #
+    psql_super -c "alter role \"${role}\" with login inherit nosuperuser nocreatedb
+                   nocreaterole noreplication nobypassrls"
+
     if [[ -n "$contract" ]]; then
-        psql_super -c "grant \"${contract}\" to \"${role}\""
-        log "  member   ${role} of ${contract}"
+        #
+        # WITH INHERIT TRUE, stated rather than relied upon. Since PostgreSQL 16
+        # a membership carries its own INHERIT setting, and a plain GRANT takes
+        # its default from the member role's attribute AS IT WAS WHEN THE GRANT
+        # WAS MADE. Altering the role afterwards does not revisit memberships
+        # already recorded, so a membership granted while the role was NOINHERIT
+        # stays inert however the role is later corrected.
+        #
+        # The symptom is silence: the catalog shows the grants, the role looks
+        # right, and every query fails with "permission denied for table".
+        #
+        psql_super -c "grant \"${contract}\" to \"${role}\" with inherit true"
+        log "  ok       ${role}  (login, inherit, member of ${contract})"
+    else
+        log "  ok       ${role}  (login, inherit)"
     fi
 }
 

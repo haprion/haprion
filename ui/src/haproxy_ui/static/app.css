@@ -71,6 +71,7 @@
 @font-face {
   font-family: "Source Sans Pro";
   font-style: normal;
+  /* NPM's v2 bundle supplied regular and bold; avoid a synthetic semibold. */
   font-weight: 600;
   font-display: swap;
   src: url("source-sans-pro-600-latin-ext.woff2") format("woff2");
@@ -153,13 +154,13 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   padding: 0 12px;
   color: var(--muted-strong);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 400;
   text-decoration: none;
 }
 .primary-nav svg { width: 16px; height: 16px; stroke-width: 1.9; }
 .primary-nav a, .nav-item { border-radius: 5px; }
 .primary-nav a:hover { color: var(--text-strong); background: color-mix(in srgb, var(--panel-raised) 72%, transparent); }
-.primary-nav a.active { color: var(--text-strong); background: transparent; }
+.primary-nav a.active { color: var(--text-strong); background: transparent; font-weight: 600; }
 .nav-item { cursor: default; opacity: 0.72; }
 
 .header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
@@ -227,7 +228,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .menu-button:hover { background: var(--panel-soft); color: var(--critical); }
 
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
-.page-heading h1 { margin: 0; color: var(--text-strong); font-size: clamp(21px, 2.1vw, 24px); font-weight: 700; letter-spacing: -0.02em; }
+.page-heading h1 { margin: 0; color: var(--text-strong); font-size: clamp(19px, 1.9vw, 21px); font-weight: 700; letter-spacing: -0.02em; }
 .mode-badge { display: inline-flex; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted-strong); font-size: 12px; font-weight: 600; white-space: nowrap; }
 
 .status-dot { display: inline-block; width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--unknown); box-shadow: 0 0 0 3px var(--unknown-soft); }
@@ -249,10 +250,10 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   box-shadow: none;
 }
 .metric-card > div { display: flex; align-items: baseline; gap: 7px; min-width: 0; overflow: hidden; white-space: nowrap; }
-.metric-card strong { color: var(--text-strong); font-size: 21px; font-weight: 690; letter-spacing: -0.03em; }
+.metric-card strong { color: var(--text-strong); font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
 .metric-card strong small { color: var(--muted); font-size: 14px; font-weight: 550; letter-spacing: 0; }
-.metric-card div > span { overflow: hidden; color: var(--muted-strong); font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.metric-card > div > small { min-width: 0; overflow: hidden; padding-left: 8px; border-left: 1px solid var(--line); color: var(--muted); font-size: 13px; font-weight: 600; text-overflow: ellipsis; }
+.metric-card div > span { overflow: hidden; color: var(--muted-strong); font-size: 14px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.metric-card > div > small { min-width: 0; overflow: hidden; padding-left: 8px; border-left: 1px solid var(--line); color: var(--muted); font-size: 13px; font-weight: 400; text-overflow: ellipsis; }
 .metric-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 auto; border-radius: 6px; color: #fff; background: var(--brand); }
 .metric-icon svg { width: 21px; height: 21px; }
 .metric-icon-node { color: #fff; background: var(--info); }

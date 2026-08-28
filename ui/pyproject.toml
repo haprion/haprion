@@ -20,6 +20,9 @@ requires-python = ">=3.12"
 dependencies = [
     "haproxy-manager",
     "psycopg[binary,pool]>=3.3,<4",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    "jinja2>=3.1,<4",
 ]
 
 [dependency-groups]

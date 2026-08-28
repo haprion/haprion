@@ -1,0 +1,22 @@
+#!/bin/sh
+#
+# The interface's own gate. Separate from the engine's because it needs the
+# environment holding the interface's dependencies, and a gate that skips what
+# it cannot import is a gate that passes by not looking.
+#
+set -eu
+
+base=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+
+if [ -z "${HAPROXY_UI_PYTHON:-}" ]; then
+    echo "run-tests: set HAPROXY_UI_PYTHON to the python of the interface environment" >&2
+    exit 2
+fi
+if [ ! -x "${HAPROXY_UI_PYTHON}" ]; then
+    echo "run-tests: not executable: ${HAPROXY_UI_PYTHON}" >&2
+    exit 2
+fi
+
+cd "$base"
+"$HAPROXY_UI_PYTHON" -m unittest discover -s tests -t . -v
+"$(dirname -- "$HAPROXY_UI_PYTHON")/mypy"

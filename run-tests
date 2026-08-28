@@ -50,5 +50,11 @@ trap 'rm -f -- "$coverage_file"' EXIT HUP INT TERM
 COVERAGE_FILE="$coverage_file" coverage run -m unittest discover -s "$base/tests" -v
 COVERAGE_FILE="$coverage_file" coverage report
 python3 "$base/contract-tests/validate_contracts.py"
+#
+# The interface has its own suite and its own environment. Run, never
+# skipped: a gate that passes because it could not import what it was meant
+# to check is the failure this repository already had once this week.
+#
+"$base/ui/run-tests"
 python3 "$base/tools/build_smoke.py"
 pip-audit --local

@@ -38,7 +38,14 @@ DEFAULT_LOCK_ROOT = Path("/run/haproxy-mgmt/locks")
 # processes that could have held it.
 #
 DIRECTORY_MODE = 0o755
-FILE_MODE = 0o644
+#
+# Only the two deploy helpers open this file, and both run as root: the mode is
+# what they create it with, not a permission anyone else needs. The note inside
+# it names a pid and an operation, which is not secret but is also not anybody
+# else's to read, so the file is root-only rather than world-readable by the
+# default umask nobody chose.
+#
+FILE_MODE = 0o600
 
 EXIT_BUSY = 75
 

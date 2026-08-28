@@ -36,6 +36,37 @@ from haproxy_ui.config import Database
 
 
 @dataclass(frozen=True, slots=True)
+class Account:
+    id: int
+    username: str
+    role: str
+    disabled: bool
+    password_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticatedSession:
+    """A live session and the account it belongs to, read in one statement.
+
+    Joined rather than fetched in two queries because every authenticated
+    request needs both, and two round trips per request is a cost paid on the
+    hot path for no benefit. The row is also the only place the two can be seen
+    to agree: a session whose account has since been disabled is caught here,
+    not later.
+    """
+
+    token_hash: bytes
+    user_id: int
+    username: str
+    role: str
+    disabled: bool
+    created_at: datetime
+    last_seen_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
 class Job:
     id: int
     request_id: UUID
@@ -140,3 +171,185 @@ def queue_job(
     if row is None:  # pragma: no cover - insert ... returning yields a row or raises
         raise psycopg.OperationalError("the insert returned no row")
     return row
+
+
+def account_by_username(connection: Connection[Any], username: str) -> Account | None:
+    """Look an account up by the normalised name.
+
+    The comparison uses the generated column rather than `lower(username)` in
+    the predicate, so it reads the unique index and cannot disagree with the
+    constraint that made the name unique in the first place.
+    """
+
+    with connection.cursor(row_factory=class_row(Account)) as cursor:
+        cursor.execute(
+            "select id, username, role, disabled, password_hash "
+            "  from app_user "
+            " where username_normalised = lower(%(username)s)",
+            {"username": username},
+        )
+        return cursor.fetchone()
+
+
+def record_login_attempt(
+    connection: Connection[Any], *, username: str, client_ip: str, succeeded: bool
+) -> None:
+    """Write down that someone tried. Always, whichever way it went.
+
+    Successes are recorded too, and not for symmetry: the throttle counts
+    failures *since the last success*, so without the success rows a person who
+    mistypes a password four times and then logs in correctly would still be
+    carrying those four failures for the rest of the window.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into login_attempt (username_normalised, client_ip, succeeded) "
+            "values (lower(%(username)s), %(client_ip)s, %(succeeded)s)",
+            {"username": username, "client_ip": client_ip, "succeeded": succeeded},
+        )
+
+
+def failures_since_last_success(
+    connection: Connection[Any], *, username: str, client_ip: str, window_minutes: int
+) -> int:
+    """How many failures this name and address have accumulated recently.
+
+    Two bounds, and both are needed. The window keeps an old mistake from
+    counting forever; "since the last success" keeps a person who has proved
+    they know the password from being locked out by their own earlier typos.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select count(*) "
+            "  from login_attempt "
+            " where username_normalised = lower(%(username)s) "
+            "   and client_ip = %(client_ip)s "
+            "   and succeeded = false "
+            "   and at > statement_timestamp() - make_interval(mins => %(window)s) "
+            "   and at > coalesce( "
+            "         (select max(at) from login_attempt "
+            "           where username_normalised = lower(%(username)s) "
+            "             and client_ip = %(client_ip)s "
+            "             and succeeded = true), "
+            "         '-infinity'::timestamptz)",
+            {"username": username, "client_ip": client_ip, "window": window_minutes},
+        )
+        row = cursor.fetchone()
+    return int(row[0]) if row is not None else 0
+
+
+def create_session(
+    connection: Connection[Any], *, token_hash: bytes, user_id: int, expires_at: datetime
+) -> None:
+    """Store the hash of a session token, never the token.
+
+    Three columns, which is exactly what the web role holds `insert` on.
+    `created_at` and `last_seen_at` come from column defaults, so a session
+    cannot be recorded as older or fresher than it is.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into app_session (token_hash, user_id, expires_at) "
+            "values (%(token_hash)s, %(user_id)s, %(expires_at)s)",
+            {"token_hash": token_hash, "user_id": user_id, "expires_at": expires_at},
+        )
+
+
+def session_by_hash(connection: Connection[Any], token_hash: bytes) -> AuthenticatedSession | None:
+    """The session and its account, or nothing.
+
+    Deliberately returns rows that are expired, revoked or disabled rather than
+    filtering them out in SQL. Whether a session is still usable is a policy
+    question with a timeout in it, and it belongs where the timeout is
+    configured - not spread between here and there.
+    """
+
+    with connection.cursor(row_factory=class_row(AuthenticatedSession)) as cursor:
+        cursor.execute(
+            "select s.token_hash, s.user_id, u.username, u.role, u.disabled, "
+            "       s.created_at, s.last_seen_at, s.expires_at, s.revoked_at "
+            "  from app_session s "
+            "  join app_user u on u.id = s.user_id "
+            " where s.token_hash = %(token_hash)s",
+            {"token_hash": token_hash},
+        )
+        return cursor.fetchone()
+
+
+def touch_session(connection: Connection[Any], token_hash: bytes) -> None:
+    """Move the inactivity clock forward, and nothing else.
+
+    `last_seen_at` is set from `statement_timestamp()` rather than from a value
+    this process supplies, and `expires_at` is not touched at all - the web role
+    holds no `update` on it. A session can therefore be kept alive by use, and
+    still never outlive the absolute limit it was issued with.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update app_session set last_seen_at = statement_timestamp() "
+            " where token_hash = %(token_hash)s and revoked_at is null",
+            {"token_hash": token_hash},
+        )
+
+
+def revoke_session(connection: Connection[Any], token_hash: bytes) -> None:
+    """End one session. Idempotent, and never un-revokes one already ended."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update app_session set revoked_at = statement_timestamp() "
+            " where token_hash = %(token_hash)s and revoked_at is null",
+            {"token_hash": token_hash},
+        )
+
+
+def revoke_sessions_for_user(connection: Connection[Any], user_id: int) -> int:
+    """End every live session an account has, and say how many that was.
+
+    What "log this person out everywhere" means, and what a password reset or a
+    disable has to do to be worth anything: an account that cannot log in again
+    while its existing cookie keeps working has not really been disabled.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update app_session set revoked_at = statement_timestamp() "
+            " where user_id = %(user_id)s and revoked_at is null",
+            {"user_id": user_id},
+        )
+        return cursor.rowcount
+
+
+def record_audit_event(
+    connection: Connection[Any],
+    *,
+    actor: str | None,
+    action: str,
+    cluster: str | None = None,
+    request_id: UUID | None = None,
+    detail: Mapping[str, Any] | None = None,
+) -> None:
+    """Append to the record.
+
+    Written in the caller's transaction, which is the entire reason this module
+    takes connections instead of opening them: an audit row that commits
+    separately from the thing it describes is a history that can disagree with
+    what happened.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into audit_event (actor, action, cluster, request_id, detail) "
+            "values (%(actor)s, %(action)s, %(cluster)s, %(request_id)s, %(detail)s)",
+            {
+                "actor": actor,
+                "action": action,
+                "cluster": cluster,
+                "request_id": request_id,
+                "detail": Jsonb(dict(detail or {})),
+            },
+        )

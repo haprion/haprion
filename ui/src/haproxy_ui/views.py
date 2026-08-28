@@ -1,0 +1,306 @@
+"""The request-facing half of authentication: cookies, forms and redirects.
+
+The rules that shape every handler below:
+
+* **The client address comes from a header nginx overwrites**, never from one a
+  client can contribute to. The site config sets `X-Forwarded-For` to the peer
+  address rather than appending to it, so what arrives here is one address that
+  a request cannot lie about. If it is missing or unparseable, the peer address
+  is used and the request is still served - the throttle must not be the reason
+  the interface stops working.
+* **Failures say one thing.** Unknown account, wrong password, disabled account
+  and a throttled address all render the same sentence. Anything else turns the
+  form into a way to learn which usernames exist and which are locked.
+* **Every state-changing request carries a CSRF token**, including logout. A
+  forced logout is a small attack, but an exception in the rule is how the rule
+  stops being checkable.
+"""
+
+from __future__ import annotations
+
+import ipaddress
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from fastapi import APIRouter, Form, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+
+from haproxy_ui import auth, db
+from haproxy_ui.config import Config
+from haproxy_ui.db import AuthenticatedSession
+
+TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+#
+# How stale the inactivity clock is allowed to get before it is written again.
+# Without this every authenticated request would be a write, which turns a
+# read-only page view into database traffic and contention on one row. A minute
+# of imprecision against a ten-hour timeout is not a meaningful difference.
+#
+TOUCH_AFTER = timedelta(minutes=1)
+
+SIGN_IN_FAILED = "Sign-in failed. Check the username and password and try again."
+
+
+def client_address(request: Request) -> str:
+    """The address to hold responsible for this request.
+
+    Taken from the forwarded header because the only thing that connects to this
+    process is nginx on loopback; the peer address would otherwise be
+    `127.0.0.1` for every caller, which would put the entire internet in one
+    throttle bucket.
+
+    Validated as an address rather than trusted as a string. The column is
+    `inet`, and a header that is not an address is a bug in whatever wrote it -
+    it must not become its own quietly-unthrottled bucket.
+    """
+
+    forwarded = request.headers.get("x-forwarded-for", "")
+    candidate = forwarded.split(",")[0].strip()
+    if not candidate and request.client is not None:
+        candidate = request.client.host
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        return "127.0.0.1"
+
+
+def _cookie(response: Response, config: Config, token: str, expires_at: datetime) -> None:
+    """Set the session cookie, with every flag stated rather than defaulted.
+
+    `SameSite=Lax` rather than `Strict`: Strict would drop the cookie when
+    arriving from a link in a mail or a monitoring dashboard, which is a normal
+    way to reach an operations interface, and Lax already withholds it from
+    cross-site form posts - the case that matters.
+    """
+
+    response.set_cookie(
+        auth.SESSION_COOKIE,
+        token,
+        max_age=int((expires_at - datetime.now(UTC)).total_seconds()),
+        httponly=True,
+        secure=config.session.cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+
+
+def current_session(request: Request) -> AuthenticatedSession | None:
+    """Who is calling, if anyone. Reads; decides nothing.
+
+    Returns None for every failure - absent, unknown, expired, revoked, disabled
+    - because from a handler's point of view those are one state: not signed in.
+    The distinction is kept where it is useful, in the audit trail.
+    """
+
+    token = request.cookies.get(auth.SESSION_COOKIE)
+    if not token:
+        return None
+    config: Config = request.app.state.config
+    digest = auth.token_hash(token)
+
+    with request.app.state.pool.connection() as connection:
+        session = db.session_by_hash(connection, digest)
+        verdict = auth.evaluate_session(session, config.session)
+        if not verdict.usable or session is None:
+            return None
+        #
+        # The inactivity clock is moved forward in its own transaction, after
+        # the read, and only when it has actually gone stale.
+        #
+        if datetime.now(UTC) - session.last_seen_at > TOUCH_AFTER:
+            db.touch_session(connection, digest)
+            connection.commit()
+    return session
+
+
+def require_session(request: Request) -> AuthenticatedSession:
+    """A dependency for anything that must not be reachable while signed out.
+
+    Raised rather than returned, because a dependency cannot redirect: a 303
+    with a Location header is how a browser gets sent to the form, and how an
+    HTMX request gets an answer it can follow rather than a page fragment where
+    content was expected.
+    """
+
+    session = current_session(request)
+    if session is None:
+        raise HTTPException(status_code=303, headers={"Location": "/login"})
+    return session
+
+
+def build_router(config: Config) -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/", response_class=HTMLResponse)
+    def index(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        return TEMPLATES.TemplateResponse(
+            request,
+            "index.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "management_writes": config.management_writes,
+                "csrf_token": auth.csrf_token(token),
+            },
+        )
+
+    @router.get("/login", response_class=HTMLResponse)
+    def login_form(request: Request) -> Response:
+        if current_session(request) is not None:
+            return RedirectResponse("/", status_code=303)
+        #
+        # A token is needed to protect the login post itself, and there is no
+        # session to derive one from yet. A short-lived cookie carries one, set
+        # here and replaced by the real session cookie on success.
+        #
+        pre_token = auth.new_session_token()
+        response: Response = TEMPLATES.TemplateResponse(
+            request,
+            "login.html",
+            {"error": None, "csrf_token": auth.csrf_token(pre_token)},
+        )
+        response.set_cookie(
+            auth.PRE_SESSION_COOKIE,
+            pre_token,
+            max_age=600,
+            httponly=True,
+            secure=config.session.cookie_secure,
+            samesite="lax",
+            path="/login",
+        )
+        return response
+
+    @router.post("/login", response_class=HTMLResponse)
+    def login(
+        request: Request,
+        username: str = Form(default="", max_length=64),
+        password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        pre_token = request.cookies.get(auth.PRE_SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(pre_token, csrf_token):
+            #
+            # Not an error page. A stale form is the ordinary cause - the tab was
+            # open longer than the pre-session cookie lived - and the useful
+            # answer is a fresh form, not a diagnosis.
+            #
+            return _login_again(request, config)
+
+        address = client_address(request)
+        with request.app.state.pool.connection() as connection:
+            failures = db.failures_since_last_success(
+                connection,
+                username=username,
+                client_ip=address,
+                window_minutes=config.throttle.window_minutes,
+            )
+            throttled = failures >= config.throttle.max_failures
+
+            account = None if throttled else db.account_by_username(connection, username)
+            if account is None or account.disabled:
+                #
+                # The same time is spent whether the account is missing,
+                # disabled or throttled, so the three cannot be told apart from
+                # outside.
+                #
+                auth.burn_absent_user_time(password)
+                accepted = False
+            else:
+                accepted = auth.verify_password(account.password_hash, password)
+
+            db.record_login_attempt(
+                connection, username=username or "?", client_ip=address, succeeded=accepted
+            )
+            if not accepted:
+                db.record_audit_event(
+                    connection,
+                    actor=username or None,
+                    action="login_failed",
+                    detail={
+                        "client_ip": address,
+                        "reason": "throttled" if throttled else "rejected",
+                    },
+                )
+                connection.commit()
+                return _login_again(request, config, error=SIGN_IN_FAILED)
+
+            assert account is not None  # noqa: S101 - accepted implies an account was found
+            #
+            # A new token on every login, which is what makes the rotation
+            # requirement real: nothing a browser held before signing in is
+            # still valid afterwards.
+            #
+            token = auth.new_session_token()
+            expires_at = auth.absolute_expiry(config.session)
+            db.create_session(
+                connection,
+                token_hash=auth.token_hash(token),
+                user_id=account.id,
+                expires_at=expires_at,
+            )
+            db.record_audit_event(
+                connection,
+                actor=account.username,
+                action="login",
+                detail={"client_ip": address, "role": account.role},
+            )
+            connection.commit()
+
+        response = RedirectResponse("/", status_code=303)
+        _cookie(response, config, token, expires_at)
+        response.delete_cookie(auth.PRE_SESSION_COOKIE, path="/login")
+        return response
+
+    @router.post("/logout")
+    def logout(
+        request: Request,
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        response = RedirectResponse("/login", status_code=303)
+        if not token or not auth.csrf_token_is_valid(token, csrf_token):
+            return response
+
+        with request.app.state.pool.connection() as connection:
+            digest = auth.token_hash(token)
+            session = db.session_by_hash(connection, digest)
+            db.revoke_session(connection, digest)
+            db.record_audit_event(
+                connection,
+                actor=session.username if session else None,
+                action="logout",
+                detail={"client_ip": client_address(request)},
+            )
+            connection.commit()
+        response.delete_cookie(auth.SESSION_COOKIE, path="/")
+        return response
+
+    return router
+
+
+def _login_again(request: Request, config: Config, *, error: str | None = None) -> Response:
+    """Render a fresh login form, with a fresh token to post it with."""
+
+    pre_token = auth.new_session_token()
+    response: Response = TEMPLATES.TemplateResponse(
+        request,
+        "login.html",
+        {"error": error, "csrf_token": auth.csrf_token(pre_token)},
+        status_code=401 if error else 200,
+    )
+    response.set_cookie(
+        auth.PRE_SESSION_COOKIE,
+        pre_token,
+        max_age=600,
+        httponly=True,
+        secure=config.session.cookie_secure,
+        samesite="lax",
+        path="/login",
+    )
+    return response

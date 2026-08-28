@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Sign in — HAProxy Manager{% endblock %}
+{% block content %}
+<div class="panel" style="max-width: 22rem; margin: 3rem auto;">
+  <h1>HAProxy Manager</h1>
+  {#
+    One message for every way this can fail. Which of them happened is in the
+    audit trail, where it is useful, and not on this page, where it would tell
+    an attacker which usernames exist and which accounts are locked.
+  #}
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/login" autocomplete="on">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text" maxlength="64" required autofocus
+           autocapitalize="none" autocorrect="off" spellcheck="false">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" required
+           autocomplete="current-password">
+    <button type="submit">Sign in</button>
+  </form>
+</div>
+{% endblock %}

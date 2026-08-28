@@ -638,6 +638,97 @@ by scp or CLI rather than through the browser.
 
 Until then, replacement is the command above. See B21 in the decision log.
 
+### 4.6 Accounts and signing in
+
+There is no default password and no first-run setup page. Both are holes that
+exist for the whole life of an installation in order to be useful for its first
+thirty seconds: a shipped password survives in the field, and an
+unauthenticated page that creates an administrator is exactly what it sounds
+like.
+
+So the first account is a local root action:
+
+```bash
+sudo haproxy-ui-user -e prod add operator --role admin
+```
+
+The password is typed at the terminal, twice, and there is deliberately no flag
+to pass it as an argument — that would put it in the shell history and the
+process list.
+
+The same tool is the break-glass path when the only administrator is locked
+out, forgotten, or gone:
+
+| Command | What it does |
+|---|---|
+| `add <user> --role admin\|reader` | create an account |
+| `reset <user>` | set a new password **and end every session that account has** |
+| `disable <user>` | block sign-in and end every session |
+| `enable <user>` | allow sign-in again |
+| `unlock <user>` | clear the sign-in throttle |
+| `revoke <user>` | end every session without changing the password |
+| `list` | accounts, roles, and how many live sessions each has |
+
+Reset and disable revoke sessions on purpose. An account that cannot sign in
+again while its existing cookie keeps working has not actually been taken back
+from whoever had it, which is usually why either command is being run.
+
+`-e` names the environment, and each one is a root-owned file written by
+`02-platform-database`: `/etc/haproxy-manager/ui-admin-<environment>.conf`,
+holding the database name and the role to connect as. Prod and dev therefore
+cannot be confused by an environment variable or a working directory.
+
+**Root connects as the migration role**, the one that owns the schema, because
+no application role holds `insert` or `update` on the account table. That is the
+same boundary the running services live behind rather than an exception carved
+out for tooling: the web process cannot create an administrator no matter what
+it is asked to do.
+
+#### How a session works
+
+- **Passwords are Argon2id**, with parameters stated in the code rather than
+  taken from library defaults, and a database CHECK refuses any hash that is not
+  Argon2id. Changing algorithm has to be a migration, not a dependency upgrade.
+- **The session token is opaque and lives only in the cookie.** The database
+  stores its SHA-256 hash, so `app_session` read by anything — a dump, a backup,
+  a mistake — cannot be replayed as a login. There are no claims in the token and
+  no signing key to leak.
+- **Cookies are `Secure`, `HttpOnly` and `SameSite=Lax`.** Lax rather than
+  Strict, so arriving from a link in a mail or a dashboard still works, which is
+  a normal way to reach an operations interface.
+- **Two clocks, not one.** Roughly ten hours of inactivity ends a session, and an
+  absolute lifetime caps one kept warm by a forgotten browser tab. The web role
+  holds no `update` on `expires_at`, so use can move the first clock forward and
+  nothing can move the second.
+- **CSRF tokens are derived from the session token**, not stored. Producing one
+  requires the cookie, which a cross-site form post can make a browser send but
+  cannot read. The login form itself is protected the same way, by a short-lived
+  cookie scoped to `/login`.
+- **A new token on every login**, so nothing a browser held before signing in is
+  still valid after.
+
+#### The throttle
+
+Failed sign-ins are counted per normalised username **and** client IP together.
+Per username alone would let one attacker lock every real user out; per IP alone
+would let one address work through a list of names.
+
+The attempts table is **append-only by grant** — the web role can add a row and
+read rows, and holds no update or delete. A counter the web process could reset
+would be a lock whose key is kept behind the door. Clearing it is
+`haproxy-ui-user unlock`, which is root.
+
+The client address is taken from `X-Forwarded-For`, which the nginx site
+*overwrites* rather than appends to, so a request cannot contribute its own. An
+address that will not parse falls back to loopback rather than becoming an
+unthrottled bucket of its own.
+
+Every sign-in, failure, sign-out and account change is written to the audit
+trail, in the same transaction as the thing it describes. What the login page
+says, on the other hand, is one sentence for every kind of failure — unknown
+account, wrong password, disabled account and throttled address are
+indistinguishable from outside, and the same amount of time is spent on each.
+
 ## Verifying the installation
 
 Work outward, and stop at the first step that fails:

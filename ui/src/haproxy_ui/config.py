@@ -22,9 +22,11 @@ from typing import Any
 DEFAULT_CONFIG_PATH = Path("/apps/haproxy-manager/config/ui.toml")
 MAX_CONFIG_BYTES = 1024 * 1024
 
-ALLOWED_KEYS = frozenset({"database", "listen", "management_writes"})
+ALLOWED_KEYS = frozenset({"database", "listen", "management_writes", "session", "throttle"})
 ALLOWED_DATABASE_KEYS = frozenset({"name", "socket_directory"})
 ALLOWED_LISTEN_KEYS = frozenset({"host", "port"})
+ALLOWED_SESSION_KEYS = frozenset({"inactivity_minutes", "absolute_hours", "cookie_secure"})
+ALLOWED_THROTTLE_KEYS = frozenset({"max_failures", "window_minutes"})
 
 
 class ConfigError(ValueError):
@@ -60,6 +62,49 @@ class Listen:
 
 
 @dataclass(frozen=True, slots=True)
+class Session:
+    """How long a login lasts, and on what terms.
+
+    Two limits, not one, because they answer different questions. The inactivity
+    timeout is the phase gate's roughly ten hours and is enforced against
+    `last_seen_at`; the absolute lifetime caps a session that is kept warm
+    forever by a browser tab nobody is watching.
+
+    The absolute limit is `expires_at`, which the web role holds no `update` on -
+    so a session can be shortened by revoking it but never extended past what it
+    was issued for.
+    """
+
+    inactivity_minutes: int
+    absolute_hours: int
+    #
+    # The cookie is Secure in any installation that a person logs into, which is
+    # why nginx and a certificate are part of phase 4 rather than a later
+    # nicety: a Secure cookie is never sent over plain HTTP, so turning TLS off
+    # does not weaken the login, it removes it.
+    #
+    # Settable only so a developer instance on loopback can be used at all. It
+    # is reported at startup when it is off, because "logged in over plain HTTP"
+    # must never be a quiet state.
+    #
+    cookie_secure: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Throttle:
+    """What a wrong password costs.
+
+    Counted per normalised username and client IP together, as the phase gate
+    says. Per username alone would let one attacker lock every real user out;
+    per IP alone would let one address work through a list of names as long as
+    it changed the name each time.
+    """
+
+    max_failures: int
+    window_minutes: int
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     database: Database
     listen: Listen
@@ -70,6 +115,8 @@ class Config:
     # a read-only interface, which is not a rollback that should require a build.
     #
     management_writes: bool
+    session: Session
+    throttle: Throttle
 
 
 def _section(data: Any, key: str, allowed: frozenset[str]) -> dict[str, Any]:
@@ -85,6 +132,38 @@ def _section(data: Any, key: str, allowed: frozenset[str]) -> dict[str, Any]:
         #
         raise ConfigError(f"[{key}] has unknown key(s): {', '.join(unknown)}")
     return value
+
+
+def _bounded_int(
+    section: dict[str, Any], key: str, location: str, *, low: int, high: int, default: int
+) -> int:
+    """An integer inside a range, with the range stated rather than implied.
+
+    Bounded in both directions on purpose. A zero inactivity timeout is a
+    session that expires before it is used, and a throttle allowing millions of
+    failures is a throttle that is off - both are configuration mistakes that
+    should be refused at startup rather than discovered by their effects.
+    """
+
+    value = section.get(key, default)
+    if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
+        raise ConfigError(f"{location}.{key} must be an integer between {low} and {high}")
+    return value
+
+
+def _boolean(section: dict[str, Any], key: str, location: str, *, default: bool) -> bool:
+    value = section.get(key, default)
+    if not isinstance(value, bool):
+        raise ConfigError(f"{location}.{key} must be true or false")
+    return value
+
+
+def _optional_section(data: Any, key: str, allowed: frozenset[str]) -> dict[str, Any]:
+    """A section that may be absent, but may not be wrong when present."""
+
+    if key not in data:
+        return {}
+    return _section(data, key, allowed)
 
 
 def _string(section: dict[str, Any], key: str, location: str) -> str:
@@ -117,6 +196,13 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
 
     database = _section(data, "database", ALLOWED_DATABASE_KEYS)
     listen = _section(data, "listen", ALLOWED_LISTEN_KEYS)
+    #
+    # Optional sections, unlike the two above. Both carry defaults that are the
+    # documented policy, so an installation that says nothing about sessions
+    # gets the phase gate's numbers rather than none.
+    #
+    session = _optional_section(data, "session", ALLOWED_SESSION_KEYS)
+    throttle = _optional_section(data, "throttle", ALLOWED_THROTTLE_KEYS)
 
     port = listen.get("port")
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
@@ -133,4 +219,21 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
         ),
         listen=Listen(host=_string(listen, "host", "listen"), port=port),
         management_writes=writes,
+        session=Session(
+            inactivity_minutes=_bounded_int(
+                session, "inactivity_minutes", "session", low=1, high=1440, default=600
+            ),
+            absolute_hours=_bounded_int(
+                session, "absolute_hours", "session", low=1, high=720, default=168
+            ),
+            cookie_secure=_boolean(session, "cookie_secure", "session", default=True),
+        ),
+        throttle=Throttle(
+            max_failures=_bounded_int(
+                throttle, "max_failures", "throttle", low=1, high=1000, default=10
+            ),
+            window_minutes=_bounded_int(
+                throttle, "window_minutes", "throttle", low=1, high=1440, default=15
+            ),
+        ),
     )

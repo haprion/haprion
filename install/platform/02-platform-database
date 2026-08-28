@@ -19,6 +19,15 @@ need_root
 load_answers "${1:-}"
 require_vars PLATFORM_ROOT DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER
 
+#
+# Defaulted rather than required: an installation that never says otherwise is
+# the production one, and `-e prod` is what the documentation tells people to
+# type. A dev platform sets ENVIRONMENT=dev and gets its own account tool
+# namespace without any other difference.
+#
+ENVIRONMENT="${ENVIRONMENT:-prod}"
+valid_id "$ENVIRONMENT" || die "ENVIRONMENT must be a short lowercase identifier"
+
 [[ "$DB_NAME" =~ ^[a-z][a-z0-9_]{0,62}$ ]] || die "invalid database name: ${DB_NAME}"
 
 systemctl is-active --quiet postgresql \
@@ -241,6 +250,22 @@ fi
 log "  ok       ${WEB_USER} cannot connect as ${DB_MIGRATION_ROLE}"
 
 echo
+step "Naming this environment for the account tool"
+#
+# haproxy-ui-user is given the database and the role here rather than deriving
+# them from the application's configuration. Each environment gets its own
+# root-owned file, so `-e prod` cannot be pointed at the dev database - or, in
+# the direction that actually matters, the reverse - by an environment variable
+# or a working directory.
+#
+ensure_dir /etc/haproxy-manager root:root 755
+install_file "/etc/haproxy-manager/ui-admin-${ENVIRONMENT}.conf" root:root 644 "$(cat <<EOF
+# Read by haproxy-ui-user -e ${ENVIRONMENT}. Written by 02-platform-database.
+DB_NAME=${DB_NAME}
+DB_ROLE=${DB_MIGRATION_ROLE}
+EOF
+)"
+
 log "platform step 2 done"
 echo
 echo "The database exists and has no tables. The schema arrives as migrations."

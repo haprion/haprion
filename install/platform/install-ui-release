@@ -167,5 +167,25 @@ else
     log "  switched current -> ${release_id}  (was ${previous})"
 fi
 
+step "The account tool"
+#
+# A shim rather than a symlink into the release. The tool must follow `current`,
+# so that a rollback takes the account tool back with it: a shim resolves the
+# link at every invocation, while a symlink written now would have to be
+# rewritten by every future release to stay honest.
+#
+install_file /usr/local/sbin/haproxy-ui-user root:root 755 "$(cat <<EOF
+#!/bin/bash
+#
+# Accounts for the web interface. Installed by install-ui-release.
+#
+# Runs whatever \`current\` points at, so an application rollback takes this with
+# it. Root only; it connects as the migration role, which is the only identity
+# allowed to write the account table.
+#
+exec ${PLATFORM_ROOT}/current/venv/bin/haproxy-ui-user "\$@"
+EOF
+)"
+
 echo
 log "release ${release_id} is current"

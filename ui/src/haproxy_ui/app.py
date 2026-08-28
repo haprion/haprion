@@ -14,6 +14,7 @@ allowed.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -23,11 +24,13 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from haproxy_ui import db
+from haproxy_ui import db, views
 from haproxy_ui.config import DEFAULT_CONFIG_PATH, Config
 from haproxy_ui.config import load as load_config
 
 CONFIG_PATH_VARIABLE = "HAPROXY_UI_CONFIG"
+
+logger = logging.getLogger("haproxy_ui")
 
 
 def _config_path() -> Path:
@@ -57,6 +60,19 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     app = FastAPI(title="HAProxy Manager", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.config = settings
+
+    #
+    # Said out loud, every start, because a session cookie without Secure is a
+    # session that can be taken off the wire - and the setting exists only so a
+    # developer instance on loopback is usable at all. A quiet installation
+    # running this way in production is exactly what this line is for.
+    #
+    if not settings.session.cookie_secure:
+        logger.warning(
+            "session.cookie_secure is off: the session cookie will be sent over plain HTTP"
+        )
+
+    app.include_router(views.build_router(settings))
 
     @app.get("/healthz")
     def healthz() -> JSONResponse:

@@ -194,3 +194,31 @@ and it will never be a file upload: the web identity must not read private key
 material. The shape is a drop directory the poller lists, an admin choosing a
 candidate, and a job carrying that candidate's id — the web process chooses
 *which*, never *what*. See B21 in the decision log.
+
+## The first account
+
+Nothing can sign in until an account exists, and creating one is a root action
+rather than a page the interface offers:
+
+```bash
+sudo haproxy-ui-user -e prod add operator --role admin
+```
+
+The password is typed at a terminal, twice; there is no flag for passing it as
+an argument, because that would put it in the shell history and the process
+list.
+
+`install-ui-release` installs the tool as a shim in `/usr/local/sbin` that
+resolves `current` at every invocation, so an application rollback takes the
+account tool back with it. `-e prod` reads
+`/etc/haproxy-manager/ui-admin-prod.conf`, written by step 2, which names the
+database and the role root connects as — the migration role, because no
+application role may write the account table.
+
+The same tool handles `reset`, `disable`, `enable`, `unlock`, `revoke` and
+`list`. Reset and disable end every session the account has: an account that
+cannot sign in again while its cookie keeps working has not been taken back
+from anyone.
+
+See [`docs/INSTALLATION.md`](../../docs/INSTALLATION.md) §4.6 for how a session
+and the sign-in throttle behave.

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block chrome %}
+<header>
+  <span class="name">HAProxy Manager</span>
+  <span class="who">
+    {{ username }} · {{ role }}
+    <form method="post" action="/logout" style="display:inline; margin-left:0.75rem;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="quiet" type="submit">Sign out</button>
+    </form>
+  </span>
+</header>
+{% endblock %}
+{% block content %}
+<div class="panel">
+  <h1>Signed in</h1>
+  <dl class="facts">
+    <dt>Account</dt><dd>{{ username }}</dd>
+    <dt>Role</dt><dd>{{ role }}</dd>
+    <dt>Management writes</dt>
+    <dd>{{ "enabled" if management_writes else "disabled" }}</dd>
+  </dl>
+  <p class="note" style="margin-bottom:0;">
+    The read-only views arrive in the next phase. Management writes stay off
+    until the phase that turns them on, and switching them off is the documented
+    way back.
+  </p>
+</div>
+{% endblock %}

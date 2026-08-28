@@ -22,6 +22,14 @@ need_root
 load_answers "${1:-}"
 require_vars PLATFORM_ROOT DB_NAME WEB_USER WORKER_USER POLLER_USER
 
+#
+# Units and the sudoers file are named after the accounts, so a second
+# environment on the same machine collides with nothing. In production the names
+# were already identical.
+#
+units=("$WORKER_USER" "$POLLER_USER")
+sudoers_name="$POLLER_USER"
+
 link="${PLATFORM_ROOT}/current"
 [[ -L "$link" ]] || die "${link} does not exist. Install a release first."
 
@@ -46,9 +54,9 @@ if ! visudo -cqf "$sudoers_staging"; then
     rm -f "$sudoers_staging"
     die "the rendered sudoers rule does not parse; nothing was installed"
 fi
-install -o root -g root -m 440 "$sudoers_staging" /etc/sudoers.d/haproxy-ui-poller
+install -o root -g root -m 440 "$sudoers_staging" "/etc/sudoers.d/${sudoers_name}"
 rm -f "$sudoers_staging"
-log "  installed /etc/sudoers.d/haproxy-ui-poller  (visudo accepted it)"
+log "  installed /etc/sudoers.d/${sudoers_name}  (visudo accepted it)"
 
 #
 # Taken before anything is restarted, and read from the database rather than
@@ -59,10 +67,10 @@ started_at="$(sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qtAX \
     -c "select statement_timestamp()")"
 
 step "Units"
-for unit in haproxy-ui-worker haproxy-ui-poller; do
-    install_file "/etc/systemd/system/${unit}.service" root:root 644 \
-        "$(render "examples/${unit}.service.example")"
-done
+install_file "/etc/systemd/system/${WORKER_USER}.service" root:root 644 \
+    "$(render "examples/haproxy-ui-worker.service.example")"
+install_file "/etc/systemd/system/${POLLER_USER}.service" root:root 644 \
+    "$(render "examples/haproxy-ui-poller.service.example")"
 systemctl daemon-reload
 log "  reloaded systemd"
 
@@ -73,9 +81,9 @@ step "Starting"
 # unit file leaves the old settings in place while reporting success, which is
 # how a sandbox fix can look like it did not work.
 #
-systemctl enable --quiet haproxy-ui-worker.service haproxy-ui-poller.service
-systemctl restart haproxy-ui-worker.service haproxy-ui-poller.service
-for unit in haproxy-ui-worker haproxy-ui-poller; do
+systemctl enable --quiet "${WORKER_USER}.service" "${POLLER_USER}.service"
+systemctl restart "${WORKER_USER}.service" "${POLLER_USER}.service"
+for unit in "${units[@]}"; do
     systemctl is-active --quiet "${unit}.service" \
         || { systemctl status --no-pager --lines=20 "${unit}.service" || true;
              die "${unit}.service did not start"; }
@@ -103,7 +111,7 @@ for _ in $(seq 30); do
     sleep 1
 done
 [[ "$observed" -gt 0 ]] || {
-    journalctl -u haproxy-ui-poller.service --no-pager --lines=20 || true
+    journalctl -u "${POLLER_USER}.service" --no-pager --lines=20 || true
     die "the poller wrote no fresh status row within 30 seconds of being restarted"
 }
 sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qAX -c \

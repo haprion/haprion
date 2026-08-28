@@ -17,7 +17,16 @@ need_root
 load_answers "${1:-}"
 require_vars PLATFORM_ROOT WEB_USER
 
-unit=/etc/systemd/system/haproxy-ui-web.service
+#
+# The unit is named after the account it runs as. That is not a convention for
+# its own sake: it means a second environment on the same machine gets its own
+# units by having its own accounts, with nothing to keep in step by hand - and
+# in production the two names were already identical, so nothing is renamed.
+#
+unit_name="${WEB_USER}"
+WEB_PORT="${WEB_PORT:-8080}"
+
+unit="/etc/systemd/system/${unit_name}.service"
 [[ -L "${PLATFORM_ROOT}/current" ]] \
     || die "${PLATFORM_ROOT}/current does not exist. Install a release first."
 
@@ -29,6 +38,7 @@ step "Unit"
 #
 rendered="$(sed -e "s|/apps/haproxy-manager|${PLATFORM_ROOT}|g" \
                 -e "s|haproxy-ui-web|${WEB_USER}|g" \
+                -e "s|--port 8080|--port ${WEB_PORT}|" \
                 examples/haproxy-ui-web.service.example)"
 install_file "$unit" root:root 644 "$rendered"
 
@@ -36,9 +46,9 @@ systemctl daemon-reload
 log "  reloaded systemd"
 
 step "Starting"
-systemctl enable --quiet haproxy-ui-web.service
-systemctl restart haproxy-ui-web.service
-log "  started  haproxy-ui-web.service"
+systemctl enable --quiet "${unit_name}.service"
+systemctl restart "${unit_name}.service"
+log "  started  ${unit_name}.service"
 
 #
 # Asked of the running service rather than assumed from a zero exit. systemd
@@ -48,7 +58,7 @@ log "  started  haproxy-ui-web.service"
 #
 step "Proving it answers"
 for _ in $(seq 10); do
-    if answer="$(curl -fsS --max-time 3 http://127.0.0.1:8080/healthz 2>/dev/null)"; then
+    if answer="$(curl -fsS --max-time 3 http://127.0.0.1:"${WEB_PORT}"/healthz 2>/dev/null)"; then
         log "  ok       ${answer}"
         echo
         log "platform step 4 done"
@@ -57,5 +67,5 @@ for _ in $(seq 10); do
     sleep 1
 done
 
-systemctl status --no-pager --lines=20 haproxy-ui-web.service || true
-die "the service did not answer /healthz within 10 seconds"
+systemctl status --no-pager --lines=20 "${unit_name}.service" || true
+die "the service did not answer /healthz on port ${WEB_PORT} within 10 seconds"

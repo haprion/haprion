@@ -202,6 +202,20 @@ else
     log "  switched current -> ${release_id}  (was ${previous})"
 fi
 
+#
+# The root commands live at fixed paths in /usr/local/sbin, so only the
+# production installation puts them there. A development platform on the same
+# machine would otherwise point the operator's rollback command at the
+# development release - which is the one moment a wrong answer is expensive.
+#
+ENVIRONMENT="${ENVIRONMENT:-prod}"
+if [[ "$ENVIRONMENT" != "prod" ]]; then
+    echo
+    log "release ${release_id} is current"
+    log "skipping /usr/local/sbin commands: this is the ${ENVIRONMENT} platform"
+    exit 0
+fi
+
 step "The account tool"
 #
 # A shim rather than a symlink into the release. The tool must follow `current`,

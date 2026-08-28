@@ -159,17 +159,30 @@ hba="$(sudo -u postgres psql -tAX -c 'show hba_file')"
 ident="$(sudo -u postgres psql -tAX -c 'show ident_file')"
 marker="# haproxy-manager platform"
 
-if grep -qF "$marker" "$ident"; then
-    log "  ok       ${ident}"
+#
+# Matched on this environment's own line, not on the marker. The marker says
+# the file has been touched by this project at some point, which a second
+# environment on the same machine satisfies without having any authentication of
+# its own - and the step then reports ok while having done nothing. Measured on
+# 2026-08-28, installing the development platform beside production.
+#
+ident_line="haproxy_manager_migration   root   ${DB_MIGRATION_ROLE}"
+hba_line="local   ${DB_NAME}   ${DB_MIGRATION_ROLE}   peer   map=haproxy_manager_migration"
+
+if grep -qF "$ident_line" "$ident"; then
+    log "  ok       ${ident}  (${DB_MIGRATION_ROLE})"
 else
     cp -a "$ident" "${ident}.pre-haproxy-manager-$(date +%Y%m%d)"
-    printf '\n%s\n%s\n' "$marker" \
-        "haproxy_manager_migration   root   ${DB_MIGRATION_ROLE}" >> "$ident"
+    if grep -qF "$marker" "$ident"; then
+        printf '%s\n' "$ident_line" >> "$ident"
+    else
+        printf '\n%s\n%s\n' "$marker" "$ident_line" >> "$ident"
+    fi
     log "  added    ${ident}  (root -> ${DB_MIGRATION_ROLE})"
 fi
 
-if grep -qF "$marker" "$hba"; then
-    log "  ok       ${hba}"
+if grep -qF "$hba_line" "$hba"; then
+    log "  ok       ${hba}  (${DB_NAME})"
 else
     cp -a "$hba" "${hba}.pre-haproxy-manager-$(date +%Y%m%d)"
     #
@@ -178,8 +191,7 @@ else
     # refuse root as a role it is not named after.
     #
     tmp="$(mktemp)"
-    { printf '%s\n%s\n\n' "$marker" \
-        "local   ${DB_NAME}   ${DB_MIGRATION_ROLE}   peer   map=haproxy_manager_migration"
+    { printf '%s\n%s\n\n' "$marker" "$hba_line"
       cat "$hba"
     } > "$tmp"
     install -o postgres -g postgres -m 640 "$tmp" "$hba"

@@ -95,10 +95,17 @@ log "  ok       ${WEB_USER} can import the release"
 
 step "Activating"
 link="${PLATFORM_ROOT}/current"
-if [[ "$(readlink -f "$link" 2>/dev/null || true)" == "$release" ]]; then
+#
+# `readlink` without -f, deliberately. -f canonicalises a path even when the
+# link is absent, so it answers with the link's own path and the "was ..." line
+# below reports the switch as coming from itself.
+#
+existing="$(readlink "$link" 2>/dev/null || true)"
+if [[ "$existing" == "$release" ]]; then
     log "  ok       current already points at ${release_id}"
 else
-    previous="$(readlink -f "$link" 2>/dev/null || echo none)"
+    previous="${existing:-nothing}"
+    [[ "$previous" == "nothing" ]] || previous="$(basename "$previous")"
     #
     # Written beside and renamed over, so `current` is never briefly absent.
     # A service restarting during the switch finds one release or the other,
@@ -106,7 +113,7 @@ else
     #
     ln -sfn "$release" "${link}.new"
     mv -T "${link}.new" "$link"
-    log "  switched current -> ${release_id}  (was $(basename "$previous"))"
+    log "  switched current -> ${release_id}  (was ${previous})"
 fi
 
 echo

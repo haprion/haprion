@@ -1,0 +1,61 @@
+#!/bin/bash
+#
+# Platform step 4 - install and start the web service.
+#
+# Needs a release: the unit runs what `current` points at, so activating a
+# release and restarting is the whole deployment, and pointing it back and
+# restarting is the whole rollback.
+#
+#     sudo ./04-platform-service <answers-file>
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars PLATFORM_ROOT WEB_USER
+
+unit=/etc/systemd/system/haproxy-ui-web.service
+[[ -L "${PLATFORM_ROOT}/current" ]] \
+    || die "${PLATFORM_ROOT}/current does not exist. Install a release first."
+
+step "Unit"
+#
+# Rendered from the example rather than copied, so the accounts and paths come
+# from the answers file like everything else. The example is what a reader
+# reviews; this is what runs.
+#
+rendered="$(sed -e "s|/apps/haproxy-manager|${PLATFORM_ROOT}|g" \
+                -e "s|haproxy-ui-web|${WEB_USER}|g" \
+                examples/haproxy-ui-web.service.example)"
+install_file "$unit" root:root 644 "$rendered"
+
+systemctl daemon-reload
+log "  reloaded systemd"
+
+step "Starting"
+systemctl enable --quiet haproxy-ui-web.service
+systemctl restart haproxy-ui-web.service
+log "  started  haproxy-ui-web.service"
+
+#
+# Asked of the running service rather than assumed from a zero exit. systemd
+# reports a unit as active the moment the process is up, which is before it has
+# reached its database - and "up but unable to answer" is the state worth
+# catching here.
+#
+step "Proving it answers"
+for _ in $(seq 10); do
+    if answer="$(curl -fsS --max-time 3 http://127.0.0.1:8080/healthz 2>/dev/null)"; then
+        log "  ok       ${answer}"
+        echo
+        log "platform step 4 done"
+        exit 0
+    fi
+    sleep 1
+done
+
+systemctl status --no-pager --lines=20 haproxy-ui-web.service || true
+die "the service did not answer /healthz within 10 seconds"

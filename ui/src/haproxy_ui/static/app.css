@@ -233,10 +233,10 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   box-shadow: none;
 }
 .metric-card > div { display: flex; align-items: baseline; gap: 7px; min-width: 0; overflow: hidden; white-space: nowrap; }
-.metric-card strong { color: var(--text-strong); font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
-.metric-card strong small { color: var(--muted); font-size: 14px; font-weight: 550; letter-spacing: 0; }
-.metric-card div > span { overflow: hidden; color: var(--muted-strong); font-size: 14px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
-.metric-card > div > small { min-width: 0; overflow: hidden; padding-left: 8px; border-left: 1px solid var(--line); color: var(--muted); font-size: 13px; font-weight: 400; text-overflow: ellipsis; }
+.metric-card strong { color: var(--text-strong); font-size: 18px; font-weight: 400; letter-spacing: -0.02em; }
+.metric-card strong small { color: var(--text); font-size: 14px; font-weight: 400; letter-spacing: 0; }
+.metric-card div > span { overflow: hidden; color: var(--text-strong); font-size: 14px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.metric-card > div > small { min-width: 0; overflow: hidden; padding-left: 8px; border-left: 1px solid var(--line); color: var(--text); font-size: 13px; font-weight: 400; text-overflow: ellipsis; }
 .metric-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 auto; border-radius: 6px; color: #fff; background: var(--brand); }
 .metric-icon svg { width: 21px; height: 21px; }
 .metric-icon-node { color: #fff; background: var(--info); }

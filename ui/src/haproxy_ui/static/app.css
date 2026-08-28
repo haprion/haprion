@@ -1,11 +1,22 @@
 :root {
   color-scheme: light;
+  /*
+   * Application-wide visual contract. New views inherit these values through
+   * base.html; use the semantic text tokens instead of local colours/weights.
+   */
+  --font-ui: "Inter Var", Inter, -apple-system, BlinkMacSystemFont, "San Francisco", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-features: "cv03", "cv04", "cv11", "liga" 0;
+  --font-size-ui: 14px;
+  --font-weight-regular: 400;
   --bg: #f5f7f8;
   --panel: #ffffff;
   --panel-soft: #f8fafc;
   --panel-raised: #ffffff;
   --text: #17202a;
   --text-strong: #101820;
+  --text-primary: var(--text-strong);
+  --text-secondary: var(--muted-strong);
+  --text-status: var(--text);
   --muted: #697586;
   --muted-strong: #4d5968;
   --line: #e3e8ef;
@@ -76,8 +87,8 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 "Inter Var", Inter, -apple-system, BlinkMacSystemFont, "San Francisco", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  font-feature-settings: "cv03", "cv04", "cv11", "liga" 0;
+  font: var(--font-size-ui)/1.5 var(--font-ui);
+  font-feature-settings: var(--font-features);
 }
 
 button, input { font: inherit; }
@@ -86,6 +97,11 @@ a { color: inherit; }
 svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 
 :focus-visible { outline: none; box-shadow: var(--focus); }
+
+/* Reuse these semantic levels in all future views and controls. */
+.text-primary { color: var(--text-primary); font-weight: var(--font-weight-regular); }
+.text-secondary { color: var(--text-secondary); font-weight: var(--font-weight-regular); }
+.text-status { color: var(--text-status); font-weight: var(--font-weight-regular); }
 
 .page {
   width: min(1500px, calc(100% - 48px));
@@ -135,7 +151,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   gap: 8px;
   min-height: 30px;
   padding: 0 12px;
-  color: var(--muted-strong);
+  color: var(--text-secondary);
   font-size: 14px;
   font-weight: 400;
   text-decoration: none;
@@ -143,7 +159,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .primary-nav svg { width: 16px; height: 16px; stroke-width: 1.9; }
 .primary-nav a, .nav-item { border-radius: 5px; }
 .primary-nav a:hover { color: var(--text-strong); background: color-mix(in srgb, var(--panel-raised) 72%, transparent); }
-.primary-nav a.active { color: var(--text-strong); background: transparent; font-weight: 600; }
+.primary-nav a.active { color: var(--text-primary); background: transparent; font-weight: var(--font-weight-regular); }
 .nav-item { cursor: default; opacity: 0.85; }
 
 .header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
@@ -233,10 +249,10 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   box-shadow: none;
 }
 .metric-card > div { display: flex; align-items: baseline; gap: 7px; min-width: 0; overflow: hidden; white-space: nowrap; }
-.metric-card strong { color: var(--text-strong); font-size: 18px; font-weight: 400; letter-spacing: -0.02em; }
-.metric-card strong small { color: var(--text); font-size: 14px; font-weight: 400; letter-spacing: 0; }
-.metric-card div > span { overflow: hidden; color: var(--text-strong); font-size: 14px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
-.metric-card > div > small { min-width: 0; overflow: hidden; padding-left: 8px; border-left: 1px solid var(--line); color: var(--text); font-size: 13px; font-weight: 400; text-overflow: ellipsis; }
+.metric-card strong { color: var(--text-primary); font-size: 18px; font-weight: var(--font-weight-regular); letter-spacing: -0.02em; }
+.metric-card strong small { color: var(--text-status); font-size: 14px; font-weight: var(--font-weight-regular); letter-spacing: 0; }
+.metric-card div > span { overflow: hidden; color: var(--text-primary); font-size: 14px; font-weight: var(--font-weight-regular); text-overflow: ellipsis; white-space: nowrap; }
+.metric-card > div > small { min-width: 0; overflow: hidden; padding-left: 8px; border-left: 1px solid var(--line); color: var(--text-status); font-size: 13px; font-weight: var(--font-weight-regular); text-overflow: ellipsis; }
 .metric-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 auto; border-radius: 6px; color: #fff; background: var(--brand); }
 .metric-icon svg { width: 21px; height: 21px; }
 .metric-icon-node { color: #fff; background: var(--info); }

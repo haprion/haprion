@@ -90,12 +90,23 @@ step "Can the target run with the configuration that is installed?"
 # validator says and not what this script believes about it. Loading the config
 # is exactly what the service does first, so a release that passes here starts.
 #
+#
+# Path, not str: `load` takes a Path and a string fails on it with an
+# AttributeError - which this script would have read as "the target refuses the
+# configuration". A check that says no to everything is exactly as useless as
+# one that says yes to everything, and it fails in the more convincing
+# direction. Found by running it against a release that should have passed.
+#
+# Any exception counts as a refusal, not only ConfigError: whatever the target
+# does when it reads this file is what it will do at startup.
+#
 if ! "${releases}/${target}/venv/bin/python" -c '
 import sys
-from haproxy_ui.config import ConfigError, load
+from pathlib import Path
+from haproxy_ui.config import load
 try:
-    load(sys.argv[1])
-except ConfigError as exc:
+    load(Path(sys.argv[1]))
+except Exception as exc:
     print(f"the target release refuses this configuration: {exc}", file=sys.stderr)
     raise SystemExit(1)
 ' "$CONFIG" 2>&1 | sed 's/^/  /'; then

@@ -836,6 +836,37 @@ database — by default on insert and by trigger on update — and the poller ho
 no `update` on that column: a poller that could write it could report a cluster
 it never reached as freshly observed.
 
+#### The sandbox, and the three ways it failed quietly
+
+The poller's unit is hardened like the others, with three deliberate exceptions
+that are written in the file with their reasons: `NoNewPrivileges=no`, because
+sudo is setuid and the whole point of this service is to run one helper through
+it; a capability set that permits changing uid, for the same reason; and network
+address families, because the helper reaches nodes from inside this sandbox.
+
+One more is worth stating separately, because it was found by running it rather
+than by reasoning about it. The status identity's key is root-owned and lives
+under `/root`, so the unit needs a hole in `ProtectHome` — and:
+
+- `ProtectHome=yes` **masks** a `BindReadOnlyPaths` under `/root`. The file
+  stays invisible and the service starts perfectly. `ProtectHome=tmpfs` is what
+  works, because the bind then lands on top of the empty filesystem.
+- A bind mount written with a leading dash is *optional*, and systemd skips it
+  in silence when it cannot be satisfied. The service starts, and every cluster
+  reports as unreachable — a failure that reads as a broken environment rather
+  than as a missing file. The dash is deliberately not used.
+- Both of those present identically: SSH exits 255 in under a tenth of a second
+  and every node is `ssh_unreachable`. If that is what the cache shows, run the
+  helper by hand outside the unit before suspecting the nodes:
+
+```bash
+printf '{"schema_version":1,"operation":"status","cluster":"<id>",'\
+'"request_id":"'"$(uuidgen)"'","parameters":{}}' \
+  | sudo -u <poller> sudo -n /opt/haproxy-mgmt/current/bin/haproxy-status-helper
+```
+
+If that answers `done`, the sandbox is the problem and not the environment.
+
 **One poller, enforced by the database.** It holds a session-scoped advisory
 lock for its whole life; a second one finds the lock taken and exits rather than
 doubling the load on every node. The lock is released by the server when the

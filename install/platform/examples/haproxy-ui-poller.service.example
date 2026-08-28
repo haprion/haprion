@@ -20,7 +20,31 @@ RestartSec=10
 # Filesystem protections identical to the web service. The poller writes nothing
 # outside the database and reads only its configuration and its own release.
 ProtectSystem=strict
-ProtectHome=yes
+# tmpfs rather than yes, and the difference is not cosmetic: with
+# ProtectHome=yes the bind mount below is masked and the file stays invisible,
+# which was measured on 2026-08-28 rather than reasoned about. tmpfs replaces
+# /home, /root and /run/user with empty filesystems, and the bind then lands on
+# top of one of them.
+ProtectHome=tmpfs
+# One hole, and it is required rather than convenient. The status
+# identity's SSH key is root-owned and lives under /root, because no application
+# identity may hold a key that reaches a node - and ProtectHome=yes hides /root
+# from the whole unit, including the root process sudo starts inside it. Without
+# this the helper cannot read its key and every cluster reports as unreachable
+# in under a tenth of a second, which reads as a broken cluster rather than as a
+# sandbox doing its job.
+#
+# A hole rather than ProtectHome=read-only: this exposes one directory instead
+# of every home directory on the machine.
+#
+# No leading dash, deliberately. An optional mount that systemd cannot satisfy
+# is skipped in silence, and the service then starts perfectly and reports every
+# cluster as unreachable - a failure that reads as a broken environment rather
+# than as a missing file. Failing to start is the honest outcome.
+#
+# An installation whose status identity keeps its key elsewhere changes this
+# path; see status_identity in the engine's runtime policy.
+BindReadOnlyPaths=/root/.ssh
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes

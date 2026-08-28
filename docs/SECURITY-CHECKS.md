@@ -13,10 +13,29 @@ The repository has complementary gates. No single scanner replaces the others.
    and runs `pip-audit` against the locked active environment.
 5. `tools/run-codeql` performs the heavier CodeQL Python `security-extended` analysis before the
    first push and before releases.
+6. `ui/run-tests` runs the interface's own suite and type checking in the environment holding its
+   dependencies. `run-tests` calls it rather than skipping it: a gate that passes because it could
+   not import what it was meant to check is not a gate. It needs `HAPROXY_UI_PYTHON` and fails
+   closed without it.
+7. `install/platform/03-verify` checks the database privilege surface against the running database,
+   in both directions. It is a deployment check rather than a repository one, so it is not part of
+   `run-checks` — but it belongs to the same family, and the reason it checks both directions is in
+   [`INSTALLATION.md`](INSTALLATION.md#44-verifying-it).
 
 A release wheel is installed only by `tools/install-release.py` with an explicitly supplied
 SHA-256 digest. The installer rejects path traversal, symlinks, special files and unexpected entry
 points before activating a root-owned, read-only release. See [`INSTALLATION.md`](INSTALLATION.md).
+
+### The scanner exists twice, deliberately
+
+`tools/secret_scan.py` is what `run-checks` and CI run. The pre-commit hook runs a **separate copy
+outside the repository**, and that duplication is defence rather than drift: a scanner that lives in
+the tree it scans can be weakened by the very commit it is meant to inspect.
+
+Everywhere else in this project two implementations of one rule are a defect. Here the out-of-tree
+copy is authoritative for commits, which means a change to the scanner's rules has to be made in
+both — and the hook refusing a commit that only changed the in-tree copy is the mechanism working,
+not a problem to route around.
 
 The private denylist is never stored in this repository. Local runs provide its path through
 `HAPROXY_MANAGER_SECRET_RULES`. GitHub Actions reconstructs it in a mode-600 temporary file from
@@ -38,8 +57,13 @@ Then run:
 export HAPROXY_MANAGER_SECRET_RULES=/path/to/private.rules
 export PATH="$PWD/.venv/bin:$PWD/.tools/shellcheck/0.11.0:$PWD/.tools/actionlint/1.7.12:$PATH"
 export GITLEAKS_BIN="$PWD/.tools/gitleaks/8.30.1/gitleaks"
+export HAPROXY_UI_PYTHON=/path/to/ui-environment/bin/python
 ./run-checks
 ```
+
+The interface has a second locked environment, because it has a second lockfile:
+`ui/uv.lock`. `HAPROXY_UI_PYTHON` points at it, and the gate refuses to run without it rather than
+quietly leaving the interface unchecked.
 
 `uv.lock` is committed and CI installs it with `uv sync --locked --group dev`; a stale lockfile
 therefore fails instead of being silently refreshed. The local project is installed editable, so

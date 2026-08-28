@@ -24,6 +24,7 @@ only works with the names used below, that is a bug in the software, not in this
 - [Part 1 — the management host](#part-1--the-management-host)
 - [Part 2 — the nodes](#part-2--the-nodes)
 - [Part 3 — the versioned CLI release](#part-3--the-versioned-cli-release)
+- [Part 4 — the web platform](#part-4--the-web-platform)
 - [Verifying the installation](#verifying-the-installation)
 - [What is still missing](#what-is-still-missing)
 
@@ -64,6 +65,15 @@ HAProxy Manager manages HAProxy; it does not install it. Before starting, you ne
 - the operating-system PyYAML package, major version 6
 - `git`, `rsync`, `openssh-client`
 - `sudo` new enough to support the no-argument sudoers form (`command ""`)
+
+**On the management host, only for the web platform (Part 4)**
+
+- PostgreSQL 16 or newer. 16 is the floor rather than a preference: role
+  membership carries its own `INHERIT` setting from that version, and the
+  installation states it explicitly instead of depending on a role attribute as
+  it happened to be when a grant was made
+- nginx
+- `uv`, for building a release environment from the committed lockfile
 
 **On every node**
 
@@ -477,6 +487,78 @@ storage.
 Install the release **before** adding runtime-policy fields that a new release introduces. The
 policy reader rejects unknown fields, so the reverse order breaks every command that reads the
 policy, not only the new one.
+
+## Part 4 — the web platform
+
+Optional, and separate on purpose. The command line is the authoritative engine
+and installs and runs without any of this; a management host that only ever uses
+the CLI never needs the platform at all. [`../install/platform/`](../install/platform/)
+is what you follow; this section explains the shape.
+
+### 4.1 What is installed where
+
+```text
+/apps/haproxy-manager/
+├── current -> releases/<version>-<commit>/
+├── releases/<version>-<commit>/venv/
+├── config/          ui.toml, root-owned, readable by the platform group
+├── secrets/         root-only, granted one file at a time
+└── data/
+    ├── dumps/       database backups, root-only
+    └── logs/
+```
+
+Config, secrets and data sit **beside** the releases rather than inside one. A
+release is replaced wholesale and rolled back by pointing `current` elsewhere,
+so anything that has to survive that cannot live within it.
+
+A release is a commit, and the installer refuses to build one from a source tree
+with uncommitted changes. It is built at its final path against the system
+interpreter — a virtual environment is not relocatable, and an interpreter under
+someone's home directory is invisible to a service running with `ProtectHome`.
+Both are checked before `current` is switched.
+
+### 4.2 Identities
+
+Three service accounts, one per service, each with its own database role. A
+shared account for all three would make a web intrusion equal to worker access,
+which is deploy rights. They share one group, and that group grants exactly one
+thing: reading the configuration file.
+
+Nothing authenticates to the database with a password. Connections use the local
+socket with peer authentication, where the kernel states which operating-system
+user is on the other end, and each account is named after its role — so there is
+no password to leak, rotate, or find in a process listing.
+
+### 4.3 The database
+
+The migration role owns every object and has no operating-system account. That
+is what makes "a service process cannot run DDL" true by construction rather
+than by a grant somebody could add later: you cannot drop a table you do not
+own. Running a migration is a deliberate root action, mapped explicitly in
+`pg_ident.conf`.
+
+Table grants live in the migration that creates the table, so a column's
+permissions are versioned with the column. They name three contract roles —
+`app_web`, `app_worker`, `app_poller` — and never an account; the installation
+connects whatever the accounts are called to those roles. Columns are listed one
+at a time, because a grant written as a whole table widens itself the next time
+somebody adds one.
+
+The web role may state what it wants done. It holds `insert` on three columns of
+the job table and no `update` at all, so a queued job is immutable to the role
+that queued it and there is no path from "I asked for this" to "this is what
+happened". State, request ID and timestamps come from column defaults.
+
+### 4.4 Verifying it
+
+`install/platform/03-verify` is read-only and can be run at any time. It is
+deliberately a **second description** of the privilege surface, compared against
+what the running database reports, and it checks both directions.
+
+Both directions matters more than it sounds. A suite that only asks what a role
+must *not* do passes completely when a role has no privileges at all — which is
+a broken system reading as a perfectly secured one. Ask what must work too.
 
 ## Verifying the installation
 

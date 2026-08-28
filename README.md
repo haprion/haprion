@@ -22,9 +22,16 @@ current foundation provides:
   transient-service sandbox
 - a hash-verified, versioned and immutable installation layout under `/opt/haproxy-mgmt`
 - reproducible development, security, test, and package-build gates
+- every management command running through the packaged CLI, including status, which reports
+  whether the nodes are running the published configuration without starting a deployment to
+  find out
+- a scripted installation covering the management host, the nodes, and the web platform
+- the web platform's foundation: a versioned application release, a database whose schema and
+  column-level grants are versioned together, and three service identities that cannot do each
+  other's work
 
-The next implementation stage adapts the existing management operations to these contracts one
-command at a time.
+The next implementation stage builds the read-only interface on that foundation. Management
+operations from the web remain disabled until the job path exists.
 
 ## Security model
 

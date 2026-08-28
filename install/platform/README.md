@@ -10,9 +10,16 @@ Run them after the CLI installation, with the same answers file:
 ```bash
 sudo ./01-platform-prepare ../answers.env
 sudo ./02-platform-database ../answers.env
-sudo ALEMBIC_BIN=/path/to/alembic ./migrate ../answers.env
+sudo UV_BIN=/path/to/uv ./install-ui-release ../answers.env /path/to/source-tree
+sudo ALEMBIC_BIN=/apps/haproxy-manager/current/venv/bin/alembic ./migrate ../answers.env
 sudo ./03-verify ../answers.env
+sudo ./04-platform-service ../answers.env
 ```
+
+The order is not arbitrary. The release has to exist before the migrations run,
+because the migrations belong to the release being installed; and the schema has
+to exist before the service starts, because a service that starts against an
+empty database reports itself healthy and fails at the first request.
 
 ## Step 1 — the filesystem
 
@@ -87,7 +94,55 @@ backdate a session; the worker cannot read the audit trail; the poller can
 neither read accounts nor write audit. Those are the ways the separation could
 be lost with nothing looking wrong.
 
-## What these steps do not do
+## Installing a release
 
-They install no application code and start no service. There is no release to
-install yet.
+`./install-ui-release` builds one and activates it.
+
+**A release is a commit.** The installer refuses a source tree with uncommitted
+changes, because a release built from an edited tree is one nobody can
+reproduce — and the moment it is running, "what is in it" has no answer. The
+release is named after the commit, so reading the `current` symlink answers that
+question, and answers it the same way in a year.
+
+The release directory holds one thing: a virtual environment with both
+distributions installed non-editably. One directory replaced whole is simpler
+than code beside an environment, and it cannot half-update.
+
+**It is built at its final path, never staged and renamed.** A virtual
+environment is not relocatable: every console script carries an absolute shebang
+naming the interpreter at the path it was built in, and `pyvenv.cfg` and the
+activate scripts do the same. Moving it leaves all of them pointing at a
+directory that no longer exists, and the service then fails to exec a program
+that is plainly there.
+
+**It is built against the system interpreter**, not against a Python that a
+build tool downloaded into somebody's home directory. The unit sets
+`ProtectHome=yes`, so such an interpreter is invisible to the service and exec
+reports it as missing rather than as hidden. Both of these are checked before
+`current` is switched — the interpreter must be under `/usr`, and the console
+scripts must point into the release — because the symptom is `203/EXEC` and
+"no such file or directory", which reads as almost anything else.
+
+Nothing becomes current until the release has been imported successfully **as
+the account that will run it**. A release the service cannot read, or that
+cannot import its own dependencies, must not be what a restart picks up. The
+symlink is then written beside and renamed over, so a service restarting during
+the switch finds one release or the other and never nothing.
+
+Rolling back is pointing `current` at the previous release and restarting. The
+platform is isolated from the command line, so it never touches HAProxy.
+
+## Step 4 — the service
+
+`./04-platform-service` renders the unit from the example with the answers file,
+starts it, and then **fetches `/healthz`**. systemd reports a unit as active as
+soon as the process is up, which is before it has reached its database; "up but
+unable to answer" is exactly the state worth catching during an installation.
+
+The health endpoint answers with the identity the database reports back, not the
+one the process believes it has. Running as the wrong role otherwise looks
+exactly like running correctly, until something is denied — or allowed.
+
+The service starts with management writes off. That flag lives in
+`config/ui.toml` rather than in a release, because turning it off is the
+documented rollback for the write path, and that should not require a build.

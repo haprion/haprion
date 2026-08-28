@@ -110,6 +110,30 @@ node-side forced-command mappings. Every node-side sudo invocation uses `sudo -n
 `NOPASSWD` command rule so a policy mismatch fails immediately instead of attempting an interactive
 password path.
 
+## Database boundary
+
+The interface's three services connect over the local Unix socket with peer authentication. No
+application identity holds a database password, and there is nowhere to put one: each service
+account is named after its database role, so the kernel establishes who is connecting.
+
+The migration role owns every object and has no operating-system account. A service process
+therefore cannot run DDL by construction rather than by the absence of a grant — you cannot drop a
+table you do not own. Running a migration is a deliberate root action, mapped explicitly.
+
+Table grants live in the migration that creates the table, named against three contract roles
+rather than against accounts, and column by column rather than table-wide. The web role may state
+what it wants done and nothing about what happened: it holds `insert` on the job table's operation,
+cluster and payload, and no `update` at all, while state, request ID and timestamps come from
+column defaults. The audit trail is append-only by grant — no role holds `update` or `delete` on it.
+
+Each role carries a `statement_timeout` and an `idle_in_transaction_session_timeout`, set per role
+and per database. The worker must never hold a transaction open across a CLI subprocess, and this
+makes that a database rule rather than a discipline.
+
+`install/platform/03-verify` checks the resulting surface against the running database, in both
+directions. Only asking what a role must *not* do passes completely for a role with no privileges
+at all, which is a broken system reading as a secured one.
+
 ## Sudo policy
 
 - Web has no sudo rule.

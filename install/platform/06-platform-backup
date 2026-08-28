@@ -80,5 +80,5 @@ done
 
 echo
 log "platform step 6 done"
-log "Nothing here survives losing this host. A whole-machine backup already covers"
-log "${DUMP_DIR}; a file-level one has to be told about it."
+log "Nothing here survives losing this host: make sure ${DUMP_DIR} ends up"
+log "somewhere that does."

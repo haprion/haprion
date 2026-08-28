@@ -222,11 +222,17 @@ class FailureTests(StatusFixture):
     def test_a_missing_cluster_config_helper_is_named(self) -> None:
         absent = str(Path(self.directory.name) / "gone")
         with mock.patch.object(config_status, "CLUSTER_CONFIG", absent):
-            code, shown, err = self.run_status()
+            out, errors = io.StringIO(), io.StringIO()
+            code = config_status.main(
+                ["-c", "alpha"],
+                stream_out=out,
+                stream_err=errors,
+                read_published=lambda _cluster: None,
+            )
 
         self.assertEqual(code, 68)
-        self.assertEqual(shown, "")
-        self.assertEqual(err, "ERROR: cluster-config helper is missing.\n")
+        self.assertEqual(out.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "ERROR: cluster-config helper is missing.\n")
 
     def test_the_argument_contract_is_the_shell_command_s(self) -> None:
         for argv in ([], ["alpha"], ["-c"], ["-c", "alpha", "extra"], ["-x", "alpha"]):

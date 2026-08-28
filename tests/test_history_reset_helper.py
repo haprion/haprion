@@ -15,9 +15,11 @@ import unittest
 import uuid
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 import yaml
 
+from haproxy_mgmt.cli import history_reset_helper
 from haproxy_mgmt.cli.history_reset_helper import ACKNOWLEDGEMENT, OPERATION, main
 
 BASE = Path(__file__).resolve().parents[1]
@@ -114,6 +116,7 @@ class HelperTests(unittest.TestCase):
             "require_secure": False,
             "require_root": False,
             "change_owner": lambda path, uid, gid: None,
+            "resolve_group": lambda _name: os.getgid(),
         }
         arguments.update(overrides)
         code = main([], **arguments)  # type: ignore[arg-type]
@@ -180,6 +183,22 @@ class HelperTests(unittest.TestCase):
             code, _, err = self.run_helper(policy, self.request())
             self.assertEqual(code, 65)
             self.assertIn("not published", err)
+
+    def test_a_missing_management_group_fails_before_writing(self) -> None:
+        with TemporaryDirectory() as raw:
+            policy, draft = self.runtime(Path(raw))
+            before = git(draft, "rev-parse", "HEAD")
+            with mock.patch.object(history_reset_helper.grp, "getgrnam", side_effect=KeyError):
+                code, out, err = self.run_helper(
+                    policy,
+                    self.request(),
+                    resolve_group=history_reset_helper._group_id,
+                )
+
+            self.assertEqual(code, 78)
+            self.assertEqual(out, "")
+            self.assertIn("group 'haproxy-mgmt' does not exist", err)
+            self.assertEqual(git(draft, "rev-parse", "HEAD"), before)
 
     # ------------------------------------------------------------------ doing it
 

@@ -23,6 +23,7 @@ import grp
 import json
 import os
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import BinaryIO, TextIO
@@ -55,6 +56,21 @@ ACKNOWLEDGEMENT = "please reset me"
 
 BASELINE_MESSAGE = "Baseline after the build phase"
 
+type ResolveGroup = Callable[[str], int]
+
+
+def _group_id(name: str) -> int:
+    """Resolve the required group, failing before writing an unreadable tree."""
+
+    try:
+        return grp.getgrnam(name).gr_gid
+    except KeyError as exc:
+        raise ResetError(
+            f"the group '{name}' does not exist. The new history would be "
+            "unreadable to the management identity.",
+            exit_code=78,
+        ) from exc
+
 
 def main(
     argv: list[str] | None = None,
@@ -66,6 +82,7 @@ def main(
     require_secure: bool = True,
     require_root: bool = True,
     change_owner: ChangeOwner = chown,
+    resolve_group: ResolveGroup = _group_id,
 ) -> int:
     output = output_stream or sys.stdout
     errors = error_stream or sys.stderr
@@ -93,14 +110,7 @@ def main(
         )
         plan = preview(request.cluster, cluster.config_path)
 
-        try:
-            group_id = grp.getgrnam(OWNER_GROUP).gr_gid
-        except KeyError as exc:
-            raise ResetError(
-                f"the group '{OWNER_GROUP}' does not exist. The new history would be "
-                "unreadable to the management identity.",
-                exit_code=78,
-            ) from exc
+        group_id = resolve_group(OWNER_GROUP)
 
         result = reset_history(
             plan,

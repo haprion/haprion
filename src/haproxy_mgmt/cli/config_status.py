@@ -53,6 +53,24 @@ type ConfigPath = Callable[[str], Path]
 type ReadPublished = Callable[[str], str | None]
 
 
+class MissingClusterConfigHelper(Exception):
+    """The installed resolver required by the real command is unavailable."""
+
+
+def _resolve_config_path(cluster_id: str) -> Path:
+    """Resolve the production path, naming a missing installed helper precisely.
+
+    Keeping this check with the production resolver matters for more than test
+    convenience: a caller that supplies another resolver owns that resolver's
+    prerequisites.  Checking an unrelated installed path before calling it
+    makes the injected dependency a lie.
+    """
+
+    if not os.access(CLUSTER_CONFIG, os.X_OK):
+        raise MissingClusterConfigHelper
+    return _config_path(cluster_id)
+
+
 def _read_published(cluster_id: str) -> str | None:
     """The published RELEASE stamp, or None when it could not be read.
 
@@ -108,7 +126,7 @@ def main(
     *,
     stream_out: TextIO | None = None,
     stream_err: TextIO | None = None,
-    config_path: ConfigPath = _config_path,
+    config_path: ConfigPath = _resolve_config_path,
     read_published: ReadPublished = _read_published,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
@@ -117,16 +135,16 @@ def main(
     cluster_id = _parse(argv)
 
     #
-    # Checked before it is called, unlike the other commands: this one names the
-    # missing helper and exits 68, where the others let it fail as a missing
-    # program. Kept as it is because that is what the shell command did, and the
-    # exit code is what a wrapper reads.
+    # Unlike the other commands, this one names a missing resolver and exits 68.
+    # The check lives inside the default resolver so an injected resolver is a
+    # complete dependency rather than still relying on this machine's install.
     #
-    if not os.access(CLUSTER_CONFIG, os.X_OK):
+    try:
+        repo = config_path(cluster_id)
+    except MissingClusterConfigHelper:
         errors.write("ERROR: cluster-config helper is missing.\n")
         return 68
 
-    repo = config_path(cluster_id)
     if not is_repo_root(repo):
         errors.write(f"{describe_problem(cluster_id, repo)}\n")
         return 68

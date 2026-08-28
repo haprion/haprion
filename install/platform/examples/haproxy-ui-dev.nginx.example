@@ -1,0 +1,52 @@
+#
+# Optional HTTPS entry point for the isolated development UI. Rendered by
+# 09-dev-nginx; edit that script/template rather than the installed site.
+#
+# This remains separate from the production vhost: a browser gets host-only
+# session cookies and the development app still listens only on loopback.
+#
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name SERVER_NAME;
+
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name SERVER_NAME;
+
+    ssl_certificate     TLS_CERT;
+    ssl_certificate_key TLS_KEY;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:haproxy_ui_dev:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # HSTS stays off until a certificate trusted by the browser is installed.
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy same-origin always;
+    client_max_body_size 1m;
+
+    access_log /var/log/nginx/haproxy-ui-dev.access.log;
+    error_log  /var/log/nginx/haproxy-ui-dev.error.log;
+
+    location / {
+        proxy_pass http://127.0.0.1:WEB_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+        proxy_set_header X-Forwarded-Port  $server_port;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout    60s;
+    }
+}

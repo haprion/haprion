@@ -2,9 +2,9 @@
 #
 # haproxy-ui-tls - inspect and replace the certificate nginx serves the UI with.
 #
-#     haproxy-ui-tls show
-#     haproxy-ui-tls install --cert <file> --key <file>
-#     haproxy-ui-tls self-signed [--days <n>]
+#     haproxy-ui-tls [--config /etc/haproxy-manager/ui-tls.conf] show
+#     haproxy-ui-tls [--config /etc/haproxy-manager/ui-tls.conf] install --cert <file> --key <file>
+#     haproxy-ui-tls [--config /etc/haproxy-manager/ui-tls.conf] self-signed [--days <n>]
 #
 # This certificate is what an operator's browser meets when logging in. It is
 # not the certificate on the HAProxy pair, and it is not used between nginx and
@@ -22,7 +22,8 @@
 #
 set -Eeuo pipefail
 
-CONF=/etc/haproxy-manager/ui-tls.conf
+DEFAULT_CONF=/etc/haproxy-manager/ui-tls.conf
+CONF="$DEFAULT_CONF"
 
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 warn() { echo "WARNING: $*" >&2; }
@@ -34,6 +35,17 @@ usage() {
 }
 
 [[ $EUID -eq 0 ]] || die "run this with sudo"
+
+#
+# Production keeps the historical default.  A second, explicitly named config
+# lets a development vhost have its own key and hostname without pointing a
+# dev certificate command at production's pair by mistake.
+if [[ "${1:-}" == "--config" ]]; then
+    CONF="${2:-}"
+    shift 2 || usage
+fi
+[[ "$CONF" == /etc/haproxy-manager/*.conf && "$CONF" != *".."* ]] \
+    || die "--config must name a configuration file under /etc/haproxy-manager"
 
 #
 # Exit 78 rather than guessing, the same contract the node scripts follow: a
@@ -190,7 +202,11 @@ case "$cmd" in
         echo
         warn "this certificate is self-signed - browsers will warn on every login."
         warn "replace it with one your clients trust:"
-        warn "  sudo haproxy-ui-tls install --cert <file> --key <file>"
+        if [[ "$CONF" == "$DEFAULT_CONF" ]]; then
+            warn "  sudo haproxy-ui-tls install --cert <file> --key <file>"
+        else
+            warn "  sudo haproxy-ui-tls --config ${CONF} install --cert <file> --key <file>"
+        fi
         ;;
 
     *) usage ;;

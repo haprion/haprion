@@ -17,6 +17,14 @@ sudo ./04-platform-service ../answers.env
 sudo ./05-platform-nginx ../answers.env
 ```
 
+For an isolated dev platform the normal path stops at step 4. If developers
+need a direct browser address rather than an SSH tunnel, give the dev answers
+file its own `SERVER_NAME` and run the optional step 9 after its service is up:
+
+```bash
+sudo ./09-dev-nginx ../answers-dev.env
+```
+
 The order is not arbitrary. The release has to exist before the migrations run,
 because the migrations belong to the release being installed; and the schema has
 to exist before the service starts, because a service that starts against an
@@ -194,6 +202,27 @@ and it will never be a file upload: the web identity must not read private key
 material. The shape is a drop directory the poller lists, an admin choosing a
 candidate, and a job carrying that candidate's id — the web process chooses
 *which*, never *what*. See B21 in the decision log.
+
+## Optional step 9 — direct development address
+
+The development service normally remains reachable only through an SSH tunnel.
+`./09-dev-nginx` is the deliberate exception for browser review: it requires a
+separate `SERVER_NAME` in the development answers file, checks that the name
+resolves before changing nginx, and renders a second virtual host to the dev
+loopback port. It never changes the production site, production certificate or
+the listener of either application.
+
+The step creates a separate TLS configuration and `haproxy-ui-dev-tls` command.
+It creates a self-signed development pair when no pair is supplied in
+`TLS_CERT`/`TLS_KEY`; install an internal-PKI pair later with:
+
+```bash
+sudo haproxy-ui-dev-tls install --cert /path/to/dev-ui.crt --key /path/to/dev-ui.key
+```
+
+The name must have a DNS record before the step runs. The separate hostname is
+also what prevents a browser from mixing development and production host-only
+session cookies.
 
 ## Step 7 — the worker and the poller
 

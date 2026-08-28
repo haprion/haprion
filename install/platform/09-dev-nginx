@@ -1,0 +1,107 @@
+#!/bin/bash
+#
+# Optional platform step 9 - publish the isolated development UI through nginx.
+#
+#     sudo ./09-dev-nginx <development-answers-file>
+#
+# The web process remains loopback-only.  This creates a second nginx virtual
+# host with a separate hostname and TLS pair, never a public listener on the
+# development port and never a change to production's vhost or certificate.
+
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars ENVIRONMENT PLATFORM_ROOT WEB_USER WEB_PORT SERVER_NAME
+
+[[ "$ENVIRONMENT" == "dev" ]] \
+    || die "09-dev-nginx only accepts an answers file with ENVIRONMENT=dev"
+[[ "$SERVER_NAME" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]] \
+    || die "SERVER_NAME must be a lower-case DNS hostname"
+if [[ ! "$WEB_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || (( WEB_PORT > 65535 )); then
+    die "WEB_PORT must be a TCP port"
+fi
+
+TLS_CERT="${TLS_CERT:-/etc/haproxy-manager/dev-tls/ui.crt}"
+TLS_KEY="${TLS_KEY:-/etc/haproxy-manager/dev-tls/ui.key}"
+TLS_CONF=/etc/haproxy-manager/ui-dev-tls.conf
+SITE=/etc/nginx/sites-available/haproxy-ui-dev
+ENABLED=/etc/nginx/sites-enabled/haproxy-ui-dev
+
+valid_abs_path "$TLS_CERT" || die "TLS_CERT must be an absolute path"
+valid_abs_path "$TLS_KEY" || die "TLS_KEY must be an absolute path"
+[[ -L "${PLATFORM_ROOT}/current" ]] \
+    || die "${PLATFORM_ROOT}/current does not exist. Install a development release first."
+systemctl is-active --quiet "${WEB_USER}.service" \
+    || die "${WEB_USER}.service is not running; run 04-platform-service first"
+
+step "Name resolution"
+getent ahosts "$SERVER_NAME" >/dev/null \
+    || die "${SERVER_NAME} does not resolve here; add its DNS record before publishing dev"
+log "  ok       ${SERVER_NAME} resolves"
+
+step "Development TLS configuration"
+ensure_dir /etc/haproxy-manager root:root 755
+ensure_dir "$(dirname "$TLS_CERT")" root:root 700
+ensure_dir "$(dirname "$TLS_KEY")" root:root 700
+install_file "$TLS_CONF" root:root 644 "$(cat <<EOF
+# Read by haproxy-ui-dev-tls. Written by 09-dev-nginx.
+TLS_CERT=${TLS_CERT}
+TLS_KEY=${TLS_KEY}
+SERVER_NAME=${SERVER_NAME}
+EOF
+)"
+install -o root -g root -m 755 bin/haproxy-ui-tls /usr/local/sbin/haproxy-ui-tls
+install_file /usr/local/sbin/haproxy-ui-dev-tls root:root 755 "#!/bin/bash
+set -Eeuo pipefail
+exec /usr/local/sbin/haproxy-ui-tls --config ${TLS_CONF} \"\$@\""
+
+step "Development site"
+rendered="$(sed -e "s|SERVER_NAME|${SERVER_NAME}|g" \
+                -e "s|TLS_CERT|${TLS_CERT}|g" \
+                -e "s|TLS_KEY|${TLS_KEY}|g" \
+                -e "s|WEB_PORT|${WEB_PORT}|g" \
+                examples/haproxy-ui-dev.nginx.example)"
+install_file "$SITE" root:root 644 "$rendered"
+if [[ -L "$ENABLED" ]]; then
+    log "  ok       site enabled"
+else
+    ln -sf ../sites-available/haproxy-ui-dev "$ENABLED"
+    log "  enabled  site"
+fi
+
+step "Certificate"
+if [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]]; then
+    /usr/local/sbin/haproxy-ui-dev-tls show
+else
+    /usr/local/sbin/haproxy-ui-dev-tls self-signed
+fi
+
+step "Starting"
+nginx -t 2>&1 | sed 's/^/  /'
+systemctl enable --quiet nginx
+systemctl reload-or-restart nginx
+log "  started  nginx"
+
+step "What the development app identity must not be able to do"
+if sudo -u "$WEB_USER" test -r "$TLS_KEY" 2>/dev/null; then
+    die "${WEB_USER} can read the development TLS private key"
+fi
+log "  ok       ${WEB_USER} cannot read the private key"
+
+step "Proving the public vhost"
+for _ in $(seq 10); do
+    if answer="$(curl -fsSk --max-time 3 "https://${SERVER_NAME}/healthz" 2>/dev/null)"; then
+        log "  ok       ${answer}"
+        echo
+        log "development nginx step done"
+        exit 0
+    fi
+    sleep 1
+done
+
+systemctl status --no-pager --lines=20 nginx || true
+die "https://${SERVER_NAME}/healthz did not answer within 10 seconds"

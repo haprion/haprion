@@ -961,11 +961,24 @@ sudo ALEMBIC_BIN=... ./migrate answers-dev.env
 sudo ./04-platform-service   answers-dev.env
 ```
 
-Steps 5, 6 and 7 are deliberately **not** run for development. There is no nginx
-in front of it — it is reached over an SSH tunnel to its loopback port, not from
-the network — it does not need backups, and it must not have the poller's
-sudoers rule, because a development platform has no business reaching
-production's nodes.
+Steps 5, 6 and 7 are deliberately **not** run for development. It does not need
+backups, and it must not have the poller's sudoers rule, because a development
+platform has no business reaching production's nodes.
+
+By default development has no nginx site and is reached over an SSH tunnel to
+its loopback port. If browser review needs a direct development address, add a
+distinct `SERVER_NAME` to the dev answers file, provision DNS for it, and run:
+
+```bash
+sudo ./09-dev-nginx answers-dev.env
+```
+
+Step 9 is deliberately separate from production's step 5: it makes a second
+nginx virtual host to the dev loopback port, with a separate certificate path
+and `haproxy-ui-dev-tls` command. It neither exposes the development port
+directly nor changes the production vhost or certificate. A self-signed pair is
+generated when no development pair has been supplied; an internal-PKI pair can
+later replace it through the dev-specific command.
 
 `ENVIRONMENT=dev` in the answers file also keeps the root commands in
 `/usr/local/sbin` pointing at production. A development install would otherwise

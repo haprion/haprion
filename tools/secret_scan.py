@@ -26,8 +26,29 @@ GENERIC_RULES = (
     (
         "assigned-secret",
         re.compile(
-            r"(?i)\b(?:password|passwd|secret|token|api[_-]?key|private[_-]?key)\b"
-            r"\s*[:=]\s*['\"]?[^\s'\"${}]{8,}"
+            #
+            # A lookbehind rather than \b at the front. A word boundary does not
+            # fire between an underscore and a letter, so `DB_PASSWORD=...` and
+            # `API_TOKEN=...` - the two most ordinary names a real secret is
+            # assigned to - went unmatched. Found 2026-08-28 while narrowing the
+            # value side of this rule.
+            #
+            r"(?i)(?<![A-Za-z0-9])(?:password|passwd|secret|token|api[_-]?key|private[_-]?key)\b"
+            r"\s*[:=]\s*"
+            #
+            # A value that is a function call or a subscript is code, not a
+            # literal: `password = read_new_password()` and
+            # `token = request.cookies.get(NAME)` name a secret without
+            # containing one. Excluded by shape rather than by an allowlist of
+            # files, so the exemption cannot rot into "this directory is
+            # trusted".
+            #
+            # Deliberately narrow. Only a call or a subscript is exempt - a bare
+            # dotted value is still reported, and so is anything quoted, because
+            # a real secret with dots in it (a JWT, for one) must keep matching.
+            #
+            r"(?!(?:[A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][A-Za-z0-9_]*)*\s*[(\[])"
+            r"['\"]?[^\s'\"${}]{8,}"
         ),
     ),
 )

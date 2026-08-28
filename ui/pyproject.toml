@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "haproxy-ui"
+version = "0.1.0"
+description = "Web interface for the HAProxy management engine"
+requires-python = ">=3.12"
+
+#
+# A separate distribution from haproxy-manager, in the same repository. The CLI
+# is the authoritative engine and is installed under /opt as the recovery path;
+# it must not carry web code it never runs, and the two are rolled back
+# independently.
+#
+# haproxy-manager is a dependency rather than a copy: the interface reads the
+# same result envelopes, through the same parsing code, as the command line.
+#
+dependencies = [
+    "haproxy-manager",
+    "psycopg[binary,pool]>=3.3,<4",
+]
+
+[dependency-groups]
+dev = [
+    "alembic==1.19.1",
+    "mypy==2.3.1",
+    "ruff==0.16.4",
+]
+
+#
+# The engine is a path dependency, not a published one. There is no index to
+# fetch it from and there should not be: the interface and the command line are
+# built from the same tree at the same commit, which is what keeps them from
+# disagreeing about a result envelope.
+#
+[tool.uv.sources]
+haproxy-manager = { path = "..", editable = true }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "S", "SIM", "EXE"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+files = ["src", "migrations"]

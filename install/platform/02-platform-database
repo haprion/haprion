@@ -33,27 +33,61 @@ psql_super() { sudo -u postgres psql -v ON_ERROR_STOP=1 -qtAX "$@"; }
 # process listing - which is why the role names below are exactly the service
 # account names.
 #
-step "Roles"
-ensure_role() {
+#
+# Two layers, and the reason is a repository rule rather than a database one.
+#
+# The migrations hold the grants - a column's permissions belong beside the
+# column - but a migration may not name a service account: account names
+# identify a real installation, and this repository is meant to be public. So
+# the migrations grant to three group roles with fixed, generic names that are
+# part of the software's contract, and this step connects whatever the accounts
+# are actually called to them.
+#
+# It is also the better database design. Adding a second worker later is a
+# membership, not a migration.
+#
+step "Contract roles"
+ensure_group_role() {
     local role="$1" purpose="$2"
     if [[ "$(psql_super -c "select 1 from pg_roles where rolname = '${role}'")" == "1" ]]; then
         log "  ok       ${role}  (${purpose})"
     else
-        #
-        # NOINHERIT on purpose. A role that inherits is a role whose privileges
-        # can be used without anyone having asked for them; here every privilege
-        # a service has must be one that was granted to it by name.
-        #
-        psql_super -c "create role \"${role}\" with login nosuperuser nocreatedb
+        psql_super -c "create role \"${role}\" with nologin nosuperuser nocreatedb
                        nocreaterole noinherit noreplication nobypassrls"
         log "  created  ${role}  (${purpose})"
     fi
 }
 
-ensure_role "$DB_MIGRATION_ROLE" "owns the schema, runs migrations"
-ensure_role "$WEB_USER"    "sessions, audit, and queueing a job"
-ensure_role "$WORKER_USER" "claims and completes jobs"
-ensure_role "$POLLER_USER" "writes cached status and metrics"
+ensure_group_role app_web    "sessions, audit, and queueing a job"
+ensure_group_role app_worker "claims and completes jobs"
+ensure_group_role app_poller "writes cached status and metrics"
+
+step "Login roles"
+ensure_login_role() {
+    local role="$1" contract="$2"
+    if [[ "$(psql_super -c "select 1 from pg_roles where rolname = '${role}'")" == "1" ]]; then
+        log "  ok       ${role}"
+    else
+        #
+        # INHERIT, and exactly one group each. Inheritance is what makes the
+        # contract role usable without every query starting with SET ROLE; one
+        # membership is what keeps "inherits" from meaning "inherits things
+        # nobody granted it".
+        #
+        psql_super -c "create role \"${role}\" with login inherit nosuperuser nocreatedb
+                       nocreaterole noreplication nobypassrls"
+        log "  created  ${role}"
+    fi
+    if [[ -n "$contract" ]]; then
+        psql_super -c "grant \"${contract}\" to \"${role}\""
+        log "  member   ${role} of ${contract}"
+    fi
+}
+
+ensure_login_role "$DB_MIGRATION_ROLE" ""
+ensure_login_role "$WEB_USER"    app_web
+ensure_login_role "$WORKER_USER" app_worker
+ensure_login_role "$POLLER_USER" app_poller
 
 step "Database"
 if [[ "$(psql_super -c "select 1 from pg_database where datname = '${DB_NAME}'")" == "1" ]]; then
@@ -73,8 +107,8 @@ step "Database-level privileges"
 psql_super -d "$DB_NAME" <<SQL
 revoke all on database "${DB_NAME}" from public;
 revoke all on schema public from public;
-grant connect on database "${DB_NAME}" to "${WEB_USER}", "${WORKER_USER}", "${POLLER_USER}";
-grant usage on schema public to "${WEB_USER}", "${WORKER_USER}", "${POLLER_USER}";
+grant connect on database "${DB_NAME}" to app_web, app_worker, app_poller;
+grant usage on schema public to app_web, app_worker, app_poller;
 alter schema public owner to "${DB_MIGRATION_ROLE}";
 SQL
 log "  set      connect and schema usage for the three services"
@@ -122,6 +156,26 @@ fi
 
 systemctl reload postgresql
 log "  reloaded postgresql"
+
+#
+# A statement that runs forever and a transaction left open are the two ways a
+# service pins a connection nobody can reclaim. Set per role and per database,
+# so they hold however the service is started and whatever it forgets.
+#
+# The worker gets a longer statement timeout and the same short idle limit: its
+# queries are brief, but it must never hold a transaction open across the CLI
+# subprocess, and this makes that a database rule rather than a discipline.
+#
+step "Per-role limits"
+set_limits() {
+    psql_super -c "alter role \"$1\" in database \"${DB_NAME}\" set statement_timeout = '$2'"
+    psql_super -c "alter role \"$1\" in database \"${DB_NAME}\"
+                   set idle_in_transaction_session_timeout = '10s'"
+    log "  set      $1  statement_timeout=$2 idle_in_transaction=10s"
+}
+set_limits "$WEB_USER"    "5s"
+set_limits "$WORKER_USER" "15s"
+set_limits "$POLLER_USER" "10s"
 
 step "Proving it"
 #

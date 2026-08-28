@@ -22,8 +22,13 @@ fi
 python3 "$base/tools/secret_scan.py" \
     --worktree "$base" \
     --rules "$HAPROXY_MANAGER_SECRET_RULES"
-ruff check "$base/src" "$base/tests" "$base/contract-tests" "$base/tools"
-ruff format --check "$base/src" "$base/tests" "$base/contract-tests" "$base/tools"
+#
+# The interface tree is linted by the same pinned ruff as the engine. Its
+# types are checked by its own environment, which is the one holding its
+# dependencies; this gate would otherwise pass by not looking.
+#
+ruff check "$base/src" "$base/tests" "$base/contract-tests" "$base/tools" "$base/ui"
+ruff format --check "$base/src" "$base/tests" "$base/contract-tests" "$base/tools" "$base/ui"
 # -x so the installation scripts' `source ./lib.sh` is followed rather than
 # reported as unreadable, and -P SCRIPTDIR so it is looked up beside the script
 # that sources it rather than in whatever directory the gate was started from.
@@ -31,7 +36,7 @@ shellcheck -x -P SCRIPTDIR "$base/run-checks" "$base/run-tests" "$base/tools/ins
     "$base/tools/install-gitleaks" "$base/tools/install-shellcheck" \
     "$base/tools/run-codeql" "$base/tools/run-gitleaks" \
     "$base/install/lib.sh" "$base/install"/[0-9][0-9]-* \
-    "$base/install/platform"/[0-9][0-9]-* \
+    "$base/install/platform"/[0-9][0-9]-* "$base/install/platform/migrate" \
     "$base/install/node/haproxy-pull-deploy" \
     "$base/install/node/haproxy-cert-pull" \
     "$base/install/node/haproxy-cert-trigger" \

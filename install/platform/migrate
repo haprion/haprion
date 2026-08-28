@@ -1,0 +1,61 @@
+#!/bin/bash
+#
+# Apply database migrations. Run after installing a release, and only then.
+#
+# This is a deliberate root action, not something a service does when it starts.
+# The migration role owns every object in the database and no operating-system
+# account maps to it except root, so a service that restarts cannot alter the
+# schema even by accident.
+#
+#     sudo ./migrate <answers-file> [alembic arguments]
+#
+# With no alembic arguments it runs `upgrade head`. Anything else is passed
+# through, so `sudo ./migrate answers.env current` and `... history` work.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+answers="${1:-}"
+load_answers "$answers"
+shift
+require_vars DB_NAME DB_MIGRATION_ROLE
+
+alembic="${ALEMBIC_BIN:-}"
+[[ -n "$alembic" ]] || die "set ALEMBIC_BIN to the alembic executable of the
+  environment holding this release's dependencies"
+[[ -x "$alembic" ]] || die "not executable: ${alembic}"
+
+#
+# The role is named in the URL because libpq would otherwise ask for one named
+# after the operating-system user - root, here, which is not a role and must not
+# become one. Peer authentication and the ident map decide whether root may be
+# this role; the URL only states which role it is asking for.
+#
+export HAPROXY_UI_DATABASE_URL="postgresql+psycopg://${DB_MIGRATION_ROLE}@/${DB_NAME}?host=/var/run/postgresql"
+
+#
+# Checked here rather than left to Postgres. The migrations grant to the three
+# contract roles, so running them before step 2 has created those roles fails
+# somewhere in the middle of a stack trace with "role app_web does not exist" -
+# true, but not a sentence that tells anyone what to do about it.
+#
+missing=""
+for role in app_web app_worker app_poller; do
+    if [[ "$(psql -U "$DB_MIGRATION_ROLE" -d "$DB_NAME" -qtAX \
+             -c "select 1 from pg_roles where rolname = '${role}'")" != "1" ]]; then
+        missing="${missing} ${role}"
+    fi
+done
+[[ -z "$missing" ]] || die "the contract role(s)${missing} do not exist.
+  Run ./02-platform-database ${answers} first; the migrations grant to them."
+
+if [[ $# -eq 0 ]]; then
+    set -- upgrade head
+fi
+
+step "Migrating ${DB_NAME} as ${DB_MIGRATION_ROLE}"
+cd ../../ui
+exec "$alembic" "$@"

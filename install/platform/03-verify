@@ -1,0 +1,108 @@
+#!/bin/bash
+#
+# Platform step 3 - check that the database grants what it is supposed to, and
+# nothing else.
+#
+# This is a contract test, and it is deliberately a SECOND description of the
+# privilege surface. The migrations are the first: they state what to grant.
+# This states what the result must be, and compares it against what the running
+# database actually reports. Two descriptions are the point here, where they
+# would be a defect anywhere else - a test that derives its expectation from the
+# thing it is testing proves nothing.
+#
+# Read-only. It changes nothing and can be run whenever.
+#
+#     sudo ./03-verify <answers-file>
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER
+
+run() { psql -U "$DB_MIGRATION_ROLE" -d "$DB_NAME" -qtAX -F $'\t' "$@"; }
+
+failures=0
+fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
+
+step "Tables"
+expected_tables=$'alembic_version\napp_session\napp_user\naudit_event'
+actual_tables="$(run -c "select tablename from pg_tables
+                          where schemaname = 'public' order by 1")"
+if [[ "$actual_tables" == "$expected_tables" ]]; then
+    log "  ok       $(echo "$actual_tables" | tr '\n' ' ')"
+else
+    fail "tables differ"
+    diff <(echo "$expected_tables") <(echo "$actual_tables") || true
+fi
+
+#
+# Column by column, grantee by grantee. A grant on a whole table would show up
+# here as every column at once, which is exactly the widening this is watching
+# for.
+#
+step "Column privileges"
+expected_grants=$(cat <<'EOF'
+app_web	app_session	INSERT	expires_at, token_hash, user_id
+app_web	app_session	SELECT	created_at, expires_at, last_seen_at, revoked_at, token_hash, user_id
+app_web	app_session	UPDATE	last_seen_at, revoked_at
+app_web	app_user	SELECT	disabled, id, password_hash, role, username, username_normalised
+app_web	audit_event	INSERT	action, actor, cluster, detail, request_id
+app_web	audit_event	SELECT	action, actor, at, cluster, detail, id, request_id
+app_worker	audit_event	INSERT	action, actor, cluster, detail, request_id
+EOF
+)
+actual_grants="$(run -c "
+    select grantee, table_name, privilege_type,
+           string_agg(column_name, ', ' order by column_name)
+      from information_schema.column_privileges
+     where table_schema = 'public' and grantee like 'app\\_%'
+     group by grantee, table_name, privilege_type
+     order by grantee, table_name, privilege_type")"
+
+if [[ "$actual_grants" == "$expected_grants" ]]; then
+    log "  ok       $(echo "$expected_grants" | wc -l) grants, exactly as expected"
+else
+    fail "the privilege surface is not what the contract says"
+    diff <(echo "$expected_grants") <(echo "$actual_grants") || true
+fi
+
+#
+# The negative half. Each of these has a matching line in the phase gate, and
+# each describes a way the separation could be lost without anything looking
+# wrong: a role that can edit the audit trail, or write a table it only reads.
+#
+step "What the roles must not be able to do"
+refuse() {
+    local user="$1" description="$2" sql="$3"
+    if sudo -u "$user" psql -d "$DB_NAME" -qtAX -c "$sql" >/dev/null 2>&1; then
+        fail "${user} ${description}"
+    else
+        log "  ok       ${user} ${description}"
+    fi
+}
+
+refuse "$WEB_USER"    "cannot update the audit trail" \
+       "update audit_event set action = 'tampered'"
+refuse "$WEB_USER"    "cannot delete from the audit trail" \
+       "delete from audit_event"
+refuse "$WEB_USER"    "cannot write accounts" \
+       "update app_user set role = 'admin'"
+refuse "$WEB_USER"    "cannot backdate a session" \
+       "insert into app_session (token_hash, user_id, expires_at, created_at)
+        values (repeat('x', 32)::bytea, 1, now(), now())"
+refuse "$WORKER_USER" "cannot read the audit trail" \
+       "select id from audit_event"
+refuse "$POLLER_USER" "cannot read accounts" \
+       "select id from app_user"
+refuse "$POLLER_USER" "cannot write the audit trail" \
+       "insert into audit_event (action) values ('probe')"
+
+echo
+if (( failures )); then
+    die "${failures} check(s) failed"
+fi
+log "platform step 3 done - the database grants exactly what the contract says"

@@ -1,0 +1,76 @@
+#
+# nginx site for the HAProxy Manager UI.
+#
+# This is the direct manager address, and it deliberately does not go through
+# the HAProxy pair. The UI is the tool used to repair that pair, so putting the
+# UI behind it means a broken publish locks the operator out of the only thing
+# that could revert it. A front - a reverse proxy elsewhere - may be added as an
+# additional path, never as a replacement. See B21 and plan section 7.
+#
+# Rendered by 05-platform-nginx from the answers file. Edit that, not this.
+#
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name SERVER_NAME;
+
+    # Nothing is served over plain HTTP: the session cookie is Secure, so it
+    # would never be sent here anyway.
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name SERVER_NAME;
+
+    ssl_certificate     TLS_CERT;
+    ssl_certificate_key TLS_KEY;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:haproxy_ui:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    #
+    # Deliberately not enabled while the certificate is self-signed. HSTS makes
+    # a certificate warning unclickable, so switching it on before a trusted
+    # certificate is installed locks every operator out of the UI - including
+    # the one who would fix it. Enable it after replacing the pair:
+    #
+    #   add_header Strict-Transport-Security "max-age=31536000" always;
+    #
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy same-origin always;
+
+    # An upload path exists for nothing here; keep bodies small.
+    client_max_body_size 1m;
+
+    access_log /var/log/nginx/haproxy-ui.access.log;
+    error_log  /var/log/nginx/haproxy-ui.error.log;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+
+        #
+        # Every one of these is set here, overwriting whatever arrived. The app
+        # trusts nginx's forwarded headers, which is only safe because a client
+        # cannot contribute to them - a request that arrives claiming its own
+        # X-Forwarded-For has that claim replaced, not appended.
+        #
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host  $host;
+        proxy_set_header X-Forwarded-Port  $server_port;
+
+        proxy_connect_timeout 5s;
+        proxy_read_timeout    60s;
+    }
+}

@@ -1,7 +1,7 @@
 # Installing the web platform
 
-Two steps, both on the management host. They are separate from the five CLI
-steps one directory up, and deliberately so: the CLI is the authoritative engine
+Five numbered steps plus two build helpers, all on the management host. They are
+separate from the five CLI steps one directory up, and deliberately so: the CLI is the authoritative engine
 and installs and runs without any of this. A management host that only ever uses
 the command line never needs the platform at all.
 
@@ -14,6 +14,7 @@ sudo UV_BIN=/path/to/uv ./install-ui-release ../answers.env /path/to/source-tree
 sudo ALEMBIC_BIN=/apps/haproxy-manager/current/venv/bin/alembic ./migrate ../answers.env
 sudo ./03-verify ../answers.env
 sudo ./04-platform-service ../answers.env
+sudo ./05-platform-nginx ../answers.env
 ```
 
 The order is not arbitrary. The release has to exist before the migrations run,
@@ -146,3 +147,50 @@ exactly like running correctly, until something is denied — or allowed.
 The service starts with management writes off. That flag lives in
 `config/ui.toml` rather than in a release, because turning it off is the
 documented rollback for the write path, and that should not require a build.
+
+## Step 5 — HTTPS
+
+`./05-platform-nginx` puts nginx in front of the web service, which keeps
+listening only on `127.0.0.1:8080` in plain HTTP. That leg stays plain on
+purpose; it never leaves the host.
+
+This is the **direct address**, and it deliberately does not go through the
+HAProxy pair. The UI is what you use to repair that pair, so routing the UI
+through it means a broken publish locks you out of the tool that would revert it.
+Anything you put in front later is an additional path, never a replacement.
+
+The step is also where the packaged nginx default site is disabled — as a
+symlink removal, not a file deletion. It answers on port 80 for any name, which
+includes this one.
+
+**If no certificate pair exists it generates a self-signed one**, so the UI is
+encrypted from the first login. The session cookie is `Secure` and is therefore
+never sent over plain HTTP; running without TLS is not a weaker setup here, it is
+a login that does not work. `TLS_CERT` and `TLS_KEY` in the answers file default
+to `/etc/haproxy-manager/tls/`; point them at a pair your clients trust and the
+self-signed path never runs.
+
+The step finishes by asking three questions of the running system rather than
+assuming them: that nginx accepts the config, that `https://$SERVER_NAME/healthz`
+actually answers, and that **none of the three application identities can read
+the private key**. The last one is a line in the phase gate, and it is checked as
+the real installed accounts.
+
+## Replacing the certificate
+
+Not by rerunning step 5. The command it installs owns the pair:
+
+```bash
+sudo haproxy-ui-tls show
+sudo haproxy-ui-tls install --cert <file> --key <file>
+```
+
+It verifies that certificate and key belong together by comparing public halves,
+refuses an expired certificate, installs root-owned `0600`, tests the config, and
+restores the previous pair if nginx refuses the new one.
+
+Doing this from the UI is planned for the phase that turns on management writes,
+and it will never be a file upload: the web identity must not read private key
+material. The shape is a drop directory the poller lists, an admin choosing a
+candidate, and a job carrying that candidate's id — the web process chooses
+*which*, never *what*. See B21 in the decision log.

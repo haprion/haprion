@@ -560,6 +560,84 @@ Both directions matters more than it sounds. A suite that only asks what a role
 must *not* do passes completely when a role has no privileges at all — which is
 a broken system reading as a perfectly secured one. Ask what must work too.
 
+### 4.5 HTTPS and the certificate
+
+`install/platform/05-platform-nginx` puts nginx in front of the web service and
+terminates HTTPS there. The web service itself listens only on
+`127.0.0.1:8080`, in plain HTTP, and that leg stays plain deliberately: it never
+leaves the host.
+
+**This is the direct address, and it does not go through the HAProxy pair.**
+That is the whole point of it. The UI is the tool used to repair that pair, so
+putting the UI behind it means a broken publish locks you out of the only thing
+that could revert it. A reverse proxy elsewhere — anything from another nginx to
+a Proxy Manager on a container host — may be added in front as an *additional*
+path, terminating with its own certificate. It must never become the only path.
+
+**The certificate is what a browser meets at login**, not something internal. It
+cannot come from the certbot chain the rest of this project uses: that chain is
+ACME with DNS-01 against a public domain, and a management host named on an
+internal domain cannot be validated that way. So the pair is either self-signed
+or issued by your own PKI.
+
+Three answers-file keys control it:
+
+| Key | Meaning |
+|---|---|
+| `SERVER_NAME` | the name the UI is reached on directly. Required |
+| `TLS_CERT` | defaults to `/etc/haproxy-manager/tls/ui.crt` |
+| `TLS_KEY` | defaults to `/etc/haproxy-manager/tls/ui.key` |
+
+If no pair exists at those paths, step 5 generates a self-signed one so the UI
+is encrypted from the first login. Point the keys at a pair your clients already
+trust and that step never runs.
+
+**Plain HTTP is not a lesser option here, it is a non-working one.** The session
+cookie is `Secure`, and a `Secure` cookie is never sent over HTTP, so login
+simply stops working. Removing `Secure` to get around that would put the session
+for a tool with deploy rights in clear text on the network. A self-signed
+certificate gives a browser warning but real encryption, which is the better
+trade while a proper pair is being arranged.
+
+#### Replacing it
+
+Not by rerunning the installer. The command that owns the certificate is
+installed by step 5:
+
+```bash
+sudo haproxy-ui-tls show
+sudo haproxy-ui-tls install --cert /path/to/ui.crt --key /path/to/ui.key
+```
+
+`install` checks that the certificate and key actually belong together by
+comparing public halves, refuses an expired certificate, warns under 30 days,
+installs the pair root-owned `0600`, runs `nginx -t`, and **puts the previous
+pair back if nginx refuses the new one**. A management host whose UI stopped
+answering is a worse outcome than a rejected replacement.
+
+The site config has HSTS present but commented out, with the reason next to it:
+HSTS makes a certificate warning unclickable, so enabling it while the
+certificate is still self-signed locks every operator out of the UI — including
+whoever would fix it. Enable it after installing a trusted pair.
+
+#### Why there is no upload form
+
+Replacing this certificate from the UI is planned, but never as a file upload.
+The web identity must not be able to read private key material — that is a line
+in the phase gate, verified as the real installed identity, and step 5 checks it
+for all three application accounts. A form that accepts a private key would make
+the web process a key handler, and a web intrusion sufficient to replace the
+management host's own certificate.
+
+The UI path being built instead: the pair is placed in a drop directory outside
+the web process, the poller lists what is there, an admin picks one, and the web
+process queues a job carrying only that candidate's id — never key bytes, never
+a path. The worker calls the same `haproxy-ui-tls`. The web process chooses
+*which*, never *what*. In practice the only difference is that the file arrives
+by scp or CLI rather than through the browser.
+
+Until then, replacement is the command above. See B21 in the decision log.
+
 ## Verifying the installation
 
 Work outward, and stop at the first step that fails:

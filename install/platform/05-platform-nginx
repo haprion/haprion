@@ -1,0 +1,128 @@
+#!/bin/bash
+#
+# Platform step 5 - terminate HTTPS in front of the web service.
+#
+#     sudo ./05-platform-nginx <answers-file>
+#
+# Installs haproxy-ui-tls, renders the site, and - if no pair is installed yet -
+# generates a self-signed one so the UI is encrypted from the first login. The
+# session cookie is Secure, so plain HTTP is not a lesser option here; it is a
+# non-working one. See B21.
+#
+# Replacing that certificate later is haproxy-ui-tls, not a rerun of this
+# script.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars PLATFORM_ROOT WEB_USER SERVER_NAME
+
+#
+# Defaulted rather than required, so an existing answers file keeps working.
+# Point these at an internally issued pair and the self-signed step never runs.
+#
+TLS_CERT="${TLS_CERT:-/etc/haproxy-manager/tls/ui.crt}"
+TLS_KEY="${TLS_KEY:-/etc/haproxy-manager/tls/ui.key}"
+
+valid_abs_path "$TLS_CERT" || die "TLS_CERT must be an absolute path"
+valid_abs_path "$TLS_KEY"  || die "TLS_KEY must be an absolute path"
+
+systemctl is-active --quiet haproxy-ui-web.service \
+    || die "haproxy-ui-web.service is not running; run 04-platform-service first"
+
+step "Where the pair lives"
+ensure_dir /etc/haproxy-manager root:root 755
+ensure_dir "$(dirname "$TLS_CERT")" root:root 700
+ensure_dir "$(dirname "$TLS_KEY")" root:root 700
+install_file /etc/haproxy-manager/ui-tls.conf root:root 644 "$(cat <<EOF
+# Read by haproxy-ui-tls. Written by 05-platform-nginx.
+TLS_CERT=${TLS_CERT}
+TLS_KEY=${TLS_KEY}
+SERVER_NAME=${SERVER_NAME}
+EOF
+)"
+
+step "The command that owns the certificate"
+install -o root -g root -m 755 bin/haproxy-ui-tls /usr/local/sbin/haproxy-ui-tls
+log "  installed /usr/local/sbin/haproxy-ui-tls"
+
+step "Site"
+rendered="$(sed -e "s|SERVER_NAME|${SERVER_NAME}|g" \
+                -e "s|TLS_CERT|${TLS_CERT}|g" \
+                -e "s|TLS_KEY|${TLS_KEY}|g" \
+                examples/haproxy-ui.nginx.example)"
+install_file /etc/nginx/sites-available/haproxy-ui root:root 644 "$rendered"
+
+if [[ -L /etc/nginx/sites-enabled/haproxy-ui ]]; then
+    log "  ok       site enabled"
+else
+    ln -sf ../sites-available/haproxy-ui /etc/nginx/sites-enabled/haproxy-ui
+    log "  enabled  site"
+fi
+
+#
+# The packaged default site answers on port 80 for any name, which means it
+# answers for this one too whenever the redirect above is not matched first.
+# Disabled rather than deleted: it is the distribution's file, not ours.
+#
+if [[ -e /etc/nginx/sites-enabled/default ]]; then
+    rm -f /etc/nginx/sites-enabled/default
+    log "  disabled the packaged default site"
+else
+    log "  ok       default site not enabled"
+fi
+
+step "Certificate"
+if [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]]; then
+    log "  ok       a pair is already installed"
+    /usr/local/sbin/haproxy-ui-tls show
+else
+    log "  none installed - generating a self-signed starting point"
+    /usr/local/sbin/haproxy-ui-tls self-signed
+fi
+
+step "Starting"
+nginx -t 2>&1 | sed 's/^/  /'
+systemctl enable --quiet nginx
+systemctl reload-or-restart nginx
+log "  started  nginx"
+
+#
+# The negative half, and the reason the private key is root-owned 0600 rather
+# than merely "out of the way". Each of these is a line in the phase 4 gate.
+#
+step "What the app identities must not be able to do"
+failed=0
+for user in "$WEB_USER" "${WORKER_USER:-}" "${POLLER_USER:-}"; do
+    [[ -n "$user" ]] || continue
+    if sudo -u "$user" test -r "$TLS_KEY" 2>/dev/null; then
+        warn "  FAIL     ${user} can read ${TLS_KEY}"
+        failed=1
+    else
+        log "  ok       ${user} cannot read the private key"
+    fi
+done
+[[ $failed -eq 0 ]] || die "an application identity can read nginx's private key"
+
+#
+# Asked over the real listener rather than assumed from a clean config test.
+# -k because the starting point is self-signed and this proves the path works,
+# not that the certificate is trusted.
+#
+step "Proving it answers"
+for _ in $(seq 10); do
+    if answer="$(curl -fsSk --max-time 3 "https://${SERVER_NAME}/healthz" 2>/dev/null)"; then
+        log "  ok       ${answer}"
+        echo
+        log "platform step 5 done"
+        exit 0
+    fi
+    sleep 1
+done
+
+systemctl status --no-pager --lines=20 nginx || true
+die "https://${SERVER_NAME}/healthz did not answer within 10 seconds"

@@ -62,6 +62,20 @@ jobs:
           uv sync --locked --group dev
           printf '%s\n' "${RUNNER_TEMP}/venv/bin" >> "${GITHUB_PATH}"
 
+      # The interface is a separate distribution with its own lockfile, so it
+      # needs its own environment. Its bin/ is deliberately NOT added to PATH:
+      # it would shadow the engine's environment, and the gate is meant to run
+      # the engine's tooling against both trees rather than the interface's
+      # copy of it.
+      - name: Install the locked interface environment
+        shell: bash
+        working-directory: ui
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/venv-ui
+        run: |
+          set -euo pipefail
+          uv sync --locked --group dev
+
       - name: Install pinned standalone checks
         shell: bash
         run: |
@@ -75,4 +89,8 @@ jobs:
         env:
           GITLEAKS_BIN: ${{ runner.temp }}/gitleaks/gitleaks
           HAPROXY_MANAGER_SECRET_RULES: ${{ runner.temp }}/haproxy-manager-private.rules
+          # Without this the gate refuses to run rather than skipping the
+          # interface. That is the point of it: a gate that passes because it
+          # could not import what it was asked to check is not a gate.
+          HAPROXY_UI_PYTHON: ${{ runner.temp }}/venv-ui/bin/python
         run: ./run-checks

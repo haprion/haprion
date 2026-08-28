@@ -33,6 +33,9 @@ require_vars PLATFORM_ROOT PLATFORM_GROUP WEB_USER
 uv="${UV_BIN:-}"
 [[ -n "$uv" && -x "$uv" ]] || die "set UV_BIN to the uv executable"
 
+PYTHON_BIN="${PYTHON_BIN:-/usr/bin/python3}"
+[[ -x "$PYTHON_BIN" ]] || die "not executable: ${PYTHON_BIN}"
+
 step "Source tree"
 #
 # Refused rather than warned about. A release built from an edited tree is a
@@ -63,8 +66,17 @@ else
     # installed code is a copy rather than a pointer into a working tree that
     # can change after installation.
     #
+    #
+    # --python-preference only-system, and the system interpreter named. Left to
+    # itself uv builds the environment against its OWN downloaded Python, which
+    # lives under the home directory of whoever ran the build - and a release
+    # that depends on an interpreter in a developer's home is not a release. It
+    # also fails in a way that takes a while to read: ProtectHome hides /home
+    # from the service, so exec reports the interpreter as not found.
+    #
     ( cd "${source_tree}/ui" \
-      && UV_PROJECT_ENVIRONMENT="${staging}/venv" "$uv" sync --locked --no-dev --no-editable )
+      && UV_PROJECT_ENVIRONMENT="${staging}/venv" "$uv" sync --locked --no-dev \
+             --no-editable --python "$PYTHON_BIN" --python-preference only-system )
     mv "$staging" "$release"
     trap - EXIT
     log "  built    ${release}"
@@ -80,6 +92,20 @@ chown -R "root:${PLATFORM_GROUP}" "$release"
 find "$release" -type d -exec chmod 750 {} +
 find "$release" -type f -exec chmod g-w,o-rwx {} +
 log "  ok       root:${PLATFORM_GROUP}, not group-writable"
+
+step "Self-containment"
+#
+# Checked rather than trusted, because the failure it prevents is unreadable
+# from the symptom. Everything the release needs must be inside the release or
+# under /usr; a path anywhere else is a dependency on the machine that built it,
+# and the sandbox the service runs in will simply report it as missing.
+#
+interpreter="$(readlink -f "${release}/venv/bin/python")"
+case "$interpreter" in
+    /usr/*) log "  ok       interpreter ${interpreter}" ;;
+    *)      die "the release interpreter is outside /usr: ${interpreter}
+  A release must not depend on an interpreter from the machine that built it." ;;
+esac
 
 step "Proving the release before it becomes current"
 #

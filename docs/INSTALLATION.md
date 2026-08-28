@@ -729,6 +729,39 @@ says, on the other hand, is one sentence for every kind of failure — unknown
 account, wrong password, disabled account and throttled address are
 indistinguishable from outside, and the same amount of time is spent on each.
 
+### 4.6b Rolling a release back
+
+```bash
+sudo haproxy-ui-rollback --list
+sudo haproxy-ui-rollback                       # the previous release
+sudo haproxy-ui-rollback --to <release-id>     # a named one
+```
+
+"Point `current` back and restart" is the shape of the rollback, but doing only
+that took the interface down when it was measured. Two reasons, neither visible
+from the symlink:
+
+- **Configuration is validated strictly.** Unknown keys are refused, which is
+  what makes a typo an error rather than a setting that silently does nothing —
+  and it means a configuration written for release N makes release N−1 refuse to
+  start. **Configuration follows the same expand/contract rule as the schema:** a
+  key added for a newer release has to be removed before rolling back past the
+  release that introduced it.
+- **Units name programs.** A unit installed for a newer release starts a program
+  an older release does not contain. The poller and the worker did not exist in
+  every release still on disk.
+
+So the command checks both against the target *before* switching — asking the
+target's own validator, because the answer is whatever that release says rather
+than what the script believes — and verifies the interface answers afterwards,
+**rolling forward by itself if it does not**. Somebody running this is already
+having a bad day; leaving them on a release that does not answer, with the
+rollback reported as done, is the worst outcome available.
+
+Releases are offered oldest-last by build time rather than by name: an id ends
+in a commit hash, which sorts alphabetically and says nothing about when it was
+built.
+
 ### 4.7 Backups, and proving they restore
 
 `install/platform/06-platform-backup` installs `haproxy-ui-backup`, a daily

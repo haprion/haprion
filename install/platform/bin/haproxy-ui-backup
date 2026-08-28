@@ -1,0 +1,255 @@
+#!/bin/bash
+#
+# haproxy-ui-backup - dump the interface database, and prove the dump is usable.
+#
+#     haproxy-ui-backup dump [-e <environment>]
+#     haproxy-ui-backup verify-restore [-e <environment>]
+#     haproxy-ui-backup list [-e <environment>]
+#
+# A dump nobody has restored is a belief, not a backup. `dump` therefore reads
+# every dump back with `pg_restore --list` before keeping it, and
+# `verify-restore` goes further: it restores the newest dump into a scratch
+# database, compares what came out against what is live, and drops it again.
+#
+# The dumps contain every password hash and every session hash in the
+# installation. They are root-owned 0600 in a 0700 directory, and no application
+# identity can read them - which is the same boundary as the private key nginx
+# uses, for the same reason.
+#
+set -Eeuo pipefail
+
+CONFIG_DIRECTORY=/etc/haproxy-manager
+KEEP_DAYS=7
+#
+# The plan's alarm threshold. Warned about rather than enforced: a backup that
+# refuses to run because a disk is filling is a backup that stops exactly when
+# things are going wrong.
+#
+DISK_WARN_PERCENT=85
+
+log()  { echo "[$(date '+%H:%M:%S')] $*"; }
+warn() { echo "WARNING: $*" >&2; }
+die()  { echo "ERROR: $*" >&2; exit 1; }
+
+usage() {
+    sed -n '3,9p' "$0" | sed 's/^# \?//'
+    exit 64
+}
+
+[[ $EUID -eq 0 ]] || die "run this with sudo"
+
+environment=prod
+command="${1:-}"
+shift || true
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -e|--environment) environment="${2:-}"; shift 2 ;;
+        *) usage ;;
+    esac
+done
+[[ "$environment" =~ ^[a-z0-9]+$ ]] || die "environment names are alphanumeric"
+
+config="${CONFIG_DIRECTORY}/ui-admin-${environment}.conf"
+[[ -r "$config" ]] || { echo "ERROR: cannot read ${config}" >&2; exit 78; }
+# shellcheck disable=SC1090
+source "$config"
+for name in DB_NAME DB_ROLE DUMP_DIR; do
+    [[ -n "${!name:-}" ]] || die "${name} is not set in ${config}"
+done
+
+#
+# Two ways in, and the difference is not cosmetic. The ident map lets root be
+# the migration role for THIS database only, so the scratch database a restore
+# test creates cannot be reached that way - it would fail on authentication,
+# which reads as a broken restore rather than as a boundary working correctly.
+# Scratch work therefore goes through the postgres superuser, which is also the
+# only identity that may create and drop a database.
+#
+psql_as()      { psql -U "$DB_ROLE" -qtAX -v ON_ERROR_STOP=1 "$@"; }
+psql_scratch() { sudo -u postgres psql -qtAX -v ON_ERROR_STOP=1 "$@"; }
+
+#
+# The tables whose contents are the reason this database is backed up at all.
+# Named rather than discovered, so a restore that silently produced an empty
+# schema cannot pass by matching zero against zero.
+#
+TABLES=(app_user app_session audit_event login_attempt job)
+
+#
+# `how` is the name of one of the two functions above, so the caller states
+# which identity is asking rather than this guessing from the database name.
+#
+row_counts() {
+    local how="$1" database="$2" table
+    for table in "${TABLES[@]}"; do
+        printf '%s=%s\n' "$table" "$("$how" -d "$database" -c "select count(*) from ${table}")"
+    done
+}
+
+do_dump() {
+    install -d -o root -g root -m 700 "$DUMP_DIR"
+
+    local used
+    used="$(df --output=pcent "$DUMP_DIR" | tail -1 | tr -dc '0-9')"
+    [[ "$used" -lt "$DISK_WARN_PERCENT" ]] \
+        || warn "the filesystem holding ${DUMP_DIR} is ${used}% full"
+
+    local target staging
+    target="${DUMP_DIR}/${DB_NAME}-$(date +%Y%m%d).dump"
+    staging="${target}.partial"
+
+    #
+    # Written to a name that is not the final one and renamed into place. A
+    # reader - Veeam, or the next run of this script - then either sees a
+    # complete dump or does not see it at all, rather than a file that is still
+    # being written and looks finished.
+    #
+    step_log "Dumping ${DB_NAME}"
+    rm -f -- "$staging"
+    ( umask 077 && pg_dump -U "$DB_ROLE" -d "$DB_NAME" --format=custom --file="$staging" )
+
+    #
+    # Read back before it is kept. pg_dump exiting zero says the command ran;
+    # this says the archive can be opened and its table of contents parsed,
+    # which is the cheapest question that a truncated or corrupt dump fails.
+    #
+    local entries
+    entries="$(pg_restore --list "$staging" | grep -c '^[0-9]' || true)"
+    [[ "$entries" -gt 0 ]] || { rm -f -- "$staging"; die "the dump has no readable contents"; }
+    log "  ok       ${entries} archive entries readable"
+
+    chown root:root "$staging"
+    chmod 600 "$staging"
+    mv -f -- "$staging" "$target"
+    log "  written  ${target}  ($(du -h "$target" | cut -f1))"
+
+    #
+    # One dump per day: today's overwrites today's. Retention counts files, not
+    # days on the calendar, so a week with the machine switched off does not
+    # quietly delete the last dump that exists.
+    #
+    step_log "Retention"
+    local -a dumps=()
+    while IFS= read -r file; do dumps+=("$file"); done < <(
+        find "$DUMP_DIR" -maxdepth 1 -name "${DB_NAME}-*.dump" -printf '%f\n' | sort -r
+    )
+    log "  ok       ${#dumps[@]} dump(s) held, keeping ${KEEP_DAYS}"
+    local index
+    for index in "${!dumps[@]}"; do
+        if [[ "$index" -ge "$KEEP_DAYS" ]]; then
+            rm -f -- "${DUMP_DIR}/${dumps[$index]}"
+            log "  removed  ${dumps[$index]}"
+        fi
+    done
+}
+
+do_verify_restore() {
+    local newest
+    newest="$(find "$DUMP_DIR" -maxdepth 1 -name "${DB_NAME}-*.dump" -printf '%f\n' \
+              | sort -r | head -1)"
+    [[ -n "$newest" ]] || die "no dump to restore from in ${DUMP_DIR}"
+    local archive="${DUMP_DIR}/${newest}"
+    local scratch="${DB_NAME}_restorecheck"
+
+    step_log "Restoring ${newest} into ${scratch}"
+    #
+    # A scratch database created and dropped by this command, never an existing
+    # one named in configuration. A restore test that can be pointed at the
+    # wrong database is a restore test that will eventually overwrite something
+    # real.
+    #
+    psql_scratch \
+        -c "drop database if exists \"${scratch}\"" \
+        -c "create database \"${scratch}\" owner \"${DB_ROLE}\"" >/dev/null
+    #
+    # Double-quoted so the name is baked in when the trap is set. Single quotes
+    # would defer the expansion to exit time, by which point `scratch` is a
+    # local variable that has gone out of scope - and under `set -u` the cleanup
+    # then dies on an unbound variable instead of dropping the database, which
+    # is the one moment it exists to handle.
+    #
+    # shellcheck disable=SC2064  # expanding now is the fix, see above
+    trap "sudo -u postgres psql -qtAX -c 'drop database if exists \"${scratch}\"' >/dev/null 2>&1 || true" EXIT
+
+    #
+    # The grants in the dump name the contract roles, which exist; --no-owner is
+    # not used, so a restore that cannot reproduce ownership fails here rather
+    # than producing a database that only looks right.
+    #
+    #
+    # Fed over stdin rather than named as a file. The dump is root-owned 0600 in
+    # a 0700 directory because it holds every password hash in the installation,
+    # and pg_restore here runs as postgres - which must not be able to open it.
+    # Root opens the file and hands over the descriptor, so the archive is read
+    # without ever becoming readable to another account.
+    #
+    # shellcheck disable=SC2024  # the redirect is opened by root, which is the point
+    if ! sudo -u postgres pg_restore -d "$scratch" --exit-on-error <"$archive" 2>&1 \
+         | sed 's/^/  /'; then
+        die "pg_restore refused the archive"
+    fi
+    log "  ok       restored without error"
+
+    step_log "Comparing what came out with what is live"
+    local live restored mismatch=0
+    live="$(row_counts psql_as "$DB_NAME")"
+    restored="$(row_counts psql_scratch "$scratch")"
+    local line table live_count restored_count
+    while IFS= read -r line; do
+        table="${line%%=*}"
+        live_count="${line#*=}"
+        restored_count="$(grep "^${table}=" <<<"$restored" | cut -d= -f2)"
+        if [[ "$live_count" == "$restored_count" ]]; then
+            log "  ok       ${table}: ${restored_count}"
+        else
+            warn "  DIFFERS  ${table}: live ${live_count}, restored ${restored_count}"
+            mismatch=1
+        fi
+    done <<<"$live"
+
+    #
+    # A row count of zero everywhere would compare equal against an empty
+    # restore, so the account table is required to be non-empty: an installation
+    # with no accounts cannot be signed into, and a backup of one is not worth
+    # verifying.
+    #
+    [[ "$(grep '^app_user=' <<<"$restored" | cut -d= -f2)" -gt 0 ]] \
+        || die "the restored database holds no accounts; this proves nothing"
+
+    #
+    # Counts can match while the data is unusable, so one row is read back in
+    # full: the newest account's hash must still verify as an Argon2id hash.
+    #
+    local hash
+    hash="$(psql_scratch -d "$scratch" -c \
+        "select password_hash from app_user order by id limit 1")"
+    # shellcheck disable=SC2016  # the literal dollar signs are the prefix being matched
+    [[ "$hash" == '$argon2id$'* ]] || die "a restored password hash is not Argon2id"
+    log "  ok       a restored password hash is intact"
+
+    [[ "$mismatch" -eq 0 ]] || die "the restore does not match the live database"
+
+    #
+    # Dropped here rather than left to the trap, so the ordinary path cleans up
+    # in the open and the trap is only the failure path.
+    #
+    psql_scratch -c "drop database if exists \"${scratch}\"" >/dev/null
+    trap - EXIT
+    log "  ok       ${scratch} dropped"
+
+    echo
+    log "restore verified from ${newest}"
+}
+
+step_log() { echo; echo "== $*"; }
+
+case "$command" in
+    dump)           do_dump ;;
+    verify-restore) do_verify_restore ;;
+    list)
+        [[ -d "$DUMP_DIR" ]] || die "no dump directory: ${DUMP_DIR}"
+        find "$DUMP_DIR" -maxdepth 1 -name "${DB_NAME}-*.dump" \
+            -printf '%TY-%Tm-%Td %TH:%TM  %10s  %f\n' | sort -r
+        ;;
+    *) usage ;;
+esac

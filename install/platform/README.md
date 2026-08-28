@@ -195,6 +195,27 @@ material. The shape is a drop directory the poller lists, an admin choosing a
 candidate, and a job carrying that candidate's id — the web process chooses
 *which*, never *what*. See B21 in the decision log.
 
+## Step 6 — backups that have been read back
+
+`./06-platform-backup` installs `haproxy-ui-backup`, a daily dump timer and a
+weekly restore check, then runs both immediately. A dump nobody has restored is
+a belief rather than a backup, and installation is the cheap moment to find that
+out.
+
+Dumps are root-owned `0600` in a `0700` directory, and the step verifies that
+none of the three application identities can read one — they hold every password
+hash in the installation. The restore test therefore has root open the archive
+and hand the descriptor to a `pg_restore` running as `postgres`, so the file is
+read without becoming readable to another account.
+
+The check restores into a scratch database it creates and drops itself, compares
+row counts against the live database table by table, requires the account table
+to be non-empty, and reads one password hash back in full — counts can match
+while the contents are unusable.
+
+`/apps/haproxy-manager/data/dumps` still has to be picked up by an off-machine
+backup. Nothing there survives losing the host.
+
 ## The first account
 
 Nothing can sign in until an account exists, and creating one is a root action

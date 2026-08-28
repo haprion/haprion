@@ -263,6 +263,7 @@ install_file "/etc/haproxy-manager/ui-admin-${ENVIRONMENT}.conf" root:root 644 "
 # Read by haproxy-ui-user -e ${ENVIRONMENT}. Written by 02-platform-database.
 DB_NAME=${DB_NAME}
 DB_ROLE=${DB_MIGRATION_ROLE}
+DUMP_DIR=${PLATFORM_ROOT}/data/dumps
 EOF
 )"
 

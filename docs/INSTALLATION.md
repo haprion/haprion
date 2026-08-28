@@ -729,6 +729,70 @@ says, on the other hand, is one sentence for every kind of failure — unknown
 account, wrong password, disabled account and throttled address are
 indistinguishable from outside, and the same amount of time is spent on each.
 
+### 4.7 Backups, and proving they restore
+
+`install/platform/06-platform-backup` installs `haproxy-ui-backup`, a daily
+timer, and a weekly restore check — then takes a dump and restores it
+immediately, because the moment to discover that a backup does not work is
+during installation rather than during an incident.
+
+```bash
+sudo haproxy-ui-backup dump            # what the daily timer runs
+sudo haproxy-ui-backup verify-restore  # what the weekly timer runs
+sudo haproxy-ui-backup list
+```
+
+**Dumps are root-owned `0600` in a `0700` directory**, and step 6 verifies that
+none of the three application identities can read one. This is not tidiness: a
+dump contains every Argon2id password hash and every session hash in the
+installation, so it sits behind the same boundary as nginx's private key.
+
+That constraint shapes the restore test. `pg_restore` there runs as the
+`postgres` superuser — the only identity that may create and drop a database —
+which must not be able to open the dump. So root opens the file and hands the
+descriptor over: the archive is read without ever becoming readable to another
+account.
+
+#### What the dump does
+
+- `pg_dump --format=custom`, written to a `.partial` name and renamed into
+  place, so anything reading the directory sees a complete dump or none — never
+  a file still being written that looks finished.
+- Read back with `pg_restore --list` **before it is kept**. A zero exit from
+  `pg_dump` says the command ran; this says the archive can be opened and its
+  contents parsed, which is what a truncated or corrupt dump fails.
+- One dump per day — today's replaces today's — and the seven newest are kept.
+  Retention counts files rather than calendar days, so a week with the machine
+  switched off does not delete the last dump that exists.
+- Warns when the filesystem holding the dumps is over 85% full, and dumps
+  anyway. A backup that refuses to run because a disk is filling is a backup
+  that stops precisely when things are going wrong.
+
+#### What the restore check does
+
+It restores the newest dump into a scratch database that it creates and drops
+itself — never a database named in configuration, because a restore test that
+can be pointed at the wrong database will eventually overwrite something real.
+Then it compares the result with what is live:
+
+- row counts for `app_user`, `app_session`, `audit_event`, `login_attempt` and
+  `job`, named explicitly so an empty restore cannot pass by matching zero
+  against zero;
+- a hard requirement that the restored `app_user` table is **not empty**, since
+  an installation nobody can sign into is not a backup worth verifying;
+- one row read back in full — the first account's hash must still be a valid
+  Argon2id hash, because counts can match while the contents are unusable.
+
+Any mismatch fails the unit, and the scratch database is dropped either way.
+
+#### What is not covered
+
+This is a database backup, and the database is not the whole installation. It
+does not hold the HAProxy configuration — that lives in Git — nor the cluster
+definitions, the keys, or the release tree. **Nothing here survives losing the
+host**, so `/apps/haproxy-manager/data/dumps` has to be included in whatever
+off-machine backup the environment already runs. Step 6 says so on every run.
+
 ## Verifying the installation
 
 Work outward, and stop at the first step that fails:

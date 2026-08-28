@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily dump of the HAProxy Manager interface database
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+# Persistent so a machine that was off at 02:30 dumps when it comes back, rather
+# than skipping a day and leaving a gap nobody notices until it matters.
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

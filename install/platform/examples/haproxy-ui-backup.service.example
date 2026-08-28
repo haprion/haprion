@@ -1,0 +1,19 @@
+[Unit]
+# Dumps the interface database. Rendered by 06-platform-backup.
+Description=Dump the HAProxy Manager interface database
+Documentation=file:///apps/haproxy-manager-dev/src/haproxy-manager/docs/INSTALLATION.md
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+# Root, because the dump holds every password and session hash and is written
+# where no application identity can read it.
+User=root
+ExecStart=/usr/local/sbin/haproxy-ui-backup dump -e ENVIRONMENT
+# The dump is worthless if it silently stops happening, so a failure is a failed
+# unit rather than a line in a log nobody reads.
+SuccessExitStatus=0
+
+[Install]
+WantedBy=multi-user.target

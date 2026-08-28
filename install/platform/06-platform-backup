@@ -1,0 +1,83 @@
+#!/bin/bash
+#
+# Platform step 6 - dump the database daily, and prove the dump restores.
+#
+#     sudo ./06-platform-backup <answers-file>
+#
+# Installs haproxy-ui-backup, a daily timer, and a weekly restore check. Then it
+# takes a dump and restores it immediately, because a backup that has never been
+# read back is a belief rather than a backup - and the moment to find out is
+# during installation, not during an incident.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars PLATFORM_ROOT DB_NAME WEB_USER
+ENVIRONMENT="${ENVIRONMENT:-prod}"
+valid_id "$ENVIRONMENT" || die "ENVIRONMENT must be a short lowercase identifier"
+
+config="/etc/haproxy-manager/ui-admin-${ENVIRONMENT}.conf"
+[[ -r "$config" ]] || die "${config} is missing. Run ./02-platform-database first."
+# shellcheck disable=SC1090
+DUMP_DIR="$(source "$config"; echo "${DUMP_DIR:-}")"
+[[ -n "$DUMP_DIR" ]] || die "DUMP_DIR is not in ${config}.
+  Rerun ./02-platform-database ${1}; it writes that file."
+
+step "Where the dumps live"
+#
+# 0700 and root-owned, because a dump holds every password hash and every
+# session hash in the installation. The same boundary as nginx's private key,
+# for the same reason: no application identity has any business reading it.
+#
+ensure_dir "$DUMP_DIR" root:root 700
+
+step "The command"
+install -o root -g root -m 755 bin/haproxy-ui-backup /usr/local/sbin/haproxy-ui-backup
+log "  installed /usr/local/sbin/haproxy-ui-backup"
+
+step "Timers"
+for unit in haproxy-ui-backup haproxy-ui-restore-check; do
+    for kind in service timer; do
+        install_file "/etc/systemd/system/${unit}.${kind}" root:root 644 \
+            "$(sed "s|ENVIRONMENT|${ENVIRONMENT}|g" "examples/${unit}.${kind}.example")"
+    done
+done
+systemctl daemon-reload
+log "  reloaded systemd"
+systemctl enable --quiet --now haproxy-ui-backup.timer haproxy-ui-restore-check.timer
+log "  enabled  daily dump and weekly restore check"
+
+#
+# Asked of the running system rather than assumed from a clean enable. A timer
+# that is enabled but whose next run is never is a backup that will not happen.
+#
+systemctl list-timers --no-pager --no-legend haproxy-ui-backup.timer \
+    haproxy-ui-restore-check.timer | sed 's/^/  /'
+
+step "Proving it, now rather than at 02:30"
+/usr/local/sbin/haproxy-ui-backup dump -e "$ENVIRONMENT"
+
+step "Proving the dump restores"
+/usr/local/sbin/haproxy-ui-backup verify-restore -e "$ENVIRONMENT"
+
+step "What must not be able to read a dump"
+newest="$(find "$DUMP_DIR" -maxdepth 1 -name '*.dump' -printf '%p\n' | sort -r | head -1)"
+failed=0
+for user in "$WEB_USER" "${WORKER_USER:-}" "${POLLER_USER:-}"; do
+    [[ -n "$user" ]] || continue
+    if sudo -u "$user" test -r "$newest" 2>/dev/null; then
+        warn "  FAIL     ${user} can read ${newest}"
+        failed=1
+    else
+        log "  ok       ${user} cannot read the dumps"
+    fi
+done
+[[ $failed -eq 0 ]] || die "an application identity can read a database dump"
+
+echo
+log "platform step 6 done"
+log "Include ${DUMP_DIR} in the off-machine backup; nothing here survives losing this host."

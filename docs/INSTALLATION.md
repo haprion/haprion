@@ -823,8 +823,15 @@ Any mismatch fails the unit, and the scratch database is dropped either way.
 This is a database backup, and the database is not the whole installation. It
 does not hold the HAProxy configuration — that lives in Git — nor the cluster
 definitions, the keys, or the release tree. **Nothing here survives losing the
-host**, so `/apps/haproxy-manager/data/dumps` has to be included in whatever
-off-machine backup the environment already runs. Step 6 says so on every run.
+host**, so `/apps/haproxy-manager/data/dumps` needs to be inside whatever
+off-machine backup the environment already runs. A whole-machine or whole-VM
+backup covers it without being asked; a file-level one has to be told.
+
+That backup does not replace these dumps, and the reason is worth being precise
+about. An image of a running database is crash-consistent, not transactionally
+clean, and restoring a single table out of a machine image is not a thing anyone
+does under pressure. The dump is what makes "put that one table back" a normal
+afternoon.
 
 ### 4.8 The worker and the poller
 

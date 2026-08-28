@@ -80,4 +80,5 @@ done
 
 echo
 log "platform step 6 done"
-log "Include ${DUMP_DIR} in the off-machine backup; nothing here survives losing this host."
+log "Nothing here survives losing this host. A whole-machine backup already covers"
+log "${DUMP_DIR}; a file-level one has to be told about it."

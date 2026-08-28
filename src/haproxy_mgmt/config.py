@@ -41,6 +41,13 @@ class PathPolicy:
     #
     certificate_root: Path | None = None
     cert_deploy_identity: DeployIdentity | None = None
+    #
+    # The identity that reads node status. Optional for the same reason as the
+    # other two, and separate from them on purpose: it is the only one of the
+    # three that never changes a node, so it is the one identity a deployment
+    # can hand out without handing out the ability to act.
+    #
+    status_identity: DeployIdentity | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +230,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             "deploy_identity",
             "certificate_root",
             "cert_deploy_identity",
+            "status_identity",
         },
         "runtime policy",
     )
@@ -246,6 +254,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
         deploy_identity=_deploy_identity(data, "deploy_identity"),
         certificate_root=_optional_root(data, "certificate_root"),
         cert_deploy_identity=_deploy_identity(data, "cert_deploy_identity"),
+        status_identity=_deploy_identity(data, "status_identity"),
     )
 
 

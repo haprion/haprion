@@ -16,6 +16,11 @@ and sudoers output remain private deployment data.
 No app identity owns or can read SSH private keys, certificate private keys, validation dummy-key
 material, secret files, or raw backup archives.
 
+Three separate node identities exist, one per thing the manager may ask a node to do: read status,
+pull a configuration release, pull a certificate. The status identity is the only one of the three
+that cannot change a node, which is what makes it the one a deployment can grant most widely. Each
+is a forced command with no argument, and each has its own key; none of them is a login.
+
 ### Identity provisioning
 
 Account names are deployment data supplied in a protected identity-policy file. The
@@ -70,7 +75,7 @@ request IDs, and unrecognised cluster-ID syntax before privileged state is consu
 
 Read-only helper classes:
 
-- status metadata
+- status metadata, including the published release the nodes are compared against
 - inventory metadata
 - version metadata
 - backup metadata, never archive contents or absolute paths

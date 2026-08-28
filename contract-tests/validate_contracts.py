@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from copy import deepcopy
 from pathlib import Path
 
@@ -67,6 +68,50 @@ def derive_vip_state(nodes: list[dict[str, object]]) -> tuple[list[str], list[st
     return owners, unknown, state
 
 
+def check_release_comparison(nodes: list[object], summary: dict[str, object], path: Path) -> None:
+    """Whether a node runs the published release, re-derived rather than believed.
+
+    This is the one part of a status result the manager decides rather than
+    forwards, so the contract test derives it independently: a status command
+    that got this wrong would send an operator away from a cluster that needed a
+    deploy, and it would look correct while doing it.
+    """
+
+    target = summary["target"]
+
+    for node in nodes:
+        assert isinstance(node, dict)
+        current = node["current"]
+        status = node["status"] if node["status_ok"] is True else None
+        observed = None
+        if isinstance(status, dict) and isinstance(status.get("release"), dict):
+            observed = status["release"].get("hash")
+
+        if target is None or observed is None:
+            expected: object = None
+        else:
+            assert isinstance(target, dict)
+            expected = target["hash"] == observed
+        if current != expected:
+            raise AssertionError(
+                f"{path}: {node['name']} current={current!r}, expected {expected!r}"
+            )
+
+    states = [node["current"] for node in nodes if isinstance(node, dict)]
+    if target is None:
+        expected_state = "unknown"
+    elif any(state is None for state in states):
+        expected_state = "incomplete" if any(state is not None for state in states) else "unknown"
+    elif all(states):
+        expected_state = "converged"
+    else:
+        expected_state = "behind"
+    if summary["release_state"] != expected_state:
+        raise AssertionError(
+            f"{path}: release_state={summary['release_state']!r}, expected {expected_state!r}"
+        )
+
+
 def check_status_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     outcome = document["outcome"]
@@ -110,6 +155,8 @@ def check_status_semantics(document: dict[str, object], path: Path) -> None:
             raise AssertionError(f"{path}: node result and node status names differ")
         if status["cluster"] != cluster:
             raise AssertionError(f"{path}: node status cluster differs from envelope")
+
+    check_release_comparison(nodes, summary, path)
 
     if outcome == "done" and valid != len(nodes):
         raise AssertionError(f"{path}: done requires usable status from every node")
@@ -300,6 +347,32 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
     return invalid
 
 
+def flip_release_state(document: dict[str, object]) -> None:
+    result = document["result"]
+    assert isinstance(result, dict)
+    summary = result["summary"]
+    summary["release_state"] = "converged" if summary["release_state"] != "converged" else "behind"
+
+
+def flip_node_current(document: dict[str, object]) -> None:
+    result = document["result"]
+    assert isinstance(result, dict)
+    node = result["nodes"][0]
+    node["current"] = not node["current"] if isinstance(node["current"], bool) else True
+
+
+#
+# One mutation per document is enough to prove a check exists, but not to prove
+# which check. These are the extra ones for rules added after the framework was
+# written: without them a document whose release comparison is nonsense would be
+# caught by whichever earlier assertion happened to fire first, and the rule the
+# fixture is here to defend would never be exercised.
+#
+EXTRA_MUTATIONS: dict[str, tuple[Callable[[dict[str, object]], None], ...]] = {
+    "status": (flip_release_state, flip_node_current),
+}
+
+
 def format_errors(errors: list[object]) -> str:
     lines = []
     for error in errors:
@@ -354,6 +427,18 @@ def main() -> int:
                 invalid_count += 1
             else:
                 raise AssertionError(f"{path}: semantic mutation was not rejected")
+
+            for mutate in EXTRA_MUTATIONS.get(str(operation), ()) if document["result"] else ():
+                mutated = deepcopy(document)
+                mutate(mutated)
+                if mutated == document:
+                    raise AssertionError(f"{path}: {mutate.__name__} changed nothing")
+                try:
+                    SEMANTIC_CHECKS[operation](mutated, path)
+                except AssertionError:
+                    invalid_count += 1
+                else:
+                    raise AssertionError(f"{path}: {mutate.__name__} was not rejected")
 
             failed = deepcopy(document)
             failed.update(

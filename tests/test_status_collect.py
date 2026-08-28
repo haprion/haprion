@@ -1,0 +1,238 @@
+"""What a cluster reading adds up to, including when a node lies or is silent.
+
+The comparison against the published release is the point of these cases. Every
+way of *not* being able to say "in sync" has its own state, because reporting
+any of them as agreement is the one mistake that would send someone away from a
+cluster that needed a deploy.
+"""
+
+from __future__ import annotations
+
+import json
+import unittest
+
+from haproxy_mgmt.config import Node
+from haproxy_mgmt.deploy_plan import ReleaseTarget, VipState
+from haproxy_mgmt.status_collect import (
+    EXIT_OK,
+    EXIT_PARTIAL,
+    EXIT_UNAVAILABLE,
+    NodeResponse,
+    collect,
+)
+
+NODES = (
+    Node(name="node-a", mgmt_host="node-a.example.com"),
+    Node(name="node-b", mgmt_host="node-b.example.com"),
+)
+TARGET = ReleaseTarget(version=18, hash="a" * 40)
+
+
+def node_status(
+    name: str, *, owner: bool | None, release_hash: str | None, version: object = "18"
+) -> dict[str, object]:
+    release: dict[str, object] | None = None
+    if release_hash is not None:
+        release = {
+            "cluster": "alpha",
+            "version": version,
+            "hash": release_hash,
+            "timestamp": "2026-08-28T07:42:00+02:00",
+        }
+    return {
+        "schema_version": 1,
+        "node": name,
+        "cluster": "alpha",
+        "haproxy": {"active": True},
+        "keepalived": {"active": True, "state": "MASTER" if owner else "BACKUP"},
+        "vip": {"address": "192.0.2.10", "interface": "eth0", "owner": owner},
+        "ip_nonlocal_bind": True,
+        "release": release,
+        "config_validation": {"ok": True},
+        "stats_ok": True,
+        "runtime": {"ok": True},
+        "certificates": [],
+    }
+
+
+def answering(**by_name: object):
+    def read(node: Node) -> NodeResponse:
+        value = by_name[node.name]
+        if isinstance(value, NodeResponse):
+            return value
+        return NodeResponse(exit_code=0, stdout=json.dumps(value))
+
+    return read
+
+
+class CollectTests(unittest.TestCase):
+    def both(self, *, hash_a: str, hash_b: str, version: object = "18"):
+        return collect(
+            NODES,
+            answering(
+                **{
+                    "node-a": node_status(
+                        "node-a", owner=True, release_hash=hash_a, version=version
+                    ),
+                    "node-b": node_status(
+                        "node-b", owner=False, release_hash=hash_b, version=version
+                    ),
+                }
+            ),
+            target=TARGET,
+        )
+
+    # ------------------------------------------------------------ the comparison
+
+    def test_both_nodes_on_the_published_hash_are_converged(self) -> None:
+        report = self.both(hash_a=TARGET.hash, hash_b=TARGET.hash)
+        self.assertEqual(report.result["summary"]["release_state"], "converged")
+        self.assertTrue(all(node["current"] for node in report.result["nodes"]))
+        self.assertEqual(report.exit_code, EXIT_OK)
+
+    def test_one_node_on_another_hash_makes_the_cluster_behind(self) -> None:
+        report = self.both(hash_a=TARGET.hash, hash_b="b" * 40)
+        self.assertEqual(report.result["summary"]["release_state"], "behind")
+        self.assertEqual(
+            [node["current"] for node in report.result["nodes"]],
+            [True, False],
+        )
+        #
+        # Behind is not degraded: both nodes answered, so the reading itself
+        # succeeded and the exit code must not claim otherwise.
+        #
+        self.assertEqual(report.exit_code, EXIT_OK)
+
+    def test_a_node_that_reports_no_release_is_not_compared(self) -> None:
+        report = self.both(hash_a=TARGET.hash, hash_b=None)
+        self.assertIsNone(report.result["nodes"][1]["current"])
+        self.assertEqual(report.result["summary"]["release_state"], "incomplete")
+
+    def test_nothing_published_means_unknown_rather_than_behind(self) -> None:
+        report = collect(
+            NODES,
+            answering(
+                **{
+                    "node-a": node_status("node-a", owner=True, release_hash=TARGET.hash),
+                    "node-b": node_status("node-b", owner=False, release_hash=TARGET.hash),
+                }
+            ),
+            target=None,
+        )
+        self.assertEqual(report.result["summary"]["release_state"], "unknown")
+        self.assertIsNone(report.result["summary"]["target"])
+        self.assertTrue(all(node["current"] is None for node in report.result["nodes"]))
+
+    def test_the_target_it_compared_against_is_reported(self) -> None:
+        summary = self.both(hash_a=TARGET.hash, hash_b=TARGET.hash).result["summary"]
+        self.assertEqual(summary["target"], {"version": 18, "hash": TARGET.hash})
+
+    # ------------------------------------------------------------ the normalisation
+
+    def test_a_numeric_string_version_becomes_a_number(self) -> None:
+        report = self.both(hash_a=TARGET.hash, hash_b=TARGET.hash, version="18")
+        self.assertEqual(report.result["nodes"][0]["status"]["release"]["version"], 18)
+
+    def test_a_version_that_is_not_a_number_is_left_exactly_as_sent(self) -> None:
+        report = self.both(hash_a=TARGET.hash, hash_b=TARGET.hash, version="eighteen")
+        self.assertEqual(report.result["nodes"][0]["status"]["release"]["version"], "eighteen")
+
+    # ------------------------------------------------------------ unusable answers
+
+    def test_an_unreachable_node_is_partial_and_warns(self) -> None:
+        report = collect(
+            NODES,
+            answering(
+                **{
+                    "node-a": node_status("node-a", owner=True, release_hash=TARGET.hash),
+                    "node-b": NodeResponse(exit_code=255, stdout=""),
+                }
+            ),
+            target=TARGET,
+        )
+        self.assertEqual(report.exit_code, EXIT_PARTIAL)
+        self.assertEqual(report.result["nodes"][1]["error"]["code"], "ssh_unreachable")
+        self.assertEqual([w.code for w in report.warnings], ["ssh_unreachable"])
+        self.assertEqual(report.result["summary"]["vip_state"], str(VipState.INCOMPLETE))
+        #
+        # One node current and one unreadable is not a converged cluster.
+        #
+        self.assertEqual(report.result["summary"]["release_state"], "incomplete")
+
+    def test_json_that_is_not_a_node_status_is_refused(self) -> None:
+        for payload in ("null", "[]", '{"schema_version": 1}'):
+            with self.subTest(payload=payload):
+                report = collect(
+                    NODES,
+                    answering(
+                        **{
+                            "node-a": node_status("node-a", owner=True, release_hash=TARGET.hash),
+                            "node-b": NodeResponse(exit_code=0, stdout=payload),
+                        }
+                    ),
+                    target=TARGET,
+                )
+                self.assertEqual(report.result["nodes"][1]["error"]["code"], "node_status_invalid")
+                self.assertFalse(report.result["nodes"][1]["status_ok"])
+
+    def test_output_that_is_not_json_is_refused(self) -> None:
+        report = collect(
+            NODES,
+            answering(
+                **{
+                    "node-a": node_status("node-a", owner=True, release_hash=TARGET.hash),
+                    "node-b": NodeResponse(exit_code=0, stdout="not json"),
+                }
+            ),
+            target=TARGET,
+        )
+        self.assertEqual(report.result["nodes"][1]["error"]["code"], "node_status_invalid_json")
+
+    def test_no_usable_node_fails_rather_than_degrades(self) -> None:
+        report = collect(
+            NODES,
+            answering(
+                **{
+                    "node-a": NodeResponse(exit_code=255, stdout=""),
+                    "node-b": NodeResponse(exit_code=255, stdout=""),
+                }
+            ),
+            target=TARGET,
+        )
+        self.assertEqual(report.exit_code, EXIT_UNAVAILABLE)
+        envelope = report.as_envelope("alpha", request_id="11111111-1111-4111-8111-111111111111")
+        self.assertEqual(envelope["outcome"], "failed")
+        self.assertEqual(envelope["error"]["code"], "status_unavailable")
+
+    # ------------------------------------------------------------ the envelope
+
+    def test_a_complete_reading_is_done_with_no_error(self) -> None:
+        envelope = self.both(hash_a=TARGET.hash, hash_b=TARGET.hash).as_envelope(
+            "alpha", request_id="11111111-1111-4111-8111-111111111111"
+        )
+        self.assertEqual(envelope["outcome"], "done")
+        self.assertTrue(envelope["ok"])
+        self.assertIsNone(envelope["error"])
+        self.assertEqual(envelope["warnings"], [])
+        self.assertEqual(envelope["operation"], "status")
+
+    def test_a_degraded_reading_is_partial_and_keeps_its_warnings(self) -> None:
+        report = collect(
+            NODES,
+            answering(
+                **{
+                    "node-a": node_status("node-a", owner=True, release_hash=TARGET.hash),
+                    "node-b": NodeResponse(exit_code=255, stdout=""),
+                }
+            ),
+            target=TARGET,
+        )
+        envelope = report.as_envelope("alpha", request_id="11111111-1111-4111-8111-111111111111")
+        self.assertEqual(envelope["outcome"], "partial")
+        self.assertFalse(envelope["ok"])
+        self.assertIsNone(envelope["error"])
+        self.assertEqual(envelope["warnings"][0]["node"], "node-b")
+
+
+if __name__ == "__main__":
+    unittest.main()

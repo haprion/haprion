@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "status",
+  "cluster": "alpha",
+  "request_id": "22222222-2222-4222-8222-222222222222",
+  "result": {
+    "nodes": [
+      {
+        "name": "node-a",
+        "mgmt_host": "node-a.example.com",
+        "reachable": true,
+        "status_ok": true,
+        "status": {
+          "schema_version": 1,
+          "node": "node-a",
+          "cluster": "alpha",
+          "haproxy": {
+            "active": true
+          },
+          "keepalived": {
+            "active": true,
+            "state": "BACKUP"
+          },
+          "vip": {
+            "address": "192.0.2.10",
+            "interface": "eth0",
+            "owner": false
+          },
+          "ip_nonlocal_bind": true,
+          "release": {
+            "cluster": "alpha",
+            "version": 7,
+            "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "timestamp": "2026-08-24T08:00:00Z"
+          },
+          "config_validation": {
+            "valid": true,
+            "validated_at": "2026-08-24T08:00:02Z"
+          },
+          "stats_ok": true,
+          "runtime": {
+            "version": "3.2.9",
+            "uptime_sec": 3600
+          },
+          "certificates": []
+        },
+        "current": true,
+        "error": null
+      },
+      {
+        "name": "node-b",
+        "mgmt_host": "node-b.example.com",
+        "reachable": true,
+        "status_ok": true,
+        "status": {
+          "schema_version": 1,
+          "node": "node-b",
+          "cluster": "alpha",
+          "haproxy": {
+            "active": true
+          },
+          "keepalived": {
+            "active": true,
+            "state": "MASTER"
+          },
+          "vip": {
+            "address": "192.0.2.10",
+            "interface": "eth0",
+            "owner": true
+          },
+          "ip_nonlocal_bind": true,
+          "release": {
+            "cluster": "alpha",
+            "version": 6,
+            "hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "timestamp": "2026-08-24T08:00:00Z"
+          },
+          "config_validation": {
+            "valid": true,
+            "validated_at": "2026-08-24T08:00:02Z"
+          },
+          "stats_ok": true,
+          "runtime": {
+            "version": "3.2.9",
+            "uptime_sec": 3600
+          },
+          "certificates": []
+        },
+        "current": false,
+        "error": null
+      }
+    ],
+    "summary": {
+      "configured_nodes": 2,
+      "reachable_nodes": 2,
+      "valid_status_nodes": 2,
+      "vip_owner_count": 1,
+      "vip_owners": [
+        "node-b"
+      ],
+      "vip_unknown_nodes": [],
+      "vip_state": "single_owner",
+      "target": {
+        "version": 7,
+        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "release_state": "behind"
+    }
+  },
+  "warnings": [],
+  "error": null
+}

@@ -113,8 +113,9 @@ These rules are shared by config deploy and certificate deploy:
 The installed commands remain the regression baseline, but Phase 1 must adapt them to these frozen
 contracts:
 
-- only status currently has a partial JSON implementation
-- status warnings are currently strings and release versions are numeric strings
+- status is ported to the packaged CLI and now emits `outcome`, warning objects and an integer
+  release version; its result also carries the published `target` and, per node, whether that node
+  runs it
 - inventory and certificate-list commands do not yet exist
 - list, backup-list, publish, deploy, revert, and cert-deploy still need JSON modes
 - current deploy safety blocks and cert-deploy failures do not yet use the frozen exit-code/outcome

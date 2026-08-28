@@ -17,7 +17,8 @@
           "code": "ssh_unreachable",
           "message": "SSH failed with exit 255",
           "node": "node-a"
-        }
+        },
+        "current": null
       }
     ],
     "summary": {
@@ -27,7 +28,12 @@
       "vip_owner_count": 0,
       "vip_owners": [],
       "vip_unknown_nodes": [],
-      "vip_state": "incomplete"
+      "vip_state": "incomplete",
+      "target": {
+        "version": 7,
+        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "release_state": "unknown"
     }
   },
   "warnings": [

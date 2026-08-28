@@ -1,0 +1,180 @@
+"""The privileged half of `haproxy-status` - reach the nodes, read the release.
+
+Takes no arguments; the cluster arrives as a structured request on stdin, the
+same form and for the same reason as the other helpers: PRIVILEGE.md forbids
+wildcards in sudoers argument matching, so a rule naming a cluster is not
+available and one no-argument rule covers every cluster.
+
+Why this needs root at all, for a command that changes nothing
+--------------------------------------------------------------
+Two things are out of an unprivileged caller's reach. The status identity's
+private key is root-owned, because no application identity may hold a key that
+reaches a node. And the published release tree is readable only by root and the
+pull identity, so the target the nodes are compared against cannot be read by
+the caller either.
+
+Both are reads. Nothing here writes, and nothing here takes the cluster lock:
+a status must stay answerable while a deploy is running, and a reading that
+queued behind a rollout would describe a cluster that has since moved.
+
+What it does not trust
+----------------------
+The cluster name is validated here. The target is read here, from the published
+tree, rather than accepted from the caller - the same rule the deploy helper
+follows, and for a sharper reason than it looks: the target is what decides
+whether a node is reported as current, so a caller-supplied one would let an
+unprivileged process choose what the operator is told is in sync.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import BinaryIO, TextIO
+
+from haproxy_mgmt.cli.deploy_helper import read_target
+from haproxy_mgmt.config import (
+    DEFAULT_POLICY_PATH,
+    ConfigError,
+    DeployIdentity,
+    Node,
+    load_policy,
+    load_runtime_config,
+)
+from haproxy_mgmt.helper_protocol import (
+    HelperProtocolError,
+    read_helper_request,
+    require_no_arguments,
+)
+from haproxy_mgmt.status_collect import NodeResponse, ReadNode, collect
+
+OPERATION = "status"
+PARAMETERS: frozenset[str] = frozenset()
+
+EXIT_NOT_ROOT = 77
+EXIT_NO_IDENTITY = 78
+
+SSH = "/usr/bin/ssh"
+SSH_OPTIONS = (
+    "-T",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "IdentitiesOnly=yes",
+    "-o",
+    "StrictHostKeyChecking=yes",
+    "-o",
+    "ConnectTimeout=5",
+    "-o",
+    "ConnectionAttempts=1",
+    "-o",
+    "LogLevel=ERROR",
+)
+SSH_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
+
+
+def ask_node(node: Node, identity: DeployIdentity) -> NodeResponse:
+    """One node's status, as it answered. Its stderr is not the operator's.
+
+    The status account is a forced command: connecting is the whole request, and
+    what comes back on stdout is the answer. stderr is dropped because a
+    connection failure is already an exit code, and ssh's own text about it
+    would arrive in the middle of a status report as noise nobody can act on.
+    """
+
+    completed = subprocess.run(  # noqa: S603 - fixed path, host from validated configuration
+        [
+            SSH,
+            *SSH_OPTIONS,
+            "-i",
+            str(identity.key),
+            f"{identity.user}@{node.mgmt_host}",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+        env=SSH_ENVIRONMENT,
+    )
+    return NodeResponse(exit_code=completed.returncode, stdout=completed.stdout)
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    policy_path: Path = DEFAULT_POLICY_PATH,
+    input_stream: BinaryIO | None = None,
+    output_stream: TextIO | None = None,
+    error_stream: TextIO | None = None,
+    require_secure: bool = True,
+    require_root: bool = True,
+    node_reader: ReadNode | None = None,
+) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    writer: TextIO = output_stream or sys.stdout
+    errors: TextIO = error_stream or sys.stderr
+
+    try:
+        require_no_arguments(argv)
+        if require_root and os.geteuid() != 0:
+            raise HelperProtocolError(
+                "haproxy-status-helper must run as root", exit_code=EXIT_NOT_ROOT
+            )
+        request = read_helper_request(
+            input_stream or sys.stdin.buffer,
+            expected_operation=OPERATION,
+            allowed_parameter_keys=PARAMETERS,
+        )
+    except HelperProtocolError as exc:
+        errors.write(f"ERROR: {exc}\n")
+        return exc.exit_code
+
+    try:
+        policy = load_policy(policy_path, require_secure=require_secure)
+        cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
+            request.cluster
+        )
+    except ConfigError as exc:
+        errors.write(f"ERROR: {exc}\n")
+        return exc.exit_code
+
+    identity = policy.status_identity
+    if identity is None and node_reader is None:
+        #
+        # Named rather than guessed, exactly as the deploy identity is. A
+        # compiled-in default would put a real account name in a repository
+        # meant to be public, and a wrong guess would reach a node as the wrong
+        # identity.
+        #
+        errors.write(
+            "ERROR: no status identity is configured. Add status_identity with "
+            "'user' and 'key' to the runtime policy.\n"
+        )
+        return EXIT_NO_IDENTITY
+
+    def default_reader(node: Node) -> NodeResponse:
+        assert identity is not None  # noqa: S101 - guarded above, stated for the reader
+        return ask_node(node, identity)
+
+    report = collect(
+        cluster.nodes,
+        node_reader or default_reader,
+        target=read_target(Path(cluster.publish_path), cluster.node_path),
+    )
+
+    writer.write(
+        json.dumps(
+            report.as_envelope(request.cluster, request_id=request.request_id),
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    return report.exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

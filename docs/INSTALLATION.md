@@ -152,7 +152,16 @@ certificate_root: /srv/certificates/haproxy
 cert_deploy_identity:
   user: "svc-trigger"
   key: "/root/.ssh/id_ed25519_cert_deploy"
+
+status_identity:
+  user: "svc-status"
+  key: "/root/.ssh/id_ed25519_status"
 ```
+
+`status_identity` is the account `haproxy-status` becomes to read a node. It is deliberately not
+the deploy identity: reading status is the one thing the manager asks a node to do that cannot
+change it, so it is the identity that can be granted most widely, and keeping it separate is what
+preserves that difference. Without it, `haproxy-status` says exactly which field is missing.
 
 The file must be root-owned, a regular file (not a symlink), not group- or world-writable, and at
 most 1 MiB. The reader rejects unknown fields, so **install a release that understands a new field
@@ -472,10 +481,13 @@ Work outward, and stop at the first step that fails:
 
 1. **Configuration status** — `haproxy-config-status -c alpha` reports the published version and a
    clean draft.
-2. **Node status** — the status command reaches both nodes and reports the address owner. This
-   proves the status key, its forced command, and the node reporter.
+2. **Node status** — `haproxy-status -c alpha` reaches both nodes and reports the address owner,
+   the release each node runs, and whether that is the published one. This proves the status key,
+   its forced command, and the node reporter.
 3. **A converged deploy** — `haproxy-deploy -c alpha` with nodes already current should skip both
-   nodes and change nothing. A run that correctly does nothing is a real test.
+   nodes and change nothing. A run that correctly does nothing is a real test. Step 2 should
+   already have said the cluster was converged; if the two disagree, believe neither and find out
+   why before deploying anything.
 4. **A deploy that does something** — publish a harmless change and deploy it. Confirm the non-owner
    is deployed first, the owner last, and that the address does not move.
 5. **The negative tests** in [`PRIVILEGE.md`](PRIVILEGE.md), run as the real installed identities

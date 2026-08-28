@@ -16,8 +16,13 @@
           "schema_version": 1,
           "node": "node-a",
           "cluster": "alpha",
-          "haproxy": { "active": true },
-          "keepalived": { "active": true, "state": "MASTER" },
+          "haproxy": {
+            "active": true
+          },
+          "keepalived": {
+            "active": true,
+            "state": "MASTER"
+          },
           "vip": {
             "address": "192.0.2.10",
             "interface": "eth0",
@@ -30,12 +35,19 @@
             "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "timestamp": "2026-08-24T08:00:00Z"
           },
-          "config_validation": { "valid": null, "validated_at": null },
+          "config_validation": {
+            "valid": null,
+            "validated_at": null
+          },
           "stats_ok": true,
-          "runtime": { "version": "3.2.9", "uptime_sec": 3600 },
+          "runtime": {
+            "version": "3.2.9",
+            "uptime_sec": 3600
+          },
           "certificates": []
         },
-        "error": null
+        "error": null,
+        "current": true
       },
       {
         "name": "node-b",
@@ -47,7 +59,8 @@
           "code": "ssh_unreachable",
           "message": "SSH failed with exit 255",
           "node": "node-b"
-        }
+        },
+        "current": null
       }
     ],
     "summary": {
@@ -55,9 +68,16 @@
       "reachable_nodes": 1,
       "valid_status_nodes": 1,
       "vip_owner_count": 1,
-      "vip_owners": ["node-a"],
+      "vip_owners": [
+        "node-a"
+      ],
       "vip_unknown_nodes": [],
-      "vip_state": "incomplete"
+      "vip_state": "incomplete",
+      "target": {
+        "version": 7,
+        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "release_state": "incomplete"
     }
   },
   "warnings": [

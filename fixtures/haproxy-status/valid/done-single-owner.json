@@ -52,7 +52,8 @@
             }
           ]
         },
-        "error": null
+        "error": null,
+        "current": true
       },
       {
         "name": "node-b",
@@ -99,7 +100,8 @@
             }
           ]
         },
-        "error": null
+        "error": null,
+        "current": true
       }
     ],
     "summary": {
@@ -111,7 +113,12 @@
         "node-b"
       ],
       "vip_unknown_nodes": [],
-      "vip_state": "single_owner"
+      "vip_state": "single_owner",
+      "target": {
+        "version": 7,
+        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "release_state": "converged"
     }
   },
   "warnings": [],

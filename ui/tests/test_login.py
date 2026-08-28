@@ -208,7 +208,10 @@ class SigningIn(LoginTestCase):
         self.assertEqual(stylesheet.status_code, 200)
         self.assertEqual(script.status_code, 200)
         self.assertIn("--healthy", stylesheet.text)
+        self.assertNotIn("prefers-color-scheme", stylesheet.text)
         self.assertIn("localStorage", script.text)
+        self.assertIn('const themes = ["light", "dark"]', script.text)
+        self.assertNotIn('"system"', script.text)
 
     def test_signing_in_over_plain_http_omits_secure_only_when_configured(self) -> None:
         client = TestClient(

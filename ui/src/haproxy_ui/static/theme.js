@@ -2,8 +2,8 @@
   "use strict";
 
   const key = "haproxy-manager-theme";
-  const themes = ["system", "light", "dark"];
-  let selected = "system";
+  const themes = ["light", "dark"];
+  let selected = "light";
 
   try {
     const stored = window.localStorage.getItem(key);
@@ -13,11 +13,7 @@
   }
 
   const apply = (theme) => {
-    if (theme === "system") {
-      document.documentElement.removeAttribute("data-theme");
-    } else {
-      document.documentElement.setAttribute("data-theme", theme);
-    }
+    document.documentElement.setAttribute("data-theme", theme);
 
     const button = document.querySelector("[data-theme-toggle]");
     const label = document.querySelector("[data-theme-label]");

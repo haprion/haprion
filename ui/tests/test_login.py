@@ -196,6 +196,8 @@ class SigningIn(LoginTestCase):
         self.assertIn("admin", page.text)
         self.assertIn("Dashboard", page.text)
         self.assertIn("Read-only mode", page.text)
+        self.assertIn('aria-disabled="true"', page.text)
+        self.assertIn("Certificates", page.text)
 
     def test_static_design_assets_are_local_and_served(self) -> None:
         client = self.client()

@@ -1,0 +1,168 @@
+#!/bin/bash
+#
+# Platform step 2 of 2 - the database, its roles, and how each one connects.
+#
+# Creates the database and one login role per service, with no privileges on any
+# table. Table grants belong to the migration that creates the table, so a
+# column's permissions are versioned with the column.
+#
+# Safe to run again: everything it does is checked before it is done.
+#
+#     sudo ./02-platform-database ../answers.env
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars PLATFORM_ROOT DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER
+
+[[ "$DB_NAME" =~ ^[a-z][a-z0-9_]{0,62}$ ]] || die "invalid database name: ${DB_NAME}"
+
+systemctl is-active --quiet postgresql \
+    || die "PostgreSQL is not running. Install and start it before this step."
+
+psql_super() { sudo -u postgres psql -v ON_ERROR_STOP=1 -qtAX "$@"; }
+
+#
+# Connections come over the local Unix socket and authenticate with peer: the
+# kernel states which OS user is on the other end, and PostgreSQL compares that
+# name to the role name. No password exists to leak, rotate, or find in a
+# process listing - which is why the role names below are exactly the service
+# account names.
+#
+step "Roles"
+ensure_role() {
+    local role="$1" purpose="$2"
+    if [[ "$(psql_super -c "select 1 from pg_roles where rolname = '${role}'")" == "1" ]]; then
+        log "  ok       ${role}  (${purpose})"
+    else
+        #
+        # NOINHERIT on purpose. A role that inherits is a role whose privileges
+        # can be used without anyone having asked for them; here every privilege
+        # a service has must be one that was granted to it by name.
+        #
+        psql_super -c "create role \"${role}\" with login nosuperuser nocreatedb
+                       nocreaterole noinherit noreplication nobypassrls"
+        log "  created  ${role}  (${purpose})"
+    fi
+}
+
+ensure_role "$DB_MIGRATION_ROLE" "owns the schema, runs migrations"
+ensure_role "$WEB_USER"    "sessions, audit, and queueing a job"
+ensure_role "$WORKER_USER" "claims and completes jobs"
+ensure_role "$POLLER_USER" "writes cached status and metrics"
+
+step "Database"
+if [[ "$(psql_super -c "select 1 from pg_database where datname = '${DB_NAME}'")" == "1" ]]; then
+    log "  ok       ${DB_NAME}"
+else
+    psql_super -c "create database \"${DB_NAME}\" owner \"${DB_MIGRATION_ROLE}\""
+    log "  created  ${DB_NAME}  (owner ${DB_MIGRATION_ROLE})"
+fi
+
+#
+# The application roles own nothing. The migration role owns every object, which
+# is what makes "a service process cannot run DDL" true by construction rather
+# than by a grant somebody could add later: you cannot drop a table you do not
+# own, whatever else you have been given.
+#
+step "Database-level privileges"
+psql_super -d "$DB_NAME" <<SQL
+revoke all on database "${DB_NAME}" from public;
+revoke all on schema public from public;
+grant connect on database "${DB_NAME}" to "${WEB_USER}", "${WORKER_USER}", "${POLLER_USER}";
+grant usage on schema public to "${WEB_USER}", "${WORKER_USER}", "${POLLER_USER}";
+alter schema public owner to "${DB_MIGRATION_ROLE}";
+SQL
+log "  set      connect and schema usage for the three services"
+log "  revoked  everything from PUBLIC"
+
+#
+# Peer authentication compares the OS user to the ROLE name, so the three
+# services connect with no configuration at all - their accounts are named after
+# their roles. The migration role has no OS account by design: migrations are a
+# deliberate root action, so root is mapped to it explicitly and nothing else
+# can reach it.
+#
+step "Authentication"
+hba="$(sudo -u postgres psql -tAX -c 'show hba_file')"
+ident="$(sudo -u postgres psql -tAX -c 'show ident_file')"
+marker="# haproxy-manager platform"
+
+if grep -qF "$marker" "$ident"; then
+    log "  ok       ${ident}"
+else
+    cp -a "$ident" "${ident}.pre-haproxy-manager-$(date +%Y%m%d)"
+    printf '\n%s\n%s\n' "$marker" \
+        "haproxy_manager_migration   root   ${DB_MIGRATION_ROLE}" >> "$ident"
+    log "  added    ${ident}  (root -> ${DB_MIGRATION_ROLE})"
+fi
+
+if grep -qF "$marker" "$hba"; then
+    log "  ok       ${hba}"
+else
+    cp -a "$hba" "${hba}.pre-haproxy-manager-$(date +%Y%m%d)"
+    #
+    # Prepended, not appended: pg_hba is first-match-wins, and the generic
+    # `local all all peer` line Ubuntu ships would otherwise match first and
+    # refuse root as a role it is not named after.
+    #
+    tmp="$(mktemp)"
+    { printf '%s\n%s\n\n' "$marker" \
+        "local   ${DB_NAME}   ${DB_MIGRATION_ROLE}   peer   map=haproxy_manager_migration"
+      cat "$hba"
+    } > "$tmp"
+    install -o postgres -g postgres -m 640 "$tmp" "$hba"
+    rm -f "$tmp"
+    log "  added    ${hba}  (migration role over the local socket)"
+fi
+
+systemctl reload postgresql
+log "  reloaded postgresql"
+
+step "Proving it"
+#
+# Asserted rather than assumed. Each of these is one of the phase's gate items,
+# and each has failed silently somewhere before: a role that cannot connect
+# looks identical to an application bug, and a role that can create a table
+# looks like nothing at all until the day it does.
+#
+for role in "$WEB_USER" "$WORKER_USER" "$POLLER_USER"; do
+    sudo -u "$role" psql -d "$DB_NAME" -qtAX -c 'select 1' >/dev/null \
+        || die "${role} cannot connect to ${DB_NAME}"
+    if sudo -u "$role" psql -d "$DB_NAME" -qtAX \
+            -c 'create table platform_privilege_probe (id int)' >/dev/null 2>&1; then
+        sudo -u postgres psql -d "$DB_NAME" -qtAX \
+            -c 'drop table if exists platform_privilege_probe' >/dev/null
+        die "${role} can create tables in ${DB_NAME}"
+    fi
+    log "  ok       ${role} connects and cannot create tables"
+done
+
+#
+# -U is not optional here, and the reason is worth stating: psql asks for a role
+# named after the OS user unless told otherwise, so plain `psql` from root asks
+# for a role called "root", which does not exist and should not. The ident map
+# does not rename root - it authorises root to *request* this one role.
+#
+psql -U "$DB_MIGRATION_ROLE" -d "$DB_NAME" -qtAX -c 'select 1' >/dev/null \
+    || die "root cannot connect as ${DB_MIGRATION_ROLE}"
+log "  ok       root connects as ${DB_MIGRATION_ROLE}, and only root can"
+
+#
+# The other half of that claim. A service account must not be able to reach the
+# role that owns everything, whatever the map says about root.
+#
+if sudo -u "$WEB_USER" psql -U "$DB_MIGRATION_ROLE" -d "$DB_NAME" \
+        -qtAX -c 'select 1' >/dev/null 2>&1; then
+    die "${WEB_USER} can connect as ${DB_MIGRATION_ROLE}"
+fi
+log "  ok       ${WEB_USER} cannot connect as ${DB_MIGRATION_ROLE}"
+
+echo
+log "platform step 2 done"
+echo
+echo "The database exists and has no tables. The schema arrives as migrations."

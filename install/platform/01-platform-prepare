@@ -1,0 +1,91 @@
+#!/bin/bash
+#
+# Platform step 1 of 2 - the application filesystem and the group that reads it.
+#
+# Creates the release layout the web application is installed into, the
+# directories that survive a release, and the read-only group the services use
+# to reach configuration. Touches no database and installs no code.
+#
+# Safe to run again: everything it does is checked before it is done.
+#
+#     sudo ./01-platform-prepare ../answers.env
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars PLATFORM_ROOT PLATFORM_GROUP WEB_USER WORKER_USER POLLER_USER
+
+valid_abs_path "$PLATFORM_ROOT" || die "not an absolute path without '..': ${PLATFORM_ROOT}"
+
+for user in "$WEB_USER" "$WORKER_USER" "$POLLER_USER"; do
+    id -u "$user" >/dev/null 2>&1 \
+        || die "service account ${user} does not exist. Render and apply the
+  sysusers fragment first: haproxy-render-sysusers --policy <file>"
+done
+
+#
+# A shared GROUP, deliberately, where a shared USER would be the mistake. The
+# three services read the same configuration, and one identity for all three
+# would make a web intrusion equal to worker access - which is deploy rights.
+# Group membership grants exactly one thing here: reading the files below.
+#
+step "Read-only platform group"
+ensure_group "$PLATFORM_GROUP"
+for user in "$WEB_USER" "$WORKER_USER" "$POLLER_USER"; do
+    if id -nG "$user" | tr ' ' '\n' | grep -qxF "$PLATFORM_GROUP"; then
+        log "  ok       ${user} in ${PLATFORM_GROUP}"
+    else
+        usermod -aG "$PLATFORM_GROUP" "$user"
+        log "  added    ${user} to ${PLATFORM_GROUP}"
+    fi
+done
+
+#
+# Config, secrets and data live OUTSIDE the releases on purpose: a release is
+# replaced wholesale and rolled back by pointing `current` elsewhere, so
+# anything that must survive that cannot live inside one.
+#
+step "Directory tree"
+ensure_dir "$PLATFORM_ROOT"              root:root              755
+ensure_dir "${PLATFORM_ROOT}/releases"   root:root              755
+ensure_dir "${PLATFORM_ROOT}/config"     "root:${PLATFORM_GROUP}" 750
+
+#
+# Nothing under secrets/ is group-readable. Files here are granted to one
+# identity at a time, by that file's own ownership, when there is a reason -
+# never by putting the directory within a group's reach and deciding later.
+#
+ensure_dir "${PLATFORM_ROOT}/secrets"    root:root              700
+
+#
+# Backups are read by whatever restores them, which is a human with root. No
+# application identity has a reason to read a dump: it contains every session
+# and every audit record in one file.
+#
+ensure_dir "${PLATFORM_ROOT}/data"       root:root              750
+ensure_dir "${PLATFORM_ROOT}/data/dumps" root:root              700
+
+#
+# Left root-owned with no group. Traffic logging arrives in a later phase, and
+# the identity that writes here is decided then, by whichever service actually
+# writes - guessing now would hand out write access nothing has asked for.
+#
+ensure_dir "${PLATFORM_ROOT}/data/logs"  root:root              750
+
+step "Release layout"
+if [[ -L "${PLATFORM_ROOT}/current" ]]; then
+    log "  ok       ${PLATFORM_ROOT}/current -> $(readlink "${PLATFORM_ROOT}/current")"
+elif [[ -e "${PLATFORM_ROOT}/current" ]]; then
+    die "${PLATFORM_ROOT}/current exists and is not a symlink"
+else
+    log "  pending  ${PLATFORM_ROOT}/current  (created by the first release install)"
+fi
+
+echo
+log "platform step 1 done"
+echo
+echo "Next: sudo ./02-platform-database ${1}"

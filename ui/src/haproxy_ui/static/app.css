@@ -60,6 +60,30 @@
   --focus: 0 0 0 3px rgb(90 196 106 / 0.28);
 }
 
+@font-face {
+  font-family: "Source Sans Pro";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("source-sans-pro-400-latin-ext.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Source Sans Pro";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("source-sans-pro-600-latin-ext.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Source Sans Pro";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("source-sans-pro-700-latin-ext.woff2") format("woff2");
+}
+
 * { box-sizing: border-box; }
 
 html { min-width: 320px; background: var(--bg); }
@@ -68,7 +92,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: 15px/1.5 "Source Sans Pro", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -202,10 +226,8 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .menu-button { width: 100%; padding: 8px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .menu-button:hover { background: var(--panel-soft); color: var(--critical); }
 
-.page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
-.eyebrow { margin: 0 0 4px; color: var(--brand); font-size: 11px; font-weight: 750; letter-spacing: 0.09em; text-transform: uppercase; }
-.page-heading h1 { margin: 0; color: var(--text-strong); font-size: clamp(22px, 2.4vw, 27px); font-weight: 680; letter-spacing: -0.03em; }
-.page-heading p:not(.eyebrow) { margin: 5px 0 0; color: var(--muted); }
+.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
+.page-heading h1 { margin: 0; color: var(--text-strong); font-size: clamp(26px, 2.5vw, 30px); font-weight: 700; letter-spacing: -0.025em; }
 .mode-badge { display: inline-flex; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted-strong); font-size: 12px; font-weight: 600; white-space: nowrap; }
 
 .status-dot { display: inline-block; width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--unknown); box-shadow: 0 0 0 3px var(--unknown-soft); }
@@ -229,17 +251,16 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .metric-card > div { display: flex; align-items: baseline; gap: 7px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .metric-card strong { color: var(--text-strong); font-size: 21px; font-weight: 690; letter-spacing: -0.03em; }
 .metric-card strong small { color: var(--muted); font-size: 14px; font-weight: 550; letter-spacing: 0; }
-.metric-card div > span { overflow: hidden; color: var(--muted-strong); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.metric-card > div > small { min-width: 0; overflow: hidden; padding-left: 8px; border-left: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 550; text-overflow: ellipsis; }
+.metric-card div > span { overflow: hidden; color: var(--muted-strong); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.metric-card > div > small { min-width: 0; overflow: hidden; padding-left: 8px; border-left: 1px solid var(--line); color: var(--muted); font-size: 12px; font-weight: 600; text-overflow: ellipsis; }
 .metric-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 auto; border-radius: 6px; color: #fff; background: var(--brand); }
 .metric-icon svg { width: 21px; height: 21px; }
 .metric-icon-node { color: #fff; background: var(--info); }
 .metric-icon-vip { color: #fff; background: var(--warning); }
 .metric-icon-release { color: #fff; background: var(--critical); }
 
-.section-heading { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 13px; }
-.section-heading h2 { margin: 0; color: var(--text-strong); font-size: 17px; font-weight: 680; letter-spacing: -0.015em; }
-.section-heading p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
+.section-heading h2 { margin: 0; color: var(--text-strong); font-size: 19px; font-weight: 700; letter-spacing: -0.015em; }
 .cluster-list { display: grid; gap: 14px; }
 .cluster-card { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow-sm); }
 .cluster-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 20px; border-bottom: 1px solid var(--line); }

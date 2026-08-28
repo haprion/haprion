@@ -66,9 +66,7 @@
 {% block content %}
 <section class="page-heading">
   <div>
-    <p class="eyebrow">Overview</p>
     <h1>Dashboard</h1>
-    <p>Live operational state from the management cache.</p>
   </div>
   <span class="mode-badge">
     <span class="status-dot status-{{ 'warning' if management_writes else 'healthy' }}"></span>
@@ -104,7 +102,7 @@
 </section>
 
 <section class="section-heading">
-  <div><h2>Clusters</h2><p>Traffic, failover and release state at a glance.</p></div>
+  <h2>Clusters</h2>
 </section>
 
 <div class="cluster-list">

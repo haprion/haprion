@@ -38,8 +38,8 @@
   --panel-raised: #263548;
   --text: #dce5f1;
   --text-strong: #f3f6fb;
-  --muted: #a6b4c7;
-  --muted-strong: #ced9e7;
+  --muted: #b7c4d5;
+  --muted-strong: #d7e1ec;
   --line: #2a394b;
   --line-strong: #3a4a5e;
   --brand: #49c462;
@@ -78,7 +78,6 @@ body {
   color: var(--text);
   font: 14px/1.5 "Inter Var", Inter, -apple-system, BlinkMacSystemFont, "San Francisco", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   font-feature-settings: "cv03", "cv04", "cv11", "liga" 0;
-  -webkit-font-smoothing: antialiased;
 }
 
 button, input { font: inherit; }
@@ -145,7 +144,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .primary-nav a, .nav-item { border-radius: 5px; }
 .primary-nav a:hover { color: var(--text-strong); background: color-mix(in srgb, var(--panel-raised) 72%, transparent); }
 .primary-nav a.active { color: var(--text-strong); background: transparent; font-weight: 600; }
-.nav-item { cursor: default; opacity: 0.72; }
+.nav-item { cursor: default; opacity: 0.85; }
 
 .header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .icon-button {

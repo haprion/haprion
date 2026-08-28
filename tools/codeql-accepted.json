@@ -1,0 +1,25 @@
+{
+  "accepted": [
+    {
+      "rule": "py/overly-permissive-file",
+      "path": "src/haproxy_mgmt/history_reset.py",
+      "message": "Overly permissive mask in chmod sets file to group readable.",
+      "decided": "2026-08-28",
+      "reason": "PRIVILEGE.md requires the config repository to be root-owned, group-readable by the production config group and never group-writable. The reset writes that tree, so 0o640 root:group is the prescribed mode; anything tighter locks the worker out of the tree it must read."
+    },
+    {
+      "rule": "py/overly-permissive-file",
+      "path": "src/haproxy_mgmt/release_install.py",
+      "message": "Overly permissive mask in chmod sets file to group readable.",
+      "decided": "2026-08-28",
+      "reason": "Published releases are read by the nodes as the publish group, which is why _group_id fails closed when that group is missing. 0o640 root:group is the documented mode for a release tree; removing group read would silently break deployment."
+    },
+    {
+      "rule": "py/overly-permissive-file",
+      "path": "src/haproxy_mgmt/release_install.py",
+      "message": "Overly permissive mask in open sets file to group readable.",
+      "decided": "2026-08-28",
+      "reason": "Same release tree, same group: the staged files are created with the mode they will keep, so the open and the later chmod agree rather than leaving a window at a different mode."
+    }
+  ]
+}

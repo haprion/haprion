@@ -58,6 +58,26 @@ The wrapper rejects an output directory inside the source tree, refuses to overw
 result directory, uses the Python `security-extended` suite, and fails if the SARIF contains any
 alerts. Source snippets are not printed by the final gate summary.
 
+### Recorded acceptances
+
+A few alerts describe the privilege contract working as designed: `PRIVILEGE.md` requires the
+config repository and the published releases to be root-owned and group-readable by the identity
+that must read them, which CodeQL reports as an overly permissive mask. Tightening those modes
+would lock the worker and the nodes out of the trees they exist to read.
+
+Such a finding is not suppressed in the source - an inline suppression tells the next reader the
+query was wrong - but recorded in [`../tools/codeql-accepted.json`](../tools/codeql-accepted.json)
+with the reason and the date the decision was taken. Every entry is printed on each run, so the
+decision stays visible instead of becoming silence.
+
+An entry matches on rule, file and the exact message text. It carries no line number, which would
+have to be rewritten whenever the file moved a line, and the message text keeps a group-readable
+acceptance from covering a world-readable finding in the same file. An entry that matches nothing
+fails the gate: an acceptance whose finding is gone has stopped being a decision and become a hole.
+
+Accepting a finding is a decision about the privilege contract, not a way to reach a green gate.
+Anything that is not the contract working as written is fixed in the code.
+
 ## GitHub repository settings
 
 Before the first push, create the repository secret `HAPROXY_MANAGER_DENYLIST`. When the repository

@@ -823,15 +823,15 @@ Any mismatch fails the unit, and the scratch database is dropped either way.
 This is a database backup, and the database is not the whole installation. It
 does not hold the HAProxy configuration — that lives in Git — nor the cluster
 definitions, the keys, or the release tree. **Nothing here survives losing the
-host**, so these dumps have to end up somewhere that survives losing it. By what
-means is the installation's own business, and depending on how the machine is
-already backed up they may be covered without anyone doing anything.
+host**, and nor does anything else on it — the release tree, the runtime policy,
+the keys, the sudoers rules. **Backing up the management host itself is a very
+good idea**, and how that is done is entirely up to whoever runs it. If it is
+backed up whole, these dumps are along for the ride.
 
-Whatever that arrangement is, it does not make the dumps redundant. An image of
-a running database is crash-consistent rather than transactionally clean, and
-restoring a single table out of a machine image is not something anyone does
-under pressure. The dump is what makes "put that one table back" an ordinary
-afternoon.
+That does not make them redundant. An image of a running database is
+crash-consistent rather than transactionally clean, and restoring a single table
+out of a machine image is not something anyone does under pressure. The dump is
+what makes "put that one table back" an ordinary afternoon.
 
 ### 4.8 The worker and the poller
 

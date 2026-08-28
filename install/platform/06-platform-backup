@@ -80,5 +80,5 @@ done
 
 echo
 log "platform step 6 done"
-log "Nothing here survives losing this host: make sure ${DUMP_DIR} ends up"
-log "somewhere that does."
+log "These dumps live on this host and do not survive losing it. Backing up the"
+log "management host itself is a very good idea; how is up to you."

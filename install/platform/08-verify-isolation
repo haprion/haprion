@@ -1,0 +1,115 @@
+#!/bin/bash
+#
+# Platform step 8 - prove the two environments cannot reach each other.
+#
+#     sudo ./08-verify-isolation <production-answers> <development-answers>
+#
+# Read-only, and runnable at any time. It exists because "dev is separate" is a
+# claim about accounts, grants and file modes that all look right individually -
+# and the only way to know is to be each identity in turn and try.
+#
+# Every check below is negative: it passes when something is refused. A check
+# that passes because the thing it tried was impossible for an unrelated reason
+# would be silent, so each one names what it attempted.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+[[ $# -eq 2 ]] || die "usage: $(basename "$0") <production-answers> <development-answers>"
+
+read_answers() {
+    ( set -a; # shellcheck disable=SC1090
+      source "$1"; set +a
+      printf '%s\n' "$PLATFORM_ROOT" "$DB_NAME" "$WEB_USER" "$WORKER_USER" "$POLLER_USER" )
+}
+
+mapfile -t prod < <(read_answers "$1")
+mapfile -t dev  < <(read_answers "$2")
+
+prod_root="${prod[0]}"; prod_db="${prod[1]}"
+prod_users=("${prod[2]}" "${prod[3]}" "${prod[4]}")
+dev_root="${dev[0]}";   dev_db="${dev[1]}"
+dev_users=("${dev[2]}" "${dev[3]}" "${dev[4]}")
+
+[[ "$prod_db" != "$dev_db" ]] || die "both answers files name the same database"
+[[ "$prod_root" != "$dev_root" ]] || die "both answers files name the same platform root"
+
+failed=0
+
+#
+# `sudo -u` and then the attempt, so the answer comes from the kernel and the
+# server rather than from this script's opinion about permissions.
+#
+refuse() {
+    local user="$1" what="$2"; shift 2
+    if sudo -u "$user" "$@" >/dev/null 2>&1; then
+        warn "  FAIL     ${user} ${what}"
+        failed=1
+    else
+        log "  ok       ${user} ${what}"
+    fi
+}
+
+step "Development cannot reach production's database"
+for user in "${dev_users[@]}"; do
+    refuse "$user" "cannot connect to ${prod_db}" \
+        psql -d "$prod_db" -qtAX -v ON_ERROR_STOP=1 -c "select 1"
+done
+
+step "Production cannot reach development's database"
+#
+# Checked in both directions. The asymmetry people expect - dev is the dangerous
+# one - is not the only way this goes wrong: a production poller that wrote to
+# the development database would be silently reporting into a void.
+#
+for user in "${prod_users[@]}"; do
+    refuse "$user" "cannot connect to ${dev_db}" \
+        psql -d "$dev_db" -qtAX -v ON_ERROR_STOP=1 -c "select 1"
+done
+
+step "Development cannot read production's files"
+for user in "${dev_users[@]}"; do
+    refuse "$user" "cannot read ${prod_root}/config/ui.toml" \
+        test -r "${prod_root}/config/ui.toml"
+    refuse "$user" "cannot list ${prod_root}/data" \
+        ls "${prod_root}/data"
+done
+
+step "Development cannot read any key"
+#
+# The two that exist on this machine: the certificate nginx serves, and the SSH
+# identity that reaches the nodes. Neither may be readable by anything in the
+# development platform - or, for that matter, by anything in production's.
+#
+keys=()
+[[ -r /etc/haproxy-manager/ui-tls.conf ]] && \
+    keys+=("$(source /etc/haproxy-manager/ui-tls.conf; echo "$TLS_KEY")")
+while IFS= read -r key; do keys+=("$key"); done < <(
+    find /root/.ssh -maxdepth 1 -name 'id_*' ! -name '*.pub' -printf '%p\n' 2>/dev/null
+)
+for user in "${dev_users[@]}" "${prod_users[@]}"; do
+    for key in "${keys[@]}"; do
+        [[ -n "$key" ]] || continue
+        refuse "$user" "cannot read ${key}" test -r "$key"
+    done
+done
+
+step "Development holds no sudo rule"
+#
+# Asked with -n so a rule that would merely prompt counts as absent. The
+# development platform deliberately gets no rule for the status helper: it has
+# no business reaching production's nodes, and the phase 4 gate is exactly that.
+#
+for user in "${dev_users[@]}"; do
+    refuse "$user" "has no sudo rule at all" sudo -n -l
+done
+
+echo
+if [[ $failed -eq 0 ]]; then
+    log "the two platforms are isolated"
+else
+    die "isolation is broken; see the FAIL line(s) above"
+fi

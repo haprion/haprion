@@ -137,14 +137,32 @@ fi
 # own, whatever else you have been given.
 #
 step "Database-level privileges"
+#
+# CONNECT goes to the LOGIN roles, not to the contract roles - and that
+# distinction is the whole of the isolation between environments.
+#
+# The contract roles are generic on purpose (B20): grants must not name service
+# accounts, because those name a real installation and this repository is meant
+# to be public. But generic means shared, and two platforms on one cluster are
+# both members of the same app_web. Granting connect there gave every
+# development account a way into the production database and back again -
+# measured on 2026-08-28 by 08-verify-isolation, which failed in both
+# directions.
+#
+# Column privileges stay where they belong, in the migrations, on the contract
+# roles. CONNECT is not a column privilege and was never theirs to hold.
+#
 psql_super -d "$DB_NAME" <<SQL
 revoke all on database "${DB_NAME}" from public;
 revoke all on schema public from public;
-grant connect on database "${DB_NAME}" to app_web, app_worker, app_poller;
+revoke connect on database "${DB_NAME}" from app_web, app_worker, app_poller;
+grant connect on database "${DB_NAME}"
+    to "${WEB_USER}", "${WORKER_USER}", "${POLLER_USER}";
 grant usage on schema public to app_web, app_worker, app_poller;
 alter schema public owner to "${DB_MIGRATION_ROLE}";
 SQL
-log "  set      connect and schema usage for the three services"
+log "  set      connect for this environment's three login roles"
+log "  revoked  connect from the shared contract roles"
 log "  revoked  everything from PUBLIC"
 
 #

@@ -935,6 +935,57 @@ engine's configuration and must not. The privileged helper still decides whether
 each name is a real cluster; the list only says which ones to ask about. An
 empty list means the poller has nothing to do and says so instead of starting.
 
+### 4.9 A development platform beside production
+
+The same steps install it, with a second answers file. Nothing is shared: its
+own accounts, its own database and roles, its own release tree, its own port.
+
+```bash
+sudo ./01-platform-prepare   answers-dev.env
+sudo ./02-platform-database  answers-dev.env
+sudo UV_BIN=... ./install-ui-release answers-dev.env <source-tree>
+sudo ALEMBIC_BIN=... ./migrate answers-dev.env
+sudo ./04-platform-service   answers-dev.env
+```
+
+Steps 5, 6 and 7 are deliberately **not** run for development. There is no nginx
+in front of it — it is reached over an SSH tunnel to its loopback port, not from
+the network — it does not need backups, and it must not have the poller's
+sudoers rule, because a development platform has no business reaching
+production's nodes.
+
+`ENVIRONMENT=dev` in the answers file also keeps the root commands in
+`/usr/local/sbin` pointing at production. A development install would otherwise
+aim the operator's rollback command at the development release, which is the one
+moment a wrong answer is expensive.
+
+#### Proving the two cannot reach each other
+
+```bash
+sudo ./08-verify-isolation answers.env answers-dev.env
+```
+
+Read-only and runnable at any time. It is every check that only exists in the
+gap between the two installations, so nothing else finds it: each platform's own
+privilege suite is green while asking only about its own accounts.
+
+It asks in **both** directions. The asymmetry people expect — development is the
+dangerous one — is not the only way this goes wrong: a production poller that
+could write to the development database would be reporting into a void.
+
+The first run failed on the database checks, in both directions, and the reason
+is worth knowing before building anything similar. Grants in the migrations name
+generic contract roles, `app_web` and friends, so that they never name a real
+service account. Generic means **shared**, and two platforms on one PostgreSQL
+cluster are both members of the same `app_web` — so `grant connect ... to
+app_web` had given every development account a route into production.
+
+`CONNECT` is not a column privilege, and it now goes to the environment's three
+**login** roles instead, granted by the installer that knows which environment
+it is installing. Column privileges stay in the migrations where they are
+versioned with the column. Who may enter a database is the installation's
+business; what they may do inside it is the schema's.
+
 ## Verifying the installation
 
 Work outward, and stop at the first step that fails:

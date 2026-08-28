@@ -115,6 +115,33 @@ class HelperFixture(unittest.TestCase):
         return code, out.getvalue(), err.getvalue()
 
 
+class StatusIdentityTests(HelperFixture):
+    """Reading a node and changing one are separate identities, or the run stops.
+
+    The convenient default here would be to read status with the deploy
+    identity, which is already configured and already reaches the node. That is
+    exactly what must not happen: it would dissolve the separation at the one
+    moment nobody is watching, and it would do it silently.
+    """
+
+    def test_deploy_refuses_to_run_without_a_status_identity(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        code = deploy_helper.main(
+            [],
+            policy_path=self.runtime(),
+            input_stream=io.BytesIO(request()),
+            output_stream=out,
+            error_stream=err,
+            require_secure=False,
+            require_root=False,
+            lock_root=self.root / "locks",
+            node_trigger=lambda node: 0,
+        )
+        self.assertEqual(code, deploy_helper.EXIT_NO_IDENTITY)
+        self.assertIn("status_identity", err.getvalue())
+        self.assertNotIn("deploy_identity", err.getvalue())
+
+
 class HelperBoundaryTests(HelperFixture):
     def test_the_helper_refuses_command_line_arguments(self) -> None:
         err = io.StringIO()

@@ -27,7 +27,7 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import BinaryIO, TextIO
+from typing import BinaryIO, TextIO, cast
 
 from haproxy_mgmt.certificates import CertificateError, target_for
 from haproxy_mgmt.cli.deploy_helper import (
@@ -189,7 +189,23 @@ def main(
 
     stream: TextIO = io.StringIO() if json_mode else writer
 
-    read: ReadStatus = status_reader or (lambda: read_status(request.cluster))
+    status_identity = policy.status_identity
+    if status_identity is None and status_reader is None:
+        #
+        # Not defaulted to the deploy identity, however convenient that would
+        # be here. Reading a node and changing one are separate identities on
+        # purpose, and quietly reading with the identity that can act would
+        # dissolve that separation at exactly the moment nobody is looking.
+        #
+        errors.write(
+            "ERROR: no status identity is configured. Add status_identity with "
+            "'user' and 'key' to the runtime policy.\n"
+        )
+        return EXIT_NO_IDENTITY
+
+    read: ReadStatus = status_reader or (
+        lambda: read_status(cluster, cast(DeployIdentity, status_identity))
+    )
 
     def default_trigger(node: NodeStatus) -> int:
         assert identity is not None  # noqa: S101 - guarded above, stated for the reader

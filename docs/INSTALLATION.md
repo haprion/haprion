@@ -158,7 +158,10 @@ status_identity:
   key: "/root/.ssh/id_ed25519_status"
 ```
 
-`status_identity` is the account `haproxy-status` becomes to read a node. It is deliberately not
+`status_identity` is the account `haproxy-status` becomes to read a node, and `haproxy-deploy`
+uses it too: a rollout reads the pair before and after every step, and it reads with the identity
+that cannot change a node rather than the one it triggers with. Both commands refuse to run
+without it instead of falling back to the deploy identity. It is deliberately not
 the deploy identity: reading status is the one thing the manager asks a node to do that cannot
 change it, so it is the identity that can be granted most widely, and keeping it separate is what
 preserves that difference. Without it, `haproxy-status` says exactly which field is missing.

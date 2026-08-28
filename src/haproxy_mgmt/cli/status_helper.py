@@ -30,16 +30,13 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haproxy_mgmt.cli.deploy_helper import read_target
 from haproxy_mgmt.config import (
     DEFAULT_POLICY_PATH,
     ConfigError,
-    DeployIdentity,
     Node,
     load_policy,
     load_runtime_config,
@@ -49,57 +46,13 @@ from haproxy_mgmt.helper_protocol import (
     read_helper_request,
     require_no_arguments,
 )
-from haproxy_mgmt.status_collect import NodeResponse, ReadNode, collect
+from haproxy_mgmt.status_collect import NodeResponse, ReadNode, ask_node, collect, read_target
 
 OPERATION = "status"
 PARAMETERS: frozenset[str] = frozenset()
 
 EXIT_NOT_ROOT = 77
 EXIT_NO_IDENTITY = 78
-
-SSH = "/usr/bin/ssh"
-SSH_OPTIONS = (
-    "-T",
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    "IdentitiesOnly=yes",
-    "-o",
-    "StrictHostKeyChecking=yes",
-    "-o",
-    "ConnectTimeout=5",
-    "-o",
-    "ConnectionAttempts=1",
-    "-o",
-    "LogLevel=ERROR",
-)
-SSH_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
-
-
-def ask_node(node: Node, identity: DeployIdentity) -> NodeResponse:
-    """One node's status, as it answered. Its stderr is not the operator's.
-
-    The status account is a forced command: connecting is the whole request, and
-    what comes back on stdout is the answer. stderr is dropped because a
-    connection failure is already an exit code, and ssh's own text about it
-    would arrive in the middle of a status report as noise nobody can act on.
-    """
-
-    completed = subprocess.run(  # noqa: S603 - fixed path, host from validated configuration
-        [
-            SSH,
-            *SSH_OPTIONS,
-            "-i",
-            str(identity.key),
-            f"{identity.user}@{node.mgmt_host}",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        check=False,
-        env=SSH_ENVIRONMENT,
-    )
-    return NodeResponse(exit_code=completed.returncode, stdout=completed.stdout)
 
 
 def main(

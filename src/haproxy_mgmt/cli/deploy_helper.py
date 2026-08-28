@@ -35,31 +35,31 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import BinaryIO, TextIO
+from typing import BinaryIO, TextIO, cast
 
 from haproxy_mgmt.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
-from haproxy_mgmt.cluster_status import ClusterStatus, NodeStatus, StatusError, parse_status
+from haproxy_mgmt.cluster_status import ClusterStatus, NodeStatus, parse_status
 from haproxy_mgmt.config import (
     DEFAULT_POLICY_PATH,
+    Cluster,
     ConfigError,
     DeployIdentity,
     load_policy,
     load_runtime_config,
 )
-from haproxy_mgmt.deploy_plan import ReleaseTarget
 from haproxy_mgmt.deploy_run import ReadStatus, TriggerNode, run
+from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
     JsonValue,
     read_helper_request,
     require_no_arguments,
 )
-from haproxy_mgmt.release_layout import parse_release_file
+from haproxy_mgmt.status_collect import ask_node, collect, read_target
 
 OPERATION = "deploy_cluster"
 PARAMETERS = frozenset({"allow_vip_unknown", "json"})
 
-STATUS_ROOT = "/usr/local/sbin/haproxy-status-root"
 SSH = "/usr/bin/ssh"
 
 #
@@ -102,46 +102,24 @@ def _validate(parameters: Mapping[str, JsonValue]) -> None:
             raise HelperProtocolError(f"{key} must be a boolean", exit_code=65)
 
 
-def read_status(cluster_id: str, status_root: str = STATUS_ROOT) -> ClusterStatus:
-    """Collected by the existing status helper, not reimplemented here.
+def read_status(cluster: Cluster, identity: DeployIdentity) -> ClusterStatus:
+    """Collected by the same code the status command uses, in this process.
 
-    Already running as root, so it is invoked directly rather than through sudo.
-    One collector means the status command and the deploy command cannot come to
-    different conclusions about the same pair.
+    This used to shell out to the standalone `haproxy-status-root` script, back
+    when that script was the only implementation. Now that collecting a cluster
+    lives in the package, calling it directly is what keeps the guarantee the
+    subprocess was there to provide: the status command and the deploy command
+    read one pair through one collector, so they cannot come to different
+    conclusions about it.
+
+    The target is left out here. What this needs is the reading; which release
+    the nodes ought to be on is decided once by the caller below and passed to
+    the loop, so a rollout cannot be measured against a target that changed
+    underneath it mid-run.
     """
 
-    completed = subprocess.run(  # noqa: S603 - fixed path, validated cluster id
-        [status_root, "-c", cluster_id, "--json"],
-        stdout=subprocess.PIPE,
-        text=True,
-        check=False,
-    )
-    try:
-        payload = json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        raise StatusError(
-            f"the status helper did not return JSON (exit {completed.returncode})"
-        ) from None
-    return parse_status(payload)
-
-
-def read_target(publish_path: Path, node_path: str) -> ReleaseTarget | None:
-    """The published release the nodes are supposed to be running.
-
-    Read here rather than accepted from the caller: the target decides which
-    nodes are skipped as already current, and a caller-supplied one would let an
-    unprivileged process choose what root does not touch.
-    """
-
-    stamp = publish_path / "current" / node_path / "RELEASE"
-    try:
-        fields = parse_release_file(stamp.read_text(encoding="utf-8", errors="replace"))
-    except OSError:
-        return None
-    version, commit = fields.get("version"), fields.get("hash")
-    if not version or not version.isdigit() or not commit:
-        return None
-    return ReleaseTarget(version=int(version), hash=commit)
+    report = collect(cluster.nodes, lambda node: ask_node(node, identity), target=None)
+    return parse_status(report.as_envelope(cluster.cluster_id, request_id=new_request_id()))
 
 
 def trigger_node(node: NodeStatus, identity: DeployIdentity, writer: TextIO) -> int:
@@ -237,7 +215,23 @@ def main(
     #
     stream: TextIO = io.StringIO() if json_mode else writer
 
-    read: ReadStatus = status_reader or (lambda: read_status(request.cluster))
+    status_identity = policy.status_identity
+    if status_identity is None and status_reader is None:
+        #
+        # Not defaulted to the deploy identity, however convenient that would
+        # be here. Reading a node and changing one are separate identities on
+        # purpose, and quietly reading with the identity that can act would
+        # dissolve that separation at exactly the moment nobody is looking.
+        #
+        errors.write(
+            "ERROR: no status identity is configured. Add status_identity with "
+            "'user' and 'key' to the runtime policy.\n"
+        )
+        return EXIT_NO_IDENTITY
+
+    read: ReadStatus = status_reader or (
+        lambda: read_status(cluster, cast(DeployIdentity, status_identity))
+    )
 
     def default_trigger(node: NodeStatus) -> int:
         assert identity is not None  # noqa: S101 - guarded above, stated for the reader

@@ -30,13 +30,16 @@ cannot be used to diagnose the node. The one exception is documented at
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt.config import Node
+from haproxy_mgmt.config import DeployIdentity, Node
 from haproxy_mgmt.deploy_plan import ReleaseTarget, VipState
 from haproxy_mgmt.envelope import Message, envelope
+from haproxy_mgmt.release_layout import parse_release_file
 
 OPERATION = "status"
 
@@ -72,6 +75,25 @@ REQUIRED_NODE_STATUS_KEYS = frozenset(
 )
 
 
+SSH = "/usr/bin/ssh"
+SSH_OPTIONS = (
+    "-T",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "IdentitiesOnly=yes",
+    "-o",
+    "StrictHostKeyChecking=yes",
+    "-o",
+    "ConnectTimeout=5",
+    "-o",
+    "ConnectionAttempts=1",
+    "-o",
+    "LogLevel=ERROR",
+)
+SSH_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
+
+
 @dataclass(frozen=True, slots=True)
 class NodeResponse:
     """What asking one node produced, before anything is believed about it."""
@@ -81,6 +103,53 @@ class NodeResponse:
 
 
 type ReadNode = Callable[[Node], NodeResponse]
+
+
+def ask_node(node: Node, identity: DeployIdentity) -> NodeResponse:
+    """One node's status, as it answered. Its stderr is not the operator's.
+
+    The status account is a forced command: connecting is the whole request, and
+    what comes back on stdout is the answer. stderr is dropped because a
+    connection failure is already an exit code, and ssh's own text about it
+    would arrive in the middle of a status report as noise nobody can act on.
+    """
+
+    completed = subprocess.run(  # noqa: S603 - fixed path, host from validated configuration
+        [
+            SSH,
+            *SSH_OPTIONS,
+            "-i",
+            str(identity.key),
+            f"{identity.user}@{node.mgmt_host}",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+        env=SSH_ENVIRONMENT,
+    )
+    return NodeResponse(exit_code=completed.returncode, stdout=completed.stdout)
+
+
+def read_target(publish_path: Path, node_path: str) -> ReleaseTarget | None:
+    """The published release the nodes are supposed to be running.
+
+    Read inside the privilege boundary rather than accepted from a caller. It
+    decides which nodes a deploy skips as already current and which nodes a
+    status reports as current, so a caller-supplied one would let an
+    unprivileged process choose both what root does not touch and what the
+    operator is told is in sync.
+    """
+
+    stamp = publish_path / "current" / node_path / "RELEASE"
+    try:
+        fields = parse_release_file(stamp.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return None
+    version, commit = fields.get("version"), fields.get("hash")
+    if not version or not version.isdigit() or not commit:
+        return None
+    return ReleaseTarget(version=int(version), hash=commit)
 
 
 def _mapping(value: object) -> Mapping[str, Any]:

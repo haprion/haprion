@@ -88,12 +88,47 @@ else
     # also fails in a way that takes a while to read: ProtectHome hides /home
     # from the service, so exec reports the interpreter as not found.
     #
+    #
+    # --refresh-package for the two local distributions, and only those. uv
+    # caches a built wheel per version, and both of these stay at 0.1.0 while
+    # their contents change with every commit - so without this the build
+    # happily reuses an older wheel and produces a release directory named after
+    # a commit it does not contain. Measured on 2026-08-28, when a one-line
+    # change to the account tool was missing from the release built for it.
+    #
+    # Third-party wheels keep their cache: their version is their content.
+    #
     ( cd "${source_tree}/ui" \
       && UV_PROJECT_ENVIRONMENT="${release}/venv" "$uv" sync --locked --no-dev \
-             --no-editable --python "$PYTHON_BIN" --python-preference only-system )
+             --no-editable --python "$PYTHON_BIN" --python-preference only-system \
+             --refresh-package haproxy-ui --refresh-package haproxy-manager )
     trap - EXIT
     log "  built    ${release}"
 fi
+
+#
+# Asked rather than assumed, because the failure this catches is silent: a
+# release whose name promises a commit it does not contain looks completely
+# normal from the outside, and the question "what is running" then has a
+# confident wrong answer. Cheap to check, expensive to debug later.
+#
+step "Proving the release is the commit"
+tree_digest() {
+    ( cd "$1" && find . -type f \( -name '*.py' -o -name '*.html' \) \
+        -not -path '*/__pycache__/*' -printf '%P\n' \
+      | LC_ALL=C sort \
+      | while read -r file; do printf '%s ' "$file"; sha256sum "$file" | cut -d' ' -f1; done \
+      | sha256sum | cut -d' ' -f1 )
+}
+installed="$(echo "${release}/venv/lib/"*"/site-packages/haproxy_ui")"
+[[ -d "$installed" ]] || die "the release contains no haproxy_ui package"
+if [[ "$(tree_digest "${source_tree}/ui/src/haproxy_ui")" != "$(tree_digest "$installed")" ]]; then
+    rm -rf -- "$release"
+    die "the built release does not match ${source_tree}/ui/src/haproxy_ui at ${commit}.
+  The half-built release has been removed. This is what --refresh-package prevents;
+  if it recurs, the build is reusing something else that is cached."
+fi
+log "  ok       the release matches the source tree at ${commit}"
 
 step "Ownership"
 #

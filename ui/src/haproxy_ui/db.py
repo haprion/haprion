@@ -67,6 +67,17 @@ class AuthenticatedSession:
 
 
 @dataclass(frozen=True, slots=True)
+class ClusterStatus:
+    cluster: str
+    observed_at: datetime
+    outcome: str
+    result: dict[str, Any]
+    warnings: list[Any]
+    error: dict[str, Any] | None
+    poll_error: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class Job:
     id: int
     request_id: UUID
@@ -353,3 +364,78 @@ def record_audit_event(
                 "detail": Jsonb(dict(detail or {})),
             },
         )
+
+
+def record_cluster_status(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    outcome: str,
+    result: Mapping[str, Any],
+    warnings: Any = None,
+    error: Mapping[str, Any] | None = None,
+    poll_error: str | None = None,
+) -> None:
+    """Write what one cluster last said. Insert or replace, never accumulate.
+
+    One row per cluster rather than a history: this is a cache of the newest
+    answer, and what happened over time belongs in metrics, which is a later
+    phase with different retention. Keeping every poll here would grow without
+    bound to answer a question nothing asks.
+
+    `observed_at` appears nowhere in this statement. The database sets it, on
+    insert by default and on update by trigger, so the freshness a reader
+    trusts is not something the writer supplies.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into cluster_status (cluster, outcome, result, warnings, error, poll_error) "
+            "values (%(cluster)s, %(outcome)s, %(result)s, %(warnings)s, %(error)s, %(poll)s) "
+            "on conflict (cluster) do update set "
+            "    outcome = excluded.outcome, "
+            "    result = excluded.result, "
+            "    warnings = excluded.warnings, "
+            "    error = excluded.error, "
+            "    poll_error = excluded.poll_error",
+            {
+                "cluster": cluster,
+                "outcome": outcome,
+                "result": Jsonb(dict(result)),
+                "warnings": Jsonb(list(warnings or [])),
+                "error": None if error is None else Jsonb(dict(error)),
+                "poll": poll_error,
+            },
+        )
+
+
+def cluster_statuses(connection: Connection[Any]) -> list[ClusterStatus]:
+    """Every cluster's newest reading, oldest observation first.
+
+    Ordered by age rather than by name, so whatever has gone stale is what a
+    reader sees at the top - which is the row that means something is wrong.
+    """
+
+    with connection.cursor(row_factory=class_row(ClusterStatus)) as cursor:
+        cursor.execute(
+            "select cluster, observed_at, outcome, result, warnings, error, poll_error "
+            "  from cluster_status "
+            " order by observed_at asc"
+        )
+        return cursor.fetchall()
+
+
+def try_singleton_lock(connection: Connection[Any], key: int) -> bool:
+    """Take a session-scoped advisory lock, or report that somebody else has it.
+
+    The lock lives in the database rather than in a file, because that is the
+    one place every candidate can see and because it is released by the server
+    when a connection dies - including when the process holding it is killed
+    without running any cleanup, which is precisely when a lock file would be
+    left behind to block the replacement.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute("select pg_try_advisory_lock(%s)", (key,))
+        row = cursor.fetchone()
+    return bool(row and row[0])

@@ -14,6 +14,21 @@
 # deploy, back to a read-only interface.
 management_writes = false
 
+# Which clusters the poller asks about. Named here rather than discovered,
+# because the application accounts cannot read the engine's configuration - that
+# tree is private, and a poller reaching into it directly is what the privilege
+# split exists to prevent. The privileged helper still decides whether each name
+# is a real cluster; this only says which ones to ask about.
+#
+# Empty means the poller has nothing to do and says so rather than starting.
+clusters = []
+
+[poller]
+# How stale a status reading is allowed to get. Nothing renders a reading
+# without saying how old it is, so this is a statement about that number rather
+# than a tuning knob.
+interval_seconds = 60
+
 [database]
 # Connections use the local socket and peer authentication. There is no user and
 # no password here, and no place to put one: each service account is named after

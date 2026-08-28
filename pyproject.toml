@@ -42,6 +42,15 @@ haproxy-deploy-helper = "haproxy_mgmt.cli.deploy_helper:main"
 haproxy-cert-deploy = "haproxy_mgmt.cli.cert_deploy:main"
 haproxy-cert-deploy-helper = "haproxy_mgmt.cli.cert_deploy_helper:main"
 
+#
+# The marker that says this package is typed. Without it a consumer - the web
+# interface, which type-checks strictly - silently loses every type this engine
+# declares and mypy reports the import as untyped. The types are already here;
+# this is what makes them visible.
+#
+[tool.setuptools.package-data]
+haproxy_mgmt = ["py.typed"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

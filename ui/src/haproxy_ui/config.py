@@ -13,6 +13,7 @@ is established by the kernel rather than by a secret the process holds.
 
 from __future__ import annotations
 
+import re
 import stat
 import tomllib
 from dataclasses import dataclass
@@ -22,11 +23,22 @@ from typing import Any
 DEFAULT_CONFIG_PATH = Path("/apps/haproxy-manager/config/ui.toml")
 MAX_CONFIG_BYTES = 1024 * 1024
 
-ALLOWED_KEYS = frozenset({"database", "listen", "management_writes", "session", "throttle"})
+ALLOWED_KEYS = frozenset(
+    {"database", "listen", "management_writes", "session", "throttle", "clusters", "poller"}
+)
 ALLOWED_DATABASE_KEYS = frozenset({"name", "socket_directory"})
 ALLOWED_LISTEN_KEYS = frozenset({"host", "port"})
 ALLOWED_SESSION_KEYS = frozenset({"inactivity_minutes", "absolute_hours", "cookie_secure"})
 ALLOWED_THROTTLE_KEYS = frozenset({"max_failures", "window_minutes"})
+ALLOWED_POLLER_KEYS = frozenset({"interval_seconds"})
+
+#
+# A cluster id, the same shape the engine and the database CHECK both use. The
+# poller passes these to a privileged helper, so a value that has not been
+# checked here is a value the helper has to refuse - and it does, but the
+# refusal reads as a broken poller rather than as a typo in a file.
+#
+CLUSTER_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 
 class ConfigError(ValueError):
@@ -105,6 +117,17 @@ class Throttle:
 
 
 @dataclass(frozen=True, slots=True)
+class Poller:
+    """How often the interface asks the clusters how they are.
+
+    Not a tuning knob so much as a statement about staleness: nothing renders a
+    reading without saying how old it is, and this decides how old that gets.
+    """
+
+    interval_seconds: int
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     database: Database
     listen: Listen
@@ -117,6 +140,15 @@ class Config:
     management_writes: bool
     session: Session
     throttle: Throttle
+    #
+    # Named here rather than discovered from the engine's configuration, which
+    # the application identities cannot read - that tree is private, and the
+    # poller reaching into it directly is exactly what the privilege split
+    # exists to prevent. The deployment states which clusters exist; the
+    # privileged helper still decides whether each one is real.
+    #
+    clusters: tuple[str, ...]
+    poller: Poller
 
 
 def _section(data: Any, key: str, allowed: frozenset[str]) -> dict[str, Any]:
@@ -203,6 +235,16 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
     #
     session = _optional_section(data, "session", ALLOWED_SESSION_KEYS)
     throttle = _optional_section(data, "throttle", ALLOWED_THROTTLE_KEYS)
+    poller = _optional_section(data, "poller", ALLOWED_POLLER_KEYS)
+
+    clusters = data.get("clusters", [])
+    if not isinstance(clusters, list) or not all(isinstance(name, str) for name in clusters):
+        raise ConfigError("clusters must be a list of strings")
+    for name in clusters:
+        if not CLUSTER_ID.match(name):
+            raise ConfigError(f"not a valid cluster id: {name!r}")
+    if len(set(clusters)) != len(clusters):
+        raise ConfigError("clusters contains a duplicate")
 
     port = listen.get("port")
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
@@ -235,5 +277,11 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
             window_minutes=_bounded_int(
                 throttle, "window_minutes", "throttle", low=1, high=1440, default=15
             ),
+        ),
+        clusters=tuple(clusters),
+        poller=Poller(
+            interval_seconds=_bounded_int(
+                poller, "interval_seconds", "poller", low=10, high=3600, default=60
+            )
         ),
     )

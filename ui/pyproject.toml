@@ -40,6 +40,8 @@ dependencies = [
 #
 [project.scripts]
 haproxy-ui-user = "haproxy_ui.admin:_entry"
+haproxy-ui-poller = "haproxy_ui.poller:_entry"
+haproxy-ui-worker = "haproxy_ui.worker:_entry"
 
 [dependency-groups]
 dev = [
@@ -70,7 +72,7 @@ where = ["src"]
 # the first page view of a release that installed cleanly.
 #
 [tool.setuptools.package-data]
-haproxy_ui = ["templates/*.html"]
+haproxy_ui = ["templates/*.html", "py.typed"]
 
 [tool.ruff]
 target-version = "py312"

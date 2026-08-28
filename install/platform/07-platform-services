@@ -1,0 +1,121 @@
+#!/bin/bash
+#
+# Platform step 7 - the worker and the poller.
+#
+#     sudo ./07-platform-services <answers-file>
+#
+# Each runs as its own account, and that is the point of the step. A single
+# application user would have made a web intrusion equivalent to deploy rights;
+# here the web process can queue a job it cannot perform, the worker can perform
+# one it cannot invent, and the poller can read what neither of them may write.
+#
+# The worker starts with management writes off and is provably unable to act.
+# That is stronger than not installing it: it is the state a rollback returns
+# to, so it has to be a state that runs.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars PLATFORM_ROOT DB_NAME WEB_USER WORKER_USER POLLER_USER
+
+link="${PLATFORM_ROOT}/current"
+[[ -L "$link" ]] || die "${link} does not exist. Install a release first."
+
+render() {
+    sed -e "s|/apps/haproxy-manager|${PLATFORM_ROOT}|g" \
+        -e "s|haproxy-ui-worker|${WORKER_USER}|g" \
+        -e "s|haproxy-ui-poller|${POLLER_USER}|g" \
+        "$1"
+}
+
+step "The poller's one privilege"
+#
+# Checked by visudo before it is installed, never after. A sudoers file that
+# does not parse takes sudo down for everyone on the machine, including the
+# operator who would fix it - so it is validated in a temporary file first and
+# only then moved into place.
+#
+sudoers_staging="$(mktemp)"
+sed "s|POLLER_USER|${POLLER_USER}|g" examples/haproxy-ui-poller.sudoers.example \
+    > "$sudoers_staging"
+if ! visudo -cqf "$sudoers_staging"; then
+    rm -f "$sudoers_staging"
+    die "the rendered sudoers rule does not parse; nothing was installed"
+fi
+install -o root -g root -m 440 "$sudoers_staging" /etc/sudoers.d/haproxy-ui-poller
+rm -f "$sudoers_staging"
+log "  installed /etc/sudoers.d/haproxy-ui-poller  (visudo accepted it)"
+
+step "Units"
+for unit in haproxy-ui-worker haproxy-ui-poller; do
+    install_file "/etc/systemd/system/${unit}.service" root:root 644 \
+        "$(render "examples/${unit}.service.example")"
+done
+systemctl daemon-reload
+log "  reloaded systemd"
+
+step "Starting"
+systemctl enable --quiet --now haproxy-ui-worker.service haproxy-ui-poller.service
+for unit in haproxy-ui-worker haproxy-ui-poller; do
+    systemctl is-active --quiet "${unit}.service" \
+        || { systemctl status --no-pager --lines=20 "${unit}.service" || true;
+             die "${unit}.service did not start"; }
+    log "  started  ${unit}.service"
+done
+
+#
+# The poller needs a moment to take the lock, run the helper and write a row.
+# Waited for rather than assumed: a unit that is active has started, which is
+# not the same as having done its job once.
+#
+step "Proving the poller reached a cluster"
+observed=""
+for _ in $(seq 30); do
+    observed="$(sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qtAX -c \
+        "select count(*) from cluster_status" 2>/dev/null || echo 0)"
+    [[ "$observed" -gt 0 ]] && break
+    sleep 1
+done
+[[ "$observed" -gt 0 ]] || {
+    journalctl -u haproxy-ui-poller.service --no-pager --lines=20 || true
+    die "the poller wrote no status row within 30 seconds"
+}
+sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qAX -c \
+    "select cluster, outcome, coalesce(poll_error, '-') as poll_error, observed_at
+       from cluster_status order by cluster" | sed 's/^/  /'
+
+step "What each identity must not be able to do"
+failed=0
+refuse() {
+    local user="$1" what="$2"; shift 2
+    if sudo -u "$user" "$@" >/dev/null 2>&1; then
+        warn "  FAIL     ${user} ${what}"
+        failed=1
+    else
+        log "  ok       ${user} ${what}"
+    fi
+}
+#
+# The rule names one account. Every other identity asking for the same helper
+# must be refused by sudo itself, not by the helper being unavailable - so this
+# asks as the accounts that exist and would most like to have it.
+#
+refuse "$WEB_USER" "cannot run the status helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-status-helper
+refuse "$WORKER_USER" "cannot run the status helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-status-helper
+refuse "$POLLER_USER" "cannot write a job row" \
+    psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
+    -c "insert into job (operation, cluster, payload) values ('deploy', 'alpha', '{}')"
+refuse "$WEB_USER" "cannot write the status cache" \
+    psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
+    -c "update cluster_status set outcome = 'done'"
+[[ $failed -eq 0 ]] || die "an identity can do something it must not"
+
+echo
+log "platform step 7 done"
+log "The worker is running with management writes off, and claims nothing."

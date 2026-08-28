@@ -56,7 +56,16 @@ RELEASE_STATE_TEXT = {
 type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
 
 
-def _run_helper(cluster_id: str, request_id: str) -> subprocess.CompletedProcess[str]:
+def run_status_helper(cluster_id: str, request_id: str) -> subprocess.CompletedProcess[str]:
+    """Ask the privileged helper for one cluster's status.
+
+    Public because the interface's poller calls it too. It must not build this
+    request itself: the helper validates the envelope strictly, and two
+    constructions of the same request are two things to keep in step - which is
+    the divergence that is hardest to find, because each side looks correct on
+    its own.
+    """
+
     request = {
         "schema_version": 1,
         "operation": OPERATION,
@@ -149,7 +158,7 @@ def main(
     *,
     stream_out: TextIO | None = None,
     stream_err: TextIO | None = None,
-    run_helper: RunHelper = _run_helper,
+    run_helper: RunHelper = run_status_helper,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = stream_out or sys.stdout

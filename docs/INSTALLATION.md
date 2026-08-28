@@ -793,6 +793,84 @@ definitions, the keys, or the release tree. **Nothing here survives losing the
 host**, so `/apps/haproxy-manager/data/dumps` has to be included in whatever
 off-machine backup the environment already runs. Step 6 says so on every run.
 
+### 4.8 The worker and the poller
+
+`install/platform/07-platform-services` installs both, each as its own operating
+system account. That separation is the reason the interface can be safe at all:
+a single application user would have made a web intrusion equivalent to deploy
+rights.
+
+| Identity | May | May not |
+|---|---|---|
+| web | authenticate, audit, queue a strictly validated job | no sudo rule, no management group, no key, cannot claim a job |
+| worker | call the engine's exact helpers, claim and complete jobs | read key files, run DDL |
+| poller | run exactly one read-only helper, write the status cache | read private trees directly, write a job, call any write operation |
+
+#### The poller
+
+It never reaches a node itself. The engine's configuration, the status account's
+key and the published release tree are all outside this account's reach by
+design, so the poller runs the same privileged helper the command line runs,
+through one sudoers rule:
+
+```
+<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-status-helper ""
+```
+
+The rule is exact because the helper **takes no arguments at all** — the cluster
+arrives as a bounded JSON request on stdin. `PRIVILEGE.md` forbids wildcards in
+sudoers argument matching, and without the no-argument form a rule naming a
+cluster would need one. The helper also reads the release target from the
+published tree rather than from its caller, so the poller cannot influence what
+an operator is told is current, and it takes no lock, so a status stays
+answerable while a deploy runs.
+
+The request itself is built by the engine's own code, not by a copy of it in the
+interface. Two constructions of the same request are two things to keep in step,
+and each looks correct on its own — which is the hardest kind of divergence to
+find.
+
+Results go to the `cluster_status` table, one row per cluster, and every page
+that shows a status also shows how old it is. `observed_at` is set by the
+database — by default on insert and by trigger on update — and the poller holds
+no `update` on that column: a poller that could write it could report a cluster
+it never reached as freshly observed.
+
+**One poller, enforced by the database.** It holds a session-scoped advisory
+lock for its whole life; a second one finds the lock taken and exits rather than
+doubling the load on every node. The lock is released by the server when the
+connection dies, including when the process is killed without cleanup — which is
+exactly the case a lock file gets wrong.
+
+Two failure kinds are kept apart in the table. `poll_error` means the poller
+could not get an answer — sudo refused, the helper is missing, the output was
+not JSON. An `outcome` of `failed` or `partial` means the cluster answered and
+the answer is bad news. Collapsing them would send somebody to read sudoers when
+a node is down, or the reverse.
+
+#### The worker
+
+It starts, connects, reports which database role it is actually running as, and
+claims nothing, because management writes are off. That is deliberate rather
+than unfinished: it is the state a rollback of the write path returns to, so it
+has to be a state that runs.
+
+Its unit is held **more tightly than the worker will eventually need** —
+`NoNewPrivileges=yes`, an empty capability set, `AF_UNIX` only. The phase that
+turns writes on has to relax that on purpose, in a diff somebody reviews, rather
+than inheriting a permission nobody chose. What it will need is written in the
+unit file so it is not rediscovered.
+
+If management writes are switched on before that phase exists, the worker exits
+78 and says so rather than pretending to work.
+
+#### Which clusters get polled
+
+`clusters` in `ui.toml`, because the application accounts cannot read the
+engine's configuration and must not. The privileged helper still decides whether
+each name is a real cluster; the list only says which ones to ask about. An
+empty list means the poller has nothing to do and says so instead of starting.
+
 ## Verifying the installation
 
 Work outward, and stop at the first step that fails:

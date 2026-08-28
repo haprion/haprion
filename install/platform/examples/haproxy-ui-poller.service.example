@@ -1,0 +1,60 @@
+[Unit]
+Description=HAProxy Manager status poller
+Documentation=file:///apps/haproxy-manager/current
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=haproxy-ui-poller
+Group=haproxy-ui-poller
+
+Environment=HAPROXY_UI_CONFIG=/apps/haproxy-manager/config/ui.toml
+ExecStart=/apps/haproxy-manager/current/venv/bin/haproxy-ui-poller
+
+# A second poller exits on the advisory lock rather than running alongside the
+# first, so a restart loop cannot double the load on every node.
+Restart=on-failure
+RestartSec=10
+
+# Filesystem protections identical to the web service. The poller writes nothing
+# outside the database and reads only its configuration and its own release.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+# Three deliberate relaxations, each of which the web service does NOT get.
+#
+# NoNewPrivileges must be off because this service's whole purpose is to run one
+# privileged helper through sudo, and sudo is setuid: with the flag on, the exec
+# fails and the poller can never read a node's status. It is the narrowest
+# possible use of that - one sudoers rule, one helper, no arguments.
+NoNewPrivileges=no
+# sudo needs to change uid, so the bounding set cannot be empty. Nothing wider
+# is granted: the helper it starts is what holds root, not this process.
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_AUDIT_WRITE CAP_DAC_READ_SEARCH
+# The helper reaches the nodes over SSH from inside this unit's sandbox, so the
+# address restrictions the web service uses would block exactly the thing this
+# service exists to do. The node addresses are not known here - they live in the
+# engine's private configuration, which this account cannot read - so they
+# cannot be enumerated in this file.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+# The system call filter stays, but @privileged is not excluded: sudo needs it.
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+
+[Install]
+WantedBy=multi-user.target

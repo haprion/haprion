@@ -1,0 +1,51 @@
+[Unit]
+Description=HAProxy Manager job worker
+Documentation=file:///apps/haproxy-manager/current
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=haproxy-ui-worker
+Group=haproxy-ui-worker
+
+Environment=HAPROXY_UI_CONFIG=/apps/haproxy-manager/config/ui.toml
+ExecStart=/apps/haproxy-manager/current/venv/bin/haproxy-ui-worker
+
+Restart=on-failure
+RestartSec=5
+
+# Held as tightly as the web service, and deliberately more tightly than the
+# worker will eventually need. While management writes are off this process
+# talks to nothing but the database, so it gets nothing but that - and the phase
+# that turns writes on has to relax this file on purpose, in a diff somebody
+# reviews, rather than inheriting a permission nobody chose.
+#
+# What that phase will need, so it is not rediscovered: NoNewPrivileges=no for
+# sudo, a CapabilityBoundingSet that permits setuid, and its own sudoers rules -
+# never the ones written for the operators, and never the poller's read-only
+# one.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 
 from haproxy_ui import auth
 from haproxy_ui.app import create_app
-from haproxy_ui.config import Config, Database, Listen, Throttle
+from haproxy_ui.config import Config, Database, Listen, Poller, Throttle
 from haproxy_ui.config import Session as SessionPolicy
 from haproxy_ui.db import Account, AuthenticatedSession
 
@@ -49,6 +49,8 @@ def configuration(*, cookie_secure: bool = True, max_failures: int = 3) -> Confi
             inactivity_minutes=600, absolute_hours=168, cookie_secure=cookie_secure
         ),
         throttle=Throttle(max_failures=max_failures, window_minutes=15),
+        clusters=(),
+        poller=Poller(interval_seconds=60),
     )
 
 

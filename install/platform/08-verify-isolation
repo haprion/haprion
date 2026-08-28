@@ -85,6 +85,13 @@ step "Development cannot read any key"
 # development platform - or, for that matter, by anything in production's.
 #
 keys=()
+#
+# The file below is written by the installation, so it exists on a machine that
+# has one and not on a clean runner. Said explicitly rather than letting the
+# local gate pass because this machine happens to have it - which is how this
+# check went green here and red in CI on 2026-08-28.
+#
+# shellcheck source=/dev/null
 [[ -r /etc/haproxy-manager/ui-tls.conf ]] && \
     keys+=("$(source /etc/haproxy-manager/ui-tls.conf; echo "$TLS_KEY")")
 while IFS= read -r key; do keys+=("$key"); done < <(

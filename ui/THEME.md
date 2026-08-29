@@ -49,3 +49,24 @@ Reuse the shared shell, primary navigation, summary cards, status badges,
 cluster cards, tables, empty states, and buttons defined in `app.css`. When a
 new component is necessary, give it semantic tokens and add it to `app.css` so
 the next view inherits the same visual language.
+
+## One line per cell
+
+**Text sits on one line where there is room.** A table cell that stacks a value
+over a muted second line, and a summary card that ellipses its own label, are
+both the same fault: these pages are read by scanning down a column, and every
+cell that becomes two rows halves how many rows fit in one glance.
+
+So: widen the column, shorten the words, or put the values beside each other -
+`value · detail`, or a column of their own. A `<span>` under a `<strong>` in a
+table cell is almost always wrong here. A summary card carries a number, a
+label and a qualifier; if it cannot show all three it is not a smaller card, it
+is a broken one, and its grid needs fixing rather than its text truncating.
+
+## Assets are versioned
+
+Every local asset URL carries `?v=<token>`, from `views.asset_token`. Without it
+a release ships new markup against the stylesheet a browser already had, which
+does not look like a caching problem - it looks like a layout bug in the new
+page, and it costs a review round to find. Add the token to any new asset
+reference.

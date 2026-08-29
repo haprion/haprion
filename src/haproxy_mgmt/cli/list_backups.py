@@ -14,6 +14,7 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from typing import Any, TextIO
 
 from haproxy_mgmt.cli.caller import usage
@@ -86,6 +87,34 @@ def _result(document: Mapping[str, Any]) -> Mapping[str, Any]:
     return result
 
 
+def _archive(version: str) -> str:
+    """The name the backup has on disk, which is the name a restore is given.
+
+    The envelope calls this field `version` and reports the stamp alone, which
+    is right for a machine reading it and wrong to put in front of an operator:
+    a version is a number, and this is a filename. `--backup` accepts it with or
+    without the suffix, so the listing shows the form that can be copied.
+    """
+
+    return f"{version}.tar.gz"
+
+
+def _local(created_at: str) -> str:
+    """The UTC instant from the envelope, shown on the operator's own clock.
+
+    The envelope stays UTC because it is read by machines and has to be
+    unambiguous. A listing is read by a person, next to a version stamp the
+    backup engine wrote in local time - and a CREATED column two hours off that
+    stamp reads as a bug rather than as a timezone.
+    """
+
+    try:
+        moment = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return created_at
+    return moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _size(size_bytes: int) -> str:
     #
     # Powers of 1024 with one unit per step, which is what `du -h` printed in
@@ -116,18 +145,20 @@ def _render(document: Mapping[str, Any], writer: TextIO) -> None:
             writer.write(f"No backups could be read: {reason}\n")
             continue
         latest = node.get("latest_version")
-        writer.write(f"latest -> {'MISSING' if latest is None else latest}\n\n")
+        writer.write(f"latest -> {'MISSING' if latest is None else _archive(str(latest))}\n\n")
         backups = node.get("backups")
         if not isinstance(backups, list) or not backups:
             writer.write("(no backups)\n")
             continue
-        writer.write(f"{'CREATED':<22}{'SIZE':>8}  VERSION\n")
+        writer.write(f"{'CREATED':<21}{'SIZE':>6}  BACKUP\n")
+        writer.write(f"{'-' * 19:<21}{'-' * 6:>6}  {'-' * 26}\n")
         for backup in backups:
             if not isinstance(backup, Mapping):
                 raise ValueError("the backup helper returned an invalid backup")
             writer.write(
-                f"{str(backup.get('created_at', '')):<22}"
-                f"{_size(int(backup.get('size_bytes', 0))):>8}  {backup.get('version', '')}\n"
+                f"{_local(str(backup.get('created_at', ''))):<21}"
+                f"{_size(int(backup.get('size_bytes', 0))):>6}  "
+                f"{_archive(str(backup.get('version', '')))}\n"
             )
 
 

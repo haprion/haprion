@@ -256,8 +256,16 @@ class CommandTests(unittest.TestCase):
 
         self.assertEqual(code, 0)
         self.assertIn("=== node-a ===", rendered)
-        self.assertIn("latest -> 2026-08-29_05-00-00", rendered)
+        self.assertIn("latest -> 2026-08-29_05-00-00.tar.gz", rendered)
         self.assertIn("28K", rendered)
+        #
+        # The listing names the archive, not the stamp. `version` is what the
+        # envelope calls the field, and putting that word in front of an
+        # operator would promise a version number where there is a filename.
+        #
+        self.assertIn("2026-08-29_05-00-00.tar.gz", rendered)
+        self.assertIn("BACKUP", rendered)
+        self.assertNotIn("VERSION", rendered)
 
     def test_all_asks_for_every_retained_backup(self) -> None:
         #

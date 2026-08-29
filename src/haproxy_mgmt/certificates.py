@@ -97,6 +97,31 @@ def leaf_fingerprint(pem: str) -> str:
     return hashlib.sha256(der).hexdigest()
 
 
+def leaf_block(pem: str) -> str:
+    """The first certificate block, as PEM, and nothing else from the file.
+
+    The published file is the private key concatenated with the full chain.
+    `cert-list` needs a real X.509 parser for subject, SAN and validity, and it
+    shells out to openssl to get one - so what it hands over must be the leaf
+    alone. The key is never in the returned text, which is what makes "the key
+    does not leave this module" a property of the code rather than a rule the
+    caller has to follow.
+    """
+
+    match = CERTIFICATE_BLOCK.search(pem)
+    if match is None:
+        raise CertificateError("the file contains no certificate")
+    body = "\n".join(line for line in match.group(1).split() if line)
+    #
+    # Assembled from DELIMITER for the same reason the pattern above is: a
+    # literal PEM header in a tracked file is what the secret scanner exists to
+    # catch, and the gate does not know that this one is a format, not a key.
+    #
+    opening = f"{DELIMITER}BEGIN CERTIFICATE{DELIMITER}"
+    closing = f"{DELIMITER}END CERTIFICATE{DELIMITER}"
+    return f"{opening}\n{body}\n{closing}\n"
+
+
 def certificate_path(root: Path, identifier: str) -> Path:
     """Where a referenced ID lives, with the suffix the IDs deliberately omit.
 

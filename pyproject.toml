@@ -44,6 +44,8 @@ haproxy-list-backups-helper = "haproxy_mgmt.cli.list_backups_helper:main"
 haproxy-inventory-helper = "haproxy_mgmt.cli.inventory_helper:main"
 haproxy-deploy = "haproxy_mgmt.cli.deploy:main"
 haproxy-deploy-helper = "haproxy_mgmt.cli.deploy_helper:main"
+haproxy-cert-list = "haproxy_mgmt.cli.cert_list:main"
+haproxy-cert-list-helper = "haproxy_mgmt.cli.cert_list_helper:main"
 haproxy-cert-deploy = "haproxy_mgmt.cli.cert_deploy:main"
 haproxy-cert-deploy-helper = "haproxy_mgmt.cli.cert_deploy_helper:main"
 

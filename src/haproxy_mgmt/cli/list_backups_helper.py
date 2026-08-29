@@ -20,7 +20,13 @@ from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
 from haproxy_mgmt.backups import BackupError, backup_list_result
-from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
+from haproxy_mgmt.config import (
+    DEFAULT_POLICY_PATH,
+    NAME,
+    ConfigError,
+    load_policy,
+    load_runtime_config,
+)
 from haproxy_mgmt.envelope import Message, envelope
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
@@ -29,7 +35,7 @@ from haproxy_mgmt.helper_protocol import (
 )
 
 OPERATION = "list_backups"
-PARAMETERS: frozenset[str] = frozenset({"limit"})
+PARAMETERS: frozenset[str] = frozenset({"limit", "node"})
 DEFAULT_LIMIT = 10
 MAX_LIMIT = 1000
 EXIT_NOT_ROOT = 77
@@ -56,10 +62,28 @@ def _limit(parameters: Mapping[str, Any]) -> int | None:
     return raw
 
 
+def _node(parameters: Mapping[str, Any]) -> str | None:
+    """Which single node to report, or null for every node in the cluster.
+
+    Filtered here rather than by the caller, so a listing for one node reads
+    exactly one directory. The caller is unprivileged and the boundary is the
+    point: less crosses it, and nothing the caller does can widen what was
+    asked for.
+    """
+
+    raw = parameters.get("node")
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not NAME.fullmatch(raw):
+        raise HelperProtocolError("node is not a valid node name", exit_code=64)
+    return raw
+
+
 def _validate_parameters(parameters: Mapping[str, Any]) -> None:
-    """Reject a bad limit while the request is being read, not after."""
+    """Reject a bad limit or node while the request is being read, not after."""
 
     _limit(parameters)
+    _node(parameters)
 
 
 def _write(writer: TextIO, document: dict[str, object]) -> None:
@@ -122,9 +146,33 @@ def main(
         )
         return 65
 
+    selected = _node(request.parameters)
+    nodes = tuple(node for node in cluster.nodes if selected is None or node.name == selected)
+    if not nodes:
+        #
+        # An empty node list is refused rather than reported. The schema needs
+        # at least one node, and an empty listing would read as "this node has
+        # no backups" when the truth is "this cluster has no such node".
+        #
+        _write(
+            writer,
+            envelope(
+                operation=OPERATION,
+                outcome="failed",
+                cluster=request.cluster,
+                request_id=request.request_id,
+                result=None,
+                error=Message(
+                    code="bad_input",
+                    message=f"cluster {request.cluster} has no node named {selected}",
+                ),
+            ),
+        )
+        return 64
+
     try:
         result, readings = backup_list_result(
-            policy.backup_root, cluster.nodes, limit=_limit(request.parameters)
+            policy.backup_root, nodes, limit=_limit(request.parameters)
         )
     except BackupError as exc:
         _write(

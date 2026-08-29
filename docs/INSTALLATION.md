@@ -171,7 +171,10 @@ backup_root: /srv/state-backups
 ```
 
 `backup_root` is where the state backup engine writes one directory per node, and it is what
-`haproxy-list-backups` reads. Only metadata is ever reported from it - archive name, size and
+`haproxy-list-backups` reads. Called with no cluster, that command lists every configured cluster
+in turn - it reads `clusters.yaml` as the calling user, the same way `haproxy-cluster-config` does,
+only to learn which clusters exist. Each listing is still resolved inside the privilege boundary by
+one helper call per cluster. Only metadata is ever reported from it - archive name, size and
 modification time. The archives themselves hold password hashes and private SSH keys, so the root
 stays root-owned and no command opens one; the helper exists precisely so that an unprivileged
 caller can learn a backup exists without being able to read it.

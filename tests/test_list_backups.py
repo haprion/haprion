@@ -15,6 +15,7 @@ import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest import mock
 
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
@@ -25,6 +26,17 @@ from haproxy_mgmt.config import Node
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
 SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haproxy-list-backups.schema.json"
+
+
+def _cluster(names: tuple[str, ...]):
+    return type(
+        "Cluster", (), {"nodes": tuple(Node(name=n, mgmt_host=f"{n}.example") for n in names)}
+    )
+
+
+def _config(clusters: dict):
+    return type("Config", (), {"clusters": clusters})
+
 
 NODES = (
     Node(name="node-a", mgmt_host="node-a.example"),
@@ -196,6 +208,37 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(document["error"]["code"], "backup_metadata_unavailable")
         _validator().validate(document)
 
+    def test_a_node_the_cluster_does_not_have_is_refused_not_answered_empty(self) -> None:
+        #
+        # The schema needs at least one node, and an empty listing would read
+        # as "this node has no backups" when the truth is "this cluster has no
+        # such node".
+        #
+        document, code = self._run(Path("/nonexistent"), {"limit": 10, "node": "node-z"})
+
+        self.assertEqual(code, 64)
+        self.assertEqual(document["outcome"], "failed")
+        self.assertEqual(document["error"]["code"], "bad_input")
+        _validator().validate(document)
+
+    def test_a_node_name_that_is_not_a_name_is_refused_before_any_read(self) -> None:
+        for value in ("../etc", "Node-A", 7, ""):
+            with self.subTest(value=value):
+                document, code = self._run(Path("/nonexistent"), {"node": value})
+                self.assertEqual(code, 64)
+                self.assertEqual(document, {})
+
+    def test_one_named_node_reads_only_that_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for node in NODES:
+                _archive(root / node.name, "2026-08-29_05-00-00")
+            document, code = self._run(root, {"limit": 10, "node": "node-b"})
+
+        self.assertEqual(code, 0)
+        self.assertEqual([node["name"] for node in document["result"]["nodes"]], ["node-b"])
+        _validator().validate(document)
+
     def test_a_limit_that_is_not_a_bounded_integer_is_refused(self) -> None:
         for value in ("10", 0, -1, True, 10_001):
             with self.subTest(value=value):
@@ -240,8 +283,8 @@ class CommandTests(unittest.TestCase):
         seen: list[object] = []
         out, err = io.StringIO(), io.StringIO()
 
-        def run_helper(cluster: str, request_id: str, limit: int | None):
-            seen.append(limit)
+        def run_helper(cluster: str, request_id: str, limit: int | None, node: str | None = None):
+            seen.append((cluster, limit, node))
             return type(
                 "Completed",
                 (),
@@ -273,10 +316,10 @@ class CommandTests(unittest.TestCase):
         # survive the trip rather than becoming a large number here.
         #
         _, _, _, seen = self._run(["-c", "alpha", "--all"])
-        self.assertEqual(seen, [None])
+        self.assertEqual(seen, [("alpha", None, None)])
 
         _, _, _, seen = self._run(["-c", "alpha"])
-        self.assertEqual(seen, [list_backups.DEFAULT_LIMIT])
+        self.assertEqual(seen, [("alpha", list_backups.DEFAULT_LIMIT, None)])
 
     def test_a_failed_envelope_is_reported_as_what_the_helper_said(self) -> None:
         #
@@ -287,7 +330,7 @@ class CommandTests(unittest.TestCase):
         #
         out, err = io.StringIO(), io.StringIO()
 
-        def run_helper(cluster: str, request_id: str, limit: int | None):
+        def run_helper(cluster: str, request_id: str, limit: int | None, node: str | None = None):
             document = {
                 "schema_version": 1,
                 "ok": False,
@@ -316,6 +359,49 @@ class CommandTests(unittest.TestCase):
         self.assertIn("backup_metadata_unavailable", err.getvalue())
         self.assertIn("no backup_root", err.getvalue())
         self.assertNotIn("invalid result", err.getvalue())
+
+    def test_a_node_is_asked_for_by_name(self) -> None:
+        _, _, _, seen = self._run(["-c", "alpha", "--node", "node-a"])
+        self.assertEqual(seen, [("alpha", list_backups.DEFAULT_LIMIT, "node-a")])
+
+    def test_without_a_cluster_every_configured_cluster_is_asked(self) -> None:
+        #
+        # The shell implementation this replaces listed every node with no
+        # arguments, and that is how the maintainer reads it. The envelope is
+        # one cluster's answer, so the command asks once per cluster rather
+        # than inventing a document that spans them.
+        #
+        clusters = {"alpha": _cluster(("node-a",)), "beta": _cluster(("node-b",))}
+        with (
+            mock.patch.object(list_backups, "load_policy", lambda *a, **k: object()),
+            mock.patch.object(
+                list_backups, "load_runtime_config", lambda *a, **k: _config(clusters)
+            ),
+        ):
+            _, _, _, seen = self._run([])
+
+        self.assertEqual([entry[0] for entry in seen], ["alpha", "beta"])
+
+    def test_a_node_without_a_cluster_asks_only_the_cluster_that_has_it(self) -> None:
+        #
+        # A node belongs to one cluster. Asking all of them would make each
+        # other cluster answer "no such node" - a listing of errors for a
+        # question that had one right answer.
+        #
+        clusters = {"alpha": _cluster(("node-a",)), "beta": _cluster(("node-b",))}
+        with (
+            mock.patch.object(list_backups, "load_policy", lambda *a, **k: object()),
+            mock.patch.object(
+                list_backups, "load_runtime_config", lambda *a, **k: _config(clusters)
+            ),
+        ):
+            _, err, code, seen = self._run(["--node", "node-b"])
+            _, missing_err, missing_code, missing_seen = self._run(["--node", "node-z"])
+
+        self.assertEqual([entry[0] for entry in seen], ["beta"])
+        self.assertEqual(missing_seen, [])
+        self.assertEqual(missing_code, 64)
+        self.assertIn("node-z", missing_err)
 
     def test_json_mode_passes_the_envelope_through_untouched(self) -> None:
         rendered, _, code, _ = self._run(["-c", "alpha", "--json"])

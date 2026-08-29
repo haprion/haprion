@@ -14,10 +14,12 @@ import json
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, TextIO
 
 from haproxy_mgmt.cli.caller import usage
+from haproxy_mgmt.config import ConfigError, load_policy, load_runtime_config
 from haproxy_mgmt.envelope import new_request_id
 
 OPERATION = "list_backups"
@@ -27,16 +29,22 @@ DEFAULT_LIMIT = 10
 EXIT_UNAVAILABLE = 68
 USAGE = (
     "Usage:\n"
-    "  haproxy-list-backups -c <cluster> [--all] [--json]\n"
+    "  haproxy-list-backups [-c <cluster>] [--node <name>] [--all] [--json]\n"
     "\n"
+    "  -c      one cluster; without it, every configured cluster in turn\n"
+    "  --node  one node, instead of every node in the cluster\n"
     "  --all   every retained backup, instead of the 10 most recent per node\n"
+    "  --json  the raw envelope, which is one cluster's answer - so -c is required\n"
 )
 
-type RunHelper = Callable[[str, str, int | None], subprocess.CompletedProcess[str]]
+type RunHelper = Callable[..., subprocess.CompletedProcess[str]]
 
 
 def run_list_backups_helper(
-    cluster_id: str, request_id: str, limit: int | None = DEFAULT_LIMIT
+    cluster_id: str,
+    request_id: str,
+    limit: int | None = DEFAULT_LIMIT,
+    node: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Ask the root helper which backups exist for one cluster's nodes."""
 
@@ -45,7 +53,7 @@ def run_list_backups_helper(
         "operation": OPERATION,
         "cluster": cluster_id,
         "request_id": request_id,
-        "parameters": {"limit": limit},
+        "parameters": {"limit": limit, "node": node},
     }
     return subprocess.run(  # noqa: S603 - fixed helper path, no caller argv
         [SUDO, "-n", HELPER],
@@ -56,13 +64,73 @@ def run_list_backups_helper(
     )
 
 
-def _parse(argv: list[str]) -> tuple[str, int | None, bool]:
-    if len(argv) < 2 or argv[0] not in ("-c", "--cluster"):
+@dataclass(frozen=True, slots=True)
+class Request:
+    cluster: str | None
+    node: str | None
+    limit: int | None
+    json_mode: bool
+
+
+def _parse(argv: list[str]) -> Request:
+    cluster: str | None = None
+    node: str | None = None
+    limit: int | None = DEFAULT_LIMIT
+    json_mode = False
+
+    rest = list(argv)
+    while rest:
+        flag = rest.pop(0)
+        if flag in ("-c", "--cluster"):
+            if not rest or cluster is not None:
+                usage(USAGE)
+            cluster = rest.pop(0)
+        elif flag == "--node":
+            if not rest or node is not None:
+                usage(USAGE)
+            node = rest.pop(0)
+        elif flag == "--all":
+            limit = None
+        elif flag == "--json":
+            json_mode = True
+        else:
+            usage(USAGE)
+
+    #
+    # The envelope is one cluster's answer, so there is no document that spans
+    # several. Rather than inventing one - a JSON array, or one object per line -
+    # the raw mode asks for the cluster it can actually answer for. A caller
+    # that wants every cluster in JSON is asking for something the contract does
+    # not define, and should call once per cluster and keep the envelopes.
+    #
+    if json_mode and cluster is None:
         usage(USAGE)
-    rest = argv[2:]
-    if any(flag not in ("--all", "--json") for flag in rest) or len(set(rest)) != len(rest):
-        usage(USAGE)
-    return argv[1], None if "--all" in rest else DEFAULT_LIMIT, "--json" in rest
+    return Request(cluster=cluster, node=node, limit=limit, json_mode=json_mode)
+
+
+def _clusters_for(request: Request) -> tuple[str, ...]:
+    """Which clusters to ask, when the caller named none.
+
+    Read as the calling user, the same way `haproxy-cluster-config` reads it.
+    This resolves nothing privileged - it only learns which clusters exist, and
+    each helper call still resolves its own paths inside the boundary.
+    """
+
+    if request.cluster is not None:
+        return (request.cluster,)
+    config = load_runtime_config(load_policy())
+    if request.node is None:
+        return tuple(config.clusters)
+    #
+    # A node belongs to one cluster, so asking every cluster for it would make
+    # each of the others answer "no such node" - a listing of errors for a
+    # question that had one right answer.
+    #
+    return tuple(
+        cluster_id
+        for cluster_id, cluster in config.clusters.items()
+        if any(node.name == request.node for node in cluster.nodes)
+    )
 
 
 class HelperFailure(ValueError):
@@ -172,25 +240,38 @@ def main(
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = stream_out or sys.stdout
     errors: TextIO = stream_err or sys.stderr
-    cluster_id, limit, json_mode = _parse(argv)
-    completed = run_helper(cluster_id, new_request_id(), limit)
+    request = _parse(argv)
 
     try:
-        document = json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        errors.write(completed.stderr.strip() or "ERROR: the backup helper returned no result")
-        errors.write("\n")
-        return completed.returncode or EXIT_UNAVAILABLE
-
-    if json_mode:
-        writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
-        return completed.returncode
-    try:
-        _render(document, writer)
-    except ValueError as exc:
+        clusters = _clusters_for(request)
+    except ConfigError as exc:
         errors.write(f"ERROR: {exc}\n")
-        return completed.returncode or EXIT_UNAVAILABLE
-    return completed.returncode
+        return exc.exit_code
+    if not clusters:
+        errors.write(f"ERROR: no configured cluster has a node named {request.node}\n")
+        return 64
+
+    worst = 0
+    for cluster_id in clusters:
+        completed = run_helper(cluster_id, new_request_id(), request.limit, request.node)
+        worst = worst or completed.returncode
+
+        try:
+            document = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            errors.write(completed.stderr.strip() or "ERROR: the backup helper returned no result")
+            errors.write("\n")
+            return completed.returncode or EXIT_UNAVAILABLE
+
+        if request.json_mode:
+            writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+            continue
+        try:
+            _render(document, writer)
+        except ValueError as exc:
+            errors.write(f"ERROR: {exc}\n")
+            return completed.returncode or EXIT_UNAVAILABLE
+    return worst
 
 
 if __name__ == "__main__":

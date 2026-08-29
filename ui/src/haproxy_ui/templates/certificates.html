@@ -22,10 +22,10 @@
     <div class="table-scroll"><table class="node-table certificate-table"><thead><tr><th>Certificate</th><th>Names</th><th>Renewal</th><th>Expires</th><th>Use</th></tr></thead><tbody>
       {% for certificate in cluster.certificates %}
       <tr{% if not certificate.referenced %} class="certificate-available"{% endif %}>
-        <td data-label="Certificate"><strong>{{ certificate.common_name }}</strong><span class="certificate-id">{{ certificate.identifier }}</span></td>
+        <td data-label="Certificate"><strong>{{ certificate.identifier }}</strong></td>
         <td data-label="Names">{% if certificate.sans %}<span class="certificate-sans">{{ certificate.sans | join(', ') }}</span>{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}—{% endif %}</td>
         <td data-label="Renewal"><span class="lifecycle-badge lifecycle-{{ certificate.lifecycle }}">{{ certificate.lifecycle_label }}</span>{% if certificate.issuer != '—' %}<span class="certificate-issuer">{{ certificate.issuer }}</span>{% endif %}</td>
-        <td data-label="Expires"><span class="status-badge status-badge-{{ certificate.tone }}">{{ certificate.expiry_label }}</span>{% if certificate.expires != '—' %}<span class="certificate-date">{{ certificate.expires }}</span>{% endif %}</td>
+        <td data-label="Expires">{% if certificate.expires != '—' %}<span class="certificate-date">{{ certificate.expires }}</span>{% endif %}<span class="status-badge status-badge-{{ certificate.tone }}">{{ certificate.expiry_label }}</span></td>
         <td data-label="Use">{% if certificate.referenced %}<span class="ownership-badge ownership-managed">Referenced</span>{% else %}<span class="ownership-badge ownership-unmanaged">Available</span>{% endif %}</td>
       </tr>
       {% endfor %}

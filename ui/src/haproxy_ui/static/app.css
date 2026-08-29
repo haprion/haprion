@@ -391,7 +391,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 /* Backups. Two tables, because the card answers two questions: whether every
    node is backed up, and which archives are actually there to restore from. */
 .backup-node-table td, .archive-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
-.node-detail { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+.node-detail { margin-left: 8px; color: var(--muted); font-size: 11px; }
 .archive-table code { color: var(--text-primary); font-size: 11px; }
 .archive-table { border-top: 1px solid var(--line); }
 .archive-latest td { background: var(--panel-soft); }
@@ -403,7 +403,9 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
    certbot lineage than for one somebody renews by hand. */
 .certificate-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .certificate-table td:first-child strong { display: block; color: var(--text-strong); }
-.certificate-id, .certificate-issuer, .certificate-date { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+.certificate-issuer, .certificate-date { color: var(--muted); font-size: 11px; }
+.certificate-date { margin-right: 8px; font-variant-numeric: tabular-nums; }
+.certificate-issuer { margin-left: 8px; }
 .certificate-sans { display: block; max-width: 420px; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
 .lifecycle-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; letter-spacing: 0.025em; color: var(--text-primary); background: var(--unknown-soft); }
 .lifecycle-acme { color: var(--info); background: var(--info-soft); }

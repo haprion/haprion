@@ -81,7 +81,7 @@ class PublishedStateTests(unittest.TestCase):
         self.assertEqual(cluster.label, "1 unpublished")
         self.assertEqual(cluster.tone, "warning")
         self.assertEqual(cluster.published, "v11")
-        self.assertIn("not published", cluster.detail)
+        self.assertEqual(cluster.detail, "Published is v11 · 12 saved versions")
 
     def test_a_published_release_outside_the_listing_is_not_called_current(self) -> None:
         #
@@ -91,6 +91,7 @@ class PublishedStateTests(unittest.TestCase):
         cluster = overview(reading(published=3, unpublished=None)).clusters[0]
 
         self.assertEqual(cluster.tone, "warning")
+        self.assertEqual(cluster.label, "Published is older")
         self.assertIn("not in this listing", cluster.detail)
 
     def test_nothing_published_is_unknown_rather_than_healthy_or_broken(self) -> None:
@@ -173,6 +174,25 @@ class RenderingTests(unittest.TestCase):
         self.assertEqual(view.cluster_count, 2)
         self.assertEqual(view.published_count, 1)
         self.assertEqual(view.waiting_count, 4)
+
+    def test_the_card_states_the_saved_count_rather_than_restating_the_badge(self) -> None:
+        #
+        # The badge already says "Published" and the row inside the table marks
+        # which version it is. A sentence repeating either spends space without
+        # adding anything, so it carries the one fact neither of them shows.
+        #
+        cluster = overview(reading()).clusters[0]
+
+        self.assertEqual(cluster.label, "Published")
+        self.assertEqual(cluster.detail, "12 saved versions")
+        self.assertEqual(cluster.total, 12)
+
+    def test_a_single_saved_version_is_not_pluralised(self) -> None:
+        row = reading(published=None, unpublished=1)
+        row.result["total_versions"] = 1
+        cluster = overview(row).clusters[0]
+
+        self.assertEqual(cluster.detail, "1 saved version, none published")
 
     def test_a_truncated_listing_says_so(self) -> None:
         self.assertTrue(overview(reading(truncated=True)).clusters[0].truncated)

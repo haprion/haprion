@@ -23,6 +23,21 @@ Use the semantic tokens (`--healthy`, `--warning`, `--critical`, `--info`, and
 values in a view. `:root` supplies light mode and `:root[data-theme="dark"]`
 supplies dark mode; there is intentionally no system theme.
 
+## Telling clusters apart
+
+A cluster's marker is the shape of the left rule on its card - solid, dashed,
+double or dotted - drawn in the single neutral `--cluster-mark`. It is chosen
+deterministically from the cluster ID by `cluster_identity.accent_index` and
+carries no operational meaning.
+
+**Do not give it a colour.** Green, amber, blue and red already mean something
+here, and any additional hue has to be defended against them forever; four
+attempts at a colour pair each ended up either too alike to tell apart or
+reading as a status. A shape says the same thing, survives the dark theme
+unchanged, and still works for a reader who cannot separate the hues. Widening
+`ACCENT_COUNT` means adding a `.cluster-accent-<n>::before` shape, which a test
+checks.
+
 ## Components
 
 Reuse the shared shell, primary navigation, summary cards, status badges,

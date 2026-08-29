@@ -49,6 +49,7 @@ class HistoryClusterView:
     stale: bool
     published: str
     unpublished: int
+    total: int
     truncated: bool
     versions: tuple[VersionView, ...]
 
@@ -131,9 +132,14 @@ def _empty(cluster: str, *, configured: bool) -> HistoryClusterView:
         stale=False,
         published="—",
         unpublished=0,
+        total=0,
         truncated=False,
         versions=(),
     )
+
+
+def _saved_count(total: int) -> str:
+    return "1 saved version" if total == 1 else f"{total} saved versions"
 
 
 def _state(
@@ -143,8 +149,15 @@ def _state(
     versions: tuple[VersionView, ...],
     published_version: int | None,
     unpublished: int | None,
+    total: int,
 ) -> tuple[str, Tone, str]:
-    """What this cluster's listing means, as a badge, a tone and a sentence."""
+    """What this cluster's listing means, as a badge, a tone and a sentence.
+
+    The badge states the cluster's publication state and the sentence adds a
+    fact the badge does not carry. They deliberately do not restate each other:
+    the row inside the table already marks which version is published, so a card
+    that says "Published" three ways spends space without adding anything.
+    """
 
     if reading.poll_error:
         return "Collection unavailable", "critical", "The poller could not read the history"
@@ -155,23 +168,23 @@ def _state(
     if not versions:
         return "No versions yet", "unknown", "Nothing has been saved for this cluster"
     if published_version is None:
-        return "Nothing published", "unknown", "Versions are saved but none has been published"
+        return "Nothing published", "unknown", f"{_saved_count(total)}, none published"
     if unpublished is None:
         #
         # The published release is older than the ten versions shown. Saying
         # "0 waiting" here would be a guess, and it would be the reassuring one.
         #
         return (
-            "Published version is older",
+            "Published is older",
             "warning",
-            "The published version is not in this listing",
+            f"v{published_version} is not in this listing",
         )
     if unpublished == 0:
-        return "Published", "healthy", "The newest saved version is the published one"
+        return "Published", "healthy", _saved_count(total)
     return (
         f"{unpublished} unpublished",
         "warning",
-        f"{unpublished} newer version(s) are saved but not published",
+        f"Published is v{published_version} · {_saved_count(total)}",
     )
 
 
@@ -194,6 +207,7 @@ def _cluster_view(
                 parsed.append(version)
     versions = tuple(parsed)
     unpublished = _integer(result.get("unpublished"))
+    total = _integer(result.get("total_versions")) or 0
     stale = now - reading.observed_at > stale_after
 
     label, tone, detail = _state(
@@ -202,6 +216,7 @@ def _cluster_view(
         versions=versions,
         published_version=published_version,
         unpublished=unpublished,
+        total=total,
     )
     return HistoryClusterView(
         cluster=reading.cluster,
@@ -216,6 +231,7 @@ def _cluster_view(
         stale=stale,
         published="—" if published_version is None else f"v{published_version}",
         unpublished=unpublished or 0,
+        total=total,
         truncated=result.get("truncated") is True,
         versions=versions,
     )

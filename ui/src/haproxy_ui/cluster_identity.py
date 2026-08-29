@@ -5,7 +5,7 @@ from __future__ import annotations
 from hashlib import sha256
 
 #
-# Four markers, drawn as a low-chroma tint behind the cluster name. Colour is
+# Four markers, drawn as a low-chroma rule down the left edge. Colour is
 # what makes the marker work: it is read before the name is, which is the whole
 # point of it - the name is adjacent everywhere, but a name has to be read.
 #
@@ -14,7 +14,7 @@ from hashlib import sha256
 # crowded into the narrow gap between blue and red. These are spread around the
 # circle and neighbours differ in lightness too. What keeps them from reading as
 # a status is chroma, not hue: every status colour here is vivid, so a muted
-# plate does not compete with one.
+# rule does not compete with one.
 #
 # Four is a ceiling, not a budget. Pure lightness separates three, maybe four;
 # hue and lightness together stretch to six before a reader starts looking

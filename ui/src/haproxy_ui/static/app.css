@@ -34,10 +34,10 @@
   --info-soft: #e9f3fd;
   --unknown: #778396;
   --unknown-soft: #eef1f5;
-  --accent-0: #cfe2e1;
-  --accent-1: #e2dcf0;
-  --accent-2: #dae4cd;
-  --accent-3: #f2dedb;
+  --accent-0: #5f9a97;
+  --accent-1: #6e63a8;
+  --accent-2: #8aa966;
+  --accent-3: #b8776d;
   --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 4px rgb(15 23 42 / 0.03);
   --shadow-menu: 0 14px 40px rgb(15 23 42 / 0.14);
   --radius: 8px;
@@ -70,10 +70,10 @@
   --info-soft: #183c5d;
   --unknown: #9aa8ba;
   --unknown-soft: #2a394b;
-  --accent-0: #2b4a49;
-  --accent-1: #3a3560;
-  --accent-2: #3a4a30;
-  --accent-3: #55393a;
+  --accent-0: #6fb3af;
+  --accent-1: #8579cc;
+  --accent-2: #9dba76;
+  --accent-3: #d1897d;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.25);
   --shadow-menu: 0 16px 48px rgb(0 0 0 / 0.4);
   --focus: 0 0 0 3px rgb(90 196 106 / 0.28);
@@ -285,25 +285,29 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .cluster-list { display: grid; gap: 26px; }
 .cluster-card { overflow: hidden; border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow-sm); }
 
-/* Cluster identity. Four low-chroma tints, spread around the circle rather than
-   squeezed into the gap between blue and red, where four earlier colour pairs
-   ended up looking alike. What keeps a tint from reading as a status is not its
-   hue but its chroma: every status colour here is vivid, so a muted plate does
-   not compete with one even in the same family. Neighbours in the cycle also
-   differ in lightness, because the eye reads lightness faster than hue - which
-   is exactly what the four rejected pairs got wrong. Cluster five repeats
-   cluster one; four is the count a reader can tell apart without looking twice. */
-.cluster-identity h3, .activity-cluster {
-  padding: 1px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--panel-soft);
+/* Cluster identity. A left rule on the card and on each activity row, in one of
+   four low-chroma tints. Colour is the point: it is read before the name is,
+   and the name - adjacent everywhere - always has to be read.
+
+   What sank four earlier colour pairs was execution. They differed in hue at
+   nearly the same lightness, and all four were crowded into the narrow gap
+   between blue and red that the status palette leaves free. These are spread
+   around the circle and neighbours differ in lightness too. What keeps them
+   from reading as a status is chroma, not hue: green, amber, blue and red are
+   vivid here, so a muted rule does not compete with one. */
+.cluster-card, .activity-entry { position: relative; }
+.cluster-card::before, .activity-entry::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 5px;
+  content: "";
 }
-.cluster-identity h3 { display: inline-block; }
-.activity-cluster { display: inline-block; justify-self: start; }
-.cluster-accent-0 .cluster-identity h3, .cluster-accent-0 .activity-cluster { background: var(--accent-0); }
-.cluster-accent-1 .cluster-identity h3, .cluster-accent-1 .activity-cluster { background: var(--accent-1); }
-.cluster-accent-2 .cluster-identity h3, .cluster-accent-2 .activity-cluster { background: var(--accent-2); }
-.cluster-accent-3 .cluster-identity h3, .cluster-accent-3 .activity-cluster { background: var(--accent-3); }
+.cluster-accent-0::before { background: var(--accent-0); }
+.cluster-accent-1::before { background: var(--accent-1); }
+.cluster-accent-2::before { background: var(--accent-2); }
+.cluster-accent-3::before { background: var(--accent-3); }
 
 .cluster-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
 .cluster-identity { display: flex; align-items: center; gap: 13px; min-width: 0; }

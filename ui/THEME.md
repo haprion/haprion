@@ -25,15 +25,15 @@ supplies dark mode; there is intentionally no system theme.
 
 ## Telling clusters apart
 
-**Each cluster carries a low-chroma tint behind its name**, on cluster cards and
-in the Activity cluster column, from `--accent-0` through `--accent-3`. The
+**Each cluster carries a low-chroma rule down its left edge**, on cluster cards
+and on activity rows, from `--accent-0` through `--accent-3`. The
 index comes from `cluster_identity.accent_index`; cluster five repeats cluster
 one. The tint is what lets a reader recognise a cluster without reading, which
 the name can never do.
 
 Two constraints, both learned the hard way. **Chroma, not hue, is what keeps a
 tint from reading as a status** - every status colour here is vivid, so a muted
-plate does not compete with one even in the same family; never reach for
+rule does not compete with one even in the same family; never reach for
 `--healthy`, `--warning`, `--critical`, `--info` or `--brand`. And **neighbours
 in the cycle must differ in lightness as well as hue**, because the eye reads
 lightness first; four earlier colour pairs differed in hue alone and could not

@@ -17,11 +17,11 @@ class ClusterIdentityTests(unittest.TestCase):
         #
         # Every index carries a tint of its own, index 0 included. Widening
         # ACCENT_COUNT without adding the tint would silently hand the new
-        # clusters a transparent marker.
+        # clusters an invisible rule.
         #
         stylesheet = STYLESHEET.read_text(encoding="utf-8")
         for index in range(ACCENT_COUNT):
-            self.assertIn(f".cluster-accent-{index} ", stylesheet)
+            self.assertIn(f".cluster-accent-{index}::before", stylesheet)
             self.assertIn(f"--accent-{index}:", stylesheet)
 
     def test_the_tints_spend_no_colour_the_status_palette_needs(self) -> None:

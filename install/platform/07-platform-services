@@ -101,29 +101,30 @@ done
 # which is precisely how a poller that has stopped working looks like one that
 # is fine.
 #
-step "Proving the poller cached status and inventory"
-observed_status=""
-observed_inventory=""
+step "Proving the poller cached status, inventory and history"
+fresh_rows() {
+    sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qtAX -c \
+        "select count(*) from ${1} where observed_at > '${started_at}'" \
+        2>/dev/null || echo 0
+}
+all_cached=0
 for _ in $(seq 30); do
-    observed_status="$(sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qtAX -c \
-        "select count(*) from cluster_status where observed_at > '${started_at}'" \
-        2>/dev/null || echo 0)"
-    observed_inventory="$(sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qtAX -c \
-        "select count(*) from cluster_inventory where observed_at > '${started_at}'" \
-        2>/dev/null || echo 0)"
-    [[ "$observed_status" -gt 0 && "$observed_inventory" -gt 0 ]] && break
+    all_cached=1
+    for table in cluster_status cluster_inventory cluster_history; do
+        [[ "$(fresh_rows "$table")" -gt 0 ]] || all_cached=0
+    done
+    [[ "$all_cached" -eq 1 ]] && break
     sleep 1
 done
-[[ "$observed_status" -gt 0 && "$observed_inventory" -gt 0 ]] || {
+[[ "$all_cached" -eq 1 ]] || {
     journalctl -u "${POLLER_USER}.service" --no-pager --lines=20 || true
-    die "the poller wrote no fresh status and inventory rows within 30 seconds of being restarted"
+    die "the poller wrote no fresh status, inventory and history rows within 30 seconds"
 }
-sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qAX -c \
-    "select cluster, outcome, coalesce(poll_error, '-') as poll_error, observed_at
-       from cluster_status order by cluster" | sed 's/^/  /'
-sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qAX -c \
-    "select cluster, outcome, coalesce(poll_error, '-') as poll_error, observed_at
-       from cluster_inventory order by cluster" | sed 's/^/  /'
+for table in cluster_status cluster_inventory cluster_history; do
+    sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qAX -c \
+        "select cluster, outcome, coalesce(poll_error, '-') as poll_error, observed_at
+           from ${table} order by cluster" | sed 's/^/  /'
+done
 
 step "What each identity must not be able to do"
 failed=0
@@ -149,6 +150,10 @@ refuse "$WEB_USER" "cannot run the inventory helper" \
     sudo -n /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper
 refuse "$WORKER_USER" "cannot run the inventory helper" \
     sudo -n /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper
+refuse "$WEB_USER" "cannot run the list helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-list-helper
+refuse "$WORKER_USER" "cannot run the list helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-list-helper
 refuse "$POLLER_USER" "cannot write a job row" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
     -c "insert into job (operation, cluster, payload) values ('deploy', 'alpha', '{}')"
@@ -158,6 +163,9 @@ refuse "$WEB_USER" "cannot write the status cache" \
 refuse "$WEB_USER" "cannot write the inventory cache" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
     -c "update cluster_inventory set outcome = 'done'"
+refuse "$WEB_USER" "cannot write the history cache" \
+    psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
+    -c "update cluster_history set outcome = 'done'"
 [[ $failed -eq 0 ]] || die "an identity can do something it must not"
 
 echo

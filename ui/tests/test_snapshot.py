@@ -70,6 +70,7 @@ class SnapshotTests(unittest.TestCase):
                     "cluster": "edge",
                     "status": {"outcome": "done", "result": {"nodes": [], "summary": {}}},
                     "inventory": {"outcome": "done", "result": {"proxies": []}},
+                    "history": {"outcome": "done", "result": {"versions": []}},
                 }
             ],
         }
@@ -80,6 +81,56 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(loaded.clusters, ("edge",))
         self.assertEqual(loaded.status_rows[0].observed_at, datetime(2026, 8, 29, 12, tzinfo=UTC))
         self.assertEqual(loaded.inventory_rows[0].result, {"proxies": []})
+        self.assertEqual(loaded.history_rows[0].result, {"versions": []})
+
+    def test_a_snapshot_taken_before_a_source_existed_still_loads(self) -> None:
+        #
+        # An older file has no history entry. Refusing it would take the pages
+        # that do have data down with the one that does not.
+        #
+        document = {
+            "schema_version": 1,
+            "source": "production",
+            "captured_at": "2026-08-29T12:00:00Z",
+            "clusters": [
+                {
+                    "cluster": "edge",
+                    "status": {"outcome": "done", "result": {"nodes": [], "summary": {}}},
+                    "inventory": {"outcome": "done", "result": {"proxies": []}},
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / snapshot.SNAPSHOT_NAME
+            path.write_text(json.dumps(document), encoding="utf-8")
+            loaded = snapshot.load_production_snapshot(path, require_secure=False)
+        self.assertEqual(loaded.history_rows, ())
+        self.assertEqual(len(loaded.status_rows), 1)
+
+    def test_a_captured_version_listing_is_length_capped_before_it_leaves(self) -> None:
+        listing = {
+            "current_version": 26,
+            "total_versions": 26,
+            "published_version": 24,
+            "published_hash": "a" * 40,
+            "unpublished": 2,
+            "truncated": True,
+            "versions": [
+                {
+                    "version": number,
+                    "hash": "b" * 40,
+                    "created_at": "2026-08-28T14:02:11+00:00",
+                    "comment": "x" * 500,
+                    "current": False,
+                }
+                for number in range(30, 10, -1)
+            ],
+        }
+        reduced = snapshot._history_result(listing)
+
+        self.assertEqual(len(reduced["versions"]), 10)
+        self.assertIsNone(reduced["versions"][0]["comment"])
+        self.assertEqual(reduced["published_version"], 24)
 
     def test_capture_uses_status_helper_and_published_tree_without_worktree_reads(self) -> None:
         runtime = mock.Mock()

@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from haproxy_ui.db import ClusterInventory, ClusterStatus
+from haproxy_ui.db import ClusterHistory, ClusterInventory, ClusterStatus
 
 CLUSTERS = ("edge-demo", "service-demo")
 
@@ -150,6 +150,72 @@ def inventory_rows(now: datetime | None = None) -> tuple[ClusterInventory, ...]:
                         "backend_count": 2,
                     },
                 ],
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+    )
+
+
+def _versions(top: int) -> list[dict[str, Any]]:
+    """Five saved versions in the frozen `list` shape, newest first."""
+
+    comments = {
+        26: "Raise the API pool to four members",
+        25: "Add a maintenance page backend",
+        24: "Shorten the health check interval",
+        23: "Move the metrics listener off the shared port",
+        22: "Split the internal and public frontends",
+        21: "Add the staging backend pool",
+        20: "Initial managed configuration",
+    }
+    return [
+        {
+            "version": number,
+            "hash": f"{number:040d}",
+            "created_at": f"2026-08-{number - 5:02d}T09:1{number % 10}:00+00:00",
+            "comment": comments.get(number, f"Change {number}"),
+            "current": number == top,
+        }
+        for number in range(top, top - 5, -1)
+    ]
+
+
+def history_rows(now: datetime | None = None) -> tuple[ClusterHistory, ...]:
+    """One cluster fully published, one holding a saved but unpublished change."""
+
+    observed = (now or datetime.now(UTC)) - timedelta(seconds=18)
+    return (
+        ClusterHistory(
+            cluster="edge-demo",
+            observed_at=observed,
+            outcome="done",
+            result={
+                "current_version": 24,
+                "total_versions": 24,
+                "versions": _versions(24),
+                "published_version": 24,
+                "published_hash": f"{24:040d}",
+                "unpublished": 0,
+                "truncated": False,
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+        ClusterHistory(
+            cluster="service-demo",
+            observed_at=observed - timedelta(seconds=9),
+            outcome="done",
+            result={
+                "current_version": 26,
+                "total_versions": 26,
+                "versions": _versions(26),
+                "published_version": 24,
+                "published_hash": f"{24:040d}",
+                "unpublished": 2,
+                "truncated": False,
             },
             warnings=[],
             error=None,

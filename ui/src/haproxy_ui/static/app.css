@@ -325,6 +325,15 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .ownership-managed { color: var(--healthy); background: var(--healthy-soft); }
 .ownership-unmanaged { color: var(--warning); background: var(--warning-soft); }
 
+/* Versions. The published row is marked, not coloured: green here would read as
+   "healthy", and a published version can be the one an operator wants to revert. */
+.version-table td { vertical-align: top; }
+.version-table td:first-child strong { display: inline-block; margin-right: 8px; font-variant-numeric: tabular-nums; }
+.version-published td { background: var(--panel-soft); }
+.version-comment { display: block; max-width: 460px; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
+.version-table code { color: var(--muted); font-size: 11px; }
+.table-note { margin: 0; padding: 10px 20px 14px; color: var(--muted); font-size: 11px; }
+
 .empty-state { display: flex; align-items: center; justify-content: center; gap: 13px; min-height: 124px; padding: 24px; color: var(--muted); }
 .empty-state svg { width: 28px; height: 28px; }
 .empty-state div { display: flex; flex-direction: column; }

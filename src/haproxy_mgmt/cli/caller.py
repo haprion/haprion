@@ -38,12 +38,8 @@ class CallerError(Exception):
         self.exit_code = exit_code
 
 
-def config_path(cluster_id: str) -> Path:
-    """Where the cluster's configuration repository is, per cluster-config.
-
-    Asked rather than derived from a naming convention: the layout is
-    configuration, and a second place that knows it is a second thing to keep in
-    step.
+def field(cluster_id: str, name: str) -> str:
+    """One field of a cluster's definition, as cluster-config reports it.
 
     Nothing is printed when it fails, deliberately. cluster-config has already
     said what was wrong - including which clusters do exist - straight to the
@@ -52,15 +48,26 @@ def config_path(cluster_id: str) -> Path:
     replace it with less.
     """
 
-    completed = subprocess.run(  # noqa: S603 - fixed path, fixed arguments
-        [CLUSTER_CONFIG, "-c", cluster_id, "--field", "config_path"],
+    completed = subprocess.run(  # noqa: S603 - fixed path, caller-selected field name
+        [CLUSTER_CONFIG, "-c", cluster_id, "--field", name],
         stdout=subprocess.PIPE,
         text=True,
         check=False,
     )
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)
-    return Path(completed.stdout.strip())
+    return completed.stdout.strip()
+
+
+def config_path(cluster_id: str) -> Path:
+    """Where the cluster's configuration repository is, per cluster-config.
+
+    Asked rather than derived from a naming convention: the layout is
+    configuration, and a second place that knows it is a second thing to keep in
+    step.
+    """
+
+    return Path(field(cluster_id, "config_path"))
 
 
 def usage(text: str) -> NoReturn:

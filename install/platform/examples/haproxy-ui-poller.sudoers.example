@@ -11,11 +11,12 @@
 # an exact rule possible - PRIVILEGE.md forbids wildcards in argument matching,
 # and without the no-argument form a rule naming a cluster would need one.
 #
-# Both helpers write nothing and take no lock. The status helper reaches nodes;
-# the inventory helper reads the exact commit named by the published RELEASE
-# stamp rather than a work tree. So the poller cannot choose what the interface
-# is told is current, cannot show an unpublished draft as live, and cannot
-# block a deploy.
+# All three helpers write nothing and take no lock. The status helper reaches
+# nodes; the inventory helper reads the exact commit named by the published
+# RELEASE stamp rather than a work tree; the list helper reads saved commit
+# metadata - version number, date and comment - and no file content at all. So
+# the poller cannot choose what the interface is told is current, cannot show an
+# unpublished draft as live, and cannot block a deploy.
 #
 # NOPASSWD because a service has no terminal to type a password at.
 #
@@ -23,3 +24,4 @@
 
 POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-status-helper ""
 POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper ""
+POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-list-helper ""

@@ -23,11 +23,13 @@ from typing import Any
 from haproxy_mgmt.cli.status import run_status_helper
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, load_policy, load_runtime_config
 from haproxy_mgmt.envelope import new_request_id
+from haproxy_mgmt.history import history_result
 from haproxy_mgmt.inventory import inventory_result
 from haproxy_mgmt.repo_snapshot import read_tree_files
 from haproxy_mgmt.status_collect import read_target
+from haproxy_mgmt.version_history import recent_versions
 
-from haproxy_ui.db import ClusterInventory, ClusterStatus
+from haproxy_ui.db import ClusterHistory, ClusterInventory, ClusterStatus
 
 SNAPSHOT_NAME = "production-snapshot.json"
 MAX_SNAPSHOT_BYTES = 1024 * 1024
@@ -44,6 +46,7 @@ class ProductionSnapshot:
     clusters: tuple[str, ...]
     status_rows: tuple[ClusterStatus, ...]
     inventory_rows: tuple[ClusterInventory, ...]
+    history_rows: tuple[ClusterHistory, ...]
 
 
 def path_for_config(config_path: Path) -> Path:
@@ -127,6 +130,40 @@ def _status_result(value: Any) -> dict[str, Any]:
     }
 
 
+def _history_result(value: Any) -> dict[str, Any]:
+    """Reduce a version listing to the fields the interface renders.
+
+    A commit comment is free text written by an operator, so it is length-capped
+    like every other string that crosses into the development platform, and the
+    listing is capped at the ten versions the engine shows.
+    """
+
+    source = _mapping(value)
+    entries = source.get("versions")
+    versions: list[dict[str, Any]] = []
+    if isinstance(entries, list):
+        for entry in entries[:10]:
+            item = _mapping(entry)
+            versions.append(
+                {
+                    "version": _number(item.get("version")),
+                    "hash": _text(item.get("hash"), limit=64),
+                    "created_at": _text(item.get("created_at"), limit=40),
+                    "comment": _text(item.get("comment"), limit=200),
+                    "current": _boolean(item.get("current")),
+                }
+            )
+    return {
+        "current_version": _number(source.get("current_version")),
+        "total_versions": _number(source.get("total_versions")),
+        "versions": versions,
+        "published_version": _number(source.get("published_version")),
+        "published_hash": _text(source.get("published_hash"), limit=64),
+        "unpublished": _number(source.get("unpublished")),
+        "truncated": _boolean(source.get("truncated")),
+    }
+
+
 def _status_document(cluster: str, completed: CompletedProcess[str]) -> dict[str, Any]:
     """Accept only the expected helper result, and never retain its stderr."""
 
@@ -168,7 +205,23 @@ def collect_production_snapshot(
             }
         except Exception:  # noqa: BLE001 - snapshot deliberately omits internal error detail
             inventory = {"outcome": "failed", "result": {"proxies": []}}
-        clusters.append({"cluster": cluster_id, "status": status, "inventory": inventory})
+        try:
+            listing = history_result(
+                recent_versions(Path(cluster.config_path)),
+                read_target(Path(cluster.publish_path), cluster.node_path),
+                generated_at=captured_at,
+            )
+            history: dict[str, object] = {"outcome": "done", "result": _history_result(listing)}
+        except Exception:  # noqa: BLE001 - snapshot deliberately omits internal error detail
+            history = {"outcome": "failed", "result": {"versions": []}}
+        clusters.append(
+            {
+                "cluster": cluster_id,
+                "status": status,
+                "inventory": inventory,
+                "history": history,
+            }
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "source": "production",
@@ -220,38 +273,45 @@ def load_production_snapshot(path: Path, *, require_secure: bool = True) -> Prod
     if not isinstance(entries, list):
         raise SnapshotError("production snapshot clusters must be a list")
     clusters: list[str] = []
-    statuses: list[ClusterStatus] = []
-    inventories: list[ClusterInventory] = []
+    rows: dict[str, list[Any]] = {"status": [], "inventory": [], "history": []}
+    #
+    # A snapshot taken before a reading existed is loaded rather than refused:
+    # the interface already renders a cluster with no row for a source as "no
+    # data yet", and failing the whole file would take the other pages down
+    # with it.
+    #
+    types = {"status": ClusterStatus, "inventory": ClusterInventory, "history": ClusterHistory}
     for entry in entries:
         item = _mapping(entry)
         cluster = _text(item.get("cluster"), limit=63)
         if cluster is None or cluster in clusters:
             raise SnapshotError("production snapshot has an invalid cluster")
         clusters.append(cluster)
-        for key in ("status", "inventory"):
+        for key, row_type in types.items():
+            if key not in item:
+                continue
             reading = _mapping(item.get(key))
             outcome = reading.get("outcome")
             result = reading.get("result")
             if outcome not in {"done", "partial", "failed"} or not isinstance(result, dict):
                 raise SnapshotError(f"production snapshot {key} is invalid")
-            row = {
-                "cluster": cluster,
-                "observed_at": captured_at,
-                "outcome": outcome,
-                "result": result,
-                "warnings": [],
-                "error": None,
-                "poll_error": None,
-            }
-            if key == "status":
-                statuses.append(ClusterStatus(**row))
-            else:
-                inventories.append(ClusterInventory(**row))
+            rows[key].append(
+                row_type(
+                    cluster=cluster,
+                    observed_at=captured_at,
+                    outcome=outcome,
+                    result=result,
+                    warnings=[],
+                    error=None,
+                    poll_error=None,
+                )
+            )
     return ProductionSnapshot(
         captured_at=captured_at,
         clusters=tuple(clusters),
-        status_rows=tuple(statuses),
-        inventory_rows=tuple(inventories),
+        status_rows=tuple(rows["status"]),
+        inventory_rows=tuple(rows["inventory"]),
+        history_rows=tuple(rows["history"]),
     )
 
 

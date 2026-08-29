@@ -10,6 +10,7 @@ at once.
 from __future__ import annotations
 
 import io
+import json
 import os
 import subprocess
 import tempfile
@@ -66,14 +67,30 @@ class ListFixture(unittest.TestCase):
             git(repo, "commit", "-qm", comment)
         return repo
 
-    def run_list(self, repo: Path, *argv: str) -> tuple[int, str]:
+    def run_list(self, repo: Path, *argv: str, published: str | None = None) -> tuple[int, str]:
         out = io.StringIO()
+        fields = {"publish_path": str(self.publish_root(repo, published)), "node_path": "internal"}
         code = list_command.main(
             list(argv) or ["-c", "alpha"],
             stream_out=out,
             config_path=lambda _cluster: repo,
+            field=lambda _cluster, name: fields[name],
         )
         return code, out.getvalue()
+
+    def publish_root(self, repo: Path, published: str | None) -> Path:
+        """A RELEASE stamp beside the repository, written only when asked for."""
+
+        root = repo.parent / "published"
+        if published is not None:
+            release = root / "current" / "internal"
+            release.mkdir(parents=True, exist_ok=True)
+            version = git(repo, "rev-list", "--first-parent", "--count", published)
+            (release / "RELEASE").write_text(
+                f"schema=1\ncluster=alpha\nversion={version}\nhash={published}\n",
+                encoding="utf-8",
+            )
+        return root
 
 
 class TableTests(ListFixture):
@@ -159,6 +176,95 @@ class FailureTests(ListFixture):
                 list_command.main(argv, stream_out=io.StringIO())
             self.assertEqual(raised.exception.code, 64)
             self.assertEqual(shown.getvalue(), list_command.USAGE)
+
+
+class JsonTests(ListFixture):
+    """`--json` is the same reading as the table, in the frozen envelope."""
+
+    def test_it_marks_the_published_version_and_counts_what_waits(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            repo = self.repository(Path(raw), ["Initial", "Add a backend", "Tune timeouts"])
+            second = git(repo, "rev-parse", "HEAD~1")
+            code, shown = self.run_list(repo, "-c", "alpha", "--json", published=second)
+
+        document = json.loads(shown)
+        self.assertEqual(code, 0)
+        self.assertEqual(document["operation"], "list")
+        self.assertEqual(document["outcome"], "done")
+        self.assertEqual(document["cluster"], "alpha")
+        self.assertEqual(document["result"]["published_version"], 2)
+        self.assertEqual(document["result"]["unpublished"], 1)
+        self.assertEqual([row["version"] for row in document["result"]["versions"]], [3, 2, 1])
+        self.assertEqual(
+            [row["current"] for row in document["result"]["versions"]], [True, False, False]
+        )
+        self.assertEqual(document["result"]["current_version"], 3)
+        self.assertEqual(document["result"]["total_versions"], 3)
+
+    def test_the_json_reading_agrees_with_the_table_row_for_row(self) -> None:
+        #
+        # The two modes read the repository once each. This is the check that
+        # they still describe the same versions, which is the whole reason the
+        # result is built in one place.
+        #
+        with tempfile.TemporaryDirectory() as raw:
+            repo = self.repository(Path(raw), ["Initial", "Add a backend"])
+            _, table = self.run_list(repo)
+            _, shown = self.run_list(repo, "-c", "alpha", "--json")
+
+        rows = json.loads(shown)["result"]["versions"]
+        #
+        # The JSON carries the contract's timestamp and the table the operator's
+        # minute-resolution one, so the versions and comments are what can be
+        # compared directly - and they are what would drift.
+        #
+        printed = table.split(list_command.RULE + "\n", 1)[1]
+        self.assertEqual([row["version"] for row in rows], [2, 1])
+        for row in rows:
+            self.assertIn(f"{row['version']:<9} ", printed)
+            self.assertIn(row["comment"], printed)
+
+    def test_an_unpublished_cluster_is_a_result_rather_than_a_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            repo = self.repository(Path(raw), ["Initial"])
+            code, shown = self.run_list(repo, "-c", "alpha", "--json")
+
+        result = json.loads(shown)["result"]
+        self.assertEqual(code, 0)
+        self.assertIsNone(result["published_version"])
+        self.assertEqual(result["unpublished"], 1)
+
+    def test_a_history_without_a_version_is_an_empty_listing_not_an_error(self) -> None:
+        #
+        # The table names the repair for a person; a reader parsing JSON gets
+        # the same fact as an empty list. Failing here would make a new cluster
+        # look like an unreadable one.
+        #
+        with tempfile.TemporaryDirectory() as raw:
+            repo = self.repository(Path(raw), [])
+            code, shown = self.run_list(repo, "-c", "alpha", "--json")
+
+        document = json.loads(shown)
+        self.assertEqual(code, 0)
+        self.assertEqual(document["outcome"], "done")
+        self.assertEqual(document["result"]["versions"], [])
+
+    def test_a_path_that_is_not_a_repository_is_a_failed_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            missing = Path(raw) / "alpha"
+            missing.mkdir()
+            code, shown = self.run_list(missing, "-c", "alpha", "--json")
+
+        document = json.loads(shown)
+        self.assertEqual(code, 68)
+        self.assertEqual(document["outcome"], "failed")
+        self.assertEqual(document["error"]["code"], "history_unavailable")
+        self.assertFalse(document["ok"])
+
+    def test_json_is_not_accepted_in_place_of_the_cluster_flag(self) -> None:
+        with self.assertRaises(SystemExit) as raised:
+            list_command.main(["--json", "alpha"])
+        self.assertEqual(raised.exception.code, 64)
 
 
 if __name__ == "__main__":

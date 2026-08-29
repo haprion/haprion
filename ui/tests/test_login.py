@@ -103,6 +103,7 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haproxy_ui.db.record_audit_event", side_effect=self._audit_event),
             mock.patch("haproxy_ui.db.cluster_statuses", return_value=[]),
             mock.patch("haproxy_ui.db.cluster_inventories", return_value=[]),
+            mock.patch("haproxy_ui.db.cluster_histories", return_value=[]),
         ]
         for patch in self.patches:
             patch.start()
@@ -210,6 +211,21 @@ class SigningIn(LoginTestCase):
         self.assertIn("Proxies", page.text)
         self.assertIn('href="/proxies" aria-current="page"', page.text)
         self.assertIn("No clusters configured", page.text)
+
+    def test_the_version_history_is_an_authenticated_read_only_page(self) -> None:
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        page = client.get("/history")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('href="/history" aria-current="page"', page.text)
+        self.assertIn("Versions", page.text)
+        self.assertIn("2 unpublished", page.text)
+        self.assertIn("Published", page.text)
+
+    def test_the_version_history_requires_a_session(self) -> None:
+        page = self.client().get("/history", follow_redirects=False)
+        self.assertEqual(page.status_code, 303)
+        self.assertEqual(page.headers["location"], "/login")
 
     def test_activity_is_an_authenticated_current_observation_page(self) -> None:
         client = self.client(replace(configuration(), demo_fixture=True))

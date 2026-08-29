@@ -116,8 +116,12 @@ contracts:
 - status is ported to the packaged CLI and now emits `outcome`, warning objects and an integer
   release version; its result also carries the published `target` and, per node, whether that node
   runs it
-- inventory and certificate-list commands do not yet exist
-- list, backup-list, publish, deploy, revert, and cert-deploy still need JSON modes
+- inventory exists and emits the frozen `inventory` result; the certificate-list command does not
+  yet exist
+- list emits the frozen `list` result under `--json`, and reports the published release alongside
+  the schema's `current_version`: `current` means the newest saved version, which is not
+  necessarily the one the nodes run
+- backup-list, publish, deploy, revert, and cert-deploy still need JSON modes
 - current deploy safety blocks and cert-deploy failures do not yet use the frozen exit-code/outcome
   mapping
 - the human backup helper's node/`all` syntax remains supported; JSON mode is cluster-bound as

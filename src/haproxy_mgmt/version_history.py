@@ -25,6 +25,13 @@ from haproxy_mgmt.git_command import git as _git
 DATE_FORMAT = "format:%Y-%m-%d %H:%M"
 
 #
+# The same instant in the frozen JSON contract's form. Kept beside the display
+# format rather than derived from it: parsing a minute-resolution local string
+# back into a timestamp would invent a zone and lose the seconds.
+#
+ISO_FORMAT = "%aI"
+
+#
 # How many versions a listing shows. The shell command showed ten, and an
 # operator reads the number of rows as "the recent ones", not as "all of them".
 #
@@ -36,6 +43,7 @@ class VersionSummary:
     version: int
     commit: str
     date: str
+    created_at: str
     comment: str
 
 
@@ -82,14 +90,16 @@ def version_summary(repo: Path, version: int, commit: str) -> VersionSummary:
         "show",
         "-s",
         f"--date={DATE_FORMAT}",
-        "--format=%ad%n%s",
+        f"--format=%ad%n{ISO_FORMAT}%n%s",
         commit,
     ).decode()
-    date, _, comment = shown.partition("\n")
+    date, _, rest = shown.partition("\n")
+    created_at, _, comment = rest.partition("\n")
     return VersionSummary(
         version=version,
         commit=commit,
         date=date.strip(),
+        created_at=created_at.strip(),
         comment=comment.strip(),
     )
 
@@ -136,18 +146,20 @@ def recent_versions(repo: Path, limit: int = LIST_LIMIT) -> tuple[VersionSummary
         f"-{limit}",
         "--first-parent",
         f"--date={DATE_FORMAT}",
-        "--pretty=tformat:%H%x00%ad%x00%s",
+        f"--pretty=tformat:%H%x00%ad%x00{ISO_FORMAT}%x00%s",
     ).decode()
 
     summaries: list[VersionSummary] = []
     for offset, line in enumerate(shown.splitlines()):
         commit, _, rest = line.partition("\0")
-        date, _, comment = rest.partition("\0")
+        date, _, rest = rest.partition("\0")
+        created_at, _, comment = rest.partition("\0")
         summaries.append(
             VersionSummary(
                 version=total - offset,
                 commit=commit,
                 date=date.strip(),
+                created_at=created_at.strip(),
                 comment=comment,
             )
         )

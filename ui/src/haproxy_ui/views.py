@@ -19,15 +19,17 @@ The rules that shape every handler below:
 from __future__ import annotations
 
 import ipaddress
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from haproxy_ui import activity, auth, dashboard, db, demo, proxies, snapshot
+from haproxy_ui import activity, auth, dashboard, db, demo, history, proxies, snapshot
 from haproxy_ui.config import Config
 from haproxy_ui.db import AuthenticatedSession
 
@@ -42,6 +44,60 @@ TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 TOUCH_AFTER = timedelta(minutes=1)
 
 SIGN_IN_FAILED = "Sign-in failed. Check the username and password and try again."
+
+
+@dataclass(frozen=True, slots=True)
+class Source:
+    """Where one kind of cached reading comes from, in each of the three modes.
+
+    A page must never choose its own source: development can be showing the
+    synthetic fixture or an operator-made production snapshot, and a view that
+    reached the database directly would quietly show real rows on a page
+    labelled as fixture data. Stated once, per kind of reading, so a new page
+    picks a source rather than inventing one.
+    """
+
+    demo_rows: Callable[[], Iterable[Any]]
+    snapshot_rows: Callable[[snapshot.ProductionSnapshot], Iterable[Any]]
+    cached_rows: Callable[[Any], Iterable[Any]]
+
+
+#
+# The cached readers are wrapped rather than referenced, so the lookup happens
+# when the page is rendered. Binding `db.cluster_statuses` here would capture the
+# function at import and quietly ignore a test that replaces it.
+#
+STATUS_SOURCE = Source(
+    demo.status_rows,
+    lambda taken: taken.status_rows,
+    lambda connection: db.cluster_statuses(connection),
+)
+INVENTORY_SOURCE = Source(
+    demo.inventory_rows,
+    lambda taken: taken.inventory_rows,
+    lambda connection: db.cluster_inventories(connection),
+)
+HISTORY_SOURCE = Source(
+    demo.history_rows,
+    lambda taken: taken.history_rows,
+    lambda connection: db.cluster_histories(connection),
+)
+
+
+def read_source(
+    request: Request, config: Config, source: Source
+) -> tuple[tuple[str, ...], Iterable[Any]]:
+    """The clusters to render and their newest readings, from the active mode."""
+
+    if config.demo_fixture:
+        return demo.CLUSTERS, source.demo_rows()
+    if config.production_snapshot:
+        captured = snapshot.load_production_snapshot(
+            snapshot.path_for_config(request.app.state.config_path)
+        )
+        return captured.clusters, source.snapshot_rows(captured)
+    with request.app.state.pool.connection() as connection:
+        return config.clusters, source.cached_rows(connection)
 
 
 def client_address(request: Request) -> str:
@@ -140,19 +196,7 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters: tuple[str, ...]
-        status_rows: Iterable[db.ClusterStatus]
-        if config.demo_fixture:
-            clusters, status_rows = demo.CLUSTERS, demo.status_rows()
-        elif config.production_snapshot:
-            captured = snapshot.load_production_snapshot(
-                snapshot.path_for_config(request.app.state.config_path)
-            )
-            clusters, status_rows = captured.clusters, captured.status_rows
-        else:
-            clusters = config.clusters
-            with request.app.state.pool.connection() as connection:
-                status_rows = db.cluster_statuses(connection)
+        clusters, status_rows = read_source(request, config, STATUS_SOURCE)
         dashboard_view = dashboard.build_dashboard(
             clusters,
             status_rows,
@@ -179,19 +223,7 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters: tuple[str, ...]
-        inventory_rows: Iterable[db.ClusterInventory]
-        if config.demo_fixture:
-            clusters, inventory_rows = demo.CLUSTERS, demo.inventory_rows()
-        elif config.production_snapshot:
-            captured = snapshot.load_production_snapshot(
-                snapshot.path_for_config(request.app.state.config_path)
-            )
-            clusters, inventory_rows = captured.clusters, captured.inventory_rows
-        else:
-            clusters = config.clusters
-            with request.app.state.pool.connection() as connection:
-                inventory_rows = db.cluster_inventories(connection)
+        clusters, inventory_rows = read_source(request, config, INVENTORY_SOURCE)
         overview = proxies.build_proxy_overview(
             clusters,
             inventory_rows,
@@ -211,25 +243,39 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
+    @router.get("/history", response_class=HTMLResponse)
+    def version_history(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        clusters, history_rows = read_source(request, config, HISTORY_SOURCE)
+        overview = history.build_history_overview(
+            clusters,
+            history_rows,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+        )
+        return TEMPLATES.TemplateResponse(
+            request,
+            "history.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "history": overview,
+                "section": "history",
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+            },
+        )
+
     @router.get("/activity", response_class=HTMLResponse)
     def latest_activity(request: Request) -> Response:
         session = current_session(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters: tuple[str, ...]
-        status_rows: Iterable[db.ClusterStatus]
-        if config.demo_fixture:
-            clusters, status_rows = demo.CLUSTERS, demo.status_rows()
-        elif config.production_snapshot:
-            captured = snapshot.load_production_snapshot(
-                snapshot.path_for_config(request.app.state.config_path)
-            )
-            clusters, status_rows = captured.clusters, captured.status_rows
-        else:
-            clusters = config.clusters
-            with request.app.state.pool.connection() as connection:
-                status_rows = db.cluster_statuses(connection)
+        clusters, status_rows = read_source(request, config, STATUS_SOURCE)
         current = dashboard.build_dashboard(
             clusters,
             status_rows,

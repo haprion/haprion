@@ -155,7 +155,10 @@ class Passes(unittest.TestCase):
                 return completed(inventory_envelope("failed"))
             return completed(inventory_envelope())
 
-        from unittest import mock
+        def list_helper(cluster: str, _request: str) -> Any:
+            if cluster == "beta":
+                return completed(inventory_envelope("failed", operation="list"))
+            return completed(inventory_envelope(operation="list"))
 
         from haproxy_ui.config import Config, Database, Listen, Poller, Throttle
         from haproxy_ui.config import Session as SessionPolicy
@@ -171,11 +174,17 @@ class Passes(unittest.TestCase):
             clusters=("alpha", "beta", "gamma"),
             poller=Poller(interval_seconds=60),
         )
-        with (
-            mock.patch("haproxy_ui.db.record_cluster_status", side_effect=record),
-            mock.patch("haproxy_ui.db.record_cluster_inventory", side_effect=record),
-        ):
-            healthy = poller.poll_once(Pool(), config, helper, inventory_helper)
+        #
+        # The recorders are passed in rather than patched onto the module: the
+        # source table binds them when it is built, so a patch applied later
+        # would be written past rather than through.
+        #
+        sources = (
+            poller.Source("status", helper, record, partial_ok=True),
+            poller.Source("inventory", inventory_helper, record),
+            poller.Source("list", list_helper, record),
+        )
+        healthy = poller.poll_once(Pool(), config, sources)
 
         self.assertEqual(healthy, 2)
         self.assertEqual(
@@ -183,12 +192,27 @@ class Passes(unittest.TestCase):
             [
                 ("alpha", "done"),
                 ("alpha", "done"),
+                ("alpha", "done"),
                 ("beta", "unavailable"),
                 ("beta", "failed"),
+                ("beta", "failed"),
+                ("gamma", "done"),
                 ("gamma", "done"),
                 ("gamma", "done"),
             ],
         )
+
+    def test_the_shipped_source_table_covers_every_polled_read(self) -> None:
+        #
+        # The table is what a new source has to be added to. This states which
+        # reads the poller is expected to make, so adding a helper without
+        # wiring it up fails here rather than being noticed as a view that
+        # never has data.
+        #
+        self.assertEqual(
+            [source.operation for source in poller.SOURCES], ["status", "inventory", "list"]
+        )
+        self.assertEqual([source.partial_ok for source in poller.SOURCES], [True, False, False])
 
 
 if __name__ == "__main__":

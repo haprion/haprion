@@ -27,10 +27,12 @@ import logging
 import os
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from haproxy_mgmt.cli.inventory import run_inventory_helper
+from haproxy_mgmt.cli.list import run_list_helper
 from haproxy_mgmt.cli.status import run_status_helper
 from haproxy_mgmt.envelope import new_request_id
 
@@ -55,6 +57,34 @@ POLLER_LOCK_KEY = 0x48415052
 MAX_ERROR_BYTES = 2000
 
 type RunHelper = Callable[[str, str], Any]
+type Recorder = Callable[..., None]
+
+
+@dataclass(frozen=True, slots=True)
+class Source:
+    """One read the poller makes, and where the answer is written.
+
+    Listed rather than written out per source, because every source is the same
+    three steps - run one helper, judge one envelope, replace one row - and a
+    fourth copy of those steps is a fourth place for them to drift.
+    """
+
+    operation: str
+    run: RunHelper
+    record: Recorder
+    #
+    # Only status can be partially good: it reaches two nodes and one of them
+    # can answer. A listing or an inventory is read in one place, so a partial
+    # outcome from those would mean the helper is doing something it should not.
+    #
+    partial_ok: bool = False
+
+
+SOURCES: tuple[Source, ...] = (
+    Source("status", run_status_helper, db.record_cluster_status, partial_ok=True),
+    Source("inventory", run_inventory_helper, db.record_cluster_inventory),
+    Source("list", run_list_helper, db.record_cluster_history),
+)
 
 
 def _excerpt(text: str) -> str:
@@ -67,6 +97,7 @@ def poll_cluster(
     run_helper: RunHelper = run_status_helper,
     *,
     operation: str = "status",
+    partial_ok: bool | None = None,
 ) -> dict[str, Any]:
     """Ask one cluster, and turn every way that can go wrong into a row.
 
@@ -109,9 +140,8 @@ def poll_cluster(
         }
 
     outcome = envelope.get("outcome")
-    expected_outcomes = (
-        ("done", "partial", "failed") if operation == "status" else ("done", "failed")
-    )
+    accept_partial = operation == "status" if partial_ok is None else partial_ok
+    expected_outcomes = ("done", "partial", "failed") if accept_partial else ("done", "failed")
     if outcome not in expected_outcomes:
         return {
             "outcome": "unavailable",
@@ -128,60 +158,46 @@ def poll_cluster(
     }
 
 
-def poll_once(
-    pool: Any,
-    config: Config,
-    run_helper: RunHelper = run_status_helper,
-    inventory_helper: RunHelper = run_inventory_helper,
-) -> int:
+def poll_once(pool: Any, config: Config, sources: tuple[Source, ...] = SOURCES) -> int:
     """One pass over every configured cluster. Returns how many answered well.
 
-    Each cluster is written in its own transaction. A pass that fails halfway
-    then leaves the clusters it did reach updated, rather than discarding good
-    readings because a later one went wrong.
+    Each source of each cluster is written in its own transaction. A pass that
+    fails halfway then leaves what it did read updated, rather than discarding
+    good readings because a later one went wrong.
+
+    The count returned is the status source only. It is what "fully current"
+    means to an operator watching the log; a cluster whose nodes are healthy
+    while its listing could not be read is a smaller problem, and it is logged
+    as its own line rather than folded into that number.
     """
 
     healthy = 0
     for cluster in config.clusters:
-        reading = poll_cluster(cluster, run_helper)
-        with pool.connection() as connection:
-            db.record_cluster_status(
-                connection,
-                cluster=cluster,
-                outcome=reading["outcome"],
-                result=reading["result"],
-                warnings=reading.get("warnings"),
-                error=reading.get("error"),
-                poll_error=reading.get("poll_error"),
+        for source in sources:
+            reading = poll_cluster(
+                cluster, source.run, operation=source.operation, partial_ok=source.partial_ok
             )
-            connection.commit()
-        inventory = poll_cluster(cluster, inventory_helper, operation="inventory")
-        with pool.connection() as connection:
-            db.record_cluster_inventory(
-                connection,
-                cluster=cluster,
-                outcome=inventory["outcome"],
-                result=inventory["result"],
-                warnings=inventory.get("warnings"),
-                error=inventory.get("error"),
-                poll_error=inventory.get("poll_error"),
-            )
-            connection.commit()
-        if reading["outcome"] == "done":
-            healthy += 1
-        else:
+            with pool.connection() as connection:
+                source.record(
+                    connection,
+                    cluster=cluster,
+                    outcome=reading["outcome"],
+                    result=reading["result"],
+                    warnings=reading.get("warnings"),
+                    error=reading.get("error"),
+                    poll_error=reading.get("poll_error"),
+                )
+                connection.commit()
+            if reading["outcome"] == "done":
+                if source.operation == "status":
+                    healthy += 1
+                continue
             logger.warning(
-                "cluster %s: %s%s",
+                "cluster %s %s: %s%s",
                 cluster,
+                source.operation,
                 reading["outcome"],
                 f" ({reading['poll_error']})" if reading.get("poll_error") else "",
-            )
-        if inventory["outcome"] != "done":
-            logger.warning(
-                "cluster %s inventory: %s%s",
-                cluster,
-                inventory["outcome"],
-                f" ({inventory['poll_error']})" if inventory.get("poll_error") else "",
             )
     return healthy
 

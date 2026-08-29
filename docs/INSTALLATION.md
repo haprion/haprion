@@ -850,7 +850,7 @@ rights.
 |---|---|---|
 | web | authenticate, audit, queue a strictly validated job | no sudo rule, no management group, no key, cannot claim a job |
 | worker | call the engine's exact helpers, claim and complete jobs | read key files, run DDL |
-| poller | run exact read-only metadata helpers, write status and inventory caches | read private trees directly, write a job, call any write operation |
+| poller | run exact read-only metadata helpers, write the status, inventory and history caches | read private trees directly, write a job, call any write operation |
 
 #### The poller
 
@@ -862,6 +862,7 @@ through exact sudoers rules:
 ```
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-status-helper ""
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-list-helper ""
 ```
 
 The rule is exact because the helper **takes no arguments at all** — the cluster
@@ -870,16 +871,23 @@ sudoers argument matching, and without the no-argument form a rule naming a
 cluster would need one. The helpers read their target inside the boundary. In
 particular, inventory reads the exact commit named by the published RELEASE
 stamp rather than the repository work tree, so an unpublished change cannot be
-presented as live. Neither takes a lock, so a status or inventory read stays
-answerable while a deploy runs.
+presented as live. The list helper reads saved commit metadata — version number,
+timestamp and comment — and no file content at all. None takes a lock, so these
+reads stay answerable while a deploy runs.
+
+`haproxy-list` itself does not use that helper: a person running it can already
+read the cluster repository, so the command reads it directly and requiring
+`sudo` for machine-readable output would be privilege for formatting. Both paths
+build their result with the same function, so the two cannot come to describe
+the same history differently.
 
 The request itself is built by the engine's own code, not by a copy of it in the
 interface. Two constructions of the same request are two things to keep in step,
 and each looks correct on its own — which is the hardest kind of divergence to
 find.
 
-Results go to `cluster_status` and `cluster_inventory`, each with one row per
-cluster, and every page shows how old the answer it uses is. `observed_at` is
+Results go to `cluster_status`, `cluster_inventory` and `cluster_history`, each
+with one row per cluster, and every page shows how old the answer it uses is. `observed_at` is
 set by the database — by default on insert and by trigger on update — and the
 poller holds no `update` on that column: a poller that could write it could
 report a cluster it never reached as freshly observed.

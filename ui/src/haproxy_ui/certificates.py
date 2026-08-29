@@ -199,7 +199,7 @@ def _certificate_view(value: Any, *, now: datetime) -> CertificateView | None:
         issuer=_text(entry.get("issuer")),
         lifecycle=lifecycle,
         lifecycle_label=_lifecycle_label(lifecycle),
-        fingerprint=_text(entry.get("fingerprint_sha256"), "")[:12],
+        fingerprint=_text(entry.get("fingerprint_sha256"), ""),
         referenced=entry.get("referenced_by_cluster") is True,
         usable=True,
         problem=None,

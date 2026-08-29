@@ -255,6 +255,29 @@ class OrderAndCountTests(unittest.TestCase):
         self.assertEqual(view.certificate_count, 1)
         self.assertEqual(view.acme_count, 1)
 
+    def test_two_certificates_sharing_a_fingerprint_prefix_are_two(self) -> None:
+        #
+        # The identity of the material is the whole digest. A shortened key
+        # would fold two certificates into one, and the symptom would be a
+        # counter that is quietly too low rather than an error anybody sees.
+        #
+        view = build_certificate_overview(
+            ("alpha",),
+            (
+                reading(
+                    cluster="alpha",
+                    certificates=[
+                        certificate("a.example.com.pem", fingerprint="a" * 12 + "1" * 52),
+                        certificate("b.example.com.pem", fingerprint="a" * 12 + "2" * 52),
+                    ],
+                ),
+            ),
+            now=NOW,
+            stale_after=STALE_AFTER,
+        )
+
+        self.assertEqual(view.certificate_count, 2)
+
     def test_certificates_needing_attention_are_counted_across_clusters(self) -> None:
         view = build_certificate_overview(
             ("alpha",),

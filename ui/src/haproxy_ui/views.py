@@ -27,7 +27,7 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from haproxy_ui import auth, dashboard, db, demo, proxies, snapshot
+from haproxy_ui import activity, auth, dashboard, db, demo, proxies, snapshot
 from haproxy_ui.config import Config
 from haproxy_ui.db import AuthenticatedSession
 
@@ -206,6 +206,44 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "proxies": overview,
                 "section": "proxies",
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+            },
+        )
+
+    @router.get("/activity", response_class=HTMLResponse)
+    def latest_activity(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        clusters: tuple[str, ...]
+        status_rows: Iterable[db.ClusterStatus]
+        if config.demo_fixture:
+            clusters, status_rows = demo.CLUSTERS, demo.status_rows()
+        elif config.production_snapshot:
+            captured = snapshot.load_production_snapshot(
+                snapshot.path_for_config(request.app.state.config_path)
+            )
+            clusters, status_rows = captured.clusters, captured.status_rows
+        else:
+            clusters = config.clusters
+            with request.app.state.pool.connection() as connection:
+                status_rows = db.cluster_statuses(connection)
+        current = dashboard.build_dashboard(
+            clusters,
+            status_rows,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+        )
+        return TEMPLATES.TemplateResponse(
+            request,
+            "activity.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "activity": activity.build_activity(current),
+                "section": "activity",
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
             },

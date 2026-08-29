@@ -22,7 +22,7 @@
     <a class="{{ 'active' if section == 'dashboard' else '' }}" href="/"{% if section == 'dashboard' %} aria-current="page"{% endif %}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 11 8-7 8 7v9H4zM9 20v-6h6v6"></path></svg>Dashboard</a>
     <a class="{{ 'active' if section == 'proxies' else '' }}" href="/proxies"{% if section == 'proxies' %} aria-current="page"{% endif %}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"></path></svg>Proxies</a>
     <span class="nav-item" aria-disabled="true" title="Read-only page coming in this phase"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v18H7zM9 7h6M9 11h6M9 15h4"></path></svg>Certificates</span>
-    <span class="nav-item" aria-disabled="true" title="Read-only page coming in this phase"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"></path></svg>Activity</span>
+    <a class="{{ 'active' if section == 'activity' else '' }}" href="/activity"{% if section == 'activity' %} aria-current="page"{% endif %}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"></path></svg>Activity</a>
   </div></nav>
 </header>
 {% endblock %}

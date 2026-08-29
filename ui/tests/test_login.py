@@ -211,6 +211,15 @@ class SigningIn(LoginTestCase):
         self.assertIn('href="/proxies" aria-current="page"', page.text)
         self.assertIn("No clusters configured", page.text)
 
+    def test_activity_is_an_authenticated_current_observation_page(self) -> None:
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        page = client.get("/activity")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('href="/activity" aria-current="page"', page.text)
+        self.assertIn("Latest stored observation", page.text)
+        self.assertIn("service-b", page.text)
+
     def test_the_explicit_demo_fixture_is_visibly_labelled(self) -> None:
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)

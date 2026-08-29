@@ -8,7 +8,7 @@
   --font-features: "cv03", "cv04", "cv11", "liga" 0;
   --font-size-ui: 14px;
   --font-weight-regular: 400;
-  --bg: #f5f7f8;
+  --bg: #e9edf2;
   --panel: #ffffff;
   --panel-soft: #f8fafc;
   --panel-raised: #ffffff;
@@ -274,8 +274,8 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 
 .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
 .section-heading h2 { margin: 0; color: var(--text-strong); font-size: 18px; font-weight: 700; letter-spacing: -0.015em; }
-.cluster-list { display: grid; gap: 14px; }
-.cluster-card { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow-sm); }
+.cluster-list { display: grid; gap: 26px; }
+.cluster-card { overflow: hidden; border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow-sm); }
 
 .cluster-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
 .cluster-identity { display: flex; align-items: center; gap: 13px; min-width: 0; }

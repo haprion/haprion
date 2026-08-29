@@ -874,6 +874,8 @@ through exact sudoers rules:
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-status-helper ""
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper ""
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-list-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-list-backups-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper ""
 ```
 
 The rule is exact because the helper **takes no arguments at all** — the cluster
@@ -883,7 +885,13 @@ cluster would need one. The helpers read their target inside the boundary. In
 particular, inventory reads the exact commit named by the published RELEASE
 stamp rather than the repository work tree, so an unpublished change cannot be
 presented as live. The list helper reads saved commit metadata — version number,
-timestamp and comment — and no file content at all. None takes a lock, so these
+timestamp and comment — and no file content at all. The backup helper reads
+directory metadata under the state backup root and never opens an archive,
+which is what lets an account that must not read password hashes and private
+SSH keys still report that a backup exists. The certificate helper reports
+metadata about the distribution root, and about which certificates certbot is
+renewing on this host; private key material never reaches its output, because
+what it parses is the leaf certificate alone. None takes a lock, so these
 reads stay answerable while a deploy runs.
 
 `haproxy-list` itself does not use that helper: a person running it can already

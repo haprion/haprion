@@ -210,9 +210,17 @@ class Passes(unittest.TestCase):
         # never has data.
         #
         self.assertEqual(
-            [source.operation for source in poller.SOURCES], ["status", "inventory", "list"]
+            [source.operation for source in poller.SOURCES],
+            ["status", "inventory", "list", "list_backups", "cert_list"],
         )
-        self.assertEqual([source.partial_ok for source in poller.SOURCES], [True, False, False])
+        #
+        # Partial is allowed only where the read has more than one place to
+        # fail: status reaches two nodes, and a backup listing reads one
+        # directory per node. The other three are each one read of one place.
+        #
+        self.assertEqual(
+            [source.partial_ok for source in poller.SOURCES], [True, False, False, True, False]
+        )
 
 
 if __name__ == "__main__":

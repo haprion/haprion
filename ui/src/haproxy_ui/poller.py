@@ -31,8 +31,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from haproxy_mgmt.cli.cert_list import run_cert_list_helper
 from haproxy_mgmt.cli.inventory import run_inventory_helper
 from haproxy_mgmt.cli.list import run_list_helper
+from haproxy_mgmt.cli.list_backups import run_list_backups_helper
 from haproxy_mgmt.cli.status import run_status_helper
 from haproxy_mgmt.envelope import new_request_id
 
@@ -73,9 +75,12 @@ class Source:
     run: RunHelper
     record: Recorder
     #
-    # Only status can be partially good: it reaches two nodes and one of them
-    # can answer. A listing or an inventory is read in one place, so a partial
-    # outcome from those would mean the helper is doing something it should not.
+    # Partial is allowed only where the read has more than one place to fail.
+    # Status reaches two nodes and one of them can answer; a backup listing
+    # reads one directory per node and one of them can be missing. An inventory,
+    # a version listing and a certificate listing are each read in one place, so
+    # a partial outcome from those would mean the helper is doing something it
+    # should not.
     #
     partial_ok: bool = False
 
@@ -84,6 +89,8 @@ SOURCES: tuple[Source, ...] = (
     Source("status", run_status_helper, db.record_cluster_status, partial_ok=True),
     Source("inventory", run_inventory_helper, db.record_cluster_inventory),
     Source("list", run_list_helper, db.record_cluster_history),
+    Source("list_backups", run_list_backups_helper, db.record_cluster_backups, partial_ok=True),
+    Source("cert_list", run_cert_list_helper, db.record_cluster_certificates),
 )
 
 

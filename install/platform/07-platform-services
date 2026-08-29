@@ -154,6 +154,14 @@ refuse "$WEB_USER" "cannot run the list helper" \
     sudo -n /opt/haproxy-mgmt/current/bin/haproxy-list-helper
 refuse "$WORKER_USER" "cannot run the list helper" \
     sudo -n /opt/haproxy-mgmt/current/bin/haproxy-list-helper
+refuse "$WEB_USER" "cannot run the backup helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-list-backups-helper
+refuse "$WORKER_USER" "cannot run the backup helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-list-backups-helper
+refuse "$WEB_USER" "cannot run the certificate helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper
+refuse "$WORKER_USER" "cannot run the certificate helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper
 refuse "$POLLER_USER" "cannot write a job row" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
     -c "insert into job (operation, cluster, payload) values ('deploy', 'alpha', '{}')"

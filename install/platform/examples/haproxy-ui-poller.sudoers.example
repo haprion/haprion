@@ -12,6 +12,13 @@
 # and without the no-argument form a rule naming a cluster would need one.
 #
 # All three helpers write nothing and take no lock. The status helper reaches
+# The backup helper reads directory metadata under the state backup root and
+# never opens an archive - which matters, because those archives hold password
+# hashes and private SSH keys. The certificate helper reports metadata about the
+# distribution root and about which certificates certbot is renewing; private
+# key material never reaches its output, because what it parses is the leaf
+# certificate alone. Both are reads, both take no lock.
+#
 # nodes; the inventory helper reads the exact commit named by the published
 # RELEASE stamp rather than a work tree; the list helper reads saved commit
 # metadata - version number, date and comment - and no file content at all. So
@@ -25,3 +32,5 @@
 POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-status-helper ""
 POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper ""
 POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-list-helper ""
+POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-list-backups-helper ""
+POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper ""

@@ -91,6 +91,32 @@ class ClusterInventory:
 
 
 @dataclass(frozen=True, slots=True)
+class ClusterBackups:
+    """The last state backup listing the poller could read for one cluster."""
+
+    cluster: str
+    observed_at: datetime
+    outcome: str
+    result: dict[str, Any]
+    warnings: list[Any]
+    error: dict[str, Any] | None
+    poll_error: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ClusterCertificates:
+    """The last certificate metadata the poller could read for one cluster."""
+
+    cluster: str
+    observed_at: datetime
+    outcome: str
+    result: dict[str, Any]
+    warnings: list[Any]
+    error: dict[str, Any] | None
+    poll_error: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ClusterHistory:
     """The last version listing the poller could read for one cluster."""
 
@@ -536,6 +562,96 @@ def cluster_histories(connection: Connection[Any]) -> list[ClusterHistory]:
         cursor.execute(
             "select cluster, observed_at, outcome, result, warnings, error, poll_error "
             "  from cluster_history "
+            " order by observed_at asc"
+        )
+        return cursor.fetchall()
+
+
+def record_cluster_backups(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    outcome: str,
+    result: Mapping[str, Any],
+    warnings: Any = None,
+    error: Mapping[str, Any] | None = None,
+    poll_error: str | None = None,
+) -> None:
+    """Replace one cluster's cached state backup listing with the newest helper answer."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into cluster_backups (cluster, outcome, result, warnings, error, poll_error) "
+            "values (%(cluster)s, %(outcome)s, %(result)s, %(warnings)s, %(error)s, %(poll)s) "
+            "on conflict (cluster) do update set "
+            "    outcome = excluded.outcome, "
+            "    result = excluded.result, "
+            "    warnings = excluded.warnings, "
+            "    error = excluded.error, "
+            "    poll_error = excluded.poll_error",
+            {
+                "cluster": cluster,
+                "outcome": outcome,
+                "result": Jsonb(dict(result)),
+                "warnings": Jsonb(list(warnings or [])),
+                "error": None if error is None else Jsonb(dict(error)),
+                "poll": poll_error,
+            },
+        )
+
+
+def cluster_backups(connection: Connection[Any]) -> list[ClusterBackups]:
+    """Every cluster's newest state backup listing, with the stalest one first."""
+
+    with connection.cursor(row_factory=class_row(ClusterBackups)) as cursor:
+        cursor.execute(
+            "select cluster, observed_at, outcome, result, warnings, error, poll_error "
+            "  from cluster_backups "
+            " order by observed_at asc"
+        )
+        return cursor.fetchall()
+
+
+def record_cluster_certificates(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    outcome: str,
+    result: Mapping[str, Any],
+    warnings: Any = None,
+    error: Mapping[str, Any] | None = None,
+    poll_error: str | None = None,
+) -> None:
+    """Replace one cluster's cached certificate metadata with the newest helper answer."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into cluster_certificates (cluster, outcome, result, warnings, error, poll_error) "
+            "values (%(cluster)s, %(outcome)s, %(result)s, %(warnings)s, %(error)s, %(poll)s) "
+            "on conflict (cluster) do update set "
+            "    outcome = excluded.outcome, "
+            "    result = excluded.result, "
+            "    warnings = excluded.warnings, "
+            "    error = excluded.error, "
+            "    poll_error = excluded.poll_error",
+            {
+                "cluster": cluster,
+                "outcome": outcome,
+                "result": Jsonb(dict(result)),
+                "warnings": Jsonb(list(warnings or [])),
+                "error": None if error is None else Jsonb(dict(error)),
+                "poll": poll_error,
+            },
+        )
+
+
+def cluster_certificates(connection: Connection[Any]) -> list[ClusterCertificates]:
+    """Every cluster's newest certificate metadata, with the stalest one first."""
+
+    with connection.cursor(row_factory=class_row(ClusterCertificates)) as cursor:
+        cursor.execute(
+            "select cluster, observed_at, outcome, result, warnings, error, poll_error "
+            "  from cluster_certificates "
             " order by observed_at asc"
         )
         return cursor.fetchall()

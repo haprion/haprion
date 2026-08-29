@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.db import ClusterStatus
 
 type Tone = Literal["healthy", "warning", "critical", "unknown"]
@@ -36,6 +37,7 @@ class NodeView:
 @dataclass(frozen=True, slots=True)
 class ClusterView:
     cluster: str
+    accent: int
     configured: bool
     label: str
     tone: Tone
@@ -195,6 +197,7 @@ def _node_view(value: Any) -> NodeView:
 def _empty_cluster(cluster: str, *, configured: bool) -> ClusterView:
     return ClusterView(
         cluster=cluster,
+        accent=accent_index(cluster),
         configured=configured,
         label="No data",
         tone="unknown",
@@ -280,6 +283,7 @@ def _cluster_view(
     observed_at = reading.observed_at.astimezone(UTC)
     return ClusterView(
         cluster=reading.cluster,
+        accent=accent_index(reading.cluster),
         configured=configured,
         label=label,
         tone=tone,

@@ -32,7 +32,9 @@ USAGE = (
     "  haproxy-list-backups [-c <cluster>] [--node <name>] [--all] [--json]\n"
     "\n"
     "  -c      one cluster; without it, every configured cluster in turn\n"
-    "  --node  one node, instead of every node in the cluster\n"
+    "  --node  one node, instead of every node in the cluster. A short name is\n"
+    "          accepted when it can only mean one node, so --node a02 finds\n"
+    "          gateway-a02\n"
     "  --all   every retained backup, instead of the 10 most recent per node\n"
     "  --json  the raw envelope, which is one cluster's answer - so -c is required\n"
 )
@@ -108,29 +110,53 @@ def _parse(argv: list[str]) -> Request:
     return Request(cluster=cluster, node=node, limit=limit, json_mode=json_mode)
 
 
-def _clusters_for(request: Request) -> tuple[str, ...]:
-    """Which clusters to ask, when the caller named none.
+class Ambiguous(ValueError):
+    """A short name that fits more than one node, which is not a name."""
 
-    Read as the calling user, the same way `haproxy-cluster-config` reads it.
-    This resolves nothing privileged - it only learns which clusters exist, and
-    each helper call still resolves its own paths inside the boundary.
+
+def _resolve(request: Request) -> tuple[tuple[str, ...], str | None]:
+    """Which clusters to ask, and the full name of the node that was meant.
+
+    The cluster list is read as the calling user, the same way
+    `haproxy-cluster-config` reads it. This resolves nothing privileged - it
+    only learns which clusters and nodes exist, and each helper call still
+    resolves its own paths inside the boundary.
     """
 
-    if request.cluster is not None:
-        return (request.cluster,)
+    if request.cluster is not None and request.node is None:
+        return (request.cluster,), None
+
     config = load_runtime_config(load_policy())
     if request.node is None:
-        return tuple(config.clusters)
-    #
-    # A node belongs to one cluster, so asking every cluster for it would make
-    # each of the others answer "no such node" - a listing of errors for a
-    # question that had one right answer.
-    #
-    return tuple(
-        cluster_id
+        return tuple(config.clusters), None
+
+    candidates = [
+        (cluster_id, node.name)
         for cluster_id, cluster in config.clusters.items()
-        if any(node.name == request.node for node in cluster.nodes)
-    )
+        if request.cluster in (None, cluster_id)
+        for node in cluster.nodes
+    ]
+    #
+    # The shell version this replaces took short names - "a02" for
+    # "gateway-a02" - from a table of aliases written into the script. The
+    # same convenience without the table: a name that is not a node's full name
+    # may be the end of exactly one. Exact matches win outright, so a node whose
+    # full name happens to end another node's name is never shadowed.
+    #
+    exact = [pair for pair in candidates if pair[1] == request.node]
+    matched = exact or [pair for pair in candidates if pair[1].endswith(request.node)]
+    if len(matched) > 1:
+        #
+        # Refused rather than guessed. A listing for the wrong node during an
+        # incident is worse than a question, and the operator is one keystroke
+        # from being exact.
+        #
+        names = ", ".join(sorted(name for _, name in matched))
+        raise Ambiguous(f"{request.node} matches more than one node: {names}")
+    if not matched:
+        return (), request.node
+    cluster_id, name = matched[0]
+    return (cluster_id,), name
 
 
 class HelperFailure(ValueError):
@@ -243,17 +269,20 @@ def main(
     request = _parse(argv)
 
     try:
-        clusters = _clusters_for(request)
+        clusters, node = _resolve(request)
     except ConfigError as exc:
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
+    except Ambiguous as exc:
+        errors.write(f"ERROR: {exc}\n")
+        return 64
     if not clusters:
         errors.write(f"ERROR: no configured cluster has a node named {request.node}\n")
         return 64
 
     worst = 0
     for index, cluster_id in enumerate(clusters):
-        completed = run_helper(cluster_id, new_request_id(), request.limit, request.node)
+        completed = run_helper(cluster_id, new_request_id(), request.limit, node)
         worst = worst or completed.returncode
 
         try:

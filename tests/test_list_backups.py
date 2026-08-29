@@ -360,8 +360,57 @@ class CommandTests(unittest.TestCase):
         self.assertIn("no backup_root", err.getvalue())
         self.assertNotIn("invalid result", err.getvalue())
 
+    def _with_clusters(self, clusters: dict, argv: list[str]):
+        with (
+            mock.patch.object(list_backups, "load_policy", lambda *a, **k: object()),
+            mock.patch.object(
+                list_backups, "load_runtime_config", lambda *a, **k: _config(clusters)
+            ),
+        ):
+            return self._run(argv)
+
     def test_a_node_is_asked_for_by_name(self) -> None:
-        _, _, _, seen = self._run(["-c", "alpha", "--node", "node-a"])
+        clusters = {"alpha": _cluster(("node-a", "node-b"))}
+        _, _, _, seen = self._with_clusters(clusters, ["-c", "alpha", "--node", "node-a"])
+        self.assertEqual(seen, [("alpha", list_backups.DEFAULT_LIMIT, "node-a")])
+
+    def test_a_short_name_is_resolved_to_the_node_it_can_only_mean(self) -> None:
+        #
+        # The shell version took "a02" from a table of aliases compiled into
+        # it. The same convenience without the table: a name that ends exactly
+        # one node's name is that node.
+        #
+        clusters = {"alpha": _cluster(("gateway-a01", "gateway-a02"))}
+        _, _, code, seen = self._with_clusters(clusters, ["--node", "a02"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, [("alpha", list_backups.DEFAULT_LIMIT, "gateway-a02")])
+
+    def test_a_short_name_that_fits_two_nodes_is_refused_not_guessed(self) -> None:
+        #
+        # A listing for the wrong node during an incident is worse than a
+        # question, and the operator is one keystroke from being exact.
+        #
+        clusters = {
+            "beta": _cluster(("gateway-b02",)),
+            "alpha": _cluster(("gateway-a02",)),
+        }
+        _, err, code, seen = self._with_clusters(clusters, ["--node", "02"])
+
+        self.assertEqual(code, 64)
+        self.assertEqual(seen, [])
+        self.assertIn("gateway-a02", err)
+        self.assertIn("gateway-b02", err)
+
+    def test_an_exact_name_is_never_shadowed_by_a_longer_one(self) -> None:
+        #
+        # "node-a" ends "extra-node-a" too. An exact match is the answer, or a
+        # node could not be asked for by its own name.
+        #
+        clusters = {"alpha": _cluster(("node-a", "extra-node-a"))}
+        _, _, code, seen = self._with_clusters(clusters, ["--node", "node-a"])
+
+        self.assertEqual(code, 0)
         self.assertEqual(seen, [("alpha", list_backups.DEFAULT_LIMIT, "node-a")])
 
     def test_without_a_cluster_every_configured_cluster_is_asked(self) -> None:

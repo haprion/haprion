@@ -347,6 +347,16 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .inline-status .status-dot { width: 6px; height: 6px; }
 .warning-text { color: var(--warning) !important; }
 .release-value { font-variant-numeric: tabular-nums; }
+/* Fixed columns, for the same reason the version tables have them: with
+   automatic layout each cluster's table sizes to its own longest value, so two
+   cards above one another disagree about where a column begins. Hosts / ports
+   is the one left to take the remaining width, because it is the only cell
+   whose content has no natural bound. */
+.proxy-table { table-layout: fixed; }
+.proxy-table th:nth-child(1), .proxy-table td:nth-child(1) { width: 260px; }
+.proxy-table th:nth-child(2), .proxy-table td:nth-child(2) { width: 130px; }
+.proxy-table th:nth-child(4), .proxy-table td:nth-child(4) { width: 130px; }
+.proxy-table th:nth-child(5), .proxy-table td:nth-child(5) { width: 150px; }
 .proxy-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .proxy-table th { padding-top: 7px; padding-bottom: 7px; }
 .proxy-table td strong { font-weight: var(--font-weight-regular); }

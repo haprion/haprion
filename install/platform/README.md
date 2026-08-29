@@ -11,7 +11,7 @@ Run them after the CLI installation, with the same answers file:
 sudo ./01-platform-prepare ../answers.env
 sudo ./02-platform-database ../answers.env
 sudo UV_BIN=/path/to/uv ./install-ui-release ../answers.env /path/to/source-tree
-sudo ALEMBIC_BIN=/apps/haproxy-manager/current/venv/bin/alembic ./migrate ../answers.env
+sudo ALEMBIC_BIN=/path/to/development/venv/bin/alembic ./migrate ../answers.env
 sudo ./03-verify ../answers.env
 sudo ./04-platform-service ../answers.env
 sudo ./05-platform-nginx ../answers.env
@@ -85,10 +85,17 @@ something a service does when it starts. The migration role owns every object,
 and no operating-system account maps to it except root, so a service that
 restarts cannot alter the schema even by accident.
 
-Run it after installing a release, and only then. `ALEMBIC_BIN` names the
-`alembic` of the environment holding that release's dependencies; the connection
-is built from the answers file, because a role name is deployment data and does
-not belong in the repository.
+Run it after installing a release, and only then. The connection is built from
+the answers file, because a role name is deployment data and does not belong in
+the repository.
+
+**`ALEMBIC_BIN` is not in the release.** alembic is a development dependency and
+a release is built with `--no-dev`, so no release venv contains it - point the
+variable at the development environment's `alembic` instead. That is not a
+release running from a checkout: this command reads the migrations from the
+source tree by design, and alembic is the tool that applies them rather than
+application code that serves requests. The application itself is only ever
+installed from a wheel.
 
 **Grants live in the migration that creates the table**, named against three
 contract roles — `app_web`, `app_worker`, `app_poller` — and never against a

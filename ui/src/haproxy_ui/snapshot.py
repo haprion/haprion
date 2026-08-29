@@ -11,7 +11,6 @@ file.  The web process only reads that file; it never reaches production.
 from __future__ import annotations
 
 import json
-import os
 import stat
 import sys
 from collections.abc import Mapping
@@ -23,6 +22,7 @@ from typing import Any
 
 from haproxy_mgmt.cli.status import run_status_helper
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, load_policy, load_runtime_config
+from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.inventory import inventory_result
 from haproxy_mgmt.repo_snapshot import read_tree_files
 from haproxy_mgmt.status_collect import read_target
@@ -154,7 +154,10 @@ def collect_production_snapshot(
     captured_at = now or datetime.now(UTC)
     clusters: list[dict[str, object]] = []
     for cluster_id, cluster in sorted(runtime.clusters.items()):
-        completed = status_runner(cluster_id, f"ui-snapshot-{os.urandom(12).hex()}")
+        # The status helper owns the request schema and accepts UUID request
+        # IDs only. Use the same generator as its public caller rather than
+        # inventing a snapshot-specific correlation format.
+        completed = status_runner(cluster_id, new_request_id())
         status = _status_document(cluster_id, completed)
         try:
             target = read_target(Path(cluster.publish_path), cluster.node_path)

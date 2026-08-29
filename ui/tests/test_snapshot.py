@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest import mock
+from uuid import UUID
 
 from haproxy_ui import snapshot
 
@@ -99,12 +100,19 @@ class SnapshotTests(unittest.TestCase):
             mock.patch("haproxy_ui.snapshot.read_target", return_value=target),
             mock.patch("haproxy_ui.snapshot.read_tree_files", return_value={}) as tree_reader,
         ):
+            request_ids: list[str] = []
+
+            def status_runner(_cluster: str, request_id: str) -> CompletedProcess[str]:
+                request_ids.append(request_id)
+                return completed
+
             document = snapshot.collect_production_snapshot(
-                now=datetime(2026, 8, 29, 12, tzinfo=UTC), status_runner=lambda *_: completed
+                now=datetime(2026, 8, 29, 12, tzinfo=UTC), status_runner=status_runner
             )
         self.assertEqual(document["source"], "production")
         self.assertEqual(document["clusters"][0]["inventory"]["result"]["version"], 24)
         tree_reader.assert_called_once_with(Path("/repo"), "a" * 40)
+        self.assertIsInstance(UUID(request_ids[0]), UUID)
 
 
 if __name__ == "__main__":

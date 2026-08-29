@@ -56,6 +56,15 @@ class PathPolicy:
     #
     backup_root: Path | None = None
 
+    #
+    # The systemd timer that takes those backups, so a listing can say whether
+    # anything is still producing it. Optional and separate from `backup_root`:
+    # an installation can hold archives without this project knowing what puts
+    # them there, and that is reported as "no schedule declared" rather than as
+    # a missing configuration error.
+    #
+    backup_timer: str | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class DeployIdentity:
@@ -185,6 +194,30 @@ def _host(value: str, location: str) -> str:
 
 
 USERNAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+#
+# Deliberately narrower than systemd's own rules: this is the set of names an
+# installation of this project can reasonably use, and everything outside it -
+# path separators, spaces, template instances - is refused rather than escaped.
+# Defined here, where the policy is read, and imported by the code that puts the
+# name in an argv, so there is one answer to what a timer name may be.
+#
+TIMER_UNIT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.timer$")
+
+
+def _optional_timer(data: Mapping[str, Any], key: str) -> str | None:
+    """A systemd timer unit the installation may or may not have declared.
+
+    Checked here as well as where it is used. The name reaches an argv, and a
+    policy file being root-owned makes it trusted, not well-formed.
+    """
+
+    raw = data.get(key)
+    if raw is None:
+        return None
+    name = _required_string(data, key, "runtime policy")
+    if not TIMER_UNIT.fullmatch(name):
+        raise ConfigError(f"runtime policy {key} is not a systemd timer name")
+    return name
 
 
 def _optional_root(data: Mapping[str, Any], key: str) -> Path | None:
@@ -239,6 +272,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             "cert_deploy_identity",
             "status_identity",
             "backup_root",
+            "backup_timer",
         },
         "runtime policy",
     )
@@ -264,6 +298,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
         cert_deploy_identity=_deploy_identity(data, "cert_deploy_identity"),
         status_identity=_deploy_identity(data, "status_identity"),
         backup_root=_optional_root(data, "backup_root"),
+        backup_timer=_optional_timer(data, "backup_timer"),
     )
 
 

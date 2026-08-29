@@ -151,6 +151,7 @@ class HelperTests(unittest.TestCase):
 
         class Policy:
             backup_root = root
+            backup_timer = None
 
         class Config:
             @staticmethod
@@ -294,6 +295,23 @@ class CommandTests(unittest.TestCase):
         code = list_backups.main(argv, stream_out=out, stream_err=err, run_helper=run_helper)
         return out.getvalue(), err.getvalue(), code, seen
 
+    def _run_with(
+        self, document: dict[str, object], argv: list[str]
+    ) -> tuple[str, str, int, list[object]]:
+        seen: list[object] = []
+        out, err = io.StringIO(), io.StringIO()
+
+        def run_helper(cluster: str, request_id: str, limit: int | None, node: str | None = None):
+            seen.append((cluster, limit, node))
+            return type(
+                "Completed",
+                (),
+                {"stdout": json.dumps(document), "stderr": "", "returncode": 0},
+            )
+
+        code = list_backups.main(argv, stream_out=out, stream_err=err, run_helper=run_helper)
+        return out.getvalue(), err.getvalue(), code, seen
+
     def test_the_listing_names_the_node_the_version_and_the_size(self) -> None:
         rendered, _, code, _ = self._run(["-c", "alpha"])
 
@@ -309,6 +327,79 @@ class CommandTests(unittest.TestCase):
         self.assertIn("2026-08-29_05-00-00.tar.gz", rendered)
         self.assertIn("BACKUP", rendered)
         self.assertNotIn("VERSION", rendered)
+
+    def test_the_schedule_is_stated_above_the_nodes(self) -> None:
+        #
+        # An operator reads "is anything still taking these" before reading
+        # which archives exist, so the timer goes first. A directory of old
+        # files looks the same whether or not something is still filling it.
+        #
+        document = self._document()
+        assert isinstance(document["result"], dict)
+        document["result"]["schedule"] = {
+            "unit": "haproxy-state-backup.timer",
+            "known": True,
+            "enabled": True,
+            "active": True,
+            "calendar": "*-*-* 05:00:00",
+            "next_run": "2026-08-30T03:00:00Z",
+            "last_run": "2026-08-29T03:00:40Z",
+            "last_result": "success",
+        }
+        rendered, _, code, _ = self._run_with(document, ["-c", "alpha"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("Schedule: *-*-* 05:00:00 (enabled)", rendered)
+        self.assertIn("(success)", rendered)
+        self.assertLess(rendered.index("Schedule:"), rendered.index("=== node-a ==="))
+
+    def test_a_disabled_timer_is_shouted_rather_than_mentioned(self) -> None:
+        document = self._document()
+        assert isinstance(document["result"], dict)
+        document["result"]["schedule"] = {
+            "unit": "haproxy-state-backup.timer",
+            "known": True,
+            "enabled": False,
+            "active": False,
+            "calendar": "*-*-* 05:00:00",
+            "next_run": None,
+            "last_run": None,
+            "last_result": None,
+        }
+        rendered, _, _, _ = self._run_with(document, ["-c", "alpha"])
+
+        self.assertIn("(DISABLED)", rendered)
+        self.assertNotIn("next run", rendered)
+
+    def test_an_installation_with_no_declared_timer_says_nothing_about_one(self) -> None:
+        #
+        # Printing "Schedule: unknown" would suggest something is missing. The
+        # truthful reading is that this deployment never declared what takes
+        # its backups.
+        #
+        document = self._document()
+        assert isinstance(document["result"], dict)
+        document["result"]["schedule"] = None
+        rendered, _, _, _ = self._run_with(document, ["-c", "alpha"])
+
+        self.assertNotIn("Schedule", rendered)
+
+    def test_a_timer_systemd_lost_is_named_in_the_listing(self) -> None:
+        document = self._document()
+        assert isinstance(document["result"], dict)
+        document["result"]["schedule"] = {
+            "unit": "haproxy-state-backup.timer",
+            "known": False,
+            "enabled": False,
+            "active": False,
+            "calendar": None,
+            "next_run": None,
+            "last_run": None,
+            "last_result": None,
+        }
+        rendered, _, _, _ = self._run_with(document, ["-c", "alpha"])
+
+        self.assertIn("haproxy-state-backup.timer is not known to systemd", rendered)
 
     def test_all_asks_for_every_retained_backup(self) -> None:
         #

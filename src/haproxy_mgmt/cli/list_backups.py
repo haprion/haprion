@@ -223,12 +223,40 @@ def _size(size_bytes: int) -> str:
     return f"{size:.0f}G"
 
 
+def _schedule(result: Mapping[str, Any], writer: TextIO) -> None:
+    """The timer line, written above the nodes because it is read first.
+
+    An installation that declares no timer gets no line at all. Printing
+    "Schedule: unknown" would suggest something is missing, when the truthful
+    reading is that this deployment never told the command what takes its
+    backups.
+    """
+
+    schedule = result.get("schedule")
+    if not isinstance(schedule, Mapping):
+        return
+    if not schedule.get("known"):
+        writer.write(f"Schedule: {schedule.get('unit')} is not known to systemd\n")
+        return
+    state = "enabled" if schedule.get("enabled") else "DISABLED"
+    calendar = schedule.get("calendar") or "no calendar"
+    writer.write(f"Schedule: {calendar} ({state})\n")
+    last = schedule.get("last_run")
+    outcome = schedule.get("last_result")
+    if last:
+        writer.write(f"  last run {_local(str(last))}{f' ({outcome})' if outcome else ''}\n")
+    following = schedule.get("next_run")
+    if following:
+        writer.write(f"  next run {_local(str(following))}\n")
+
+
 def _render(document: Mapping[str, Any], writer: TextIO) -> None:
     result = _result(document)
     nodes = result.get("nodes")
     if not isinstance(nodes, list):
         raise ValueError("the backup helper returned an invalid node list")
     writer.write(f"Cluster: {document.get('cluster')}\n")
+    _schedule(result, writer)
     for node in nodes:
         if not isinstance(node, Mapping):
             raise ValueError("the backup helper returned an invalid node")

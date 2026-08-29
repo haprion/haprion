@@ -353,6 +353,16 @@ def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
     moment = now or datetime.now(UTC)
     observed = moment - timedelta(seconds=18)
     last_run = (moment - timedelta(hours=6)).replace(minute=0, second=0, microsecond=0)
+    schedule = {
+        "unit": "haproxy-state-backup.timer",
+        "known": True,
+        "enabled": True,
+        "active": True,
+        "calendar": "*-*-* 05:00:00",
+        "next_run": (last_run + timedelta(days=1)).isoformat().replace("+00:00", "Z"),
+        "last_run": last_run.isoformat().replace("+00:00", "Z"),
+        "last_result": "success",
+    }
     return (
         ClusterBackups(
             cluster="edge-demo",
@@ -360,6 +370,7 @@ def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
             outcome="done",
             result={
                 "limit": 10,
+                "schedule": schedule,
                 "nodes": [
                     {
                         "name": "edge-a",
@@ -387,6 +398,7 @@ def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
             outcome="done",
             result={
                 "limit": 10,
+                "schedule": schedule,
                 "nodes": [
                     {
                         "name": "service-a",

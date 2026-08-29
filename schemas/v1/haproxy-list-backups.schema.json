@@ -25,6 +25,40 @@
   ],
   "additionalProperties": true,
   "$defs": {
+    "backup_schedule": {
+      "type": "object",
+      "required": [
+        "unit",
+        "known",
+        "enabled",
+        "active",
+        "calendar",
+        "next_run",
+        "last_run",
+        "last_result"
+      ],
+      "properties": {
+        "unit": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "known": { "type": "boolean" },
+        "enabled": { "type": "boolean" },
+        "active": { "type": "boolean" },
+        "calendar": { "type": ["string", "null"], "maxLength": 256 },
+        "next_run": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/timestamp" },
+            { "type": "null" }
+          ]
+        },
+        "last_run": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/timestamp" },
+            { "type": "null" }
+          ]
+        },
+        "last_result": { "type": ["string", "null"], "maxLength": 64 }
+      },
+      "additionalProperties": true
+    },
     "backup": {
       "type": "object",
       "required": ["version", "created_at", "size_bytes", "latest"],
@@ -66,6 +100,12 @@
       "type": "object",
       "required": ["limit", "nodes"],
       "properties": {
+        "schedule": {
+          "oneOf": [
+            { "$ref": "#/$defs/backup_schedule" },
+            { "type": "null" }
+          ]
+        },
         "limit": { "type": ["integer", "null"], "minimum": 1 },
         "nodes": {
           "type": "array",

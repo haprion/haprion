@@ -389,7 +389,35 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .table-note { margin: 0; padding: 10px 20px 14px; color: var(--muted); font-size: 11px; }
 
 /* Backups. Two tables, because the card answers two questions: whether every
-   node is backed up, and which archives are actually there to restore from. */
+   node is backed up, and which archives are actually there to restore from.
+   The second is folded away: it is read during a restore, and it is ten rows
+   per node in front of the one question that is asked daily.
+
+   Both tables use the same fixed column widths. They hold different facts, but
+   they sit directly above one another, and two grids that disagree by a few
+   pixels read as a rendering fault rather than as two tables. */
+.backup-node-table, .archive-table { table-layout: fixed; }
+.backup-node-table th:nth-child(1), .backup-node-table td:nth-child(1),
+.archive-table th:nth-child(1), .archive-table td:nth-child(1) { width: 26%; }
+.backup-node-table th:nth-child(2), .backup-node-table td:nth-child(2),
+.archive-table th:nth-child(2), .archive-table td:nth-child(2) { width: 24%; }
+.backup-node-table th:nth-child(3), .backup-node-table td:nth-child(3),
+.archive-table th:nth-child(3), .archive-table td:nth-child(3) { width: 26%; }
+.backup-node-table th:nth-child(4), .backup-node-table td:nth-child(4),
+.archive-table th:nth-child(4), .archive-table td:nth-child(4) { width: 12%; }
+.backup-node-table th:nth-child(5), .backup-node-table td:nth-child(5),
+.archive-table th:nth-child(5), .archive-table td:nth-child(5) { width: 12%; }
+.archive-details > summary { padding: 9px 20px; border-top: 1px solid var(--line); color: var(--text-primary); font-size: 12px; cursor: pointer; }
+.archive-details > summary:hover { color: var(--text-strong); }
+.archive-details[open] > summary { color: var(--text-strong); }
+
+/* The schedule, stated once: one timer takes every node's backup. */
+.schedule-strip { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 10px 16px; border-radius: var(--radius); background: var(--panel); color: var(--text-primary); font-size: 12px; }
+.schedule-strip strong { color: var(--text-strong); }
+.schedule-facts { color: var(--muted); }
+.schedule-facts code { color: var(--text-primary); font-size: 11px; }
+.schedule-help { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin-left: auto; border-radius: 999px; background: var(--unknown-soft); color: var(--muted); font-size: 11px; font-weight: 700; cursor: help; }
+
 .backup-node-table td, .archive-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .node-detail { margin-left: 8px; color: var(--muted); font-size: 11px; }
 .archive-table code { color: var(--text-primary); font-size: 11px; }

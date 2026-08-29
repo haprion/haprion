@@ -19,6 +19,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
+from haproxy_mgmt.backup_schedule import ScheduleError, schedule_result
 from haproxy_mgmt.backups import BackupError, backup_list_result
 from haproxy_mgmt.config import (
     DEFAULT_POLICY_PATH,
@@ -174,7 +175,15 @@ def main(
         result, readings = backup_list_result(
             policy.backup_root, nodes, limit=_limit(request.parameters)
         )
-    except BackupError as exc:
+        #
+        # Read here rather than by the caller, and reported with the listing
+        # rather than on its own: "these archives exist" and "something is still
+        # producing them" are one question asked twice, and an interface that
+        # had to correlate two commands to answer it would eventually show one
+        # without the other.
+        #
+        result["schedule"] = schedule_result(policy.backup_timer)
+    except (BackupError, ScheduleError) as exc:
         _write(
             writer,
             envelope(

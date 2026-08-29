@@ -87,11 +87,30 @@ class BackupClusterView:
 
 
 @dataclass(frozen=True, slots=True)
+class ScheduleView:
+    """What is supposed to be taking these backups, and whether it still is."""
+
+    unit: str
+    label: str
+    tone: Tone
+    calendar: str
+    last_run: str
+    next_run: str
+    outcome: str
+
+
+@dataclass(frozen=True, slots=True)
 class BackupOverview:
     clusters: tuple[BackupClusterView, ...]
     cluster_count: int
     node_count: int
     protected_count: int
+    #
+    # One timer takes every node's backup, so this is a manager-wide fact that
+    # every cluster's listing repeats. Shown once, above the cards, rather than
+    # copied onto each of them.
+    #
+    schedule: ScheduleView | None
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -246,6 +265,63 @@ def _node_view(value: Any, *, now: datetime) -> tuple[NodeBackupsView, tuple[Arc
     )
 
 
+def _clock(value: Any, now: datetime) -> str:
+    """A scheduled moment as a date and an age, on one line and in UTC."""
+
+    moment = _moment(value)
+    if moment is None:
+        return "—"
+    return f"{moment.astimezone(UTC).strftime('%Y-%m-%d %H:%M')} ({relative_age(moment, now)})"
+
+
+def _schedule_view(value: Any, *, now: datetime) -> ScheduleView | None:
+    """The timer, read from the same envelope the archives came from.
+
+    A missing timer and a disabled one are both critical and are worded
+    differently, because they are fixed differently: one unit was removed, the
+    other is present and switched off.
+    """
+
+    schedule = _mapping(value)
+    unit = _text(schedule.get("unit"), "")
+    if not unit:
+        return None
+
+    outcome = _text(schedule.get("last_result"), "")
+    label: str
+    tone: Tone
+    if schedule.get("known") is not True:
+        label, tone = "Timer missing", "critical"
+    elif schedule.get("enabled") is not True:
+        label, tone = "Disabled", "critical"
+    elif outcome not in ("", "success"):
+        #
+        # The timer fires and the run it starts fails. Nothing else on this page
+        # would show it: the archives simply stop getting newer, which reads as
+        # an old backup rather than as a broken one.
+        #
+        label, tone = "Last run failed", "critical"
+    elif schedule.get("active") is not True:
+        label, tone = "Not running", "warning"
+    else:
+        label, tone = "Scheduled", "healthy"
+
+    next_run = _clock(schedule.get("next_run"), now)
+    return ScheduleView(
+        unit=unit,
+        label=label,
+        tone=tone,
+        calendar=_text(schedule.get("calendar"), "no calendar"),
+        last_run=_clock(schedule.get("last_run"), now),
+        #
+        # A disabled timer still reports the elapse it would have had. Showing
+        # it would promise a run that is not going to happen.
+        #
+        next_run=next_run if tone != "critical" else "—",
+        outcome=outcome or "—",
+    )
+
+
 def _empty(cluster: str, *, configured: bool) -> BackupClusterView:
     return BackupClusterView(
         cluster=cluster,
@@ -353,6 +429,20 @@ def build_backup_overview(
 
     now = now or datetime.now(UTC)
     rows = {reading.cluster: reading for reading in readings}
+    #
+    # One timer takes every node's backup, so every cluster's listing carries
+    # the same schedule. The first one that has it answers for all of them; a
+    # cluster whose own poll failed carries none, and must not blank a fact the
+    # others could still report.
+    #
+    schedule = next(
+        (
+            view
+            for reading in rows.values()
+            if (view := _schedule_view(_mapping(reading.result).get("schedule"), now=now))
+        ),
+        None,
+    )
     clusters: list[BackupClusterView] = []
     for cluster in tuple(configured_clusters):
         reading = rows.pop(cluster, None)
@@ -377,4 +467,5 @@ def build_backup_overview(
         # would report a node whose last backup is from June as covered.
         #
         protected_count=sum(node.tone == "healthy" for node in nodes),
+        schedule=schedule,
     )

@@ -10,7 +10,7 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from haproxy_ui.backups import build_backup_overview
+from haproxy_ui.backups import BackupOverview, ScheduleView, build_backup_overview
 from haproxy_ui.db import ClusterBackups
 
 NOW = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
@@ -47,6 +47,20 @@ def node(
     }
 
 
+def schedule(**changes: object) -> dict[str, object]:
+    return {
+        "unit": "haproxy-state-backup.timer",
+        "known": True,
+        "enabled": True,
+        "active": True,
+        "calendar": "*-*-* 05:00:00",
+        "next_run": (NOW + timedelta(hours=19)).isoformat().replace("+00:00", "Z"),
+        "last_run": (NOW - timedelta(hours=5)).isoformat().replace("+00:00", "Z"),
+        "last_result": "success",
+        **changes,
+    }
+
+
 def reading(
     *,
     cluster: str = "alpha",
@@ -55,12 +69,17 @@ def reading(
     poll_error: str | None = None,
     nodes: list[dict[str, object]] | None = None,
     limit: int | None = 10,
+    timer: dict[str, object] | None = None,
 ) -> ClusterBackups:
     return ClusterBackups(
         cluster=cluster,
         observed_at=NOW - timedelta(seconds=age_seconds),
         outcome=outcome,
-        result={"limit": limit, "nodes": [node(), node("node-b")] if nodes is None else nodes},
+        result={
+            "limit": limit,
+            "schedule": timer,
+            "nodes": [node(), node("node-b")] if nodes is None else nodes,
+        },
         warnings=[],
         error=None,
         poll_error=poll_error,
@@ -69,6 +88,14 @@ def reading(
 
 def overview(*readings: ClusterBackups, clusters: tuple[str, ...] = ("alpha",)):
     return build_backup_overview(clusters, readings, now=NOW, stale_after=STALE_AFTER)
+
+
+def timer_of(view: BackupOverview) -> ScheduleView:
+    """The schedule, or a failure that names what was missing."""
+
+    if view.schedule is None:
+        raise AssertionError("the overview carries no schedule")
+    return view.schedule
 
 
 class NodeStateTests(unittest.TestCase):
@@ -220,6 +247,67 @@ class ArchiveListingTests(unittest.TestCase):
         self.assertEqual(cluster.archives[0].taken, "2026-08-29_05-00-00")
         self.assertEqual(cluster.archives[0].age_label, "—")
         self.assertEqual(cluster.nodes[0].label, "Undated")
+
+
+class ScheduleTests(unittest.TestCase):
+    def test_a_running_timer_is_stated_once_for_every_cluster(self) -> None:
+        #
+        # One timer takes every node's backup, so both clusters' listings carry
+        # the same schedule. Rendering it per card would repeat one fact and
+        # invite the reader to compare two copies of it.
+        #
+        view = build_backup_overview(
+            ("alpha", "beta"),
+            (
+                reading(cluster="alpha", timer=schedule()),
+                reading(cluster="beta", timer=schedule()),
+            ),
+            now=NOW,
+            stale_after=STALE_AFTER,
+        )
+        schedule_view = timer_of(view)
+
+        self.assertEqual(schedule_view.tone, "healthy")
+        self.assertEqual(schedule_view.label, "Scheduled")
+        self.assertEqual(schedule_view.calendar, "*-*-* 05:00:00")
+        self.assertIn("5h ago", schedule_view.last_run)
+
+    def test_an_installation_without_a_timer_shows_no_schedule(self) -> None:
+        self.assertIsNone(overview(reading()).schedule)
+
+    def test_a_timer_that_fires_into_a_failing_run_is_critical(self) -> None:
+        #
+        # Nothing else on the page would show this: the archives simply stop
+        # getting newer, which reads as an old backup rather than a broken one.
+        #
+        schedule_view = timer_of(overview(reading(timer=schedule(last_result="exit-code"))))
+
+        self.assertEqual(schedule_view.tone, "critical")
+        self.assertEqual(schedule_view.label, "Last run failed")
+
+    def test_a_missing_timer_and_a_disabled_one_are_worded_differently(self) -> None:
+        missing = timer_of(overview(reading(timer=schedule(known=False, enabled=False))))
+        disabled = timer_of(overview(reading(timer=schedule(enabled=False))))
+
+        self.assertEqual(missing.label, "Timer missing")
+        self.assertEqual(disabled.label, "Disabled")
+        #
+        # A disabled timer still reports the elapse it would have had. Showing
+        # it would promise a run that is not going to happen.
+        #
+        self.assertEqual(disabled.next_run, "—")
+
+    def test_a_cluster_whose_poll_failed_does_not_blank_the_schedule(self) -> None:
+        view = build_backup_overview(
+            ("alpha", "beta"),
+            (
+                reading(cluster="alpha", outcome="failed", nodes=[], timer=None),
+                reading(cluster="beta", timer=schedule()),
+            ),
+            now=NOW,
+            stale_after=STALE_AFTER,
+        )
+        self.assertEqual(timer_of(view).label, "Scheduled")
 
 
 class CountTests(unittest.TestCase):

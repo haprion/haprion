@@ -168,6 +168,7 @@ status_identity:
   key: "/root/.ssh/id_ed25519_status"
 
 backup_root: /srv/state-backups
+backup_timer: haproxy-state-backup.timer
 ```
 
 `backup_root` is where the state backup engine writes one directory per node, and it is what
@@ -178,6 +179,17 @@ one helper call per cluster. Only metadata is ever reported from it - archive na
 modification time. The archives themselves hold password hashes and private SSH keys, so the root
 stays root-owned and no command opens one; the helper exists precisely so that an unprivileged
 caller can learn a backup exists without being able to read it.
+
+`backup_timer` is the systemd timer that produces those archives, and it is optional. Declaring it
+lets `haproxy-list-backups` answer the question the directory listing cannot: whether anything is
+still taking backups, or whether these are the ones a timer stopped adding to. The command reads
+the unit with `systemctl show`, which reports properties and changes nothing - it never enables,
+starts or edits a unit, and no interface can. Leave it out and the listing simply says nothing
+about a schedule, which is the honest answer for an installation whose backups are produced by
+something this project does not know about.
+
+Changing the schedule stays a systemd operation on the manager: `systemctl edit <unit>` followed by
+`systemctl restart <unit>`, as root. Taking one backup right now stays `haproxy-state-backup`.
 
 `status_identity` is the account `haproxy-status` becomes to read a node, and `haproxy-deploy`
 uses it too: a rollout reads the pair before and after every step, and it reads with the identity

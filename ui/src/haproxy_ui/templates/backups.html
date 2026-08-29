@@ -11,6 +11,15 @@
   <article class="metric-card"><span class="metric-icon metric-icon-cluster" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"></ellipse><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"></path></svg></span><div><strong>{{ backups.cluster_count }}</strong><span>Clusters</span><small>Taken by the node</small></div></article>
 </section>
 
+{% if backups.schedule %}
+<section class="schedule-strip" aria-label="Backup schedule">
+  <span class="status-dot status-{{ backups.schedule.tone }}" aria-hidden="true"></span>
+  <strong>{{ backups.schedule.label }}</strong>
+  <span class="schedule-facts"><code>{{ backups.schedule.calendar }}</code> · last run {{ backups.schedule.last_run }}{% if backups.schedule.outcome != '—' %} ({{ backups.schedule.outcome }}){% endif %} · next {{ backups.schedule.next_run }}</span>
+  <span class="schedule-help" tabindex="0" role="note" title="{{ backups.schedule.unit }} on the manager takes these backups. This page only reads it. To change the schedule: sudo systemctl edit {{ backups.schedule.unit }}, then sudo systemctl restart {{ backups.schedule.unit }}. To take one now: sudo haproxy-state-backup.">?</span>
+</section>
+{% endif %}
+
 <div class="cluster-list backup-cluster-list">
 {% for cluster in backups.clusters %}
   <article class="cluster-card backup-cluster-card cluster-accent-{{ cluster.accent }}">
@@ -31,6 +40,8 @@
       {% endfor %}
     </tbody></table></div>
     {% if cluster.archives %}
+    <details class="archive-details">
+      <summary>{{ cluster.archives | length }} archive{{ '' if cluster.archives | length == 1 else 's' }} on these nodes</summary>
     <div class="table-scroll"><table class="node-table archive-table"><thead><tr><th>Archive</th><th>Node</th><th>Taken</th><th>Age</th><th>Size</th></tr></thead><tbody>
       {% for archive in cluster.archives %}
       <tr{% if archive.latest %} class="archive-latest"{% endif %}>
@@ -42,6 +53,7 @@
       </tr>
       {% endfor %}
     </tbody></table></div>
+    </details>
     {% endif %}
     <p class="table-note">Restoring from an archive is a command-line recovery procedure; this page only reads what the nodes hold{% if cluster.truncated %}, and shows the most recent archives per node{% endif %}.</p>
     {% else %}

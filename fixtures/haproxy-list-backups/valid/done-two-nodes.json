@@ -35,7 +35,17 @@
         "backups": [],
         "error": null
       }
-    ]
+    ],
+    "schedule": {
+      "unit": "haproxy-state-backup.timer",
+      "known": true,
+      "enabled": true,
+      "active": true,
+      "calendar": "*-*-* 05:00:00",
+      "next_run": "2026-08-25T03:00:00Z",
+      "last_run": "2026-08-24T03:00:00Z",
+      "last_result": "success"
+    }
   },
   "warnings": [],
   "error": null

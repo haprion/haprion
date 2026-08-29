@@ -210,7 +210,23 @@ def _backup_result(value: Any) -> dict[str, Any]:
                     "error": {"message": _text(error, limit=200)} if error else None,
                 }
             )
-    return {"limit": _number(source.get("limit")), "nodes": nodes}
+    schedule = _mapping(source.get("schedule"))
+    return {
+        "limit": _number(source.get("limit")),
+        "nodes": nodes,
+        "schedule": {
+            "unit": _text(schedule.get("unit"), limit=128),
+            "known": _boolean(schedule.get("known")),
+            "enabled": _boolean(schedule.get("enabled")),
+            "active": _boolean(schedule.get("active")),
+            "calendar": _text(schedule.get("calendar"), limit=256),
+            "next_run": _text(schedule.get("next_run"), limit=40),
+            "last_run": _text(schedule.get("last_run"), limit=40),
+            "last_result": _text(schedule.get("last_result"), limit=64),
+        }
+        if schedule
+        else None,
+    }
 
 
 def _backup_document(cluster: str, completed: CompletedProcess[str]) -> dict[str, Any]:

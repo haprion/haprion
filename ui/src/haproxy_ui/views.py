@@ -59,6 +59,21 @@ def selected_theme(request: Request) -> str:
 
 TEMPLATES.env.filters["selected_theme"] = selected_theme
 
+
+def snapshot_age(captured_at: datetime | None) -> str:
+    """How old the snapshot is, or empty for a mode that has no snapshot.
+
+    Stated once, next to the badge that already says the page is showing one.
+    Per-cluster freshness is measured against the capture, so this is the only
+    place the wall clock appears in snapshot mode - and it is the only place it
+    means anything, because it is the only number the operator can act on.
+    """
+
+    if captured_at is None:
+        return ""
+    return dashboard.relative_age(captured_at, datetime.now(UTC))
+
+
 #
 # How stale the inactivity clock is allowed to get before it is written again.
 # Without this every authenticated request would be a write, which turns a
@@ -110,18 +125,33 @@ HISTORY_SOURCE = Source(
 
 def read_source(
     request: Request, config: Config, source: Source
-) -> tuple[tuple[str, ...], Iterable[Any]]:
-    """The clusters to render and their newest readings, from the active mode."""
+) -> tuple[tuple[str, ...], Iterable[Any], datetime | None]:
+    """The clusters to render, their newest readings, and the clock to judge them by.
+
+    The third value is the moment the readings describe, and it is set only for
+    a snapshot. A snapshot is deliberately static, so measured against the wall
+    clock every reading in it goes stale two poll intervals after it was taken,
+    on every page, forever. That is formally true and useless: a badge that is
+    always lit teaches the reader to stop seeing it, and it would be lit for the
+    one thing the reader cannot act on - dev cannot poll production.
+
+    Measured against the capture instead, the badge says what it says everywhere
+    else: whether production's own readings were current when they were taken.
+    The age of the snapshot is a separate fact, and the page states it beside
+    the mode badge rather than smearing it across every cluster.
+    """
 
     if config.demo_fixture:
-        return demo.CLUSTERS, source.demo_rows()
+        # The fixture times its readings from the moment it is read, so it needs
+        # no clock of its own; it is never stale.
+        return demo.CLUSTERS, source.demo_rows(), None
     if config.production_snapshot:
         captured = snapshot.load_production_snapshot(
             snapshot.path_for_config(request.app.state.config_path)
         )
-        return captured.clusters, source.snapshot_rows(captured)
+        return captured.clusters, source.snapshot_rows(captured), captured.captured_at
     with request.app.state.pool.connection() as connection:
-        return config.clusters, source.cached_rows(connection)
+        return config.clusters, source.cached_rows(connection), None
 
 
 def client_address(request: Request) -> str:
@@ -220,10 +250,11 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters, status_rows = read_source(request, config, STATUS_SOURCE)
+        clusters, status_rows, captured_at = read_source(request, config, STATUS_SOURCE)
         dashboard_view = dashboard.build_dashboard(
             clusters,
             status_rows,
+            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
         )
         return TEMPLATES.TemplateResponse(
@@ -238,6 +269,7 @@ def build_router(config: Config) -> APIRouter:
                 "section": "dashboard",
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
+                "snapshot_age": snapshot_age(captured_at),
             },
         )
 
@@ -247,10 +279,11 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters, inventory_rows = read_source(request, config, INVENTORY_SOURCE)
+        clusters, inventory_rows, captured_at = read_source(request, config, INVENTORY_SOURCE)
         overview = proxies.build_proxy_overview(
             clusters,
             inventory_rows,
+            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
         )
         return TEMPLATES.TemplateResponse(
@@ -264,6 +297,7 @@ def build_router(config: Config) -> APIRouter:
                 "section": "proxies",
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
+                "snapshot_age": snapshot_age(captured_at),
             },
         )
 
@@ -273,10 +307,11 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters, history_rows = read_source(request, config, HISTORY_SOURCE)
+        clusters, history_rows, captured_at = read_source(request, config, HISTORY_SOURCE)
         overview = history.build_history_overview(
             clusters,
             history_rows,
+            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
         )
         return TEMPLATES.TemplateResponse(
@@ -290,6 +325,7 @@ def build_router(config: Config) -> APIRouter:
                 "section": "history",
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
+                "snapshot_age": snapshot_age(captured_at),
             },
         )
 
@@ -299,10 +335,11 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters, status_rows = read_source(request, config, STATUS_SOURCE)
+        clusters, status_rows, captured_at = read_source(request, config, STATUS_SOURCE)
         current = dashboard.build_dashboard(
             clusters,
             status_rows,
+            now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
         )
         return TEMPLATES.TemplateResponse(
@@ -316,6 +353,7 @@ def build_router(config: Config) -> APIRouter:
                 "section": "activity",
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
+                "snapshot_age": snapshot_age(captured_at),
             },
         )
 

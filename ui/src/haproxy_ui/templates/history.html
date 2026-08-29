@@ -3,7 +3,7 @@
 {% block content %}
 <section class="page-heading">
   <div><h1>Versions</h1></div>
-  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
+  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
 </section>
 
 <section class="metric-grid history-summary" aria-label="Version summary">

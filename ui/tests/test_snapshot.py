@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest import mock
 from uuid import UUID
 
-from haproxy_ui import snapshot
+from haproxy_ui import dashboard, snapshot, views
 
 
 class SnapshotTests(unittest.TestCase):
@@ -168,3 +168,77 @@ class SnapshotTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SnapshotFreshnessTests(unittest.TestCase):
+    """What the staleness badge measures when the data is deliberately frozen.
+
+    A snapshot never gets newer. Judged against the wall clock every reading in
+    it is stale two poll intervals after it was taken, on every page, forever -
+    formally true, and it teaches the reader to stop seeing the badge. It is
+    judged against the capture instead, which is the same question the badge
+    answers everywhere else: were production's readings current when taken.
+    """
+
+    document = {
+        "schema_version": 1,
+        "source": "production",
+        "captured_at": "2026-08-29T12:00:00Z",
+        "clusters": [
+            {
+                "cluster": "edge",
+                "status": {"outcome": "done", "result": {"nodes": [], "summary": {}}},
+            }
+        ],
+    }
+
+    def _request(self, path: Path) -> mock.Mock:
+        request = mock.Mock()
+        request.app.state.config_path = path
+        return request
+
+    def test_a_snapshot_is_read_with_the_clock_it_was_taken_by(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / snapshot.SNAPSHOT_NAME
+            path.write_text(json.dumps(self.document), encoding="utf-8")
+            config = mock.Mock(demo_fixture=False, production_snapshot=True)
+            #
+            # The real loader, with its permission check waived: the mode and
+            # owner of a file in a temporary directory are not what this test
+            # is about, and they are covered where they belong.
+            #
+            real_load = snapshot.load_production_snapshot
+
+            def load(candidate: Path) -> snapshot.ProductionSnapshot:
+                return real_load(candidate, require_secure=False)
+
+            with (
+                mock.patch.object(views.snapshot, "path_for_config", return_value=path),
+                mock.patch.object(views.snapshot, "load_production_snapshot", load),
+            ):
+                clusters, rows, captured_at = views.read_source(
+                    self._request(path), config, views.STATUS_SOURCE
+                )
+
+        self.assertEqual(clusters, ("edge",))
+        self.assertEqual(captured_at, datetime(2026, 8, 29, 12, tzinfo=UTC))
+
+        #
+        # A whole day after the capture, which is far past two poll intervals.
+        # The reading was current when it was taken, so nothing is stale.
+        #
+        view = dashboard.build_dashboard(
+            clusters, rows, now=captured_at, stale_after=timedelta(seconds=60)
+        )
+        self.assertFalse(view.clusters[0].stale)
+
+    def test_the_live_and_fixture_modes_keep_the_wall_clock(self) -> None:
+        #
+        # Only a snapshot carries a clock. A None here is what makes the view
+        # builders fall back to datetime.now, so live readings still go stale.
+        #
+        config = mock.Mock(demo_fixture=True, production_snapshot=False)
+        _, _, captured_at = views.read_source(
+            self._request(Path("/nonexistent")), config, views.STATUS_SOURCE
+        )
+        self.assertIsNone(captured_at)

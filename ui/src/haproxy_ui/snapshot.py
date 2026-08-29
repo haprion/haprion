@@ -20,6 +20,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from typing import Any
 
+from haproxy_mgmt.cli.cert_list import run_cert_list_helper
 from haproxy_mgmt.cli.status import run_status_helper
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, load_policy, load_runtime_config
 from haproxy_mgmt.envelope import new_request_id
@@ -29,7 +30,12 @@ from haproxy_mgmt.repo_snapshot import read_tree_files
 from haproxy_mgmt.status_collect import read_target
 from haproxy_mgmt.version_history import recent_versions
 
-from haproxy_ui.db import ClusterHistory, ClusterInventory, ClusterStatus
+from haproxy_ui.db import (
+    ClusterCertificates,
+    ClusterHistory,
+    ClusterInventory,
+    ClusterStatus,
+)
 
 SNAPSHOT_NAME = "production-snapshot.json"
 MAX_SNAPSHOT_BYTES = 1024 * 1024
@@ -47,6 +53,7 @@ class ProductionSnapshot:
     status_rows: tuple[ClusterStatus, ...]
     inventory_rows: tuple[ClusterInventory, ...]
     history_rows: tuple[ClusterHistory, ...]
+    certificate_rows: tuple[ClusterCertificates, ...]
 
 
 def path_for_config(config_path: Path) -> Path:
@@ -164,6 +171,58 @@ def _history_result(value: Any) -> dict[str, Any]:
     }
 
 
+def _certificate_result(value: Any) -> dict[str, Any]:
+    """Reduce a certificate listing to the fields the interface renders.
+
+    No fingerprint of real material and no private key can be in here to begin
+    with - the helper never emits key material - but subjects and SANs are real
+    hostnames, and this file is carried into a development platform. It is
+    therefore reduced like every other source rather than copied through, and
+    the catalogue is capped at what a page can usefully show.
+    """
+
+    source = _mapping(value)
+    entries = source.get("certificates")
+    certificates: list[dict[str, Any]] = []
+    if isinstance(entries, list):
+        for entry in entries[:50]:
+            item = _mapping(entry)
+            sans = item.get("sans")
+            certificates.append(
+                {
+                    "id": _text(item.get("id"), limit=255),
+                    "fingerprint_sha256": _text(item.get("fingerprint_sha256"), limit=64),
+                    "common_name": _text(item.get("common_name")),
+                    "sans": [name for name in sans if _text(name)][:20]
+                    if isinstance(sans, list)
+                    else [],
+                    "not_before": _text(item.get("not_before"), limit=40),
+                    "not_after": _text(item.get("not_after"), limit=40),
+                    "issuer": _text(item.get("issuer"), limit=200),
+                    "lifecycle": _text(item.get("lifecycle"), limit=16),
+                    "valid": _boolean(item.get("valid")),
+                    "referenced_by_cluster": _boolean(item.get("referenced_by_cluster")),
+                    "deployable": _boolean(item.get("deployable")),
+                    "validation_error": _text(item.get("validation_error"), limit=200),
+                }
+            )
+    return {"certificates": certificates}
+
+
+def _certificate_document(cluster: str, completed: CompletedProcess[str]) -> dict[str, Any]:
+    """Accept only this cluster's own certificate result, and never its stderr."""
+
+    try:
+        envelope = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return {"outcome": "failed", "result": {"certificates": []}}
+    if not isinstance(envelope, dict) or envelope.get("operation") != "cert_list":
+        return {"outcome": "failed", "result": {"certificates": []}}
+    if envelope.get("cluster") != cluster or envelope.get("outcome") != "done":
+        return {"outcome": "failed", "result": {"certificates": []}}
+    return {"outcome": "done", "result": _certificate_result(envelope.get("result"))}
+
+
 def _status_document(cluster: str, completed: CompletedProcess[str]) -> dict[str, Any]:
     """Accept only the expected helper result, and never retain its stderr."""
 
@@ -183,6 +242,7 @@ def collect_production_snapshot(
     policy_path: Path = DEFAULT_POLICY_PATH,
     now: datetime | None = None,
     status_runner: Any = run_status_helper,
+    certificate_runner: Any = run_cert_list_helper,
 ) -> dict[str, object]:
     """Collect the restricted document emitted by the root-only CLI command."""
 
@@ -196,6 +256,9 @@ def collect_production_snapshot(
         # inventing a snapshot-specific correlation format.
         completed = status_runner(cluster_id, new_request_id())
         status = _status_document(cluster_id, completed)
+        certificates = _certificate_document(
+            cluster_id, certificate_runner(cluster_id, new_request_id())
+        )
         try:
             target = read_target(Path(cluster.publish_path), cluster.node_path)
             files = read_tree_files(Path(cluster.config_path), target.hash) if target else {}
@@ -220,6 +283,7 @@ def collect_production_snapshot(
                 "status": status,
                 "inventory": inventory,
                 "history": history,
+                "certificates": certificates,
             }
         )
     return {
@@ -273,14 +337,19 @@ def load_production_snapshot(path: Path, *, require_secure: bool = True) -> Prod
     if not isinstance(entries, list):
         raise SnapshotError("production snapshot clusters must be a list")
     clusters: list[str] = []
-    rows: dict[str, list[Any]] = {"status": [], "inventory": [], "history": []}
+    rows: dict[str, list[Any]] = {"status": [], "inventory": [], "history": [], "certificates": []}
     #
     # A snapshot taken before a reading existed is loaded rather than refused:
     # the interface already renders a cluster with no row for a source as "no
     # data yet", and failing the whole file would take the other pages down
     # with it.
     #
-    types = {"status": ClusterStatus, "inventory": ClusterInventory, "history": ClusterHistory}
+    types = {
+        "status": ClusterStatus,
+        "inventory": ClusterInventory,
+        "history": ClusterHistory,
+        "certificates": ClusterCertificates,
+    }
     for entry in entries:
         item = _mapping(entry)
         cluster = _text(item.get("cluster"), limit=63)
@@ -312,6 +381,7 @@ def load_production_snapshot(path: Path, *, require_secure: bool = True) -> Prod
         status_rows=tuple(rows["status"]),
         inventory_rows=tuple(rows["inventory"]),
         history_rows=tuple(rows["history"]),
+        certificate_rows=tuple(rows["certificates"]),
     )
 
 

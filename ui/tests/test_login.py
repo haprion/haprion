@@ -104,6 +104,7 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haproxy_ui.db.cluster_statuses", return_value=[]),
             mock.patch("haproxy_ui.db.cluster_inventories", return_value=[]),
             mock.patch("haproxy_ui.db.cluster_histories", return_value=[]),
+            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[]),
         ]
         for patch in self.patches:
             patch.start()
@@ -200,8 +201,7 @@ class SigningIn(LoginTestCase):
         self.assertIn("admin", page.text)
         self.assertIn("Dashboard", page.text)
         self.assertIn("Read-only mode", page.text)
-        self.assertIn('aria-disabled="true"', page.text)
-        self.assertIn("Certificates", page.text)
+        self.assertIn('href="/certificates"', page.text)
 
     def test_the_proxy_overview_is_an_authenticated_read_only_page(self) -> None:
         client = self.client()
@@ -211,6 +211,35 @@ class SigningIn(LoginTestCase):
         self.assertIn("Proxies", page.text)
         self.assertIn('href="/proxies" aria-current="page"', page.text)
         self.assertIn("No clusters configured", page.text)
+
+    def test_the_certificate_overview_is_an_authenticated_read_only_page(self) -> None:
+        client = self.client()
+        self.sign_in(client)
+        page = client.get("/certificates")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Certificates", page.text)
+        self.assertIn('href="/certificates" aria-current="page"', page.text)
+        self.assertIn("No clusters configured", page.text)
+
+    def test_the_certificate_page_renders_every_row_it_is_given(self) -> None:
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        page = client.get("/certificates")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Certbot", page.text)
+        self.assertIn("Manual", page.text)
+        #
+        # A certificate the cluster does not serve is listed rather than
+        # hidden: it is what a later phase picks from, and an operator looking
+        # for one that is missing needs to see that it exists.
+        #
+        self.assertIn("Available", page.text)
+        self.assertIn("Referenced", page.text)
+
+    def test_the_certificate_page_requires_a_session(self) -> None:
+        page = self.client().get("/certificates", follow_redirects=False)
+        self.assertEqual(page.status_code, 303)
+        self.assertEqual(page.headers["location"], "/login")
 
     def test_the_version_history_is_an_authenticated_read_only_page(self) -> None:
         client = self.client(replace(configuration(), demo_fixture=True))

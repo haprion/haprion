@@ -388,6 +388,22 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .version-table code { color: var(--muted); font-size: 11px; }
 .table-note { margin: 0; padding: 10px 20px 14px; color: var(--muted); font-size: 11px; }
 
+/* Certificates. The renewal column says what keeps the certificate alive, and
+   the expiry column says how long it has - two facts an operator weighs
+   together, because "three weeks left" means something different for a
+   certbot lineage than for one somebody renews by hand. */
+.certificate-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
+.certificate-table td:first-child strong { display: block; color: var(--text-strong); }
+.certificate-id, .certificate-issuer, .certificate-date { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+.certificate-sans { display: block; max-width: 420px; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
+.lifecycle-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; letter-spacing: 0.025em; color: var(--text-primary); background: var(--unknown-soft); }
+.lifecycle-acme { color: var(--info); background: var(--info-soft); }
+/* Rows for certificates this cluster does not serve are held back rather than
+   hidden: they are what a later phase picks from, and an operator looking for
+   one that is missing needs to see that it exists. */
+.certificate-available td { color: var(--muted); }
+.certificate-cluster-card .cluster-header { padding: 11px 20px; }
+
 .empty-state { display: flex; align-items: center; justify-content: center; gap: 13px; min-height: 124px; padding: 24px; color: var(--muted); }
 .empty-state svg { width: 28px; height: 28px; }
 .empty-state div { display: flex; flex-direction: column; }

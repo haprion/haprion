@@ -4,6 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 
 from haproxy_ui import demo
+from haproxy_ui.certificates import build_certificate_overview
 from haproxy_ui.dashboard import build_dashboard
 from haproxy_ui.history import build_history_overview
 from haproxy_ui.proxies import build_proxy_overview
@@ -39,3 +40,28 @@ class DemoFixtureTests(unittest.TestCase):
         self.assertEqual(tones, ["healthy", "warning"])
         self.assertEqual(history.waiting_count, 2)
         self.assertTrue(any(version.published for version in history.clusters[0].versions))
+
+    def test_the_certificate_fixture_shows_a_renewal_and_a_certificate_nobody_serves(self) -> None:
+        #
+        # The page has two jobs a browser review has to be able to see: it must
+        # single out the certificate that needs renewing, and it must list the
+        # ones sitting in the distribution directory without colouring a card
+        # for them.
+        #
+        certificates = build_certificate_overview(
+            demo.CLUSTERS, demo.certificate_rows(NOW), now=NOW, stale_after=timedelta(minutes=2)
+        )
+        tones = [cluster.tone for cluster in certificates.clusters]
+
+        # One wildcard, one internal certificate and one retired one, each read
+        # by both clusters and therefore counted once.
+        self.assertEqual(certificates.certificate_count, 3)
+        self.assertEqual(certificates.acme_count, 1)
+        self.assertEqual(tones, ["healthy", "warning"])
+        self.assertTrue(
+            any(
+                not entry.referenced
+                for cluster in certificates.clusters
+                for entry in cluster.certificates
+            )
+        )

@@ -29,7 +29,17 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from haproxy_ui import activity, auth, dashboard, db, demo, history, proxies, snapshot
+from haproxy_ui import (
+    activity,
+    auth,
+    certificates,
+    dashboard,
+    db,
+    demo,
+    history,
+    proxies,
+    snapshot,
+)
 from haproxy_ui.config import Config
 from haproxy_ui.db import AuthenticatedSession
 
@@ -120,6 +130,11 @@ HISTORY_SOURCE = Source(
     demo.history_rows,
     lambda taken: taken.history_rows,
     lambda connection: db.cluster_histories(connection),
+)
+CERTIFICATE_SOURCE = Source(
+    demo.certificate_rows,
+    lambda taken: taken.certificate_rows,
+    lambda connection: db.cluster_certificates(connection),
 )
 
 
@@ -295,6 +310,34 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "proxies": overview,
                 "section": "proxies",
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": snapshot_age(captured_at),
+            },
+        )
+
+    @router.get("/certificates", response_class=HTMLResponse)
+    def certificate_overview(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        clusters, certificate_rows, captured_at = read_source(request, config, CERTIFICATE_SOURCE)
+        overview = certificates.build_certificate_overview(
+            clusters,
+            certificate_rows,
+            now=captured_at,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+        )
+        return TEMPLATES.TemplateResponse(
+            request,
+            "certificates.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "certificates": overview,
+                "section": "certificates",
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
                 "snapshot_age": snapshot_age(captured_at),

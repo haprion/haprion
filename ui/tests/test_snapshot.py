@@ -157,13 +157,106 @@ class SnapshotTests(unittest.TestCase):
                 request_ids.append(request_id)
                 return completed
 
+            def certificate_runner(_cluster: str, request_id: str) -> CompletedProcess[str]:
+                request_ids.append(request_id)
+                return CompletedProcess(
+                    args=[],
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "operation": "cert_list",
+                            "cluster": "edge",
+                            "outcome": "done",
+                            "result": {"certificates": []},
+                        }
+                    ),
+                    stderr="",
+                )
+
             document = snapshot.collect_production_snapshot(
-                now=datetime(2026, 8, 29, 12, tzinfo=UTC), status_runner=status_runner
+                now=datetime(2026, 8, 29, 12, tzinfo=UTC),
+                status_runner=status_runner,
+                certificate_runner=certificate_runner,
             )
         self.assertEqual(document["source"], "production")
         self.assertEqual(document["clusters"][0]["inventory"]["result"]["version"], 24)
+        self.assertEqual(
+            document["clusters"][0]["certificates"],
+            {"outcome": "done", "result": {"certificates": []}},
+        )
         tree_reader.assert_called_once_with(Path("/repo"), "a" * 40)
         self.assertIsInstance(UUID(request_ids[0]), UUID)
+
+
+class CertificateCaptureTests(unittest.TestCase):
+    """The certificate source crosses the same boundary as the others.
+
+    The helper emits no key material, so nothing secret can be in here to begin
+    with. Subjects and SANs are real hostnames though, and this file is carried
+    into a development platform, so the listing is reduced and length-capped
+    like every other source rather than copied through.
+    """
+
+    def test_a_captured_catalogue_keeps_only_display_fields(self) -> None:
+        reduced = snapshot._certificate_result(
+            {
+                "certificates": [
+                    {
+                        "id": "example.com.pem",
+                        "fingerprint_sha256": "c" * 64,
+                        "common_name": "*.example.com",
+                        "sans": ["*.example.com", "example.com"],
+                        "not_before": "2026-08-01T00:00:00Z",
+                        "not_after": "2026-11-01T00:00:00Z",
+                        "issuer": "Example Test CA",
+                        "lifecycle": "acme",
+                        "valid": True,
+                        "referenced_by_cluster": True,
+                        "deployable": True,
+                        "validation_error": None,
+                        "private_key_path": "/should/never/be/carried",
+                    }
+                ]
+            }
+        )
+        entry = reduced["certificates"][0]
+
+        self.assertNotIn("private_key_path", entry)
+        self.assertEqual(entry["common_name"], "*.example.com")
+        self.assertTrue(entry["deployable"])
+
+    def test_a_catalogue_is_capped_before_it_leaves(self) -> None:
+        reduced = snapshot._certificate_result(
+            {
+                "certificates": [
+                    {"id": f"host-{number}.example.com.pem", "sans": ["x" * 300]}
+                    for number in range(80)
+                ]
+            }
+        )
+
+        self.assertEqual(len(reduced["certificates"]), 50)
+        self.assertEqual(reduced["certificates"][0]["sans"], [])
+
+    def test_another_clusters_answer_is_not_accepted_as_this_ones(self) -> None:
+        completed = CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "operation": "cert_list",
+                    "cluster": "other",
+                    "outcome": "done",
+                    "result": {"certificates": [{"id": "example.com.pem"}]},
+                }
+            ),
+            stderr="",
+        )
+
+        self.assertEqual(
+            snapshot._certificate_document("edge", completed),
+            {"outcome": "failed", "result": {"certificates": []}},
+        )
 
 
 if __name__ == "__main__":

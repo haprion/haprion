@@ -10,9 +10,10 @@ before a safe non-production cluster fixture exists.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from typing import Any
 
-from haproxy_ui.db import ClusterHistory, ClusterInventory, ClusterStatus
+from haproxy_ui.db import ClusterCertificates, ClusterHistory, ClusterInventory, ClusterStatus
 
 CLUSTERS = ("edge-demo", "service-demo")
 
@@ -216,6 +217,102 @@ def history_rows(now: datetime | None = None) -> tuple[ClusterHistory, ...]:
                 "published_hash": f"{24:040d}",
                 "unpublished": 2,
                 "truncated": False,
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+    )
+
+
+def _certificate(
+    identifier: str,
+    *,
+    common_name: str,
+    sans: list[str],
+    days_left: int,
+    lifecycle: str,
+    referenced: bool,
+    now: datetime,
+) -> dict[str, Any]:
+    """One catalogue entry in the frozen `cert_list` shape."""
+
+    not_after = now + timedelta(days=days_left)
+    return {
+        "id": identifier,
+        "fingerprint_sha256": sha256(identifier.encode("utf-8")).hexdigest(),
+        "common_name": common_name,
+        "sans": sans,
+        "not_before": (not_after - timedelta(days=90)).isoformat().replace("+00:00", "Z"),
+        "not_after": not_after.isoformat().replace("+00:00", "Z"),
+        "issuer": "Demo Let's Encrypt" if lifecycle == "acme" else "Demo Internal CA",
+        "lifecycle": lifecycle,
+        "valid": True,
+        "referenced_by_cluster": referenced,
+        "deployable": True,
+        "validation_error": None,
+    }
+
+
+def certificate_rows(now: datetime | None = None) -> tuple[ClusterCertificates, ...]:
+    """One healthy catalogue, and one holding a certificate worth renewing.
+
+    Both clusters read the same distribution directory and differ only in what
+    they reference, which is what the page has to make readable - and it is also
+    what the deduplicated counters across the top exist to keep honest.
+    """
+
+    moment = now or datetime.now(UTC)
+    observed = moment - timedelta(seconds=18)
+    wildcard = _certificate(
+        "demo.example.pem",
+        common_name="*.demo.example",
+        sans=["*.demo.example", "demo.example"],
+        days_left=63,
+        lifecycle="acme",
+        referenced=True,
+        now=moment,
+    )
+    internal = _certificate(
+        "internal.demo.example.pem",
+        common_name="internal.demo.example",
+        sans=["internal.demo.example"],
+        days_left=17,
+        lifecycle="static",
+        referenced=True,
+        now=moment,
+    )
+    retired = _certificate(
+        "legacy.demo.example.pem",
+        common_name="legacy.demo.example",
+        sans=["legacy.demo.example"],
+        days_left=-9,
+        lifecycle="static",
+        referenced=False,
+        now=moment,
+    )
+    return (
+        ClusterCertificates(
+            cluster="edge-demo",
+            observed_at=observed,
+            outcome="done",
+            result={
+                "certificates": [wildcard, {**internal, "referenced_by_cluster": False}, retired]
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+        ClusterCertificates(
+            cluster="service-demo",
+            observed_at=observed - timedelta(seconds=9),
+            outcome="done",
+            result={
+                "certificates": [
+                    internal,
+                    {**wildcard, "referenced_by_cluster": False},
+                    retired,
+                ]
             },
             warnings=[],
             error=None,

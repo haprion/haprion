@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{% block title %}Certificates — HAProxy Manager{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><h1>Certificates</h1></div>
+  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
+</section>
+
+<section class="metric-grid certificate-summary" aria-label="Certificate summary">
+  <article class="metric-card"><span class="metric-icon metric-icon-cluster" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 10h8M8 14h5"></path></svg></span><div><strong>{{ certificates.certificate_count }}</strong><span>Certificates</span><small>{{ certificates.acme_count }} renewed by certbot</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg></span><div><strong>{{ certificates.attention_count }}</strong><span>Need attention</span><small>Expiring or unreadable</small></div></article>
+</section>
+
+<div class="cluster-list certificate-cluster-list">
+{% for cluster in certificates.clusters %}
+  <article class="cluster-card certificate-cluster-card cluster-accent-{{ cluster.accent }}">
+    <header class="cluster-header">
+      <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
+      <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
+    </header>
+    {% if cluster.certificates %}
+    <div class="table-scroll"><table class="node-table certificate-table"><thead><tr><th>Certificate</th><th>Names</th><th>Renewal</th><th>Expires</th><th>Use</th></tr></thead><tbody>
+      {% for certificate in cluster.certificates %}
+      <tr{% if not certificate.referenced %} class="certificate-available"{% endif %}>
+        <td data-label="Certificate"><strong>{{ certificate.common_name }}</strong><span class="certificate-id">{{ certificate.identifier }}</span></td>
+        <td data-label="Names">{% if certificate.sans %}<span class="certificate-sans">{{ certificate.sans | join(', ') }}</span>{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}—{% endif %}</td>
+        <td data-label="Renewal"><span class="lifecycle-badge lifecycle-{{ certificate.lifecycle }}">{{ certificate.lifecycle_label }}</span>{% if certificate.issuer != '—' %}<span class="certificate-issuer">{{ certificate.issuer }}</span>{% endif %}</td>
+        <td data-label="Expires"><span class="status-badge status-badge-{{ certificate.tone }}">{{ certificate.expiry_label }}</span>{% if certificate.expires != '—' %}<span class="certificate-date">{{ certificate.expires }}</span>{% endif %}</td>
+        <td data-label="Use">{% if certificate.referenced %}<span class="ownership-badge ownership-managed">Referenced</span>{% else %}<span class="ownership-badge ownership-unmanaged">Available</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody></table></div>
+    <p class="table-note">{{ cluster.referenced_count }} referenced by this cluster{% if cluster.available_count %}, {{ cluster.available_count }} available in the distribution directory{% endif %}.</p>
+    {% else %}
+    <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>
+    {% endif %}
+  </article>
+{% else %}
+  <div class="empty-page"><h2>No clusters configured</h2><p>Add a cluster to the platform configuration before starting the poller.</p></div>
+{% endfor %}
+</div>
+{% endblock %}

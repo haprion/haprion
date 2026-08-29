@@ -304,6 +304,11 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   width: 5px;
   content: "";
 }
+/* The row divider is drawn on the entry's own bottom border, which is outside
+   the rule's containing block - so a rule that stops at bottom: 0 is cut into
+   segments once per row. It reaches one pixel further instead, and the column
+   runs unbroken down the list. */
+.activity-entry::before { bottom: -1px; }
 .cluster-accent-0::before { background: var(--accent-0); }
 .cluster-accent-1::before { background: var(--accent-1); }
 .cluster-accent-2::before { background: var(--accent-2); }

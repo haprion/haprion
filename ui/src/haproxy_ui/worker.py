@@ -66,9 +66,13 @@ def main(argv: list[str] | None = None) -> int:
             if config.management_writes:
                 #
                 # Deliberately a refusal rather than a partial implementation.
-                # Claiming needs the fencing token, the lease and the whole
-                # error matrix; half of that shipped early is a worker that
-                # takes a job it cannot finish or report.
+                # The claim, the lease and the fenced writes exist now as
+                # `db.claim_job`, `db.renew_lease` and `db.finish_job` - what is
+                # missing is the half that runs the command: a subprocess in its
+                # own process group, with a timeout and an aborted run when the
+                # lease is lost. A worker that claims before it can execute is a
+                # worker that takes a job it cannot finish or report, which is
+                # worse than one that has not started.
                 #
                 logger.error(
                     "management writes are enabled but the claim path is not built yet. "

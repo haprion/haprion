@@ -48,6 +48,17 @@ GENERIC_RULES = (
             # a real secret with dots in it (a JWT, for one) must keep matching.
             #
             r"(?!(?:[A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][A-Za-z0-9_]*)*\s*[(\[])"
+            #
+            # A bound-parameter placeholder is not a value at all - it is the
+            # mechanism that keeps the value out of the statement text. psycopg
+            # writes them as `%(name)s` or `%s`, and a colon form appears in
+            # other drivers. Matching them reported the fencing predicate
+            # `claim_token = %(claim_token)s` as an assigned secret, which is the
+            # opposite of what it is. Excluded by shape, like the call above.
+            #
+            r"(?!%\(?[A-Za-z_][A-Za-z0-9_]*\)?s\b)"
+            r"(?!%s\b)"
+            r"(?!:[A-Za-z_][A-Za-z0-9_]*\b)"
             r"['\"]?[^\s'\"${}]{8,}"
         ),
     ),

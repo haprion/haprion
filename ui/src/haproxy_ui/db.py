@@ -314,6 +314,154 @@ def queue_job(
     return existing
 
 
+def claim_job(connection: Connection[Any], *, worker_id: str, lease_seconds: int) -> Job | None:
+    """Take the oldest waiting job, atomically, and hold it with a lease.
+
+    One statement, never read-then-write. Two workers running the same select
+    and then the same update would both believe they own the row; here the
+    database decides, and the loser gets a different row or none.
+
+    `for update skip locked` rather than a plain subselect: a worker must skip a
+    row another worker is already taking rather than queue behind it, or one slow
+    claim serialises every worker in the installation.
+
+    The claim token is rotated on every claim, including a re-claim after an
+    expired lease. That is what makes the fencing in `renew_lease` and
+    `finish_job` work: the previous holder's token is no longer the row's token,
+    so its writes are refused by the database rather than by its own good
+    manners.
+
+    `started_at` keeps its first value, because it records when the work first
+    began and not when it was last picked up.
+    """
+
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "update job "
+            "   set state = 'running', "
+            "       claim_token = gen_random_uuid(), "
+            "       worker_id = %(worker_id)s, "
+            "       lease_until = statement_timestamp() "
+            "                     + %(lease_seconds)s * interval '1 second', "
+            "       started_at = coalesce(started_at, statement_timestamp()) "
+            " where id = ( "
+            "         select id from job "
+            "          where state = 'pending' "
+            "          order by created_at, id "
+            "            for update skip locked "
+            "          limit 1) "
+            "returning id, request_id, operation, cluster, payload, state, created_at, "
+            "          started_at, finished_at, exit_code, outcome, result, "
+            "          stderr_excerpt, idempotency_key",
+            {"worker_id": worker_id, "lease_seconds": lease_seconds},
+        )
+        return cursor.fetchone()
+
+
+def renew_lease(
+    connection: Connection[Any], *, job_id: int, claim_token: UUID, lease_seconds: int
+) -> bool:
+    """Push the lease forward while the work is still running.
+
+    False means the lease is gone - it expired and another worker claimed the
+    row, so this process no longer owns the job. The caller must abort rather
+    than finish: two workers writing a result for one job is the failure the
+    fencing token exists to prevent, and the one holding a stale token is the one
+    that must stop.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update job "
+            "   set lease_until = statement_timestamp() "
+            "                     + %(lease_seconds)s * interval '1 second' "
+            " where id = %(job_id)s "
+            "   and claim_token = %(claim_token)s "
+            "   and state = 'running' "
+            "returning id",
+            {"job_id": job_id, "claim_token": str(claim_token), "lease_seconds": lease_seconds},
+        )
+        return cursor.fetchone() is not None
+
+
+def finish_job(
+    connection: Connection[Any],
+    *,
+    job_id: int,
+    claim_token: UUID,
+    state: str,
+    exit_code: int | None,
+    outcome: str | None,
+    result: Mapping[str, Any] | None,
+    stderr_excerpt: str | None,
+) -> bool:
+    """Record how a job ended, if this process is still the one holding it.
+
+    The claim token is in the WHERE clause for the same reason it is in
+    `renew_lease`: a worker that woke from an expired lease must not be able to
+    overwrite the result of the worker that took over. False means exactly that
+    happened, and it is a fact worth logging rather than retrying.
+
+    The lease is cleared as part of finishing, so a reclaim query can never find
+    a row that is already done.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update job "
+            "   set state = %(state)s, "
+            "       finished_at = statement_timestamp(), "
+            "       lease_until = null, "
+            "       exit_code = %(exit_code)s, "
+            "       outcome = %(outcome)s, "
+            "       result = %(result)s, "
+            "       stderr_excerpt = %(stderr_excerpt)s "
+            " where id = %(job_id)s "
+            "   and claim_token = %(claim_token)s "
+            "   and state = 'running' "
+            "returning id",
+            {
+                "job_id": job_id,
+                "claim_token": str(claim_token),
+                "state": state,
+                "exit_code": exit_code,
+                "outcome": outcome,
+                "result": Jsonb(result) if result is not None else None,
+                "stderr_excerpt": stderr_excerpt,
+            },
+        )
+        return cursor.fetchone() is not None
+
+
+def expired_leases(connection: Connection[Any]) -> list[Job]:
+    """Jobs whose holder stopped renewing, for something else to adjudicate.
+
+    A read, deliberately - not an automatic move back to `pending`.
+
+    A lease that ran out says the worker is gone. It does not say whether the
+    operation ran, and the plan is explicit that only an operation proved not to
+    have started, or proved idempotent, may be requeued. Deciding that needs the
+    operation-specific completion evidence: a publish is proved by the commit and
+    the release, a deploy by the nodes' hashes, a cert-deploy by the referenced
+    fingerprints. None of that exists yet, and a requeue written before it does
+    would be the blind retry the plan refuses.
+
+    So this lists them and stops there. What reads it comes with the recovery
+    path.
+    """
+
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key "
+            "  from job "
+            " where state = 'running' and lease_until < statement_timestamp() "
+            " order by lease_until"
+        )
+        return cursor.fetchall()
+
+
 def account_by_username(connection: Connection[Any], username: str) -> Account | None:
     """Look an account up by the normalised name.
 

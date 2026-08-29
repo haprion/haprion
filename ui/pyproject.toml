@@ -73,7 +73,7 @@ where = ["src"]
 # the first page view of a release that installed cleanly.
 #
 [tool.setuptools.package-data]
-haproxy_ui = ["templates/*.html", "static/*.css", "static/*.js", "static/*.woff2", "py.typed"]
+haproxy_ui = ["templates/*.html", "static/*.css", "static/*.js", "static/*.svg", "static/*.woff2", "py.typed"]
 
 [tool.ruff]
 target-version = "py312"

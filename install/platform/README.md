@@ -25,6 +25,18 @@ file its own `SERVER_NAME` and run the optional step 9 after its service is up:
 sudo ./09-dev-nginx ../answers-dev.env
 ```
 
+When realistic production values are useful for UI review, the optional step
+10 makes one explicit, root-owned snapshot from production into development:
+
+```bash
+sudo ./10-dev-production-snapshot ../answers-prod.env ../answers-dev.env
+```
+
+It is deliberately a manual action, not a poller or timer. The development web
+and poller accounts receive no production credentials, never contact
+production, and can only read the bounded static copy written under the dev
+platform's `config/` directory.
+
 The order is not arbitrary. The release has to exist before the migrations run,
 because the migrations belong to the release being installed; and the schema has
 to exist before the service starts, because a service that starts against an

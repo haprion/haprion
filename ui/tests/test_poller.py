@@ -165,6 +165,7 @@ class Passes(unittest.TestCase):
             listen=Listen(host="127.0.0.1", port=8080),
             management_writes=False,
             demo_fixture=False,
+            production_snapshot=False,
             session=SessionPolicy(inactivity_minutes=600, absolute_hours=168, cookie_secure=True),
             throttle=Throttle(max_failures=10, window_minutes=15),
             clusters=("alpha", "beta", "gamma"),

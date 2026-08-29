@@ -20,6 +20,12 @@ management_writes = false
 # It may only be enabled with management_writes=false and clusters=[].
 # demo_fixture = true
 
+# Development only: displays a manually captured, root-owned one-way snapshot
+# from production. It never permits this environment to reach production, and
+# may only be enabled with management_writes=false, clusters=[] and no demo
+# fixture. Capture it explicitly with platform step 10 before enabling it.
+# production_snapshot = true
+
 # Which clusters the poller asks about. Named here rather than discovered,
 # because the application accounts cannot read the engine's configuration - that
 # tree is private, and a poller reaching into it directly is what the privilege

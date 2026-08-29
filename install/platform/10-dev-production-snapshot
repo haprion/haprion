@@ -1,0 +1,60 @@
+#!/bin/bash
+#
+# Development-only, explicit production display snapshot.
+#
+#     sudo ./10-dev-production-snapshot <production-answers> <development-answers>
+#
+# This is intentionally not a service and not a timer. Root asks production
+# for one read-only status pass, derives inventory from published Git trees, and
+# installs the reduced result as a root-owned file in development. No dev
+# process receives production credentials or a path back to production.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+production_answers="${1:-}"
+development_answers="${2:-}"
+[[ -n "$production_answers" && -n "$development_answers" ]] || \
+    die "usage: $(basename "$0") <production-answers> <development-answers>"
+
+load_answers "$production_answers"
+require_vars PLATFORM_ROOT PLATFORM_GROUP
+# Production answers predate the dev/prod split and therefore omit this key.
+# Preserve that established form, but do not give the development destination
+# the same latitude below: that is the side this command writes.
+production_environment="${ENVIRONMENT:-prod}"
+[[ "$production_environment" == "prod" ]] || die "first answers file must set ENVIRONMENT=prod"
+production_root="$PLATFORM_ROOT"
+
+load_answers "$development_answers"
+require_vars ENVIRONMENT PLATFORM_ROOT PLATFORM_GROUP
+[[ "$ENVIRONMENT" == "dev" ]] || die "second answers file must set ENVIRONMENT=dev"
+development_root="$PLATFORM_ROOT"
+development_group="$PLATFORM_GROUP"
+
+[[ "$production_root" != "$development_root" ]] || \
+    die "production and development PLATFORM_ROOT must differ"
+[[ -L "${development_root}/current" ]] || \
+    die "${development_root}/current does not exist; install a development release first"
+
+snapshot_command="${development_root}/current/venv/bin/haproxy-ui-production-snapshot"
+[[ -x "$snapshot_command" ]] || die "development release has no production snapshot command; deploy it first"
+
+step "Capturing the production display snapshot"
+temporary="$(mktemp)"
+trap 'rm -f -- "$temporary"' EXIT
+"$snapshot_command" > "$temporary"
+/usr/bin/python3 -m json.tool "$temporary" >/dev/null
+
+target="${development_root}/config/production-snapshot.json"
+install -o root -g "$development_group" -m 640 "$temporary" "$target"
+log "  captured ${target}"
+log "  it is a static root-owned copy; development services do not contact production"
+
+echo
+log "development production snapshot done"
+echo "Enable production_snapshot = true in ${development_root}/config/ui.toml,"
+echo "disable demo_fixture, then restart the development web service."

@@ -27,7 +27,7 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from haproxy_ui import auth, dashboard, db, demo, proxies
+from haproxy_ui import auth, dashboard, db, demo, proxies, snapshot
 from haproxy_ui.config import Config
 from haproxy_ui.db import AuthenticatedSession
 
@@ -144,6 +144,11 @@ def build_router(config: Config) -> APIRouter:
         status_rows: Iterable[db.ClusterStatus]
         if config.demo_fixture:
             clusters, status_rows = demo.CLUSTERS, demo.status_rows()
+        elif config.production_snapshot:
+            captured = snapshot.load_production_snapshot(
+                snapshot.path_for_config(request.app.state.config_path)
+            )
+            clusters, status_rows = captured.clusters, captured.status_rows
         else:
             clusters = config.clusters
             with request.app.state.pool.connection() as connection:
@@ -164,6 +169,7 @@ def build_router(config: Config) -> APIRouter:
                 "dashboard": dashboard_view,
                 "section": "dashboard",
                 "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
             },
         )
 
@@ -177,6 +183,11 @@ def build_router(config: Config) -> APIRouter:
         inventory_rows: Iterable[db.ClusterInventory]
         if config.demo_fixture:
             clusters, inventory_rows = demo.CLUSTERS, demo.inventory_rows()
+        elif config.production_snapshot:
+            captured = snapshot.load_production_snapshot(
+                snapshot.path_for_config(request.app.state.config_path)
+            )
+            clusters, inventory_rows = captured.clusters, captured.inventory_rows
         else:
             clusters = config.clusters
             with request.app.state.pool.connection() as connection:
@@ -196,6 +207,7 @@ def build_router(config: Config) -> APIRouter:
                 "proxies": overview,
                 "section": "proxies",
                 "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
             },
         )
 

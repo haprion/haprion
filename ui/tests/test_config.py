@@ -54,6 +54,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.listen.port, 8080)
         self.assertFalse(config.management_writes)
         self.assertFalse(config.demo_fixture)
+        self.assertFalse(config.production_snapshot)
 
     def test_the_connection_string_names_no_user_and_no_password(self) -> None:
         config = self.load(VALID)
@@ -75,6 +76,16 @@ class ConfigTests(unittest.TestCase):
             self.load("demo_fixture = true\n" + VALID.replace("false", "true", 1))
         with self.assertRaisesRegex(ConfigError, "clusters"):
             self.load('demo_fixture = true\nclusters = ["alpha"]\n' + VALID)
+
+    def test_production_snapshot_is_explicit_and_isolated_from_other_sources(self) -> None:
+        config = self.load("production_snapshot = true\n" + VALID)
+        self.assertTrue(config.production_snapshot)
+        with self.assertRaisesRegex(ConfigError, "management_writes"):
+            self.load("production_snapshot = true\n" + VALID.replace("false", "true", 1))
+        with self.assertRaisesRegex(ConfigError, "clusters"):
+            self.load('production_snapshot = true\nclusters = ["alpha"]\n' + VALID)
+        with self.assertRaisesRegex(ConfigError, "demo_fixture"):
+            self.load("production_snapshot = true\ndemo_fixture = true\n" + VALID)
 
     # ------------------------------------------------------------------ refusing
 

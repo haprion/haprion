@@ -48,7 +48,8 @@ def create_app(config: Config | None = None) -> FastAPI:
     and where systemd can see it.
     """
 
-    settings = config if config is not None else load_config(_config_path())
+    config_path = _config_path()
+    settings = config if config is not None else load_config(config_path)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -62,6 +63,9 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     app = FastAPI(title="HAProxy Manager", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.config = settings
+    # The source file is retained only so the display-only production snapshot
+    # can use its fixed sibling. No path comes from a request or TOML setting.
+    app.state.config_path = config_path
     app.mount("/static", StaticFiles(directory=str(STATIC_DIRECTORY)), name="static")
 
     #

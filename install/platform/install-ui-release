@@ -13,9 +13,9 @@
 # distributions installed non-editably. The plan sketched app/ beside venv/;
 # one directory that is replaced whole is simpler and cannot half-update.
 #
-# `current` is switched only after the new release has been started and has
-# answered. A release that cannot import its own dependencies must not become
-# the one a service restart would pick up.
+# `current` is switched only after the new release has imported successfully.
+# It is then restarted and proved through the running service. A release that
+# cannot import its own dependencies must not become the one a restart picks.
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
@@ -202,6 +202,30 @@ else
     mv -T "${link}.new" "$link"
     log "  switched current -> ${release_id}  (was ${previous})"
 fi
+
+step "Starting"
+#
+# A process follows the `current` symlink only when it execs. `start` (and
+# `enable --now`) silently leaves an already-active unit on the previous
+# release, so every activation must restart the web unit before its health
+# response is accepted as evidence for the new release.
+#
+systemctl restart "${WEB_USER}.service"
+log "  restarted ${WEB_USER}.service"
+
+step "Proving it answers"
+WEB_PORT="${WEB_PORT:-8080}"
+for _ in $(seq 10); do
+    if answer="$(curl -fsS --max-time 3 "http://127.0.0.1:${WEB_PORT}/healthz" 2>/dev/null)"; then
+        log "  ok       ${answer}"
+        break
+    fi
+    sleep 1
+done
+[[ -n "${answer:-}" ]] || {
+    systemctl status --no-pager --lines=20 "${WEB_USER}.service" || true
+    die "${WEB_USER}.service did not answer /healthz on port ${WEB_PORT} after the release switch"
+}
 
 #
 # The root commands live at fixed paths in /usr/local/sbin, so only the

@@ -21,6 +21,7 @@ from subprocess import CompletedProcess
 from typing import Any
 
 from haproxy_mgmt.cli.cert_list import run_cert_list_helper
+from haproxy_mgmt.cli.list_backups import run_list_backups_helper
 from haproxy_mgmt.cli.status import run_status_helper
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, load_policy, load_runtime_config
 from haproxy_mgmt.envelope import new_request_id
@@ -31,6 +32,7 @@ from haproxy_mgmt.status_collect import read_target
 from haproxy_mgmt.version_history import recent_versions
 
 from haproxy_ui.db import (
+    ClusterBackups,
     ClusterCertificates,
     ClusterHistory,
     ClusterInventory,
@@ -54,6 +56,7 @@ class ProductionSnapshot:
     inventory_rows: tuple[ClusterInventory, ...]
     history_rows: tuple[ClusterHistory, ...]
     certificate_rows: tuple[ClusterCertificates, ...]
+    backup_rows: tuple[ClusterBackups, ...]
 
 
 def path_for_config(config_path: Path) -> Path:
@@ -171,6 +174,64 @@ def _history_result(value: Any) -> dict[str, Any]:
     }
 
 
+def _backup_result(value: Any) -> dict[str, Any]:
+    """Reduce a backup listing to the fields the interface renders.
+
+    Node names are the only sensitive thing in here and they are already in
+    every other source, but the listing is reduced like the rest rather than
+    copied through: archive counts are unbounded on a node with long retention,
+    and this file has a size limit it must not be the reason to exceed.
+    """
+
+    source = _mapping(value)
+    entries = source.get("nodes")
+    nodes: list[dict[str, Any]] = []
+    if isinstance(entries, list):
+        for entry in entries[:4]:
+            item = _mapping(entry)
+            archives = item.get("backups")
+            error = _mapping(item.get("error")).get("message")
+            nodes.append(
+                {
+                    "name": _text(item.get("name"), limit=63),
+                    "available": _boolean(item.get("available")),
+                    "latest_version": _text(item.get("latest_version"), limit=32),
+                    "backups": [
+                        {
+                            "version": _text(_mapping(archive).get("version"), limit=32),
+                            "created_at": _text(_mapping(archive).get("created_at"), limit=40),
+                            "size_bytes": _number(_mapping(archive).get("size_bytes")),
+                            "latest": _boolean(_mapping(archive).get("latest")),
+                        }
+                        for archive in archives[:10]
+                    ]
+                    if isinstance(archives, list)
+                    else [],
+                    "error": {"message": _text(error, limit=200)} if error else None,
+                }
+            )
+    return {"limit": _number(source.get("limit")), "nodes": nodes}
+
+
+def _backup_document(cluster: str, completed: CompletedProcess[str]) -> dict[str, Any]:
+    """Accept only this cluster's own backup listing, partial included.
+
+    A partial listing is the interesting one: it means a node could not be read
+    while the others could, and dropping it would turn the state the page exists
+    to show into an empty card.
+    """
+
+    try:
+        envelope = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return {"outcome": "failed", "result": {"nodes": []}}
+    if not isinstance(envelope, dict) or envelope.get("operation") != "list_backups":
+        return {"outcome": "failed", "result": {"nodes": []}}
+    if envelope.get("cluster") != cluster or envelope.get("outcome") not in {"done", "partial"}:
+        return {"outcome": "failed", "result": {"nodes": []}}
+    return {"outcome": envelope["outcome"], "result": _backup_result(envelope.get("result"))}
+
+
 def _certificate_result(value: Any) -> dict[str, Any]:
     """Reduce a certificate listing to the fields the interface renders.
 
@@ -243,6 +304,7 @@ def collect_production_snapshot(
     now: datetime | None = None,
     status_runner: Any = run_status_helper,
     certificate_runner: Any = run_cert_list_helper,
+    backup_runner: Any = run_list_backups_helper,
 ) -> dict[str, object]:
     """Collect the restricted document emitted by the root-only CLI command."""
 
@@ -259,6 +321,7 @@ def collect_production_snapshot(
         certificates = _certificate_document(
             cluster_id, certificate_runner(cluster_id, new_request_id())
         )
+        backups = _backup_document(cluster_id, backup_runner(cluster_id, new_request_id()))
         try:
             target = read_target(Path(cluster.publish_path), cluster.node_path)
             files = read_tree_files(Path(cluster.config_path), target.hash) if target else {}
@@ -284,6 +347,7 @@ def collect_production_snapshot(
                 "inventory": inventory,
                 "history": history,
                 "certificates": certificates,
+                "backups": backups,
             }
         )
     return {
@@ -337,7 +401,13 @@ def load_production_snapshot(path: Path, *, require_secure: bool = True) -> Prod
     if not isinstance(entries, list):
         raise SnapshotError("production snapshot clusters must be a list")
     clusters: list[str] = []
-    rows: dict[str, list[Any]] = {"status": [], "inventory": [], "history": [], "certificates": []}
+    rows: dict[str, list[Any]] = {
+        "status": [],
+        "inventory": [],
+        "history": [],
+        "certificates": [],
+        "backups": [],
+    }
     #
     # A snapshot taken before a reading existed is loaded rather than refused:
     # the interface already renders a cluster with no row for a source as "no
@@ -349,6 +419,7 @@ def load_production_snapshot(path: Path, *, require_secure: bool = True) -> Prod
         "inventory": ClusterInventory,
         "history": ClusterHistory,
         "certificates": ClusterCertificates,
+        "backups": ClusterBackups,
     }
     for entry in entries:
         item = _mapping(entry)
@@ -382,6 +453,7 @@ def load_production_snapshot(path: Path, *, require_secure: bool = True) -> Prod
         inventory_rows=tuple(rows["inventory"]),
         history_rows=tuple(rows["history"]),
         certificate_rows=tuple(rows["certificates"]),
+        backup_rows=tuple(rows["backups"]),
     )
 
 

@@ -4,6 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 
 from haproxy_ui import demo
+from haproxy_ui.backups import build_backup_overview
 from haproxy_ui.certificates import build_certificate_overview
 from haproxy_ui.dashboard import build_dashboard
 from haproxy_ui.history import build_history_overview
@@ -65,3 +66,19 @@ class DemoFixtureTests(unittest.TestCase):
                 for entry in cluster.certificates
             )
         )
+
+    def test_the_backup_fixture_shows_a_node_that_has_quietly_fallen_behind(self) -> None:
+        #
+        # Nothing has failed in the second cluster: no error, no unreachable
+        # node, and one node has not taken a backup in three days. A fixture
+        # where every node looks the same cannot show that this renders
+        # differently, which is what the browser review is for.
+        #
+        backups = build_backup_overview(
+            demo.CLUSTERS, demo.backup_rows(NOW), now=NOW, stale_after=timedelta(minutes=2)
+        )
+        tones = [cluster.tone for cluster in backups.clusters]
+
+        self.assertEqual(tones, ["healthy", "warning"])
+        self.assertEqual((backups.node_count, backups.protected_count), (4, 3))
+        self.assertTrue(backups.clusters[0].archives)

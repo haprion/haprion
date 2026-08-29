@@ -1,0 +1,380 @@
+"""Read model for the state backups held on the nodes.
+
+Like the other pages, this layer knows only the envelope the poller cached. It
+reaches no node, and it creates nothing: taking a backup is an administrative
+command, and a restore is a documented recovery procedure with a person reading
+it. What the interface owes an operator is the answer to one question, on a
+normal working day rather than during an incident - **is there a recent backup
+on every node, and can I still see the one I would restore from.**
+
+That is why a node with no backup at all is treated as harshly as a node that
+could not be read. An empty listing looks calm - no errors, no old archives, a
+row that renders fine - and it is the worst state on the page.
+
+The archives are dated by the node's own backup run, which is a different clock
+from the poll. Both ages are therefore shown: how old the newest archive is
+answers whether backups are running, and how old the reading is answers whether
+this page can be believed.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
+
+from haproxy_ui.cluster_identity import accent_index
+from haproxy_ui.dashboard import relative_age
+from haproxy_ui.db import ClusterBackups
+
+type Tone = Literal["healthy", "warning", "critical", "unknown"]
+
+#
+# The backup runs daily. One missed run is a warning rather than an alarm - a
+# node that was down for maintenance overnight is the ordinary cause - and the
+# window is a day and a half so that a run finishing late does not light the
+# page up every morning.
+#
+BACKUP_WARNING = timedelta(hours=36)
+
+#
+# A week without a backup is not a late run. Whatever should have taken it has
+# been failing unnoticed since, and everything restored from here would be a
+# week behind the configuration the nodes are actually serving.
+#
+BACKUP_CRITICAL = timedelta(days=7)
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveView:
+    node: str
+    version: str
+    taken: str
+    taken_iso: str | None
+    age_label: str
+    size: str
+    latest: bool
+
+
+@dataclass(frozen=True, slots=True)
+class NodeBackupsView:
+    name: str
+    label: str
+    tone: Tone
+    detail: str
+    latest: str
+    age_label: str
+    count: int
+    total_size: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackupClusterView:
+    cluster: str
+    accent: int
+    configured: bool
+    label: str
+    tone: Tone
+    detail: str
+    observed_at: datetime | None
+    observed_iso: str | None
+    age_label: str
+    stale: bool
+    nodes: tuple[NodeBackupsView, ...]
+    archives: tuple[ArchiveView, ...]
+    truncated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BackupOverview:
+    clusters: tuple[BackupClusterView, ...]
+    cluster_count: int
+    node_count: int
+    protected_count: int
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _text(value: Any, fallback: str = "—") -> str:
+    return value if isinstance(value, str) and value else fallback
+
+
+def _integer(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _moment(value: Any) -> datetime | None:
+    text = _text(value, "")
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _size(total: int) -> str:
+    """An archive size, in the unit an operator would say it in.
+
+    Binary units, because that is what `ls -lh` and `du -h` on the node report,
+    and a page that disagrees with the shell about the size of the same file
+    invites somebody to work out which one is lying.
+    """
+
+    if total < 1024:
+        return f"{total} B"
+    if total < 1024 * 1024:
+        return f"{total / 1024:.0f} KiB"
+    if total < 1024 * 1024 * 1024:
+        return f"{total / (1024 * 1024):.1f} MiB"
+    return f"{total / (1024 * 1024 * 1024):.1f} GiB"
+
+
+def _taken(moment: datetime | None, fallback: str) -> str:
+    """When the archive was taken, in UTC like the rest of the interface.
+
+    The command line prints these on the local clock. This is the one place the
+    two deliberately differ, and it differs the same way every other timestamp
+    here does: an operations page that mixes zones is worse than one that picks
+    a zone and stays in it.
+    """
+
+    if moment is None:
+        return fallback
+    return moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M")
+
+
+def _archive_views(node: str, value: Any, *, now: datetime) -> tuple[ArchiveView, ...]:
+    if not isinstance(value, list):
+        return ()
+    archives: list[ArchiveView] = []
+    for entry in value:
+        item = _mapping(entry)
+        version = _text(item.get("version"), "")
+        if not version:
+            continue
+        taken_at = _moment(item.get("created_at"))
+        size = _integer(item.get("size_bytes"))
+        archives.append(
+            ArchiveView(
+                node=node,
+                version=version,
+                taken=_taken(taken_at, version),
+                taken_iso=None if taken_at is None else taken_at.astimezone(UTC).isoformat(),
+                age_label="—" if taken_at is None else relative_age(taken_at, now),
+                size="—" if size is None else _size(size),
+                latest=item.get("latest") is True,
+            )
+        )
+    return tuple(archives)
+
+
+def _newest(archives: tuple[ArchiveView, ...], value: Any) -> datetime | None:
+    """When this node last took a backup, read from the listing itself.
+
+    `latest_version` names the archive but the timestamp is on the entry, and
+    the two can disagree while a run is in flight. The newest `created_at` is
+    what the age is measured from, so the page cannot report an archive as fresh
+    on the strength of a name.
+    """
+
+    if not isinstance(value, list):
+        return None
+    moments = [_moment(_mapping(entry).get("created_at")) for entry in value]
+    known = [moment for moment in moments if moment is not None]
+    return max(known) if known and archives else None
+
+
+def _node_state(
+    *,
+    available: bool,
+    error: str | None,
+    archives: tuple[ArchiveView, ...],
+    newest_at: datetime | None,
+    now: datetime,
+) -> tuple[str, Tone, str]:
+    if not available:
+        return "Unreadable", "critical", error or "The backup directory could not be read"
+    if not archives:
+        #
+        # No error, no archives. Nothing on this row looks wrong, and there is
+        # nothing here to restore from.
+        #
+        return "No backups", "critical", "This node holds no state backup"
+    if newest_at is None:
+        return "Undated", "warning", "The archives carry no usable timestamp"
+    age = now - newest_at
+    if age > BACKUP_CRITICAL:
+        return "Stale backups", "critical", f"Newest archive is {relative_age(newest_at, now)}"
+    if age > BACKUP_WARNING:
+        return "Backup overdue", "warning", f"Newest archive is {relative_age(newest_at, now)}"
+    return "Current", "healthy", f"{len(archives)} archive{'' if len(archives) == 1 else 's'} kept"
+
+
+def _node_view(value: Any, *, now: datetime) -> tuple[NodeBackupsView, tuple[ArchiveView, ...]]:
+    node = _mapping(value)
+    name = _text(node.get("name"), "Unnamed node")
+    raw = node.get("backups")
+    listed: list[Any] = raw if isinstance(raw, list) else []
+    archives = _archive_views(name, listed, now=now)
+    newest_at = _newest(archives, listed)
+    error = _mapping(node.get("error")).get("message")
+    label, tone, detail = _node_state(
+        available=node.get("available") is True,
+        error=_text(error, ""),
+        archives=archives,
+        newest_at=newest_at,
+        now=now,
+    )
+    total = sum((_integer(_mapping(entry).get("size_bytes")) or 0) for entry in listed)
+    return (
+        NodeBackupsView(
+            name=name,
+            label=label,
+            tone=tone,
+            detail=detail,
+            latest=_text(node.get("latest_version"), "—"),
+            age_label="—" if newest_at is None else relative_age(newest_at, now),
+            count=len(archives),
+            total_size=_size(total) if total else "—",
+        ),
+        archives,
+    )
+
+
+def _empty(cluster: str, *, configured: bool) -> BackupClusterView:
+    return BackupClusterView(
+        cluster=cluster,
+        accent=accent_index(cluster),
+        configured=configured,
+        label="No backup data yet",
+        tone="unknown",
+        detail="Waiting for the first backup listing",
+        observed_at=None,
+        observed_iso=None,
+        age_label="Never",
+        stale=False,
+        nodes=(),
+        archives=(),
+        truncated=False,
+    )
+
+
+def _state(
+    reading: ClusterBackups,
+    *,
+    stale: bool,
+    nodes: tuple[NodeBackupsView, ...],
+) -> tuple[str, Tone, str]:
+    """What this cluster's backup listing means, as a badge and a sentence.
+
+    The worst node decides, and it is named. "1 of 2 nodes" is what an operator
+    acts on; a cluster-level "degraded" would send them to the table to work out
+    which node it meant.
+    """
+
+    if reading.poll_error:
+        return "Collection unavailable", "critical", "The poller could not read the backups"
+    if reading.outcome == "failed":
+        return "Backups unavailable", "critical", "The backup listing could not be read"
+    if stale:
+        return "Stale data", "warning", "Backup data needs a fresh poll"
+    if not nodes:
+        return "No nodes listed", "unknown", "The listing named no node"
+
+    severity = ("critical", "warning", "unknown", "healthy")
+    worst = min(nodes, key=lambda node: severity.index(node.tone))
+    if worst.tone == "healthy":
+        return "Current", "healthy", f"Every node backed up · newest {worst.age_label}"
+    return f"{worst.name}: {worst.label.lower()}", worst.tone, worst.detail
+
+
+def _cluster_view(
+    reading: ClusterBackups,
+    *,
+    configured: bool,
+    now: datetime,
+    stale_after: timedelta,
+) -> BackupClusterView:
+    result = _mapping(reading.result)
+    entries = result.get("nodes")
+    nodes: list[NodeBackupsView] = []
+    archives: list[ArchiveView] = []
+    if isinstance(entries, list):
+        for entry in entries:
+            node, node_archives = _node_view(entry, now=now)
+            nodes.append(node)
+            archives.extend(node_archives)
+    stale = now - reading.observed_at > stale_after
+    limit = _integer(result.get("limit"))
+    label, tone, detail = _state(reading, stale=stale, nodes=tuple(nodes))
+
+    return BackupClusterView(
+        cluster=reading.cluster,
+        accent=accent_index(reading.cluster),
+        configured=configured,
+        label=label,
+        tone=tone,
+        detail=detail,
+        observed_at=reading.observed_at,
+        observed_iso=reading.observed_at.astimezone(UTC).isoformat(),
+        age_label=relative_age(reading.observed_at, now),
+        stale=stale,
+        nodes=tuple(nodes),
+        #
+        # Newest first, and across nodes rather than per node: the question is
+        # what can be restored and how recent it is, and the two nodes' runs
+        # interleave in time.
+        #
+        archives=tuple(
+            sorted(archives, key=lambda entry: (entry.version, entry.node), reverse=True)
+        ),
+        #
+        # The helper is asked for a fixed number of archives per node. A node
+        # that returned exactly that many probably has older ones the page is
+        # not showing; a shorter listing is the whole retention.
+        #
+        truncated=any(node.count == limit for node in nodes) if limit else False,
+    )
+
+
+def build_backup_overview(
+    configured_clusters: Iterable[str],
+    readings: Iterable[ClusterBackups],
+    *,
+    now: datetime | None = None,
+    stale_after: timedelta,
+) -> BackupOverview:
+    """Combine configured clusters and their newest cached backup listing."""
+
+    now = now or datetime.now(UTC)
+    rows = {reading.cluster: reading for reading in readings}
+    clusters: list[BackupClusterView] = []
+    for cluster in tuple(configured_clusters):
+        reading = rows.pop(cluster, None)
+        clusters.append(
+            _empty(cluster, configured=True)
+            if reading is None
+            else _cluster_view(reading, configured=True, now=now, stale_after=stale_after)
+        )
+    for cluster in sorted(rows):
+        clusters.append(
+            _cluster_view(rows[cluster], configured=False, now=now, stale_after=stale_after)
+        )
+
+    nodes = tuple(node for cluster in clusters for node in cluster.nodes)
+    return BackupOverview(
+        clusters=tuple(clusters),
+        cluster_count=len(clusters),
+        node_count=len(nodes),
+        #
+        # A node counts as protected only when its newest archive is recent
+        # enough to restore from. Counting nodes that merely hold something
+        # would report a node whose last backup is from June as covered.
+        #
+        protected_count=sum(node.tone == "healthy" for node in nodes),
+    )

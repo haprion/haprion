@@ -388,6 +388,15 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .version-table code { color: var(--muted); font-size: 11px; }
 .table-note { margin: 0; padding: 10px 20px 14px; color: var(--muted); font-size: 11px; }
 
+/* Backups. Two tables, because the card answers two questions: whether every
+   node is backed up, and which archives are actually there to restore from. */
+.backup-node-table td, .archive-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
+.node-detail { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+.archive-table code { color: var(--text-primary); font-size: 11px; }
+.archive-table { border-top: 1px solid var(--line); }
+.archive-latest td { background: var(--panel-soft); }
+.backup-cluster-card .cluster-header { padding: 11px 20px; }
+
 /* Certificates. The renewal column says what keeps the certificate alive, and
    the expiry column says how long it has - two facts an operator weighs
    together, because "three weeks left" means something different for a

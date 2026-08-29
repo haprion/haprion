@@ -32,6 +32,7 @@ from fastapi.templating import Jinja2Templates
 from haproxy_ui import (
     activity,
     auth,
+    backups,
     certificates,
     dashboard,
     db,
@@ -130,6 +131,11 @@ HISTORY_SOURCE = Source(
     demo.history_rows,
     lambda taken: taken.history_rows,
     lambda connection: db.cluster_histories(connection),
+)
+BACKUP_SOURCE = Source(
+    demo.backup_rows,
+    lambda taken: taken.backup_rows,
+    lambda connection: db.cluster_backups(connection),
 )
 CERTIFICATE_SOURCE = Source(
     demo.certificate_rows,
@@ -338,6 +344,34 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "certificates": overview,
                 "section": "certificates",
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": snapshot_age(captured_at),
+            },
+        )
+
+    @router.get("/backups", response_class=HTMLResponse)
+    def backup_overview(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        clusters, backup_rows, captured_at = read_source(request, config, BACKUP_SOURCE)
+        overview = backups.build_backup_overview(
+            clusters,
+            backup_rows,
+            now=captured_at,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+        )
+        return TEMPLATES.TemplateResponse(
+            request,
+            "backups.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "backups": overview,
+                "section": "backups",
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
                 "snapshot_age": snapshot_age(captured_at),

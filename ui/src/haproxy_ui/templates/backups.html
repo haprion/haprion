@@ -1,0 +1,55 @@
+{% extends "layout.html" %}
+{% block title %}Backups — HAProxy Manager{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><h1>Backups</h1></div>
+  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
+</section>
+
+<section class="metric-grid backup-summary" aria-label="Backup summary">
+  <article class="metric-card"><span class="metric-icon metric-icon-node" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 9h.01M11 9h6M7 15h.01M11 15h6"></path></svg></span><div><strong>{{ backups.protected_count }}<small>/{{ backups.node_count }}</small></strong><span>Nodes backed up</span><small>Recent enough to restore</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-cluster" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"></ellipse><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"></path></svg></span><div><strong>{{ backups.cluster_count }}</strong><span>Clusters</span><small>Read-only, taken by the node</small></div></article>
+</section>
+
+<div class="cluster-list backup-cluster-list">
+{% for cluster in backups.clusters %}
+  <article class="cluster-card backup-cluster-card cluster-accent-{{ cluster.accent }}">
+    <header class="cluster-header">
+      <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
+      <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
+    </header>
+    {% if cluster.nodes %}
+    <div class="table-scroll"><table class="node-table backup-node-table"><thead><tr><th>Node</th><th>State</th><th>Newest backup</th><th>Kept</th><th>On disk</th></tr></thead><tbody>
+      {% for node in cluster.nodes %}
+      <tr>
+        <td data-label="Node"><strong>{{ node.name }}</strong></td>
+        <td data-label="State"><span class="status-badge status-badge-{{ node.tone }}">{{ node.label }}</span><span class="node-detail">{{ node.detail }}</span></td>
+        <td data-label="Newest backup">{{ node.age_label }}<span class="node-detail">{{ node.latest }}</span></td>
+        <td data-label="Kept">{{ node.count }}</td>
+        <td data-label="On disk">{{ node.total_size }}</td>
+      </tr>
+      {% endfor %}
+    </tbody></table></div>
+    {% if cluster.archives %}
+    <div class="table-scroll"><table class="node-table archive-table"><thead><tr><th>Archive</th><th>Node</th><th>Taken</th><th>Age</th><th>Size</th></tr></thead><tbody>
+      {% for archive in cluster.archives %}
+      <tr{% if archive.latest %} class="archive-latest"{% endif %}>
+        <td data-label="Archive"><code>{{ archive.version }}</code></td>
+        <td data-label="Node">{{ archive.node }}</td>
+        <td data-label="Taken">{% if archive.taken_iso %}<time datetime="{{ archive.taken_iso }}">{{ archive.taken }}</time>{% else %}{{ archive.taken }}{% endif %}</td>
+        <td data-label="Age">{{ archive.age_label }}</td>
+        <td data-label="Size">{{ archive.size }}</td>
+      </tr>
+      {% endfor %}
+    </tbody></table></div>
+    {% endif %}
+    <p class="table-note">Restoring from an archive is a command-line recovery procedure; this page only reads what the nodes hold{% if cluster.truncated %}, and shows the most recent archives per node{% endif %}.</p>
+    {% else %}
+    <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"></ellipse><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>
+    {% endif %}
+  </article>
+{% else %}
+  <div class="empty-page"><h2>No clusters configured</h2><p>Add a cluster to the platform configuration before starting the poller.</p></div>
+{% endfor %}
+</div>
+{% endblock %}

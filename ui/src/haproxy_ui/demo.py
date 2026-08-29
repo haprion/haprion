@@ -13,7 +13,13 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Any
 
-from haproxy_ui.db import ClusterCertificates, ClusterHistory, ClusterInventory, ClusterStatus
+from haproxy_ui.db import (
+    ClusterBackups,
+    ClusterCertificates,
+    ClusterHistory,
+    ClusterInventory,
+    ClusterStatus,
+)
 
 CLUSTERS = ("edge-demo", "service-demo")
 
@@ -313,6 +319,90 @@ def certificate_rows(now: datetime | None = None) -> tuple[ClusterCertificates, 
                     {**wildcard, "referenced_by_cluster": False},
                     retired,
                 ]
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+    )
+
+
+def _archives(node_hour: datetime, count: int) -> list[dict[str, Any]]:
+    """`count` daily archives, newest first, in the frozen `list_backups` shape."""
+
+    return [
+        {
+            "version": (node_hour - timedelta(days=day)).strftime("%Y-%m-%d_%H-%M-%S"),
+            "created_at": (node_hour - timedelta(days=day) + timedelta(seconds=41))
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "size_bytes": 28672 + day * 96,
+            "latest": day == 0,
+        }
+        for day in range(count)
+    ]
+
+
+def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
+    """One cluster backed up on both nodes, and one where a node has fallen behind.
+
+    The second cluster is the state the page exists for: nothing has failed, no
+    error is reported, and one node has quietly not taken a backup in three days.
+    """
+
+    moment = now or datetime.now(UTC)
+    observed = moment - timedelta(seconds=18)
+    last_run = (moment - timedelta(hours=6)).replace(minute=0, second=0, microsecond=0)
+    return (
+        ClusterBackups(
+            cluster="edge-demo",
+            observed_at=observed,
+            outcome="done",
+            result={
+                "limit": 10,
+                "nodes": [
+                    {
+                        "name": "edge-a",
+                        "available": True,
+                        "latest_version": _archives(last_run, 1)[0]["version"],
+                        "backups": _archives(last_run, 4),
+                        "error": None,
+                    },
+                    {
+                        "name": "edge-b",
+                        "available": True,
+                        "latest_version": _archives(last_run, 1)[0]["version"],
+                        "backups": _archives(last_run, 4),
+                        "error": None,
+                    },
+                ],
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+        ClusterBackups(
+            cluster="service-demo",
+            observed_at=observed - timedelta(seconds=9),
+            outcome="done",
+            result={
+                "limit": 10,
+                "nodes": [
+                    {
+                        "name": "service-a",
+                        "available": True,
+                        "latest_version": _archives(last_run, 1)[0]["version"],
+                        "backups": _archives(last_run, 10),
+                        "error": None,
+                    },
+                    {
+                        "name": "service-b",
+                        "available": True,
+                        "latest_version": _archives(last_run - timedelta(days=3), 1)[0]["version"],
+                        "backups": _archives(last_run - timedelta(days=3), 2),
+                        "error": None,
+                    },
+                ],
             },
             warnings=[],
             error=None,

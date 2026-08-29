@@ -173,10 +173,27 @@ class SnapshotTests(unittest.TestCase):
                     stderr="",
                 )
 
+            def backup_runner(_cluster: str, request_id: str) -> CompletedProcess[str]:
+                request_ids.append(request_id)
+                return CompletedProcess(
+                    args=[],
+                    returncode=0,
+                    stdout=json.dumps(
+                        {
+                            "operation": "list_backups",
+                            "cluster": "edge",
+                            "outcome": "done",
+                            "result": {"limit": 10, "nodes": []},
+                        }
+                    ),
+                    stderr="",
+                )
+
             document = snapshot.collect_production_snapshot(
                 now=datetime(2026, 8, 29, 12, tzinfo=UTC),
                 status_runner=status_runner,
                 certificate_runner=certificate_runner,
+                backup_runner=backup_runner,
             )
         self.assertEqual(document["source"], "production")
         self.assertEqual(document["clusters"][0]["inventory"]["result"]["version"], 24)
@@ -186,6 +203,71 @@ class SnapshotTests(unittest.TestCase):
         )
         tree_reader.assert_called_once_with(Path("/repo"), "a" * 40)
         self.assertIsInstance(UUID(request_ids[0]), UUID)
+
+
+class BackupCaptureTests(unittest.TestCase):
+    """The backup source crosses the boundary like the others, partial included."""
+
+    def test_a_partial_listing_is_kept_rather_than_discarded(self) -> None:
+        #
+        # Partial is the reading worth having: one node answered and another did
+        # not. Refusing it would turn the state the page exists to show into an
+        # empty card in the development review.
+        #
+        completed = CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "operation": "list_backups",
+                    "cluster": "edge",
+                    "outcome": "partial",
+                    "result": {
+                        "limit": 10,
+                        "nodes": [
+                            {
+                                "name": "node-a",
+                                "available": False,
+                                "latest_version": None,
+                                "backups": [],
+                                "error": {"message": "host unreachable"},
+                            }
+                        ],
+                    },
+                }
+            ),
+            stderr="",
+        )
+        document = snapshot._backup_document("edge", completed)
+
+        self.assertEqual(document["outcome"], "partial")
+        self.assertEqual(document["result"]["nodes"][0]["error"], {"message": "host unreachable"})
+
+    def test_a_long_retention_is_capped_before_it_leaves(self) -> None:
+        reduced = snapshot._backup_result(
+            {
+                "limit": None,
+                "nodes": [
+                    {
+                        "name": "node-a",
+                        "available": True,
+                        "backups": [
+                            {
+                                "version": f"2026-08-{day:02d}_05-00-00",
+                                "created_at": f"2026-08-{day:02d}T05:00:01Z",
+                                "size_bytes": 28672,
+                                "latest": False,
+                            }
+                            for day in range(1, 29)
+                        ],
+                        "error": None,
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(len(reduced["nodes"][0]["backups"]), 10)
+        self.assertIsNone(reduced["limit"])
 
 
 class CertificateCaptureTests(unittest.TestCase):

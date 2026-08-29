@@ -13,6 +13,19 @@ from haproxy_ui.dashboard import DashboardView, Tone
 
 
 @dataclass(frozen=True, slots=True)
+class ActivitySummary:
+    """The two counters above the feed.
+
+    Both are derived from the entries themselves rather than read again from
+    the dashboard, so the numbers can never disagree with the list below them.
+    """
+
+    observation_count: int
+    cluster_count: int
+    attention_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class ActivityEntry:
     cluster: str
     accent: int
@@ -52,3 +65,14 @@ def build_activity(dashboard: DashboardView) -> tuple[ActivityEntry, ...]:
                 )
             )
     return tuple(entries)
+
+
+def summarise_activity(entries: tuple[ActivityEntry, ...]) -> ActivitySummary:
+    """Count the feed. Anything not healthy is worth a second look, including
+    `unknown` - an observation the collector could not classify is not a pass."""
+
+    return ActivitySummary(
+        observation_count=len(entries),
+        cluster_count=len({entry.cluster for entry in entries}),
+        attention_count=sum(entry.tone != "healthy" for entry in entries),
+    )

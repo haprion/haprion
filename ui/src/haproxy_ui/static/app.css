@@ -263,7 +263,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
    it is not a smaller card, it is a broken one. These two size to their text
    instead, with an upper bound so a stat does not stretch across half a
    screen. */
-.certificate-summary, .backup-summary { grid-template-columns: repeat(2, minmax(320px, 480px)); }
+.certificate-summary, .backup-summary, .activity-summary { grid-template-columns: repeat(2, minmax(320px, 480px)); }
 .metric-card {
   display: flex;
   align-items: center;
@@ -425,8 +425,12 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .archive-details > summary:hover::before { border-color: var(--text-strong); }
 .archive-details[open] > summary { color: var(--text-strong); }
 
-/* The schedule, stated once: one timer takes every node's backup. */
+/* A one-line page lede sits beside the heading so the metric row keeps its height. */
+.heading-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-width: 0; }
+.heading-title .page-lede { margin: 0; }
 .page-lede { max-width: 720px; margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+
+/* The schedule, stated once: one timer takes every node's backup. */
 .schedule-strip { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 10px 16px; border-radius: var(--radius); background: var(--panel); color: var(--text-primary); font-size: 12px; }
 .schedule-strip strong { color: var(--text-strong); }
 .schedule-facts { color: var(--muted); }

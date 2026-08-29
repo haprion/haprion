@@ -456,6 +456,7 @@ def build_router(config: Config) -> APIRouter:
             now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
         )
+        entries = activity.build_activity(current)
         return TEMPLATES.TemplateResponse(
             request,
             "activity.html",
@@ -463,7 +464,8 @@ def build_router(config: Config) -> APIRouter:
                 "username": session.username,
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
-                "activity": activity.build_activity(current),
+                "activity": entries,
+                "summary": activity.summarise_activity(entries),
                 "section": "activity",
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,

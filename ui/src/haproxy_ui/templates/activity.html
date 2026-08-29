@@ -6,6 +6,11 @@
   <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
 </section>
 
+<section class="metric-grid activity-summary" aria-label="Observation summary">
+  <article class="metric-card"><span class="metric-icon metric-icon-cluster" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 18h4l3-11 3 14 2.5-7H20"></path></svg></span><div><strong>{{ summary.observation_count }}</strong><span>Observations</span><small>Across {{ summary.cluster_count }} cluster{{ '' if summary.cluster_count == 1 else 's' }}</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4l9 16H3z"></path><path d="M12 10v4M12 17h.01"></path></svg></span><div><strong>{{ summary.attention_count }}</strong><span>Need attention</span><small>Anything not healthy</small></div></article>
+</section>
+
 <p class="activity-note">Latest stored observation for each cluster and node. This is not an audit trail.</p>
 
 <section class="activity-list" aria-label="Latest observations">

@@ -98,6 +98,13 @@ else
     #
     # Third-party wheels keep their cache: their version is their content.
     #
+    # The staging trees are cleared, because --refresh-package is not enough
+    # on its own. setuptools copies the package into build/lib and never removes
+    # a file that has since disappeared from the source, so a commit that DELETES
+    # a module produces a wheel still carrying it - rebuilt faithfully from stale
+    # staging. Measured on 2026-08-29, on the first commit here to delete one.
+    #
+    rm -rf -- "${source_tree}/ui/build" "${source_tree}/build"
     ( cd "${source_tree}/ui" \
       && UV_PROJECT_ENVIRONMENT="${release}/venv" "$uv" sync --locked --no-dev \
              --no-editable --python "$PYTHON_BIN" --python-preference only-system \
@@ -121,15 +128,27 @@ tree_digest() {
       | while read -r file; do printf '%s ' "$file"; sha256sum "$file" | cut -d' ' -f1; done \
       | sha256sum | cut -d' ' -f1 )
 }
-installed="$(echo "${release}/venv/lib/"*"/site-packages/haproxy_ui")"
-[[ -d "$installed" ]] || die "the release contains no haproxy_ui package"
-if [[ "$(tree_digest "${source_tree}/ui/src/haproxy_ui")" != "$(tree_digest "$installed")" ]]; then
-    rm -rf -- "$release"
-    die "the built release does not match ${source_tree}/ui/src/haproxy_ui at ${commit}.
-  The half-built release has been removed. This is what --refresh-package prevents;
-  if it recurs, the build is reusing something else that is cached."
-fi
-log "  ok       the release matches the source tree at ${commit}"
+#
+# Both distributions, not just the interface. They are built from the same
+# source tree by the same command and share every way of going stale, and a
+# check that covers one of them says nothing about the other.
+#
+for package in haproxy_ui haproxy_mgmt; do
+    case "$package" in
+        haproxy_ui) source_package="${source_tree}/ui/src/${package}" ;;
+        *)          source_package="${source_tree}/src/${package}" ;;
+    esac
+    installed="$(echo "${release}/venv/lib/"*"/site-packages/${package}")"
+    [[ -d "$installed" ]] || die "the release contains no ${package} package"
+    if [[ "$(tree_digest "$source_package")" != "$(tree_digest "$installed")" ]]; then
+        rm -rf -- "$release"
+        die "the built release does not match ${source_package} at ${commit}.
+  The half-built release has been removed. The build reused something cached:
+  check that ${source_tree}/build and ${source_tree}/ui/build were cleared, since
+  setuptools staging keeps a file the source has deleted."
+    fi
+    log "  ok       ${package} matches the source tree at ${commit}"
+done
 
 step "Ownership"
 #

@@ -252,7 +252,7 @@ def main(
         return 64
 
     worst = 0
-    for cluster_id in clusters:
+    for index, cluster_id in enumerate(clusters):
         completed = run_helper(cluster_id, new_request_id(), request.limit, request.node)
         worst = worst or completed.returncode
 
@@ -266,6 +266,11 @@ def main(
         if request.json_mode:
             writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
             continue
+        # One blank line between clusters. Without it the next cluster's heading
+        # sits directly under the previous cluster's last backup and reads as
+        # part of it.
+        if index:
+            writer.write("\n")
         try:
             _render(document, writer)
         except ValueError as exc:

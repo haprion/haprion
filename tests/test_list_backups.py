@@ -382,6 +382,22 @@ class CommandTests(unittest.TestCase):
 
         self.assertEqual([entry[0] for entry in seen], ["alpha", "beta"])
 
+    def test_clusters_are_separated_by_a_blank_line(self) -> None:
+        clusters = {"alpha": _cluster(("node-a",)), "beta": _cluster(("node-b",))}
+        with (
+            mock.patch.object(list_backups, "load_policy", lambda *a, **k: object()),
+            mock.patch.object(
+                list_backups, "load_runtime_config", lambda *a, **k: _config(clusters)
+            ),
+        ):
+            rendered, _, _, _ = self._run([])
+
+        #
+        # Without it the second cluster's heading sits directly under the first
+        # cluster's last backup and reads as part of it.
+        #
+        self.assertIn(".tar.gz\n\nCluster:", rendered)
+
     def test_a_node_without_a_cluster_asks_only_the_cluster_that_has_it(self) -> None:
         #
         # A node belongs to one cluster. Asking all of them would make each

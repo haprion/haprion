@@ -36,6 +36,30 @@ from haproxy_ui.db import AuthenticatedSession
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 #
+# The theme is rendered into the document by the server, from a cookie the
+# browser maintains. It has to be known before the first byte: a theme applied
+# by script is applied after the first paint at the earliest, and between two
+# documents the browser paints its own light canvas - a flash on every
+# navigation, and every tab here is a full page load.
+#
+THEME_COOKIE = "haproxy_ui_theme"
+THEMES = ("light", "dark")
+
+
+def selected_theme(request: Request) -> str:
+    """Return the requested theme, or the default for anything else.
+
+    The value is written by client-side script and is therefore attacker
+    controlled. It reaches an HTML attribute, so it is matched against the
+    themes that exist rather than escaped and passed through.
+    """
+    theme = request.cookies.get(THEME_COOKIE, "")
+    return theme if theme in THEMES else THEMES[0]
+
+
+TEMPLATES.env.filters["selected_theme"] = selected_theme
+
+#
 # How stale the inactivity clock is allowed to get before it is written again.
 # Without this every authenticated request would be a write, which turns a
 # read-only page view into database traffic and contention on one row. A minute

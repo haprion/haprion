@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  A local favicon, for the same reason the fonts are local: the interface has to
-  work while the network it manages is broken. Without one the browser asks for
-  /favicon.ico on every navigation, is refused, and falls back to the blank page
-  icon - which is the flicker the tab shows on each page load.
+  The brand mark from the header, standing alone. Same geometry and same brand
+  green, so the tab and the page agree about what this application is.
 
-  Two lanes meeting one node: what the thing does, at 16px.
+  Local like the fonts and the stylesheet: the interface has to work while the
+  network it manages is broken. Without a favicon the browser asks for
+  /favicon.ico on every navigation, is refused, and falls back to the blank
+  page icon - which is the flicker the tab showed on each page load.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="7" fill="#2fb344"/>
-  <g fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round">
-    <path d="M8 10h5c2.2 0 3.4 1.4 4.6 3s2.4 3 4.6 3h2"/>
-    <path d="M8 22h5c2.2 0 3.4-1.4 4.6-3"/>
+  <g fill="none" stroke="#2fb344" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 8h13M6 16h20M6 24h13"/>
+    <circle cx="22" cy="8" r="3"/>
+    <circle cx="10" cy="24" r="3"/>
   </g>
-  <circle cx="24" cy="16" r="2.6" fill="#ffffff"/>
 </svg>

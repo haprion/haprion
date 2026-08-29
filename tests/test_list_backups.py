@@ -270,6 +270,45 @@ class CommandTests(unittest.TestCase):
         _, _, _, seen = self._run(["-c", "alpha"])
         self.assertEqual(seen, [list_backups.DEFAULT_LIMIT])
 
+    def test_a_failed_envelope_is_reported_as_what_the_helper_said(self) -> None:
+        #
+        # The reader has to be sent to the cause, not to the reader. A failed
+        # envelope carries a structured reason - a missing backup_root, most
+        # often - and reporting it as "invalid result" would send someone
+        # looking for a bug in the helper that just answered them.
+        #
+        out, err = io.StringIO(), io.StringIO()
+
+        def run_helper(cluster: str, request_id: str, limit: int | None):
+            document = {
+                "schema_version": 1,
+                "ok": False,
+                "outcome": "failed",
+                "operation": "list_backups",
+                "cluster": "alpha",
+                "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "result": None,
+                "warnings": [],
+                "error": {
+                    "code": "backup_metadata_unavailable",
+                    "message": "the runtime policy declares no backup_root",
+                    "node": None,
+                    "details": None,
+                },
+            }
+            return type(
+                "Completed", (), {"stdout": json.dumps(document), "stderr": "", "returncode": 65}
+            )
+
+        code = list_backups.main(
+            ["-c", "alpha"], stream_out=out, stream_err=err, run_helper=run_helper
+        )
+
+        self.assertEqual(code, 65)
+        self.assertIn("backup_metadata_unavailable", err.getvalue())
+        self.assertIn("no backup_root", err.getvalue())
+        self.assertNotIn("invalid result", err.getvalue())
+
     def test_json_mode_passes_the_envelope_through_untouched(self) -> None:
         rendered, _, code, _ = self._run(["-c", "alpha", "--json"])
 

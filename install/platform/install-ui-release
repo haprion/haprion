@@ -104,11 +104,19 @@ else
     # a module produces a wheel still carrying it - rebuilt faithfully from stale
     # staging. Measured on 2026-08-29, on the first commit here to delete one.
     #
-    rm -rf -- "${source_tree}/ui/build" "${source_tree}/build"
+    # They are cleared afterwards as well. This script runs as root, so the
+    # trees setuptools recreates are root-owned - inside the maintainer's own
+    # checkout, where the next unprivileged build cannot delete them and fails
+    # on a permission error that says nothing about where it came from. The
+    # trees are build inputs, not outputs, so removing them costs nothing.
+    #
+    clear_staging() { rm -rf -- "${source_tree}/ui/build" "${source_tree}/build"; }
+    clear_staging
     ( cd "${source_tree}/ui" \
       && UV_PROJECT_ENVIRONMENT="${release}/venv" "$uv" sync --locked --no-dev \
              --no-editable --python "$PYTHON_BIN" --python-preference only-system \
              --refresh-package haproxy-ui --refresh-package haproxy-manager )
+    clear_staging
     trap - EXIT
     log "  built    ${release}"
 fi

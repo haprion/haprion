@@ -64,9 +64,24 @@ def _parse(argv: list[str]) -> tuple[str, int | None, bool]:
     return argv[1], None if "--all" in rest else DEFAULT_LIMIT, "--json" in rest
 
 
+class HelperFailure(ValueError):
+    """The helper answered, and the answer is that it could not do the read."""
+
+
 def _result(document: Mapping[str, Any]) -> Mapping[str, Any]:
+    if document.get("operation") != OPERATION:
+        raise ValueError("the backup helper returned an invalid result")
+    #
+    # A failed envelope is an answer, not a malformed one. Reporting it as
+    # "invalid result" would send the reader to look for a bug in the helper
+    # when the helper has just told them, in a structured field, exactly what is
+    # wrong - a missing backup_root, most often.
+    #
+    error = document.get("error")
+    if isinstance(error, Mapping):
+        raise HelperFailure(f"{error.get('code')}: {error.get('message')}")
     result = document.get("result")
-    if document.get("operation") != OPERATION or not isinstance(result, Mapping):
+    if not isinstance(result, Mapping):
         raise ValueError("the backup helper returned an invalid result")
     return result
 

@@ -96,6 +96,30 @@ def _target_version(cluster_id: str, requested: str | None, total: int) -> int:
     return version
 
 
+def build_request(cluster_id: str, request_id: str, *, version: int, expected_commit: str) -> str:
+    """The exact request a revert sends, built in one place.
+
+    Public for the same reason as the other write operations: the interface's
+    worker sends this operation too, and a second construction of the envelope is
+    a second thing to keep in step with the helper's strict validation.
+
+    `expected_commit` is the fencing that makes a revert safe to retry. The
+    helper refuses if the cluster no longer stands where the caller thought it
+    did, so a request that was built from a stale reading fails instead of
+    reverting something else.
+    """
+
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "operation": OPERATION,
+            "cluster": cluster_id,
+            "request_id": request_id,
+            "parameters": {"version": version, "expected_commit": expected_commit},
+        }
+    )
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -144,14 +168,8 @@ def main(
         f"  Comment:   {summary.comment}\n\n"
     )
 
-    request = json.dumps(
-        {
-            "schema_version": 1,
-            "operation": OPERATION,
-            "cluster": cluster_id,
-            "request_id": str(uuid.uuid4()),
-            "parameters": {"version": version, "expected_commit": commit},
-        }
+    request = build_request(
+        cluster_id, str(uuid.uuid4()), version=version, expected_commit=commit
     ).encode()
 
     code, out, err = run_helper(request)

@@ -55,20 +55,44 @@ def _parse(argv: list[str]) -> tuple[str, bool, bool]:
     return argv[1], "--allow-vip-unknown" in options, "--json" in options
 
 
+def build_request(
+    cluster_id: str, request_id: str, *, allow_vip_unknown: bool, json_mode: bool
+) -> str:
+    """The exact request this operation sends, built in one place.
+
+    Public because the interface's worker sends the same operation. It must not
+    build the envelope itself: the helper validates it strictly, and two
+    constructions of one request are two things to keep in step - the divergence
+    that is hardest to find, because each side looks correct on its own.
+
+    The request ID is a parameter rather than generated here. The command line
+    has nobody to answer to and makes one up; the worker already holds the ID the
+    job was queued with, and that ID is what makes "did this operation take
+    effect?" answerable after a crash.
+    """
+
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "operation": OPERATION,
+            "cluster": cluster_id,
+            "request_id": request_id,
+            "parameters": {"allow_vip_unknown": allow_vip_unknown, "json": json_mode},
+        }
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     cluster_id, allow_vip_unknown, json_mode = _parse(argv)
 
     _config_path(cluster_id)
 
-    request = json.dumps(
-        {
-            "schema_version": 1,
-            "operation": OPERATION,
-            "cluster": cluster_id,
-            "request_id": str(uuid.uuid4()),
-            "parameters": {"allow_vip_unknown": allow_vip_unknown, "json": json_mode},
-        }
+    request = build_request(
+        cluster_id,
+        str(uuid.uuid4()),
+        allow_vip_unknown=allow_vip_unknown,
+        json_mode=json_mode,
     ).encode()
 
     completed = subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments

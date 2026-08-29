@@ -26,7 +26,7 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from haproxy_ui import auth, dashboard, db
+from haproxy_ui import auth, dashboard, db, proxies
 from haproxy_ui.config import Config
 from haproxy_ui.db import AuthenticatedSession
 
@@ -155,6 +155,32 @@ def build_router(config: Config) -> APIRouter:
                 "management_writes": config.management_writes,
                 "csrf_token": auth.csrf_token(token),
                 "dashboard": dashboard_view,
+                "section": "dashboard",
+            },
+        )
+
+    @router.get("/proxies", response_class=HTMLResponse)
+    def proxy_overview(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        with request.app.state.pool.connection() as connection:
+            inventory_rows = db.cluster_inventories(connection)
+        overview = proxies.build_proxy_overview(
+            config.clusters,
+            inventory_rows,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+        )
+        return TEMPLATES.TemplateResponse(
+            request,
+            "proxies.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "proxies": overview,
+                "section": "proxies",
             },
         )
 

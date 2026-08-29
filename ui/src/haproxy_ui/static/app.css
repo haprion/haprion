@@ -258,6 +258,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .metric-icon-node { color: #fff; background: var(--info); }
 .metric-icon-vip { color: #fff; background: var(--warning); }
 .metric-icon-release { color: #fff; background: var(--critical); }
+.proxy-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
 .section-heading h2 { margin: 0; color: var(--text-strong); font-size: 18px; font-weight: 700; letter-spacing: -0.015em; }
@@ -296,6 +297,15 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .inline-status .status-dot { width: 6px; height: 6px; }
 .warning-text { color: var(--warning) !important; }
 .release-value { font-variant-numeric: tabular-nums; }
+.proxy-table td { vertical-align: top; }
+.proxy-hosts { display: block; max-width: 430px; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
+.protocol-badge, .ownership-badge { display: inline-flex; align-items: center; min-height: 23px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; letter-spacing: 0.025em; }
+.protocol-http { color: var(--info); background: var(--info-soft); }
+.protocol-https { color: var(--healthy); background: var(--healthy-soft); }
+.protocol-tcp { color: var(--warning); background: var(--warning-soft); }
+.protocol-unknown { color: var(--unknown); background: var(--unknown-soft); }
+.ownership-managed { color: var(--healthy); background: var(--healthy-soft); }
+.ownership-unmanaged { color: var(--warning); background: var(--warning-soft); }
 
 .empty-state { display: flex; align-items: center; justify-content: center; gap: 13px; min-height: 124px; padding: 24px; color: var(--muted); }
 .empty-state svg { width: 28px; height: 28px; }
@@ -325,6 +335,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 
 @media (max-width: 900px) {
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .proxy-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .account-copy { display: none; }
   .account-menu summary { min-width: auto; }
   .account-menu summary > svg { display: none; }
@@ -342,6 +353,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   .icon-button { width: 36px; padding: 0; }
   .page-heading { align-items: flex-start; flex-direction: column; gap: 13px; }
   .metric-grid { grid-template-columns: 1fr; }
+  .proxy-summary { grid-template-columns: 1fr; }
   .cluster-header { align-items: flex-start; flex-direction: column; gap: 12px; }
   .cluster-state { width: 100%; justify-content: space-between; }
   .cluster-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 0; }

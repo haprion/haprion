@@ -100,6 +100,7 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haproxy_ui.db.revoke_session", side_effect=self._revoke),
             mock.patch("haproxy_ui.db.record_audit_event", side_effect=self._audit_event),
             mock.patch("haproxy_ui.db.cluster_statuses", return_value=[]),
+            mock.patch("haproxy_ui.db.cluster_inventories", return_value=[]),
         ]
         for patch in self.patches:
             patch.start()
@@ -198,6 +199,15 @@ class SigningIn(LoginTestCase):
         self.assertIn("Read-only mode", page.text)
         self.assertIn('aria-disabled="true"', page.text)
         self.assertIn("Certificates", page.text)
+
+    def test_the_proxy_overview_is_an_authenticated_read_only_page(self) -> None:
+        client = self.client()
+        self.sign_in(client)
+        page = client.get("/proxies")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Proxies", page.text)
+        self.assertIn('href="/proxies" aria-current="page"', page.text)
+        self.assertIn("No clusters configured", page.text)
 
     def test_static_design_assets_are_local_and_served(self) -> None:
         client = self.client()

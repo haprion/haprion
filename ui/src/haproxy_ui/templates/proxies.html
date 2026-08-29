@@ -1,0 +1,36 @@
+{% extends "layout.html" %}
+{% block title %}Proxies — HAProxy Manager{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><h1>Proxies</h1></div>
+  <span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>
+</section>
+
+<section class="metric-grid proxy-summary" aria-label="Proxy summary">
+  <article class="metric-card"><span class="metric-icon metric-icon-cluster" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong>{{ proxies.proxy_count }}</strong><span>Proxies</span><small>Published</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-node" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"></path></svg></span><div><strong>{{ proxies.managed_count }}</strong><span>Managed</span><small>Platform owned</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong>{{ proxies.unmanaged_count }}</strong><span>Unmanaged</span><small>Read-only</small></div></article>
+</section>
+
+<div class="cluster-list proxy-cluster-list">
+{% for cluster in proxies.clusters %}
+  <article class="cluster-card proxy-cluster-card">
+    <header class="cluster-header">
+      <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
+      <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
+    </header>
+    {% if cluster.proxies %}
+    <div class="table-scroll"><table class="node-table proxy-table"><thead><tr><th>Proxy</th><th>Protocol</th><th>Hosts / ports</th><th>Backends</th><th>Ownership</th></tr></thead><tbody>
+      {% for proxy in cluster.proxies %}
+      <tr><td data-label="Proxy"><strong>{{ proxy.name }}</strong>{% if not proxy.enabled %}<small class="warning-text">Disabled</small>{% endif %}</td><td data-label="Protocol"><span class="protocol-badge protocol-{{ proxy.protocol }}">{{ proxy.protocol | upper }}</span></td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ proxy.hostnames | join(', ') if proxy.hostnames else 'No hostname rule' }}</span><small>Ports {{ proxy.ports | join(', ') if proxy.ports else '—' }}</small></td><td data-label="Backends">{{ proxy.backend_count }}</td><td data-label="Ownership"><span class="ownership-badge ownership-{{ 'managed' if proxy.managed else 'unmanaged' }}">{{ 'Managed' if proxy.managed else 'Unmanaged' }}</span></td></tr>
+      {% endfor %}
+    </tbody></table></div>
+    {% else %}
+    <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>
+    {% endif %}
+  </article>
+{% else %}
+  <div class="empty-page"><h2>No clusters configured</h2><p>Add a cluster to the platform configuration before starting the poller.</p></div>
+{% endfor %}
+</div>
+{% endblock %}

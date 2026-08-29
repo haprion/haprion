@@ -33,8 +33,18 @@ GENERIC_RULES = (
             # assigned to - went unmatched. Found 2026-08-28 while narrowing the
             # value side of this rule.
             #
-            r"(?i)(?<![A-Za-z0-9])(?:password|passwd|secret|token|api[_-]?key|private[_-]?key)\b"
+            r"(?i)(?<![A-Za-z0-9])(?P<name>password|passwd|secret|token|api[_-]?key|private[_-]?key)\b"
             r"\s*[:=]\s*"
+            #
+            # A value that is the key again is a variable, not a secret:
+            # `claim_token=claim_token` passes one along, and
+            # `claim_token = job.claim_token` reads one off a row. Written as a
+            # backreference so the exemption is exact - it fires only when the
+            # value ends in the very word that named it, which no real secret
+            # does. A dotted JWT segment therefore keeps matching, which is why
+            # bare dotted values are still reported below.
+            #
+            r"(?!(?:[A-Za-z_][A-Za-z0-9_]*\.)*(?:[A-Za-z0-9]+_)*(?P=name)\b)"
             #
             # A value that is a function call or a subscript is code, not a
             # literal: `password = read_new_password()` and

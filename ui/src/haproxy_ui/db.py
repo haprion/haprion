@@ -184,6 +184,33 @@ def connected_identity(connection: Connection[Any]) -> tuple[str, str]:
     return str(row[0]), str(row[1])
 
 
+@dataclass(frozen=True, slots=True)
+class ClaimedJob:
+    """A job this worker holds, and the token that proves it.
+
+    A separate type from `Job` rather than an optional field on it, because the
+    difference is a grant and not a convenience: `app_web` holds no `select` on
+    `claim_token`, so a web page reading this shape would be refused by the
+    database. Keeping them apart makes that impossible to do by accident.
+    """
+
+    id: int
+    request_id: UUID
+    operation: str
+    cluster: str
+    payload: dict[str, Any]
+    state: str
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    exit_code: int | None
+    outcome: str | None
+    result: dict[str, Any] | None
+    stderr_excerpt: str | None
+    idempotency_key: UUID | None
+    claim_token: UUID
+
+
 class ClusterBusy(Exception):
     """A job for this cluster is already pending or running.
 
@@ -314,7 +341,9 @@ def queue_job(
     return existing
 
 
-def claim_job(connection: Connection[Any], *, worker_id: str, lease_seconds: int) -> Job | None:
+def claim_job(
+    connection: Connection[Any], *, worker_id: str, lease_seconds: int
+) -> ClaimedJob | None:
     """Take the oldest waiting job, atomically, and hold it with a lease.
 
     One statement, never read-then-write. Two workers running the same select
@@ -335,7 +364,7 @@ def claim_job(connection: Connection[Any], *, worker_id: str, lease_seconds: int
     began and not when it was last picked up.
     """
 
-    with connection.cursor(row_factory=class_row(Job)) as cursor:
+    with connection.cursor(row_factory=class_row(ClaimedJob)) as cursor:
         cursor.execute(
             "update job "
             "   set state = 'running', "
@@ -352,7 +381,7 @@ def claim_job(connection: Connection[Any], *, worker_id: str, lease_seconds: int
             "          limit 1) "
             "returning id, request_id, operation, cluster, payload, state, created_at, "
             "          started_at, finished_at, exit_code, outcome, result, "
-            "          stderr_excerpt, idempotency_key",
+            "          stderr_excerpt, idempotency_key, claim_token",
             {"worker_id": worker_id, "lease_seconds": lease_seconds},
         )
         return cursor.fetchone()

@@ -15,7 +15,6 @@ from typing import Any
 from unittest import mock
 
 from haproxy_ui import demo
-
 from tests.test_login import LoginTestCase, configuration
 
 ONLY = demo.CLUSTERS[0]

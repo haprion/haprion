@@ -144,6 +144,7 @@ class Job:
     outcome: str | None
     result: dict[str, Any] | None
     stderr_excerpt: str | None
+    idempotency_key: UUID | None
 
 
 def pool(database: Database, *, min_size: int = 1, max_size: int = 4) -> ConnectionPool:
@@ -183,6 +184,25 @@ def connected_identity(connection: Connection[Any]) -> tuple[str, str]:
     return str(row[0]), str(row[1])
 
 
+class ClusterBusy(Exception):
+    """A job for this cluster is already pending or running.
+
+    Not an error in the caller's request - the request was fine, the cluster is
+    not free. The two are told apart because the answer differs: this one is
+    worth retrying when the running job finishes, and the one below never is.
+    """
+
+
+class RequestConflict(Exception):
+    """The same idempotency key, asking for something else.
+
+    A retry carries the key it used before. If what it now asks for differs, the
+    two are not the same attempt, and treating it as a no-op would silently drop
+    an operation somebody asked for. Refused rather than queued, and never
+    treated as already done.
+    """
+
+
 def recent_jobs(
     connection: Connection[Any], *, cluster: str | None = None, limit: int = 20
 ) -> list[Job]:
@@ -197,7 +217,8 @@ def recent_jobs(
     with connection.cursor(row_factory=class_row(Job)) as cursor:
         cursor.execute(
             "select id, request_id, operation, cluster, payload, state, created_at, "
-            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt "
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key "
             "  from job "
             " where (%(cluster)s::text is null or cluster = %(cluster)s) "
             " order by created_at desc, id desc "
@@ -208,32 +229,89 @@ def recent_jobs(
 
 
 def queue_job(
-    connection: Connection[Any], *, operation: str, cluster: str, payload: Mapping[str, Any]
+    connection: Connection[Any],
+    *,
+    operation: str,
+    cluster: str,
+    payload: Mapping[str, Any],
+    idempotency_key: UUID,
 ) -> Job:
     """Ask for an operation. Say nothing about what happened.
 
-    Three columns, which is exactly what the web role holds `insert` on. The
-    state, the request ID and the creation time are not passed and could not be:
-    they come from column defaults, so the row that comes back states what the
-    database decided rather than what this process asked for.
+    Four columns now, which is exactly what the web role holds `insert` on. The
+    state, the request ID and the creation time are still not passed and could
+    not be: they come from column defaults, so the row that comes back states
+    what the database decided rather than what this process asked for.
+
+    Three outcomes, and the difference between them is the point:
+
+    - the insert succeeds and a job is queued
+    - the key has been seen before, asking for exactly this, and the job already
+      queued is returned unchanged. That is what makes a refresh or a
+      double-click harmless: the second attempt is the first one, not a second
+      operation
+    - the request is refused, either because the cluster is busy or because the
+      key was used for something else
+
+    The comparison that decides between the last two is made in SQL against
+    `payload_hash`, so "the same request" means the same bytes the database
+    hashed - not the same Python object graph, and not a second hashing here
+    that could disagree with the trigger.
     """
 
+    parameters = {
+        "operation": operation,
+        "cluster": cluster,
+        "payload": Jsonb(payload),
+        "key": str(idempotency_key),
+    }
+    try:
+        #
+        # A savepoint, so a refused insert leaves the connection usable. Without
+        # it the failed statement aborts the whole transaction and the read
+        # below - the one that turns a conflict into a useful answer - cannot
+        # run.
+        #
+        with connection.transaction(), connection.cursor(row_factory=class_row(Job)) as cursor:
+            cursor.execute(
+                "insert into job (operation, cluster, payload, idempotency_key) "
+                "values (%(operation)s, %(cluster)s, %(payload)s, %(key)s) "
+                "returning id, request_id, operation, cluster, payload, state, created_at, "
+                "          started_at, finished_at, exit_code, outcome, result, "
+                "          stderr_excerpt, idempotency_key",
+                parameters,
+            )
+            row = cursor.fetchone()
+        if row is None:  # pragma: no cover - insert ... returning yields a row or raises
+            raise psycopg.OperationalError("the insert returned no row")
+        return row
+    except psycopg.errors.UniqueViolation as violation:
+        constraint = violation.diag.constraint_name
+        if constraint == "job_one_active_per_cluster":
+            raise ClusterBusy(cluster) from violation
+        if constraint != "job_idempotency_key":  # pragma: no cover - no other unique index
+            raise
+    #
+    # The key has been used. Whether that is a retry or a collision is decided by
+    # what the earlier row asked for, and the hash is compared the way the
+    # trigger computed it.
+    #
     with connection.cursor(row_factory=class_row(Job)) as cursor:
         cursor.execute(
-            "insert into job (operation, cluster, payload) "
-            "values (%(operation)s, %(cluster)s, %(payload)s) "
-            "returning id, request_id, operation, cluster, payload, state, created_at, "
-            "          started_at, finished_at, exit_code, outcome, result, stderr_excerpt",
-            {
-                "operation": operation,
-                "cluster": cluster,
-                "payload": Jsonb(payload),
-            },
+            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key "
+            "  from job "
+            " where idempotency_key = %(key)s "
+            "   and operation = %(operation)s "
+            "   and cluster = %(cluster)s "
+            "   and payload_hash = sha256(convert_to(%(payload)s::jsonb::text, 'UTF8'))",
+            parameters,
         )
-        row = cursor.fetchone()
-    if row is None:  # pragma: no cover - insert ... returning yields a row or raises
-        raise psycopg.OperationalError("the insert returned no row")
-    return row
+        existing = cursor.fetchone()
+    if existing is None:
+        raise RequestConflict(str(idempotency_key))
+    return existing
 
 
 def account_by_username(connection: Connection[Any], username: str) -> Account | None:

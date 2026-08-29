@@ -166,7 +166,15 @@ cert_deploy_identity:
 status_identity:
   user: "svc-status"
   key: "/root/.ssh/id_ed25519_status"
+
+backup_root: /srv/state-backups
 ```
+
+`backup_root` is where the state backup engine writes one directory per node, and it is what
+`haproxy-list-backups` reads. Only metadata is ever reported from it - archive name, size and
+modification time. The archives themselves hold password hashes and private SSH keys, so the root
+stays root-owned and no command opens one; the helper exists precisely so that an unprivileged
+caller can learn a backup exists without being able to read it.
 
 `status_identity` is the account `haproxy-status` becomes to read a node, and `haproxy-deploy`
 uses it too: a rollout reads the pair before and after every step, and it reads with the identity

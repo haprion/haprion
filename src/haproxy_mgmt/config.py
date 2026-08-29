@@ -48,6 +48,13 @@ class PathPolicy:
     # can hand out without handing out the ability to act.
     #
     status_identity: DeployIdentity | None = None
+    #
+    # Where the backup engine writes each node's state archives, one directory
+    # per node. Optional like the others: it is read by one command, and a
+    # policy every other command rejected until backups were configured would
+    # be worse than one that says what is missing when it is needed.
+    #
+    backup_root: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,6 +238,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             "certificate_root",
             "cert_deploy_identity",
             "status_identity",
+            "backup_root",
         },
         "runtime policy",
     )
@@ -255,6 +263,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
         certificate_root=_optional_root(data, "certificate_root"),
         cert_deploy_identity=_deploy_identity(data, "cert_deploy_identity"),
         status_identity=_deploy_identity(data, "status_identity"),
+        backup_root=_optional_root(data, "backup_root"),
     )
 
 

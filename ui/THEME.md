@@ -25,17 +25,23 @@ supplies dark mode; there is intentionally no system theme.
 
 ## Telling clusters apart
 
-**Nothing marks a cluster except its name**, and that is deliberate. Four
-colour pairs and one set of shapes were tried as a left-edge marker on cluster
-cards and activity rows; each was rejected, and the reason turned out to be the
-same every time. The cluster name is already adjacent in every place the marker
-appeared - as the card heading, and as its own column in Activity - so the
-marker never carried information, only weight. Green, amber, blue and red
-already mean something here, so a marker in colour also has to be defended
-against being read as a status, forever.
+**Each cluster carries a low-chroma tint behind its name**, on cluster cards and
+in the Activity cluster column, from `--accent-0` through `--accent-3`. The
+index comes from `cluster_identity.accent_index`; cluster five repeats cluster
+one. The tint is what lets a reader recognise a cluster without reading, which
+the name can never do.
 
-If a future view genuinely groups rows from several clusters without showing the
-name, add the name. Do not reintroduce a colour.
+Two constraints, both learned the hard way. **Chroma, not hue, is what keeps a
+tint from reading as a status** - every status colour here is vivid, so a muted
+plate does not compete with one even in the same family; never reach for
+`--healthy`, `--warning`, `--critical`, `--info` or `--brand`. And **neighbours
+in the cycle must differ in lightness as well as hue**, because the eye reads
+lightness first; four earlier colour pairs differed in hue alone and could not
+be told apart.
+
+Do not widen the cycle past four without testing it. Hue and lightness together
+stretch to about six before a reader starts looking twice, and a marker that has
+to be studied is not doing its job.
 
 ## Components
 

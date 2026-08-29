@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import relative_age
 from haproxy_ui.db import ClusterHistory
 
@@ -37,6 +38,7 @@ class VersionView:
 @dataclass(frozen=True, slots=True)
 class HistoryClusterView:
     cluster: str
+    accent: int
     configured: bool
     label: str
     tone: Tone
@@ -119,6 +121,7 @@ def _version_view(value: Any, published_hash: str | None) -> VersionView | None:
 def _empty(cluster: str, *, configured: bool) -> HistoryClusterView:
     return HistoryClusterView(
         cluster=cluster,
+        accent=accent_index(cluster),
         configured=configured,
         label="No history yet",
         tone="unknown",
@@ -217,6 +220,7 @@ def _cluster_view(
     )
     return HistoryClusterView(
         cluster=reading.cluster,
+        accent=accent_index(reading.cluster),
         configured=configured,
         label=label,
         tone=tone,

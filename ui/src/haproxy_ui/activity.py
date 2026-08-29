@@ -15,6 +15,7 @@ from haproxy_ui.dashboard import DashboardView, Tone
 @dataclass(frozen=True, slots=True)
 class ActivityEntry:
     cluster: str
+    accent: int
     subject: str
     detail: str
     tone: Tone
@@ -30,6 +31,7 @@ def build_activity(dashboard: DashboardView) -> tuple[ActivityEntry, ...]:
         entries.append(
             ActivityEntry(
                 cluster=cluster.cluster,
+                accent=cluster.accent,
                 subject=cluster.label,
                 detail=cluster.detail,
                 tone=cluster.tone,
@@ -41,6 +43,7 @@ def build_activity(dashboard: DashboardView) -> tuple[ActivityEntry, ...]:
             entries.append(
                 ActivityEntry(
                     cluster=cluster.cluster,
+                    accent=cluster.accent,
                     subject=node.name,
                     detail=f"{node.label} · {node.keepalived} · {node.version}",
                     tone=node.tone,

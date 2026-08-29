@@ -25,18 +25,17 @@ supplies dark mode; there is intentionally no system theme.
 
 ## Telling clusters apart
 
-A cluster's marker is the shape of the left rule on its card - solid, dashed,
-double or dotted - drawn in the single neutral `--cluster-mark`. It is chosen
-deterministically from the cluster ID by `cluster_identity.accent_index` and
-carries no operational meaning.
+**Nothing marks a cluster except its name**, and that is deliberate. Four
+colour pairs and one set of shapes were tried as a left-edge marker on cluster
+cards and activity rows; each was rejected, and the reason turned out to be the
+same every time. The cluster name is already adjacent in every place the marker
+appeared - as the card heading, and as its own column in Activity - so the
+marker never carried information, only weight. Green, amber, blue and red
+already mean something here, so a marker in colour also has to be defended
+against being read as a status, forever.
 
-**Do not give it a colour.** Green, amber, blue and red already mean something
-here, and any additional hue has to be defended against them forever; four
-attempts at a colour pair each ended up either too alike to tell apart or
-reading as a status. A shape says the same thing, survives the dark theme
-unchanged, and still works for a reader who cannot separate the hues. Widening
-`ACCENT_COUNT` means adding a `.cluster-accent-<n>::before` shape, which a test
-checks.
+If a future view genuinely groups rows from several clusters without showing the
+name, add the name. Do not reintroduce a colour.
 
 ## Components
 

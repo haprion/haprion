@@ -10,7 +10,7 @@
 
 <section class="activity-list" aria-label="Latest observations">
 {% for entry in activity %}
-  <article class="activity-entry cluster-accent-{{ entry.accent }}">
+  <article class="activity-entry">
     <span class="status-orb status-{{ entry.tone }}" aria-hidden="true"></span>
     <div class="activity-copy"><span class="activity-cluster">{{ entry.cluster }}</span><strong>{{ entry.subject }}</strong><small>{{ entry.detail }}</small></div>
     {% if entry.observed_iso %}<time datetime="{{ entry.observed_iso }}" title="{{ entry.observed_iso }}">{{ entry.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}

@@ -34,7 +34,6 @@
   --info-soft: #e9f3fd;
   --unknown: #778396;
   --unknown-soft: #eef1f5;
-  --cluster-mark: #333b45;
   --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 4px rgb(15 23 42 / 0.03);
   --shadow-menu: 0 14px 40px rgb(15 23 42 / 0.14);
   --radius: 8px;
@@ -67,7 +66,6 @@
   --info-soft: #183c5d;
   --unknown: #9aa8ba;
   --unknown-soft: #2a394b;
-  --cluster-mark: #c8d0da;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.25);
   --shadow-menu: 0 16px 48px rgb(0 0 0 / 0.4);
   --focus: 0 0 0 3px rgb(90 196 106 / 0.28);
@@ -166,13 +164,13 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 
 .activity-note { margin: -10px 0 18px; color: var(--text-secondary); font-size: 14px; }
 .activity-list { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
-.activity-entry { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 14px 18px 14px 19px; border-bottom: 1px solid var(--line); }
+.activity-entry { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 7px 18px; border-bottom: 1px solid var(--line); }
 .activity-entry:last-child { border-bottom: 0; }
 .activity-entry .status-orb { width: 11px; height: 11px; margin: 0; }
 .activity-copy { display: grid; grid-template-columns: 120px minmax(150px, 0.5fr) minmax(200px, 1fr); gap: 16px; align-items: baseline; }
-.activity-copy strong { color: var(--text-primary); font-weight: var(--font-weight-regular); }
-.activity-copy small, .activity-cluster { color: var(--text-secondary); font-size: 14px; }
-.activity-entry time { color: var(--text-secondary); font-size: 14px; white-space: nowrap; }
+.activity-copy strong { color: var(--text-primary); font-size: 13px; font-weight: var(--font-weight-regular); }
+.activity-copy small, .activity-cluster { color: var(--text-secondary); font-size: 13px; }
+.activity-entry time { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
 
 .header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .icon-button {
@@ -277,26 +275,8 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }
 .section-heading h2 { margin: 0; color: var(--text-strong); font-size: 18px; font-weight: 700; letter-spacing: -0.015em; }
 .cluster-list { display: grid; gap: 14px; }
-.cluster-card { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow-sm); }
+.cluster-card { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow-sm); }
 
-/* The cluster marker distinguishes clusters by the SHAPE of the left rule, not
-   by its colour. One neutral ink is used for every cluster, so the marker can
-   never be read as a status and cannot collide with the green/amber/blue/red
-   palette - which is what four attempts at a colour pair kept running into. It
-   also survives a dark theme and colour blindness unchanged. */
-.cluster-card::before,
-.activity-entry::before {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 4px;
-  background: var(--cluster-mark);
-  content: "";
-}
-.cluster-accent-1::before { background: repeating-linear-gradient(to bottom, var(--cluster-mark) 0 15px, transparent 15px 25px); }
-.cluster-accent-2::before { background: linear-gradient(to right, var(--cluster-mark) 0 1px, transparent 1px 3px, var(--cluster-mark) 3px 4px); }
-.cluster-accent-3::before { background: repeating-linear-gradient(to bottom, var(--cluster-mark) 0 4px, transparent 4px 11px); }
 .cluster-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
 .cluster-identity { display: flex; align-items: center; gap: 13px; min-width: 0; }
 .status-orb { width: 11px; height: 11px; flex: 0 0 auto; border-radius: 50%; }
@@ -349,9 +329,11 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .version-table th:nth-child(1), .version-table td:nth-child(1) { width: 168px; }
 .version-table th:nth-child(2), .version-table td:nth-child(2) { width: 168px; }
 .version-table th:nth-child(4), .version-table td:nth-child(4) { width: 150px; }
-.version-table td { vertical-align: top; }
+.version-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
+.version-table th { padding-top: 7px; padding-bottom: 7px; }
 .published-badge { display: inline-flex; align-items: center; min-height: 21px; padding: 2px 8px; border-radius: 999px; color: var(--text-primary); background: var(--unknown-soft); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
 .version-table td:first-child strong { display: inline-block; margin-right: 8px; font-variant-numeric: tabular-nums; }
+.history-cluster-card .cluster-header { padding: 11px 20px; }
 .version-published td { background: var(--panel-soft); }
 .version-comment { display: block; max-width: 460px; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .version-table code { color: var(--muted); font-size: 11px; }

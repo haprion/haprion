@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import relative_age
 from haproxy_ui.db import ClusterInventory
 
@@ -33,7 +32,6 @@ class ProxyView:
 @dataclass(frozen=True, slots=True)
 class ProxyClusterView:
     cluster: str
-    accent: int
     configured: bool
     label: str
     tone: Tone
@@ -99,7 +97,6 @@ def _proxy_view(value: Any) -> ProxyView | None:
 def _empty(cluster: str, *, configured: bool) -> ProxyClusterView:
     return ProxyClusterView(
         cluster=cluster,
-        accent=accent_index(cluster),
         configured=configured,
         label="No inventory yet",
         tone="unknown",
@@ -158,7 +155,6 @@ def _cluster_view(
 
     return ProxyClusterView(
         cluster=reading.cluster,
-        accent=accent_index(reading.cluster),
         configured=configured,
         label=label,
         tone=tone,

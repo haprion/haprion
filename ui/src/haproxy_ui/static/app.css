@@ -412,6 +412,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .archive-details[open] > summary { color: var(--text-strong); }
 
 /* The schedule, stated once: one timer takes every node's backup. */
+.page-lede { max-width: 720px; margin: 3px 0 0; color: var(--muted); font-size: 12px; }
 .schedule-strip { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 10px 16px; border-radius: var(--radius); background: var(--panel); color: var(--text-primary); font-size: 12px; }
 .schedule-strip strong { color: var(--text-strong); }
 .schedule-facts { color: var(--muted); }

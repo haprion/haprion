@@ -292,8 +292,14 @@ class SigningIn(LoginTestCase):
     def test_static_design_assets_are_local_and_served(self) -> None:
         client = self.client()
         page = client.get("/login")
-        self.assertIn('href="https://manager.example.com/static/app.css"', page.text)
-        self.assertIn('src="https://manager.example.com/static/theme.js"', page.text)
+        #
+        # Local, and versioned. Without the token a stylesheet change reaches a
+        # reader only when a cache they have no reason to suspect expires - and
+        # it arrives selectively, new markup against old CSS, which reads as a
+        # layout bug in the new page.
+        #
+        self.assertIn('href="https://manager.example.com/static/app.css?v=', page.text)
+        self.assertIn('src="https://manager.example.com/static/theme.js?v=', page.text)
         self.assertNotIn("cdn", page.text.lower())
         stylesheet = client.get("/static/app.css")
         script = client.get("/static/theme.js")

@@ -257,6 +257,13 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .status-unknown { background-color: var(--unknown); box-shadow: 0 0 0 3px var(--unknown-soft); }
 
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 29px; }
+/* A page with two cards was still laying them out in a four-column grid, so
+   each card got a quarter of the width and ellipsed both of its own labels. A
+   card carries a number, a label and a qualifier; if it cannot show all three
+   it is not a smaller card, it is a broken one. These two size to their text
+   instead, with an upper bound so a stat does not stretch across half a
+   screen. */
+.certificate-summary, .backup-summary { grid-template-columns: repeat(2, minmax(320px, 480px)); }
 .metric-card {
   display: flex;
   align-items: center;
@@ -407,8 +414,15 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .archive-table th:nth-child(4), .archive-table td:nth-child(4) { width: 12%; }
 .backup-node-table th:nth-child(5), .backup-node-table td:nth-child(5),
 .archive-table th:nth-child(5), .archive-table td:nth-child(5) { width: 12%; }
-.archive-details > summary { padding: 9px 20px; border-top: 1px solid var(--line); color: var(--text-primary); font-size: 12px; cursor: pointer; }
+/* The native disclosure triangle is drawn by the platform and matches nothing
+   else here, so it is replaced by a chevron built from the same borders as the
+   rest of the interface. */
+.archive-details > summary { display: flex; align-items: center; gap: 9px; padding: 14px 20px 13px; border-top: 1px solid var(--line); color: var(--text-primary); font-size: 12px; list-style: none; cursor: pointer; }
+.archive-details > summary::-webkit-details-marker { display: none; }
+.archive-details > summary::before { width: 6px; height: 6px; margin-left: 1px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); content: ""; transform: rotate(-45deg); }
+.archive-details[open] > summary::before { margin-top: -3px; transform: rotate(45deg); }
 .archive-details > summary:hover { color: var(--text-strong); }
+.archive-details > summary:hover::before { border-color: var(--text-strong); }
 .archive-details[open] > summary { color: var(--text-strong); }
 
 /* The schedule, stated once: one timer takes every node's backup. */

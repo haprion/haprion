@@ -18,6 +18,7 @@ The rules that shape every handler below:
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -45,6 +46,42 @@ from haproxy_ui.config import Config
 from haproxy_ui.db import AuthenticatedSession
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+STATIC_DIRECTORY = Path(__file__).parent / "static"
+
+
+def asset_token(directory: Path = STATIC_DIRECTORY) -> str:
+    """A short token that changes whenever a local asset does.
+
+    Without it a stylesheet change is invisible until every reader empties a
+    cache they have no reason to suspect - and worse, it is invisible
+    *selectively*: the new markup arrives with the old CSS, which looks like a
+    layout bug in the new page rather than like a stale file. That happened
+    once; this is the fix that keeps it from happening again.
+
+    Computed from size and modification time rather than from file contents:
+    a release is a fresh directory of files, so the two move together, and this
+    reads no bytes on a path that runs at startup.
+    """
+
+    digest = hashlib.sha256()
+    try:
+        for path in sorted(directory.iterdir()):
+            if path.is_file():
+                stat = path.stat()
+                digest.update(f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}".encode())
+    except OSError:
+        # A missing static directory is a deployment fault that the mount will
+        # report; it must not stop a page from rendering its own diagnosis.
+        return "0"
+    return digest.hexdigest()[:12]
+
+
+#
+# Resolved once, at import. The files cannot change under a running release -
+# a release directory is read-only and a new one is a new process.
+#
+TEMPLATES.env.globals["asset_token"] = asset_token()
 
 #
 # The theme is rendered into the document by the server, from a cookie the

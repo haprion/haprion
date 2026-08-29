@@ -11,7 +11,15 @@
   <meta name="color-scheme" content="light dark">
   <title>{% block title %}HAProxy Manager{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
-  <script src="{{ url_for('static', path='/theme.js') }}" defer></script>
+  {#
+    Not deferred, and that is the point. A deferred script runs after the
+    document is parsed, so every page load painted once in the light palette
+    before the stored theme was applied - a flash on every navigation, since
+    each tab is a full page load. Running it here costs one local file read
+    before the first paint, and the toggle it also wires up is bound again on
+    DOMContentLoaded, once the button exists.
+  #}
+  <script src="{{ url_for('static', path='/theme.js') }}"></script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
   {% block chrome %}{% endblock %}

@@ -271,6 +271,11 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(schedule_view.label, "Scheduled")
         self.assertEqual(schedule_view.calendar, "*-*-* 05:00:00")
         self.assertIn("5h ago", schedule_view.last_run)
+        #
+        # A run that has not happened yet carries no age. `relative_age` clamps
+        # the future to "Just now", which would say the next run just did.
+        #
+        self.assertNotIn("(", schedule_view.next_run)
 
     def test_an_installation_without_a_timer_shows_no_schedule(self) -> None:
         self.assertIsNone(overview(reading()).schedule)

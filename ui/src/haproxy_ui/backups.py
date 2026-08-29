@@ -265,13 +265,25 @@ def _node_view(value: Any, *, now: datetime) -> tuple[NodeBackupsView, tuple[Arc
     )
 
 
-def _clock(value: Any, now: datetime) -> str:
-    """A scheduled moment as a date and an age, on one line and in UTC."""
+def _stamp(value: Any) -> str:
+    """A scheduled moment, in UTC like every other time in the interface."""
+
+    moment = _moment(value)
+    return "—" if moment is None else moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M")
+
+
+def _elapsed(value: Any, now: datetime) -> str:
+    """The same moment with how long ago it was, for a run that has happened.
+
+    Only ever used backwards. `relative_age` never looks into the future - it
+    clamps ahead of now to "Just now" - so a next run rendered through it would
+    claim the thing that has not happened yet just did.
+    """
 
     moment = _moment(value)
     if moment is None:
         return "—"
-    return f"{moment.astimezone(UTC).strftime('%Y-%m-%d %H:%M')} ({relative_age(moment, now)})"
+    return f"{_stamp(value)} ({relative_age(moment, now)})"
 
 
 def _schedule_view(value: Any, *, now: datetime) -> ScheduleView | None:
@@ -306,13 +318,13 @@ def _schedule_view(value: Any, *, now: datetime) -> ScheduleView | None:
     else:
         label, tone = "Scheduled", "healthy"
 
-    next_run = _clock(schedule.get("next_run"), now)
+    next_run = _stamp(schedule.get("next_run"))
     return ScheduleView(
         unit=unit,
         label=label,
         tone=tone,
         calendar=_text(schedule.get("calendar"), "no calendar"),
-        last_run=_clock(schedule.get("last_run"), now),
+        last_run=_elapsed(schedule.get("last_run"), now),
         #
         # A disabled timer still reports the elapse it would have had. Showing
         # it would promise a run that is not going to happen.

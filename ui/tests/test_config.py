@@ -53,6 +53,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.database.name, "haproxy_ui")
         self.assertEqual(config.listen.port, 8080)
         self.assertFalse(config.management_writes)
+        self.assertFalse(config.demo_fixture)
 
     def test_the_connection_string_names_no_user_and_no_password(self) -> None:
         config = self.load(VALID)
@@ -66,6 +67,14 @@ class ConfigTests(unittest.TestCase):
     def test_management_writes_defaults_to_off(self) -> None:
         config = self.load(VALID.replace("management_writes = false\n", ""))
         self.assertFalse(config.management_writes)
+
+    def test_demo_fixture_is_explicit_and_cannot_mix_with_real_management(self) -> None:
+        config = self.load("demo_fixture = true\n" + VALID)
+        self.assertTrue(config.demo_fixture)
+        with self.assertRaisesRegex(ConfigError, "management_writes"):
+            self.load("demo_fixture = true\n" + VALID.replace("false", "true", 1))
+        with self.assertRaisesRegex(ConfigError, "clusters"):
+            self.load('demo_fixture = true\nclusters = ["alpha"]\n' + VALID)
 
     # ------------------------------------------------------------------ refusing
 

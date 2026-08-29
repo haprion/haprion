@@ -45,6 +45,7 @@ def configuration(*, cookie_secure: bool = True, max_failures: int = 3) -> Confi
         database=Database(name="haproxy_ui_test", socket_directory="/var/run/postgresql"),
         listen=Listen(host="127.0.0.1", port=8080),
         management_writes=False,
+        demo_fixture=False,
         session=SessionPolicy(
             inactivity_minutes=600, absolute_hours=168, cookie_secure=cookie_secure
         ),
@@ -208,6 +209,15 @@ class SigningIn(LoginTestCase):
         self.assertIn("Proxies", page.text)
         self.assertIn('href="/proxies" aria-current="page"', page.text)
         self.assertIn("No clusters configured", page.text)
+
+    def test_the_explicit_demo_fixture_is_visibly_labelled(self) -> None:
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        dashboard = client.get("/")
+        proxies = client.get("/proxies")
+        self.assertIn("Synthetic dev data", dashboard.text)
+        self.assertIn("public-web", proxies.text)
+        self.assertIn("Unmanaged", proxies.text)
 
     def test_static_design_assets_are_local_and_served(self) -> None:
         client = self.client()

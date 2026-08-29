@@ -5,10 +5,9 @@
   <div>
     <h1>Dashboard</h1>
   </div>
-  <span class="mode-badge">
-    <span class="status-dot status-{{ 'warning' if management_writes else 'healthy' }}"></span>
-    {{ "Management enabled" if management_writes else "Read-only mode" }}
-  </span>
+  <div class="heading-badges"><span class="mode-badge">
+    <span class="status-dot status-{{ 'warning' if management_writes else 'healthy' }}"></span>{{ "Management enabled" if management_writes else "Read-only mode" }}
+  </span>{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% endif %}</div>
 </section>
 
 <section class="metric-grid" aria-label="Environment summary">

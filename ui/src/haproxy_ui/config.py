@@ -24,7 +24,16 @@ DEFAULT_CONFIG_PATH = Path("/apps/haproxy-manager/config/ui.toml")
 MAX_CONFIG_BYTES = 1024 * 1024
 
 ALLOWED_KEYS = frozenset(
-    {"database", "listen", "management_writes", "session", "throttle", "clusters", "poller"}
+    {
+        "database",
+        "listen",
+        "management_writes",
+        "session",
+        "throttle",
+        "clusters",
+        "poller",
+        "demo_fixture",
+    }
 )
 ALLOWED_DATABASE_KEYS = frozenset({"name", "socket_directory"})
 ALLOWED_LISTEN_KEYS = frozenset({"host", "port"})
@@ -138,6 +147,9 @@ class Config:
     # a read-only interface, which is not a rollback that should require a build.
     #
     management_writes: bool
+    # A deliberate development-only display source. It is never a poller input,
+    # and can only coexist with the read-only, no-real-cluster configuration.
+    demo_fixture: bool
     session: Session
     throttle: Throttle
     #
@@ -253,6 +265,13 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
     writes = data.get("management_writes", False)
     if not isinstance(writes, bool):
         raise ConfigError("management_writes must be true or false")
+    demo_fixture = data.get("demo_fixture", False)
+    if not isinstance(demo_fixture, bool):
+        raise ConfigError("demo_fixture must be true or false")
+    if demo_fixture and writes:
+        raise ConfigError("demo_fixture requires management_writes = false")
+    if demo_fixture and clusters:
+        raise ConfigError("demo_fixture requires clusters = []")
 
     return Config(
         database=Database(
@@ -261,6 +280,7 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
         ),
         listen=Listen(host=_string(listen, "host", "listen"), port=port),
         management_writes=writes,
+        demo_fixture=demo_fixture,
         session=Session(
             inactivity_minutes=_bounded_int(
                 session, "inactivity_minutes", "session", low=1, high=1440, default=600

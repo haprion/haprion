@@ -14,6 +14,12 @@
 # deploy, back to a read-only interface.
 management_writes = false
 
+# Only for visual UI work before a safe non-production cluster fixture exists.
+# It supplies clearly labelled synthetic Dashboard/Proxies data in the web
+# process; it never starts a poll, reaches a cluster, or writes the database.
+# It may only be enabled with management_writes=false and clusters=[].
+# demo_fixture = true
+
 # Which clusters the poller asks about. Named here rather than discovered,
 # because the application accounts cannot read the engine's configuration - that
 # tree is private, and a poller reaching into it directly is what the privilege

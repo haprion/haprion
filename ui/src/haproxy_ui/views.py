@@ -19,6 +19,7 @@ The rules that shape every handler below:
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -26,7 +27,7 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from haproxy_ui import auth, dashboard, db, proxies
+from haproxy_ui import auth, dashboard, db, demo, proxies
 from haproxy_ui.config import Config
 from haproxy_ui.db import AuthenticatedSession
 
@@ -139,10 +140,16 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        with request.app.state.pool.connection() as connection:
-            status_rows = db.cluster_statuses(connection)
+        clusters: tuple[str, ...]
+        status_rows: Iterable[db.ClusterStatus]
+        if config.demo_fixture:
+            clusters, status_rows = demo.CLUSTERS, demo.status_rows()
+        else:
+            clusters = config.clusters
+            with request.app.state.pool.connection() as connection:
+                status_rows = db.cluster_statuses(connection)
         dashboard_view = dashboard.build_dashboard(
-            config.clusters,
+            clusters,
             status_rows,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
         )
@@ -156,6 +163,7 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "dashboard": dashboard_view,
                 "section": "dashboard",
+                "demo_fixture": config.demo_fixture,
             },
         )
 
@@ -165,10 +173,16 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        with request.app.state.pool.connection() as connection:
-            inventory_rows = db.cluster_inventories(connection)
+        clusters: tuple[str, ...]
+        inventory_rows: Iterable[db.ClusterInventory]
+        if config.demo_fixture:
+            clusters, inventory_rows = demo.CLUSTERS, demo.inventory_rows()
+        else:
+            clusters = config.clusters
+            with request.app.state.pool.connection() as connection:
+                inventory_rows = db.cluster_inventories(connection)
         overview = proxies.build_proxy_overview(
-            config.clusters,
+            clusters,
             inventory_rows,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
         )
@@ -181,6 +195,7 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "proxies": overview,
                 "section": "proxies",
+                "demo_fixture": config.demo_fixture,
             },
         )
 

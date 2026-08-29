@@ -227,8 +227,10 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .menu-button:hover { background: var(--panel-soft); color: var(--critical); }
 
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
+.heading-badges { display: inline-flex; align-items: center; gap: 8px; }
 .page-heading h1 { margin: 0; color: var(--text-strong); font-size: clamp(18px, 1.7vw, 20px); font-weight: 700; letter-spacing: -0.02em; }
 .mode-badge { display: inline-flex; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted-strong); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.demo-badge { color: var(--info); background: var(--info-soft); }
 
 .status-dot { display: inline-block; width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--unknown); box-shadow: 0 0 0 3px var(--unknown-soft); }
 .status-healthy { background-color: var(--healthy); box-shadow: 0 0 0 3px var(--healthy-soft); }

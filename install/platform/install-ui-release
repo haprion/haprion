@@ -176,7 +176,7 @@ step "Proving the release before it becomes current"
 # the only way to know is to try it as that user.
 #
 sudo -u "$WEB_USER" "${release}/venv/bin/python" -c \
-    'import haproxy_ui.app, haproxy_mgmt.cluster_status; print("imports ok")' \
+    'import haproxy_ui.app, haproxy_mgmt.cluster_status, haproxy_mgmt.inventory; print("imports ok")' \
     || die "the release cannot be imported by ${WEB_USER}"
 log "  ok       ${WEB_USER} can import the release"
 

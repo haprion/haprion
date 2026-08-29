@@ -30,6 +30,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from haproxy_mgmt.cli.inventory import run_inventory_helper
 from haproxy_mgmt.cli.status import run_status_helper
 from haproxy_mgmt.envelope import new_request_id
 
@@ -61,7 +62,12 @@ def _excerpt(text: str) -> str:
     return text if len(text) <= MAX_ERROR_BYTES else text[:MAX_ERROR_BYTES] + " […]"
 
 
-def poll_cluster(cluster: str, run_helper: RunHelper = run_status_helper) -> dict[str, Any]:
+def poll_cluster(
+    cluster: str,
+    run_helper: RunHelper = run_status_helper,
+    *,
+    operation: str = "status",
+) -> dict[str, Any]:
     """Ask one cluster, and turn every way that can go wrong into a row.
 
     Never raises. A poller that dies on one unreachable cluster stops reporting
@@ -80,7 +86,7 @@ def poll_cluster(cluster: str, run_helper: RunHelper = run_status_helper) -> dic
         return {
             "outcome": "unavailable",
             "result": {},
-            "poll_error": f"could not run the status helper: {exc}",
+            "poll_error": f"could not run the {operation} helper: {exc}",
         }
 
     try:
@@ -95,15 +101,18 @@ def poll_cluster(cluster: str, run_helper: RunHelper = run_status_helper) -> dic
             ),
         }
 
-    if not isinstance(envelope, dict) or "outcome" not in envelope:
+    if not isinstance(envelope, dict) or envelope.get("operation") != operation:
         return {
             "outcome": "unavailable",
             "result": {},
-            "poll_error": "the helper returned JSON that is not a result envelope",
+            "poll_error": f"the helper returned JSON that is not a result envelope for {operation}",
         }
 
     outcome = envelope.get("outcome")
-    if outcome not in ("done", "partial", "failed"):
+    expected_outcomes = (
+        ("done", "partial", "failed") if operation == "status" else ("done", "failed")
+    )
+    if outcome not in expected_outcomes:
         return {
             "outcome": "unavailable",
             "result": {},
@@ -119,7 +128,12 @@ def poll_cluster(cluster: str, run_helper: RunHelper = run_status_helper) -> dic
     }
 
 
-def poll_once(pool: Any, config: Config, run_helper: RunHelper = run_status_helper) -> int:
+def poll_once(
+    pool: Any,
+    config: Config,
+    run_helper: RunHelper = run_status_helper,
+    inventory_helper: RunHelper = run_inventory_helper,
+) -> int:
     """One pass over every configured cluster. Returns how many answered well.
 
     Each cluster is written in its own transaction. A pass that fails halfway
@@ -141,6 +155,18 @@ def poll_once(pool: Any, config: Config, run_helper: RunHelper = run_status_help
                 poll_error=reading.get("poll_error"),
             )
             connection.commit()
+        inventory = poll_cluster(cluster, inventory_helper, operation="inventory")
+        with pool.connection() as connection:
+            db.record_cluster_inventory(
+                connection,
+                cluster=cluster,
+                outcome=inventory["outcome"],
+                result=inventory["result"],
+                warnings=inventory.get("warnings"),
+                error=inventory.get("error"),
+                poll_error=inventory.get("poll_error"),
+            )
+            connection.commit()
         if reading["outcome"] == "done":
             healthy += 1
         else:
@@ -149,6 +175,13 @@ def poll_once(pool: Any, config: Config, run_helper: RunHelper = run_status_help
                 cluster,
                 reading["outcome"],
                 f" ({reading['poll_error']})" if reading.get("poll_error") else "",
+            )
+        if inventory["outcome"] != "done":
+            logger.warning(
+                "cluster %s inventory: %s%s",
+                cluster,
+                inventory["outcome"],
+                f" ({inventory['poll_error']})" if inventory.get("poll_error") else "",
             )
     return healthy
 

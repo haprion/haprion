@@ -1,4 +1,4 @@
-# Lets the interface's poller read cluster status, and nothing else.
+# Lets the interface's poller read published cluster metadata, and nothing else.
 #
 # The existing rules for this helper are granted to %sudo - the humans - and the
 # comments in them say why an application identity must not ride along on an
@@ -11,13 +11,15 @@
 # an exact rule possible - PRIVILEGE.md forbids wildcards in argument matching,
 # and without the no-argument form a rule naming a cluster would need one.
 #
-# The helper writes nothing, takes no lock, and reads the target from the
-# published tree rather than from the caller. So the poller cannot choose what
-# the interface is told is current, cannot block a deploy, and cannot reach a
-# node with anything but this one question.
+# Both helpers write nothing and take no lock. The status helper reaches nodes;
+# the inventory helper reads the exact commit named by the published RELEASE
+# stamp rather than a work tree. So the poller cannot choose what the interface
+# is told is current, cannot show an unpublished draft as live, and cannot
+# block a deploy.
 #
 # NOPASSWD because a service has no terminal to type a password at.
 #
 # Installed 0440 root:root, and accepted by visudo before it is put in place.
 
 POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-status-helper ""
+POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper ""

@@ -64,7 +64,7 @@ SystemCallArchitectures=native
 # NoNewPrivileges must be off because this service's whole purpose is to run one
 # privileged helper through sudo, and sudo is setuid: with the flag on, the exec
 # fails and the poller can never read a node's status. It is the narrowest
-# possible use of that - one sudoers rule, one helper, no arguments.
+# possible use of that - two exact sudoers rules, no arguments.
 NoNewPrivileges=no
 # sudo needs to change uid, so the bounding set cannot be empty. Nothing wider
 # is granted: the helper it starts is what holds root, not this process.

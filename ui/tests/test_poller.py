@@ -34,6 +34,18 @@ def envelope(outcome: str = "done", **extra: Any) -> str:
     return json.dumps(document)
 
 
+def inventory_envelope(outcome: str = "done", **extra: Any) -> str:
+    document: dict[str, Any] = {
+        "schema_version": 1,
+        "operation": "inventory",
+        "outcome": outcome,
+        "cluster": "alpha",
+        "result": {"proxies": []},
+    }
+    document.update(extra)
+    return json.dumps(document)
+
+
 class GoodAnswers(unittest.TestCase):
     def test_a_healthy_cluster_is_recorded_with_its_result(self) -> None:
         reading = poller.poll_cluster("alpha", lambda *_: completed(envelope()))
@@ -56,6 +68,16 @@ class GoodAnswers(unittest.TestCase):
         payload = envelope("partial", warnings=[{"code": "vip_unknown"}], error=None)
         reading = poller.poll_cluster("alpha", lambda *_: completed(payload))
         self.assertEqual(reading["warnings"], [{"code": "vip_unknown"}])
+
+    def test_inventory_accepts_only_its_own_done_or_failed_outcomes(self) -> None:
+        reading = poller.poll_cluster(
+            "alpha", lambda *_: completed(inventory_envelope()), operation="inventory"
+        )
+        self.assertEqual(reading["outcome"], "done")
+        wrong = poller.poll_cluster(
+            "alpha", lambda *_: completed(envelope()), operation="inventory"
+        )
+        self.assertEqual(wrong["outcome"], "unavailable")
 
 
 class BadAnswers(unittest.TestCase):
@@ -128,6 +150,11 @@ class Passes(unittest.TestCase):
                 raise OSError("unreachable")
             return completed(envelope())
 
+        def inventory_helper(cluster: str, _request: str) -> Any:
+            if cluster == "beta":
+                return completed(inventory_envelope("failed"))
+            return completed(inventory_envelope())
+
         from unittest import mock
 
         from haproxy_ui.config import Config, Database, Listen, Poller, Throttle
@@ -142,11 +169,24 @@ class Passes(unittest.TestCase):
             clusters=("alpha", "beta", "gamma"),
             poller=Poller(interval_seconds=60),
         )
-        with mock.patch("haproxy_ui.db.record_cluster_status", side_effect=record):
-            healthy = poller.poll_once(Pool(), config, helper)
+        with (
+            mock.patch("haproxy_ui.db.record_cluster_status", side_effect=record),
+            mock.patch("haproxy_ui.db.record_cluster_inventory", side_effect=record),
+        ):
+            healthy = poller.poll_once(Pool(), config, helper, inventory_helper)
 
         self.assertEqual(healthy, 2)
-        self.assertEqual(written, [("alpha", "done"), ("beta", "unavailable"), ("gamma", "done")])
+        self.assertEqual(
+            written,
+            [
+                ("alpha", "done"),
+                ("alpha", "done"),
+                ("beta", "unavailable"),
+                ("beta", "failed"),
+                ("gamma", "done"),
+                ("gamma", "done"),
+            ],
+        )
 
 
 if __name__ == "__main__":

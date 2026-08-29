@@ -101,22 +101,29 @@ done
 # which is precisely how a poller that has stopped working looks like one that
 # is fine.
 #
-step "Proving the poller reached a cluster"
-observed=""
+step "Proving the poller cached status and inventory"
+observed_status=""
+observed_inventory=""
 for _ in $(seq 30); do
-    observed="$(sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qtAX -c \
+    observed_status="$(sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qtAX -c \
         "select count(*) from cluster_status where observed_at > '${started_at}'" \
         2>/dev/null || echo 0)"
-    [[ "$observed" -gt 0 ]] && break
+    observed_inventory="$(sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qtAX -c \
+        "select count(*) from cluster_inventory where observed_at > '${started_at}'" \
+        2>/dev/null || echo 0)"
+    [[ "$observed_status" -gt 0 && "$observed_inventory" -gt 0 ]] && break
     sleep 1
 done
-[[ "$observed" -gt 0 ]] || {
+[[ "$observed_status" -gt 0 && "$observed_inventory" -gt 0 ]] || {
     journalctl -u "${POLLER_USER}.service" --no-pager --lines=20 || true
-    die "the poller wrote no fresh status row within 30 seconds of being restarted"
+    die "the poller wrote no fresh status and inventory rows within 30 seconds of being restarted"
 }
 sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qAX -c \
     "select cluster, outcome, coalesce(poll_error, '-') as poll_error, observed_at
        from cluster_status order by cluster" | sed 's/^/  /'
+sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qAX -c \
+    "select cluster, outcome, coalesce(poll_error, '-') as poll_error, observed_at
+       from cluster_inventory order by cluster" | sed 's/^/  /'
 
 step "What each identity must not be able to do"
 failed=0
@@ -138,12 +145,19 @@ refuse "$WEB_USER" "cannot run the status helper" \
     sudo -n /opt/haproxy-mgmt/current/bin/haproxy-status-helper
 refuse "$WORKER_USER" "cannot run the status helper" \
     sudo -n /opt/haproxy-mgmt/current/bin/haproxy-status-helper
+refuse "$WEB_USER" "cannot run the inventory helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper
+refuse "$WORKER_USER" "cannot run the inventory helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-inventory-helper
 refuse "$POLLER_USER" "cannot write a job row" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
     -c "insert into job (operation, cluster, payload) values ('deploy', 'alpha', '{}')"
 refuse "$WEB_USER" "cannot write the status cache" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
     -c "update cluster_status set outcome = 'done'"
+refuse "$WEB_USER" "cannot write the inventory cache" \
+    psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
+    -c "update cluster_inventory set outcome = 'done'"
 [[ $failed -eq 0 ]] || die "an identity can do something it must not"
 
 echo

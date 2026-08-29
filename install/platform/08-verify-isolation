@@ -107,8 +107,9 @@ done
 step "Development holds no sudo rule"
 #
 # Asked with -n so a rule that would merely prompt counts as absent. The
-# development platform deliberately gets no rule for the status helper: it has
-# no business reaching production's nodes, and the phase 4 gate is exactly that.
+# development platform deliberately gets no metadata-helper rule: it has no
+# business reaching production's nodes or reading production inventory, and the
+# phase 4 gate is exactly that.
 #
 for user in "${dev_users[@]}"; do
     refuse "$user" "has no sudo rule at all" sudo -n -l

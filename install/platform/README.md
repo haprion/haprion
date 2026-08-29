@@ -226,16 +226,16 @@ session cookies.
 
 ## Step 7 — the worker and the poller
 
-`./07-platform-services` installs both as their own accounts, plus the one
-sudoers rule the poller needs. The rule is validated with `visudo -cqf` in a
+`./07-platform-services` installs both as their own accounts, plus the two
+exact read-only sudoers rules the poller needs. The rules are validated with `visudo -cqf` in a
 temporary file **before** it is installed: a sudoers file that does not parse
 takes sudo down for everyone on the machine, including whoever would fix it.
 
-The step then waits for the poller to actually write a status row rather than
+The step then waits for the poller to actually write status and inventory rows rather than
 treating an active unit as proof — a service that has started is not a service
 that has done its job once. It finishes by asking, as the real accounts, that
-the web and worker identities cannot run the status helper, that the poller
-cannot write a job, and that the web role cannot write the status cache.
+the web and worker identities cannot run either metadata helper, that the
+poller cannot write a job, and that the web role cannot write either cache.
 
 The worker runs with management writes off and claims nothing. That is the phase
 4 state and the state a rollback returns to, so it has to be a state that runs.

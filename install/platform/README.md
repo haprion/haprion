@@ -150,6 +150,12 @@ cannot import its own dependencies, must not be what a restart picks up. The
 symlink is then written beside and renamed over, so a service restarting during
 the switch finds one release or the other and never nothing.
 
+**An existing web service is always restarted and then health-checked by the
+release installer.** A running process has already resolved `current` to its
+old interpreter, so merely switching the symlink cannot update the UI. On the
+first installation the unit does not exist yet; the installer names that as
+pending and Step 4 creates, starts and health-checks it instead.
+
 Rolling back is pointing `current` at the previous release and restarting. The
 platform is isolated from the command line, so it never touches HAProxy.
 

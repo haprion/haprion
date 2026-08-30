@@ -12,6 +12,7 @@ import grp
 import io
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -22,7 +23,7 @@ import yaml
 from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli.publish_helper import main
 from haproxy_mgmt.cluster_lock import hold
-from haproxy_mgmt.version_history import request_id_of
+from haproxy_mgmt.version_history import count_versions, request_id_of
 from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]
@@ -280,12 +281,19 @@ class PublishTests(PublishFixture):
             #
             self.assertEqual(document["outcome"], "done")
             self.assertFalse(result["changed"])
-            self.assertIs(result["deployment_required"], False)
-            self.assertIsNone(result["next_command"])
             self.assertIsNone(result["published_at"])
             self.assertEqual(result["hash"], before)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
-            self.assertFalse(self.publish_path.exists())
+            #
+            # No version was recorded, but the release for the head that already
+            # existed is now published. A published area that lags the
+            # repository is the state an interrupted run leaves behind, and it
+            # cannot be told apart from one that was never published - so both
+            # are repaired the same way. `deployment_required` says so plainly
+            # rather than letting the nodes lag a release nobody mentioned.
+            #
+            self.assertTrue(result["deployment_required"])
+            self.assertEqual(os.readlink(self.publish_path / "current"), f"releases/{before}")
 
 
 class RefusalTests(PublishFixture):
@@ -339,6 +347,57 @@ class RefusalTests(PublishFixture):
                 self.assertIn("ERROR:", stderr)
                 document = assert_contract("haproxy-publish", stdout)
                 self.assertEqual(document["error"]["code"], "bad_input")
+
+    def test_a_second_publish_with_the_release_in_place_asks_for_no_deploy(self) -> None:
+        """The genuine no-op the contract describes: nothing recorded, nothing
+        moved, and no deploy implied."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
+            self.run_publish(policy_path, self.request())
+
+            code, stdout, _ = self.run_publish(policy_path, self.request())
+
+            self.assertEqual(code, 0)
+            result = assert_contract("haproxy-publish", stdout)["result"]
+            self.assertFalse(result["changed"])
+            self.assertIs(result["deployment_required"], False)
+            self.assertIsNone(result["next_command"])
+            self.assertTrue(result["already_current"])
+
+    def test_an_interrupted_publish_is_finished_without_a_second_version(self) -> None:
+        """Phase 6's repair: a commit whose release never landed.
+
+        The crash window is between the reference swap and the install. On the
+        retry the candidate matches the head that the interrupted run recorded,
+        so nothing new is committed - and the release the nodes fetch is written
+        from that same commit rather than from a new one.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
+            self.run_publish(policy_path, self.request())
+
+            head = git(self.repo, "rev-parse", "HEAD")
+            versions = count_versions(self.repo)
+            #
+            # What the crash left: the version is recorded, the release is gone.
+            #
+            shutil.rmtree(self.publish_path / "releases" / head)
+            (self.publish_path / "current").unlink()
+
+            code, stdout, _ = self.run_publish(policy_path, self.request())
+
+            self.assertEqual(code, 0)
+            result = assert_contract("haproxy-publish", stdout)["result"]
+            self.assertFalse(result["changed"])
+            self.assertEqual(count_versions(self.repo), versions)
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
+            self.assertEqual(result["hash"], head)
+            self.assertTrue(result["deployment_required"])
+            self.assertEqual(os.readlink(self.publish_path / "current"), f"releases/{head}")
 
     def test_a_held_cluster_lock_blocks_the_publish_without_writing(self) -> None:
         """The lock a publish did not use to take at all.

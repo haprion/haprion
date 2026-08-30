@@ -136,21 +136,22 @@ def _tree_of(repo: Path, commit: str) -> str:
 def _result(
     *,
     changed: bool,
+    deployment_required: bool,
     from_version: int,
     restored_version: int,
     new_version: int,
     commit: str,
-    published_at: str,
+    published_at: str | None,
     cluster: str,
     release: str | None,
     already_current: bool,
 ) -> dict[str, Any]:
     """The frozen `revert` result.
 
-    `deployment_required` follows `changed` rather than being reported
-    separately. A revert never deploys, so a changed revert always leaves the
-    nodes behind - and a revert that changed nothing must not tell an operator to
-    run a deploy that has nothing to carry.
+    `changed` and `deployment_required` are two questions, not one. A revert that
+    recorded no new version can still have moved the published release - that is
+    what finishing an interrupted run looks like - and telling the operator no
+    deploy is needed would leave the nodes behind a release nobody mentioned.
     """
 
     return {
@@ -160,8 +161,8 @@ def _result(
         "new_version": new_version,
         "hash": commit,
         "published_at": published_at,
-        "deployment_required": changed,
-        "next_command": f"haproxy-deploy -c {cluster}" if changed else None,
+        "deployment_required": deployment_required,
+        "next_command": f"haproxy-deploy -c {cluster}" if deployment_required else None,
         #
         # Outside the frozen fields, and allowed to be: v1 ignores unknown keys.
         # The release path is what an operator looks for when asking whether the
@@ -345,13 +346,30 @@ def _revert(
 
     if target_tree == _tree_of(repo, head):
         #
-        # The contract's successful no-op. Recording a second version holding
-        # byte-identical content would be a change in the history that is not a
-        # change in the configuration, and it would tell the operator to deploy
-        # something the nodes already run. It is also what makes a retried revert
-        # safe: the second attempt sees its own work and reports it, rather than
-        # reverting again.
+        # The contract's successful no-op, and the shape a retry takes.
+        # Recording a second version holding byte-identical content would grow
+        # the history without changing the configuration.
         #
+        # The release is still installed. That is not belt and braces: it is the
+        # repair the recovery path needs. A run interrupted between the commit
+        # and the install leaves a version whose release was never published, and
+        # the retry arrives here - the tree already matches - so this is the only
+        # place that repair can happen. `install_release` is idempotent, so when
+        # nothing was missing it verifies the stamp and returns.
+        #
+        installed = install_release(
+            cluster.publish_path,
+            node_path=cluster.node_path,
+            artifact=build_node_artifact(read_tree_files(repo, target_tree)),
+            metadata=ReleaseMetadata(
+                cluster=request.cluster,
+                version=from_version,
+                commit=head,
+                timestamp=clock().strftime(TIMESTAMP_FORMAT),
+            ),
+            group=group,
+            change_owner=change_owner,
+        )
         write_document(
             output,
             envelope(
@@ -361,14 +379,15 @@ def _revert(
                 request_id=request.request_id,
                 result=_result(
                     changed=False,
+                    deployment_required=not installed.already_current,
                     from_version=from_version,
                     restored_version=version,
                     new_version=from_version,
                     commit=head,
-                    published_at=clock().strftime(TIMESTAMP_FORMAT),
+                    published_at=None,
                     cluster=request.cluster,
-                    release=None,
-                    already_current=True,
+                    release=str(installed.release),
+                    already_current=installed.already_current,
                 ),
             ),
         )
@@ -443,6 +462,7 @@ def _revert(
             request_id=request.request_id,
             result=_result(
                 changed=True,
+                deployment_required=True,
                 from_version=from_version,
                 restored_version=version,
                 new_version=metadata.version,

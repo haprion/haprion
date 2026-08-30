@@ -201,6 +201,7 @@ class Refuse(Protocol):
 def _result(
     *,
     changed: bool,
+    deployment_required: bool,
     version: int | None,
     commit: str | None,
     published_at: str | None,
@@ -212,6 +213,12 @@ def _result(
     already_current: bool = False,
 ) -> dict[str, Any]:
     """The frozen `publish` result.
+
+    `changed` and `deployment_required` are two questions, not one. A publish
+    that recorded no new version can still have moved the published release -
+    that is what finishing an interrupted run looks like - and telling the
+    operator no deploy is needed would leave the nodes behind a release nobody
+    mentioned.
 
     `issues` is present and empty rather than absent. The contract has a place
     for structured validation findings; what this path has is HAProxy's own
@@ -228,8 +235,8 @@ def _result(
         "published_at": published_at,
         "comment": comment,
         "validation": {"valid": valid, "issues": []},
-        "deployment_required": changed,
-        "next_command": f"haproxy-deploy -c {cluster}" if changed else None,
+        "deployment_required": deployment_required,
+        "next_command": f"haproxy-deploy -c {cluster}" if deployment_required else None,
         #
         # Outside the frozen fields, and allowed to be: v1 ignores unknown keys.
         # The candidate digest is what ties a stored result to the exact bytes
@@ -401,9 +408,29 @@ def _publish(
     snapshot = build_candidate_tree(repo, head, files)
     if snapshot.unchanged:
         #
-        # The contract's verified no-op: a successful outcome that says plainly
-        # that nothing was recorded and that no deploy follows from it.
+        # The contract's verified no-op - and the shape a retry takes.
         #
+        # The release is still installed. That is not belt and braces: it is the
+        # repair the recovery path needs. A run interrupted between the commit
+        # and the install leaves a version whose release was never published, and
+        # the retry arrives here - the candidate already matches the head it
+        # produced - so this is the only place that repair can happen.
+        # `install_release` is idempotent, so when nothing was missing it
+        # verifies the stamp and returns.
+        #
+        installed = install_release(
+            cluster.publish_path,
+            node_path=cluster.node_path,
+            artifact=build_node_artifact(read_tree_files(repo, snapshot.tree)),
+            metadata=ReleaseMetadata(
+                cluster=request.cluster,
+                version=count_versions(repo, head),
+                commit=head,
+                timestamp=clock().strftime(TIMESTAMP_FORMAT),
+            ),
+            group=group,
+            change_owner=change_owner,
+        )
         write_document(
             output,
             envelope(
@@ -413,12 +440,15 @@ def _publish(
                 request_id=request.request_id,
                 result=_result(
                     changed=False,
+                    deployment_required=not installed.already_current,
                     version=count_versions(repo, head),
                     commit=head,
                     published_at=None,
                     comment=comment,
                     valid=True,
                     cluster=request.cluster,
+                    release=str(installed.release),
+                    already_current=installed.already_current,
                 ),
             ),
         )
@@ -495,6 +525,7 @@ def _publish(
             request_id=request.request_id,
             result=_result(
                 changed=True,
+                deployment_required=True,
                 version=metadata.version,
                 commit=metadata.commit,
                 published_at=metadata.timestamp,

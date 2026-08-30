@@ -12,6 +12,7 @@ import grp
 import io
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -392,6 +393,34 @@ class ContractTests(RevertFixture):
             self.assertIsNone(result["next_command"])
             self.assertEqual(result["new_version"], result["from_version"])
             self.assertIn("already holds the content of version 2", output)
+
+    def test_an_interrupted_revert_is_finished_without_a_second_version(self) -> None:
+        """Phase 6's repair, on the revert path.
+
+        The crash window is between the reference swap and the install. The
+        retry finds the tree already restored, so it records nothing - and
+        publishes the release from that same commit rather than reverting again.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            self.run_caller(policy_path, "-c", "alpha", "2")
+
+            head = git(self.repo, "rev-parse", "HEAD")
+            versions = count_versions(self.repo)
+            shutil.rmtree(self.publish_path / "releases" / head)
+            (self.publish_path / "current").unlink()
+
+            code, _ = self.run_caller(policy_path, "-c", "alpha", "2")
+
+            self.assertEqual(code, 0)
+            result = assert_contract("haproxy-revert", self.helper_stdout)["result"]
+            self.assertFalse(result["changed"])
+            self.assertEqual(count_versions(self.repo), versions)
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
+            self.assertTrue(result["deployment_required"])
+            self.assertEqual(os.readlink(self.publish_path / "current"), f"releases/{head}")
 
     def test_an_invalid_candidate_fails_in_the_envelope_with_its_diagnostics(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

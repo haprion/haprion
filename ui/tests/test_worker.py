@@ -37,6 +37,7 @@ def claimed(operation: str = "deploy", payload: dict[str, Any] | None = None) ->
         result=None,
         stderr_excerpt=None,
         idempotency_key=uuid4(),
+        attempts=1,
         claim_token=TOKEN,
     )
 

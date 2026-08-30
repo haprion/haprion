@@ -54,6 +54,12 @@ class VersionSummary:
     date: str
     created_at: str
     comment: str
+    #
+    # The request that produced this version, when it carries the trailer.
+    # None for every version recorded before the binding existed, and for
+    # anything committed by hand.
+    #
+    request_id: str | None = None
 
 
 def count_versions(repo: Path, commit: str = "HEAD") -> int:
@@ -155,14 +161,21 @@ def recent_versions(repo: Path, limit: int = LIST_LIMIT) -> tuple[VersionSummary
         f"-{limit}",
         "--first-parent",
         f"--date={DATE_FORMAT}",
-        f"--pretty=tformat:%H%x00%ad%x00{ISO_FORMAT}%x00%s",
+        #
+        # The trailer is last and uses an explicit separator: git's trailer
+        # placeholder ends the block with a newline of its own unless one is
+        # given, and a newline here would split one version across two lines.
+        #
+        f"--pretty=tformat:%H%x00%ad%x00{ISO_FORMAT}%x00%s%x00"
+        f"%(trailers:key={REQUEST_TRAILER},valueonly,separator=%x2C)",
     ).decode()
 
     summaries: list[VersionSummary] = []
     for offset, line in enumerate(shown.splitlines()):
         commit, _, rest = line.partition("\0")
         date, _, rest = rest.partition("\0")
-        created_at, _, comment = rest.partition("\0")
+        created_at, _, rest = rest.partition("\0")
+        comment, _, request_id = rest.partition("\0")
         summaries.append(
             VersionSummary(
                 version=total - offset,
@@ -170,6 +183,7 @@ def recent_versions(repo: Path, limit: int = LIST_LIMIT) -> tuple[VersionSummary
                 date=date.strip(),
                 created_at=created_at.strip(),
                 comment=comment,
+                request_id=request_id.strip() or None,
             )
         )
     return tuple(summaries)

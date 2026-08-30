@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-from haproxy_ui import db, diagnostics, execution, operations
+from haproxy_ui import db, diagnostics, execution, operations, recovery
 from haproxy_ui.config import DEFAULT_CONFIG_PATH
 from haproxy_ui.config import load as load_config
 from haproxy_ui.service import StopRequest
@@ -398,6 +398,15 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             with pool.connection() as connection:
+                #
+                # Before claiming anything new. A job abandoned by a dead worker
+                # is invisible to `claim_job` - it is still `running` - so
+                # nothing would ever pick it up again, and settling it first
+                # means the claim below can find it on this same tick rather
+                # than on the next one.
+                #
+                recovery.adjudicate(connection, worker=worker)
+
                 job = db.claim_job(connection, worker_id=worker, lease_seconds=LEASE_SECONDS)
                 #
                 # Committed before the command starts, and not at the end of the

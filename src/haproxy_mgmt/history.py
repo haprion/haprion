@@ -34,6 +34,13 @@ def _version_document(entry: VersionSummary, newest: int | None) -> dict[str, ob
         "created_at": entry.created_at,
         "comment": entry.comment,
         "current": entry.version == newest,
+        #
+        # Additive within v1, which allows unknown fields. This is the half of
+        # the completion evidence that survives a crash: after a restart, "did
+        # this request already record a version?" is answered by reading the
+        # listing rather than by guessing from the configuration's content.
+        #
+        "request_id": entry.request_id,
     }
 
 

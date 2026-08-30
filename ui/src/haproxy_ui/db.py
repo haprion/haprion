@@ -145,6 +145,27 @@ class Job:
     result: dict[str, Any] | None
     stderr_excerpt: str | None
     idempotency_key: UUID | None
+    attempts: int
+
+
+@dataclass(frozen=True, slots=True)
+class AbandonedJob:
+    """A running job whose holder stopped renewing its lease.
+
+    Deliberately narrow. Adjudicating an abandoned job needs to know which
+    operation on which cluster, how many times it has been picked up, and when
+    its authority ran out. It does not need the payload, the result or the
+    diagnostics, and a type that carried them would invite a decision to be made
+    from a stored answer rather than from what can be read now.
+    """
+
+    id: int
+    request_id: UUID
+    operation: str
+    cluster: str
+    state: str
+    attempts: int
+    lease_until: datetime
 
 
 def pool(database: Database, *, min_size: int = 1, max_size: int = 4) -> ConnectionPool:
@@ -208,6 +229,7 @@ class ClaimedJob:
     result: dict[str, Any] | None
     stderr_excerpt: str | None
     idempotency_key: UUID | None
+    attempts: int
     claim_token: UUID
 
 
@@ -245,7 +267,7 @@ def recent_jobs(
         cursor.execute(
             "select id, request_id, operation, cluster, payload, state, created_at, "
             "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
-            "       idempotency_key "
+            "       idempotency_key, attempts "
             "  from job "
             " where (%(cluster)s::text is null or cluster = %(cluster)s) "
             " order by created_at desc, id desc "
@@ -307,7 +329,7 @@ def queue_job(
                 "values (%(operation)s, %(cluster)s, %(payload)s, %(key)s) "
                 "returning id, request_id, operation, cluster, payload, state, created_at, "
                 "          started_at, finished_at, exit_code, outcome, result, "
-                "          stderr_excerpt, idempotency_key",
+                "          stderr_excerpt, idempotency_key, attempts",
                 parameters,
             )
             row = cursor.fetchone()
@@ -335,7 +357,7 @@ def queue_job(
         cursor.execute(
             "select id, request_id, operation, cluster, payload, state, created_at, "
             "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
-            "       idempotency_key "
+            "       idempotency_key, attempts "
             "  from job "
             " where idempotency_key = %(key)s "
             "   and operation = %(operation)s "
@@ -375,7 +397,9 @@ def claim_job(
     manners.
 
     `started_at` keeps its first value, because it records when the work first
-    began and not when it was last picked up.
+    began and not when it was last picked up. `attempts` does the opposite: it
+    counts the pickups, which is what the recovery path needs to know before it
+    requeues anything a second time.
     """
 
     with connection.cursor(row_factory=class_row(ClaimedJob)) as cursor:
@@ -386,7 +410,8 @@ def claim_job(
             "       worker_id = %(worker_id)s, "
             "       lease_until = statement_timestamp() "
             "                     + %(lease_seconds)s * interval '1 second', "
-            "       started_at = coalesce(started_at, statement_timestamp()) "
+            "       started_at = coalesce(started_at, statement_timestamp()), "
+            "       attempts = attempts + 1 "
             " where id = ( "
             "         select id from job "
             "          where state = 'pending' "
@@ -395,7 +420,7 @@ def claim_job(
             "          limit 1) "
             "returning id, request_id, operation, cluster, payload, state, created_at, "
             "          started_at, finished_at, exit_code, outcome, result, "
-            "          stderr_excerpt, idempotency_key, claim_token",
+            "          stderr_excerpt, idempotency_key, attempts, claim_token",
             {"worker_id": worker_id, "lease_seconds": lease_seconds},
         )
         return cursor.fetchone()
@@ -477,33 +502,105 @@ def finish_job(
         return cursor.fetchone() is not None
 
 
-def expired_leases(connection: Connection[Any]) -> list[Job]:
-    """Jobs whose holder stopped renewing, for something else to adjudicate.
+def expired_leases(connection: Connection[Any]) -> list[AbandonedJob]:
+    """Jobs whose holder stopped renewing, for the recovery path to adjudicate.
 
-    A read, deliberately - not an automatic move back to `pending`.
+    Still a read: nothing here moves a job. A lease that ran out says the worker
+    is gone; it does not say whether the operation ran, and only an operation
+    proved not to have started, or proved safe to repeat, may be requeued. That
+    judgement lives in `recovery`, which reads evidence this query does not have.
 
-    A lease that ran out says the worker is gone. It does not say whether the
-    operation ran, and the plan is explicit that only an operation proved not to
-    have started, or proved idempotent, may be requeued. Deciding that needs the
-    operation-specific completion evidence: a publish is proved by the commit and
-    the release, a deploy by the nodes' hashes, a cert-deploy by the referenced
-    fingerprints. None of that exists yet, and a requeue written before it does
-    would be the blind retry the plan refuses.
+    `lease_until` is returned because the judgement depends on it: evidence
+    gathered before the lease expired describes the world as it was while the
+    operation may still have been running, and cannot settle anything.
 
-    So this lists them and stops there. What reads it comes with the recovery
-    path.
+    Its own row type rather than `Job`, because `lease_until` is not a column the
+    web role may read. Widening `Job` would have put it in the shape a page
+    renders, and the database would then refuse the page rather than the
+    mistake.
     """
 
-    with connection.cursor(row_factory=class_row(Job)) as cursor:
+    with connection.cursor(row_factory=class_row(AbandonedJob)) as cursor:
         cursor.execute(
-            "select id, request_id, operation, cluster, payload, state, created_at, "
-            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
-            "       idempotency_key "
+            "select id, request_id, operation, cluster, state, attempts, lease_until "
             "  from job "
             " where state = 'running' and lease_until < statement_timestamp() "
             " order by lease_until"
         )
         return cursor.fetchall()
+
+
+def requeue_expired(connection: Connection[Any], *, job_id: int, attempts: int) -> bool:
+    """Put one abandoned job back in the queue, atomically.
+
+    The predicate is the whole safety of this. The row must still be running,
+    its lease must still be in the past, and its attempt count must be the one
+    the adjudication looked at - so a worker that claimed the job between the
+    reading and this write finds its work untouched, and a second adjudicator
+    running the same reasoning writes nothing. That is the same
+    read-decide-write hazard `claim_job` avoids, on the way back out.
+
+    The claim token is cleared rather than kept. The previous holder's token is
+    then no longer the row's token, so a process that wakes up late is refused
+    by the database even before another worker has claimed the row.
+
+    False means the world moved and the caller must do nothing.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update job "
+            "   set state = 'pending', "
+            "       claim_token = null, "
+            "       worker_id = null, "
+            "       lease_until = null "
+            " where id = %(job_id)s "
+            "   and state = 'running' "
+            "   and lease_until < statement_timestamp() "
+            "   and attempts = %(attempts)s "
+            "returning id",
+            {"job_id": job_id, "attempts": attempts},
+        )
+        return cursor.fetchone() is not None
+
+
+def abandon_expired(
+    connection: Connection[Any], *, job_id: int, attempts: int, code: str, message: str
+) -> bool:
+    """End one abandoned job as `unknown`, atomically.
+
+    `unknown` is not a failure and must not read as one. It says the operation
+    may or may not have taken effect, which is the honest answer when the worker
+    that held it is gone and nothing readable settles the question. Nothing
+    retries it; a person decides.
+
+    Guarded exactly as `requeue_expired` is, and for the same reason: the
+    adjudication read the row a moment ago, and only a row that has not moved
+    since may be written.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update job "
+            "   set state = 'unknown', "
+            "       outcome = 'unknown', "
+            "       finished_at = statement_timestamp(), "
+            "       claim_token = null, "
+            "       worker_id = null, "
+            "       lease_until = null, "
+            "       result = %(result)s "
+            " where id = %(job_id)s "
+            "   and state = 'running' "
+            "   and lease_until < statement_timestamp() "
+            "   and attempts = %(attempts)s "
+            "returning id",
+            {
+                "job_id": job_id,
+                "attempts": attempts,
+                "result": Jsonb({"error": {"code": code, "message": message}}),
+            },
+        )
+        return cursor.fetchone() is not None
 
 
 def account_by_username(connection: Connection[Any], username: str) -> Account | None:
@@ -823,6 +920,25 @@ def record_cluster_history(
                 "poll": poll_error,
             },
         )
+
+
+def cluster_history(connection: Connection[Any], cluster: str) -> ClusterHistory | None:
+    """One cluster's cached version listing, or nothing when it has never been read.
+
+    Separate from `cluster_histories` rather than filtered out of it: the
+    recovery path asks about exactly one cluster and needs the answer's age, and
+    fetching every cluster to discard all but one would make the query's cost
+    grow with an installation that has nothing to do with the question.
+    """
+
+    with connection.cursor(row_factory=class_row(ClusterHistory)) as cursor:
+        cursor.execute(
+            "select cluster, observed_at, outcome, result, warnings, error, poll_error "
+            "  from cluster_history "
+            " where cluster = %(cluster)s",
+            {"cluster": cluster},
+        )
+        return cursor.fetchone()
 
 
 def cluster_histories(connection: Connection[Any]) -> list[ClusterHistory]:

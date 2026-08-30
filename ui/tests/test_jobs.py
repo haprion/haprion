@@ -105,6 +105,7 @@ def queued_job() -> db.Job:
         result=None,
         stderr_excerpt=None,
         idempotency_key=uuid4(),
+        attempts=1,
     )
 
 

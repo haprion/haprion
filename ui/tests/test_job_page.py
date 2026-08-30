@@ -26,6 +26,7 @@ def job(*, state: str, outcome: str | None = None) -> db.Job:
         result=None,
         stderr_excerpt="must not be rendered",
         idempotency_key=uuid4(),
+        attempts=1,
     )
 
 

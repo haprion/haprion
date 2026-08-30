@@ -36,6 +36,7 @@ def queued(**overrides: Any) -> db.Job:
         "result": None,
         "stderr_excerpt": None,
         "idempotency_key": UUID(KEY),
+        "attempts": 0,
     }
     return db.Job(**{**fields, **overrides})
 

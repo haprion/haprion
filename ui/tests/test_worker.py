@@ -40,13 +40,18 @@ def claimed(operation: str = "deploy", payload: dict[str, Any] | None = None) ->
 
 
 def completed(
-    ending: str = "finished", exit_code: int | None = 0, stdout: str = "", stderr: str = ""
+    ending: str = "finished",
+    exit_code: int | None = 0,
+    stdout: str = "",
+    stderr: str = "",
+    stdout_error: str | None = None,
 ) -> execution.Completed:
     return execution.Completed(
         ending=ending,  # type: ignore[arg-type]
         exit_code=exit_code,
         stdout=stdout,
         stderr=stderr,
+        stdout_error=stdout_error,  # type: ignore[arg-type]
     )
 
 
@@ -123,6 +128,21 @@ class UndeterminedEndings(WorkerTestCase):
 
         self.assertEqual(self.finished[0]["state"], "unknown")
 
+    def test_oversized_stdout_is_an_internal_error_without_being_parsed(self) -> None:
+        with mock.patch.object(
+            execution,
+            "run",
+            return_value=completed(stdout='{"outcome":"done"}', stdout_error="too_large"),
+        ):
+            worker.run_one_job(self.connection, claimed())
+
+        self.assertEqual(self.finished[0]["state"], "unknown")
+        self.assertEqual(self.finished[0]["outcome"], "unknown")
+        self.assertEqual(
+            self.finished[0]["result"]["error"]["code"],
+            "internal_error",
+        )
+
 
 class ThingsThatNeverRan(WorkerTestCase):
     def test_a_refused_payload_blocks_the_job_without_running_it(self) -> None:
@@ -154,17 +174,51 @@ class LosingTheLease(WorkerTestCase):
         self.assertEqual(self.finished, [])
         self.connection.commit.assert_not_called()
 
+    def test_a_successful_renewal_is_committed_before_the_command_finishes(self) -> None:
+        def run(*_: object, still_ours: Any, **__: object) -> execution.Completed:
+            self.assertTrue(still_ours())
+            self.connection.commit.assert_called_once_with()
+            return completed(stdout='{"outcome":"done"}')
 
-class StoredDiagnosticsAreBounded(WorkerTestCase):
-    def test_a_long_stderr_is_cut_before_the_write(self) -> None:
-        with mock.patch.object(
-            execution,
-            "run",
-            return_value=completed(stdout='{"outcome":"failed"}', stderr="x" * 90000),
+        with (
+            mock.patch.object(execution, "run", side_effect=run),
+            mock.patch.object(db, "renew_lease", return_value=True),
         ):
             worker.run_one_job(self.connection, claimed())
 
-        self.assertEqual(len(self.finished[0]["stderr_excerpt"]), worker.STDERR_LIMIT)
+        self.assertEqual(self.connection.commit.call_count, 2)
+
+    def test_a_refused_renewal_rolls_back_its_transaction(self) -> None:
+        def run(*_: object, still_ours: Any, **__: object) -> execution.Completed:
+            self.assertFalse(still_ours())
+            return completed(ending="lease_lost")
+
+        with (
+            mock.patch.object(execution, "run", side_effect=run),
+            mock.patch.object(db, "renew_lease", return_value=False),
+        ):
+            worker.run_one_job(self.connection, claimed())
+
+        self.connection.rollback.assert_called_once_with()
+        self.connection.commit.assert_not_called()
+
+
+class StoredDiagnosticsAreBounded(WorkerTestCase):
+    def test_a_long_stderr_keeps_both_edges_before_the_write(self) -> None:
+        with mock.patch.object(
+            execution,
+            "run",
+            return_value=completed(
+                stdout='{"outcome":"failed"}', stderr="first" + ("x" * 90000) + "last"
+            ),
+        ):
+            worker.run_one_job(self.connection, claimed())
+
+        excerpt = self.finished[0]["stderr_excerpt"]
+        self.assertLessEqual(len(excerpt.encode("utf-8")), worker.STDERR_LIMIT)
+        self.assertTrue(excerpt.startswith("first"))
+        self.assertTrue(excerpt.endswith("last"))
+        self.assertIn("diagnostics truncated", excerpt)
 
 
 if __name__ == "__main__":

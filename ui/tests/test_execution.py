@@ -69,6 +69,41 @@ class RunningToCompletion(unittest.TestCase):
         self.assertEqual(completed.ending, "finished")
         self.assertEqual(len(completed.stdout), 400000)
 
+    def test_stdout_beyond_the_contract_limit_is_drained_but_not_retained(self) -> None:
+        completed = execution.run(
+            script(f"import sys; sys.stdout.write('x' * ({execution.STDOUT_LIMIT} + 1))"),
+            request="",
+            timeout_seconds=30,
+            still_ours=lambda: True,
+        )
+
+        self.assertEqual(completed.ending, "finished")
+        self.assertEqual(completed.stdout_error, "too_large")
+        self.assertEqual(len(completed.stdout), execution.STDOUT_LIMIT)
+
+    def test_stdout_must_be_utf8(self) -> None:
+        completed = execution.run(
+            script("import os; os.write(1, bytes((255,)))"),
+            request="",
+            timeout_seconds=30,
+            still_ours=lambda: True,
+        )
+
+        self.assertEqual(completed.stdout_error, "invalid_utf8")
+
+    def test_stderr_keeps_both_ends_with_an_explicit_marker(self) -> None:
+        completed = execution.run(
+            script("import sys; sys.stderr.write('first\\n' + 'x' * 90000 + '\\nlast')"),
+            request="",
+            timeout_seconds=30,
+            still_ours=lambda: True,
+        )
+
+        self.assertLessEqual(len(completed.stderr.encode("utf-8")), 65536)
+        self.assertTrue(completed.stderr.startswith("first"))
+        self.assertTrue(completed.stderr.endswith("last"))
+        self.assertIn("diagnostics truncated", completed.stderr)
+
 
 class StoppingWhatItStarted(unittest.TestCase):
     def setUp(self) -> None:
@@ -134,6 +169,21 @@ class StoppingWhatItStarted(unittest.TestCase):
         else:
             os.kill(child, signal.SIGKILL)
             self.fail("the grandchild outlived the process group it was started in")
+
+    def test_a_lease_check_error_stops_the_process_before_it_escapes(self) -> None:
+        def unavailable() -> bool:
+            raise RuntimeError("database unavailable")
+
+        started = time.monotonic()
+        with self.assertRaisesRegex(RuntimeError, "database unavailable"):
+            execution.run(
+                script("import time; time.sleep(30)"),
+                request="",
+                timeout_seconds=30,
+                still_ours=unavailable,
+            )
+
+        self.assertLess(time.monotonic() - started, 10)
 
 
 class TheEnvironmentIsBuiltByName(unittest.TestCase):

@@ -406,11 +406,10 @@ def renew_lease(
 ) -> bool:
     """Push the lease forward while the work is still running.
 
-    False means the lease is gone - it expired and another worker claimed the
-    row, so this process no longer owns the job. The caller must abort rather
-    than finish: two workers writing a result for one job is the failure the
-    fencing token exists to prevent, and the one holding a stale token is the one
-    that must stop.
+    False means the lease is gone - either its time elapsed or another worker
+    holds the row. The caller must abort rather than finish: an expired lease is
+    no longer authority to mutate even before recovery has assigned a new
+    token, and two workers writing one result is the failure fencing prevents.
     """
 
     with connection.cursor() as cursor:
@@ -421,6 +420,7 @@ def renew_lease(
             " where id = %(job_id)s "
             "   and claim_token = %(claim_token)s "
             "   and state = 'running' "
+            "   and lease_until >= statement_timestamp() "
             "returning id",
             {"job_id": job_id, "claim_token": str(claim_token), "lease_seconds": lease_seconds},
         )
@@ -440,10 +440,10 @@ def finish_job(
 ) -> bool:
     """Record how a job ended, if this process is still the one holding it.
 
-    The claim token is in the WHERE clause for the same reason it is in
-    `renew_lease`: a worker that woke from an expired lease must not be able to
-    overwrite the result of the worker that took over. False means exactly that
-    happened, and it is a fact worth logging rather than retrying.
+    The claim token and an unexpired lease are in the WHERE clause for the same
+    reason they are in `renew_lease`: a worker that woke after its authority
+    elapsed must not be able to overwrite a result, whether or not recovery has
+    assigned a new token yet. False is worth logging rather than retrying.
 
     The lease is cleared as part of finishing, so a reclaim query can never find
     a row that is already done.
@@ -462,6 +462,7 @@ def finish_job(
             " where id = %(job_id)s "
             "   and claim_token = %(claim_token)s "
             "   and state = 'running' "
+            "   and lease_until >= statement_timestamp() "
             "returning id",
             {
                 "job_id": job_id,

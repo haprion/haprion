@@ -171,6 +171,7 @@ class WritesAreFenced(unittest.TestCase):
 
         self.assertIn("claim_token = %(claim_token)s", statement)
         self.assertIn("state = 'running'", statement)
+        self.assertIn("lease_until >= statement_timestamp()", statement)
 
     def test_finishing_a_job_names_the_claim_token_and_clears_the_lease(self) -> None:
         connection = FakeConnection(row=(1,))
@@ -188,6 +189,7 @@ class WritesAreFenced(unittest.TestCase):
 
         self.assertIn("claim_token = %(claim_token)s", statement)
         self.assertIn("lease_until = null", statement)
+        self.assertIn("lease_until >= statement_timestamp()", statement)
 
     def test_a_lost_lease_is_reported_rather_than_raised(self) -> None:
         #

@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from haproxy_ui import db, execution, operations
+from haproxy_ui import db, diagnostics, execution, operations
 from haproxy_ui.config import DEFAULT_CONFIG_PATH
 from haproxy_ui.config import load as load_config
 from haproxy_ui.service import StopRequest
@@ -50,7 +50,7 @@ LEASE_SECONDS = 60
 # The contract's cap on stored diagnostics, applied before the write rather than
 # discovered at the constraint.
 #
-STDERR_LIMIT = 65536
+STDERR_LIMIT = diagnostics.LIMIT_BYTES
 
 
 def worker_identity() -> str:
@@ -95,7 +95,7 @@ def run_one_job(connection: Any, job: db.ClaimedJob) -> None:
         # untouched and the job needs a person, not a retry.
         #
         logger.error("job %s refused before it ran: %s", job.id, refusal)
-        db.finish_job(
+        if not db.finish_job(
             connection,
             job_id=job.id,
             claim_token=job.claim_token,
@@ -103,8 +103,11 @@ def run_one_job(connection: Any, job: db.ClaimedJob) -> None:
             exit_code=None,
             outcome="blocked",
             result=None,
-            stderr_excerpt=str(refusal)[:STDERR_LIMIT],
-        )
+            stderr_excerpt=diagnostics.safe_excerpt(str(refusal)),
+        ):
+            logger.error("job %s could not be blocked; its lease was gone", job.id)
+            connection.rollback()
+            return
         connection.commit()
         return
 
@@ -117,12 +120,23 @@ def run_one_job(connection: Any, job: db.ClaimedJob) -> None:
         running after somebody else took it.
         """
 
-        return db.renew_lease(
+        ours = db.renew_lease(
             connection,
             job_id=job.id,
             claim_token=job.claim_token,
             lease_seconds=LEASE_SECONDS,
         )
+        if ours:
+            #
+            # A renewal hidden inside this transaction is invisible to every
+            # other worker, and the role's ten-second idle-in-transaction limit
+            # would then terminate the connection while the CLI is running.
+            # Each tick is therefore its own completed database transaction.
+            #
+            connection.commit()
+        else:
+            connection.rollback()
+        return ours
 
     logger.info("job %s: %s on %s", job.id, job.operation, job.cluster)
     completed = execution.run(
@@ -136,8 +150,22 @@ def run_one_job(connection: Any, job: db.ClaimedJob) -> None:
         logger.error("job %s was taken over while it ran; writing nothing", job.id)
         return
 
-    envelope = _envelope(completed.stdout)
-    if completed.ending == "timeout" or envelope is None:
+    envelope = _envelope(completed.stdout) if completed.stdout_error is None else None
+    if completed.stdout_error is not None:
+        #
+        # A document beyond the hard cap is rejected before JSON parsing, and
+        # invalid UTF-8 cannot be a contract document. The operation itself may
+        # still have taken effect, so the job remains `unknown`; the structured
+        # code says why the worker could not accept the answer.
+        #
+        state = outcome = "unknown"
+        result = {
+            "error": {
+                "code": "internal_error",
+                "message": "the operation returned an invalid result document",
+            }
+        }
+    elif completed.ending == "timeout" or envelope is None:
         #
         # The honest answer in both cases is that reality is undetermined. A
         # command that was stopped may have finished its work first, and one that
@@ -160,9 +188,10 @@ def run_one_job(connection: Any, job: db.ClaimedJob) -> None:
         exit_code=completed.exit_code,
         outcome=outcome,
         result=result,
-        stderr_excerpt=completed.stderr[:STDERR_LIMIT] or None,
+        stderr_excerpt=diagnostics.safe_excerpt(completed.stderr) or None,
     ):
         logger.error("job %s could not be finished; the lease was gone by then", job.id)
+        connection.rollback()
         return
     connection.commit()
     logger.info("job %s ended as %s", job.id, state)

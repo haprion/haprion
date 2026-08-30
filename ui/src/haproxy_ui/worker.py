@@ -362,12 +362,40 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
     )
 
 
+def _wait_for_work(listener: Any, stopping: StopRequest, seconds: int) -> None:
+    """Wait for a queued job, the interval, or a stop - whichever comes first.
+
+    Replaces a flat sleep. A job queued a moment after a tick began used to wait
+    out the whole interval before anything looked at it, which is most of a
+    minute of an operator watching a page that says "queued" about a cluster
+    nobody is touching.
+
+    A second at a time, for the same reason `StopRequest.sleep` is: systemd
+    waits for a service to go, and one that always takes its full interval to
+    stop teaches everyone that a restart is slow.
+
+    The notification is a hint and never an instruction. It carries no id and is
+    not trusted to mean a job is claimable - it only ends the wait early, and
+    the claim on the next pass decides what is actually there. So a lost
+    notification costs latency and nothing else: the interval still expires, and
+    the loop still asks. That is what keeps this an optimisation rather than a
+    second source of truth.
+    """
+
+    for _ in range(seconds):
+        if stopping.requested():
+            return
+        for _notification in listener.notifies(timeout=1.0, stop_after=1):
+            return
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(format="%(levelname)s %(message)s", level=logging.INFO)
     path = Path(os.environ.get("HAPROXY_UI_CONFIG", str(DEFAULT_CONFIG_PATH)))
     config = load_config(path)
 
     pool = db.pool(config.database, min_size=1, max_size=2)
+    listener = db.listener(config.database)
     pool.open(wait=True, timeout=10)
     try:
         with pool.connection() as connection:
@@ -427,8 +455,9 @@ def main(argv: list[str] | None = None) -> int:
                     run_one_job(connection, job, worker=worker)
 
             if job is None:
-                stopping.sleep(IDLE_SECONDS)
+                _wait_for_work(listener, stopping, IDLE_SECONDS)
     finally:
+        listener.close()
         pool.close()
     return 0
 

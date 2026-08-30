@@ -27,7 +27,7 @@ from typing import Any
 from uuid import UUID
 
 import psycopg
-from psycopg import Connection
+from psycopg import Connection, sql
 from psycopg.rows import class_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
@@ -188,6 +188,31 @@ def pool(database: Database, *, min_size: int = 1, max_size: int = 4) -> Connect
     )
 
 
+JOB_CHANNEL = "job_queued"
+
+
+def listener(database: Database, channel: str = JOB_CHANNEL) -> Connection[Any]:
+    """A connection whose only job is to be told when something arrives.
+
+    Its own connection rather than one from the pool. A listener is held for the
+    process's whole life, and the pool exists for short queries - lending one out
+    permanently would leave the pool a size smaller than it says it is, in a way
+    that only shows up under load.
+
+    `autocommit` because a LISTEN inside a transaction does not take effect until
+    that transaction commits, so a listener in transaction mode would wait
+    politely for notifications it had not actually subscribed to yet.
+
+    The channel is passed as an identifier rather than interpolated. It is a
+    constant today; a constant that is formatted by hand is how the next caller
+    learns the wrong habit.
+    """
+
+    connection = psycopg.connect(database.connection_string, autocommit=True)
+    connection.execute(sql.SQL("listen {}").format(sql.Identifier(channel)))
+    return connection
+
+
 def connected_identity(connection: Connection[Any]) -> tuple[str, str]:
     """Who the database thinks we are, and which database this is.
 
@@ -333,6 +358,18 @@ def queue_job(
                 parameters,
             )
             row = cursor.fetchone()
+            #
+            # Inside the transaction on purpose. Postgres holds a notification
+            # until commit and drops it on rollback, so this cannot tell a
+            # worker about a job that does not exist - and the worker cannot be
+            # woken before the row it is being woken for is visible.
+            #
+            # No payload. The channel says "something arrived", and the worker
+            # then asks the database what it may claim; sending the id would
+            # invite a worker to act on a row it has not claimed, which is the
+            # one thing the claim exists to prevent.
+            #
+            cursor.execute("notify job_queued")
         if row is None:  # pragma: no cover - insert ... returning yields a row or raises
             raise psycopg.OperationalError("the insert returned no row")
         return row

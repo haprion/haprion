@@ -403,3 +403,59 @@ class TheAuditTrail(WorkerTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeListener:
+    """A listener that yields what it was told to, and records its waits."""
+
+    def __init__(self, notifications: list[list[object]]) -> None:
+        self._notifications = notifications
+        self.waits: list[float | None] = []
+
+    def notifies(self, *, timeout: float | None = None, stop_after: int | None = None):
+        self.waits.append(timeout)
+        if not self._notifications:
+            return
+        yield from self._notifications.pop(0)[:stop_after]
+
+
+class FakeStop:
+    """Stops after a given number of checks, the way a signal would."""
+
+    def __init__(self, stop_at: int | None = None) -> None:
+        self.stop_at = stop_at
+        self.checks = 0
+
+    def requested(self) -> bool:
+        self.checks += 1
+        return self.stop_at is not None and self.checks > self.stop_at
+
+
+class WaitingForWork(unittest.TestCase):
+    """The wait ends on a job, on the interval, or on a stop - and on nothing else."""
+
+    def test_a_notification_ends_the_wait_immediately(self) -> None:
+        listener = FakeListener([[object()]])
+
+        worker._wait_for_work(listener, FakeStop(), 30)
+
+        # One second-long wait, not thirty: the point of the change.
+        self.assertEqual(listener.waits, [1.0])
+
+    def test_no_notification_still_returns_after_the_interval(self) -> None:
+        """A lost notification costs latency and nothing else."""
+
+        listener = FakeListener([])
+
+        worker._wait_for_work(listener, FakeStop(), 5)
+
+        self.assertEqual(len(listener.waits), 5)
+
+    def test_a_stop_is_answered_within_a_second(self) -> None:
+        """systemd waits for a service to go; a long interval must not delay it."""
+
+        listener = FakeListener([])
+
+        worker._wait_for_work(listener, FakeStop(stop_at=2), 3600)
+
+        self.assertLessEqual(len(listener.waits), 2)

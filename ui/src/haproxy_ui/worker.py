@@ -166,6 +166,81 @@ def _envelope(stdout: str, job: db.ClaimedJob) -> dict[str, Any] | None:
     return envelope
 
 
+def _error_code(result: dict[str, Any] | None) -> str | None:
+    """The stable code a result blamed, or nothing.
+
+    Codes are part of the frozen contract and are safe to keep: they are chosen
+    from a fixed list, they do not vary with the environment, and they are the
+    one part of a failure a person can act on months later. The message, the
+    diagnostics and the command's stderr are none of those things and stay out
+    of the trail.
+    """
+
+    error = (result or {}).get("error")
+    if isinstance(error, dict) and isinstance(error.get("code"), str):
+        return str(error["code"])
+    return None
+
+
+def _finish(
+    connection: Any,
+    job: db.ClaimedJob,
+    *,
+    state: str,
+    outcome: str | None,
+    exit_code: int | None,
+    result: dict[str, Any] | None,
+    stderr_excerpt: str | None,
+    worker: str,
+) -> bool:
+    """Write how a job ended, and record it, in one transaction.
+
+    The audit row goes in beside the result rather than after it. A trail that
+    commits separately from the thing it describes is a trail that can disagree
+    with the job table, and the disagreement would surface during an incident -
+    which is the one time nobody can afford to work out which of two records is
+    the true one.
+
+    What it deliberately does not carry: the result document, the operation's
+    stderr and the payload. The trail answers who ran what against which cluster
+    and how it ended. Raw diagnostics are held on the job row, behind the roles
+    that may read it, and the contract forbids showing them to a reader anyway.
+    """
+
+    if not db.finish_job(
+        connection,
+        job_id=job.id,
+        claim_token=job.claim_token,
+        state=state,
+        exit_code=exit_code,
+        outcome=outcome,
+        result=result,
+        stderr_excerpt=stderr_excerpt,
+    ):
+        logger.error("job %s could not be finished; its lease was gone", job.id)
+        connection.rollback()
+        return False
+
+    db.record_audit_event(
+        connection,
+        actor=worker,
+        action="job_finished",
+        cluster=job.cluster,
+        request_id=job.request_id,
+        detail={
+            "job": job.id,
+            "operation": job.operation,
+            "state": state,
+            "outcome": outcome,
+            "exit_code": exit_code,
+            "error_code": _error_code(result),
+        },
+    )
+    connection.commit()
+    logger.info("job %s ended as %s", job.id, state)
+    return True
+
+
 def _internal_error() -> dict[str, Any]:
     return {
         "error": {
@@ -175,7 +250,7 @@ def _internal_error() -> dict[str, Any]:
     }
 
 
-def run_one_job(connection: Any, job: db.ClaimedJob) -> None:
+def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
     """Run a claimed job and record how it ended.
 
     The lease is renewed from inside the run, and the renewal is also the check:
@@ -198,20 +273,16 @@ def run_one_job(connection: Any, job: db.ClaimedJob) -> None:
         # untouched and the job needs a person, not a retry.
         #
         logger.error("job %s refused before it ran: %s", job.id, refusal)
-        if not db.finish_job(
+        _finish(
             connection,
-            job_id=job.id,
-            claim_token=job.claim_token,
+            job,
             state="blocked",
-            exit_code=None,
             outcome="blocked",
+            exit_code=None,
             result=None,
             stderr_excerpt=diagnostics.safe_excerpt(str(refusal)),
-        ):
-            logger.error("job %s could not be blocked; its lease was gone", job.id)
-            connection.rollback()
-            return
-        connection.commit()
+            worker=worker,
+        )
         return
 
     def lease_is_ours() -> bool:
@@ -279,21 +350,16 @@ def run_one_job(connection: Any, job: db.ClaimedJob) -> None:
         state = outcome if outcome in {"done", "partial", "failed", "blocked"} else "unknown"
         result = envelope
 
-    if not db.finish_job(
+    _finish(
         connection,
-        job_id=job.id,
-        claim_token=job.claim_token,
+        job,
         state=state,
-        exit_code=completed.exit_code,
         outcome=outcome,
+        exit_code=completed.exit_code,
         result=result,
         stderr_excerpt=diagnostics.safe_excerpt(completed.stderr) or None,
-    ):
-        logger.error("job %s could not be finished; the lease was gone by then", job.id)
-        connection.rollback()
-        return
-    connection.commit()
-    logger.info("job %s ended as %s", job.id, state)
+        worker=worker,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -343,7 +409,7 @@ def main(argv: list[str] | None = None) -> int:
                 #
                 connection.commit()
                 if job is not None:
-                    run_one_job(connection, job)
+                    run_one_job(connection, job, worker=worker)
 
             if job is None:
                 stopping.sleep(IDLE_SECONDS)

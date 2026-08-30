@@ -81,6 +81,30 @@ class JobPageTests(LoginTestCase):
         self.assertIn("Deploy configuration", page.text)
         self.assertNotIn("must not be rendered", page.text)
 
+    def test_the_attention_states_are_rendered_and_told_apart(self) -> None:
+        """`partial`, `blocked` and `unknown` are three different answers.
+
+        Flattening them into one "failed" would lose the distinction the whole
+        outcome vocabulary exists for: what may be retried, what needs a person,
+        and what nobody yet knows the effect of.
+        """
+
+        rows = [
+            job(state="partial", outcome="partial"),
+            job(state="blocked", outcome="blocked"),
+            job(state="unknown", outcome="unknown"),
+        ]
+        client = self.client()
+        self.sign_in(client)
+
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=rows):
+            page = client.get("/jobs")
+
+        self.assertEqual(page.status_code, 200)
+        for label in ("Completed with gaps", "Blocked", "Outcome unknown"):
+            self.assertIn(label, page.text)
+        self.assertNotIn("must not be rendered", page.text)
+
     def test_the_job_page_requires_a_session(self) -> None:
         page = self.client().get("/jobs", follow_redirects=False)
 

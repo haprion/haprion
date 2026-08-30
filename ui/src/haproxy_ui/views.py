@@ -85,6 +85,7 @@ def asset_token(directory: Path = STATIC_DIRECTORY) -> str:
 # a release directory is read-only and a new one is a new process.
 #
 TEMPLATES.env.globals["asset_token"] = asset_token()
+TEMPLATES.env.globals["new_request_key"] = lambda: str(uuid4())
 
 #
 # The theme is rendered into the document by the server, from a cookie the

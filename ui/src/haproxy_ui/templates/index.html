@@ -93,6 +93,16 @@
       <div><strong>No node status yet</strong><span>The dashboard will update after the poller records its first result.</span></div>
     </div>
     {% endif %}
+
+    {% if management_writes and role == 'admin' and cluster.configured %}
+    <footer class="cluster-actions" aria-label="{{ cluster.cluster }} operations">
+      <div><strong>Operations</strong><span>Requests are queued and run separately by the worker.</span></div>
+      <div class="action-buttons">
+        <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Deploy configuration</button></form>
+        <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="cert_deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Deploy certificates</button></form>
+      </div>
+    </footer>
+    {% endif %}
   </article>
   {% else %}
   <div class="empty-page">

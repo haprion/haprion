@@ -1,0 +1,34 @@
+# Lets the interface's worker run the three cluster mutations, and nothing else.
+#
+# Its own rule, for the same reason the poller has one. %haproxy-mgmt holds the
+# operators and %sudo holds the humans; a service account must not reach a
+# privilege because somebody else needed it. This is the separate decision.
+#
+# What it grants, exactly: three helpers, each with no arguments at all. The
+# helpers accept no argv and read a bounded JSON request on stdin, which is what
+# makes an exact rule possible - PRIVILEGE.md forbids wildcards in argument
+# matching, and a rule naming a cluster would need one.
+#
+# These three write. That is the point of them, and it is why the list is this
+# short: deploy brings nodes onto the published version, cert-deploy distributes
+# certificates, revert moves the cluster back to an earlier one. Everything else
+# the worker might plausibly want - publish, config edits, history reset - is
+# absent on purpose. Publishing is an operator's decision made at a terminal,
+# not a job the interface can queue.
+#
+# What the rule does NOT decide: which cluster, which version, whether to touch
+# any node at all. The caller hands over a cluster name and two booleans; the
+# privileged half reads the cluster's real state and decides the rest. So this
+# rule cannot be widened by argument, only by editing this file.
+#
+# The application's own `management_writes` switch is a separate gate and stays
+# off until the phase that opens it. This file grants the capability; it does
+# not turn writes on.
+#
+# NOPASSWD because a service has no terminal to type a password at.
+#
+# Installed 0440 root:root, and accepted by visudo before it is put in place.
+
+haproxy-ui-worker ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-helper ""
+haproxy-ui-worker ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-deploy-helper ""
+haproxy-ui-worker ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-revert-helper ""

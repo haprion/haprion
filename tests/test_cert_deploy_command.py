@@ -23,7 +23,9 @@ from pathlib import Path
 import yaml
 
 from haproxy_mgmt.cli import cert_deploy, cert_deploy_helper
+from haproxy_mgmt.cluster_lock import hold
 from haproxy_mgmt.cluster_status import NodeStatus, parse_status
+from tests.contract_schema import assert_contract
 from tests.node_harness import FakeCluster, FakeNode
 
 BASE = Path(__file__).resolve().parents[1]
@@ -292,6 +294,52 @@ class TriggerTests(unittest.TestCase):
             cert_deploy_helper.subprocess.run = original  # type: ignore[assignment]
 
         self.assertEqual(sent[0][-1], "cert-pull example-net example-com")
+
+
+class RefusalContractTests(HelperFixture):
+    """A certificate run that stops early still owes its caller a result.
+
+    Same reason as the configuration deploy: a worker that gets an exit code and
+    no document can only record `unknown`, and `unknown` is the one outcome the
+    plan forbids retrying automatically. A refusal that reached no node is a
+    thing worth being definite about.
+    """
+
+    def test_a_missing_certificate_root_is_refused_in_the_frozen_envelope(self) -> None:
+        policy = self.runtime()
+        data = yaml.safe_load(policy.read_text())
+        del data["certificate_root"]
+        policy.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+        code, out, _ = self.run_helper(request(json=True), policy_path=policy)
+
+        self.assertEqual(code, 78)
+        document = assert_contract("haproxy-cert-deploy", out)
+        self.assertEqual(document["operation"], "cert_deploy")
+        self.assertEqual(document["outcome"], "failed")
+        self.assertEqual(document["request_id"], REQUEST_ID)
+        self.assertEqual(document["error"]["code"], "dependency_unavailable")
+        self.assertEqual(self.requests, [])
+
+    def test_a_referenced_certificate_that_is_absent_names_its_stable_code(self) -> None:
+        policy = self.runtime(certificates=False)
+
+        code, out, _ = self.run_helper(request(json=True), policy_path=policy)
+
+        document = assert_contract("haproxy-cert-deploy", out)
+        self.assertEqual(code, 68)
+        self.assertEqual(document["error"]["code"], "certificate_missing")
+        self.assertEqual(self.requests, [])
+
+    def test_a_held_lock_is_blocked_rather_than_failed(self) -> None:
+        with hold("alpha", operation="deploy", root=self.root / "locks"):
+            code, out, _ = self.run_helper(request(json=True))
+
+        self.assertEqual(code, 75)
+        document = assert_contract("haproxy-cert-deploy", out)
+        self.assertEqual(document["outcome"], "blocked")
+        self.assertEqual(document["error"]["code"], "operation_locked")
+        self.assertEqual(self.requests, [])
 
 
 if __name__ == "__main__":

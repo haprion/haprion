@@ -55,3 +55,50 @@ def envelope(
         "warnings": [warning.as_dict() for warning in warnings],
         "error": error.as_dict() if error is not None else None,
     }
+
+
+#
+# The one exit code the contract maps to `blocked` rather than `failed`: the
+# operation did not start because a safety condition or a lock stopped it. Every
+# other non-zero code means the operation was attempted and did not succeed.
+#
+BLOCKED_EXIT = 75
+
+
+def outcome_for_exit(exit_code: int) -> Outcome:
+    """The contract's exit code to outcome mapping, in one place.
+
+    Helpers used to decide this at each error site, which is how several early
+    failures ended up writing nothing at all: the decision was small enough to
+    forget. Having one function makes the omission visible.
+    """
+
+    return "blocked" if exit_code == BLOCKED_EXIT else "failed"
+
+
+def failure(
+    *,
+    operation: str,
+    cluster: str | None,
+    request_id: str,
+    code: str,
+    message: str,
+    exit_code: int,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The envelope a helper owes its caller when it refuses or fails.
+
+    JSON mode promises exactly one document on stdout on every path. A helper
+    that returned an exit code and a line of stderr instead left the worker with
+    nothing to record but `unknown`, which reads as "the operation may have taken
+    effect" - the opposite of what a refusal before any write actually means.
+    """
+
+    return envelope(
+        operation=operation,
+        outcome=outcome_for_exit(exit_code),
+        cluster=cluster,
+        result=None,
+        request_id=request_id,
+        error=Message(code=code, message=message[:2048], details=details),
+    )

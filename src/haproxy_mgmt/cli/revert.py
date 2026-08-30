@@ -175,34 +175,49 @@ def main(
     code, out, err = run_helper(request)
 
     try:
-        result = json.loads(out) if out else None
+        document = json.loads(out) if out else None
     except json.JSONDecodeError:
-        result = None
+        document = None
 
-    if result is None:
+    if not isinstance(document, dict) or "outcome" not in document:
+        #
+        # No envelope means the helper died before it could describe what it did.
+        # Its stderr is the only account of the run there is, so it is shown as
+        # it stands rather than replaced by a friendlier sentence that would say
+        # less.
+        #
         writer.write(err or f"ERROR: the revert failed with exit code {code}.\n")
         return code or 70
 
-    if not result["valid"]:
-        writer.write(
-            f"{result['diagnostics']}\n"
-            "ERROR: the restored configuration is not valid for this cluster today.\n"
-            "No version was created and nothing was published.\n"
-        )
-        return code or 65
+    if document.get("outcome") != "done":
+        error = document.get("error") or {}
+        diagnostics = (error.get("details") or {}).get("diagnostics")
+        if diagnostics:
+            writer.write(f"{diagnostics}\n")
+        writer.write(f"ERROR: {error.get('message', 'the revert did not run.')}\n")
+        return code or 70
 
-    if code != 0:
-        writer.write(err or f"ERROR: the revert failed with exit code {code}.\n")
-        return code
+    result = document.get("result") or {}
+    if not result.get("changed"):
+        #
+        # The helper found the chosen version's content already in place. It is
+        # a success, and saying so is more useful than reporting a version
+        # number that was not created.
+        #
+        writer.write(
+            f"Cluster '{cluster_id}' already holds the content of version {version}. "
+            "No new version was created.\n"
+        )
+        return 0
 
     writer.write(
         "HAProxy configuration OK.\n\n"
         f"Cluster '{cluster_id}' is back on the content of version {version}, "
-        f"recorded as version {result['version']}.\n\n"
-        f"  Hash:     {result['commit']}\n"
+        f"recorded as version {result['new_version']}.\n\n"
+        f"  Hash:     {result['hash']}\n"
         f"  Release:  {result['release']}\n\n"
         "No node deployment has run. Bring the nodes into step with:\n\n"
-        f"  haproxy-deploy -c {cluster_id}\n"
+        f"  {result['next_command']}\n"
     )
     return 0
 

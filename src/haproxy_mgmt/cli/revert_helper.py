@@ -28,13 +28,12 @@ certificates and the maps present now, not on what was true then.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, BinaryIO, TextIO
+from typing import Any, BinaryIO, Protocol, TextIO
 
 from haproxy_mgmt.candidate_validation import (
     DEFAULT_RUN_ROOT,
@@ -46,7 +45,15 @@ from haproxy_mgmt.candidate_validation import (
     validate_candidate,
     validate_in_sandbox,
 )
-from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
+from haproxy_mgmt.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
+from haproxy_mgmt.config import (
+    DEFAULT_POLICY_PATH,
+    Cluster,
+    ConfigError,
+    load_policy,
+    load_runtime_config,
+)
+from haproxy_mgmt.envelope import envelope, failure
 from haproxy_mgmt.git_command import GitError
 from haproxy_mgmt.git_command import git as _git
 from haproxy_mgmt.helper_protocol import (
@@ -55,6 +62,7 @@ from haproxy_mgmt.helper_protocol import (
     JsonValue,
     read_helper_request,
     require_no_arguments,
+    write_document,
 )
 from haproxy_mgmt.release_install import (
     PUBLISH_GROUP,
@@ -66,6 +74,7 @@ from haproxy_mgmt.release_install import (
 from haproxy_mgmt.release_layout import LayoutError, ReleaseMetadata, build_node_artifact
 from haproxy_mgmt.repo_health import unsaved_changes
 from haproxy_mgmt.repo_snapshot import (
+    ConcurrentUpdate,
     PublishError,
     commit_and_swap,
     read_tree_files,
@@ -77,7 +86,14 @@ from haproxy_mgmt.version_history import (
     version_commit,
 )
 
+#
+# Two names, deliberately. `OPERATION` is what the request must say to reach this
+# helper - a privileged entry point, named for what it does rather than for the
+# command. `REVERT_OPERATION` is what the frozen contract calls the result, and
+# it is what a caller matches its own job against.
+#
 OPERATION = "revert_version"
+REVERT_OPERATION = "revert"
 PARAMETERS = frozenset({"version", "expected_commit"})
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -104,26 +120,57 @@ def parse_expected_commit(raw: JsonValue) -> str:
     return raw
 
 
-def _response(request: HelperRequest, **fields: Any) -> dict[str, Any]:
-    return {
-        "schema_version": 1,
-        "operation": request.operation,
-        "cluster": request.cluster,
-        "request_id": request.request_id,
-        "valid": True,
-        "diagnostics": "",
-        "restored_version": None,
-        "version": None,
-        "commit": None,
-        "timestamp": None,
-        "release": None,
-        "already_current": False,
-        **fields,
-    }
+class Refuse(Protocol):
+    """How this helper ends a run that will not write anything."""
+
+    def __call__(
+        self, code: str, message: str, exit_code: int, details: dict[str, Any] | None = None
+    ) -> int: ...
 
 
 def _tree_of(repo: Path, commit: str) -> str:
     return _git(repo, "rev-parse", f"{commit}^{{tree}}").decode().strip()
+
+
+def _result(
+    *,
+    changed: bool,
+    from_version: int,
+    restored_version: int,
+    new_version: int,
+    commit: str,
+    published_at: str,
+    cluster: str,
+    release: str | None,
+    already_current: bool,
+) -> dict[str, Any]:
+    """The frozen `revert` result.
+
+    `deployment_required` follows `changed` rather than being reported
+    separately. A revert never deploys, so a changed revert always leaves the
+    nodes behind - and a revert that changed nothing must not tell an operator to
+    run a deploy that has nothing to carry.
+    """
+
+    return {
+        "changed": changed,
+        "from_version": from_version,
+        "restored_version": restored_version,
+        "new_version": new_version,
+        "hash": commit,
+        "published_at": published_at,
+        "deployment_required": changed,
+        "next_command": f"haproxy-deploy -c {cluster}" if changed else None,
+        #
+        # Outside the frozen fields, and allowed to be: v1 ignores unknown keys.
+        # The release path is what an operator looks for when asking whether the
+        # published area really moved, and `already_current` records that the
+        # release was installed before this run - which is how a repeated revert
+        # of the same content is recognised as a repeat rather than as a change.
+        #
+        "release": release,
+        "already_current": already_current,
+    }
 
 
 def main(
@@ -136,6 +183,7 @@ def main(
     error_stream: TextIO | None = None,
     require_secure: bool = True,
     require_root: bool = True,
+    lock_root: Path = DEFAULT_LOCK_ROOT,
     validator: SandboxValidator = validate_in_sandbox,
     group: str = PUBLISH_GROUP,
     change_owner: ChangeOwner = default_change_owner,
@@ -151,130 +199,260 @@ def main(
         require_no_arguments(arguments)
         if require_root and os.geteuid() != 0:
             raise HelperProtocolError("revert helper must run as root", exit_code=77)
-
         request = read_helper_request(
             stream,
             expected_operation=OPERATION,
             allowed_parameter_keys=PARAMETERS,
         )
+    except HelperProtocolError as exc:
+        #
+        # Deliberately stderr only. The cluster and the request ID an envelope
+        # must be bound to are fields of the request that just failed to parse;
+        # an envelope invented here could not be bound to the caller's job and
+        # would rightly be rejected as somebody else's answer.
+        #
+        errors.write(f"ERROR: {exc}\n")
+        return exc.exit_code
+
+    def refuse(
+        code: str, message: str, exit_code: int, details: dict[str, Any] | None = None
+    ) -> int:
+        """End the run with a result, not just an exit code.
+
+        Everything below this point knows which job it belongs to, so every exit
+        carries the envelope the contract promises on every path. Without it a
+        worker sees an unparseable answer and stores `unknown` - "this may have
+        taken effect" - for a refusal that provably wrote nothing.
+        """
+
+        errors.write(f"ERROR: {message}\n")
+        write_document(
+            output,
+            failure(
+                operation=REVERT_OPERATION,
+                cluster=request.cluster,
+                request_id=request.request_id,
+                code=code,
+                message=message,
+                exit_code=exit_code,
+                details=details,
+            ),
+        )
+        return exit_code
+
+    try:
         version = parse_version(request.parameters.get("version"))
         expected_commit = parse_expected_commit(request.parameters.get("expected_commit"))
-
         policy = load_policy(policy_path, require_secure=require_secure)
         cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
             request.cluster
         )
-        repo = cluster.config_path
-
-        #
-        # Checked again on this side. The draft may have become dirty after the
-        # operator approved the preview, and the reset below would overwrite it.
-        #
-        dirty = unsaved_changes(repo)
-        if dirty:
-            raise PublishError(
-                f"there are unsaved changes in {repo}. Publish or discard them before reverting."
-            )
-
-        branch, head = resolve_head(repo)
-
-        #
-        # The same lookup the caller made. A different answer means the
-        # repository moved in between, and the preview the human approved is no
-        # longer true.
-        #
-        actual = version_commit(repo, version)
-        if actual != expected_commit:
-            raise PublishError(
-                f"the repository changed during the revert; version {version} no longer "
-                f"points at the same commit. Expected {expected_commit}, "
-                f"now {actual or 'missing'}. Check the version list and try again."
-            )
-
-        target_tree = _tree_of(repo, expected_commit)
-        artifact = build_node_artifact(read_tree_files(repo, target_tree))
-
-        certificate = read_validation_certificate(
-            cluster.validation_certs / VALIDATION_CERTIFICATE,
-            require_secure=require_secure,
+    except HelperProtocolError as exc:
+        return refuse("bad_input", str(exc), exc.exit_code)
+    except ConfigError as exc:
+        return refuse(
+            "bad_input" if exc.exit_code == 64 else "dependency_unavailable",
+            str(exc),
+            exc.exit_code,
         )
-        prepare_run_root(run_root, require_secure=require_secure)
-        result = validate_candidate(
-            candidate_from_files(artifact),
-            run_root=run_root,
-            certificate_ids=cluster.certificate_ids,
-            validation_certificate=certificate,
-            request_id=request.request_id,
-            validator=validator,
+
+    try:
+        #
+        # Everything that decides what gets written happens inside the cluster's
+        # lock, and the checks are made again in here rather than carried in from
+        # outside it. A revert taken without the lock could be prepared against a
+        # repository that a deploy or another revert moved a moment later, and
+        # the reference swap alone would not notice a release area changing
+        # underneath it.
+        #
+        with hold(request.cluster, operation="revert", root=lock_root):
+            return _revert(
+                request=request,
+                cluster=cluster,
+                version=version,
+                expected_commit=expected_commit,
+                output=output,
+                run_root=run_root,
+                require_secure=require_secure,
+                validator=validator,
+                group=group,
+                change_owner=change_owner,
+                clock=clock,
+                refuse=refuse,
+            )
+    except LockBusy as exc:
+        return refuse("operation_locked", str(exc), exc.exit_code)
+    except ConcurrentUpdate as exc:
+        return refuse("expected_target_changed", str(exc), exc.exit_code)
+    except (InstallError, LayoutError) as exc:
+        return refuse("publish_incomplete", str(exc), exc.exit_code)
+    except PublishError as exc:
+        return refuse("publish_incomplete", str(exc), exc.exit_code)
+    except GitError as exc:
+        return refuse("internal_error", str(exc), exc.exit_code)
+
+
+def _revert(
+    *,
+    request: HelperRequest,
+    cluster: Cluster,
+    version: int,
+    expected_commit: str,
+    output: TextIO,
+    run_root: Path,
+    require_secure: bool,
+    validator: SandboxValidator,
+    group: str,
+    change_owner: ChangeOwner,
+    clock: Callable[[], datetime],
+    refuse: Refuse,
+) -> int:
+    """The revert itself, with the cluster's lock already held."""
+
+    repo = cluster.config_path
+
+    #
+    # Checked again on this side. The draft may have become dirty after the
+    # operator approved the preview, and the reset below would overwrite it.
+    #
+    dirty = unsaved_changes(repo)
+    if dirty:
+        return refuse(
+            "dirty_worktree",
+            f"there are unsaved changes in {repo}. Publish or discard them before reverting.",
+            65,
         )
-        if not result.valid:
-            json.dump(
-                _response(
-                    request,
-                    valid=False,
-                    diagnostics=result.diagnostics,
+
+    branch, head = resolve_head(repo)
+    from_version = count_versions(repo, head)
+
+    #
+    # The same lookup the caller made. A different answer means the repository
+    # moved in between, and the preview the human approved is no longer true.
+    #
+    actual = version_commit(repo, version)
+    if actual != expected_commit:
+        return refuse(
+            "expected_target_changed",
+            f"the repository changed during the revert; version {version} no longer "
+            f"points at the same commit. Expected {expected_commit}, "
+            f"now {actual or 'missing'}. Check the version list and try again.",
+            65,
+        )
+
+    target_tree = _tree_of(repo, expected_commit)
+
+    if target_tree == _tree_of(repo, head):
+        #
+        # The contract's successful no-op. Recording a second version holding
+        # byte-identical content would be a change in the history that is not a
+        # change in the configuration, and it would tell the operator to deploy
+        # something the nodes already run. It is also what makes a retried revert
+        # safe: the second attempt sees its own work and reports it, rather than
+        # reverting again.
+        #
+        write_document(
+            output,
+            envelope(
+                operation=REVERT_OPERATION,
+                outcome="done",
+                cluster=request.cluster,
+                request_id=request.request_id,
+                result=_result(
+                    changed=False,
+                    from_version=from_version,
                     restored_version=version,
+                    new_version=from_version,
+                    commit=head,
+                    published_at=clock().strftime(TIMESTAMP_FORMAT),
+                    cluster=request.cluster,
+                    release=None,
+                    already_current=True,
                 ),
-                output,
-                sort_keys=True,
-            )
-            output.write("\n")
-            return 65
-
-        commit = commit_and_swap(
-            repo,
-            branch=branch,
-            tree=target_tree,
-            parent=head,
-            message=MESSAGE.format(version=version),
+            ),
         )
-        #
-        # A hard reset, unlike publishing's index refresh: a revert changes what
-        # the configuration IS, so the files a person opens next must be the
-        # reverted ones.
-        #
-        restore_worktree(repo, commit)
+        return 0
 
-        metadata = ReleaseMetadata(
-            cluster=request.cluster,
-            version=count_versions(repo, commit),
-            commit=commit,
-            timestamp=clock().strftime(TIMESTAMP_FORMAT),
-        )
-        installed = install_release(
-            cluster.publish_path,
-            node_path=cluster.node_path,
-            artifact=artifact,
-            metadata=metadata,
-            group=group,
-            change_owner=change_owner,
-        )
-    except (
-        ConfigError,
-        GitError,
-        HelperProtocolError,
-        InstallError,
-        LayoutError,
-        PublishError,
-    ) as exc:
-        print(f"ERROR: {exc}", file=errors)
-        return exc.exit_code
+    artifact = build_node_artifact(read_tree_files(repo, target_tree))
 
-    json.dump(
-        _response(
-            request,
-            diagnostics=result.diagnostics,
-            restored_version=version,
-            version=metadata.version,
-            commit=metadata.commit,
-            timestamp=metadata.timestamp,
-            release=str(installed.release),
-            already_current=installed.already_current,
-        ),
-        output,
-        sort_keys=True,
+    certificate = read_validation_certificate(
+        cluster.validation_certs / VALIDATION_CERTIFICATE,
+        require_secure=require_secure,
     )
-    output.write("\n")
+    prepare_run_root(run_root, require_secure=require_secure)
+    result = validate_candidate(
+        candidate_from_files(artifact),
+        run_root=run_root,
+        certificate_ids=cluster.certificate_ids,
+        validation_certificate=certificate,
+        request_id=request.request_id,
+        validator=validator,
+    )
+    if not result.valid:
+        #
+        # The content was valid when it was published, which is exactly why this
+        # is checked again: what a node can accept depends on the certificates
+        # and maps present now. The diagnostics travel in the error's details
+        # because they are the whole answer to "why not", and a reader that only
+        # understands the stable code can still show the refusal.
+        #
+        return refuse(
+            "candidate_invalid",
+            f"the content of version {version} is not valid for this cluster today. "
+            "No version was created and nothing was published.",
+            65,
+            {"diagnostics": result.diagnostics, "restored_version": version},
+        )
+
+    commit = commit_and_swap(
+        repo,
+        branch=branch,
+        tree=target_tree,
+        parent=head,
+        message=MESSAGE.format(version=version),
+    )
+    #
+    # A hard reset, unlike publishing's index refresh: a revert changes what the
+    # configuration IS, so the files a person opens next must be the reverted
+    # ones.
+    #
+    restore_worktree(repo, commit)
+
+    metadata = ReleaseMetadata(
+        cluster=request.cluster,
+        version=count_versions(repo, commit),
+        commit=commit,
+        timestamp=clock().strftime(TIMESTAMP_FORMAT),
+    )
+    installed = install_release(
+        cluster.publish_path,
+        node_path=cluster.node_path,
+        artifact=artifact,
+        metadata=metadata,
+        group=group,
+        change_owner=change_owner,
+    )
+
+    write_document(
+        output,
+        envelope(
+            operation=REVERT_OPERATION,
+            outcome="done",
+            cluster=request.cluster,
+            request_id=request.request_id,
+            result=_result(
+                changed=True,
+                from_version=from_version,
+                restored_version=version,
+                new_version=metadata.version,
+                commit=metadata.commit,
+                published_at=metadata.timestamp,
+                cluster=request.cluster,
+                release=str(installed.release),
+                already_current=installed.already_current,
+            ),
+        ),
+    )
     return 0
 
 

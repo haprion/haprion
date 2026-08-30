@@ -21,7 +21,6 @@ half the pair has been reloaded.
 from __future__ import annotations
 
 import io
-import json
 import os
 import subprocess
 import sys
@@ -49,11 +48,13 @@ from haproxy_mgmt.config import (
 )
 from haproxy_mgmt.deploy_plan import CertificateTarget
 from haproxy_mgmt.deploy_run import CERT_OPERATION, ReadStatus, TriggerNode, run
+from haproxy_mgmt.envelope import failure
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
     JsonValue,
     read_helper_request,
     require_no_arguments,
+    write_document,
 )
 
 OPERATION = "cert_deploy_cluster"
@@ -145,11 +146,41 @@ def main(
             validate_parameters=_validate,
         )
     except HelperProtocolError as exc:
+        #
+        # Deliberately stderr only. JSON mode, the cluster and the request ID an
+        # envelope must be bound to are all fields of the request that just
+        # failed to parse; an envelope invented here could not be bound to the
+        # caller's job, and would rightly be rejected as somebody else's answer.
+        #
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
 
     allow_vip_unknown = bool(request.parameters.get("allow_vip_unknown", False))
     json_mode = bool(request.parameters.get("json", False))
+
+    def refuse(code: str, message: str, exit_code: int) -> int:
+        """End the run with a result, not just an exit code.
+
+        Everything below this point knows which job it belongs to, so every exit
+        can carry the envelope the contract promises on every path. Without it a
+        worker sees an unparseable answer and stores `unknown` - "this may have
+        taken effect" - for a refusal that provably reached no node.
+        """
+
+        errors.write(f"ERROR: {message}\n")
+        if json_mode:
+            write_document(
+                writer,
+                failure(
+                    operation=CERT_OPERATION,
+                    cluster=request.cluster,
+                    request_id=request.request_id,
+                    code=code,
+                    message=message,
+                    exit_code=exit_code,
+                ),
+            )
+        return exit_code
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -157,23 +188,27 @@ def main(
             request.cluster
         )
     except ConfigError as exc:
-        errors.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return refuse(
+            "bad_input" if exc.exit_code == 64 else "dependency_unavailable",
+            str(exc),
+            exc.exit_code,
+        )
 
     if policy.certificate_root is None:
-        errors.write(
-            "ERROR: no certificate root is configured. Add certificate_root to "
-            "the runtime policy.\n"
+        return refuse(
+            "dependency_unavailable",
+            "no certificate root is configured. Add certificate_root to the runtime policy.",
+            EXIT_NO_CERTIFICATE_ROOT,
         )
-        return EXIT_NO_CERTIFICATE_ROOT
 
     identity = policy.cert_deploy_identity
     if identity is None and node_trigger is None:
-        errors.write(
-            "ERROR: no certificate deploy identity is configured. Add "
-            "cert_deploy_identity with 'user' and 'key' to the runtime policy.\n"
+        return refuse(
+            "dependency_unavailable",
+            "no certificate deploy identity is configured. Add cert_deploy_identity "
+            "with 'user' and 'key' to the runtime policy.",
+            EXIT_NO_IDENTITY,
         )
-        return EXIT_NO_IDENTITY
 
     #
     # Resolved before the lock is taken and before anything is sent: a run that
@@ -184,8 +219,7 @@ def main(
     try:
         target = target_for(cluster, policy.certificate_root)
     except CertificateError as exc:
-        errors.write(f"ERROR: {exc}\n")
-        return 68
+        return refuse("certificate_missing", str(exc), 68)
 
     stream: TextIO = io.StringIO() if json_mode else writer
 
@@ -197,11 +231,12 @@ def main(
         # purpose, and quietly reading with the identity that can act would
         # dissolve that separation at exactly the moment nobody is looking.
         #
-        errors.write(
-            "ERROR: no status identity is configured. Add status_identity with "
-            "'user' and 'key' to the runtime policy.\n"
+        return refuse(
+            "dependency_unavailable",
+            "no status identity is configured. Add status_identity with "
+            "'user' and 'key' to the runtime policy.",
+            EXIT_NO_IDENTITY,
         )
-        return EXIT_NO_IDENTITY
 
     read: ReadStatus = status_reader or (
         lambda: read_status(cluster, cast(DeployIdentity, status_identity))
@@ -230,17 +265,11 @@ def main(
                 operation=CERT_OPERATION,
             )
     except LockBusy as exc:
-        errors.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return refuse("operation_locked", str(exc), exc.exit_code)
 
     if json_mode:
-        writer.write(
-            json.dumps(
-                outcome.report.as_envelope(request.cluster, request_id=request.request_id),
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            + "\n"
+        write_document(
+            writer, outcome.report.as_envelope(request.cluster, request_id=request.request_id)
         )
     return outcome.exit_code
 

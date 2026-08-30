@@ -29,7 +29,6 @@ half looked up is used as the basis for what happens to a node.
 from __future__ import annotations
 
 import io
-import json
 import os
 import subprocess
 import sys
@@ -47,13 +46,15 @@ from haproxy_mgmt.config import (
     load_policy,
     load_runtime_config,
 )
+from haproxy_mgmt.deploy_run import OPERATION as DEPLOY_OPERATION
 from haproxy_mgmt.deploy_run import ReadStatus, TriggerNode, run
-from haproxy_mgmt.envelope import new_request_id
+from haproxy_mgmt.envelope import failure, new_request_id
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
     JsonValue,
     read_helper_request,
     require_no_arguments,
+    write_document,
 )
 from haproxy_mgmt.status_collect import ask_node, collect, read_target
 
@@ -180,11 +181,43 @@ def main(
             validate_parameters=_validate,
         )
     except HelperProtocolError as exc:
+        #
+        # Deliberately stderr only. JSON mode is a parameter of the request, and
+        # so are the operation, cluster and request ID an envelope would have to
+        # be bound to; a request that failed to parse supplies none of them. An
+        # envelope invented here could not be bound to the caller's job and would
+        # be rejected as somebody else's answer - correctly - so there is nothing
+        # honest to write on stdout.
+        #
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
 
     allow_vip_unknown = bool(request.parameters.get("allow_vip_unknown", False))
     json_mode = bool(request.parameters.get("json", False))
+
+    def refuse(code: str, message: str, exit_code: int) -> int:
+        """End the run with a result, not just an exit code.
+
+        Everything below this point knows which job it belongs to, so every exit
+        can carry the envelope the contract promises on every path. Without it a
+        worker sees an unparseable answer and stores `unknown` - "this may have
+        taken effect" - for a refusal that provably changed nothing.
+        """
+
+        errors.write(f"ERROR: {message}\n")
+        if json_mode:
+            write_document(
+                writer,
+                failure(
+                    operation=DEPLOY_OPERATION,
+                    cluster=request.cluster,
+                    request_id=request.request_id,
+                    code=code,
+                    message=message,
+                    exit_code=exit_code,
+                ),
+            )
+        return exit_code
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -192,8 +225,11 @@ def main(
             request.cluster
         )
     except ConfigError as exc:
-        errors.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return refuse(
+            "bad_input" if exc.exit_code == 64 else "dependency_unavailable",
+            str(exc),
+            exc.exit_code,
+        )
 
     identity = policy.deploy_identity
     if identity is None and node_trigger is None:
@@ -202,11 +238,12 @@ def main(
         # guess would reach a node as the wrong identity, and a compiled-in right
         # one would put a real account name in a repository meant to be public.
         #
-        errors.write(
-            "ERROR: no deploy identity is configured. Add deploy_identity with "
-            "'user' and 'key' to the runtime policy.\n"
+        return refuse(
+            "dependency_unavailable",
+            "no deploy identity is configured. Add deploy_identity with "
+            "'user' and 'key' to the runtime policy.",
+            EXIT_NO_IDENTITY,
         )
-        return EXIT_NO_IDENTITY
 
     #
     # In JSON mode the human-readable stream is collected and thrown away rather
@@ -223,11 +260,12 @@ def main(
         # purpose, and quietly reading with the identity that can act would
         # dissolve that separation at exactly the moment nobody is looking.
         #
-        errors.write(
-            "ERROR: no status identity is configured. Add status_identity with "
-            "'user' and 'key' to the runtime policy.\n"
+        return refuse(
+            "dependency_unavailable",
+            "no status identity is configured. Add status_identity with "
+            "'user' and 'key' to the runtime policy.",
+            EXIT_NO_IDENTITY,
         )
-        return EXIT_NO_IDENTITY
 
     read: ReadStatus = status_reader or (
         lambda: read_status(cluster, cast(DeployIdentity, status_identity))
@@ -249,17 +287,11 @@ def main(
                 allow_vip_unknown=allow_vip_unknown,
             )
     except LockBusy as exc:
-        errors.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return refuse("operation_locked", str(exc), exc.exit_code)
 
     if json_mode:
-        writer.write(
-            json.dumps(
-                outcome.report.as_envelope(request.cluster, request_id=request.request_id),
-                separators=(",", ":"),
-                sort_keys=True,
-            )
-            + "\n"
+        write_document(
+            writer, outcome.report.as_envelope(request.cluster, request_id=request.request_id)
         )
     return outcome.exit_code
 

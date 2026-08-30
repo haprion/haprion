@@ -21,7 +21,9 @@ from pathlib import Path
 import yaml
 
 from haproxy_mgmt.cli import deploy, deploy_helper
+from haproxy_mgmt.cluster_lock import hold
 from haproxy_mgmt.cluster_status import NodeStatus, parse_status
+from tests.contract_schema import assert_contract
 from tests.node_harness import TARGET_HASH, pair
 
 BASE = Path(__file__).resolve().parents[1]
@@ -307,6 +309,67 @@ class CallerTests(unittest.TestCase):
                 deploy.main(argv)
             self.assertEqual(raised.exception.code, 64, argv)
             self.assertEqual(shown.getvalue(), deploy.USAGE)
+
+
+class RefusalContractTests(HelperFixture):
+    """A refusal is a result too, and in JSON mode it has to look like one.
+
+    These paths used to return an exit code and a line of stderr. A worker
+    parsing that sees no document, and the only honest thing it can record is
+    `unknown` - "the operation may have taken effect". For a run that stopped
+    before it reached a node, that is the worst of the available answers: it is
+    the one nothing may safely retry.
+    """
+
+    def test_an_unknown_cluster_is_refused_in_the_frozen_envelope(self) -> None:
+        code, out, err = self.run_helper(request("beta", json=True))
+        self.assertEqual(code, 64)
+        self.assertIn("unknown cluster", err)
+
+        document = assert_contract("haproxy-deploy", out)
+        self.assertEqual(document["operation"], "deploy")
+        self.assertEqual(document["outcome"], "failed")
+        self.assertEqual(document["request_id"], REQUEST_ID)
+        self.assertEqual(document["error"]["code"], "bad_input")
+        self.assertIsNone(document["result"])
+
+    def test_a_missing_status_identity_is_refused_in_the_frozen_envelope(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        code = deploy_helper.main(
+            [],
+            policy_path=self.runtime(),
+            input_stream=io.BytesIO(request(json=True)),
+            output_stream=out,
+            error_stream=err,
+            require_secure=False,
+            require_root=False,
+            lock_root=self.root / "locks",
+            node_trigger=lambda node: 0,
+        )
+        self.assertEqual(code, deploy_helper.EXIT_NO_IDENTITY)
+        document = assert_contract("haproxy-deploy", out.getvalue())
+        self.assertEqual(document["error"]["code"], "dependency_unavailable")
+        self.assertEqual(document["outcome"], "failed")
+
+    def test_a_held_lock_is_blocked_rather_than_failed(self) -> None:
+        with hold("alpha", operation="revert", root=self.root / "locks"):
+            code, out, _ = self.run_helper(request(json=True))
+
+        self.assertEqual(code, 75)
+        document = assert_contract("haproxy-deploy", out)
+        self.assertEqual(document["outcome"], "blocked")
+        self.assertEqual(document["error"]["code"], "operation_locked")
+        self.assertEqual(self.triggered, [])
+
+    def test_the_human_mode_still_prints_only_the_error(self) -> None:
+        """No document without JSON mode. A person reading a terminal gets a
+        sentence, and a stray envelope on stdout would be noise in the middle
+        of a rollout."""
+
+        code, out, err = self.run_helper(request("beta"))
+        self.assertEqual(code, 64)
+        self.assertEqual(out, "")
+        self.assertIn("unknown cluster", err)
 
 
 if __name__ == "__main__":

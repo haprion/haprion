@@ -5,7 +5,7 @@ import re
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import BinaryIO, cast
+from typing import Any, BinaryIO, TextIO, cast
 
 from haproxy_mgmt.config import CLUSTER_ID
 
@@ -160,3 +160,15 @@ def read_helper_request(
         request_id=request_id,
         parameters=parameters,
     )
+
+
+def write_document(stream: TextIO, document: Mapping[str, Any]) -> None:
+    """Write one helper result to stdout, in the one form every helper uses.
+
+    Sorted keys and no incidental whitespace, so two helpers answering the same
+    question produce byte-identical documents and a diff between a fixture and a
+    real run is a difference in content rather than in formatting.
+    """
+
+    json.dump(document, stream, separators=(",", ":"), sort_keys=True)
+    stream.write("\n")

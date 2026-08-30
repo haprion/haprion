@@ -19,7 +19,9 @@ from pathlib import Path
 
 from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli import revert, revert_helper
+from haproxy_mgmt.cluster_lock import hold
 from haproxy_mgmt.version_history import count_versions, version_commit, version_summary
+from tests.contract_schema import assert_contract
 from tests.test_publish_helper import HAPROXY_CFG, PublishFixture, Recorder, git
 
 REQUEST_ID = "33333333-3333-4333-8333-333333333333"
@@ -69,6 +71,7 @@ class RevertFixture(PublishFixture):
                 [],
                 policy_path=policy_path,
                 run_root=self.run_root,
+                lock_root=self.lock_root,
                 input_stream=io.BytesIO(request),
                 output_stream=out,
                 error_stream=err,
@@ -78,7 +81,15 @@ class RevertFixture(PublishFixture):
                 group=grp.getgrgid(os.getgid()).gr_name,
                 change_owner=Recorder(),
             )
-            return code, out.getvalue(), err.getvalue()
+            #
+            # Kept so a test can hold the privileged half to its own contract.
+            # Everything else in this file reads the human text the caller
+            # printed afterwards, which is exactly how a helper document that
+            # matched no schema at all went unnoticed.
+            #
+            self.helper_stdout = out.getvalue()
+            self.helper_stderr = err.getvalue()
+            return code, self.helper_stdout, self.helper_stderr
 
         writer = io.StringIO()
         code = revert.main(
@@ -314,6 +325,151 @@ class RefusalTests(RevertFixture):
         )
         self.assertEqual(code, 64)
         self.assertIn("no command-line arguments", stderr.getvalue())
+
+
+class ContractTests(RevertFixture):
+    """What the privileged half prints, held to `schemas/v1/haproxy-revert`.
+
+    The worker stores whatever this document says happened, and refuses anything
+    that is not the common v1 envelope bound to the job it claimed. A helper that
+    answers in a shape of its own leaves every revert recorded as `unknown` -
+    "this may have taken effect" - which is the least useful thing a job history
+    can say about a write.
+    """
+
+    def test_a_completed_revert_answers_in_the_frozen_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            code, _ = self.run_caller(policy_path, "-c", "alpha", "2")
+            self.assertEqual(code, 0)
+
+            document = assert_contract("haproxy-revert", self.helper_stdout)
+            self.assertEqual(document["operation"], "revert")
+            self.assertEqual(document["outcome"], "done")
+            self.assertIs(document["ok"], True)
+            self.assertEqual(document["request_id"], self.requests[0]["request_id"])
+            self.assertEqual(document["cluster"], "alpha")
+
+            result = document["result"]
+            self.assertEqual(
+                (result["changed"], result["from_version"], result["restored_version"]),
+                (True, 3, 2),
+            )
+            self.assertEqual(result["new_version"], 4)
+            self.assertIs(result["deployment_required"], True)
+            self.assertEqual(result["next_command"], "haproxy-deploy -c alpha")
+
+    def test_reverting_to_the_content_already_in_place_is_a_no_op(self) -> None:
+        """The contract's successful no-op, and what makes a retry safe.
+
+        A second attempt at a revert that already landed finds its own content at
+        the tip. Recording another version there would grow the history by one
+        every time somebody pressed the button twice, and would tell an operator
+        to deploy content the nodes already run.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            self.run_caller(policy_path, "-c", "alpha", "2")
+            self.assertEqual(count_versions(self.repo), 4)
+
+            code, output = self.run_caller(policy_path, "-c", "alpha", "2")
+            self.assertEqual(code, 0)
+            self.assertEqual(count_versions(self.repo), 4)
+
+            document = assert_contract("haproxy-revert", self.helper_stdout)
+            self.assertEqual(document["outcome"], "done")
+            result = document["result"]
+            self.assertIs(result["changed"], False)
+            self.assertIs(result["deployment_required"], False)
+            self.assertIsNone(result["next_command"])
+            self.assertEqual(result["new_version"], result["from_version"])
+            self.assertIn("already holds the content of version 2", output)
+
+    def test_an_invalid_candidate_fails_in_the_envelope_with_its_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            code, output = self.run_caller(
+                policy_path,
+                "-c",
+                "alpha",
+                "2",
+                valid=False,
+                diagnostics="[ALERT] missing certificate\n",
+            )
+            self.assertEqual(code, 65)
+
+            document = assert_contract("haproxy-revert", self.helper_stdout)
+            self.assertEqual(document["outcome"], "failed")
+            self.assertIsNone(document["result"])
+            self.assertEqual(document["error"]["code"], "candidate_invalid")
+            self.assertIn("missing certificate", document["error"]["details"]["diagnostics"])
+            #
+            # The caller still shows the diagnostics. They moved from a field of
+            # their own into the error's details; what an operator sees did not.
+            #
+            self.assertIn("missing certificate", output)
+
+    def test_a_dirty_draft_is_a_stable_code_rather_than_only_a_message(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+
+            def somebody_edits_the_draft() -> None:
+                (self.repo / "core/haproxy.cfg").write_bytes(HAPROXY_CFG + b"  # unsaved\n")
+
+            code, _ = self.run_caller(
+                policy_path, "-c", "alpha", "2", before_helper=somebody_edits_the_draft
+            )
+            self.assertEqual(code, 65)
+            document = assert_contract("haproxy-revert", self.helper_stdout)
+            self.assertEqual(document["error"]["code"], "dirty_worktree")
+
+    def test_a_version_that_moved_is_reported_as_a_changed_target(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+
+            def someone_rewrites_history() -> None:
+                first = version_commit(self.repo, 1)
+                assert first is not None
+                git(self.repo, "reset", "--hard", "--quiet", first)
+                (self.repo / "core/haproxy.cfg").write_bytes(HAPROXY_CFG + b"  # smuggled\n")
+                git(self.repo, "add", "-A")
+                git(self.repo, "commit", "-qm", "Smuggled version 2")
+
+            code, _ = self.run_caller(
+                policy_path, "-c", "alpha", "2", before_helper=someone_rewrites_history
+            )
+            self.assertEqual(code, 65)
+            document = assert_contract("haproxy-revert", self.helper_stdout)
+            self.assertEqual(document["error"]["code"], "expected_target_changed")
+
+    def test_a_held_cluster_lock_blocks_the_revert_without_writing(self) -> None:
+        """The lock a revert did not use to take at all.
+
+        A revert prepared outside the cluster's lock can be built against a
+        repository a deploy is already acting on. The reference swap would still
+        refuse a moved branch, but nothing stopped a release from being installed
+        underneath a rollout that was reading it.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            before = git(self.repo, "rev-parse", "HEAD")
+
+            with hold("alpha", operation="deploy", root=self.lock_root):
+                code, _ = self.run_caller(policy_path, "-c", "alpha", "2")
+
+            self.assertEqual(code, 75)
+            document = assert_contract("haproxy-revert", self.helper_stdout)
+            self.assertEqual(document["outcome"], "blocked")
+            self.assertEqual(document["error"]["code"], "operation_locked")
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
 
 if __name__ == "__main__":

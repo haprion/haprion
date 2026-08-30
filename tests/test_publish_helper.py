@@ -79,6 +79,7 @@ class PublishFixture(unittest.TestCase):
         policy_path = root / "runtime-policy.yaml"
         policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
         self.run_root = root / "run"
+        self.lock_root = root / "locks"
         return policy_path
 
     def repository(self, config_root: Path, *, linked_worktree: bool) -> Path:

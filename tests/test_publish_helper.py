@@ -21,6 +21,8 @@ import yaml
 
 from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli.publish_helper import main
+from haproxy_mgmt.cluster_lock import hold
+from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "22222222-2222-4222-8222-222222222222"
@@ -170,6 +172,7 @@ class PublishFixture(unittest.TestCase):
             [],
             policy_path=policy_path,
             run_root=self.run_root,
+            lock_root=self.lock_root,
             input_stream=stream,
             output_stream=stdout,
             error_stream=stderr,
@@ -190,13 +193,19 @@ class PublishTests(PublishFixture):
             before = git(self.repo, "rev-parse", "HEAD")
             self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
             code, stdout, stderr = self.run_publish(policy_path, self.request())
-            result = json.loads(stdout)
+            document = assert_contract("haproxy-publish", stdout)
+            result = document["result"]
 
             self.assertEqual((code, stderr), (0, ""))
+            self.assertEqual(document["operation"], "publish")
+            self.assertEqual(document["outcome"], "done")
             self.assertTrue(result["changed"])
             self.assertEqual(result["version"], 2)
-            self.assertEqual(result["commit"], git(self.repo, "rev-parse", "HEAD"))
-            self.assertNotEqual(result["commit"], before)
+            self.assertEqual(result["hash"], git(self.repo, "rev-parse", "HEAD"))
+            self.assertNotEqual(result["hash"], before)
+            self.assertIs(result["deployment_required"], True)
+            self.assertEqual(result["next_command"], "haproxy-deploy -c alpha")
+            self.assertEqual(result["comment"], "Added serverxyz")
             self.assertEqual(git(self.repo, "log", "-1", "--format=%s"), "Added serverxyz")
 
             release = Path(result["release"]) / "alpha"
@@ -204,7 +213,7 @@ class PublishTests(PublishFixture):
             self.assertEqual((release / "conf.d/40-managed.cfg").read_bytes(), GENERATED)
             self.assertIn("version=2\n", (release / "RELEASE").read_text())
             self.assertEqual(
-                os.readlink(self.publish_path / "current"), f"releases/{result['commit']}"
+                os.readlink(self.publish_path / "current"), f"releases/{result['hash']}"
             )
 
     def test_the_draft_area_is_clean_afterwards(self) -> None:
@@ -231,7 +240,7 @@ class PublishTests(PublishFixture):
             policy_path = self.runtime(Path(raw), linked_worktree=True)
             self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
             code, stdout, stderr = self.run_publish(policy_path, self.request())
-            result = json.loads(stdout)
+            result = assert_contract("haproxy-publish", stdout)["result"]
             self.assertEqual((code, stderr), (0, ""))
             self.assertEqual(result["version"], 2)
             self.assertEqual(git(self.repo, "status", "--porcelain"), "")
@@ -241,10 +250,19 @@ class PublishTests(PublishFixture):
             policy_path = self.runtime(Path(raw))
             before = git(self.repo, "rev-parse", "HEAD")
             code, stdout, stderr = self.run_publish(policy_path, self.request())
-            result = json.loads(stdout)
+            document = assert_contract("haproxy-publish", stdout)
+            result = document["result"]
             self.assertEqual((code, stderr), (0, ""))
+            #
+            # A verified no-op is `done`, not a failure: the contract says so,
+            # and an operator who publishes twice has not made a mistake.
+            #
+            self.assertEqual(document["outcome"], "done")
             self.assertFalse(result["changed"])
-            self.assertIsNone(result["version"])
+            self.assertIs(result["deployment_required"], False)
+            self.assertIsNone(result["next_command"])
+            self.assertIsNone(result["published_at"])
+            self.assertEqual(result["hash"], before)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
             self.assertFalse(self.publish_path.exists())
 
@@ -259,7 +277,10 @@ class RefusalTests(PublishFixture):
             code, stdout, stderr = self.run_publish(policy_path, stream)
             self.assertEqual(code, 75)
             self.assertIn("changed after this candidate was prepared", stderr)
-            self.assertEqual((stdout, git(self.repo, "rev-parse", "HEAD")), ("", before))
+            document = assert_contract("haproxy-publish", stdout)
+            self.assertEqual(document["outcome"], "blocked")
+            self.assertEqual(document["error"]["code"], "base_version_changed")
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
     def test_an_invalid_candidate_records_nothing(self) -> None:
         """The order the shell path established: validate, then commit."""
@@ -273,10 +294,12 @@ class RefusalTests(PublishFixture):
                 valid=False,
                 diagnostics="[ALERT] parsing error\n",
             )
-            result = json.loads(stdout)
-            self.assertEqual((code, stderr), (65, ""))
-            self.assertFalse(result["valid"])
-            self.assertIn("parsing error", result["diagnostics"])
+            document = assert_contract("haproxy-publish", stdout)
+            self.assertEqual(code, 65)
+            self.assertIn("configuration is invalid", stderr)
+            self.assertEqual(document["outcome"], "failed")
+            self.assertEqual(document["error"]["code"], "candidate_invalid")
+            self.assertIn("parsing error", document["error"]["details"]["diagnostics"])
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
             self.assertFalse(self.publish_path.exists())
 
@@ -291,8 +314,34 @@ class RefusalTests(PublishFixture):
                     }
                 )
                 code, stdout, stderr = self.run_publish(policy_path, stream)
-                self.assertEqual((code, stdout), (65, ""))
+                self.assertEqual(code, 65)
                 self.assertIn("ERROR:", stderr)
+                document = assert_contract("haproxy-publish", stdout)
+                self.assertEqual(document["error"]["code"], "bad_input")
+
+    def test_a_held_cluster_lock_blocks_the_publish_without_writing(self) -> None:
+        """The lock a publish did not use to take at all.
+
+        The compare-and-swap on the branch reference already caught a second
+        publish, but nothing serialised a publish against a revert, and nothing
+        stopped a deploy from reading the release area while this run was
+        rewriting it.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            before = git(self.repo, "rev-parse", "HEAD")
+            self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
+
+            with hold("alpha", operation="deploy", root=self.lock_root):
+                code, stdout, _ = self.run_publish(policy_path, self.request())
+
+            self.assertEqual(code, 75)
+            document = assert_contract("haproxy-publish", stdout)
+            self.assertEqual(document["outcome"], "blocked")
+            self.assertEqual(document["error"]["code"], "operation_locked")
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+            self.assertFalse(self.publish_path.exists())
 
     def test_a_comment_with_control_characters_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

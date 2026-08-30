@@ -52,6 +52,7 @@ class CallerFixture(PublishFixture):
                 [],
                 policy_path=policy_path,
                 run_root=self.run_root,
+                lock_root=self.lock_root,
                 input_stream=io.BytesIO(request),
                 output_stream=out,
                 error_stream=err,

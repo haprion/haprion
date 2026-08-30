@@ -181,31 +181,29 @@ def main(
     code, out, err = run_helper(request)
 
     try:
-        result = json.loads(out) if out else None
+        document = json.loads(out) if out else None
     except json.JSONDecodeError:
-        result = None
+        document = None
 
-    if result is None:
+    if not isinstance(document, dict) or "outcome" not in document:
         #
-        # No answer to read. Whatever went wrong, the helper's own words are the
-        # best thing available - inventing a summary here would be guessing.
+        # No envelope means the helper died before it could describe what it
+        # did. Its own words are the best thing available - inventing a summary
+        # here would be guessing.
         #
         writer.write(err or f"ERROR: publishing failed with exit code {code}.\n")
         return code or 70
 
-    if not result["valid"]:
-        writer.write(
-            f"\n{result['diagnostics']}\n"
-            "ERROR: the HAProxy configuration is invalid.\n"
-            "No version was created and nothing was published.\n"
-        )
-        return code or 65
+    if document.get("outcome") != "done":
+        error = document.get("error") or {}
+        diagnostics = (error.get("details") or {}).get("diagnostics")
+        if diagnostics:
+            writer.write(f"\n{diagnostics}\n")
+        writer.write(f"ERROR: {error.get('message', 'publishing did not run.')}\n")
+        return code or 70
 
-    if code != 0:
-        writer.write(err or f"ERROR: publishing failed with exit code {code}.\n")
-        return code
-
-    if not result["changed"]:
+    result = document.get("result") or {}
+    if not result.get("changed"):
         writer.write(f"No changes to publish for cluster '{cluster_id}'.\n")
         return 0
 
@@ -213,10 +211,10 @@ def main(
         "HAProxy configuration OK.\n\n"
         f"Cluster '{cluster_id}' is published.\n\n"
         f"  Version:  {result['version']}\n"
-        f"  Hash:     {result['commit']}\n"
+        f"  Hash:     {result['hash']}\n"
         f"  Release:  {result['release']}\n\n"
         "No node deployment has run. Bring the nodes into step with:\n\n"
-        f"  haproxy-deploy -c {cluster_id}\n"
+        f"  {result['next_command']}\n"
     )
     return 0
 

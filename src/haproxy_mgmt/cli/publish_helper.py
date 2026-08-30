@@ -28,14 +28,13 @@ head, the version number and the author identity are all read again here.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO, TextIO
+from typing import Any, BinaryIO, Protocol, TextIO
 
 from haproxy_mgmt.candidate_validation import (
     DEFAULT_RUN_ROOT,
@@ -50,13 +49,23 @@ from haproxy_mgmt.candidate_validation import (
     validate_candidate,
     validate_in_sandbox,
 )
-from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
+from haproxy_mgmt.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
+from haproxy_mgmt.config import (
+    DEFAULT_POLICY_PATH,
+    Cluster,
+    ConfigError,
+    load_policy,
+    load_runtime_config,
+)
+from haproxy_mgmt.envelope import envelope, failure
 from haproxy_mgmt.git_command import GitError
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
+    HelperRequest,
     JsonValue,
     read_helper_request,
     require_no_arguments,
+    write_document,
 )
 from haproxy_mgmt.release_install import (
     PUBLISH_GROUP,
@@ -68,6 +77,7 @@ from haproxy_mgmt.release_install import (
 from haproxy_mgmt.release_layout import LayoutError, ReleaseMetadata, build_node_artifact
 from haproxy_mgmt.repo_snapshot import (
     SNAPSHOT_PREFIXES,
+    ConcurrentUpdate,
     PublishError,
     build_candidate_tree,
     commit_and_swap,
@@ -77,7 +87,14 @@ from haproxy_mgmt.repo_snapshot import (
 )
 from haproxy_mgmt.version_history import count_versions
 
+#
+# Two names, deliberately. `OPERATION` is what the request must say to reach this
+# helper - a privileged entry point, named for what it does rather than for the
+# command. `PUBLISH_OPERATION` is what the frozen contract calls the result, and
+# it is what a caller matches its own job against.
+#
 OPERATION = "publish_version"
+PUBLISH_OPERATION = "publish"
 PARAMETERS = frozenset({"files", "expected_head", "comment"})
 COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -173,27 +190,55 @@ def parse_expected_head(raw_head: JsonValue) -> str:
     return raw_head
 
 
-def _response(
-    request_operation: str,
+class Refuse(Protocol):
+    """How this helper ends a run that will not record a version."""
+
+    def __call__(
+        self, code: str, message: str, exit_code: int, details: dict[str, Any] | None = None
+    ) -> int: ...
+
+
+def _result(
+    *,
+    changed: bool,
+    version: int | None,
+    commit: str | None,
+    published_at: str | None,
+    comment: str,
+    valid: bool,
     cluster: str,
-    request_id: str,
-    **fields: Any,
+    candidate_sha256: str | None = None,
+    release: str | None = None,
+    already_current: bool = False,
 ) -> dict[str, Any]:
+    """The frozen `publish` result.
+
+    `issues` is present and empty rather than absent. The contract has a place
+    for structured validation findings; what this path has is HAProxy's own
+    diagnostics text, which is not that. Returning an empty list says truthfully
+    that no structured issue was produced, and leaves the field free to be filled
+    once the generator owns validation. The text itself travels with the error,
+    where a reader looks for the reason something was refused.
+    """
+
     return {
-        "schema_version": 1,
-        "operation": request_operation,
-        "cluster": cluster,
-        "request_id": request_id,
-        "changed": False,
-        "valid": True,
-        "diagnostics": "",
-        "candidate_sha256": None,
-        "version": None,
-        "commit": None,
-        "timestamp": None,
-        "release": None,
-        "already_current": False,
-        **fields,
+        "changed": changed,
+        "version": version,
+        "hash": commit,
+        "published_at": published_at,
+        "comment": comment,
+        "validation": {"valid": valid, "issues": []},
+        "deployment_required": changed,
+        "next_command": f"haproxy-deploy -c {cluster}" if changed else None,
+        #
+        # Outside the frozen fields, and allowed to be: v1 ignores unknown keys.
+        # The candidate digest is what ties a stored result to the exact bytes
+        # that were validated, and the release path is what an operator looks at
+        # when asking whether the published area really moved.
+        #
+        "candidate_sha256": candidate_sha256,
+        "release": release,
+        "already_current": already_current,
     }
 
 
@@ -207,6 +252,7 @@ def main(
     error_stream: TextIO | None = None,
     require_secure: bool = True,
     require_root: bool = True,
+    lock_root: Path = DEFAULT_LOCK_ROOT,
     validator: SandboxValidator = validate_in_sandbox,
     group: str = PUBLISH_GROUP,
     change_owner: ChangeOwner = default_change_owner,
@@ -229,6 +275,37 @@ def main(
             allowed_parameter_keys=PARAMETERS,
             max_bytes=MAX_CANDIDATE_BYTES + 1024 * 1024,
         )
+    except HelperProtocolError as exc:
+        #
+        # Deliberately stderr only. The cluster and the request ID an envelope
+        # must be bound to are fields of the request that just failed to parse;
+        # an envelope invented here could not be bound to the caller's job and
+        # would rightly be rejected as somebody else's answer.
+        #
+        errors.write(f"ERROR: {exc}\n")
+        return exc.exit_code
+
+    def refuse(
+        code: str, message: str, exit_code: int, details: dict[str, Any] | None = None
+    ) -> int:
+        """End the run with a result, not just an exit code."""
+
+        errors.write(f"ERROR: {message}\n")
+        write_document(
+            output,
+            failure(
+                operation=PUBLISH_OPERATION,
+                cluster=request.cluster,
+                request_id=request.request_id,
+                code=code,
+                message=message,
+                exit_code=exit_code,
+                details=details,
+            ),
+        )
+        return exit_code
+
+    try:
         files = parse_files(request.parameters.get("files"))
         expected_head = parse_expected_head(request.parameters.get("expected_head"))
         comment = parse_comment(request.parameters.get("comment"))
@@ -237,129 +314,193 @@ def main(
         cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
             request.cluster
         )
-        repo = cluster.config_path
-
-        #
-        # 1. Where the repository actually is now. The caller measured the same
-        #    value before building its request; if the two disagree, something
-        #    was published or reverted in between and this candidate was built
-        #    on a starting point that no longer exists.
-        #
-        branch, head = resolve_head(repo)
-        if head != expected_head:
-            raise PublishError(
-                "the configuration changed after this candidate was prepared. "
-                "Nothing was published; run the command again so the candidate "
-                "is built on the current version.",
-                exit_code=75,
-            )
-
-        #
-        # 2. The candidate tree. managed/ is carried over from HEAD untouched.
-        #
-        snapshot = build_candidate_tree(repo, head, files)
-        if snapshot.unchanged:
-            json.dump(
-                _response(request.operation, request.cluster, request.request_id),
-                output,
-                sort_keys=True,
-            )
-            output.write("\n")
-            return 0
-
-        #
-        # 3. The artifact, derived here from the candidate tree - not received.
-        #
-        artifact = build_node_artifact(read_tree_files(repo, snapshot.tree))
-        candidate = candidate_from_files(artifact)
-
-        #
-        # 4. Validation, in the sandbox, on exactly those bytes.
-        #
-        certificate = read_validation_certificate(
-            cluster.validation_certs / VALIDATION_CERTIFICATE,
-            require_secure=require_secure,
+    except HelperProtocolError as exc:
+        return refuse("bad_input", str(exc), exc.exit_code)
+    except ConfigError as exc:
+        return refuse(
+            "bad_input" if exc.exit_code == 64 else "dependency_unavailable",
+            str(exc),
+            exc.exit_code,
         )
-        prepare_run_root(run_root, require_secure=require_secure)
-        result = validate_candidate(
-            candidate,
-            run_root=run_root,
-            certificate_ids=cluster.certificate_ids,
-            validation_certificate=certificate,
-            request_id=request.request_id,
-            validator=validator,
+
+    try:
+        #
+        # Everything that decides what gets written happens inside the cluster's
+        # lock, the head included. Publishing used to take no lock at all: the
+        # compare-and-swap on the branch reference caught a second publish, but
+        # nothing stopped a deploy from reading the release area while this run
+        # was rewriting it, and nothing serialised publish against revert.
+        #
+        with hold(request.cluster, operation="publish", root=lock_root):
+            return _publish(
+                request=request,
+                cluster=cluster,
+                files=files,
+                expected_head=expected_head,
+                comment=comment,
+                output=output,
+                run_root=run_root,
+                require_secure=require_secure,
+                validator=validator,
+                group=group,
+                change_owner=change_owner,
+                clock=clock,
+                refuse=refuse,
+            )
+    except LockBusy as exc:
+        return refuse("operation_locked", str(exc), exc.exit_code)
+    except ConcurrentUpdate as exc:
+        return refuse("base_version_changed", str(exc), exc.exit_code)
+    except (InstallError, LayoutError) as exc:
+        return refuse("publish_incomplete", str(exc), exc.exit_code)
+    except PublishError as exc:
+        return refuse("publish_incomplete", str(exc), exc.exit_code)
+    except GitError as exc:
+        return refuse("internal_error", str(exc), exc.exit_code)
+
+
+def _publish(
+    *,
+    request: HelperRequest,
+    cluster: Cluster,
+    files: dict[str, bytes],
+    expected_head: str,
+    comment: str,
+    output: TextIO,
+    run_root: Path,
+    require_secure: bool,
+    validator: SandboxValidator,
+    group: str,
+    change_owner: ChangeOwner,
+    clock: Callable[[], datetime],
+    refuse: Refuse,
+) -> int:
+    """The publish itself, with the cluster's lock already held."""
+
+    repo = cluster.config_path
+
+    #
+    # 1. Where the repository actually is now. The caller measured the same
+    #    value before building its request; if the two disagree, something was
+    #    published or reverted in between and this candidate was built on a
+    #    starting point that no longer exists.
+    #
+    branch, head = resolve_head(repo)
+    if head != expected_head:
+        return refuse(
+            "base_version_changed",
+            "the configuration changed after this candidate was prepared. "
+            "Nothing was published; run the command again so the candidate "
+            "is built on the current version.",
+            75,
         )
-        if not result.valid:
-            json.dump(
-                _response(
-                    request.operation,
-                    request.cluster,
-                    request.request_id,
-                    valid=False,
-                    diagnostics=result.diagnostics,
-                    candidate_sha256=candidate.sha256,
+
+    #
+    # 2. The candidate tree. managed/ is carried over from HEAD untouched.
+    #
+    snapshot = build_candidate_tree(repo, head, files)
+    if snapshot.unchanged:
+        #
+        # The contract's verified no-op: a successful outcome that says plainly
+        # that nothing was recorded and that no deploy follows from it.
+        #
+        write_document(
+            output,
+            envelope(
+                operation=PUBLISH_OPERATION,
+                outcome="done",
+                cluster=request.cluster,
+                request_id=request.request_id,
+                result=_result(
+                    changed=False,
+                    version=count_versions(repo, head),
+                    commit=head,
+                    published_at=None,
+                    comment=comment,
+                    valid=True,
+                    cluster=request.cluster,
                 ),
-                output,
-                sort_keys=True,
-            )
-            output.write("\n")
-            return 65
-
-        #
-        # 5. Only now is a version recorded, and only if nobody moved the branch
-        #    while the sandbox was running.
-        #
-        commit = commit_and_swap(
-            repo, branch=branch, tree=snapshot.tree, parent=head, message=comment
+            ),
         )
-        refresh_worktree_index(repo, commit)
+        return 0
 
-        #
-        # 6. Install the release the nodes fetch, named by the commit.
-        #
-        metadata = ReleaseMetadata(
-            cluster=request.cluster,
-            version=count_versions(repo, commit),
-            commit=commit,
-            timestamp=clock().strftime(TIMESTAMP_FORMAT),
-        )
-        installed = install_release(
-            cluster.publish_path,
-            node_path=cluster.node_path,
-            artifact=artifact,
-            metadata=metadata,
-            group=group,
-            change_owner=change_owner,
-        )
-    except (
-        ConfigError,
-        GitError,
-        HelperProtocolError,
-        InstallError,
-        LayoutError,
-        PublishError,
-    ) as exc:
-        print(f"ERROR: {exc}", file=errors)
-        return exc.exit_code
+    #
+    # 3. The artifact, derived here from the candidate tree - not received.
+    #
+    artifact = build_node_artifact(read_tree_files(repo, snapshot.tree))
+    candidate = candidate_from_files(artifact)
 
-    json.dump(
-        _response(
-            request.operation,
-            request.cluster,
-            request.request_id,
-            changed=True,
-            candidate_sha256=candidate.sha256,
-            diagnostics=result.diagnostics,
-            version=metadata.version,
-            commit=metadata.commit,
-            timestamp=metadata.timestamp,
-            release=str(installed.release),
-            already_current=installed.already_current,
-        ),
-        output,
-        sort_keys=True,
+    #
+    # 4. Validation, in the sandbox, on exactly those bytes.
+    #
+    certificate = read_validation_certificate(
+        cluster.validation_certs / VALIDATION_CERTIFICATE,
+        require_secure=require_secure,
     )
-    output.write("\n")
+    prepare_run_root(run_root, require_secure=require_secure)
+    result = validate_candidate(
+        candidate,
+        run_root=run_root,
+        certificate_ids=cluster.certificate_ids,
+        validation_certificate=certificate,
+        request_id=request.request_id,
+        validator=validator,
+    )
+    if not result.valid:
+        return refuse(
+            "candidate_invalid",
+            "the HAProxy configuration is invalid. "
+            "No version was created and nothing was published.",
+            65,
+            {"diagnostics": result.diagnostics, "candidate_sha256": candidate.sha256},
+        )
+
+    #
+    # 5. Only now is a version recorded, and only if nobody moved the branch
+    #    while the sandbox was running.
+    #
+    commit = commit_and_swap(repo, branch=branch, tree=snapshot.tree, parent=head, message=comment)
+    refresh_worktree_index(repo, commit)
+
+    #
+    # 6. Install the release the nodes fetch, named by the commit.
+    #
+    metadata = ReleaseMetadata(
+        cluster=request.cluster,
+        version=count_versions(repo, commit),
+        commit=commit,
+        timestamp=clock().strftime(TIMESTAMP_FORMAT),
+    )
+    installed = install_release(
+        cluster.publish_path,
+        node_path=cluster.node_path,
+        artifact=artifact,
+        metadata=metadata,
+        group=group,
+        change_owner=change_owner,
+    )
+
+    write_document(
+        output,
+        envelope(
+            operation=PUBLISH_OPERATION,
+            outcome="done",
+            cluster=request.cluster,
+            request_id=request.request_id,
+            result=_result(
+                changed=True,
+                version=metadata.version,
+                commit=metadata.commit,
+                published_at=metadata.timestamp,
+                comment=comment,
+                valid=True,
+                cluster=request.cluster,
+                candidate_sha256=candidate.sha256,
+                release=str(installed.release),
+                already_current=installed.already_current,
+            ),
+        ),
+    )
     return 0
 
 

@@ -76,6 +76,18 @@ copy_path /etc/systemd/system/haproxy.service.d
 
 copy_path /etc/default/haproxy
 
+#
+# Where HAProxy comes from, not just which packages are installed.
+# packages.txt records names; a name resolves to whatever the node's sources
+# happen to offer, which after a restore is the distribution's package on a
+# different branch. The keyring, the source and the pin are what make the
+# answer reproducible, so they belong in the archive with everything else that
+# has to come back identical.
+#
+copy_path /etc/apt/sources.list.d
+copy_path /etc/apt/preferences.d
+copy_path /etc/apt/keyrings
+
 copy_path /etc/sudoers.d
 
 # What this node believes about itself: its cluster, its management host, and

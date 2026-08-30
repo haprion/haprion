@@ -21,6 +21,7 @@ only works with the names used below, that is a bug in the software, not in this
 
 - [The shape of a deployment](#the-shape-of-a-deployment)
 - [Prerequisites](#prerequisites)
+- [Keeping HAProxy current](#keeping-haproxy-current)
 - [Part 1 — the management host](#part-1--the-management-host)
 - [Part 2 — the nodes](#part-2--the-nodes)
 - [Part 3 — the versioned CLI release](#part-3--the-versioned-cli-release)
@@ -56,7 +57,8 @@ Three properties drive the whole design, and every step below follows from one o
 
 ## Prerequisites
 
-HAProxy Manager manages HAProxy; it does not install it. Before starting, you need:
+HAProxy Manager manages HAProxy's configuration; it does not install, patch or upgrade
+HAProxy itself. Before starting, you need:
 
 **On the management host**
 
@@ -91,6 +93,40 @@ HAProxy Manager manages HAProxy; it does not install it. Before starting, you ne
 | node names | `node-a`, `node-b` | two per cluster in the reference layout |
 | virtual address | `192.0.2.10` | per cluster, if keepalived is used |
 | management network | `192.0.2.0/24` | how the host and nodes reach each other |
+
+## Keeping HAProxy current
+
+Which HAProxy version runs, and when it is upgraded, stays with you. That is a boundary in the
+design rather than an omission, and it is worth knowing why before it matters.
+
+Upgrading the package restarts the data plane. The whole privilege model here exists so that this
+tool cannot do that on its own: every management identity is a forced command that can ask a node
+to *pull* something, and nothing else. There is no push path, and a tool that could silently
+restart HAProxy on a live node would need one. Package upkeep belongs to whatever already patches
+these hosts — unattended upgrades, a configuration-management run, your own maintenance window —
+on a schedule you choose and can pause.
+
+Two things this project does depend on:
+
+**The branch you run should still be receiving fixes.** HAProxy publishes maintenance status per
+branch at [haproxy.org](https://www.haproxy.org/), and the binary states it too:
+
+```console
+$ haproxy -v
+HAProxy version 3.4.4 2026/08/28 - https://haproxy.org/
+Status: long-term supported branch - will stop receiving fixes around Q2 2031.
+```
+
+Distribution packages are often frozen at an early point release of a branch and carry backported
+security fixes only, which is a different thing from running the branch's current release. Both are
+defensible; they are worth telling apart deliberately rather than by default.
+
+**The management host and the nodes should run the same branch.** The management host validates a
+candidate configuration with its own `haproxy -c` before any node is asked to pull it. That check
+is only meaningful while it is at least as strict as the nodes are. A validator on a *newer* branch
+can accept a directive the nodes then reject — the deploy fails on the first node and rolls back,
+so nothing breaks, but the check stopped doing its job. When you upgrade, do the nodes first and
+the management host last, and the validator is never the newer of the two.
 
 ## Part 1 — the management host
 
@@ -313,6 +349,42 @@ net.ipv4.ip_nonlocal_bind = 1
 Without it, HAProxy on the node that does *not* hold the address fails to start: it is asked to
 bind an address the kernel says is not there. With it, both nodes run continuously and the virtual
 address decides which one traffic reaches. `04-node-prepare` sets this and reports it.
+
+**The unit must load `conf.d`, and must load it exactly once.**
+
+A node's configuration is a main file plus a directory of fragments, and systemd has to be told
+about both:
+
+```text
+ExecStart=/usr/sbin/haproxy -Ws -f $CONFIG -f $CFGDIR -p $PIDFILE $EXTRAOPTS
+```
+
+Upstream's packaging does this and sets `CFGDIR=/etc/haproxy/conf.d`. Some distribution packages
+ship a unit with only `-f $CONFIG`, and installations working around that have historically
+smuggled the directory in through the variable itself:
+
+```text
+# Don't. This breaks the moment the unit gains -f $CFGDIR of its own.
+Environment="CONFIG=/etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d"
+```
+
+Against a unit that already loads `CFGDIR`, that reads the directory **twice**, every proxy is
+declared twice, and HAProxy refuses to start — duplicate proxy names are an error as of 3.3, where
+they were a warning before. Check the effective invocation rather than the unit file, since
+drop-ins and `/etc/default/haproxy` both feed into it:
+
+```console
+$ systemctl cat haproxy
+$ grep -vE '^\s*#|^\s*$' /etc/default/haproxy
+```
+
+`systemctl show haproxy -p Environment` is not a substitute: it reports only the unit's own
+`Environment=` lines. `EnvironmentFile=` is read when the service starts, never appears there, and
+overrides them.
+
+This matters beyond startup. `haproxy-pull-deploy` validates with its own explicit arguments —
+each file named once — so a configuration can validate cleanly while the service will not start.
+The two paths only agree if the unit names each path once too.
 
 **Both nodes run keepalived as `BACKUP`, with `nopreempt`.**
 

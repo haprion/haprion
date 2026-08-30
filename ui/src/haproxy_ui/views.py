@@ -653,8 +653,11 @@ def build_router(config: Config) -> APIRouter:
             )
         except operations.UnknownOperation:
             return PlainTextResponse("Unknown operation", status_code=400)
-        except operations.BadPayload as refusal:
-            return PlainTextResponse(str(refusal), status_code=400)
+        except operations.BadPayload:
+            # Validation detail can contain request-derived values. It belongs
+            # in neither a client response nor CodeQL's stack-trace surface;
+            # the form already names the fields it accepts.
+            return PlainTextResponse("Invalid operation parameters", status_code=400)
 
         with request.app.state.pool.connection() as connection:
             try:

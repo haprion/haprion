@@ -14,7 +14,7 @@ from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haproxy_ui import auth, db
+from haproxy_ui import auth, db, operations
 from tests.test_login import LoginTestCase, configuration
 
 KEY = str(uuid4())
@@ -159,6 +159,17 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         )
 
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.queued, [])
+
+    def test_a_payload_refusal_does_not_echo_request_detail(self) -> None:
+        with mock.patch(
+            "haproxy_ui.operations.prepare",
+            side_effect=operations.BadPayload("request-derived detail"),
+        ):
+            response = self.post(self.writing_client())
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.text, "Invalid operation parameters")
         self.assertEqual(self.queued, [])
 
 

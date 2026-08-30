@@ -20,7 +20,12 @@ from pathlib import Path
 from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli import revert, revert_helper
 from haproxy_mgmt.cluster_lock import hold
-from haproxy_mgmt.version_history import count_versions, version_commit, version_summary
+from haproxy_mgmt.version_history import (
+    count_versions,
+    request_id_of,
+    version_commit,
+    version_summary,
+)
 from tests.contract_schema import assert_contract
 from tests.test_publish_helper import HAPROXY_CFG, PublishFixture, Recorder, git
 
@@ -470,6 +475,37 @@ class ContractTests(RevertFixture):
             self.assertEqual(document["outcome"], "blocked")
             self.assertEqual(document["error"]["code"], "operation_locked")
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+
+    def test_the_version_it_records_is_bound_to_the_request(self) -> None:
+        """Half of the evidence a restart needs, written where it survives.
+
+        After a crash the question is whether the revert took effect. The
+        version's content cannot answer it - the same tree can be restored twice
+        for two different reasons - so the commit carries the request that asked
+        for it. The subject is untouched, because that is what an operator reads
+        in the version list.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.history(3)
+            self.run_caller(policy_path, "-c", "alpha", "2")
+
+            head = git(self.repo, "rev-parse", "HEAD")
+            self.assertEqual(request_id_of(self.repo, head), self.requests[0]["request_id"])
+            self.assertEqual(
+                git(self.repo, "log", "-1", "--format=%s"), "Revert configuration to version 2"
+            )
+
+    def test_a_commit_without_a_trailer_confirms_nothing(self) -> None:
+        """None means "this commit cannot confirm a request", not "it did not
+        happen". Every version published before the trailer existed answers
+        this way, and treating that as proof of anything would be a guess."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            self.runtime(Path(raw))
+            self.history(3)
+            self.assertIsNone(request_id_of(self.repo, git(self.repo, "rev-parse", "HEAD")))
 
 
 if __name__ == "__main__":

@@ -25,7 +25,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from haproxy_mgmt.release_layout import NODE_DIRECTORIES, ReleaseMetadata, render_release_file
+from haproxy_mgmt.release_layout import (
+    NODE_DIRECTORIES,
+    ReleaseMetadata,
+    parse_release_file,
+    render_release_file,
+)
 
 #
 # The same constant lives in `haproxy-publish-core` and in
@@ -85,12 +90,26 @@ def _own(path: Path, gid: int, *, mode: int, change_owner: ChangeOwner) -> None:
     os.chmod(path, mode)
 
 
+#
+# What a release IS. The timestamp is not part of it: it records when a release
+# was written, and two writes of the same commit are the same release written
+# twice - which is exactly the case a repair after a crash has to be able to
+# reach. Comparing the whole stamp made that case an error, so an interrupted
+# publish could never be completed idempotently from its own commit; it could
+# only be refused.
+#
+IDENTIFYING_FIELDS = ("schema", "cluster", "version", "hash")
+
+
 def _verify_existing(release: Path, node_path: str, metadata: ReleaseMetadata) -> None:
     """A release that already exists must be the one this commit describes.
 
-    Reached when the same commit is published twice. The check is not a
-    formality: a mismatch means the tree holds something other than what its
-    name claims, and overwriting it would destroy the evidence.
+    Reached when the same commit is published twice - by an operator repeating
+    themselves, or by a recovery finishing a run that was interrupted between
+    the commit and the install. A mismatch in what identifies the release means
+    the tree holds something other than what its name claims, and overwriting it
+    would destroy the evidence. A different timestamp means only that this is
+    the second write.
     """
 
     stamp = release / node_path / "RELEASE"
@@ -100,8 +119,18 @@ def _verify_existing(release: Path, node_path: str, metadata: ReleaseMetadata) -
         raise InstallError(
             f"existing release {metadata.commit} has no readable metadata: {exc}"
         ) from exc
-    if existing != render_release_file(metadata):
-        raise InstallError(f"existing release {metadata.commit} has incorrect metadata.")
+
+    try:
+        found = parse_release_file(existing.decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        raise InstallError(f"existing release {metadata.commit} has unreadable metadata.") from exc
+
+    expected = parse_release_file(render_release_file(metadata).decode("utf-8"))
+    differing = [field for field in IDENTIFYING_FIELDS if found.get(field) != expected.get(field)]
+    if differing:
+        raise InstallError(
+            f"existing release {metadata.commit} has incorrect metadata: {', '.join(differing)}."
+        )
 
 
 def install_release(

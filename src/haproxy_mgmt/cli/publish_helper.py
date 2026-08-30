@@ -85,7 +85,7 @@ from haproxy_mgmt.repo_snapshot import (
     refresh_worktree_index,
     resolve_head,
 )
-from haproxy_mgmt.version_history import count_versions
+from haproxy_mgmt.version_history import count_versions, with_request_trailer
 
 #
 # Two names, deliberately. `OPERATION` is what the request must say to reach this
@@ -459,7 +459,13 @@ def _publish(
     # 5. Only now is a version recorded, and only if nobody moved the branch
     #    while the sandbox was running.
     #
-    commit = commit_and_swap(repo, branch=branch, tree=snapshot.tree, parent=head, message=comment)
+    commit = commit_and_swap(
+        repo,
+        branch=branch,
+        tree=snapshot.tree,
+        parent=head,
+        message=with_request_trailer(comment, request.request_id),
+    )
     refresh_worktree_index(repo, commit)
 
     #

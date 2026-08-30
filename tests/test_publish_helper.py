@@ -22,6 +22,7 @@ import yaml
 from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli.publish_helper import main
 from haproxy_mgmt.cluster_lock import hold
+from haproxy_mgmt.version_history import request_id_of
 from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]
@@ -215,6 +216,26 @@ class PublishTests(PublishFixture):
             self.assertEqual(
                 os.readlink(self.publish_path / "current"), f"releases/{result['hash']}"
             )
+
+    def test_the_version_it_records_is_bound_to_the_request(self) -> None:
+        """Half of the evidence a restart needs, written where it survives.
+
+        The operator's comment stays the whole subject: that is what the version
+        list shows, and a UUID there would be noise. The binding rides in a
+        trailer, which every reader of the list ignores and a recovery reads
+        exactly.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
+            code, stdout, _ = self.run_publish(policy_path, self.request())
+
+            self.assertEqual(code, 0)
+            document = assert_contract("haproxy-publish", stdout)
+            head = git(self.repo, "rev-parse", "HEAD")
+            self.assertEqual(request_id_of(self.repo, head), document["request_id"])
+            self.assertEqual(git(self.repo, "log", "-1", "--format=%s"), "Added serverxyz")
 
     def test_the_draft_area_is_clean_afterwards(self) -> None:
         """Without the index refresh the draft reads as dirty to every later check."""

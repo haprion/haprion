@@ -84,6 +84,7 @@ from haproxy_mgmt.version_history import (
     count_versions,
     restore_worktree,
     version_commit,
+    with_request_trailer,
 )
 
 #
@@ -409,7 +410,7 @@ def _revert(
         branch=branch,
         tree=target_tree,
         parent=head,
-        message=MESSAGE.format(version=version),
+        message=with_request_trailer(MESSAGE.format(version=version), request.request_id),
     )
     #
     # A hard reset, unlike publishing's index refresh: a revert changes what the

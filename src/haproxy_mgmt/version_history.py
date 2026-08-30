@@ -37,6 +37,15 @@ ISO_FORMAT = "%aI"
 #
 LIST_LIMIT = 10
 
+#
+# The trailer that ties a recorded version to the request that asked for it.
+# A trailer rather than a line in the subject, because the subject is what an
+# operator reads in the version list and a UUID there would be noise. Everything
+# that reads the list uses `%s`, so the binding is invisible to a person and
+# exact to a program.
+#
+REQUEST_TRAILER = "Request-Id"
+
 
 @dataclass(frozen=True, slots=True)
 class VersionSummary:
@@ -164,3 +173,39 @@ def recent_versions(repo: Path, limit: int = LIST_LIMIT) -> tuple[VersionSummary
             )
         )
     return tuple(summaries)
+
+
+def with_request_trailer(message: str, request_id: str) -> str:
+    """The commit message a mutation records, bound to the request that asked.
+
+    This is half of the completion evidence a restart needs. After a crash the
+    question is whether an operation took effect, and a version's own content
+    cannot answer it: the same configuration can be published twice for two
+    different reasons. The trailer says which request produced this commit, so a
+    retry can recognise its own earlier work instead of doing it again.
+    """
+
+    return f"{message}\n\n{REQUEST_TRAILER}: {request_id}\n"
+
+
+def request_id_of(repo: Path, commit: str) -> str | None:
+    """The request a commit was recorded for, or None if it carries no trailer.
+
+    None is the normal answer for every version published before this existed,
+    and for anything committed by hand. It means "this commit cannot confirm a
+    request", never "the request did not happen" - the difference matters,
+    because only the first is safe to treat as no evidence either way.
+    """
+
+    value = (
+        _git(
+            repo,
+            "log",
+            "-1",
+            f"--format=%(trailers:key={REQUEST_TRAILER},valueonly)",
+            commit,
+        )
+        .decode()
+        .strip()
+    )
+    return value or None

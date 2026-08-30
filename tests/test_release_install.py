@@ -31,10 +31,10 @@ COMMIT = "a" * 40
 NODE_PATH = "alpha-node"
 
 
-def metadata(version: int = 7, commit: str = COMMIT) -> ReleaseMetadata:
-    return ReleaseMetadata(
-        cluster="alpha", version=version, commit=commit, timestamp="2026-08-25T20:00:00Z"
-    )
+def metadata(
+    version: int = 7, commit: str = COMMIT, timestamp: str = "2026-08-25T20:00:00Z"
+) -> ReleaseMetadata:
+    return ReleaseMetadata(cluster="alpha", version=version, commit=commit, timestamp=timestamp)
 
 
 class Recorder:
@@ -182,6 +182,45 @@ class ImmutabilityTests(InstallFixture):
             with self.assertRaises(InstallError) as caught:
                 self.install(publish, Recorder(), metadata=metadata(version=9))
             self.assertIn("incorrect metadata", str(caught.exception))
+
+    def test_a_second_write_of_the_same_commit_may_carry_a_later_timestamp(self) -> None:
+        """The case a repair after a crash has to be able to reach.
+
+        A run interrupted between the commit and the install is finished by
+        installing the same commit again, and the second attempt takes its
+        timestamp from its own clock. Comparing the whole stamp made that an
+        error, so the only interrupted publish the system could handle was one
+        it refused to finish.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            publish = Path(raw) / "alpha"
+            self.install(publish, Recorder())
+            again = self.install(
+                publish, Recorder(), metadata=metadata(timestamp="2026-08-25T21:30:00Z")
+            )
+
+            self.assertFalse(again.created)
+            self.assertTrue(again.already_current)
+            #
+            # And the stamp on disk is the original one. The release is written
+            # once; a repair confirms it rather than restating it.
+            #
+            stamp = (publish / "releases" / COMMIT / NODE_PATH / "RELEASE").read_text()
+            self.assertIn("timestamp=2026-08-25T20:00:00Z", stamp)
+
+    def test_a_release_whose_commit_disagrees_is_still_refused(self) -> None:
+        """Tolerating the timestamp must not tolerate the identity."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            publish = Path(raw) / "alpha"
+            self.install(publish, Recorder())
+            stamp = publish / "releases" / COMMIT / NODE_PATH / "RELEASE"
+            stamp.write_text(stamp.read_text().replace(f"hash={COMMIT}", "hash=" + "b" * 40))
+
+            with self.assertRaises(InstallError) as caught:
+                self.install(publish, Recorder())
+            self.assertIn("hash", str(caught.exception))
 
     def test_an_existing_release_is_never_rewritten(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

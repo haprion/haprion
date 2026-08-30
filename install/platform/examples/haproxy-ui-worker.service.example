@@ -15,19 +15,48 @@ ExecStart=/apps/haproxy-manager/current/venv/bin/haproxy-ui-worker
 Restart=on-failure
 RestartSec=5
 
-# Held as tightly as the web service, and deliberately more tightly than the
-# worker will eventually need. While management writes are off this process
-# talks to nothing but the database, so it gets nothing but that - and the phase
-# that turns writes on has to relax this file on purpose, in a diff somebody
-# reviews, rather than inheriting a permission nobody chose.
+# Relaxed on purpose, in the diff the old comment here asked for. This unit
+# runs the three cluster mutations, and every line below is here because the
+# helper cannot work without it - not because a tighter value was untested.
 #
-# What that phase will need, so it is not rediscovered: NoNewPrivileges=no for
-# sudo, a CapabilityBoundingSet that permits setuid, and its own sudoers rules -
-# never the ones written for the operators, and never the poller's read-only
-# one.
-NoNewPrivileges=yes
+# The thing to understand before changing any of it: sudo execs the helper
+# INSIDE this unit's sandbox. Seccomp filters survive exec and mount namespaces
+# are inherited, so every restriction here applies to the privileged helper too,
+# not just to the Python process that calls it. That is why this file had to
+# open rather than the helper being hardened separately.
+#
+# Where the real limit now lives: /etc/sudoers.d/haproxy-ui-worker, which names
+# three helpers and permits no arguments at all. The sandbox never was what
+# stopped this account from deploying - the absence of a sudo rule was. Widening
+# here does not widen what may be run; only that file does.
+
+# sudo cannot raise privilege under NoNewPrivileges, and setuid needs both a
+# capability to arrive through and the syscalls to use it.
+NoNewPrivileges=no
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_AUDIT_WRITE
+
+# @privileged carries setuid/setgid and @resources carries the setrlimit calls
+# sudo makes while building the target environment. Denying either denies sudo.
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+SystemCallArchitectures=native
+
+# The rollout reaches the nodes over SSH, and AF_NETLINK is how glibc resolves
+# their names. AF_UNIX alone is what a database-only worker needed.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+# The three deploy identities are keys under /root/.ssh, named by
+# runtime-policy.yaml. ProtectHome=yes hid them. read-only rather than off: the
+# helper reads those keys and writes nothing under any home.
+ProtectHome=read-only
+
+# The cluster lock, which is what stops two rollouts touching one cluster at
+# once. The only path this unit needs to write outside its private tmp.
 ProtectSystem=strict
-ProtectHome=yes
+ReadWritePaths=/run/haproxy-mgmt
+
+# Unchanged, and none of them stand in the helper's way. Kept so that opening
+# the four above is a decision about four things and not about the whole file.
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
@@ -41,11 +70,6 @@ RestrictNamespaces=yes
 RestrictRealtime=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
-SystemCallArchitectures=native
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources @obsolete
-RestrictAddressFamilies=AF_UNIX
-CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target

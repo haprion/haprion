@@ -10,6 +10,7 @@ from typing import Any, TextIO
 
 from haproxy_mgmt.cli.caller import usage
 from haproxy_mgmt.envelope import new_request_id
+from haproxy_mgmt.helper_protocol import write_document
 
 OPERATION = "inventory"
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-inventory-helper"
@@ -95,7 +96,7 @@ def main(
         return completed.returncode or EXIT_UNAVAILABLE
 
     if json_mode:
-        writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+        write_document(writer, document)
         return completed.returncode
     try:
         _render(document, writer)

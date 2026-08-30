@@ -7,7 +7,6 @@ by the published RELEASE stamp; it never opens the repository working tree.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from collections.abc import Callable, Mapping
@@ -21,6 +20,7 @@ from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
     read_helper_request,
     require_no_arguments,
+    write_document,
 )
 from haproxy_mgmt.inventory import InventoryError, inventory_result
 from haproxy_mgmt.repo_snapshot import read_tree_files
@@ -31,10 +31,6 @@ PARAMETERS: frozenset[str] = frozenset()
 EXIT_NOT_ROOT = 77
 
 type ReadTree = Callable[[Path, str], Mapping[str, bytes]]
-
-
-def _write(writer: TextIO, document: dict[str, object]) -> None:
-    writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
 
 
 def main(
@@ -83,7 +79,7 @@ def main(
             files = tree_reader(Path(cluster.config_path), target.hash)
         result = inventory_result(files, target)
     except GitError as exc:
-        _write(
+        write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -96,7 +92,7 @@ def main(
         )
         return exc.exit_code
     except InventoryError as exc:
-        _write(
+        write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -109,7 +105,7 @@ def main(
         )
         return 65
 
-    _write(
+    write_document(
         writer,
         envelope(
             operation=OPERATION,

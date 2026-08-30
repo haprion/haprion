@@ -21,6 +21,7 @@ from typing import Any, TextIO
 from haproxy_mgmt.cli.caller import usage
 from haproxy_mgmt.config import ConfigError, load_policy, load_runtime_config
 from haproxy_mgmt.envelope import new_request_id
+from haproxy_mgmt.helper_protocol import write_document
 
 OPERATION = "list_backups"
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-list-backups-helper"
@@ -321,7 +322,7 @@ def main(
             return completed.returncode or EXIT_UNAVAILABLE
 
         if request.json_mode:
-            writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
+            write_document(writer, document)
             continue
         # One blank line between clusters. Without it the next cluster's heading
         # sits directly under the previous cluster's last backup and reads as

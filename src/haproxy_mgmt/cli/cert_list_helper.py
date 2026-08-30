@@ -12,7 +12,6 @@ privilege boundary from configuration.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -25,6 +24,7 @@ from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
     read_helper_request,
     require_no_arguments,
+    write_document,
 )
 
 OPERATION = "cert_list"
@@ -32,14 +32,10 @@ PARAMETERS: frozenset[str] = frozenset()
 EXIT_NOT_ROOT = 77
 
 
-def _write(writer: TextIO, document: dict[str, object]) -> None:
-    writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
-
-
 def _failed(
     writer: TextIO, cluster: str, request_id: str, code: str, message: str, exit_code: int
 ) -> int:
-    _write(
+    write_document(
         writer,
         envelope(
             operation=OPERATION,
@@ -119,7 +115,7 @@ def main(
     # whole listing for one damaged file would hide the other certificates -
     # including the ones a rollout could still use.
     #
-    _write(
+    write_document(
         writer,
         envelope(
             operation=OPERATION,

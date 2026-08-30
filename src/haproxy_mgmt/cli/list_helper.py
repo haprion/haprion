@@ -14,7 +14,6 @@ file in the work tree and writes nothing anywhere.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -27,6 +26,7 @@ from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
     read_helper_request,
     require_no_arguments,
+    write_document,
 )
 from haproxy_mgmt.history import history_result
 from haproxy_mgmt.repo_health import describe_problem, is_repo_root
@@ -36,10 +36,6 @@ from haproxy_mgmt.version_history import recent_versions
 OPERATION = "list"
 PARAMETERS: frozenset[str] = frozenset()
 EXIT_NOT_ROOT = 77
-
-
-def _write(writer: TextIO, document: dict[str, object]) -> None:
-    writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
 
 
 def main(
@@ -87,7 +83,7 @@ def main(
     # the cluster as unreadable while the others keep rendering.
     #
     if not is_repo_root(repo):
-        _write(
+        write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -107,7 +103,7 @@ def main(
     try:
         result = history_result(recent_versions(repo), target)
     except GitError as exc:
-        _write(
+        write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -120,7 +116,7 @@ def main(
         )
         return exc.exit_code
 
-    _write(
+    write_document(
         writer,
         envelope(
             operation=OPERATION,

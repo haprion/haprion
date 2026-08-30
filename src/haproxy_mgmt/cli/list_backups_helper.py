@@ -12,7 +12,6 @@ from configuration - so a caller cannot ask this for a path of its choosing.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from collections.abc import Mapping
@@ -33,6 +32,7 @@ from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
     read_helper_request,
     require_no_arguments,
+    write_document,
 )
 
 OPERATION = "list_backups"
@@ -87,10 +87,6 @@ def _validate_parameters(parameters: Mapping[str, Any]) -> None:
     _node(parameters)
 
 
-def _write(writer: TextIO, document: dict[str, object]) -> None:
-    writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
-
-
 def main(
     argv: list[str] | None = None,
     *,
@@ -131,7 +127,7 @@ def main(
         return exc.exit_code
 
     if policy.backup_root is None:
-        _write(
+        write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -155,7 +151,7 @@ def main(
         # at least one node, and an empty listing would read as "this node has
         # no backups" when the truth is "this cluster has no such node".
         #
-        _write(
+        write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -184,7 +180,7 @@ def main(
         #
         result["schedule"] = schedule_result(policy.backup_timer)
     except (BackupError, ScheduleError) as exc:
-        _write(
+        write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -206,7 +202,7 @@ def main(
     #
     unreadable = tuple(reading for reading in readings if reading.error is not None)
     if unreadable:
-        _write(
+        write_document(
             writer,
             envelope(
                 operation=OPERATION,
@@ -226,7 +222,7 @@ def main(
         )
         return 0
 
-    _write(
+    write_document(
         writer,
         envelope(
             operation=OPERATION,

@@ -32,6 +32,7 @@ from haproxy_mgmt.cli.caller import config_path as _config_path
 from haproxy_mgmt.cli.caller import field as _field
 from haproxy_mgmt.envelope import Message, envelope
 from haproxy_mgmt.git_command import GitError
+from haproxy_mgmt.helper_protocol import write_document
 from haproxy_mgmt.history import history_result
 from haproxy_mgmt.repo_health import describe_problem, is_repo_root
 from haproxy_mgmt.status_collect import read_target
@@ -78,10 +79,6 @@ def run_list_helper(cluster_id: str, request_id: str) -> subprocess.CompletedPro
     )
 
 
-def _write_json(writer: TextIO, document: dict[str, object]) -> None:
-    writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
-
-
 def _parse(argv: list[str]) -> tuple[str, bool]:
     if len(argv) not in (2, 3) or argv[0] not in ("-c", "--cluster"):
         usage(USAGE)
@@ -116,7 +113,7 @@ def main(
             raise CallerError(f"cluster '{cluster_id}' has no versions yet.")
     except (CallerError, GitError) as exc:
         if json_mode:
-            _write_json(
+            write_document(
                 writer,
                 envelope(
                     operation=OPERATION,
@@ -147,7 +144,7 @@ def main(
         target = read_target(
             Path(field(cluster_id, "publish_path")), field(cluster_id, "node_path")
         )
-        _write_json(
+        write_document(
             writer,
             envelope(
                 operation=OPERATION,

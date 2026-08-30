@@ -230,6 +230,33 @@ else
     log "  switched current -> ${release_id}  (was ${previous})"
 fi
 
+#
+# The same reasoning as the web unit below, and the reason it cannot be left
+# implicit: all three services exec out of the same `current` symlink, so a
+# release that restarts only the web unit is running in one process and not in
+# the other two. That is worse than not having switched at all, because the
+# symlink then says the new release is live while two thirds of it is not.
+#
+# Done before the web unit so that the health response, which is this script's
+# only evidence, is evidence about a platform that is wholly on the new
+# release rather than a third of it.
+#
+# A missing unit is skipped rather than refused. The development platform runs
+# the web service alone and its worker and poller are deliberately absent, so
+# their absence is a choice somebody made, not a fault to stop a release for.
+#
+step "Starting the background services"
+for background_user in "${WORKER_USER:-}" "${POLLER_USER:-}"; do
+    [[ -n "$background_user" ]] || continue
+    background_unit="${background_user}.service"
+    if systemctl cat "$background_unit" >/dev/null 2>&1; then
+        systemctl restart "$background_unit"
+        log "  restarted ${background_unit}"
+    else
+        log "  pending  ${background_unit} is not installed here"
+    fi
+done
+
 unit="${WEB_USER}.service"
 if systemctl cat "$unit" >/dev/null 2>&1; then
     step "Starting"

@@ -28,7 +28,7 @@ import os
 import socket
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from haproxy_ui import db, diagnostics, execution, operations
 from haproxy_ui.config import DEFAULT_CONFIG_PATH
@@ -64,12 +64,115 @@ def worker_identity() -> str:
     return f"{socket.gethostname()}/{os.getpid()}"
 
 
-def _envelope(stdout: str) -> dict[str, Any] | None:
+_REQUIRED_ENVELOPE_FIELDS = frozenset(
+    {
+        "schema_version",
+        "ok",
+        "outcome",
+        "operation",
+        "cluster",
+        "request_id",
+        "result",
+        "warnings",
+        "error",
+    }
+)
+_OPERATION_OUTCOMES = {
+    "deploy": frozenset({"done", "partial", "failed", "blocked"}),
+    "cert_deploy": frozenset({"done", "partial", "failed", "blocked"}),
+    "revert": frozenset({"done", "failed", "blocked"}),
+}
+
+
+class _InvalidEnvelope(ValueError):
+    """A helper answer is not one result the claimed job may accept."""
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise _InvalidEnvelope("duplicate field")
+        value[key] = item
+    return value
+
+
+def _finite_number(_value: str) -> None:
+    raise _InvalidEnvelope("non-finite number")
+
+
+def _message(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("code"), str)
+        and bool(value["code"])
+        and isinstance(value.get("message"), str)
+        and bool(value["message"])
+    )
+
+
+def _envelope(stdout: str, job: db.ClaimedJob) -> dict[str, Any] | None:
+    """Accept only the common v1 envelope bound to this exact claimed job.
+
+    The operation helpers own their operation-specific result schemas. The
+    worker still owns the boundary that says whose answer this is: accepting a
+    valid deploy result carrying another request ID would turn request binding
+    into decoration rather than fencing.
+    """
+
     try:
-        parsed = json.loads(stdout)
-    except (json.JSONDecodeError, TypeError):
+        parsed = json.loads(
+            stdout,
+            object_pairs_hook=_unique_object,
+            parse_constant=_finite_number,
+        )
+    except (json.JSONDecodeError, TypeError, _InvalidEnvelope):
         return None
-    return parsed if isinstance(parsed, dict) else None
+    if not isinstance(parsed, dict):
+        return None
+    envelope = cast(dict[str, Any], parsed)
+    if not _REQUIRED_ENVELOPE_FIELDS.issubset(envelope):
+        return None
+    if type(envelope["schema_version"]) is not int or envelope["schema_version"] != 1:
+        return None
+    if envelope["operation"] != job.operation:
+        return None
+    if envelope["cluster"] != job.cluster:
+        return None
+    if envelope["request_id"] != str(job.request_id):
+        return None
+
+    outcome = envelope["outcome"]
+    allowed = _OPERATION_OUTCOMES.get(job.operation, frozenset())
+    if not isinstance(outcome, str) or outcome not in allowed:
+        return None
+    if not isinstance(envelope["ok"], bool):
+        return None
+    warnings = envelope["warnings"]
+    if not isinstance(warnings, list) or not all(_message(item) for item in warnings):
+        return None
+
+    error = envelope["error"]
+    if outcome == "done":
+        valid_cross_fields = envelope["ok"] and error is None
+    elif outcome == "partial":
+        valid_cross_fields = not envelope["ok"] and bool(warnings) and error is None
+    else:
+        valid_cross_fields = not envelope["ok"] and _message(error)
+    if not valid_cross_fields:
+        return None
+    if outcome in {"done", "partial"} and not isinstance(envelope["result"], dict):
+        return None
+    return envelope
+
+
+def _internal_error() -> dict[str, Any]:
+    return {
+        "error": {
+            "code": "internal_error",
+            "message": "the operation returned an invalid result document",
+        }
+    }
 
 
 def run_one_job(connection: Any, job: db.ClaimedJob) -> None:
@@ -150,7 +253,7 @@ def run_one_job(connection: Any, job: db.ClaimedJob) -> None:
         logger.error("job %s was taken over while it ran; writing nothing", job.id)
         return
 
-    envelope = _envelope(completed.stdout) if completed.stdout_error is None else None
+    envelope = _envelope(completed.stdout, job) if completed.stdout_error is None else None
     if completed.stdout_error is not None:
         #
         # A document beyond the hard cap is rejected before JSON parsing, and
@@ -159,22 +262,18 @@ def run_one_job(connection: Any, job: db.ClaimedJob) -> None:
         # code says why the worker could not accept the answer.
         #
         state = outcome = "unknown"
-        result = {
-            "error": {
-                "code": "internal_error",
-                "message": "the operation returned an invalid result document",
-            }
-        }
-    elif completed.ending == "timeout" or envelope is None:
+        result = _internal_error()
+    elif completed.ending == "timeout":
         #
-        # The honest answer in both cases is that reality is undetermined. A
-        # command that was stopped may have finished its work first, and one that
-        # answered with something unparseable did something this process cannot
-        # describe. `unknown` is what the plan reserves for exactly this, and it
-        # is never retried automatically.
+        # A command that was stopped may have finished its work first. `unknown`
+        # is what the plan reserves for exactly this, and it is never retried
+        # automatically.
         #
         state = outcome = "unknown"
         result = None
+    elif envelope is None:
+        state = outcome = "unknown"
+        result = _internal_error()
     else:
         outcome = str(envelope.get("outcome", "unknown"))
         state = outcome if outcome in {"done", "partial", "failed", "blocked"} else "unknown"

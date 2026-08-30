@@ -8,6 +8,7 @@ than about SQL.
 
 from __future__ import annotations
 
+import json
 import unittest
 from datetime import UTC, datetime
 from typing import Any
@@ -55,6 +56,32 @@ def completed(
     )
 
 
+def result_document(job: db.ClaimedJob, outcome: str = "done") -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "ok": outcome == "done",
+        "outcome": outcome,
+        "operation": job.operation,
+        "cluster": job.cluster,
+        "request_id": str(job.request_id),
+        "result": {} if outcome in {"done", "partial"} else None,
+        "warnings": (
+            [{"code": "synthetic_warning", "message": "synthetic warning"}]
+            if outcome == "partial"
+            else []
+        ),
+        "error": (
+            {"code": "synthetic_failure", "message": "synthetic failure"}
+            if outcome in {"failed", "blocked"}
+            else None
+        ),
+    }
+
+
+def answer(job: db.ClaimedJob, outcome: str = "done") -> str:
+    return json.dumps(result_document(job, outcome))
+
+
 class WorkerTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.finished: list[dict[str, Any]] = []
@@ -71,29 +98,31 @@ class WorkerTestCase(unittest.TestCase):
 
 class GoodAnswers(WorkerTestCase):
     def test_the_envelopes_outcome_becomes_the_jobs_state(self) -> None:
+        job = claimed()
+        document = result_document(job)
         with mock.patch.object(
-            execution, "run", return_value=completed(stdout='{"outcome": "done", "ok": true}')
+            execution, "run", return_value=completed(stdout=json.dumps(document))
         ):
-            worker.run_one_job(self.connection, claimed())
+            worker.run_one_job(self.connection, job)
 
         self.assertEqual(self.finished[0]["state"], "done")
         self.assertEqual(self.finished[0]["outcome"], "done")
-        self.assertEqual(self.finished[0]["result"], {"outcome": "done", "ok": True})
+        self.assertEqual(self.finished[0]["result"], document)
 
     def test_partial_is_carried_through_and_not_flattened(self) -> None:
+        job = claimed()
         with mock.patch.object(
-            execution, "run", return_value=completed(exit_code=1, stdout='{"outcome": "partial"}')
+            execution, "run", return_value=completed(exit_code=69, stdout=answer(job, "partial"))
         ):
-            worker.run_one_job(self.connection, claimed())
+            worker.run_one_job(self.connection, job)
 
         self.assertEqual(self.finished[0]["state"], "partial")
-        self.assertEqual(self.finished[0]["exit_code"], 1)
+        self.assertEqual(self.finished[0]["exit_code"], 69)
 
     def test_the_claim_token_is_passed_to_the_write(self) -> None:
-        with mock.patch.object(
-            execution, "run", return_value=completed(stdout='{"outcome":"done"}')
-        ):
-            worker.run_one_job(self.connection, claimed())
+        job = claimed()
+        with mock.patch.object(execution, "run", return_value=completed(stdout=answer(job))):
+            worker.run_one_job(self.connection, job)
 
         self.assertEqual(self.finished[0]["claim_token"], TOKEN)
 
@@ -121,10 +150,43 @@ class UndeterminedEndings(WorkerTestCase):
         self.assertEqual(self.finished[0]["state"], "unknown")
 
     def test_an_outcome_the_contract_does_not_define_is_unknown(self) -> None:
+        job = claimed()
+        document = result_document(job)
+        document["outcome"] = "probably fine"
         with mock.patch.object(
-            execution, "run", return_value=completed(stdout='{"outcome": "probably fine"}')
+            execution, "run", return_value=completed(stdout=json.dumps(document))
         ):
-            worker.run_one_job(self.connection, claimed())
+            worker.run_one_job(self.connection, job)
+
+        self.assertEqual(self.finished[0]["state"], "unknown")
+
+    def test_an_envelope_for_another_job_is_never_accepted(self) -> None:
+        for field, wrong in (
+            ("schema_version", 2),
+            ("operation", "cert_deploy"),
+            ("cluster", "beta"),
+            ("request_id", str(uuid4())),
+            ("ok", False),
+        ):
+            with self.subTest(field=field):
+                job = claimed()
+                document = result_document(job)
+                document[field] = wrong
+                self.finished.clear()
+                with mock.patch.object(
+                    execution, "run", return_value=completed(stdout=json.dumps(document))
+                ):
+                    worker.run_one_job(self.connection, job)
+
+                self.assertEqual(self.finished[0]["state"], "unknown")
+                self.assertEqual(self.finished[0]["result"]["error"]["code"], "internal_error")
+
+    def test_a_partial_revert_is_not_part_of_its_contract(self) -> None:
+        job = claimed(operation="revert", payload={"version": 1, "expected_commit": "a" * 40})
+        with mock.patch.object(
+            execution, "run", return_value=completed(stdout=answer(job, "partial"))
+        ):
+            worker.run_one_job(self.connection, job)
 
         self.assertEqual(self.finished[0]["state"], "unknown")
 
@@ -175,16 +237,18 @@ class LosingTheLease(WorkerTestCase):
         self.connection.commit.assert_not_called()
 
     def test_a_successful_renewal_is_committed_before_the_command_finishes(self) -> None:
+        job = claimed()
+
         def run(*_: object, still_ours: Any, **__: object) -> execution.Completed:
             self.assertTrue(still_ours())
             self.connection.commit.assert_called_once_with()
-            return completed(stdout='{"outcome":"done"}')
+            return completed(stdout=answer(job))
 
         with (
             mock.patch.object(execution, "run", side_effect=run),
             mock.patch.object(db, "renew_lease", return_value=True),
         ):
-            worker.run_one_job(self.connection, claimed())
+            worker.run_one_job(self.connection, job)
 
         self.assertEqual(self.connection.commit.call_count, 2)
 
@@ -205,14 +269,15 @@ class LosingTheLease(WorkerTestCase):
 
 class StoredDiagnosticsAreBounded(WorkerTestCase):
     def test_a_long_stderr_keeps_both_edges_before_the_write(self) -> None:
+        job = claimed()
         with mock.patch.object(
             execution,
             "run",
             return_value=completed(
-                stdout='{"outcome":"failed"}', stderr="first" + ("x" * 90000) + "last"
+                stdout=answer(job, "failed"), stderr="first" + ("x" * 90000) + "last"
             ),
         ):
-            worker.run_one_job(self.connection, claimed())
+            worker.run_one_job(self.connection, job)
 
         excerpt = self.finished[0]["stderr_excerpt"]
         self.assertLessEqual(len(excerpt.encode("utf-8")), worker.STDERR_LIMIT)

@@ -27,8 +27,10 @@ type Tone = Literal["healthy", "warning", "critical", "unknown"]
 
 @dataclass(frozen=True, slots=True)
 class VersionView:
+    number: int
     version: str
     commit: str
+    expected_commit: str
     date: str
     comment: str
     published: bool
@@ -109,8 +111,13 @@ def _version_view(value: Any, published_hash: str | None) -> VersionView | None:
     #
     commit = _text(entry.get("hash"), "")
     return VersionView(
+        number=number,
         version=f"v{number}",
         commit=commit[:12],
+        # The short hash is only display text. A revert request binds to the
+        # complete poller-supplied hash, so a truncated prefix can never become
+        # an ambiguous target just because it looked pleasant in the table.
+        expected_commit=commit,
         date=_saved_at(entry.get("created_at")),
         comment=_text(entry.get("comment"), "(no comment)"),
         published=bool(commit) and commit == published_hash,

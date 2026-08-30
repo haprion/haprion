@@ -3,7 +3,7 @@
 {% block content %}
 <section class="page-heading">
   <div><h1>Versions</h1></div>
-  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
+  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-{{ 'warning' if management_writes else 'healthy' }}"></span>{{ "Management enabled" if management_writes else "Read-only mode" }}</span>{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
 </section>
 
 <section class="metric-grid history-summary" aria-label="Version summary">
@@ -19,9 +19,9 @@
       <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
     {% if cluster.versions %}
-    <div class="table-scroll"><table class="node-table version-table"><thead><tr><th>Version</th><th>Saved</th><th>Comment</th><th>Commit</th></tr></thead><tbody>
+    <div class="table-scroll"><table class="node-table version-table"><thead><tr><th>Version</th><th>Saved</th><th>Comment</th><th>Commit</th>{% if management_writes and role == 'admin' and cluster.configured %}<th>Action</th>{% endif %}</tr></thead><tbody>
       {% for version in cluster.versions %}
-      <tr{% if version.published %} class="version-published"{% endif %}><td data-label="Version"><strong>{{ version.version }}</strong>{% if version.published %}<span class="published-badge">Published</span>{% endif %}</td><td data-label="Saved">{{ version.date }}</td><td data-label="Comment"><span class="version-comment">{{ version.comment }}</span></td><td data-label="Commit"><code>{{ version.commit }}</code></td></tr>
+      <tr{% if version.published %} class="version-published"{% endif %}><td data-label="Version"><strong>{{ version.version }}</strong>{% if version.published %}<span class="published-badge">Published</span>{% endif %}</td><td data-label="Saved">{{ version.date }}</td><td data-label="Comment"><span class="version-comment">{{ version.comment }}</span></td><td data-label="Commit"><code>{{ version.commit }}</code></td>{% if management_writes and role == 'admin' and cluster.configured %}<td data-label="Action"><form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="revert"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="version" value="{{ version.number }}"><input type="hidden" name="expected_commit" value="{{ version.expected_commit }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Publish this version</button></form><small class="revert-note">Does not deploy</small></td>{% endif %}</tr>
       {% endfor %}
     </tbody></table></div>
     {% if cluster.truncated %}<p class="table-note">Showing the ten most recent saved versions.</p>{% endif %}

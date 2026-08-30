@@ -395,6 +395,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .version-table th:nth-child(1), .version-table td:nth-child(1) { width: 168px; }
 .version-table th:nth-child(2), .version-table td:nth-child(2) { width: 168px; }
 .version-table th:nth-child(4), .version-table td:nth-child(4) { width: 150px; }
+.version-table th:nth-child(5), .version-table td:nth-child(5) { width: 170px; }
 .version-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .version-table th { padding-top: 7px; padding-bottom: 7px; }
 .published-badge { display: inline-flex; align-items: center; min-height: 21px; padding: 2px 8px; border-radius: 999px; color: var(--text-primary); background: var(--unknown-soft); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
@@ -403,6 +404,8 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .version-published td { background: var(--panel-soft); }
 .version-comment { display: block; max-width: 460px; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .version-table code { color: var(--muted); font-size: 11px; }
+.version-table form { margin: 0; }
+.version-table .revert-note { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
 .table-note { margin: 0; padding: 10px 20px 14px; color: var(--muted); font-size: 11px; }
 
 /* Jobs are intentionally a single cross-cluster sequence, rather than a

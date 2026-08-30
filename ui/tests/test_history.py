@@ -142,6 +142,7 @@ class RenderingTests(unittest.TestCase):
 
         self.assertEqual(version.version, "v12")
         self.assertEqual(version.commit, "a" * 12)
+        self.assertEqual(version.expected_commit, "a" * 40)
         self.assertEqual(version.comment, "Add a maintenance backend")
         self.assertEqual(version.date, "2026-08-28 14:02")
         self.assertTrue(version.current)

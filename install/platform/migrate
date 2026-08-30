@@ -24,8 +24,18 @@ shift
 require_vars DB_NAME DB_MIGRATION_ROLE
 
 alembic="${ALEMBIC_BIN:-}"
+#
+# The development environment's alembic, not a release's. alembic is in the
+# `dev` dependency group and a release is built with --no-dev, so no release has
+# ever had one - which is correct: a running service must not be able to alter
+# the schema it reads. This script reads the migrations out of the source tree
+# on purpose, and alembic is the tool that applies them rather than application
+# code that serves requests.
+#
 [[ -n "$alembic" ]] || die "set ALEMBIC_BIN to the alembic executable of the
-  environment holding this release's dependencies"
+  development environment, for example /path/to/venv-ui/bin/alembic. It is not
+  in a release: alembic is a development dependency and releases are built with
+  --no-dev."
 [[ -x "$alembic" ]] || die "not executable: ${alembic}"
 
 #

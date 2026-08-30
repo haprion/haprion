@@ -997,8 +997,8 @@ own accounts, its own database and roles, its own release tree, its own port.
 ```bash
 sudo ./01-platform-prepare   answers-dev.env
 sudo ./02-platform-database  answers-dev.env
-sudo UV_BIN=... ./install-ui-release answers-dev.env <source-tree>
-sudo ALEMBIC_BIN=... ./migrate answers-dev.env
+sudo ./install-ui-release   answers-dev.env <source-tree>
+sudo ./migrate               answers-dev.env
 sudo ./04-platform-service   answers-dev.env
 ```
 

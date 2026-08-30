@@ -10,8 +10,8 @@ Run them after the CLI installation, with the same answers file:
 ```bash
 sudo ./01-platform-prepare ../answers.env
 sudo ./02-platform-database ../answers.env
-sudo UV_BIN=/path/to/uv ./install-ui-release ../answers.env /path/to/source-tree
-sudo ALEMBIC_BIN=/path/to/development/venv/bin/alembic ./migrate ../answers.env
+sudo ./install-ui-release ../answers.env /path/to/source-tree
+sudo ./migrate ../answers.env
 sudo ./03-verify ../answers.env
 sudo ./04-platform-service ../answers.env
 sudo ./05-platform-nginx ../answers.env
@@ -89,13 +89,20 @@ Run it after installing a release, and only then. The connection is built from
 the answers file, because a role name is deployment data and does not belong in
 the repository.
 
-**`ALEMBIC_BIN` is not in the release.** alembic is a development dependency and
-a release is built with `--no-dev`, so no release venv contains it - point the
-variable at the development environment's `alembic` instead. That is not a
-release running from a checkout: this command reads the migrations from the
-source tree by design, and alembic is the tool that applies them rather than
-application code that serves requests. The application itself is only ever
-installed from a wheel.
+**`ALEMBIC_BIN` and `UV_BIN` are answered in the answers file**, beside every
+other fact about where things are on this machine. They used to be typed on the
+command line each time, which meant getting them wrong each time.
+
+`ALEMBIC_BIN` names the **development** environment's alembic, never a release's:
+alembic is a development dependency and a release is built with `--no-dev`, so no
+release venv contains it - correctly, because a running service must not be able
+to alter the schema it reads. That is not a release running from a checkout;
+`./migrate` reads the migrations from the source tree by design, and alembic is
+the tool that applies them rather than application code that serves requests. The
+application itself is only ever installed from a wheel.
+
+An environment variable of either name still overrides the answers file, for the
+one-off case of testing a different version.
 
 **Grants live in the migration that creates the table**, named against three
 contract roles — `app_web`, `app_worker`, `app_poller` — and never against a

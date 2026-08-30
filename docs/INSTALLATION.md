@@ -982,6 +982,23 @@ unit file so it is not rediscovered.
 If management writes are switched on before that phase exists, the worker exits
 78 and says so rather than pretending to work.
 
+Once writes are on, each pass first settles jobs whose worker died. An expired
+lease says only that the process holding a job stopped renewing its authority,
+so the job is judged by what can be read rather than retried on assumption: a
+publish or a revert by whether a version carrying that request exists and
+whether its release was published, a deploy or a certificate deploy by nothing
+at all, because those read the cluster before they act and repeating one is how
+they work. Evidence older than the expired lease is not weak evidence but none —
+it describes a world in which the operation could still have been running — and
+such a job waits rather than being decided. A job is handed to a worker at most
+twice; one that has been taken twice and answered neither time ends as
+`unknown`, which is the outcome reserved for "nobody can say whether this took
+effect" and is never retried automatically.
+
+This too is below the writes check. With writes off nothing moves at all,
+including a job somebody would rather see moved — which is what makes the flag a
+rollback rather than a pause.
+
 #### Which clusters get polled
 
 `clusters` in `ui.toml`, because the application accounts cannot read the

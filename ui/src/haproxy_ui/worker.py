@@ -405,6 +405,12 @@ def main(argv: list[str] | None = None) -> int:
                 # means the claim below can find it on this same tick rather
                 # than on the next one.
                 #
+                # Below the management-writes check on purpose. With writes off
+                # nothing moves at all, including a job somebody would rather
+                # see moved: that is what makes the flag a rollback and not a
+                # pause, and an abandoned job is still there to adjudicate when
+                # writes come back.
+                #
                 recovery.adjudicate(connection, worker=worker)
 
                 job = db.claim_job(connection, worker_id=worker, lease_seconds=LEASE_SECONDS)

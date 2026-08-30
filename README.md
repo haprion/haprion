@@ -29,9 +29,16 @@ current foundation provides:
 - the web platform's foundation: a versioned application release, a database whose schema and
   column-level grants are versioned together, and three service identities that cannot do each
   other's work
+- a read-only web interface over that foundation, fed by a poller rather than by reads made while
+  somebody is looking at a screen
+- the job path management operations will run through: an immutable queue, an atomic claim held
+  under a renewable lease, and a worker that records how every job ended — including recovering a
+  job whose worker died, which is decided from readable evidence rather than retried on assumption
 
-The next implementation stage builds the read-only interface on that foundation. Management
-operations from the web remain disabled until the job path exists.
+Management operations from the web remain **disabled**. The worker is installed, running, and
+provably unable to act, which is a stronger statement than not installing it: it is the state
+turning the feature off returns to. Enabling them waits on the worker's own privilege being
+installed and its gate passed.
 
 ## Security model
 

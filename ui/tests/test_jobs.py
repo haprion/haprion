@@ -14,7 +14,11 @@ over, and nothing about that looks wrong in a diff.
 from __future__ import annotations
 
 import unittest
+from contextlib import nullcontext
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 from uuid import UUID, uuid4
 
 from haproxy_ui import db
@@ -52,6 +56,58 @@ class FakeConnection:
         return self.last
 
 
+class FakeUniqueViolation(Exception):
+    """A database constraint error with the part `queue_job` inspects."""
+
+    def __init__(self, constraint: str) -> None:
+        super().__init__(constraint)
+        self.diag = SimpleNamespace(constraint_name=constraint)
+
+
+class RaisingCursor(FakeCursor):
+    def __init__(self, constraint: str) -> None:
+        super().__init__(row=None)
+        self.constraint = constraint
+
+    def execute(self, statement: str, parameters: Any = None) -> None:
+        super().execute(statement, parameters)
+        raise FakeUniqueViolation(self.constraint)
+
+
+class QueueConnection:
+    """An insert that conflicts, followed by the idempotency lookup."""
+
+    def __init__(self, constraint: str, existing: db.Job | None) -> None:
+        self.insert = RaisingCursor(constraint)
+        self.lookup = FakeCursor(existing)
+        self.cursors = iter((self.insert, self.lookup))
+
+    def transaction(self) -> Any:
+        return nullcontext()
+
+    def cursor(self, **_: object) -> FakeCursor:
+        return next(self.cursors)
+
+
+def queued_job() -> db.Job:
+    return db.Job(
+        id=7,
+        request_id=uuid4(),
+        operation="deploy",
+        cluster="alpha",
+        payload={},
+        state="pending",
+        created_at=datetime.now(UTC),
+        started_at=None,
+        finished_at=None,
+        exit_code=None,
+        outcome=None,
+        result=None,
+        stderr_excerpt=None,
+        idempotency_key=uuid4(),
+    )
+
+
 class ClaimingIsOneStatement(unittest.TestCase):
     def test_the_claim_is_a_single_update_that_skips_locked_rows(self) -> None:
         connection = FakeConnection(row=None)
@@ -78,6 +134,33 @@ class ClaimingIsOneStatement(unittest.TestCase):
         self.assertIsNone(
             db.claim_job(connection, worker_id="worker-a", lease_seconds=30)  # type: ignore[arg-type]
         )
+
+
+class QueueConflictsAreClassifiedAfterTheKeyLookup(unittest.TestCase):
+    def queue(self, constraint: str, existing: db.Job | None) -> db.Job:
+        connection = QueueConnection(constraint, existing)
+        with mock.patch.object(db.psycopg.errors, "UniqueViolation", FakeUniqueViolation):
+            result = db.queue_job(
+                connection,  # type: ignore[arg-type]
+                operation="deploy",
+                cluster="alpha",
+                payload={},
+                idempotency_key=uuid4(),
+            )
+        self.assertIn("idempotency_key = %(key)s", connection.lookup.statements[0])
+        return result
+
+    def test_a_same_request_is_returned_when_the_cluster_index_reports_first(self) -> None:
+        existing = queued_job()
+
+        self.assertIs(
+            self.queue("job_one_active_per_cluster", existing),
+            existing,
+        )
+
+    def test_a_different_request_still_reports_a_busy_cluster(self) -> None:
+        with self.assertRaises(db.ClusterBusy):
+            self.queue("job_one_active_per_cluster", None)
 
 
 class WritesAreFenced(unittest.TestCase):

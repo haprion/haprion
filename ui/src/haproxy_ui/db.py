@@ -292,6 +292,8 @@ def queue_job(
         "payload": Jsonb(payload),
         "key": str(idempotency_key),
     }
+    conflict: BaseException | None = None
+    constraint = ""
     try:
         #
         # A savepoint, so a refused insert leaves the connection usable. Without
@@ -313,10 +315,16 @@ def queue_job(
             raise psycopg.OperationalError("the insert returned no row")
         return row
     except psycopg.errors.UniqueViolation as violation:
-        constraint = violation.diag.constraint_name
-        if constraint == "job_one_active_per_cluster":
-            raise ClusterBusy(cluster) from violation
-        if constraint != "job_idempotency_key":  # pragma: no cover - no other unique index
+        conflict = violation
+        constraint = violation.diag.constraint_name or ""
+        #
+        # A retry of the same request conflicts with both unique indexes: its
+        # key already exists and its cluster already has the pending row. The
+        # executor is free to report either one first, so the cluster constraint
+        # cannot mean "busy" until the key lookup below has ruled out the retry.
+        #
+        if constraint not in {"job_one_active_per_cluster", "job_idempotency_key"}:
+            # pragma: no cover - no other unique index
             raise
     #
     # The key has been used. Whether that is a retry or a collision is decided by
@@ -337,6 +345,12 @@ def queue_job(
         )
         existing = cursor.fetchone()
     if existing is None:
+        if constraint == "job_one_active_per_cluster":
+            if conflict is None:  # pragma: no cover - the lookup only follows that violation
+                raise psycopg.OperationalError(
+                    "the cluster conflict was lost before classification"
+                )
+            raise ClusterBusy(cluster) from conflict
         raise RequestConflict(str(idempotency_key))
     return existing
 

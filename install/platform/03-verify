@@ -29,7 +29,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\njob'
+expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_status\njob\nlogin_attempt'
 actual_tables="$(run -c "select tablename from pg_tables
                           where schemaname = 'public' order by 1")"
 if [[ "$actual_tables" == "$expected_tables" ]]; then
@@ -46,16 +46,38 @@ fi
 #
 step "Column privileges"
 expected_grants=$(cat <<'EOF'
+app_poller	cluster_backups	INSERT	cluster, error, outcome, poll_error, result, warnings
+app_poller	cluster_backups	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_poller	cluster_backups	UPDATE	error, outcome, poll_error, result, warnings
+app_poller	cluster_certificates	INSERT	cluster, error, outcome, poll_error, result, warnings
+app_poller	cluster_certificates	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_poller	cluster_certificates	UPDATE	error, outcome, poll_error, result, warnings
+app_poller	cluster_history	INSERT	cluster, error, outcome, poll_error, result, warnings
+app_poller	cluster_history	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_poller	cluster_history	UPDATE	error, outcome, poll_error, result, warnings
+app_poller	cluster_inventory	INSERT	cluster, error, outcome, poll_error, result, warnings
+app_poller	cluster_inventory	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_poller	cluster_inventory	UPDATE	error, outcome, poll_error, result, warnings
+app_poller	cluster_status	INSERT	cluster, error, outcome, poll_error, result, warnings
+app_poller	cluster_status	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_poller	cluster_status	UPDATE	error, outcome, poll_error, result, warnings
 app_web	app_session	INSERT	expires_at, token_hash, user_id
 app_web	app_session	SELECT	created_at, expires_at, last_seen_at, revoked_at, token_hash, user_id
 app_web	app_session	UPDATE	last_seen_at, revoked_at
 app_web	app_user	SELECT	disabled, id, password_hash, role, username, username_normalised
 app_web	audit_event	INSERT	action, actor, cluster, detail, request_id
 app_web	audit_event	SELECT	action, actor, at, cluster, detail, id, request_id
-app_web	job	INSERT	cluster, operation, payload
-app_web	job	SELECT	cluster, created_at, exit_code, finished_at, id, operation, outcome, payload, request_id, result, started_at, state, stderr_excerpt
+app_web	cluster_backups	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_web	cluster_certificates	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_web	cluster_history	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_web	cluster_inventory	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_web	cluster_status	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_web	job	INSERT	cluster, idempotency_key, operation, payload
+app_web	job	SELECT	cluster, created_at, exit_code, finished_at, id, idempotency_key, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt
+app_web	login_attempt	INSERT	client_ip, succeeded, username_normalised
+app_web	login_attempt	SELECT	at, client_ip, id, succeeded, username_normalised
 app_worker	audit_event	INSERT	action, actor, cluster, detail, request_id
-app_worker	job	SELECT	claim_token, cluster, created_at, exit_code, finished_at, id, lease_until, operation, outcome, payload, request_id, result, started_at, state, stderr_excerpt, worker_id
+app_worker	job	SELECT	claim_token, cluster, created_at, exit_code, finished_at, id, idempotency_key, lease_until, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt, worker_id
 app_worker	job	UPDATE	claim_token, exit_code, finished_at, lease_until, outcome, result, started_at, state, stderr_excerpt, worker_id
 EOF
 )
@@ -127,6 +149,9 @@ refuse "$WEB_USER"    "cannot queue a job as already running" \
 refuse "$WEB_USER"    "cannot choose a job's request id" \
        "insert into job (operation, cluster, payload, request_id)
         values ('deploy', 'alpha', '{}'::jsonb, gen_random_uuid())"
+refuse "$WEB_USER"    "cannot choose a job's payload hash" \
+       "insert into job (operation, cluster, payload, payload_hash)
+        values ('deploy', 'alpha', '{}'::jsonb, decode('00', 'hex'))"
 refuse "$WEB_USER"    "cannot write a job result" \
        "insert into job (operation, cluster, payload, result)
         values ('deploy', 'alpha', '{}'::jsonb, '{}'::jsonb)"
@@ -171,16 +196,22 @@ allow() {
 # caller asked for: pending, a request ID and a creation time none of which the
 # web role holds insert on.
 #
-allow "$WEB_USER" "can queue a job, which the database marks pending" \
-      "insert into job (operation, cluster, payload)
-       values ('deploy', 'alpha', '{\"probe\": true}'::jsonb)
+allow "$WEB_USER" "can queue a keyed job, which the database marks pending" \
+      "insert into job (operation, cluster, payload, idempotency_key)
+       values ('deploy', 'alpha', '{\"probe\": true}'::jsonb, gen_random_uuid())
        returning state" \
       "pending"
 
 allow "$WEB_USER" "receives a request id it did not choose" \
-      "insert into job (operation, cluster, payload)
-       values ('deploy', 'alpha', '{}'::jsonb)
+      "insert into job (operation, cluster, payload, idempotency_key)
+       values ('deploy', 'alpha', '{}'::jsonb, gen_random_uuid())
        returning request_id is not null" \
+      "t"
+
+allow "$WEB_USER" "receives the database-derived payload hash" \
+      "insert into job (operation, cluster, payload, idempotency_key)
+       values ('deploy', 'alpha', '{}'::jsonb, gen_random_uuid())
+       returning payload_hash is not null" \
       "t"
 
 #

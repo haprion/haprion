@@ -254,6 +254,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .status-healthy { background-color: var(--healthy); box-shadow: 0 0 0 3px var(--healthy-soft); }
 .status-warning { background-color: var(--warning); box-shadow: 0 0 0 3px var(--warning-soft); }
 .status-critical { background-color: var(--critical); box-shadow: 0 0 0 3px var(--critical-soft); }
+.status-info { background-color: var(--info); box-shadow: 0 0 0 3px var(--info-soft); }
 .status-unknown { background-color: var(--unknown); box-shadow: 0 0 0 3px var(--unknown-soft); }
 
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 29px; }
@@ -332,6 +333,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .status-badge-healthy { color: var(--healthy); background: var(--healthy-soft); }
 .status-badge-warning { color: var(--warning); background: var(--warning-soft); }
 .status-badge-critical { color: var(--critical); background: var(--critical-soft); }
+.status-badge-info { color: var(--info); background: var(--info-soft); }
 .status-badge-unknown { color: var(--unknown); background: var(--unknown-soft); }
 
 .cluster-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; padding: 13px 20px; border-bottom: 1px solid var(--line); background: var(--panel-soft); }
@@ -394,6 +396,19 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .version-comment { display: block; max-width: 460px; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .version-table code { color: var(--muted); font-size: 11px; }
 .table-note { margin: 0; padding: 10px 20px 14px; color: var(--muted); font-size: 11px; }
+
+/* Jobs are intentionally a single cross-cluster sequence, rather than a
+   cluster card per row: their order is the operational fact.  The operation
+   description may be long, so it gets the flexible column. */
+.job-table { table-layout: fixed; }
+.job-table th:nth-child(1), .job-table td:nth-child(1) { width: 70px; }
+.job-table th:nth-child(2), .job-table td:nth-child(2) { width: 210px; }
+.job-table th:nth-child(3), .job-table td:nth-child(3) { width: 140px; }
+.job-table th:nth-child(4), .job-table td:nth-child(4) { width: 170px; }
+.job-table th:nth-child(n+5), .job-table td:nth-child(n+5) { width: 125px; }
+.job-table td { padding-top: 7px; padding-bottom: 7px; }
+.job-table td:nth-child(2) { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
+.job-table time { font-variant-numeric: tabular-nums; }
 
 /* Backups. Two tables, because the card answers two questions: whether every
    node is backed up, and which archives are actually there to restore from.

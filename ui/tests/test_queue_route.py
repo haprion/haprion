@@ -80,6 +80,7 @@ class AskingForAnOperation(QueueRouteTestCase):
         response = self.post(self.writing_client())
 
         self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/jobs")
         self.assertEqual(len(self.queued), 1)
 
     def test_the_form_key_is_what_reaches_the_database(self) -> None:

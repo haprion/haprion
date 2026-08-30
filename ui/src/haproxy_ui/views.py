@@ -40,6 +40,7 @@ from haproxy_ui import (
     db,
     demo,
     history,
+    jobs,
     operations,
     proxies,
     snapshot,
@@ -475,6 +476,29 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
+    @router.get("/jobs", response_class=HTMLResponse)
+    def latest_jobs(request: Request) -> Response:
+        """Show the bounded, reader-safe history of management requests."""
+
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        with request.app.state.pool.connection() as connection:
+            overview = jobs.build_job_overview(db.recent_jobs(connection))
+        return TEMPLATES.TemplateResponse(
+            request,
+            "jobs.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "jobs": overview,
+                "management_writes": config.management_writes,
+                "section": "jobs",
+            },
+        )
+
     @router.get("/login", response_class=HTMLResponse)
     def login_form(request: Request) -> Response:
         if current_session(request) is not None:
@@ -690,7 +714,7 @@ def build_router(config: Config) -> APIRouter:
         # would catch that anyway; not relying on it is cheaper than explaining
         # why it did.
         #
-        return RedirectResponse("/activity", status_code=303)
+        return RedirectResponse("/jobs", status_code=303)
 
     @router.post("/logout")
     def logout(

@@ -1,0 +1,36 @@
+{% extends "layout.html" %}
+{% block title %}Jobs — HAProxy Manager{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div class="heading-title"><h1>Jobs</h1><p class="page-lede">The newest management requests and their recorded outcome.</p></div>
+  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-{{ 'warning' if management_writes else 'healthy' }}"></span>{{ "Management enabled" if management_writes else "Read-only mode" }}</span></div>
+</section>
+
+<section class="metric-grid activity-summary" aria-label="Job summary">
+  <article class="metric-card"><span class="metric-icon metric-icon-node" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h12M12 7l5 5-5 5"></path><circle cx="5" cy="12" r="2"></circle></svg></span><div><strong>{{ jobs.active_count }}</strong><span>Active</span><small>Queued or running</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg></span><div><strong>{{ jobs.attention_count }}</strong><span>Need review</span><small>Partial, blocked, failed or unknown</small></div></article>
+</section>
+
+<div class="table-scroll job-table-wrap">
+  <table class="node-table job-table">
+    <thead><tr><th>Job</th><th>Operation</th><th>Cluster</th><th>State</th><th>Requested</th><th>Started</th><th>Finished</th><th>Outcome</th><th>Exit</th></tr></thead>
+    <tbody>
+    {% for job in jobs.jobs %}
+      <tr>
+        <td data-label="Job"><strong>#{{ job.id }}</strong></td>
+        <td data-label="Operation">{{ job.operation }}</td>
+        <td data-label="Cluster"><strong>{{ job.cluster }}</strong></td>
+        <td data-label="State"><span class="status-badge status-badge-{{ job.tone }}">{{ job.state_label }}</span></td>
+        <td data-label="Requested"><time datetime="{{ job.requested_iso }}" title="{{ job.requested_iso }}">{{ job.requested }}</time></td>
+        <td data-label="Started">{{ job.started }}</td>
+        <td data-label="Finished">{{ job.finished }}</td>
+        <td data-label="Outcome">{{ job.outcome }}</td>
+        <td data-label="Exit">{{ job.exit_code }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="9"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5"></path></svg><div><strong>No jobs yet</strong><span>New management requests will appear here.</span></div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

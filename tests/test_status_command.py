@@ -21,6 +21,7 @@ import yaml
 from haproxy_mgmt.cli import status, status_helper
 from haproxy_mgmt.config import Node
 from haproxy_mgmt.status_collect import NodeResponse
+from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "55555555-5555-4555-8555-555555555555"
@@ -55,9 +56,16 @@ def node_status(name: str, *, owner: bool, release_hash: str) -> str:
                 "hash": release_hash,
                 "timestamp": "2026-01-02T03:04:05+00:00",
             },
-            "config_validation": {"ok": True},
+            #
+            # The shapes `haproxy-node-status` actually emits, not a stand-in.
+            # These two carried `{"ok": true}` for months, which no node has ever
+            # produced: the fixture was invented rather than copied, and the
+            # tests built on it could not have caught a real node's document
+            # drifting away from the frozen contract.
+            #
+            "config_validation": {"valid": True, "validated_at": "2026-01-02T03:00:00+00:00"},
             "stats_ok": True,
-            "runtime": {"ok": True},
+            "runtime": {"version": "3.2.9", "uptime_sec": 3600},
             "certificates": [],
         }
     )
@@ -199,7 +207,13 @@ class HelperReadingTests(HelperFixture):
         code, out, _ = self.run_helper(request())
         self.assertEqual(code, 0)
         self.assertEqual(self.asked, ["node-a", "node-b"])
-        envelope = json.loads(out)
+        #
+        # Held to the frozen schema, not only to the fields this test reads.
+        # The poller parses this document on every tick; a field that quietly
+        # changed shape here would surface as a dashboard that is wrong rather
+        # than as a test that failed.
+        #
+        envelope = assert_contract("haproxy-status", out)
         self.assertEqual(envelope["outcome"], "done")
         self.assertEqual(envelope["request_id"], REQUEST_ID)
         self.assertEqual(

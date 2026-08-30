@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 
 from haproxy_mgmt.cli import inventory, inventory_helper
+from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "55555555-5555-4555-8555-555555555555"
@@ -91,7 +92,7 @@ class InventoryHelperTests(unittest.TestCase):
         code, out, _ = self.run_helper(tree_reader=tree)
         self.assertEqual(code, 0)
         self.assertEqual(called[0][1], TARGET_HASH)
-        document = json.loads(out)
+        document = assert_contract("haproxy-inventory", out)
         self.assertEqual(document["outcome"], "done")
         self.assertEqual(document["request_id"], REQUEST_ID)
         self.assertTrue(document["result"]["proxies"][0]["managed"])
@@ -111,7 +112,7 @@ class InventoryHelperTests(unittest.TestCase):
             tree_reader=lambda _repo, _commit: {"core/haproxy.cfg": b"\xff"}
         )
         self.assertEqual(code, 65)
-        document = json.loads(out)
+        document = assert_contract("haproxy-inventory", out)
         self.assertEqual(document["outcome"], "failed")
         self.assertEqual(document["error"]["code"], "inventory_invalid")
 

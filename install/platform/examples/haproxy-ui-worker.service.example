@@ -32,8 +32,14 @@ RestartSec=5
 
 # sudo cannot raise privilege under NoNewPrivileges, and setuid needs both a
 # capability to arrive through and the syscalls to use it.
+#
+# CAP_CHOWN is not sudo's; it is the publish step's. A released version is
+# installed root-owned with the pull account's group so the nodes can fetch it,
+# and setting that group is a chown - which root cannot do with an empty
+# bounding set. Found by running the gate: the revert reached install_release
+# and failed there with EPERM, one step past the write paths.
 NoNewPrivileges=no
-CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_AUDIT_WRITE
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_AUDIT_WRITE CAP_CHOWN
 
 # @privileged carries setuid/setgid and @resources carries the setrlimit calls
 # sudo makes while building the target environment. Denying either denies sudo.

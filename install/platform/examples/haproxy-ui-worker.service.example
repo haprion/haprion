@@ -50,10 +50,22 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 # helper reads those keys and writes nothing under any home.
 ProtectHome=read-only
 
-# The cluster lock, which is what stops two rollouts touching one cluster at
-# once. The only path this unit needs to write outside its private tmp.
+# What the mutations actually write, and nothing else. Found by running the
+# gate rather than by reading: a deploy only reads and reaches nodes over SSH,
+# so /run alone carried it, and the gap did not appear until a revert - which
+# publishes - failed on "git commit-tree: Read-only file system".
+#
+#   /run/haproxy-mgmt           the cluster lock, which stops two rollouts at once
+#   /configs/haproxy            the clusters' Git repositories; revert commits here
+#   /configs/haproxy-published  the immutable release the commit is swapped into
+#   /configs/haproxy-validation a revert validates before it publishes
+#
+# These are root-owned drwxr-x--- with no group write, so opening the mount
+# namespace does not let the worker account itself write to them - the helper
+# writes as root, and file permissions stay the real boundary. This list is the
+# second layer, not the only one.
 ProtectSystem=strict
-ReadWritePaths=/run/haproxy-mgmt
+ReadWritePaths=/run/haproxy-mgmt /configs/haproxy /configs/haproxy-published /configs/haproxy-validation
 
 # Unchanged, and none of them stand in the helper's way. Kept so that opening
 # the four above is a decision about four things and not about the whole file.

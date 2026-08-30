@@ -28,7 +28,6 @@ unprivileged process choose what the operator is told is in sync.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -43,8 +42,11 @@ from haproxy_mgmt.config import (
 )
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
+    config_error_code,
     read_helper_request,
     require_no_arguments,
+    write_document,
+    write_failure,
 )
 from haproxy_mgmt.status_collect import NodeResponse, ReadNode, ask_node, collect, read_target
 
@@ -82,6 +84,12 @@ def main(
             allowed_parameter_keys=PARAMETERS,
         )
     except HelperProtocolError as exc:
+        #
+        # Deliberately stderr only. The cluster and the request ID an envelope
+        # must be bound to are fields of the request that just failed to parse;
+        # an envelope invented here could not be bound to the caller's request
+        # and would rightly be rejected as somebody else's answer.
+        #
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
 
@@ -92,7 +100,15 @@ def main(
         )
     except ConfigError as exc:
         errors.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return write_failure(
+            writer,
+            operation=OPERATION,
+            cluster=request.cluster,
+            request_id=request.request_id,
+            code=config_error_code(exc.exit_code),
+            message=str(exc),
+            exit_code=exc.exit_code,
+        )
 
     identity = policy.status_identity
     if identity is None and node_reader is None:
@@ -102,11 +118,20 @@ def main(
         # meant to be public, and a wrong guess would reach a node as the wrong
         # identity.
         #
-        errors.write(
-            "ERROR: no status identity is configured. Add status_identity with "
-            "'user' and 'key' to the runtime policy.\n"
+        message = (
+            "no status identity is configured. Add status_identity with "
+            "'user' and 'key' to the runtime policy."
         )
-        return EXIT_NO_IDENTITY
+        errors.write(f"ERROR: {message}\n")
+        return write_failure(
+            writer,
+            operation=OPERATION,
+            cluster=request.cluster,
+            request_id=request.request_id,
+            code="status_unavailable",
+            message=message,
+            exit_code=EXIT_NO_IDENTITY,
+        )
 
     def default_reader(node: Node) -> NodeResponse:
         assert identity is not None  # noqa: S101 - guarded above, stated for the reader
@@ -118,14 +143,7 @@ def main(
         target=read_target(Path(cluster.publish_path), cluster.node_path),
     )
 
-    writer.write(
-        json.dumps(
-            report.as_envelope(request.cluster, request_id=request.request_id),
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        + "\n"
-    )
+    write_document(writer, report.as_envelope(request.cluster, request_id=request.request_id))
     return report.exit_code
 
 

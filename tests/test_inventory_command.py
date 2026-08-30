@@ -67,13 +67,13 @@ class InventoryHelperTests(unittest.TestCase):
         policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
         return policy_path
 
-    def run_helper(self, *, published: bool = True, tree_reader=None):
+    def run_helper(self, *, published: bool = True, tree_reader=None, cluster: str = "alpha"):
         out, err = io.StringIO(), io.StringIO()
         read = tree_reader or (lambda _repo, _commit: {"core/haproxy.cfg": b"global\n"})
         code = inventory_helper.main(
             [],
             policy_path=self.runtime(published=published),
-            input_stream=io.BytesIO(request()),
+            input_stream=io.BytesIO(request(cluster=cluster)),
             output_stream=out,
             error_stream=err,
             require_secure=False,
@@ -115,6 +115,15 @@ class InventoryHelperTests(unittest.TestCase):
         document = assert_contract("haproxy-inventory", out)
         self.assertEqual(document["outcome"], "failed")
         self.assertEqual(document["error"]["code"], "inventory_invalid")
+
+    def test_an_unknown_cluster_is_refused_in_the_frozen_envelope(self) -> None:
+        code, out, err = self.run_helper(cluster="beta")
+
+        self.assertEqual(code, 64)
+        self.assertIn("unknown cluster", err)
+        document = assert_contract("haproxy-inventory", out)
+        self.assertEqual(document["outcome"], "failed")
+        self.assertEqual(document["error"]["code"], "bad_input")
 
     def test_protocol_and_argument_errors_do_not_cross_the_boundary(self) -> None:
         err = io.StringIO()

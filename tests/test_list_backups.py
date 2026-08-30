@@ -22,7 +22,7 @@ from referencing import Registry, Resource
 
 from haproxy_mgmt import backups
 from haproxy_mgmt.cli import list_backups, list_backups_helper
-from haproxy_mgmt.config import Node
+from haproxy_mgmt.config import ConfigError, Node
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
 SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haproxy-list-backups.schema.json"
@@ -139,11 +139,13 @@ class NodeBackupsTests(unittest.TestCase):
 
 
 class HelperTests(unittest.TestCase):
-    def _run(self, root: Path | None, parameters: dict[str, object]) -> tuple[dict, int]:
+    def _run(
+        self, root: Path | None, parameters: dict[str, object], *, cluster: str = "alpha"
+    ) -> tuple[dict, int]:
         request = {
             "schema_version": 1,
             "operation": "list_backups",
-            "cluster": "alpha",
+            "cluster": cluster,
             "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             "parameters": parameters,
         }
@@ -155,7 +157,14 @@ class HelperTests(unittest.TestCase):
 
         class Config:
             @staticmethod
-            def cluster(_: str) -> object:
+            def cluster(cluster_id: str) -> object:
+                #
+                # Refuses an unknown cluster the way the real loader does. A
+                # fake that answers every question is a fake that cannot fail a
+                # test the real thing would fail.
+                #
+                if cluster_id != "alpha":
+                    raise ConfigError(f"unknown cluster '{cluster_id}'", exit_code=64)
                 return type("Cluster", (), {"nodes": NODES})
 
         original_policy = list_backups_helper.load_policy
@@ -186,6 +195,20 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(document["outcome"], "done")
         self.assertTrue(document["ok"])
+        _validator().validate(document)
+
+    def test_an_unknown_cluster_is_refused_in_the_frozen_envelope(self) -> None:
+        """A refusal is a result. The contract promises one document on stdout
+        on every path, and a caller that gets an exit code and nothing to parse
+        has to guess what happened."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            document, code = self._run(Path(directory), {"limit": 10}, cluster="beta")
+
+        self.assertEqual(code, 64)
+        self.assertEqual(document["outcome"], "failed")
+        self.assertEqual(document["error"]["code"], "bad_input")
+        self.assertIsNone(document["result"])
         _validator().validate(document)
 
     def test_one_unreadable_node_is_partial_and_matches_the_schema(self) -> None:

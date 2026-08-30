@@ -19,34 +19,19 @@ from typing import BinaryIO, TextIO
 
 from haproxy_mgmt.cert_inventory import CertInventoryError, cert_list_result
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
-from haproxy_mgmt.envelope import Message, envelope
+from haproxy_mgmt.envelope import envelope
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
+    config_error_code,
     read_helper_request,
     require_no_arguments,
     write_document,
+    write_failure,
 )
 
 OPERATION = "cert_list"
 PARAMETERS: frozenset[str] = frozenset()
 EXIT_NOT_ROOT = 77
-
-
-def _failed(
-    writer: TextIO, cluster: str, request_id: str, code: str, message: str, exit_code: int
-) -> int:
-    write_document(
-        writer,
-        envelope(
-            operation=OPERATION,
-            outcome="failed",
-            cluster=cluster,
-            request_id=request_id,
-            result=None,
-            error=Message(code=code, message=message),
-        ),
-    )
-    return exit_code
 
 
 def main(
@@ -75,6 +60,12 @@ def main(
             allowed_parameter_keys=PARAMETERS,
         )
     except HelperProtocolError as exc:
+        #
+        # Deliberately stderr only. The cluster and the request ID an envelope
+        # must be bound to are fields of the request that just failed to parse;
+        # an envelope invented here could not be bound to the caller's request
+        # and would rightly be rejected as somebody else's answer.
+        #
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
 
@@ -85,28 +76,38 @@ def main(
         )
     except ConfigError as exc:
         errors.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return write_failure(
+            writer,
+            operation=OPERATION,
+            cluster=request.cluster,
+            request_id=request.request_id,
+            code=config_error_code(exc.exit_code),
+            message=str(exc),
+            exit_code=exc.exit_code,
+        )
 
     if policy.certificate_root is None:
-        return _failed(
+        return write_failure(
             writer,
-            request.cluster,
-            request.request_id,
-            "certificate_metadata_unavailable",
-            "the runtime policy declares no certificate_root",
-            65,
+            operation=OPERATION,
+            cluster=request.cluster,
+            request_id=request.request_id,
+            code="certificate_metadata_unavailable",
+            message="the runtime policy declares no certificate_root",
+            exit_code=65,
         )
 
     try:
         result = cert_list_result(policy.certificate_root, cluster)
     except CertInventoryError as exc:
-        return _failed(
+        return write_failure(
             writer,
-            request.cluster,
-            request.request_id,
-            "certificate_metadata_unavailable",
-            str(exc),
-            65,
+            operation=OPERATION,
+            cluster=request.cluster,
+            request_id=request.request_id,
+            code="certificate_metadata_unavailable",
+            message=str(exc),
+            exit_code=65,
         )
 
     #

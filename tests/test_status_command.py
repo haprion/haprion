@@ -221,6 +221,22 @@ class HelperReadingTests(HelperFixture):
         )
         self.assertEqual(envelope["result"]["summary"]["release_state"], "converged")
 
+    def test_an_unknown_cluster_is_refused_in_the_frozen_envelope(self) -> None:
+        """A refusal is a result. The contract promises one document on stdout
+        on every path, and a caller that gets an exit code and nothing to parse
+        has to guess what happened."""
+
+        code, out, err = self.run_helper(request("beta"))
+
+        self.assertEqual(code, 64)
+        self.assertIn("unknown cluster", err)
+        document = assert_contract("haproxy-status", out)
+        self.assertEqual(document["operation"], "status")
+        self.assertEqual(document["outcome"], "failed")
+        self.assertEqual(document["request_id"], REQUEST_ID)
+        self.assertEqual(document["error"]["code"], "bad_input")
+        self.assertIsNone(document["result"])
+
     def test_a_node_on_another_release_is_reported_as_behind(self) -> None:
         code, out, _ = self.run_helper(
             request(),

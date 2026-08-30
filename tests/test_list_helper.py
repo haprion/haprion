@@ -22,6 +22,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
 from haproxy_mgmt.cli import list_helper
+from tests.contract_schema import assert_contract
 
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "66666666-6666-4666-8666-666666666666"
@@ -194,6 +195,20 @@ class ListHelperTests(unittest.TestCase):
 
         errors = sorted(list_validator().iter_errors(json.loads(out)), key=str)
         self.assertEqual([error.message for error in errors], [])
+
+    def test_an_unknown_cluster_is_refused_in_the_frozen_envelope(self) -> None:
+        """A refusal is a result. The contract promises one document on stdout
+        on every path, and a caller that gets an exit code and nothing to parse
+        has to guess what happened."""
+
+        code, out, err = self.run_helper(payload=request(cluster="beta"))
+
+        self.assertEqual(code, 64)
+        self.assertIn("unknown cluster", err)
+        document = assert_contract("haproxy-list", out)
+        self.assertEqual(document["outcome"], "failed")
+        self.assertEqual(document["error"]["code"], "bad_input")
+        self.assertIsNone(document["result"])
 
     def test_no_argument_reaches_the_privileged_side(self) -> None:
         code, _, err = self.run_helper(argv=["-c", "alpha"])

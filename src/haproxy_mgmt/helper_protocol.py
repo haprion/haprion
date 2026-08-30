@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, BinaryIO, TextIO, cast
 
 from haproxy_mgmt.config import CLUSTER_ID
+from haproxy_mgmt.envelope import failure
 
 MAX_REQUEST_BYTES = 64 * 1024
 OPERATION = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -172,3 +173,49 @@ def write_document(stream: TextIO, document: Mapping[str, Any]) -> None:
 
     json.dump(document, stream, separators=(",", ":"), sort_keys=True)
     stream.write("\n")
+
+
+def config_error_code(exit_code: int) -> str:
+    """The stable code a configuration failure is reported under.
+
+    64 is the caller's mistake - a cluster this installation does not have.
+    Anything else means the configuration a helper depends on could not be read
+    or used, which is the installation's problem and not the request's.
+    """
+
+    return "bad_input" if exit_code == 64 else "dependency_unavailable"
+
+
+def write_failure(
+    stream: TextIO,
+    *,
+    operation: str,
+    cluster: str | None,
+    request_id: str,
+    code: str,
+    message: str,
+    exit_code: int,
+    details: dict[str, Any] | None = None,
+) -> int:
+    """Write one refusal envelope and hand back the exit code to return.
+
+    A helper that has read its request knows which operation, cluster and
+    request ID an answer belongs to, so every exit from there on can carry the
+    document the contract promises. Returning the exit code keeps the call site
+    to one line, which is the difference between a rule that is followed and one
+    that is remembered.
+    """
+
+    write_document(
+        stream,
+        failure(
+            operation=operation,
+            cluster=cluster,
+            request_id=request_id,
+            code=code,
+            message=message,
+            exit_code=exit_code,
+            details=details,
+        ),
+    )
+    return exit_code

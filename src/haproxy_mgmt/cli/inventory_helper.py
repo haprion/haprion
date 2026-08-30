@@ -18,9 +18,11 @@ from haproxy_mgmt.envelope import Message, envelope
 from haproxy_mgmt.git_command import GitError
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
+    config_error_code,
     read_helper_request,
     require_no_arguments,
     write_document,
+    write_failure,
 )
 from haproxy_mgmt.inventory import InventoryError, inventory_result
 from haproxy_mgmt.repo_snapshot import read_tree_files
@@ -60,6 +62,12 @@ def main(
             allowed_parameter_keys=PARAMETERS,
         )
     except HelperProtocolError as exc:
+        #
+        # Deliberately stderr only. The cluster and the request ID an envelope
+        # must be bound to are fields of the request that just failed to parse;
+        # an envelope invented here could not be bound to the caller's request
+        # and would rightly be rejected as somebody else's answer.
+        #
         errors.write(f"ERROR: {exc}\n")
         return exc.exit_code
 
@@ -70,7 +78,15 @@ def main(
         )
     except ConfigError as exc:
         errors.write(f"ERROR: {exc}\n")
-        return exc.exit_code
+        return write_failure(
+            writer,
+            operation=OPERATION,
+            cluster=request.cluster,
+            request_id=request.request_id,
+            code=config_error_code(exc.exit_code),
+            message=str(exc),
+            exit_code=exc.exit_code,
+        )
 
     target = read_target(Path(cluster.publish_path), cluster.node_path)
     try:

@@ -21,7 +21,9 @@ from referencing import Registry, Resource
 
 from haproxy_mgmt import cert_inventory
 from haproxy_mgmt.certificates import leaf_fingerprint
-from haproxy_mgmt.cli import cert_list
+from haproxy_mgmt.cli import cert_list, cert_list_helper
+from haproxy_mgmt.config import ConfigError
+from tests.contract_schema import assert_contract
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "v1"
 SCHEMA_ID = "https://example.com/haproxy-manager/schemas/v1/haproxy-cert-list.schema.json"
@@ -336,6 +338,88 @@ class CommandTests(unittest.TestCase):
 
         self.assertIn("certificate_metadata_unavailable", err)
         self.assertNotIn("invalid result", err)
+
+
+class HelperTests(unittest.TestCase):
+    """The privileged half, run end to end and held to its schema.
+
+    Every other test in this file builds the envelope itself or stubs the
+    helper out. That proves the result body and the schema agree; it cannot
+    prove that the helper emits either, which is exactly the gap that let two
+    other helpers answer off-contract for months.
+    """
+
+    def _run(self, *, cluster: str = "alpha", with_root: bool = True):
+        request = {
+            "schema_version": 1,
+            "operation": "cert_list",
+            "cluster": cluster,
+            "request_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "parameters": {},
+        }
+        out, err = io.StringIO(), io.StringIO()
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "example.com.pem").write_text(_pem("example.com"), encoding="utf-8")
+
+            class Policy:
+                certificate_root = root if with_root else None
+
+            class Config:
+                @staticmethod
+                def cluster(cluster_id: str) -> object:
+                    #
+                    # Refuses an unknown cluster the way the real loader does.
+                    # A fake that answers every question is a fake that cannot
+                    # fail a test the real thing would fail.
+                    #
+                    if cluster_id != "alpha":
+                        raise ConfigError(f"unknown cluster '{cluster_id}'", exit_code=64)
+                    return _cluster(("example.com",))
+
+            original_policy = cert_list_helper.load_policy
+            original_config = cert_list_helper.load_runtime_config
+            cert_list_helper.load_policy = lambda *a, **k: Policy()  # type: ignore[assignment]
+            cert_list_helper.load_runtime_config = lambda *a, **k: Config()  # type: ignore[assignment]
+            try:
+                code = cert_list_helper.main(
+                    [],
+                    input_stream=io.BytesIO(json.dumps(request).encode("utf-8")),
+                    output_stream=out,
+                    error_stream=err,
+                    require_root=False,
+                )
+            finally:
+                cert_list_helper.load_policy = original_policy  # type: ignore[assignment]
+                cert_list_helper.load_runtime_config = original_config  # type: ignore[assignment]
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_listing_from_the_helper_matches_the_frozen_schema(self) -> None:
+        code, out, err = self._run()
+
+        self.assertEqual((code, err), (0, ""))
+        document = assert_contract("haproxy-cert-list", out)
+        self.assertEqual(document["operation"], "cert_list")
+        self.assertEqual(document["outcome"], "done")
+        self.assertEqual(document["result"]["certificates"][0]["id"], "example.com")
+
+    def test_an_unknown_cluster_is_refused_in_the_frozen_envelope(self) -> None:
+        code, out, err = self._run(cluster="beta")
+
+        self.assertEqual(code, 64)
+        self.assertIn("unknown cluster", err)
+        document = assert_contract("haproxy-cert-list", out)
+        self.assertEqual(document["outcome"], "failed")
+        self.assertEqual(document["error"]["code"], "bad_input")
+        self.assertIsNone(document["result"])
+
+    def test_a_missing_certificate_root_is_a_structured_failure(self) -> None:
+        code, out, _ = self._run(with_root=False)
+
+        self.assertEqual(code, 65)
+        document = assert_contract("haproxy-cert-list", out)
+        self.assertEqual(document["error"]["code"], "certificate_metadata_unavailable")
 
 
 if __name__ == "__main__":

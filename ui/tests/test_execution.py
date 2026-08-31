@@ -27,7 +27,7 @@ def script(source: str) -> list[str]:
 class RunningToCompletion(unittest.TestCase):
     def test_stdin_carries_the_request_and_stdout_comes_back(self) -> None:
         completed = execution.run(
-            script("import sys; sys.stdout.write(sys.stdin.read().upper())"),
+            script("import sys; sys.stdout.write(sys.stdin.readline().strip().upper())"),
             request="the request",
             timeout_seconds=30,
             still_ours=lambda: True,
@@ -121,6 +121,7 @@ class StoppingWhatItStarted(unittest.TestCase):
             request="",
             timeout_seconds=30,
             still_ours=lambda: False,
+            lifeline_grace_seconds=0.2,
         )
 
         self.assertEqual(completed.ending, "lease_lost")
@@ -132,6 +133,7 @@ class StoppingWhatItStarted(unittest.TestCase):
             request="",
             timeout_seconds=0.1,
             still_ours=lambda: True,
+            lifeline_grace_seconds=0.2,
         )
 
         self.assertEqual(completed.ending, "timeout")
@@ -156,7 +158,11 @@ class StoppingWhatItStarted(unittest.TestCase):
             "time.sleep(30)\n"
         )
         completed = execution.run(
-            script(source), request="", timeout_seconds=0.5, still_ours=lambda: True
+            script(source),
+            request="",
+            timeout_seconds=0.5,
+            still_ours=lambda: True,
+            lifeline_grace_seconds=0.2,
         )
         child = int(completed.stdout.strip())
 
@@ -183,6 +189,7 @@ class StoppingWhatItStarted(unittest.TestCase):
                 request="",
                 timeout_seconds=30,
                 still_ours=unavailable,
+                lifeline_grace_seconds=0.2,
             )
 
         self.assertLess(time.monotonic() - started, 10)
@@ -240,3 +247,63 @@ class WhenTheGroupIsBeyondOurPrivilege(unittest.TestCase):
             execution._stop(finished, finished.pid)
 
         self.assertIn("beyond this worker's privilege", "\n".join(logged.output))
+
+
+class TheLifelineStopsWhatSignalsCannot(unittest.TestCase):
+    """The point of the whole mechanism, with a real process.
+
+    The command here behaves the way a helper does: it reads its request as one
+    line and then keeps reading, so the only thing that ends it is the worker
+    closing the pipe. No signal is sent in this test - and in production none
+    could be, because the helper runs as root and the worker holds no CAP_KILL.
+    """
+
+    #
+    # Reads the request line, then blocks until the lifeline closes. Writes what
+    # ended it, so the assertion is about the command's own view rather than
+    # about this process guessing.
+    #
+    WATCHER = (
+        "import sys; sys.stdin.readline(); "
+        "rest = sys.stdin.read(); "
+        "sys.stdout.write('released' if rest == '' else 'unexpected'); "
+        "sys.stdout.flush()"
+    )
+
+    def test_a_lost_lease_ends_a_command_that_only_watches_its_lifeline(self) -> None:
+        started = time.monotonic()
+        completed = execution.run(
+            script(self.WATCHER),
+            request="the request",
+            timeout_seconds=30,
+            still_ours=lambda: False,
+            lifeline_grace_seconds=5,
+        )
+
+        self.assertEqual(completed.ending, "lease_lost")
+        self.assertEqual(completed.stdout, "released")
+        self.assertEqual(completed.exit_code, 0)
+        self.assertLess(time.monotonic() - started, 20)
+
+    def test_an_open_lifeline_does_not_hold_up_a_command_that_is_done(self) -> None:
+        """A real helper does its work and exits; it does not wait for EOF.
+
+        Its lifeline watcher is a daemon thread, so it never holds the process
+        open. This is the ordinary path - the one that has to stay exactly as
+        fast as it was - and it is worth stating, because the obvious way to
+        write a watcher is to block on the read in the main thread and that
+        would turn every operation into a wait for the worker to let go.
+        """
+
+        started = time.monotonic()
+        completed = execution.run(
+            script("import sys; sys.stdout.write(sys.stdin.readline().strip().upper())"),
+            request="the request",
+            timeout_seconds=30,
+            still_ours=lambda: True,
+            lifeline_grace_seconds=5,
+        )
+
+        self.assertEqual(completed.ending, "finished")
+        self.assertEqual(completed.stdout, "THE REQUEST")
+        self.assertLess(time.monotonic() - started, 5)

@@ -47,6 +47,18 @@ type OutputError = Literal["too_large", "invalid_utf8"]
 TICK_SECONDS = 5.0
 
 #
+# How long a released lifeline is given before signals are tried. It is a
+# checkpoint distance rather than a timeout: the helper answers at the top of
+# its next reconcile iteration, which is one status read and one node away.
+#
+# A starting value, not a measured one. It is deliberately longer than any
+# operation seen so far, because the cost of being too generous is a slow stop
+# and the cost of being too eager is a cluster stopped mid-step - and only one
+# of those is worth avoiding.
+#
+LIFELINE_GRACE_SECONDS = 10.0
+
+#
 # The grace between asking the process group to stop and insisting. A deploy
 # that is interrupted mid-step should get the chance to leave the node in a
 # state it chose rather than one the kernel chose.
@@ -201,6 +213,7 @@ def run(
     request: str,
     timeout_seconds: float,
     still_ours: Callable[[], bool],
+    lifeline_grace_seconds: float = LIFELINE_GRACE_SECONDS,
     environment: Mapping[str, str] | None = None,
 ) -> Completed:
     """Run one command to completion, or stop it and say why.
@@ -272,12 +285,30 @@ def run(
             reader_done()
 
     def write_request() -> None:
+        """Write the request and leave the pipe open.
+
+        The open pipe is the lifeline. The helper runs as root and this process
+        holds no CAP_KILL, so signalling it is not available - but closing this
+        descriptor is, and the helper is watching for exactly that. Closing it
+        here, as this used to, would throw away the only way to stop a
+        privileged operation short of waiting for it.
+
+        The request ends with a line ending because the helper reads one line
+        rather than reading to end of input. Without it the helper would still
+        be waiting for a request that has, in fact, been sent.
+        """
+
         try:
-            process_stdin.write(encoded_request)
+            process_stdin.write(encoded_request + b"\n")
             process_stdin.flush()
         except BrokenPipeError:
-            pass
-        finally:
+            with suppress(OSError):
+                process_stdin.close()
+
+    def release_lifeline() -> None:
+        """Tell the helper to stop at its next checkpoint."""
+
+        with suppress(OSError):
             process_stdin.close()
 
     threads = (
@@ -316,6 +347,7 @@ def run(
                 break
             if now >= next_tick and not still_ours():
                 logger.error("the lease was lost while the operation was running; stopping it")
+                release_lifeline()
                 ending = "lease_lost"
                 break
             if now >= next_tick:
@@ -324,13 +356,37 @@ def run(
                 logger.error(
                     "the operation passed its timeout of %ss; stopping it", timeout_seconds
                 )
+                release_lifeline()
                 ending = "timeout"
                 break
     except Exception as exc:
         callback_error = exc
 
     if ending != "finished" or callback_error is not None:
-        _stop(process, group)
+        #
+        # The lifeline first, and signals only if it was not answered. A helper
+        # that stops at its own checkpoint leaves a cluster the report can
+        # describe; one that is killed leaves whatever instant the signal
+        # arrived in. So the release above is given a window to work before
+        # `_stop` is asked to do what, against a root-owned group, it very
+        # likely cannot do anyway.
+        #
+        release_lifeline()
+        try:
+            process.wait(timeout=lifeline_grace_seconds)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "the operation did not stop within %ss of the lifeline closing",
+                lifeline_grace_seconds,
+            )
+            _stop(process, group)
+
+    #
+    # Always closed, including on the ordinary path where the command finished
+    # by itself. The lifeline is a descriptor this process holds open for the
+    # whole run, and a run that ended is a run that is not holding anything.
+    #
+    release_lifeline()
 
     #
     # Joined after the kill, so output produced before it is not thrown away. A

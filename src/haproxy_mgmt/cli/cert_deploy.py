@@ -56,7 +56,12 @@ def _parse(argv: list[str]) -> tuple[str, bool, bool]:
 
 
 def build_request(
-    cluster_id: str, request_id: str, *, allow_vip_unknown: bool, json_mode: bool
+    cluster_id: str,
+    request_id: str,
+    *,
+    allow_vip_unknown: bool,
+    json_mode: bool,
+    lifeline: bool = False,
 ) -> str:
     """The exact request this operation sends, built in one place.
 
@@ -69,6 +74,11 @@ def build_request(
     has nobody to answer to and makes one up; the worker already holds the ID the
     job was queued with, and that ID is what makes "did this operation take
     effect?" answerable after a crash.
+
+    `lifeline` says the caller is holding stdin open so it can let go later. The
+    command line leaves it False and closes stdin as it always has: a person at
+    a terminal has Ctrl-C and holds no lease, so there is nothing for a lifeline
+    to express. The worker sets it, because it has both.
     """
 
     return json.dumps(
@@ -77,6 +87,7 @@ def build_request(
             "operation": OPERATION,
             "cluster": cluster_id,
             "request_id": request_id,
+            "lifeline": lifeline,
             "parameters": {"allow_vip_unknown": allow_vip_unknown, "json": json_mode},
         }
     )

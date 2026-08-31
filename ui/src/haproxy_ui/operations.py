@@ -90,6 +90,13 @@ def prepare(
                 str(request_id),
                 allow_vip_unknown=_flag(payload, "allow_vip_unknown", default=False),
                 json_mode=True,
+                #
+                # The worker holds a lease it can lose, and it cannot signal a
+                # helper running as root. Holding stdin open is how it keeps a
+                # way to say "I have let go" - and the kernel says it for the
+                # worker if the worker dies first.
+                #
+                lifeline=True,
             ),
         )
 
@@ -102,6 +109,13 @@ def prepare(
                 str(request_id),
                 allow_vip_unknown=_flag(payload, "allow_vip_unknown", default=False),
                 json_mode=True,
+                #
+                # The worker holds a lease it can lose, and it cannot signal a
+                # helper running as root. Holding stdin open is how it keeps a
+                # way to say "I have let go" - and the kernel says it for the
+                # worker if the worker dies first.
+                #
+                lifeline=True,
             ),
         )
 

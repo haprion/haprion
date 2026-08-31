@@ -29,9 +29,30 @@ class TheCommandComesFromTheEngine(unittest.TestCase):
         self.assertEqual(
             envelope,
             json.loads(
-                deploy.build_request("alpha", str(REQUEST), allow_vip_unknown=False, json_mode=True)
+                deploy.build_request(
+                    "alpha",
+                    str(REQUEST),
+                    allow_vip_unknown=False,
+                    json_mode=True,
+                    lifeline=True,
+                )
             ),
         )
+
+    def test_the_worker_declares_a_lifeline(self) -> None:
+        """The worker holds stdin open; the command line does not.
+
+        The worker has a lease it can lose and no way to signal a helper running
+        as root. A person at a terminal has Ctrl-C and no lease, so the engine's
+        own default stays False and nothing about the command line changes.
+        """
+
+        for operation in ("deploy", "cert_deploy"):
+            with self.subTest(operation=operation):
+                prepared = operations.prepare(
+                    operation=operation, cluster="alpha", request_id=REQUEST, payload={}
+                )
+                self.assertIs(json.loads(prepared.request)["lifeline"], True)
 
     def test_the_queued_request_id_is_the_one_that_is_sent(self) -> None:
         #

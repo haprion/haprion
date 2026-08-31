@@ -1,0 +1,96 @@
+#!/bin/bash
+#
+# Platform step 11 - keep the job table bounded.
+#
+#     sudo ./11-platform-retention <answers-file>
+#
+# Installs haproxy-ui-retention and a weekly timer. Optional, and separate from
+# the backup step on purpose: this removes rows from a live table, which is a
+# different kind of action from writing a dump, and an installation that wants
+# one does not necessarily want the other.
+#
+# Unlike step 6 it is meant to be run for development too. A development
+# platform's job table grows exactly as production's does, and rehearsal traffic
+# is the traffic that fills it fastest.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars DB_NAME
+ENVIRONMENT="${ENVIRONMENT:-prod}"
+valid_id "$ENVIRONMENT" || die "ENVIRONMENT must be a short lowercase identifier"
+
+config="/etc/haproxy-manager/ui-admin-${ENVIRONMENT}.conf"
+[[ -r "$config" ]] || die "${config} is missing. Run ./02-platform-database first."
+#
+# Read out of the admin config rather than out of the answers file, because that
+# is where the command itself reads it: a check that consulted a second source
+# could pass while the command talks to something else.
+#
+# shellcheck disable=SC1090
+DB_ROLE="$(source "$config"; echo "${DB_ROLE:-}")"
+[[ -n "$DB_ROLE" ]] || die "DB_ROLE is not in ${config}"
+
+step "The command"
+install -o root -g root -m 755 bin/haproxy-ui-retention /usr/local/sbin/haproxy-ui-retention
+log "  installed /usr/local/sbin/haproxy-ui-retention"
+
+step "Timer"
+#
+# Named after the environment, which the backup units are not. Development runs
+# this step and does not run step 6, so these are the units that would collide
+# on a machine carrying both platforms - and two timers pruning each other's
+# database is a failure that would look like retention working.
+#
+unit="haproxy-ui-retention-${ENVIRONMENT}"
+for kind in service timer; do
+    install_file "/etc/systemd/system/${unit}.${kind}" root:root 644 \
+        "$(sed "s|ENVIRONMENT|${ENVIRONMENT}|g" "examples/haproxy-ui-retention.${kind}.example")"
+done
+systemctl daemon-reload
+log "  reloaded systemd"
+systemctl enable --quiet --now "${unit}.timer"
+log "  enabled  weekly pruning for ${ENVIRONMENT}"
+
+#
+# Asked of the running system rather than assumed from a clean enable. A timer
+# that is enabled but whose next run is never is retention that will not happen.
+#
+systemctl list-timers --no-pager --no-legend "${unit}.timer" | sed 's/^/  /'
+
+step "What the first run will remove"
+#
+# Reported, not done. This is the one step that deletes rows from a live table,
+# and an installation that deletes on the way past gives nobody the chance to
+# disagree with the number. The timer does the first real prune, or an operator
+# does it deliberately - which is also the honest reading of a dry run: it means
+# something, or it is decoration.
+#
+/usr/local/sbin/haproxy-ui-retention prune -e "$ENVIRONMENT" --dry-run
+
+step "What must not be able to do this"
+#
+# The boundary the command rests on, checked rather than described. If an
+# application identity can reach the database as the owning role, nothing about
+# `delete` being ungranted matters.
+#
+failed=0
+for user in "${WEB_USER:-}" "${WORKER_USER:-}" "${POLLER_USER:-}"; do
+    [[ -n "$user" ]] || continue
+    if sudo -u "$user" psql -U "$DB_ROLE" -d "$DB_NAME" -qtAX -c 'select 1' >/dev/null 2>&1; then
+        warn "  FAIL     ${user} can connect as the owning role"
+        failed=1
+    else
+        log "  ok       ${user} cannot connect as the owning role"
+    fi
+done
+[[ $failed -eq 0 ]] || die "an application identity can reach the database as its owner"
+
+step "Done"
+log "  ${unit}.timer prunes finished jobs older than a week, keeping the 20 most recent"
+log "  nothing has been deleted yet; run it now with:"
+log "    sudo haproxy-ui-retention prune -e ${ENVIRONMENT}"

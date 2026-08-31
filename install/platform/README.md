@@ -17,7 +17,18 @@ sudo ./04-platform-service ../answers.env
 sudo ./05-platform-nginx ../answers.env
 ```
 
-For an isolated dev platform the normal path stops at step 4. If developers
+Step 11 is optional and comes after them:
+
+```bash
+sudo ./11-platform-retention ../answers.env
+```
+
+It keeps the job table bounded. Separate from the backup step because it is the
+only thing here that touches rows in a live table, and it deletes nothing itself:
+it reports what the first run would remove and leaves that to the timer.
+
+For an isolated dev platform the normal path stops at step 4, though step 11 is
+worth running there too. If developers
 need a direct browser address rather than an SSH tunnel, give the dev answers
 file its own `SERVER_NAME` and run the optional step 9 after its service is up:
 
@@ -172,6 +183,29 @@ pending and Step 4 creates, starts and health-checks it instead.
 
 Rolling back is pointing `current` at the previous release and restarting. The
 platform is isolated from the command line, so it never touches HAProxy.
+
+## Step 11 — retention
+
+`./11-platform-retention` installs `haproxy-ui-retention` and a weekly timer.
+
+**A root command, because no application role holds `delete` on any table and
+none is going to.** The audit trail, the login attempts and the job queue follow
+the same rule: a compromised web or worker process must not be able to remove
+the record of what it did. The migration role owns the tables and may delete
+from them, and the ident map lets only root be that role for this database — a
+boundary the step verifies rather than describes.
+
+It removes finished jobs older than seven days. Never a `pending` or `running`
+one, however old, because those are the states the single-active-job index rests
+on; and never the twenty most recent, because a quiet fortnight would otherwise
+empty the jobs page and read as lost history rather than as a quiet fortnight.
+The audit trail is untouched: this removes the queue's working copy, not the
+record of what happened.
+
+Its units are named after the environment, unlike the backup step's. Development
+runs this step and does not run step 6, so these are the units that would
+otherwise collide on a machine carrying both platforms — and two timers pruning
+each other's database is a failure that would look like retention working.
 
 ## Step 4 — the service
 

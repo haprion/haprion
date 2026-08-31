@@ -1,0 +1,138 @@
+#!/bin/bash
+#
+# haproxy-ui-retention - keep the job table bounded.
+#
+#     haproxy-ui-retention prune  [-e <environment>] [--days <n>] [--dry-run]
+#     haproxy-ui-retention report [-e <environment>] [--days <n>]
+#
+# The job table grows without limit otherwise: it holds one row per management
+# request ever made, and nothing has ever removed one. The audit trail is what
+# records that an operation happened and is deliberately untouched here - this
+# removes the queue's working copy, not the history.
+#
+# It is a root command rather than something the interface does, because no
+# application role holds `delete` on any table and none is going to. That is the
+# same boundary as the audit trail and the login attempts: a compromised web or
+# worker process must not be able to remove the evidence of what it did. The
+# migration role owns the table and may therefore delete from it, and the ident
+# map lets root - and only root - be that role for this database.
+#
+set -Eeuo pipefail
+
+CONFIG_DIRECTORY=/etc/haproxy-manager
+
+#
+# The decided retention: one week. A management request older than that has
+# either been acted on or has been superseded, and what it did is in the audit
+# trail regardless.
+#
+KEEP_DAYS=7
+
+#
+# A floor under the retention, expressed in rows rather than days.
+#
+# Without it a quiet week empties the jobs page completely, and an operator who
+# opens it after a calm fortnight is shown nothing at all - which reads as "the
+# interface has lost its history", not as "nothing has happened lately". This is
+# the same number the page itself lists, so the floor is exactly what a reader
+# can see.
+#
+KEEP_MINIMUM=20
+
+log()  { echo "[$(date '+%H:%M:%S')] $*"; }
+die()  { echo "ERROR: $*" >&2; exit 1; }
+
+usage() {
+    sed -n '3,7p' "$0" | sed 's/^# \?//'
+    exit 64
+}
+
+[[ $EUID -eq 0 ]] || die "run this with sudo"
+
+environment=prod
+dry_run=0
+command="${1:-}"
+shift || true
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -e|--environment) environment="${2:-}"; shift 2 ;;
+        --days) KEEP_DAYS="${2:-}"; shift 2 ;;
+        --dry-run) dry_run=1; shift ;;
+        *) usage ;;
+    esac
+done
+[[ "$environment" =~ ^[a-z0-9]+$ ]] || die "environment names are alphanumeric"
+[[ "$KEEP_DAYS" =~ ^[0-9]+$ && "$KEEP_DAYS" -ge 1 ]] || die "--days takes a whole number of days"
+
+config="${CONFIG_DIRECTORY}/ui-admin-${environment}.conf"
+[[ -r "$config" ]] || { echo "ERROR: cannot read ${config}" >&2; exit 78; }
+# shellcheck disable=SC1090
+source "$config"
+for name in DB_NAME DB_ROLE; do
+    [[ -n "${!name:-}" ]] || die "${name} is not set in ${config}"
+done
+
+psql_as() { psql -U "$DB_ROLE" -d "$DB_NAME" -qtAX -v ON_ERROR_STOP=1 "$@"; }
+
+#
+# One predicate, written once and used by both the count and the delete, so
+# `report` cannot describe a different set of rows than `prune` removes.
+#
+# Three conditions, and each one is load-bearing. A job that has not finished is
+# never removed however old it is: `pending` and `running` are the states the
+# single-active-job index is built on, and deleting one would let a second
+# operation start on a cluster that is still being changed. `finished_at` is
+# guaranteed non-null for every other state by the table's own constraint, so
+# the age test cannot silently match a row with no timestamp. And the floor is
+# applied as a subquery on id rather than as a second pass, so a run cannot
+# delete rows between counting them and keeping them.
+#
+where_removable() {
+    cat <<SQL
+    state not in ('pending', 'running')
+    and finished_at < statement_timestamp() - make_interval(days => ${KEEP_DAYS})
+    and id not in (select id from job order by id desc limit ${KEEP_MINIMUM})
+SQL
+}
+
+counts() {
+    psql_as -c "select count(*) from job" \
+            -c "select count(*) from job where $(where_removable)"
+}
+
+main() {
+    local total removable removed
+    { read -r total; read -r removable; } < <(counts)
+
+    log "  ${DB_NAME}: ${total} job row(s), ${removable} older than ${KEEP_DAYS} day(s)"
+    log "  keeping the ${KEEP_MINIMUM} most recent whatever their age"
+
+    case "$command" in
+        report)
+            ;;
+        prune)
+            if [[ "$dry_run" -eq 1 ]]; then
+                log "  dry run: nothing was deleted"
+            elif [[ "$removable" -eq 0 ]]; then
+                log "  nothing to remove"
+            else
+                #
+                # The count comes back from the delete itself rather than from
+                # the number counted a moment ago: a worker may have finished a
+                # job in between, and reporting the earlier number would state
+                # something that was true before the command ran.
+                #
+                removed="$(psql_as -c "with removed as (
+                                          delete from job where $(where_removable)
+                                          returning 1
+                                       ) select count(*) from removed")"
+                log "  removed  ${removed} job row(s)"
+            fi
+            ;;
+        *)
+            usage
+            ;;
+    esac
+}
+
+main

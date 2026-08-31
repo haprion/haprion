@@ -935,7 +935,55 @@ crash-consistent rather than transactionally clean, and restoring a single table
 out of a machine image is not something anyone does under pressure. The dump is
 what makes "put that one table back" an ordinary afternoon.
 
-### 4.8 The worker and the poller
+### 4.8 Keeping the job table bounded
+
+`install/platform/11-platform-retention` installs `haproxy-ui-retention` and a
+weekly timer. It is optional, and it is separate from the backup step because
+it is the only thing here that removes rows from a live table. **The step itself
+deletes nothing** — it reports what the first run would remove and leaves the
+deciding to the timer or to an operator.
+
+```bash
+sudo haproxy-ui-retention report              # how many rows, how many removable
+sudo haproxy-ui-retention prune --dry-run     # the same, deleting nothing
+sudo haproxy-ui-retention prune               # what the weekly timer runs
+```
+
+**It is a root command because no application role holds `delete` on any table,
+and none is going to.** That is the same boundary as the audit trail and the
+login attempts: a compromised web or worker process must not be able to remove
+the record of what it did. The migration role owns the table and may therefore
+delete from it, and the ident map lets root — and only root — be that role for
+this database. The step verifies that last part rather than describing it: if an
+application identity could connect as the owning role, nothing about `delete`
+being ungranted would matter.
+
+#### What it removes, and what it will not
+
+- **Finished jobs older than seven days.** A management request older than that
+  has been acted on or superseded, and *what it did* is in the audit trail,
+  which this never touches.
+- **Never a `pending` or `running` job**, however old. Those are the states the
+  single-active-job index is built on, and removing one would let a second
+  operation start against a cluster that is still being changed. Every other
+  state carries a `finished_at` by the table's own constraint, so the age test
+  cannot match a row that has no timestamp.
+- **Never the twenty most recent rows**, whatever their age. Without that floor
+  a quiet fortnight empties the jobs page completely, which reads as the
+  interface having lost its history rather than as nothing having happened.
+  Twenty is the number the page itself lists, so the floor is exactly what a
+  reader can see.
+
+The timer runs weekly, after the daily dump rather than before it, so the newest
+dump still contains the rows the prune removes.
+
+Unlike the backup step, this one is meant to be run for development too — a
+development platform's job table grows exactly as production's does, and
+rehearsal traffic fills it fastest. Its units are therefore named after the
+environment, since a machine carrying both platforms would otherwise have two
+timers pruning each other's database.
+
+### 4.9 The worker and the poller
 
 `install/platform/07-platform-services` installs both, each as its own operating
 system account. That separation is the reason the interface can be safe at all:
@@ -1079,7 +1127,7 @@ engine's configuration and must not. The privileged helper still decides whether
 each name is a real cluster; the list only says which ones to ask about. An
 empty list means the poller has nothing to do and says so instead of starting.
 
-### 4.9 A development platform beside production
+### 4.10 A development platform beside production
 
 The same steps install it, with a second answers file. Nothing is shared: its
 own accounts, its own database and roles, its own release tree, its own port.

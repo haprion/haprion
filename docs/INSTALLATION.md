@@ -315,7 +315,8 @@ deploys then fail while every permission still looks deliberate.
 Two separate policies, which must not be merged:
 
 - **Application rules.** Exact helper paths, invoked with no arguments (`command ""`), so the
-  helper reads its request as bounded JSON on stdin. No rule grants a shell, an interpreter, an
+  helper reads its request as one bounded JSON line on stdin. A caller that runs an operation it may
+  later need to stop keeps that stream open as a lifeline; see `PRIVILEGE.md`. No rule grants a shell, an interpreter, an
   editor, a wildcard path, environment preservation, or unrestricted arguments. The web identity
   has no sudo rule at all.
 - **Operator rules.** A `sudoedit` policy listing the configuration files an administrator may
@@ -963,7 +964,7 @@ through exact sudoers rules:
 ```
 
 The rule is exact because the helper **takes no arguments at all** — the cluster
-arrives as a bounded JSON request on stdin. `PRIVILEGE.md` forbids wildcards in
+arrives as a bounded JSON request on one line of stdin. `PRIVILEGE.md` forbids wildcards in
 sudoers argument matching, and without the no-argument form a rule naming a
 cluster would need one. The helpers read their target inside the boundary. In
 particular, inventory reads the exact commit named by the published RELEASE

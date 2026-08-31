@@ -51,8 +51,8 @@ Helpers are root-owned, not group/other writable, use absolute executables, a fi
 and fail closed. The target helper interface has no caller-selected filesystem path or shell text.
 
 Where sudoers argument matching would otherwise require a wildcard, the helper is invoked with no
-argv and reads one size-bounded JSON request from stdin. Sudoers uses the explicit no-argument
-form supported by the installed sudo version. The helper validates operation, cluster ID,
+argv and reads one size-bounded JSON request as a single line on stdin. Sudoers uses the explicit
+no-argument form supported by the installed sudo version. The helper validates operation, cluster ID,
 request ID, expected target, and all enum values before looking up private paths from root-owned
 runtime configuration.
 
@@ -68,10 +68,32 @@ The common request document is exactly:
 }
 ```
 
+`lifeline` is an optional boolean beside those fields. Absent or false, the caller has finished with
+stdin and anything after the request is refused, which is how a caller at a terminal uses these
+helpers.
+
+Set true, the caller states that it is holding stdin open for the life of the operation, and end of
+input on that stream means the caller has let go. A helper that supports it then stops at its next
+safe checkpoint and reports what it had done by then; one that does not support it refuses the
+request rather than accepting a promise it cannot keep.
+
+This exists because the caller cannot stop the helper. A helper runs as root and the unprivileged
+service that starts it holds no `CAP_KILL`, so `kill` is answered with `EPERM`. Closing a descriptor
+is the one signal that crosses the boundary without any privilege at all — and it is delivered by
+the kernel if the caller dies without running any code. Granting the ability to signal arbitrary
+processes, or a helper that kills a caller-supplied process group, would both be broader than the
+problem: this model is built on each privileged action being an exact command.
+
+Once its request has been read, a helper with a lifeline moves that descriptor to a private one and
+opens `/dev/null` on descriptor 0, so no child of it — every `ssh` to a node included — inherits the
+caller's stream.
+
 Each executable compiles in one expected operation and an exact allowlist plus validator for its
 operation-specific parameters. The protocol rejects argv, input over 64 KiB, invalid UTF-8,
-duplicate or unknown fields, multiple/trailing JSON documents, non-finite numbers, non-canonical
-request IDs, and unrecognised cluster-ID syntax before privileged state is consulted.
+duplicate or unknown fields, trailing input where no lifeline was declared, non-finite numbers,
+non-canonical request IDs, and unrecognised cluster-ID syntax before privileged state is consulted.
+Input arriving on a declared lifeline is refused too: the stream is there to be closed, not written
+to.
 
 Read-only helper classes:
 

@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import os
 import signal
+import subprocess
 import sys
 import time
 import unittest
+import unittest.mock
 
 from haproxy_ui import execution
 
@@ -203,3 +205,38 @@ class TheEnvironmentIsBuiltByName(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhenTheGroupIsBeyondOurPrivilege(unittest.TestCase):
+    """The helper runs as root; the worker does not, and holds no CAP_KILL.
+
+    Measured on 2026-08-31: `killpg(group, 0)` against a group whose remaining
+    members are root's raises `PermissionError`, not `ProcessLookupError`. The
+    worker read that as an error it had no answer for and died with exit 1,
+    which systemd then restarted into a second attempt on the same job.
+
+    These use mocks rather than a real root process, because a test that needs
+    root to run is a test that does not run.
+    """
+
+    def test_permission_denied_means_the_group_is_still_there(self) -> None:
+        def denied(_group: int, _signal: int) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        with unittest.mock.patch.object(execution.os, "killpg", denied):
+            self.assertTrue(execution._group_exists(4242))
+
+    def test_a_group_that_cannot_be_signalled_is_reported_not_raised(self) -> None:
+        def denied(_group: int, _signal: int) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        finished = subprocess.Popen(script("pass"))  # noqa: S603 - a fixed argv, no shell
+        finished.wait()
+
+        with (
+            unittest.mock.patch.object(execution.os, "killpg", denied),
+            self.assertLogs(execution.logger, level="ERROR") as logged,
+        ):
+            execution._stop(finished, finished.pid)
+
+        self.assertIn("beyond this worker's privilege", "\n".join(logged.output))

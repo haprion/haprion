@@ -135,10 +135,21 @@ def _environment() -> dict[str, str]:
 
 
 def _group_exists(group: int) -> bool:
+    """Whether anything is still in the group - not whether we may signal it.
+
+    `EPERM` is not absence. The helper runs as root through sudo, so once the
+    members this worker was allowed to signal have gone, the kernel answers
+    `EPERM` for what is left rather than `ESRCH`. Reading that as "the group is
+    gone" was how this crashed the worker on 2026-08-31; reading it as "there is
+    something there" is what it actually means.
+    """
+
     try:
         os.killpg(group, 0)
     except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
     return True
 
 
@@ -154,6 +165,18 @@ def _stop(process: subprocess.Popen[bytes], group: int) -> None:
         try:
             os.killpg(group, sig)
         except ProcessLookupError:  # pragma: no cover - the group is already gone
+            return
+        except PermissionError:
+            #
+            # The remaining members are root's, and this worker holds no
+            # CAP_KILL. Stopping them is not available here, so the honest thing
+            # is to say so and stop pretending: the job is already heading for
+            # `unknown`, and the cluster lock the privileged half holds is what
+            # actually prevents a second operation from overlapping this one.
+            #
+            logger.error(
+                "the operation group is beyond this worker's privilege; it was not stopped"
+            )
             return
         try:
             process.wait(timeout=GRACE_SECONDS)

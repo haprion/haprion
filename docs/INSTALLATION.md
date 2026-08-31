@@ -265,6 +265,56 @@ clusters:
 `node_path` is the subdirectory a node fetches from on the management host. It is the only
 per-cluster value the node side needs.
 
+#### Optional per-cluster sections
+
+Four sections may be added. All of them are optional, and a cluster that omits every one of them
+behaves exactly as the example above.
+
+```yaml
+    # Named addresses the generated frontends bind, each with the source
+    # address it connects to backends from - a SNIP, in ADC vocabulary. A
+    # proxy object names the VIP it sits on; it never names an address.
+    # Omitted, the cluster has one VIP called `main`, taken from `vip` above.
+    vips:
+      internal:
+        address: 192.0.2.10
+        source: 192.0.2.15
+      dmz:
+        address: 198.51.100.10
+    default_vip: internal
+
+    # The resolvers section in core/ that generated server lines point at.
+    # Without it, a backend named by hostname is resolved once at startup and
+    # not again until the next reload.
+    resolvers: cluster-dns
+
+    # Named address groups an object may restrict itself to with `allow_from`.
+    networks:
+      office:
+        - 198.51.100.0/24
+
+    # What a request for a hostname no object claims is answered with. Without
+    # it, HAProxy answers 503. Set exactly one of `status` or `redirect`.
+    unknown_host:
+      status: 404
+```
+
+`vip` keeps its original meaning and is unchanged: it is the address whose ownership `deploy`
+checks before it acts. One node holds every virtual address at a time, so that single check answers
+for all of them.
+
+**A cluster that sets `resolvers` must provide the section itself in `core/`**, since nameserver
+addresses are environment values the generator never invents:
+
+```text
+resolvers cluster-dns
+    nameserver ns1 192.0.2.53:53
+    resolve_retries 3
+    timeout resolve 1s
+    timeout retry 1s
+    hold valid 10s
+```
+
 ### 1.5 Validation certificate
 
 Candidate validation runs a real `haproxy -c` against the candidate. Any configuration that

@@ -288,7 +288,15 @@ behaves exactly as the example above.
     # not again until the next reload.
     resolvers: cluster-dns
 
+    # Named source addresses an object may connect out from instead of the one
+    # its VIP pairs with. HAProxy takes the source per backend, so the pairing
+    # in `vips` is a default rather than a rule.
+    snips:
+      outbound: 192.0.2.15
+
     # Named address groups an object may restrict itself to with `allow_from`.
+    # An object may also write an address or range directly, for what belongs
+    # to one site alone.
     networks:
       office:
         - 198.51.100.0/24

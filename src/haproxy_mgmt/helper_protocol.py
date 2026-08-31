@@ -59,7 +59,23 @@ def _read_document(stream: BinaryIO, *, max_bytes: int) -> dict[str, JsonValue]:
     if max_bytes < 1:
         raise ValueError("max_bytes must be positive")
 
-    raw = stream.read(max_bytes + 1)
+    #
+    # One line, not one stream. Reading to EOF would force the caller to close
+    # stdin to say "that is the whole request", and closing it throws away the
+    # only channel that survives sudo - which closes every descriptor from 3 up.
+    # That channel is the helper's lifeline: EOF on stdin is how a caller says
+    # it has let go, and it arrives by itself when the caller dies, without any
+    # code having to run and without anyone needing privilege to signal a
+    # process running as root.
+    #
+    # A line ending is what ends the request, but EOF still ends it too. That is
+    # what makes this readable by a caller that has not been changed yet, and it
+    # decides the rollout order: a new helper understands an old caller, while a
+    # new caller against an old helper would hang rather than fail.
+    #
+    raw = stream.readline(max_bytes + 2)
+    if raw.endswith(b"\n"):
+        raw = raw[:-1]
     if len(raw) > max_bytes:
         raise HelperProtocolError("helper request exceeds the size limit", exit_code=65)
     if not raw:
@@ -102,8 +118,21 @@ def read_helper_request(
     allowed_parameter_keys: frozenset[str] = frozenset(),
     validate_parameters: ParameterValidator | None = None,
     max_bytes: int = MAX_REQUEST_BYTES,
+    lifeline: bool = False,
 ) -> HelperRequest:
-    """Read and validate exactly one request for an exact privileged helper."""
+    """Read and validate exactly one request for an exact privileged helper.
+
+    `lifeline` says what stdin is for once the request has been read. Left
+    False, the stream must be at its end and anything after the request is
+    refused - the guarantee a helper has always had, and the one every
+    read-only helper still wants.
+
+    Set True by a helper whose caller holds stdin open on purpose: the stream is
+    then the caller's lifeline, and the helper reads it to learn that the caller
+    has let go. The refusal above cannot apply there - the whole point is that
+    nothing arrives - so a helper that asks for a lifeline takes on the duty of
+    refusing anything that does.
+    """
 
     if not OPERATION.fullmatch(expected_operation):
         raise ValueError("expected_operation is invalid")
@@ -139,6 +168,15 @@ def read_helper_request(
         raise HelperProtocolError("request_id must be a UUID", exit_code=65) from exc
     if str(parsed_request_id) != request_id.lower():
         raise HelperProtocolError("request_id must use canonical UUID form", exit_code=65)
+
+    if not lifeline and stream.read(1):
+        #
+        # Nothing may follow the request when stdin is not a lifeline. The line
+        # framing ends the document, so trailing bytes are no longer a JSON
+        # error the parser happens to catch - they are a second request, or a
+        # caller that does not agree with this one about what it is sending.
+        #
+        raise HelperProtocolError("helper request is followed by more input", exit_code=65)
 
     raw_parameters = document["parameters"]
     if not isinstance(raw_parameters, dict) or not all(

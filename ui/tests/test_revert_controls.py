@@ -165,3 +165,45 @@ class ThePublishedVersionHasNoButton(LoginTestCase):
         # ability to publish.
         #
         self.assertIn('name="version" value="11"', page.text)
+
+
+PAGES = ("/", "/proxies", "/certificates", "/history", "/backups", "/jobs", "/activity")
+
+
+class TheModeBadgeReportsThePlatformNotThePage(LoginTestCase):
+    """One flag, seven headings, and no page allowed to disagree.
+
+    Four of them stated "Read-only mode" unconditionally, which on the
+    certificate page put that badge directly above a working deploy button. The
+    badge names the platform's mode, so a page that omits `management_writes`
+    from its context renders the false half of the same expression silently -
+    which is why every page is asserted here rather than the ones that carry a
+    control.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        jobs = mock.patch("haproxy_ui.db.recent_jobs", return_value=[])
+        jobs.start()
+        self.addCleanup(jobs.stop)
+
+    def page(self, path: str, *, writes: bool) -> str:
+        client = self.client(
+            replace(configuration(), management_writes=writes, clusters=("alpha",))
+        )
+        self.sign_in(client)
+        return client.get(path).text
+
+    def test_every_page_says_read_only_when_writes_are_off(self) -> None:
+        for path in PAGES:
+            with self.subTest(path=path):
+                body = self.page(path, writes=False)
+                self.assertIn("Read-only mode", body)
+                self.assertNotIn("Management enabled", body)
+
+    def test_every_page_says_management_enabled_when_writes_are_on(self) -> None:
+        for path in PAGES:
+            with self.subTest(path=path):
+                body = self.page(path, writes=True)
+                self.assertIn("Management enabled", body)
+                self.assertNotIn("Read-only mode", body)

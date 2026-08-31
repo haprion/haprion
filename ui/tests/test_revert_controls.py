@@ -170,15 +170,19 @@ class ThePublishedVersionHasNoButton(LoginTestCase):
 PAGES = ("/", "/proxies", "/certificates", "/history", "/backups", "/jobs", "/activity")
 
 
-class TheModeBadgeReportsThePlatformNotThePage(LoginTestCase):
-    """One flag, seven headings, and no page allowed to disagree.
+class TheModeBadgeAppearsOnlyWhenWritesAreOff(LoginTestCase):
+    """One badge, seven headings, and nothing to say when all is normal.
 
-    Four of them stated "Read-only mode" unconditionally, which on the
-    certificate page put that badge directly above a working deploy button. The
-    badge names the platform's mode, so a page that omits `management_writes`
-    from its context renders the false half of the same expression silently -
-    which is why every page is asserted here rather than the ones that carry a
-    control.
+    The badge existed in both directions once, which meant production carried a
+    permanent "Management enabled" that never changed and was therefore never
+    read. Writes off is the state worth naming: it is the documented rollback
+    for the write path, and it is the answer to "where did the buttons go".
+    Writes on needs no badge, because the buttons themselves say it.
+
+    Every page is asserted, not only the ones carrying a control. Four of them
+    stated the mode unconditionally, and three never passed `management_writes`
+    to the template at all - which Jinja renders as false in silence, so the
+    wrong half of the condition would have looked correct forever.
     """
 
     def setUp(self) -> None:
@@ -194,16 +198,14 @@ class TheModeBadgeReportsThePlatformNotThePage(LoginTestCase):
         self.sign_in(client)
         return client.get(path).text
 
-    def test_every_page_says_read_only_when_writes_are_off(self) -> None:
+    def test_every_page_names_read_only_mode_when_writes_are_off(self) -> None:
         for path in PAGES:
             with self.subTest(path=path):
-                body = self.page(path, writes=False)
-                self.assertIn("Read-only mode", body)
-                self.assertNotIn("Management enabled", body)
+                self.assertIn("Read-only mode", self.page(path, writes=False))
 
-    def test_every_page_says_management_enabled_when_writes_are_on(self) -> None:
+    def test_no_page_carries_a_mode_badge_when_writes_are_on(self) -> None:
         for path in PAGES:
             with self.subTest(path=path):
                 body = self.page(path, writes=True)
-                self.assertIn("Management enabled", body)
                 self.assertNotIn("Read-only mode", body)
+                self.assertNotIn("Management enabled", body)

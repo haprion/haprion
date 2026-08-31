@@ -3,7 +3,7 @@
 {% block content %}
 <section class="page-heading">
   <div class="heading-title"><h1>Jobs</h1><p class="page-lede">The newest management requests and their recorded outcome.</p></div>
-  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-{{ 'warning' if management_writes else 'healthy' }}"></span>{{ "Management enabled" if management_writes else "Read-only mode" }}</span></div>
+  <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}</div>
 </section>
 
 <section class="metric-grid activity-summary" aria-label="Job summary">

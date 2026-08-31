@@ -318,6 +318,7 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
         request=prepared.request,
         timeout_seconds=operations.TIMEOUT_SECONDS,
         still_ours=lease_is_ours,
+        lifeline=prepared.lifeline,
     )
 
     if completed.ending == "lease_lost":

@@ -213,6 +213,7 @@ def run(
     request: str,
     timeout_seconds: float,
     still_ours: Callable[[], bool],
+    lifeline: bool = False,
     lifeline_grace_seconds: float = LIFELINE_GRACE_SECONDS,
     environment: Mapping[str, str] | None = None,
 ) -> Completed:
@@ -285,23 +286,29 @@ def run(
             reader_done()
 
     def write_request() -> None:
-        """Write the request and leave the pipe open.
+        """Write the request, and keep the pipe only if it is a lifeline.
 
-        The open pipe is the lifeline. The helper runs as root and this process
-        holds no CAP_KILL, so signalling it is not available - but closing this
-        descriptor is, and the helper is watching for exactly that. Closing it
-        here, as this used to, would throw away the only way to stop a
-        privileged operation short of waiting for it.
+        Kept open, the pipe is how this process stops an operation it may not
+        signal: the helper runs as root and this one holds no CAP_KILL, so
+        closing the descriptor is the only message that crosses the boundary.
+
+        Closed immediately otherwise, and that is not a detail. A helper that
+        was not told to expect a lifeline refuses trailing input, which it can
+        only do by reading - so a pipe held open for it blocks it before it does
+        anything at all. Measured on 2026-08-31 as a revert that never started.
+        The two ends agree through the request; this is the same answer, applied
+        to the descriptor.
 
         The request ends with a line ending because the helper reads one line
-        rather than reading to end of input. Without it the helper would still
-        be waiting for a request that has, in fact, been sent.
+        rather than reading to end of input.
         """
 
         try:
             process_stdin.write(encoded_request + b"\n")
             process_stdin.flush()
         except BrokenPipeError:
+            pass
+        if not lifeline:
             with suppress(OSError):
                 process_stdin.close()
 

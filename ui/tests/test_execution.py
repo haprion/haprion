@@ -277,6 +277,7 @@ class TheLifelineStopsWhatSignalsCannot(unittest.TestCase):
             request="the request",
             timeout_seconds=30,
             still_ours=lambda: False,
+            lifeline=True,
             lifeline_grace_seconds=5,
         )
 
@@ -301,9 +302,57 @@ class TheLifelineStopsWhatSignalsCannot(unittest.TestCase):
             request="the request",
             timeout_seconds=30,
             still_ours=lambda: True,
+            lifeline=True,
             lifeline_grace_seconds=5,
         )
 
         self.assertEqual(completed.ending, "finished")
         self.assertEqual(completed.stdout, "THE REQUEST")
         self.assertLess(time.monotonic() - started, 5)
+
+
+class WithoutALifelineThePipeIsClosed(unittest.TestCase):
+    """The half of the contract that is easy to forget, because it is a default.
+
+    Only some operations declare a lifeline. A helper that did not ask for one
+    refuses trailing input, and refusing means reading - so a pipe held open for
+    it blocks it before it does any work at all. Not a slow operation: a stopped
+    one, holding its cluster lock until the timeout.
+
+    Measured on 2026-08-31 as a revert that logged that it had started and then
+    said nothing for as long as it was left alone.
+    """
+
+    READS_TO_END = "import sys; sys.stdout.write(sys.stdin.read().strip().upper())"
+
+    def test_a_command_that_reads_to_end_of_input_still_finishes(self) -> None:
+        started = time.monotonic()
+        completed = execution.run(
+            script(self.READS_TO_END),
+            request="the request",
+            timeout_seconds=10,
+            still_ours=lambda: True,
+        )
+
+        self.assertEqual(completed.ending, "finished")
+        self.assertEqual(completed.stdout, "THE REQUEST")
+        self.assertLess(time.monotonic() - started, 5)
+
+    def test_the_same_command_hangs_when_a_lifeline_is_held(self) -> None:
+        """States the coupling directly, so it cannot be broken by accident.
+
+        This is the failure the default prevents. It is asserted rather than
+        described, because a comment saying "these must agree" is exactly what
+        was already there in spirit and did not stop it happening.
+        """
+
+        completed = execution.run(
+            script(self.READS_TO_END),
+            request="the request",
+            timeout_seconds=1,
+            still_ours=lambda: True,
+            lifeline=True,
+            lifeline_grace_seconds=0.2,
+        )
+
+        self.assertEqual(completed.ending, "timeout")

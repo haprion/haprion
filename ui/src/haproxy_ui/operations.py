@@ -52,10 +52,18 @@ class BadPayload(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Prepared:
-    """One command, ready to run: its argv and the envelope for its stdin."""
+    """One command, ready to run: its argv and the envelope for its stdin.
+
+    `lifeline` has to travel with the request rather than being decided by the
+    runner, because the two ends must agree exactly. A caller that holds the
+    pipe open for a helper that is not watching it leaves that helper blocked on
+    a read for input that will never come - which is not a slow operation but a
+    stopped one.
+    """
 
     argv: tuple[str, ...]
     request: str
+    lifeline: bool = False
 
 
 def _flag(payload: Mapping[str, Any], name: str, *, default: bool) -> bool:
@@ -98,6 +106,7 @@ def prepare(
                 #
                 lifeline=True,
             ),
+            lifeline=True,
         )
 
     if operation == "cert_deploy":
@@ -117,6 +126,7 @@ def prepare(
                 #
                 lifeline=True,
             ),
+            lifeline=True,
         )
 
     if operation == "revert":

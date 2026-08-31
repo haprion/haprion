@@ -27,7 +27,13 @@ class RevertControlsTests(LoginTestCase):
         self.assertIn('name="operation" value="revert"', page.text)
         self.assertIn('name="version" value="12"', page.text)
         self.assertIn('name="expected_commit" value="' + "a" * 40 + '"', page.text)
-        self.assertIn("Does not deploy", page.text)
+        #
+        # Publishing and deploying are two steps, and the page has to say so -
+        # once, under the table, rather than under every button where it made
+        # every row taller to repeat the same sentence.
+        #
+        self.assertIn("does not reach the nodes", page.text)
+        self.assertIn("Deploy alpha from the dashboard", page.text)
 
     def test_read_only_and_reader_views_do_not_render_a_revert_control(self) -> None:
         client = self.client(replace(configuration(), clusters=("alpha",)))

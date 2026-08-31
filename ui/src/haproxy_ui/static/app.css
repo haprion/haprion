@@ -405,7 +405,10 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .version-comment { display: block; max-width: 460px; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .version-table code { color: var(--muted); font-size: 11px; }
 .version-table form { margin: 0; }
-.version-table .revert-note { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+/* "Does not deploy" used to sit under every button, which stacked the action
+   cell and made every row taller for a sentence that is the same on all of
+   them. It is said once under the table instead, where it can also say what to
+   do about it. */
 .table-note { margin: 0; padding: 10px 20px 14px; color: var(--muted); font-size: 11px; }
 
 /* Jobs are intentionally a single cross-cluster sequence, rather than a
@@ -420,6 +423,11 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .job-table td { padding-top: 7px; padding-bottom: 7px; }
 .job-table td:nth-child(2) { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .job-table time { font-variant-numeric: tabular-nums; }
+/* The exit code is shown for the reader who wants the precise number and
+   explained for the one who does not. A dotted underline rather than the
+   browser default, which varies, and `help` so the pointer says there is
+   something to read. */
+.job-table abbr { text-decoration: underline dotted var(--line-strong); text-underline-offset: 3px; cursor: help; }
 
 /* What a finished job still owes. Its own full-width row rather than a second
    line inside the operation cell: this table is fixed-layout and that cell

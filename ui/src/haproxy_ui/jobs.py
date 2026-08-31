@@ -32,6 +32,7 @@ class JobView:
     finished: str
     outcome: str
     exit_code: str
+    exit_meaning: str
     #
     # What is still owed after a job that succeeded. A revert publishes but does
     # not roll out, so a job that reads `Completed` can leave the nodes on the
@@ -131,9 +132,60 @@ def _view(job: Job, now: datetime, *, follow_up: str | None, next_command: str |
         finished=_stamp(job.finished_at, now),
         outcome=job.outcome.replace("_", " ") if job.outcome else "—",
         exit_code="—" if job.exit_code is None else str(job.exit_code),
+        exit_meaning=_exit_meaning(job.exit_code),
         follow_up=follow_up,
         next_command=next_command,
     )
+
+
+ATTENTION = frozenset({"partial", "blocked", "failed", "unknown"})
+
+#
+# What the number in the exit column means. It is shown because a maintainer
+# reading a bad job wants the precise code, and explained because everyone else
+# is being shown an implementation detail of a command they did not run.
+#
+# Two of these are worth knowing about: 65 and 75 both mean "refused", because
+# the engine has two constants named for blocking with different values. That is
+# the engine's to reconcile, not this table's to hide.
+#
+EXIT_MEANINGS = {
+    0: "Finished.",
+    64: "The request itself was not valid.",
+    65: "Refused before anything was changed.",
+    68: "No usable status could be read from the cluster.",
+    69: "Finished with nodes left unverified.",
+    75: "Refused: the target had moved, or the cluster was locked.",
+}
+
+
+def _exit_meaning(code: int | None) -> str:
+    if code is None:
+        return "The job recorded no exit code."
+    if code < 0:
+        return f"Stopped by signal {-code}."
+    return EXIT_MEANINGS.get(code, f"The command exited with {code}.")
+
+
+def _unresolved(rows: list[Job]) -> int:
+    """Clusters whose newest finished job ended badly.
+
+    Not a tally of every bad outcome in the list. That number only ever grows,
+    cannot be cleared, and answers no question a reader can act on - a failure
+    from yesterday that a later run replaced is history, not work. Asked on the
+    page as "what needs review?", the honest answer is: the clusters where the
+    last thing we did did not work.
+
+    A cluster whose newest job is still queued or running is left out. It is not
+    yet an outcome, and calling it one would make the number flicker while an
+    operation the reader started is still going.
+    """
+
+    latest: dict[str, str] = {}
+    for job in rows:
+        if job.cluster not in latest and job.state not in {"pending", "running"}:
+            latest[job.cluster] = job.state
+    return sum(state in ATTENTION for state in latest.values())
 
 
 def build_job_overview(
@@ -181,8 +233,6 @@ def build_job_overview(
     return JobOverview(
         jobs=jobs,
         active_count=sum(job.state in {"pending", "running"} for job in jobs),
-        attention_count=sum(
-            job.state in {"partial", "blocked", "failed", "unknown"} for job in jobs
-        ),
+        attention_count=_unresolved(rows),
         completed_count=sum(job.state == "done" for job in jobs),
     )

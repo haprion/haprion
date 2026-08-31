@@ -15,19 +15,21 @@ def job(
     outcome: str | None = None,
     result: dict | None = None,
     operation: str = "deploy",
+    cluster: str = "alpha",
+    exit_code: int | None = None,
 ) -> db.Job:
     now = datetime.now(UTC)
     return db.Job(
         id=19,
         request_id=uuid4(),
         operation=operation,
-        cluster="alpha",
+        cluster=cluster,
         payload={},
         state=state,
         created_at=now - timedelta(minutes=3),
         started_at=None if state == "pending" else now - timedelta(minutes=2),
         finished_at=None if state in {"pending", "running"} else now - timedelta(minutes=1),
-        exit_code=0 if state == "done" else None,
+        exit_code=(0 if state == "done" else None) if exit_code is None else exit_code,
         outcome=outcome,
         result=result,
         stderr_excerpt="must not be rendered",
@@ -52,7 +54,13 @@ class JobOverviewTests(unittest.TestCase):
 
         self.assertEqual(overview.active_count, 2)
         self.assertEqual(overview.completed_count, 1)
-        self.assertEqual(overview.attention_count, 4)
+        #
+        # Zero, not four. The rows arrive newest first, every one of them is the
+        # same cluster, and the newest finished row is `done` - so the four bad
+        # outcomes below it were all replaced by a later run. They are history,
+        # and history is not work.
+        #
+        self.assertEqual(overview.attention_count, 0)
         self.assertEqual(
             [entry.state_label for entry in overview.jobs],
             [
@@ -298,3 +306,83 @@ class WhichClustersAreBehind(unittest.TestCase):
                 self.assertEqual(
                     jobs.awaiting_deployment([self.status("alpha", result)]), frozenset()
                 )
+
+
+class WhatStillNeedsReview(unittest.TestCase):
+    """The counter has to be able to reach zero, or it teaches people to ignore it.
+
+    Counting every bad outcome ever recorded produces a number that only grows
+    and that no action can clear. Asked "what needs review?", a reader wants the
+    clusters where the last thing that happened did not work.
+    """
+
+    def test_a_cluster_whose_latest_job_succeeded_is_not_counted(self) -> None:
+        rows = [
+            job(state="done", outcome="done"),
+            job(state="failed", outcome="failed"),
+            job(state="unknown", outcome="unknown"),
+        ]
+
+        self.assertEqual(jobs.build_job_overview(rows).attention_count, 0)
+
+    def test_a_cluster_whose_latest_job_failed_is_counted_once(self) -> None:
+        rows = [
+            job(state="failed", outcome="failed"),
+            job(state="failed", outcome="failed"),
+        ]
+
+        self.assertEqual(jobs.build_job_overview(rows).attention_count, 1)
+
+    def test_each_cluster_is_counted_on_its_own(self) -> None:
+        rows = [
+            job(state="failed", outcome="failed", cluster="alpha"),
+            job(state="done", outcome="done", cluster="beta"),
+            job(state="unknown", outcome="unknown", cluster="beta"),
+        ]
+
+        self.assertEqual(jobs.build_job_overview(rows).attention_count, 1)
+
+    def test_a_job_still_running_does_not_hide_the_outcome_under_it(self) -> None:
+        """A running job is not yet an answer, so the last answer still stands."""
+
+        rows = [
+            job(state="running"),
+            job(state="failed", outcome="failed"),
+        ]
+
+        self.assertEqual(jobs.build_job_overview(rows).attention_count, 1)
+
+
+class WhatTheExitNumberMeans(unittest.TestCase):
+    """The column shows a number from a command the reader never ran.
+
+    Keeping it is right - a maintainer reading a bad job wants the precise code
+    - but a bare number in an interface whose whole point is not having to read
+    exit codes is only half an answer.
+    """
+
+    def meaning(self, code: int | None) -> str:
+        rows = [job(state="failed", outcome="failed", exit_code=code)]
+        return jobs.build_job_overview(rows).jobs[0].exit_meaning
+
+    def test_the_codes_the_engine_actually_returns_are_named(self) -> None:
+        for code, expected in (
+            (0, "Finished."),
+            (64, "The request itself was not valid."),
+            (65, "Refused before anything was changed."),
+            (68, "No usable status could be read from the cluster."),
+            (69, "Finished with nodes left unverified."),
+            (75, "Refused: the target had moved, or the cluster was locked."),
+        ):
+            with self.subTest(code=code):
+                self.assertEqual(self.meaning(code), expected)
+
+    def test_a_signal_is_reported_as_a_signal(self) -> None:
+        """Negative codes are what a killed helper leaves behind - -15 and -6 both happened."""
+
+        self.assertEqual(self.meaning(-15), "Stopped by signal 15.")
+        self.assertEqual(self.meaning(-6), "Stopped by signal 6.")
+
+    def test_an_unrecorded_or_unfamiliar_code_still_says_something(self) -> None:
+        self.assertEqual(self.meaning(None), "The job recorded no exit code.")
+        self.assertEqual(self.meaning(42), "The command exited with 42.")

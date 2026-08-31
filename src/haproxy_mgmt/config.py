@@ -122,6 +122,7 @@ class Cluster:
     vip: str
     vips: Mapping[str, Vip]
     default_vip: str
+    resolvers: str | None
     config_path: Path
     publish_path: Path
     node_path: str
@@ -424,6 +425,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
                 "vip",
                 "vips",
                 "default_vip",
+                "resolvers",
                 "config_path",
                 "publish_path",
                 "node_path",
@@ -441,6 +443,11 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
         except ValueError as exc:
             raise ConfigError(f"{location}.vip must be an IP address") from exc
         vips, default_vip = _vips(raw, vip, location)
+        resolvers = raw.get("resolvers")
+        if resolvers is not None and (
+            not isinstance(resolvers, str) or not NAME.fullmatch(resolvers)
+        ):
+            raise ConfigError(f"{location}.resolvers must name a resolvers section")
         node_path = _required_string(raw, "node_path", location)
         if not NODE_PATH.fullmatch(node_path):
             raise ConfigError(f"{location}.node_path is invalid")
@@ -508,6 +515,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             vip=vip,
             vips=vips,
             default_vip=default_vip,
+            resolvers=resolvers,
             config_path=_under_root(
                 _required_string(raw, "config_path", location),
                 policy.config_root,

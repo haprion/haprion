@@ -120,6 +120,14 @@ BALANCE_NEEDS_KEY = ("hdr", "url_param")
 PARAMETER = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 #
+# A cookie name, as a cookie name is allowed to look. Narrow for the same
+# reason everything else here is: it is written into a configuration line and
+# read back by a browser, and the intersection of what both accept is smaller
+# than either.
+#
+COOKIE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+
+#
 # An HTTP field name, as RFC 9110 defines a token.
 #
 HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$")
@@ -173,8 +181,18 @@ class ModelError(ConfigError):
 
 @dataclass(frozen=True, slots=True)
 class Server:
+    """One pool member.
+
+    `backup` is the classic active/passive pair: a member that takes no traffic
+    at all while any non-backup member is up, and everything the moment none
+    is. It is a property of the member rather than of the pool, because which
+    machine is the standby is exactly what a reader needs to see on the line
+    that names it.
+    """
+
     host: str
     port: int
+    backup: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,6 +234,15 @@ class Backend:
     servers: tuple[Server, ...]
     health: Health
     tls: BackendTls | None = None
+    cookie: str | None = None
+    """The name of the cookie that keeps one visitor on one member.
+
+    Session persistence, and deliberately not a balancing algorithm.
+    `balance source` is the version that needs no cookie and breaks the moment
+    a group of visitors shares an address - an office behind NAT, a mobile
+    network - because they then share a server too. A cookie follows the
+    session rather than the address.
+    """
     balance_key: str | None = None
     """Which header or query parameter `hdr` and `url_param` hash.
 
@@ -332,7 +359,7 @@ def _optional_prefix(value: Mapping[str, Any], key: str, location: str) -> str |
 
 def _server(value: Any, location: str) -> Server:
     data = _mapping(value, location)
-    _only_keys(data, {"host", "port"}, location)
+    _only_keys(data, {"host", "port", "backup"}, location)
     host = _required_string(data, "host", location)
     port = data.get("port")
     #
@@ -341,7 +368,7 @@ def _server(value: Any, location: str) -> Server:
     #
     if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
         raise ModelError(f"{location}.port must be a port number")
-    return Server(host=host, port=port)
+    return Server(host=host, port=port, backup=_boolean(data, "backup", location, default=False))
 
 
 _HTTP_ONLY = ("path", "host", "expect_status", "expect_body")
@@ -448,7 +475,7 @@ def _balance_key(data: Mapping[str, Any], balance: str, location: str) -> str | 
 
 def _backend(name: str, value: Any, location: str) -> Backend:
     data = _mapping(value, location)
-    _only_keys(data, {"balance", "balance_key", "servers", "health", "tls"}, location)
+    _only_keys(data, {"balance", "balance_key", "cookie", "servers", "health", "tls"}, location)
     balance = _string(data, "balance", location, BALANCE)
     balance_key = _balance_key(data, balance, location)
 
@@ -490,10 +517,15 @@ def _backend(name: str, value: Any, location: str) -> Backend:
             f"certificate is verified"
         )
 
+    cookie = data.get("cookie")
+    if cookie is not None and (not isinstance(cookie, str) or not COOKIE.match(cookie)):
+        raise ModelError(f"{location}.cookie must be a usable cookie name")
+
     return Backend(
         name=name,
         balance=balance,
         balance_key=balance_key,
+        cookie=cookie,
         servers=members,
         health=health,
         tls=backend_tls,

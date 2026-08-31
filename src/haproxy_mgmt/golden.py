@@ -71,7 +71,19 @@ def expected(case: Path) -> dict[str, str]:
 #
 CERTIFICATES = ("example.com", "example.net", "wildcard-example-com")
 
+#
+# The resolvers section a case's cluster declares in `core/`. Named here rather
+# than per case: every deployment that has one has exactly one.
+#
+RESOLVERS = "cluster-dns"
+
 
 def produced(case: Path) -> dict[str, str]:
     vips, default_vip = network(case)
-    return generate(objects(case), vips=vips, default_vip=default_vip, certificates=CERTIFICATES)
+    return generate(
+        objects(case),
+        vips=vips,
+        default_vip=default_vip,
+        certificates=CERTIFICATES,
+        resolvers=RESOLVERS,
+    )

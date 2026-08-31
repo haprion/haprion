@@ -22,6 +22,7 @@ from haproxy_mgmt.generate import NODE_CERTIFICATE_DIR, GeneratorError, generate
 from haproxy_mgmt.golden import (
     CERTIFICATES,
     DEFAULT_VIPS,
+    GOLDEN,
     cases,
     expected,
     network,
@@ -39,6 +40,12 @@ from haproxy_mgmt.proxy_model import Proxy, load_proxy
 CORE = """
 global
     daemon
+resolvers cluster-dns
+    nameserver ns1 192.0.2.53:53
+    resolve_retries 3
+    timeout resolve 1s
+    timeout retry 1s
+    hold valid 10s
 defaults
     mode http
     timeout connect 5s
@@ -48,6 +55,19 @@ defaults
 
 
 class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
+    def test_a_server_named_by_hostname_is_kept_resolved(self) -> None:
+        """The trap this repository would otherwise walk into.
+
+        A hostname without a resolvers section is looked up once at startup and
+        never again. The site then dies whenever that address changes, and it
+        dies looking like a broken backend rather than like stale DNS.
+        """
+
+        files = produced(GOLDEN / "https")
+
+        self.assertIn("resolvers cluster-dns init-addr last,libc,none", files["1001-admin.cfg"])
+        self.assertNotIn("resolvers", files["1001-app.cfg"])
+
     def test_the_cases_exist_at_all(self) -> None:
         """A test that silently checks nothing is worse than no test.
 

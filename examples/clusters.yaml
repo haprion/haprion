@@ -21,6 +21,13 @@ clusters:
         address: 198.51.100.20
         source: 198.51.100.25
     default_vip: internal
+    #
+    # The resolvers section in core/ that generated server lines point at, so a
+    # backend named by hostname is looked up again when its address changes
+    # rather than once at startup. Optional; without it, hostnames are resolved
+    # exactly once per reload.
+    #
+    resolvers: cluster-dns
     config_path: /srv/haproxy-manager/config-repositories/alpha
     publish_path: /srv/haproxy-manager/published/alpha
     node_path: alpha

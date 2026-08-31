@@ -10,6 +10,7 @@ routes:
 backends:
   console:
     balance: leastconn
+    cookie: MGDSRV
     health:
       type: http
       tls: true
@@ -19,5 +20,6 @@ backends:
     servers:
       - host: 198.51.100.20
         port: 8443
-      - host: 198.51.100.21
+      - host: standby.example.net
         port: 8443
+        backup: true

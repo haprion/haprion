@@ -192,7 +192,7 @@ class DeployIdentityTests(unittest.TestCase):
 _UNSET = object()
 
 
-def _cluster(vips: object = _UNSET, default_vip: object = _UNSET):
+def _cluster(vips: object = _UNSET, default_vip: object = _UNSET, resolvers: object = _UNSET):
     """One cluster from the shipped example, with its address table replaced.
 
     Defaults to removing the section entirely, which is the deployment that
@@ -207,6 +207,8 @@ def _cluster(vips: object = _UNSET, default_vip: object = _UNSET):
         alpha["vips"] = vips
     if default_vip is not _UNSET:
         alpha["default_vip"] = default_vip
+    if resolvers is not _UNSET:
+        alpha["resolvers"] = resolvers
 
     with tempfile.TemporaryDirectory() as raw:
         directory = Path(raw)
@@ -290,3 +292,14 @@ class TheClusterAddressTable(unittest.TestCase):
             _cluster(vips={"internal": {"address": "192.0.2.20", "source": "not-an-address"}})
 
         self.assertIn("source", str(raised.exception))
+
+
+class TheResolversSection(unittest.TestCase):
+    def test_a_cluster_may_name_the_resolvers_section_its_servers_use(self) -> None:
+        self.assertEqual(_cluster().resolvers, "cluster-dns")
+
+    def test_a_name_that_is_not_a_section_name_is_refused(self) -> None:
+        with self.assertRaises(ConfigError) as raised:
+            _cluster(resolvers="not a section")
+
+        self.assertIn("resolvers", str(raised.exception))

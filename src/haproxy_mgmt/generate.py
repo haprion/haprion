@@ -29,11 +29,12 @@ meaning without being regenerated.
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Iterable, Mapping, Sequence
 
 from haproxy_mgmt.config import ConfigError, Vip
 from haproxy_mgmt.guid import backend_guid, frontend_guid, listener_guid_prefix, server_guid
-from haproxy_mgmt.proxy_model import Backend, Health, Proxy, Route
+from haproxy_mgmt.proxy_model import Backend, Health, Proxy, Route, Server
 from haproxy_mgmt.route_match import order_routes
 
 #
@@ -113,6 +114,7 @@ def generate(
     vips: Mapping[str, Vip],
     default_vip: str,
     certificates: Sequence[str] = (),
+    resolvers: str | None = None,
     ports: Mapping[str, int] = PORTS,
 ) -> dict[str, str]:
     """Every file the generated layer consists of, keyed by filename.
@@ -145,7 +147,7 @@ def generate(
 
     files = {FRONTEND_FILE: _frontend_file(placed, ports)}
     for vip, proxy in placed:
-        files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(proxy, vip)
+        files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(proxy, vip, resolvers)
     return files
 
 
@@ -408,11 +410,11 @@ def _frontend_rules(proxy: Proxy, role: str = "serve") -> list[str]:
     return lines + decisions
 
 
-def _object_file(proxy: Proxy, vip: Vip) -> str:
+def _object_file(proxy: Proxy, vip: Vip, resolvers: str | None) -> str:
     rewrites = _rewrites_per_backend(proxy)
     body: list[str] = []
     for name in sorted(proxy.backends):
-        body.extend(_backend(proxy, proxy.backends[name], rewrites[name], vip))
+        body.extend(_backend(proxy, proxy.backends[name], rewrites[name], vip, resolvers))
     return _lines(HEADER, ["#", f"# Object: {proxy.name}", "#"], body)
 
 
@@ -490,7 +492,37 @@ def _hsts_line(proxy: Proxy) -> list[str]:
     return [f'    http-response set-header Strict-Transport-Security "{value}"']
 
 
-def _backend(proxy: Proxy, backend: Backend, rewrites: list[str], vip: Vip) -> list[str]:
+def _server_address(server: Server, resolvers: str | None) -> str:
+    """How a member's address is kept current, when it is a name.
+
+    Without a resolvers section HAProxy looks a hostname up once, while it is
+    starting, and keeps that answer until the next reload. A container host
+    that changes address, a rebuilt VM, a moved service - all of them take the
+    site down until somebody happens to publish again, and in the interface it
+    looks like a dead backend rather than like stale DNS.
+
+    `init-addr last,libc,none` is what makes that safe in the other direction
+    too: if DNS is unreachable at startup the server begins disabled instead of
+    HAProxy refusing to start. Measured on 3.4.4 here - it is a notice, not an
+    error. An address needs none of this, so it gets none of it.
+    """
+
+    if resolvers is None:
+        return ""
+    try:
+        ipaddress.ip_address(server.host)
+    except ValueError:
+        return f" resolvers {resolvers} init-addr last,libc,none"
+    return ""
+
+
+def _backend(
+    proxy: Proxy,
+    backend: Backend,
+    rewrites: list[str],
+    vip: Vip,
+    resolvers: str | None = None,
+) -> list[str]:
     name = _backend_name(proxy.name, backend.name)
     lines = [
         "",
@@ -513,13 +545,26 @@ def _backend(proxy: Proxy, backend: Backend, rewrites: list[str], vip: Vip) -> l
     lines.extend(rewrites)
     lines.extend(_hsts_line(proxy))
 
+    if backend.cookie is not None:
+        #
+        # `insert` adds the cookie, `indirect` removes it again before the
+        # request reaches the application so it never sees a cookie it did not
+        # set, and `nocache` stops a shared cache from storing one visitor's
+        # cookie and handing it to the next.
+        #
+        lines.append(f"    cookie {backend.cookie} insert indirect nocache")
+
     lines.extend(_health_lines(backend.health))
 
     for index, server in enumerate(backend.servers):
+        name = _server_name(index)
+        cookie = f" cookie {name}" if backend.cookie is not None else ""
+        backup = " backup" if server.backup else ""
         lines.append(
-            f"    server {_server_name(index)} {server.host}:{server.port}"
+            f"    server {name} {server.host}:{server.port}"
             f" guid {server_guid(proxy.name, backend.name, server)}"
-            f"{_server_tls(backend)}{_server_check(backend.health)}"
+            f"{_server_tls(backend)}{_server_address(server, resolvers)}"
+            f"{_server_check(backend.health)}{cookie}{backup}"
         )
     return lines
 

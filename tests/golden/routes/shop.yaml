@@ -1,0 +1,42 @@
+schema: 1
+name: shop
+hostnames: [shop.example.com, www.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: web
+  - path: /api
+    backend: api
+    strip_prefix: /api
+    add_prefix: /v2
+  - path: /api/v1/orders
+    backend: orders
+  - path: /health
+    match: exact
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 198.51.100.10
+        port: 8080
+      - host: 198.51.100.11
+        port: 8080
+  api:
+    balance: leastconn
+    health:
+      type: http
+      path: /healthz
+    servers:
+      - host: 198.51.100.20
+        port: 9000
+  orders:
+    balance: roundrobin
+    health:
+      type: tcp
+    servers:
+      - host: 198.51.100.30
+        port: 9100

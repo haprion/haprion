@@ -116,6 +116,7 @@ def generate(
     certificates: Sequence[str] = (),
     resolvers: str | None = None,
     networks: Mapping[str, Sequence[str]] | None = None,
+    snips: Mapping[str, str] | None = None,
     unknown_host: UnknownHost | None = None,
     ports: Mapping[str, int] = PORTS,
 ) -> dict[str, str]:
@@ -147,12 +148,36 @@ def generate(
     known_networks = dict(networks or {})
     _refuse_unknown_networks(ordered, known_networks)
 
+    known_snips = dict(snips or {})
     placed = [(_vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
 
     files = {FRONTEND_FILE: _frontend_file(placed, ports, known_networks, unknown_host)}
     for vip, proxy in placed:
-        files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(proxy, vip, resolvers)
+        files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(
+            proxy, _source_of(proxy, vip, known_snips), resolvers
+        )
     return files
+
+
+def _source_of(proxy: Proxy, vip: Vip, snips: Mapping[str, str]) -> str | None:
+    """The address this object connects to backends from.
+
+    The VIP's own source unless the object names another. An object that names
+    one the cluster does not define is refused rather than quietly falling back
+    to the default: leaving from an unexpected address is exactly what a
+    firewall rule further in will notice, at the worst possible moment.
+    """
+
+    if proxy.listen.snip is None:
+        return vip.source
+    try:
+        return snips[proxy.listen.snip]
+    except KeyError:
+        known = ", ".join(sorted(snips)) or "none"
+        raise GeneratorError(
+            f"{proxy.name} leaves from the source address {proxy.listen.snip}, which this "
+            f"cluster does not define. Known source addresses: {known}"
+        ) from None
 
 
 def _vip_of(proxy: Proxy, vips: Mapping[str, Vip], default_vip: str) -> Vip:
@@ -500,11 +525,11 @@ def _frontend_rules(
     return lines + decisions
 
 
-def _object_file(proxy: Proxy, vip: Vip, resolvers: str | None) -> str:
+def _object_file(proxy: Proxy, source: str | None, resolvers: str | None) -> str:
     rewrites = _rewrites_per_backend(proxy)
     body: list[str] = []
     for name in sorted(proxy.backends):
-        body.extend(_backend(proxy, proxy.backends[name], rewrites[name], vip, resolvers))
+        body.extend(_backend(proxy, proxy.backends[name], rewrites[name], source, resolvers))
     return _lines(HEADER, ["#", f"# Object: {proxy.name}", "#"], body)
 
 
@@ -610,7 +635,7 @@ def _backend(
     proxy: Proxy,
     backend: Backend,
     rewrites: list[str],
-    vip: Vip,
+    source: str | None,
     resolvers: str | None = None,
 ) -> list[str]:
     name = _backend_name(proxy.name, backend.name)
@@ -624,14 +649,15 @@ def _backend(
         f"    timeout server {TIMEOUT_SERVER}",
         f"    timeout tunnel {TIMEOUT_TUNNEL}",
     ]
-    if vip.source is not None:
+    if source is not None:
         #
         # The address this pool is reached from. Written per backend because
-        # that is the only place HAProxy takes it, but decided by the VIP:
-        # traffic that arrives on one address leaves from the address paired
-        # with it, which is what a firewall rule further in is written against.
+        # that is the only place HAProxy takes it. It is the VIP's own source
+        # unless the object named another: traffic normally leaves from the
+        # address paired with the one it arrived on, which is what a firewall
+        # rule further in is written against.
         #
-        lines.append(f"    source {vip.source}")
+        lines.append(f"    source {source}")
     lines.extend(rewrites)
     lines.extend(_hsts_line(proxy))
 

@@ -82,6 +82,7 @@ RESOLVERS = "cluster-dns"
 # no object claims.
 #
 NETWORKS = {"office": ("198.51.100.0/24",), "vpn": ("203.0.113.0/24",)}
+SNIPS = {"outbound": "192.0.2.35"}
 UNKNOWN_HOST = UnknownHost(status=404)
 
 
@@ -99,6 +100,7 @@ def arguments(case: Path) -> dict[str, object]:
         "certificates": CERTIFICATES,
         "resolvers": RESOLVERS,
         "networks": NETWORKS,
+        "snips": SNIPS,
         "unknown_host": UNKNOWN_HOST,
     }
 

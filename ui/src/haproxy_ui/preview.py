@@ -53,6 +53,7 @@ PREVIEW_CLUSTER = Cluster(
     },
     default_vip="internal",
     resolvers="cluster-dns",
+    snips={"outbound": "192.0.2.35"},
     networks={"office": ("198.51.100.0/24",), "vpn": ("203.0.113.0/24",)},
     unknown_host=UnknownHost(status=404),
     config_path=Path("/preview"),
@@ -75,6 +76,7 @@ DEFAULTS = {
     "hostnames": "app.example.com",
     "protocol": "https",
     "vip": "",
+    "snip": "",
     "certificate": "",
     "redirect_http": True,
     "hsts": False,
@@ -119,6 +121,31 @@ class Preview:
     files: dict[str, str] = field(default_factory=dict)
     problem: str | None = None
 
+    @property
+    def problem_field(self) -> str:
+        """The field a refusal names, when it names one.
+
+        Every refusal the engine raises begins with the path of the thing it is
+        about - `app.listen.certificate`, `shop.backends.web.servers` - so the
+        page can show that as the subject rather than leaving the reader to
+        find it inside a sentence.
+        """
+
+        if self.problem is None:
+            return ""
+        head = self.problem.split(" ", 1)[0]
+        return head if "." in head and head[0].isalnum() else ""
+
+    @property
+    def problem_text(self) -> str:
+        """What is wrong with it, with the field taken off the front."""
+
+        if self.problem is None:
+            return ""
+        if not self.problem_field:
+            return self.problem
+        return self.problem[len(self.problem_field) :].lstrip()
+
 
 def _servers(raw: str) -> list[dict[str, object]]:
     """One `host:port` per line, in the order they were typed.
@@ -161,6 +188,8 @@ def build_document(form: dict[str, object]) -> str:
     listen: dict[str, object] = {"protocol": protocol}
     if text("vip"):
         listen["vip"] = text("vip")
+    if text("snip"):
+        listen["snip"] = text("snip")
     if protocol == "https":
         if text("certificate"):
             listen["certificate"] = text("certificate")
@@ -208,7 +237,11 @@ def build_document(form: dict[str, object]) -> str:
         "backends": {"web": backend},
     }
     selected = form.get("allow_from", ())
-    allowed = [str(name) for name in selected] if isinstance(selected, (list, tuple)) else []
+    allowed = (
+        [str(name) for name in selected if str(name).strip()]
+        if isinstance(selected, (list, tuple))
+        else []
+    )
     allowed += [
         entry.strip()
         for entry in text("allow_ranges").replace(",", "\n").splitlines()
@@ -242,6 +275,7 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
             certificates=cluster.certificate_ids,
             resolvers=cluster.resolvers,
             networks=cluster.networks,
+            snips=cluster.snips,
             unknown_host=cluster.unknown_host,
         )
     except (ModelError, GeneratorError) as exc:
@@ -257,6 +291,7 @@ def choices(cluster: Cluster) -> dict[str, object]:
         "vips": sorted(cluster.vips),
         "default_vip": cluster.default_vip,
         "certificates": sorted(cluster.certificate_ids),
+        "snips": sorted(cluster.snips),
         "networks": sorted(cluster.networks),
         "balances": BALANCE,
         "health_types": HEALTH_TYPES,

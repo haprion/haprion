@@ -197,6 +197,7 @@ def _cluster(
     default_vip: object = _UNSET,
     resolvers: object = _UNSET,
     networks: object = _UNSET,
+    snips: object = _UNSET,
     unknown_host: object = _UNSET,
 ):
     """One cluster from the shipped example, with its address table replaced.
@@ -217,6 +218,8 @@ def _cluster(
         alpha["resolvers"] = resolvers
     if networks is not _UNSET:
         alpha["networks"] = networks
+    if snips is not _UNSET:
+        alpha["snips"] = snips
     if unknown_host is not _UNSET:
         alpha["unknown_host"] = unknown_host
 
@@ -345,3 +348,14 @@ class NamedNetworksAndTheUnknownHostAnswer(unittest.TestCase):
             _cluster(unknown_host={"redirect": "/elsewhere"})
 
         self.assertIn("absolute", str(raised.exception))
+
+
+class NamedSourceAddresses(unittest.TestCase):
+    def test_a_cluster_may_name_sources_beyond_the_ones_its_vips_pair_with(self) -> None:
+        self.assertEqual(_cluster().snips["outbound"], "192.0.2.35")
+
+    def test_a_source_that_is_not_an_address_is_refused(self) -> None:
+        with self.assertRaises(ConfigError) as raised:
+            _cluster(snips={"outbound": "not-an-address"})
+
+        self.assertIn("snips.outbound", str(raised.exception))

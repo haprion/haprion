@@ -106,6 +106,12 @@ class Vip:
     them here rather than letting an object pick them separately removes a way
     to get it wrong.
 
+    `source` is this VIP's default and not a rule: HAProxy takes the source
+    address per backend, so any object may name a different one from the
+    cluster's `snips` table where it has a reason to. Pairing them here is
+    about what happens when nobody says otherwise, which is the case that
+    should need no words.
+
     `source` is optional. Without it HAProxy connects from whatever address the
     routing table picks, which is the right answer on a host with one network.
     """
@@ -137,6 +143,7 @@ class Cluster:
     vips: Mapping[str, Vip]
     default_vip: str
     resolvers: str | None
+    snips: Mapping[str, str]
     networks: Mapping[str, tuple[str, ...]]
     unknown_host: UnknownHost | None
     config_path: Path
@@ -283,6 +290,28 @@ def _vips(raw: Mapping[str, Any], vip: str, location: str) -> tuple[Mapping[str,
     if default not in vips:
         raise ConfigError(f"{location}.default_vip names no VIP in this cluster: {default}")
     return vips, default
+
+
+def _snips(raw: Mapping[str, Any], location: str) -> Mapping[str, str]:
+    """Named source addresses an object may connect out from.
+
+    Separate from the VIP table because the two are not actually locked
+    together: HAProxy takes the source address per backend, so a site may leave
+    on a different address than the one it arrived on. Most never do, which is
+    why each VIP still carries a default - this table is for the exception, and
+    an exception should have to be named.
+    """
+
+    entries = raw.get("snips")
+    if entries is None:
+        return {}
+    snips: dict[str, str] = {}
+    for name, value in _mapping(entries, f"{location}.snips").items():
+        where = f"{location}.snips.{name}"
+        if not NAME.fullmatch(name):
+            raise ConfigError(f"{where} is not a usable source name")
+        snips[name] = _address(value, where)
+    return snips
 
 
 def _networks(raw: Mapping[str, Any], location: str) -> Mapping[str, tuple[str, ...]]:
@@ -501,6 +530,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
                 "vips",
                 "default_vip",
                 "resolvers",
+                "snips",
                 "networks",
                 "unknown_host",
                 "config_path",
@@ -593,6 +623,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             vips=vips,
             default_vip=default_vip,
             resolvers=resolvers,
+            snips=_snips(raw, location),
             networks=_networks(raw, location),
             unknown_host=_unknown_host(raw.get("unknown_host"), f"{location}.unknown_host"),
             config_path=_under_root(

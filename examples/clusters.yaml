@@ -22,6 +22,13 @@ clusters:
         source: 198.51.100.25
     default_vip: internal
     #
+    # Named source addresses an object may connect out from instead of the one
+    # its VIP pairs with. HAProxy takes the source per backend, so the pairing
+    # above is a default rather than a rule; this table is for the exception.
+    #
+    snips:
+      outbound: 192.0.2.35
+    #
     # The resolvers section in core/ that generated server lines point at, so a
     # backend named by hostname is looked up again when its address changes
     # rather than once at startup. Optional; without it, hostnames are resolved

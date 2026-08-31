@@ -619,7 +619,10 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .preview-form { display: grid; gap: 18px; margin-bottom: 18px; }
 .preview-form .cluster-card { padding-bottom: 18px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; padding: 18px 20px 4px; }
-.form-grid label, .check-value { display: flex; flex-direction: column; gap: 6px; color: var(--text-secondary); font-weight: 620; }
+.form-grid label { display: flex; flex-direction: column; gap: 6px; color: var(--text-secondary); font-weight: 620; }
+.check-value { display: flex; align-items: center; gap: 10px; color: var(--text-secondary); font-weight: 620; }
+.section-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.section-title p { margin: 0; }
 .form-grid input, .form-grid select, .form-grid textarea, .check-value input {
   padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
   background: var(--panel); color: var(--text); font: inherit; font-weight: var(--font-weight-regular);
@@ -630,7 +633,13 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .form-checks .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
 .preview-form .warning-text { margin: 12px 20px 0; }
 .form-actions { display: flex; justify-content: flex-end; }
-.form-actions .primary-button { width: auto; padding: 0 22px; }
+.form-actions .secondary-button { padding: 9px 22px; }
+.refusal-card { border-left: 3px solid var(--critical); }
+.refusal { margin: 0; padding: 16px 20px; color: var(--text); }
+.refusal code {
+  padding: 2px 6px; border-radius: var(--radius-sm); background: var(--critical-soft);
+  color: var(--critical); font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
 .config-block {
   margin: 0; padding: 16px 20px; overflow-x: auto; background: var(--panel-soft);
   color: var(--text); font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;

@@ -4,6 +4,7 @@ hostnames: [shop.example.com]
 listen:
   protocol: http
   vip: dmz
+  snip: outbound
 routes:
   - path: /
     backend: web

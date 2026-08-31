@@ -182,3 +182,47 @@ class TheFieldsAddedAfterTheFirstLook(unittest.TestCase):
     def test_the_suggested_cookie_name_carries_the_object_s_name(self) -> None:
         self.assertEqual(suggested_cookie("shop"), "hap_shop")
         self.assertEqual(suggested_cookie(""), "hap_site")
+
+
+class TheSourceAddressMayBeChosen(unittest.TestCase):
+    """A VIP carries a default source; it is not a rule.
+
+    HAProxy takes the source address per backend, so an object may leave on a
+    different address than the one it arrived on. Most never do, which is why
+    the VIP still carries a default and this is the exception that has to be
+    named.
+    """
+
+    def test_the_vip_s_own_source_is_used_when_nothing_is_chosen(self) -> None:
+        result = preview(form(vip="internal"), PREVIEW_CLUSTER)
+
+        self.assertIn("source 192.0.2.25", result.files["1001-app.cfg"])
+
+    def test_a_named_source_overrides_it(self) -> None:
+        result = preview(form(vip="internal", snip="outbound"), PREVIEW_CLUSTER)
+
+        self.assertIn("source 192.0.2.35", result.files["1001-app.cfg"])
+        self.assertIn("snip: outbound", result.document)
+
+    def test_everywhere_is_not_a_group_name(self) -> None:
+        """The `Everywhere` option submits an empty value, which must not be a group."""
+
+        result = preview(form(allow_from=("",)), PREVIEW_CLUSTER)
+
+        self.assertIsNone(result.problem)
+        self.assertNotIn("allow_from", result.document)
+        self.assertNotIn("http-request deny", result.files["1000-frontends.cfg"])
+
+
+class ARefusalNamesTheFieldItIsAbout(unittest.TestCase):
+    def test_the_field_is_separated_from_the_sentence(self) -> None:
+        result = preview(form(certificate=""), PREVIEW_CLUSTER)
+
+        self.assertEqual(result.problem_field, "app.listen.certificate")
+        self.assertEqual(result.problem_text, "is required for https")
+
+    def test_a_refusal_without_a_field_is_shown_whole(self) -> None:
+        result = preview(form(servers="not a server"), PREVIEW_CLUSTER)
+
+        self.assertEqual(result.problem_field, "")
+        self.assertEqual(result.problem_text, str(result.problem))

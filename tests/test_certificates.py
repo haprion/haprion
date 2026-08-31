@@ -59,6 +59,7 @@ def cluster(*certificates: str) -> Cluster:
         vips={"main": Vip(name="main", address="192.0.2.10")},
         default_vip="main",
         resolvers=None,
+        snips={},
         networks={},
         unknown_host=None,
         config_path=Path("/configs/alpha"),

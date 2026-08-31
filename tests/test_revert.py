@@ -367,12 +367,19 @@ class ContractTests(RevertFixture):
             self.assertEqual(result["next_command"], "haproxy-deploy -c alpha")
 
     def test_reverting_to_the_content_already_in_place_is_a_no_op(self) -> None:
-        """The contract's successful no-op, and what makes a retry safe.
+        """The contract's successful no-op: no second version, but still deploy.
 
         A second attempt at a revert that already landed finds its own content at
         the tip. Recording another version there would grow the history by one
-        every time somebody pressed the button twice, and would tell an operator
-        to deploy content the nodes already run.
+        every time somebody pressed the button twice - so `changed` is false and
+        the version does not move.
+
+        `deployment_required` stays true, and that is not the same question. This
+        branch cannot tell a repeat from the repair of a run that was killed
+        before it could report anything, because both arrive with the tree
+        matching and the release in place. It answers with the side whose cost is
+        a no-op deploy, having measured on 2026-08-31 what the other side costs:
+        a cluster left a version behind with nothing saying so.
         """
 
         with tempfile.TemporaryDirectory() as raw:
@@ -389,8 +396,8 @@ class ContractTests(RevertFixture):
             self.assertEqual(document["outcome"], "done")
             result = document["result"]
             self.assertIs(result["changed"], False)
-            self.assertIs(result["deployment_required"], False)
-            self.assertIsNone(result["next_command"])
+            self.assertIs(result["deployment_required"], True)
+            self.assertEqual(result["next_command"], "haproxy-deploy -c alpha")
             self.assertEqual(result["new_version"], result["from_version"])
             self.assertIn("already holds the content of version 2", output)
 

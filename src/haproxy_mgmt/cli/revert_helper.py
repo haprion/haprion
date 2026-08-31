@@ -379,7 +379,28 @@ def _revert(
                 request_id=request.request_id,
                 result=_result(
                     changed=False,
-                    deployment_required=not installed.already_current,
+                    #
+                    # True whether or not the install did anything, and
+                    # `already_current` is the record of which it was.
+                    #
+                    # This branch cannot tell a repeat from a repair. Both arrive
+                    # with the tree already matching and the release already in
+                    # place, and the difference between them is not in the
+                    # repository at all - it is whether anybody was ever told to
+                    # deploy. A repeat follows a run that said so; a repair
+                    # follows a run that was killed before it could say
+                    # anything.
+                    #
+                    # Measured on 2026-08-31: a worker killed after its helper
+                    # committed and installed left both nodes a version behind,
+                    # and the retry answered that no deploy was needed. Answering
+                    # from node state would mean reading nodes, which this
+                    # command deliberately does not do - so it answers with the
+                    # side whose cost is a no-op deploy reporting `skip`, rather
+                    # than the side whose cost is a cluster left behind a release
+                    # nobody named.
+                    #
+                    deployment_required=True,
                     from_version=from_version,
                     restored_version=version,
                     new_version=from_version,

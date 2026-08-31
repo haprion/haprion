@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -12,7 +13,18 @@ from haproxy_mgmt.envelope import failure
 
 MAX_REQUEST_BYTES = 64 * 1024
 OPERATION = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-REQUEST_FIELDS = frozenset({"schema_version", "operation", "cluster", "request_id", "parameters"})
+REQUIRED_REQUEST_FIELDS = frozenset(
+    {"schema_version", "operation", "cluster", "request_id", "parameters"}
+)
+#
+# Optional, and optional on purpose. A caller that holds stdin open as a
+# lifeline has to say so, because the alternative is worse than it looks: a
+# helper that simply watched stdin would read the immediate EOF from a caller
+# that has not been rebuilt yet as "the caller let go", and abort every
+# operation. Declaring it makes the old combination behave exactly as before.
+#
+OPTIONAL_REQUEST_FIELDS = frozenset({"lifeline"})
+REQUEST_FIELDS = REQUIRED_REQUEST_FIELDS | OPTIONAL_REQUEST_FIELDS
 
 type JsonScalar = None | bool | int | float | str
 type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
@@ -33,6 +45,75 @@ class HelperRequest:
     cluster: str
     request_id: str
     parameters: Mapping[str, JsonValue]
+    lifeline: bool = False
+
+
+class Lifeline:
+    """The caller's stdin, watched for the moment the caller lets go.
+
+    Why a flag and not a signal
+    ---------------------------
+    This exists because the caller cannot stop us. The helper runs as root
+    through sudo and the worker does not, so `kill` answers EPERM - and no
+    amount of privilege would make killing the right answer anyway. A signal
+    arrives at an arbitrary instant, which for a reconcile loop means an
+    arbitrary half-applied cluster. A flag is read where the code already knows
+    what it has done and what it has not.
+
+    So this never stops anything. It answers one question - has the caller let
+    go - and the loop that owns the mutation decides where to act on it.
+
+    Two things end the watch, and both mean the same thing here:
+
+    - EOF, which is the caller closing the stream, dying, or being torn out of
+      its cgroup. Three of those need no code to run anywhere.
+    - anything arriving on the stream, which the request framing says cannot
+      happen. A caller that sends more is not the caller this helper agreed to
+      run for, and continuing on its behalf is not defensible.
+    """
+
+    __slots__ = ("_reason", "_stream", "_thread")
+
+    def __init__(self, stream: BinaryIO) -> None:
+        self._stream = stream
+        self._reason: str | None = None
+        self._thread: threading.Thread | None = None
+
+    def watch(self) -> None:
+        """Start watching. Daemon, so it can never hold the helper's exit."""
+
+        thread = threading.Thread(target=self._read_until_gone, name="lifeline", daemon=True)
+        self._thread = thread
+        thread.start()
+
+    def _read_until_gone(self) -> None:
+        try:
+            extra = self._stream.read(1)
+        except OSError:
+            #
+            # The stream failing IS the caller being gone. Reporting it as an
+            # error would leave the helper running for a caller it can no longer
+            # hear, which is the situation this class exists to end.
+            #
+            self._reason = "the lifeline could not be read"
+            return
+        self._reason = (
+            "unexpected input arrived on the lifeline"
+            if extra
+            else "the caller closed the lifeline"
+        )
+
+    @property
+    def released(self) -> bool:
+        """Whether the caller has let go. Cheap enough to ask every iteration."""
+
+        return self._reason is not None
+
+    @property
+    def reason(self) -> str:
+        if self._reason is None:
+            raise RuntimeError("the lifeline is still held")
+        return self._reason
 
 
 def require_no_arguments(argv: Sequence[str]) -> None:
@@ -122,23 +203,28 @@ def read_helper_request(
 ) -> HelperRequest:
     """Read and validate exactly one request for an exact privileged helper.
 
-    `lifeline` says what stdin is for once the request has been read. Left
-    False, the stream must be at its end and anything after the request is
-    refused - the guarantee a helper has always had, and the one every
-    read-only helper still wants.
+    Two separate questions decide what stdin is for afterwards, and keeping them
+    apart is what makes the rollout safe.
 
-    Set True by a helper whose caller holds stdin open on purpose: the stream is
-    then the caller's lifeline, and the helper reads it to learn that the caller
-    has let go. The refusal above cannot apply there - the whole point is that
-    nothing arrives - so a helper that asks for a lifeline takes on the duty of
-    refusing anything that does.
+    `lifeline` here is the helper's own answer: whether this helper is one that
+    can be interrupted at a checkpoint. A helper that says no and is handed a
+    request asking for a lifeline refuses it rather than accepting a promise it
+    cannot keep.
+
+    The request's own `lifeline` field is the caller's answer: whether it is
+    holding stdin open. Absent - which is every caller that has not been rebuilt
+    - the stream must be at its end, and anything after the request is refused
+    exactly as before.
+
+    Both true is the only case where the stream is left open, and the helper
+    then owns the duty of refusing anything that arrives on it.
     """
 
     if not OPERATION.fullmatch(expected_operation):
         raise ValueError("expected_operation is invalid")
 
     document = _read_document(stream, max_bytes=max_bytes)
-    missing = sorted(REQUEST_FIELDS - document.keys())
+    missing = sorted(REQUIRED_REQUEST_FIELDS - document.keys())
     unknown = sorted(document.keys() - REQUEST_FIELDS)
     if missing:
         raise HelperProtocolError(
@@ -169,7 +255,13 @@ def read_helper_request(
     if str(parsed_request_id) != request_id.lower():
         raise HelperProtocolError("request_id must use canonical UUID form", exit_code=65)
 
-    if not lifeline and stream.read(1):
+    requested_lifeline = document.get("lifeline", False)
+    if type(requested_lifeline) is not bool:
+        raise HelperProtocolError("lifeline must be true or false", exit_code=65)
+    if requested_lifeline and not lifeline:
+        raise HelperProtocolError("this helper does not support a lifeline", exit_code=65)
+
+    if not requested_lifeline and stream.read(1):
         #
         # Nothing may follow the request when stdin is not a lifeline. The line
         # framing ends the document, so trailing bytes are no longer a JSON
@@ -198,6 +290,7 @@ def read_helper_request(
         cluster=cluster,
         request_id=request_id,
         parameters=parameters,
+        lifeline=requested_lifeline,
     )
 
 

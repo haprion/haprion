@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import time
 import unittest
 
+from haproxy_mgmt import helper_protocol
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
     read_helper_request,
@@ -132,12 +135,14 @@ class RequestFraming(unittest.TestCase):
         self.assertEqual(self.read(request_bytes()).cluster, "alpha")
 
     def test_what_follows_the_line_is_left_on_the_stream(self):
-        stream = io.BytesIO(request_bytes() + b"\nthe lifeline")
+        stream = io.BytesIO(request_bytes(lifeline=True) + b"\nthe lifeline")
         read_helper_request(stream, expected_operation="status", lifeline=True)
         self.assertEqual(stream.read(), b"the lifeline")
 
     def test_a_second_line_is_not_read_as_part_of_the_request(self):
-        stream = io.BytesIO(request_bytes() + b"\n" + request_bytes() + b"\n")
+        stream = io.BytesIO(
+            request_bytes(lifeline=True) + b"\n" + request_bytes(lifeline=True) + b"\n"
+        )
         first = read_helper_request(stream, expected_operation="status", lifeline=True)
         self.assertEqual(first.cluster, "alpha")
         self.assertTrue(stream.read().startswith(b"{"))
@@ -155,6 +160,81 @@ class RequestFraming(unittest.TestCase):
         with self.assertRaisesRegex(HelperProtocolError, "followed by more input"):
             self.read(request_bytes() + b"\n" + request_bytes())
 
+    def test_a_caller_that_says_nothing_gets_the_old_behaviour(self):
+        """The rollout depends on this one.
+
+        A helper that watched stdin without being told would read the immediate
+        EOF from a caller that has not been rebuilt as "the caller let go", and
+        abort every operation - during exactly the window the rollout order
+        creates. An undeclared lifeline must therefore mean no lifeline.
+        """
+
+        result = read_helper_request(
+            io.BytesIO(request_bytes()), expected_operation="status", lifeline=True
+        )
+        self.assertFalse(result.lifeline)
+
+    def test_a_helper_without_a_lifeline_refuses_a_request_that_wants_one(self):
+        with self.assertRaisesRegex(HelperProtocolError, "does not support a lifeline"):
+            self.read(request_bytes(lifeline=True))
+
+    def test_the_lifeline_field_must_be_a_boolean(self):
+        with self.assertRaisesRegex(HelperProtocolError, "must be true or false"):
+            self.read(request_bytes(lifeline="yes"))
+
     def test_an_empty_line_is_an_empty_request(self):
         with self.assertRaisesRegex(HelperProtocolError, "empty"):
             self.read(b"\n")
+
+
+class TheLifeline(unittest.TestCase):
+    """Watching the caller's stdin, with real pipes.
+
+    Real file descriptors rather than BytesIO: EOF on a pipe whose write end is
+    still open is precisely what a mock gets wrong, and it is the whole point -
+    a lifeline that reported "released" while the caller was alive would abort
+    every operation instead of none.
+    """
+
+    def lifeline(self, read_fd: int):
+        stream = os.fdopen(read_fd, "rb", buffering=0)
+        self.addCleanup(stream.close)
+        line = helper_protocol.Lifeline(stream)
+        line.watch()
+        return line
+
+    def settle(self, line, *, expected: bool) -> None:
+        for _ in range(200):
+            if line.released == expected:
+                return
+            time.sleep(0.005)
+        self.fail(f"the lifeline never became released={expected}")
+
+    def test_a_held_lifeline_is_not_released(self):
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(os.close, write_fd)
+        line = self.lifeline(read_fd)
+        time.sleep(0.05)
+        self.assertFalse(line.released)
+
+    def test_closing_the_write_end_releases_it(self):
+        read_fd, write_fd = os.pipe()
+        line = self.lifeline(read_fd)
+        os.close(write_fd)
+        self.settle(line, expected=True)
+        self.assertEqual(line.reason, "the caller closed the lifeline")
+
+    def test_input_on_the_lifeline_releases_it_too(self):
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(os.close, write_fd)
+        line = self.lifeline(read_fd)
+        os.write(write_fd, b"x")
+        self.settle(line, expected=True)
+        self.assertEqual(line.reason, "unexpected input arrived on the lifeline")
+
+    def test_asking_why_before_it_is_released_is_a_mistake(self):
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(os.close, write_fd)
+        line = self.lifeline(read_fd)
+        with self.assertRaises(RuntimeError):
+            _ = line.reason

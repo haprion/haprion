@@ -1,0 +1,23 @@
+schema: 1
+name: app
+hostnames: [app.example.com]
+listen:
+  protocol: https
+  certificate: wildcard-example-com
+  redirect_http: true
+  hsts:
+    max_age: 31536000
+    include_subdomains: true
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: http
+      path: /healthz
+      host: app.example.com
+    servers:
+      - host: 198.51.100.10
+        port: 12345

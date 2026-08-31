@@ -48,11 +48,31 @@ FRONTEND_FILE = "1000-frontends.cfg"
 OBJECT_BAND = "1001"
 
 #
+# Where a node keeps the certificates it may serve. Part of the node-side
+# contract rather than a choice this generator makes - `docs/INSTALLATION.md`
+# describes the directory, and `candidate_validation` rewrites exactly this
+# prefix when it validates a candidate inside a sandbox that has no /etc.
+# Changing it here without changing that rewrite would make validation pass
+# against certificates the node will never load.
+#
+NODE_CERTIFICATE_DIR = "/etc/haproxy/certs"
+
+#
+# Offered on every TLS listener. HTTP/2 is what a current browser negotiates
+# when it is allowed to, and the ordering states the preference; `http/1.1`
+# stays for everything that cannot.
+#
+ALPN = "h2,http/1.1"
+
+#
 # The V1 defaults from the plan, written into every generated section. `tunnel`
 # is what makes a WebSocket upgrade survive without a separate switch in the
 # interface: an upgraded connection stops being a series of requests, and the
 # client and server timeouts would otherwise close it while it is idle and
-# healthy.
+# healthy. It belongs in the backend and only there - HAProxy takes the tunnel
+# timeout from the backend, and says so about the same line in a frontend:
+# "will be ignored because frontend has no backend capability". Measured on
+# 3.4.4 on this machine.
 #
 TIMEOUT_CONNECT = "5s"
 TIMEOUT_CLIENT = "50s"
@@ -79,20 +99,12 @@ class GeneratorError(ConfigError):
 
 
 #
-# Where the shared frontend listens. A default rather than a constant: the
-# port is the protocol's own, but the address a node listens on is an
-# environment value, and environment values are read from the cluster
-# configuration by the publishing path rather than written into code. The
-# default is what makes the generator usable on its own, which is the whole
-# point of proving it before it has a publishing path.
-#
-#
 # The port each protocol is served on unless a cluster says otherwise. A
 # default rather than a constant: most deployments terminate on the standard
 # ports, but a cluster that sits behind something else does not, and a port
 # nailed into the generator would be an environment value living in code.
 #
-PORTS = {"http": 80}
+PORTS = {"http": 80, "https": 443}
 
 
 def generate(
@@ -100,6 +112,7 @@ def generate(
     *,
     vips: Mapping[str, Vip],
     default_vip: str,
+    certificates: Sequence[str] = (),
     ports: Mapping[str, int] = PORTS,
 ) -> dict[str, str]:
     """Every file the generated layer consists of, keyed by filename.
@@ -123,7 +136,10 @@ def generate(
         # success, which is the one outcome worse than a refusal.
         #
         names = ", ".join(proxy.name for proxy in unsupported)
-        raise GeneratorError(f"this version generates only http objects; cannot generate: {names}")
+        raise GeneratorError(
+            f"this version generates http and https objects; cannot generate: {names}"
+        )
+    _refuse_unknown_certificates(ordered, certificates)
 
     placed = [(_vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
 
@@ -151,6 +167,27 @@ def _vip_of(proxy: Proxy, vips: Mapping[str, Vip], default_vip: str) -> Vip:
             f"{proxy.name} sits on the VIP {name}, which this cluster does not have. "
             f"Known VIPs: {known}"
         ) from None
+
+
+def _refuse_unknown_certificates(proxies: Sequence[Proxy], certificates: Sequence[str]) -> None:
+    """A certificate an object may choose is one the cluster distributes.
+
+    The model cannot ask this question - it reads one object and knows nothing
+    about the cluster - so it is asked here, against the allowlist the cluster
+    configuration carries. A name that is merely plausible would reach the node
+    as a path to a file that is not there, and HAProxy refuses to start on a
+    missing certificate rather than serving the site without TLS.
+    """
+
+    allowed = set(certificates)
+    for proxy in proxies:
+        wanted = proxy.listen.certificate
+        if wanted is not None and wanted not in allowed:
+            known = ", ".join(sorted(allowed)) or "none"
+            raise GeneratorError(
+                f"{proxy.name} asks for the certificate {wanted}, which this cluster does not "
+                f"distribute. Available: {known}"
+            )
 
 
 def _refuse_duplicate_names(proxies: Sequence[Proxy]) -> None:
@@ -207,13 +244,21 @@ def _frontend_file(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping[str, int]
     what makes a second VIP a real separation rather than a label.
     """
 
-    groups: dict[tuple[str, str], list[tuple[Vip, Proxy]]] = {}
+    #
+    # An https object that redirects plain http needs a listener on port 80 as
+    # well, on the same address, whether or not any object actually serves http
+    # there. Both land in the same group, so the redirect and a site that
+    # really is http cannot end up in two frontends fighting over one port.
+    #
+    groups: dict[tuple[str, str], list[tuple[Vip, Proxy, str]]] = {}
     for vip, proxy in placed:
-        groups.setdefault((vip.name, proxy.listen.protocol), []).append((vip, proxy))
+        groups.setdefault((vip.name, proxy.listen.protocol), []).append((vip, proxy, "serve"))
+        if proxy.listen.redirect_http:
+            groups.setdefault((vip.name, "http"), []).append((vip, proxy, "redirect"))
 
     body: list[str] = []
     for key in sorted(groups):
-        members = groups[key]
+        members = sorted(groups[key], key=lambda member: member[1].name)
         vip = members[0][0]
         protocol = key[1]
         identity = f"{vip.name}-{protocol}"
@@ -222,17 +267,37 @@ def _frontend_file(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping[str, int]
             f"frontend {_frontend_name(vip, protocol)}",
             f"    guid {frontend_guid(identity)}",
             f"    bind {vip.address}:{ports[protocol]}"
-            f" guid-prefix {listener_guid_prefix(identity)}",
+            f"{_tls(members, protocol)} guid-prefix {listener_guid_prefix(identity)}",
             "    mode http",
             "    option httplog",
             f"    timeout client {TIMEOUT_CLIENT}",
-            f"    timeout tunnel {TIMEOUT_TUNNEL}",
         ]
-        for _, proxy in members:
-            body.extend(_frontend_rules(proxy))
+        for _, proxy, role in members:
+            body.extend(_frontend_rules(proxy, role))
     if not body:
         body = ["", "# No object listens anywhere on this cluster."]
     return _lines(HEADER, body)
+
+
+def _tls(members: Sequence[tuple[Vip, Proxy, str]], protocol: str) -> str:
+    """The TLS half of a bind line: every certificate this listener may serve.
+
+    One listener, many certificates, chosen per connection by SNI. They are
+    listed in a fixed order so the file is stable, and the first one is what a
+    client that sends no SNI - or an unknown one - is given.
+    """
+
+    if protocol != "https":
+        return ""
+    wanted = sorted(
+        {
+            proxy.listen.certificate
+            for _, proxy, role in members
+            if role == "serve" and proxy.listen.certificate is not None
+        }
+    )
+    crt = "".join(f" crt {NODE_CERTIFICATE_DIR}/{name}.pem" for name in wanted)
+    return f" ssl{crt} alpn {ALPN}"
 
 
 def _host_acl(proxy: Proxy) -> list[str]:
@@ -303,7 +368,7 @@ def _rewrite_rule(route: Route) -> list[str]:
     return [f"    http-request replace-path ^{strip}/?(.*) {add}/\\1"]
 
 
-def _frontend_rules(proxy: Proxy) -> list[str]:
+def _frontend_rules(proxy: Proxy, role: str = "serve") -> list[str]:
     """One object's whole contribution to the shared frontend.
 
     The routes are written in the order `order_routes` decides, and that order
@@ -315,6 +380,14 @@ def _frontend_rules(proxy: Proxy) -> list[str]:
 
     host = _acl_name(proxy.name, "host")
     lines = ["", f"    # {proxy.name}", *_host_acl(proxy)]
+
+    if role == "redirect":
+        #
+        # The whole of this object's presence on port 80: everything that
+        # arrives for one of its names is told to come back over TLS, and
+        # nothing is served in cleartext, not even a path.
+        #
+        return [*lines, f"    redirect scheme https code 301 if {host}"]
 
     decisions: list[str] = []
     for index, route in enumerate(order_routes(proxy.routes)):
@@ -397,6 +470,26 @@ def _balance(backend: Backend) -> str:
     return backend.balance
 
 
+def _hsts_line(proxy: Proxy) -> list[str]:
+    """The Strict-Transport-Security header, written where it can be written.
+
+    In the backend, not the frontend, and that is HAProxy's rule rather than a
+    preference: an `http-response` rule in a frontend cannot read the request's
+    Host header, and HAProxy says so out loud - "will never match because it
+    only involves keywords that are incompatible with 'frontend http-response
+    header rule'". Measured on 3.4.4 on this machine. In a backend no condition
+    is needed at all, since a backend belongs to exactly one object.
+    """
+
+    hsts = proxy.listen.hsts
+    if hsts is None:
+        return []
+    value = f"max-age={hsts.max_age}"
+    if hsts.include_subdomains:
+        value += "; includeSubDomains"
+    return [f'    http-response set-header Strict-Transport-Security "{value}"']
+
+
 def _backend(proxy: Proxy, backend: Backend, rewrites: list[str], vip: Vip) -> list[str]:
     name = _backend_name(proxy.name, backend.name)
     lines = [
@@ -418,6 +511,7 @@ def _backend(proxy: Proxy, backend: Backend, rewrites: list[str], vip: Vip) -> l
         #
         lines.append(f"    source {vip.source}")
     lines.extend(rewrites)
+    lines.extend(_hsts_line(proxy))
 
     lines.extend(_health_lines(backend.health))
 

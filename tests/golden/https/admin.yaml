@@ -1,0 +1,23 @@
+schema: 1
+name: admin
+hostnames: [admin.example.net]
+listen:
+  protocol: https
+  certificate: example.net
+routes:
+  - path: /
+    backend: console
+backends:
+  console:
+    balance: leastconn
+    health:
+      type: http
+      tls: true
+      path: /healthz
+    tls:
+      verify: system
+    servers:
+      - host: 198.51.100.20
+        port: 8443
+      - host: 198.51.100.21
+        port: 8443

@@ -21,17 +21,18 @@ from __future__ import annotations
 
 import shutil
 import socket
+import ssl
 import subprocess
 import tempfile
 import threading
 import time
 import unittest
-from http.client import HTTPConnection
+from http.client import HTTPConnection, HTTPSConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from haproxy_mgmt.config import Vip
-from haproxy_mgmt.generate import generate
+from haproxy_mgmt.generate import NODE_CERTIFICATE_DIR, generate
 from haproxy_mgmt.proxy_model import load_proxy
 from haproxy_mgmt.route_match import order_routes, rewrite, select
 
@@ -265,3 +266,160 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+HTTPS_OBJECT = """
+schema: 1
+name: app
+hostnames: [{hostname}]
+listen:
+  protocol: https
+  certificate: {certificate}
+  redirect_http: true
+  hsts:
+    max_age: 31536000
+    include_subdomains: true
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
+CERTIFICATE = "example-com"
+
+
+@unittest.skipUnless(
+    shutil.which("haproxy") and shutil.which("openssl"),
+    "haproxy or openssl is not installed here",
+)
+class TlsIsServedTheWayTheObjectAsksFor(unittest.TestCase):
+    """The https half, proved by connecting rather than by reading the file.
+
+    Three things are worth proving with a real client: that plain http is
+    answered with a redirect and nothing else, that the certificate is actually
+    served on the TLS listener, and that the Strict-Transport-Security header
+    reaches the response - the last one because HAProxy refuses to place that
+    header where the first attempt put it, and a silent placement mistake would
+    look identical in the golden file.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        certificates = root / "certs"
+        certificates.mkdir()
+        openssl = shutil.which("openssl")
+        assert openssl is not None
+        subprocess.run(
+            [
+                openssl,
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                str(certificates / "key.pem"),
+                "-out",
+                str(certificates / "cert.pem"),
+                "-days",
+                "1",
+                "-nodes",
+                "-subj",
+                f"/CN={HOSTNAME}",
+            ],
+            capture_output=True,
+            check=True,
+        )
+        (certificates / f"{CERTIFICATE}.pem").write_bytes(
+            (certificates / "cert.pem").read_bytes() + (certificates / "key.pem").read_bytes()
+        )
+
+        backend = free_port()
+        cls.server = echo_server("web", backend)
+        wait_for(backend)
+
+        cls.http_port = free_port()
+        cls.https_port = free_port()
+        document = HTTPS_OBJECT.format(
+            hostname=HOSTNAME, certificate=CERTIFICATE, web=backend
+        ).encode()
+
+        (root / "0000-core.cfg").write_text(CORE)
+        layer = generate(
+            [load_proxy("app", document)],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            certificates=(CERTIFICATE,),
+            ports={"http": cls.http_port, "https": cls.https_port},
+        )
+        for name, content in layer.items():
+            (root / name).write_text(content.replace(NODE_CERTIFICATE_DIR, str(certificates)))
+
+        arguments: list[str] = []
+        for path in sorted(root.iterdir()):
+            if path.is_file():
+                arguments += ["-f", str(path)]
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        cls.haproxy = subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL)
+        wait_for(cls.https_port)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.haproxy.terminate()
+        cls.haproxy.wait(timeout=5)
+        cls.server.shutdown()
+        cls.directory.cleanup()
+
+    def test_plain_http_is_redirected_and_serves_nothing(self) -> None:
+        connection = HTTPConnection("127.0.0.1", self.http_port, timeout=5)
+        try:
+            connection.putrequest("GET", "/secret", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", HOSTNAME)
+            connection.endheaders()
+            response = connection.getresponse()
+
+            self.assertEqual(response.status, 301)
+            #
+            # The redirect keeps the requested name and path and adds no port:
+            # `redirect scheme https` rewrites the scheme only, so the browser
+            # asks for the standard port. The path survives, which matters -
+            # a redirect that drops it sends everybody to the front page.
+            #
+            self.assertEqual(response.getheader("Location"), f"https://{HOSTNAME}/secret")
+        finally:
+            connection.close()
+
+    def test_the_object_is_served_over_tls_and_promises_https(self) -> None:
+        context = ssl.create_default_context()
+        #
+        # The certificate is generated for this test and signed by nobody. The
+        # question here is what HAProxy serves and which headers it adds, not
+        # whether a throwaway certificate chains to a public root.
+        #
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+
+        connection = HTTPSConnection("127.0.0.1", self.https_port, timeout=5, context=context)
+        try:
+            connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", HOSTNAME)
+            connection.endheaders()
+            response = connection.getresponse()
+
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.read().decode(), "web /")
+            self.assertEqual(
+                response.getheader("Strict-Transport-Security"),
+                "max-age=31536000; includeSubDomains",
+            )
+        finally:
+            connection.close()

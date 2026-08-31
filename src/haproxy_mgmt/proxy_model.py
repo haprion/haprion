@@ -255,6 +255,30 @@ class Route:
         return len([part for part in self.path.split("/") if part])
 
 
+#
+# The longest promise HSTS may make. Two years is what the preload lists ask
+# for, and more than that is a commitment nobody can honour by editing
+# configuration - the browser stops asking.
+#
+MAX_HSTS_AGE = 63072000
+
+
+@dataclass(frozen=True, slots=True)
+class Hsts:
+    """A promise to the browser that this name is https from now on.
+
+    Off unless asked for, and it is the one setting in the model that cannot
+    be taken back by changing configuration: for `max_age` seconds the browser
+    refuses plain http on its own, whatever the server now says.
+    `include_subdomains` extends that to names this object may not even own,
+    which is why it is a separate, deliberate word rather than part of a
+    preset.
+    """
+
+    max_age: int
+    include_subdomains: bool = False
+
+
 @dataclass(frozen=True, slots=True)
 class Listen:
     """Where this object is reached, and how.
@@ -271,6 +295,7 @@ class Listen:
     vip: str | None = None
     certificate: str | None = None
     redirect_http: bool = False
+    hsts: Hsts | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -594,7 +619,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
 
 def _listen(value: Any, location: str) -> Listen:
     data = _mapping(value, location)
-    _only_keys(data, {"protocol", "vip", "certificate", "redirect_http"}, location)
+    _only_keys(data, {"protocol", "vip", "certificate", "redirect_http", "hsts"}, location)
     protocol = _string(data, "protocol", location, PROTOCOLS)
     vip = data.get("vip")
     if vip is not None and (not isinstance(vip, str) or not NAME.match(vip)):
@@ -616,4 +641,28 @@ def _listen(value: Any, location: str) -> Listen:
     if redirect and protocol != "https":
         raise ModelError(f"{location}.redirect_http requires protocol: https")
 
-    return Listen(protocol=protocol, vip=vip, certificate=certificate, redirect_http=redirect)
+    hsts = _hsts(data.get("hsts"), f"{location}.hsts")
+    if hsts is not None and protocol != "https":
+        raise ModelError(f"{location}.hsts requires protocol: https")
+
+    return Listen(
+        protocol=protocol,
+        vip=vip,
+        certificate=certificate,
+        redirect_http=redirect,
+        hsts=hsts,
+    )
+
+
+def _hsts(value: Any, location: str) -> Hsts | None:
+    if value is None:
+        return None
+    data = _mapping(value, location)
+    _only_keys(data, {"max_age", "include_subdomains"}, location)
+    max_age = data.get("max_age")
+    if not isinstance(max_age, int) or isinstance(max_age, bool) or not 0 < max_age <= MAX_HSTS_AGE:
+        raise ModelError(f"{location}.max_age must be a number of seconds up to {MAX_HSTS_AGE}")
+    return Hsts(
+        max_age=max_age,
+        include_subdomains=_boolean(data, "include_subdomains", location, default=False),
+    )

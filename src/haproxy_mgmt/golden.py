@@ -65,6 +65,13 @@ def expected(case: Path) -> dict[str, str]:
     return {path.name: path.read_text() for path in sorted(case.glob("*.cfg"))}
 
 
+#
+# What the cluster in a golden case distributes. Certificates are named, never
+# pathed: the path is the node's business and the allowlist is the cluster's.
+#
+CERTIFICATES = ("example.com", "example.net", "wildcard-example-com")
+
+
 def produced(case: Path) -> dict[str, str]:
     vips, default_vip = network(case)
-    return generate(objects(case), vips=vips, default_vip=default_vip)
+    return generate(objects(case), vips=vips, default_vip=default_vip, certificates=CERTIFICATES)

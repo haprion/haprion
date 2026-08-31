@@ -18,8 +18,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.generate import GeneratorError, generate
-from haproxy_mgmt.golden import DEFAULT_VIPS, cases, expected, network, objects, produced
+from haproxy_mgmt.generate import NODE_CERTIFICATE_DIR, GeneratorError, generate
+from haproxy_mgmt.golden import (
+    CERTIFICATES,
+    DEFAULT_VIPS,
+    cases,
+    expected,
+    network,
+    objects,
+    produced,
+)
 from haproxy_mgmt.proxy_model import Proxy, load_proxy
 
 #
@@ -65,13 +73,21 @@ class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
             with self.subTest(case.name):
                 loaded = objects(case)
                 vips, default_vip = network(case)
+                arguments = {
+                    "vips": vips,
+                    "default_vip": default_vip,
+                    "certificates": CERTIFICATES,
+                }
                 self.assertEqual(
-                    generate(list(reversed(loaded)), vips=vips, default_vip=default_vip),
-                    generate(loaded, vips=vips, default_vip=default_vip),
+                    generate(list(reversed(loaded)), **arguments),
+                    generate(loaded, **arguments),
                 )
 
 
-@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
+@unittest.skipUnless(
+    shutil.which("haproxy") and shutil.which("openssl"),
+    "haproxy or openssl is not installed here",
+)
 class HaproxyAcceptsWhatWeGenerate(unittest.TestCase):
     """The check that the golden files are configuration and not just text.
 
@@ -85,7 +101,17 @@ class HaproxyAcceptsWhatWeGenerate(unittest.TestCase):
             with self.subTest(case.name), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / "0000-core.cfg").write_text(CORE)
+                certificates = _certificate_directory(root)
                 for name, content in produced(case).items():
+                    #
+                    # The same substitution `candidate_validation` makes when it
+                    # validates a candidate in a sandbox that has no /etc: the
+                    # node's certificate directory becomes one that exists here.
+                    # HAProxy refuses to start on a certificate it cannot stat,
+                    # so without this an https case could not be validated at
+                    # all.
+                    #
+                    content = content.replace(NODE_CERTIFICATE_DIR, str(certificates))
                     (root / name).write_text(content)
 
                 arguments: list[str] = []
@@ -106,7 +132,46 @@ class HaproxyAcceptsWhatWeGenerate(unittest.TestCase):
 def _generate(proxies: list[Proxy]) -> dict[str, str]:
     """The generator on a cluster with one plain address, which most are."""
 
-    return generate(proxies, vips=dict(DEFAULT_VIPS), default_vip="main")
+    return generate(proxies, vips=dict(DEFAULT_VIPS), default_vip="main", certificates=CERTIFICATES)
+
+
+def _certificate_directory(root: Path) -> Path:
+    """Throwaway certificates for the ones the cases name.
+
+    Generated per run rather than committed: a certificate and its private key
+    have no business in this repository even when both are worthless, and a
+    key block in the tree is exactly what the secret scanner is there to stop.
+    """
+
+    directory = root / "certs"
+    directory.mkdir()
+    openssl = shutil.which("openssl")
+    assert openssl is not None
+    for name in CERTIFICATES:
+        subprocess.run(
+            [
+                openssl,
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                str(directory / "key.pem"),
+                "-out",
+                str(directory / "cert.pem"),
+                "-days",
+                "1",
+                "-nodes",
+                "-subj",
+                f"/CN={name}",
+            ],
+            capture_output=True,
+            check=True,
+        )
+        (directory / f"{name}.pem").write_bytes(
+            (directory / "cert.pem").read_bytes() + (directory / "key.pem").read_bytes()
+        )
+    return directory
 
 
 class ThingsAWholeLayerRefuses(unittest.TestCase):
@@ -161,3 +226,54 @@ MINIMAL = (Path(__file__).parent / "golden" / "minimal" / "shop.yaml").read_byte
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HttpsIsRefusedWhereItCannotBeHonoured(unittest.TestCase):
+    """What the layer refuses once TLS is in the picture."""
+
+    def test_a_certificate_the_cluster_does_not_distribute_is_refused(self) -> None:
+        """Otherwise it reaches the node as a path to a file that is not there.
+
+        HAProxy refuses to start on a certificate it cannot read, so the
+        failure would land on the node during a deploy rather than in the
+        editor while somebody is still typing.
+        """
+
+        document = HTTPS.replace(b"certificate: wildcard-example-com", b"certificate: not-issued")
+
+        with self.assertRaises(GeneratorError) as raised:
+            _generate([load_proxy("app", document)])
+
+        self.assertIn("not-issued", str(raised.exception))
+        self.assertIn("example.net", str(raised.exception))
+
+    def test_a_redirect_puts_the_object_on_port_80_as_well(self) -> None:
+        """An https object that redirects needs a listener on 80 to redirect from."""
+
+        files = _generate([load_proxy("app", HTTPS)])
+        frontends = files["1000-frontends.cfg"]
+
+        self.assertIn("bind 192.0.2.20:80", frontends)
+        self.assertIn("redirect scheme https code 301", frontends)
+        self.assertIn("bind 192.0.2.20:443 ssl crt", frontends)
+
+    def test_the_strict_transport_header_is_written_in_the_backend(self) -> None:
+        """HAProxy refuses to make it conditional anywhere else.
+
+        An `http-response` rule in a frontend cannot read the request's Host
+        header - HAProxy warns that such an ACL "will never match" - so the
+        header goes in the backend, which belongs to one object and needs no
+        condition at all.
+        """
+
+        files = _generate([load_proxy("app", HTTPS)])
+
+        self.assertNotIn("Strict-Transport-Security", files["1000-frontends.cfg"])
+        self.assertIn(
+            'http-response set-header Strict-Transport-Security "max-age=31536000; '
+            'includeSubDomains"',
+            files["1001-app.cfg"],
+        )
+
+
+HTTPS = (Path(__file__).parent / "golden" / "https" / "app.yaml").read_bytes()

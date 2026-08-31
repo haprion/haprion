@@ -212,3 +212,74 @@ class ThingsThatAreNotAProxyObject(unittest.TestCase):
             load_proxy("shop", b"# " + b"x" * (256 * 1024))
 
         self.assertIn("size limit", str(caught.exception))
+
+
+class TheBalancingAlgorithms(unittest.TestCase):
+    """Which algorithms an object may ask for, and which it may not.
+
+    The list is deliberately shorter than HAProxy's. Everything left out takes
+    an expression as its argument, and a field somebody writes an expression
+    into is the raw configuration syntax this project has decided not to offer.
+    """
+
+    def test_every_offered_algorithm_loads(self) -> None:
+        for algorithm in (
+            "roundrobin",
+            "static-rr",
+            "leastconn",
+            "first",
+            "source",
+            "uri",
+            "random",
+        ):
+            with self.subTest(algorithm):
+                proxy = load_proxy(
+                    "shop", with_lines(("balance: roundrobin", f"balance: {algorithm}"))
+                )
+
+                self.assertEqual(proxy.backends["web"].balance, algorithm)
+
+    def test_an_algorithm_that_hashes_by_name_must_be_told_the_name(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", with_lines(("balance: roundrobin", "balance: url_param")))
+
+        self.assertIn("balance_key is required", str(raised.exception))
+
+    def test_a_header_and_a_parameter_are_validated_as_what_they_are(self) -> None:
+        for balance, key in (("hdr", "X-Tenant"), ("url_param", "userid")):
+            with self.subTest(balance):
+                proxy = load_proxy(
+                    "shop",
+                    with_lines(
+                        ("balance: roundrobin", f"balance: {balance}\n    balance_key: {key}")
+                    ),
+                )
+
+                self.assertEqual(proxy.backends["web"].balance_key, key)
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy(
+                "shop",
+                with_lines(("balance: roundrobin", "balance: hdr\n    balance_key: not a header")),
+            )
+
+        self.assertIn("header name", str(raised.exception))
+
+    def test_a_key_next_to_an_algorithm_that_ignores_it_is_refused(self) -> None:
+        """Silently ignoring it would leave somebody believing the pool is sticky."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy(
+                "shop",
+                with_lines(("balance: roundrobin", "balance: roundrobin\n    balance_key: Host")),
+            )
+
+        self.assertIn("means nothing", str(raised.exception))
+
+    def test_a_free_haproxy_expression_is_not_an_option(self) -> None:
+        """`hash <expression>` is the escape hatch this project decided not to have."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", with_lines(("balance: roundrobin", "balance: hash")))
+
+        self.assertIn("roundrobin", str(raised.exception))

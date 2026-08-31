@@ -26,7 +26,8 @@ backends:
       - host: 198.51.100.11
         port: 8080
   api:
-    balance: leastconn
+    balance: hdr
+    balance_key: X-Tenant
     health:
       type: http
       path: /healthz

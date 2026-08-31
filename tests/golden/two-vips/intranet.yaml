@@ -8,7 +8,7 @@ routes:
     backend: portal
 backends:
   portal:
-    balance: leastconn
+    balance: source
     health:
       type: http
       path: /healthz

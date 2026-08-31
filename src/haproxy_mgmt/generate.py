@@ -382,6 +382,21 @@ def _server_name(index: int) -> str:
     return f"s{index + 1}"
 
 
+def _balance(backend: Backend) -> str:
+    """The `balance` line, in the two spellings HAProxy uses for it.
+
+    A header is named inside parentheses and a query parameter after a space -
+    verified against 3.4.4 on this machine rather than assumed, since the two
+    look interchangeable and are not.
+    """
+
+    if backend.balance == "hdr":
+        return f"hdr({backend.balance_key})"
+    if backend.balance == "url_param":
+        return f"url_param {backend.balance_key}"
+    return backend.balance
+
+
 def _backend(proxy: Proxy, backend: Backend, rewrites: list[str], vip: Vip) -> list[str]:
     name = _backend_name(proxy.name, backend.name)
     lines = [
@@ -389,7 +404,7 @@ def _backend(proxy: Proxy, backend: Backend, rewrites: list[str], vip: Vip) -> l
         f"backend {name}",
         f"    guid {backend_guid(proxy.name, backend.name)}",
         "    mode http",
-        f"    balance {backend.balance}",
+        f"    balance {_balance(backend)}",
         f"    timeout connect {TIMEOUT_CONNECT}",
         f"    timeout server {TIMEOUT_SERVER}",
         f"    timeout tunnel {TIMEOUT_TUNNEL}",

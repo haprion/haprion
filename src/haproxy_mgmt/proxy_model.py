@@ -62,7 +62,67 @@ HOSTNAME = re.compile(
 ROUTE_PATH = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
 
 PROTOCOLS = ("http", "https", "tcp")
-BALANCE = ("roundrobin", "leastconn")
+#
+# The balancing algorithms an object may choose, read from HAProxy 3.4.4's own
+# documentation on this machine. HAProxy has more - `hash`, `hdr()`,
+# `url_param()`, `rdp-cookie` - and they are left out on purpose: each takes an
+# expression as an argument, and a field where somebody writes an expression is
+# the raw HAProxy syntax this project has decided not to have.
+#
+#   roundrobin  in turn, by weight. The fair default for HTTP.
+#   static-rr   the same without on-the-fly weight changes; no server limit.
+#   leastconn   fewest connections first. For long-lived sessions, not short
+#               HTTP ones - HAProxy's own documentation says so.
+#   first       fill one server before using the next, so idle ones can be
+#               powered off. Only meaningful together with a connection limit.
+#   source      hash the client address, so one client keeps one server. The
+#               stickiness you get without asking the browser to hold a cookie.
+#   uri         hash the path, so one URL keeps one server. What a cache in the
+#               backend wants.
+#   random      pick at random. Behaves well when several proxies balance over
+#               the same pool and would otherwise agree on the same "next" one.
+#
+#   hdr         hash one request header's value, named by `balance_key`. What
+#               a multi-tenant backend wants when the tenant is in a header.
+#   url_param   hash one query parameter's value, named by `balance_key`. The
+#               usual way to keep one logged-in user on one server without
+#               involving a cookie.
+#
+# `hash <expression>` is the one HAProxy offers that is left out, and it is
+# left out for a reason rather than an oversight: its argument is an arbitrary
+# HAProxy expression, which is the raw configuration syntax this project has
+# decided not to have. `rdp-cookie` waits for TCP support, since it is
+# meaningless in an HTTP backend, and `sticky` is for log backends.
+#
+BALANCE = (
+    "roundrobin",
+    "static-rr",
+    "leastconn",
+    "first",
+    "source",
+    "uri",
+    "random",
+    "hdr",
+    "url_param",
+)
+
+#
+# The algorithms that hash something the request carries by name, and therefore
+# need to be told which name.
+#
+BALANCE_NEEDS_KEY = ("hdr", "url_param")
+
+#
+# A query parameter name. Deliberately narrower than what a URL may carry: this
+# value is written into a configuration line, and a name needing escaping there
+# is a name worth refusing where somebody can still change it.
+#
+PARAMETER = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+#
+# An HTTP field name, as RFC 9110 defines a token.
+#
+HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$")
 HEALTH_TYPES = ("disabled", "tcp", "http")
 MATCH_MODES = ("exact", "prefix")
 VERIFY_MODES = ("system", "none")
@@ -107,6 +167,14 @@ class Backend:
     servers: tuple[Server, ...]
     health: Health
     tls: BackendTls | None = None
+    balance_key: str | None = None
+    """Which header or query parameter `hdr` and `url_param` hash.
+
+    Required by those two and refused by every other algorithm, rather than
+    ignored. A key set next to `roundrobin` means somebody believed the pool
+    was sticky when it was not, and finding that out from a support call is
+    worse than finding it out from the editor.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,10 +284,29 @@ def _health(value: Any, location: str) -> Health:
     return Health(type=kind)
 
 
+def _balance_key(data: Mapping[str, Any], balance: str, location: str) -> str | None:
+    key = data.get("balance_key")
+    if balance not in BALANCE_NEEDS_KEY:
+        if key is not None:
+            raise ModelError(
+                f"{location}.balance_key means nothing for balance: {balance}; "
+                f"it names what hdr or url_param hashes"
+            )
+        return None
+    if not isinstance(key, str):
+        raise ModelError(f"{location}.balance_key is required for balance: {balance}")
+    pattern = HEADER_NAME if balance == "hdr" else PARAMETER
+    if not pattern.match(key):
+        what = "an HTTP header name" if balance == "hdr" else "a query parameter name"
+        raise ModelError(f"{location}.balance_key must be {what}")
+    return key
+
+
 def _backend(name: str, value: Any, location: str) -> Backend:
     data = _mapping(value, location)
-    _only_keys(data, {"balance", "servers", "health", "tls"}, location)
+    _only_keys(data, {"balance", "balance_key", "servers", "health", "tls"}, location)
     balance = _string(data, "balance", location, BALANCE)
+    balance_key = _balance_key(data, balance, location)
 
     servers = data.get("servers")
     if not isinstance(servers, list) or not servers:
@@ -248,6 +335,7 @@ def _backend(name: str, value: Any, location: str) -> Backend:
     return Backend(
         name=name,
         balance=balance,
+        balance_key=balance_key,
         servers=members,
         health=_health(data.get("health", {"type": "disabled"}), f"{location}.health"),
         tls=backend_tls,

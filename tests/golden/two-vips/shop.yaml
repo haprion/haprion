@@ -9,7 +9,7 @@ routes:
     backend: web
 backends:
   web:
-    balance: roundrobin
+    balance: random
     health:
       type: disabled
     servers:

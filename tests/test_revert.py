@@ -235,7 +235,7 @@ class WindowTests(RevertFixture):
             code, output = self.run_caller(
                 policy_path, "-c", "alpha", "2", before_helper=someone_rewrites_history
             )
-            self.assertEqual(code, 65)
+            self.assertEqual(code, 75)
             self.assertIn("no longer points at the same commit", output)
             self.assertEqual(git(self.repo, "log", "-1", "--format=%s"), "Smuggled version 2")
             self.assertNotIn(b"# version 2", (self.repo / "core/haproxy.cfg").read_bytes())
@@ -252,7 +252,7 @@ class WindowTests(RevertFixture):
             code, output = self.run_caller(
                 policy_path, "-c", "alpha", "2", before_helper=someone_else_edits
             )
-            self.assertEqual(code, 65)
+            self.assertEqual(code, 75)
             self.assertIn("unsaved changes", output)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
             #
@@ -458,7 +458,7 @@ class ContractTests(RevertFixture):
             code, _ = self.run_caller(
                 policy_path, "-c", "alpha", "2", before_helper=somebody_edits_the_draft
             )
-            self.assertEqual(code, 65)
+            self.assertEqual(code, 75)
             document = assert_contract("haproxy-revert", self.helper_stdout)
             self.assertEqual(document["error"]["code"], "dirty_worktree")
 
@@ -478,7 +478,7 @@ class ContractTests(RevertFixture):
             code, _ = self.run_caller(
                 policy_path, "-c", "alpha", "2", before_helper=someone_rewrites_history
             )
-            self.assertEqual(code, 65)
+            self.assertEqual(code, 75)
             document = assert_contract("haproxy-revert", self.helper_stdout)
             self.assertEqual(document["error"]["code"], "expected_target_changed")
 

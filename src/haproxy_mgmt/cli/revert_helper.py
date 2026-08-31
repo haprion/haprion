@@ -53,7 +53,7 @@ from haproxy_mgmt.config import (
     load_policy,
     load_runtime_config,
 )
-from haproxy_mgmt.envelope import envelope, failure
+from haproxy_mgmt.envelope import BLOCKED_EXIT, envelope, failure
 from haproxy_mgmt.git_command import GitError
 from haproxy_mgmt.git_command import git as _git
 from haproxy_mgmt.helper_protocol import (
@@ -322,7 +322,7 @@ def _revert(
         return refuse(
             "dirty_worktree",
             f"there are unsaved changes in {repo}. Publish or discard them before reverting.",
-            65,
+            BLOCKED_EXIT,
         )
 
     branch, head = resolve_head(repo)
@@ -339,7 +339,7 @@ def _revert(
             f"the repository changed during the revert; version {version} no longer "
             f"points at the same commit. Expected {expected_commit}, "
             f"now {actual or 'missing'}. Check the version list and try again.",
-            65,
+            BLOCKED_EXIT,
         )
 
     target_tree = _tree_of(repo, expected_commit)

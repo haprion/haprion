@@ -57,7 +57,7 @@ from haproxy_mgmt.config import (
     load_policy,
     load_runtime_config,
 )
-from haproxy_mgmt.envelope import envelope, failure
+from haproxy_mgmt.envelope import BLOCKED_EXIT, envelope, failure
 from haproxy_mgmt.git_command import GitError
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
@@ -399,7 +399,7 @@ def _publish(
             "the configuration changed after this candidate was prepared. "
             "Nothing was published; run the command again so the candidate "
             "is built on the current version.",
-            75,
+            BLOCKED_EXIT,
         )
 
     #

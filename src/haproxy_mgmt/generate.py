@@ -34,7 +34,7 @@ from collections.abc import Iterable, Mapping, Sequence
 
 from haproxy_mgmt.config import ConfigError, UnknownHost, Vip
 from haproxy_mgmt.guid import backend_guid, frontend_guid, listener_guid_prefix, server_guid
-from haproxy_mgmt.proxy_model import Backend, Health, Proxy, Route, Server
+from haproxy_mgmt.proxy_model import Backend, Health, Proxy, Route, Server, is_range
 from haproxy_mgmt.route_match import order_routes
 
 #
@@ -209,12 +209,13 @@ def _refuse_unknown_networks(
 
     for proxy in proxies:
         for name in proxy.allow_from:
-            if name not in networks:
-                known = ", ".join(sorted(networks)) or "none"
-                raise GeneratorError(
-                    f"{proxy.name} is restricted to the network {name}, which this cluster does "
-                    f"not define. Known networks: {known}"
-                )
+            if is_range(name) or name in networks:
+                continue
+            known = ", ".join(sorted(networks)) or "none"
+            raise GeneratorError(
+                f"{proxy.name} is restricted to the group {name}, which this cluster does "
+                f"not define. Known groups: {known}"
+            )
 
 
 def _refuse_duplicate_names(proxies: Sequence[Proxy]) -> None:
@@ -348,7 +349,13 @@ def _allow_rules(proxy: Proxy, networks: Mapping[str, Sequence[str]], host: str)
 
     if not proxy.allow_from:
         return []
-    allowed = sorted({cidr for name in proxy.allow_from for cidr in networks[name]})
+    allowed = sorted(
+        {
+            cidr
+            for entry in proxy.allow_from
+            for cidr in ((entry,) if is_range(entry) else networks[entry])
+        }
+    )
     acl = _acl_name(proxy.name, "allow")
     return [
         f"    acl {acl} src {' '.join(allowed)}",
@@ -701,7 +708,8 @@ def _health_lines(health: Health) -> list[str]:
 def _server_check(health: Health) -> str:
     if health.type == "disabled":
         return ""
-    return f" check inter {health.interval} rise {health.rise} fall {health.fall}"
+    port = f" port {health.port}" if health.port is not None else ""
+    return f" check{port} inter {health.interval} rise {health.rise} fall {health.fall}"
 
 
 def _server_tls(backend: Backend) -> str:

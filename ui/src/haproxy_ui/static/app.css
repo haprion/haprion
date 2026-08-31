@@ -610,6 +610,12 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
  * Configuration preview. A form beside the configuration it produces, so the
  * consequence of a field is visible in the same scroll as the field itself.
  */
+.preview-heading { margin-bottom: 10px; }
+.preview-heading p { margin: 4px 0 0; }
+.preview-notice {
+  margin: 0 0 16px; padding: 11px 16px; border-left: 3px solid var(--info);
+  border-radius: var(--radius-sm); background: var(--info-soft); color: var(--text);
+}
 .preview-form { display: grid; gap: 18px; margin-bottom: 18px; }
 .preview-form .cluster-card { padding-bottom: 18px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; padding: 18px 20px 4px; }

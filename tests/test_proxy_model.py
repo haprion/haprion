@@ -342,3 +342,54 @@ class TheMonitorVariants(unittest.TestCase):
             self.health("      type: http\n      tls: true\n      path: /healthz")
 
         self.assertIn("verified", str(raised.exception))
+
+
+class WhoMayReachAnObject(unittest.TestCase):
+    """`allow_from` takes a group the cluster named, or a range written here.
+
+    The named form is better where it fits, because the addresses then live in
+    the cluster configuration and the object means the same thing everywhere it
+    is published. A range that belongs to one site and nothing else has no
+    business being named cluster-wide, though, and writing it in the object is
+    the honest answer rather than a workaround.
+    """
+
+    def allow(self, entries: str) -> tuple[str, ...]:
+        document = with_lines(("routes:", f"allow_from: [{entries}]\nroutes:"))
+        return load_proxy("shop", document).allow_from
+
+    def test_a_group_name_and_a_range_may_sit_in_the_same_list(self) -> None:
+        self.assertEqual(self.allow("office, 198.51.100.0/24"), ("office", "198.51.100.0/24"))
+
+    def test_a_single_address_is_a_range_of_one(self) -> None:
+        self.assertEqual(self.allow("198.51.100.10"), ("198.51.100.10/32",))
+
+    def test_a_range_meaning_everywhere_is_refused(self) -> None:
+        """It reads as a restriction and enforces nothing, which is worse than none."""
+
+        with self.assertRaises(ModelError) as raised:
+            self.allow("192.0.2.0/0")
+
+        self.assertIn("entire address family", str(raised.exception))
+
+    def test_something_that_is_neither_says_which_it_is_not(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            self.allow("'Office Network'")
+
+        self.assertIn("neither a group name nor an address", str(raised.exception))
+
+
+class TheHealthCheckMayUseItsOwnPort(unittest.TestCase):
+    def test_a_check_port_is_separate_from_the_traffic_port(self) -> None:
+        """Plenty of systems answer health on a management port of their own."""
+
+        document = with_lines(
+            ("    health:\n      type: disabled", "    health:\n      type: tcp\n      port: 8413")
+        )
+
+        self.assertEqual(load_proxy("shop", document).backends["web"].health.port, 8413)
+
+    def test_absent_means_the_server_s_own_port(self) -> None:
+        document = with_lines(("    health:\n      type: disabled", "    health:\n      type: tcp"))
+
+        self.assertIsNone(load_proxy("shop", document).backends["web"].health.port)

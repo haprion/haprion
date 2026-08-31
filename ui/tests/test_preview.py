@@ -12,7 +12,13 @@ from __future__ import annotations
 import re
 import unittest
 
-from haproxy_ui.preview import DEFAULTS, PREVIEW_CLUSTER, build_document, preview
+from haproxy_ui.preview import (
+    DEFAULTS,
+    PREVIEW_CLUSTER,
+    build_document,
+    preview,
+    suggested_cookie,
+)
 from tests.test_login import LoginTestCase
 
 
@@ -128,3 +134,51 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheFieldsAddedAfterTheFirstLook(unittest.TestCase):
+    """What the maintainer asked for once the page existed.
+
+    Each of these is a field somebody wanted the moment they saw the form,
+    which is the whole reason the page was built before the rest of the model.
+    """
+
+    def test_addresses_may_be_written_straight_into_the_object(self) -> None:
+        """A range belonging to one site has no business being named cluster-wide."""
+
+        result = preview(form(allow_ranges="198.51.100.0/24\n203.0.113.10"), PREVIEW_CLUSTER)
+
+        self.assertIsNone(result.problem)
+        self.assertIn("198.51.100.0/24", result.document)
+        self.assertIn(
+            "acl mgd-app-allow src 198.51.100.0/24 203.0.113.10/32",
+            result.files["1000-frontends.cfg"],
+        )
+
+    def test_a_group_and_an_address_may_be_used_together(self) -> None:
+        result = preview(form(allow_from=("office",), allow_ranges="203.0.113.10"), PREVIEW_CLUSTER)
+
+        self.assertIn(
+            "acl mgd-app-allow src 198.51.100.0/24 203.0.113.10/32",
+            result.files["1000-frontends.cfg"],
+        )
+
+    def test_the_health_check_may_answer_on_its_own_port(self) -> None:
+        result = preview(form(health_port="8413"), PREVIEW_CLUSTER)
+
+        self.assertIn("check port 8413", result.files["1001-app.cfg"])
+
+    def test_no_port_means_the_server_s_own(self) -> None:
+        result = preview(form(), PREVIEW_CLUSTER)
+
+        self.assertNotIn("check port", result.files["1001-app.cfg"])
+        self.assertIn("check inter", result.files["1001-app.cfg"])
+
+    def test_a_port_that_is_not_a_number_says_so(self) -> None:
+        result = preview(form(health_port="eight"), PREVIEW_CLUSTER)
+
+        self.assertIn("port must be a number", str(result.problem))
+
+    def test_the_suggested_cookie_name_carries_the_object_s_name(self) -> None:
+        self.assertEqual(suggested_cookie("shop"), "hap_shop")
+        self.assertEqual(suggested_cookie(""), "hap_site")

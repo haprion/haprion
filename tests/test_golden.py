@@ -313,7 +313,7 @@ class WhoGetsAnAnswerAndWhoDoesNot(unittest.TestCase):
     def test_an_allowlist_denies_before_anything_is_routed(self) -> None:
         frontends = produced(GOLDEN / "https")["1000-frontends.cfg"]
 
-        self.assertIn("acl mgd-admin-allow src 198.51.100.0/24 203.0.113.0/24", frontends)
+        self.assertIn("acl mgd-admin-allow src 198.51.100.0/24 203.0.113.128/25", frontends)
         self.assertIn(
             "http-request deny deny_status 403 if mgd-admin-host !mgd-admin-allow", frontends
         )

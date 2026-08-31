@@ -4,7 +4,7 @@ hostnames: [admin.example.net]
 listen:
   protocol: https
   certificate: example.net
-allow_from: [office, vpn]
+allow_from: [office, 203.0.113.128/25]
 routes:
   - path: /
     backend: console
@@ -15,6 +15,7 @@ backends:
     health:
       type: http
       tls: true
+      port: 9443
       path: /healthz
     tls:
       verify: system

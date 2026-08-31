@@ -87,9 +87,23 @@ DEFAULTS = {
     "health_type": "http",
     "health_path": "/",
     "health_host": "",
+    "health_port": "",
     "backend_tls": "",
     "allow_from": (),
+    "allow_ranges": "",
 }
+
+
+def suggested_cookie(name: str) -> str:
+    """The session cookie name offered for an object that has none yet.
+
+    Prefixed so it is recognisable as this system's in a browser's cookie list,
+    and next to the object's own name so two sites do not overwrite each
+    other's. Cookie names are case-sensitive, so the suggestion picks one
+    casing and stays with it.
+    """
+
+    return f"hap_{name}" if name else "hap_site"
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +176,11 @@ def build_document(form: dict[str, object]) -> str:
             }
 
     health: dict[str, object] = {"type": text("health_type")}
+    if text("health_type") != "disabled" and text("health_port"):
+        port = text("health_port")
+        if not port.isdigit():
+            raise ValueError("the health check port must be a number")
+        health["port"] = int(port)
     if text("health_type") == "http":
         health["path"] = text("health_path") or "/"
         if text("health_host"):
@@ -190,6 +209,11 @@ def build_document(form: dict[str, object]) -> str:
     }
     selected = form.get("allow_from", ())
     allowed = [str(name) for name in selected] if isinstance(selected, (list, tuple)) else []
+    allowed += [
+        entry.strip()
+        for entry in text("allow_ranges").replace(",", "\n").splitlines()
+        if entry.strip()
+    ]
     if allowed:
         document["allow_from"] = allowed
 

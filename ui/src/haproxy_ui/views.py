@@ -407,6 +407,8 @@ def build_router(config: Config) -> APIRouter:
         health_type: str = Form(default="disabled", max_length=16),
         health_path: str = Form(default="", max_length=1024),
         health_host: str = Form(default="", max_length=255),
+        health_port: str = Form(default="", max_length=8),
+        allow_ranges: str = Form(default="", max_length=2048),
         backend_tls: str = Form(default="", max_length=16),
         allow_from: list[str] = NETWORK_SELECTION,
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
@@ -445,6 +447,8 @@ def build_router(config: Config) -> APIRouter:
                 "health_type": health_type,
                 "health_path": health_path,
                 "health_host": health_host,
+                "health_port": health_port,
+                "allow_ranges": allow_ranges,
                 "backend_tls": backend_tls,
                 "allow_from": tuple(allow_from),
             },
@@ -898,6 +902,9 @@ def _preview_page(
             "section": "preview",
             "form": form,
             "choices": preview_module.choices(cluster),
+            "suggested_cookie": preview_module.suggested_cookie(
+                str(form.get("name", "") or "").strip()
+            ),
             "result": result,
             "submitted": submitted,
             "management_writes": config.management_writes,

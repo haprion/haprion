@@ -21,6 +21,7 @@ does. Both are worse than being told.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -211,6 +212,7 @@ class Health:
 
     type: str
     tls: bool = False
+    port: int | None = None
     path: str | None = None
     host: str | None = None
     expect_status: str | None = None
@@ -333,12 +335,15 @@ class Proxy:
     routes: tuple[Route, ...]
     backends: Mapping[str, Backend]
     allow_from: tuple[str, ...] = ()
-    """Which named networks may reach this object at all.
+    """Who may reach this object at all. Empty means everyone.
 
-    Empty means everyone, which is what a public site wants. Named groups
-    rather than addresses: the object says "the office", and which addresses
-    that is stays in the cluster configuration where it can differ between a
-    rehearsal cluster and production.
+    An entry is either the name of a group the cluster defines, or a literal
+    address or range. The named form is the better one where it fits - the
+    object says "the office" and which addresses that is stays in the cluster
+    configuration, so the same object means the same thing in a rehearsal
+    cluster and in production - but a range that belongs to one site and
+    nothing else has no business being named cluster-wide, and writing it here
+    is then the honest answer rather than a workaround.
 
     This is a different question from the trusted proxy list. That one decides
     whose forwarded headers are believed; this one decides who gets an answer.
@@ -384,7 +389,7 @@ def _server(value: Any, location: str) -> Server:
 
 _HTTP_ONLY = ("path", "host", "expect_status", "expect_body")
 _TCP_ONLY = ("send", "expect")
-_TIMING = ("tls", "interval", "rise", "fall")
+_TIMING = ("tls", "port", "interval", "rise", "fall")
 
 
 def _health(value: Any, location: str) -> Health:
@@ -409,6 +414,17 @@ def _health(value: Any, location: str) -> Health:
         raise ModelError(f"{location}.interval must be a duration such as 5s or 500ms")
 
     tls = _boolean(data, "tls", location, default=False)
+    #
+    # A separate port for the check, because a health endpoint is not always on
+    # the port that serves traffic - plenty of systems answer on their own
+    # management port instead. Absent means the server's own port, which is the
+    # usual case and needs no words.
+    #
+    port = data.get("port")
+    if port is not None and (
+        not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535
+    ):
+        raise ModelError(f"{location}.port must be a port number")
     rise = _count(data, "rise", location, DEFAULT_RISE)
     fall = _count(data, "fall", location, DEFAULT_FALL)
 
@@ -429,6 +445,7 @@ def _health(value: Any, location: str) -> Health:
             expect_status=status,
             expect_body=_probe(data, "expect_body", location),
             tls=tls,
+            port=port,
             interval=interval,
             rise=rise,
             fall=fall,
@@ -444,7 +461,14 @@ def _health(value: Any, location: str) -> Health:
         #
         raise ModelError(f"{location}.send and {location}.expect belong together")
     return Health(
-        type=kind, send=send, expect=expect, tls=tls, interval=interval, rise=rise, fall=fall
+        type=kind,
+        send=send,
+        expect=expect,
+        tls=tls,
+        port=port,
+        interval=interval,
+        rise=rise,
+        fall=fall,
     )
 
 
@@ -675,14 +699,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     if unused:
         raise ModelError(f"{name}.backends defines backends no route uses: {', '.join(unused)}")
 
-    allow_from = data.get("allow_from", [])
-    if not isinstance(allow_from, list):
-        raise ModelError(f"{name}.allow_from must list network names")
-    for network in allow_from:
-        if not isinstance(network, str) or not NAME.match(network):
-            raise ModelError(f"{name}.allow_from contains something that is not a network name")
-    if len(set(allow_from)) != len(allow_from):
-        raise ModelError(f"{name}.allow_from names the same network twice")
+    allow_from = _allow_from(data.get("allow_from", []), name)
 
     return Proxy(
         name=name,
@@ -692,6 +709,51 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         backends=backends,
         allow_from=tuple(allow_from),
     )
+
+
+def is_range(entry: str) -> bool:
+    """Whether an `allow_from` entry is a literal address or range.
+
+    Decided by trying to parse it, not by looking for a slash: a bare address is
+    a range of one, and a name can never parse as either.
+    """
+
+    try:
+        ipaddress.ip_network(entry, strict=False)
+    except ValueError:
+        return False
+    return True
+
+
+def _allow_from(value: Any, name: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ModelError(f"{name}.allow_from must list group names, addresses or ranges")
+
+    entries: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str) or not entry:
+            raise ModelError(f"{name}.allow_from contains something that is not a name or range")
+        if is_range(entry):
+            network = ipaddress.ip_network(entry, strict=False)
+            if network.prefixlen == 0:
+                #
+                # A range that means everywhere is an allowlist that allows
+                # everything, which is worse than none: it reads as a
+                # restriction and enforces nothing.
+                #
+                raise ModelError(f"{name}.allow_from may not allow an entire address family")
+            entries.append(str(network))
+            continue
+        if not NAME.match(entry):
+            raise ModelError(
+                f"{name}.allow_from contains {entry!r}, which is neither a group name nor an "
+                f"address or range"
+            )
+        entries.append(entry)
+
+    if len(set(entries)) != len(entries):
+        raise ModelError(f"{name}.allow_from names the same group or range twice")
+    return tuple(entries)
 
 
 def _listen(value: Any, location: str) -> Listen:

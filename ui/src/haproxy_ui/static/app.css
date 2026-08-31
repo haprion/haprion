@@ -421,6 +421,19 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .job-table td:nth-child(2) { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .job-table time { font-variant-numeric: tabular-nums; }
 
+/* What a finished job still owes. Its own full-width row rather than a second
+   line inside the operation cell: this table is fixed-layout and that cell
+   clips with an ellipsis, so the sentence that matters most would be the one
+   cut off. Full width also keeps it on a single line at the sizes the table is
+   built for.
+
+   The job's own row keeps its bottom border and this one carries it instead, so
+   the two read as one entry rather than two. */
+.job-table tr:has(+ .job-follow-up) td { border-bottom: 0; }
+.job-follow-up td { padding-top: 0; padding-bottom: 11px; white-space: normal; color: var(--muted); font-size: 11px; }
+.job-follow-up .status-dot { margin-right: 7px; }
+.job-follow-up code { margin-left: 7px; padding: 1px 6px; border-radius: 4px; background: var(--panel-soft); color: var(--text-primary); font-size: 11px; }
+
 /* Backups. Two tables, because the card answers two questions: whether every
    node is backed up, and which archives are actually there to restore from.
    The second is folded away: it is read during a restore, and it is ten rows

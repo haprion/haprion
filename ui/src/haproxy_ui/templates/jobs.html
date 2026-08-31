@@ -27,6 +27,15 @@
         <td data-label="Outcome">{{ job.outcome }}</td>
         <td data-label="Exit">{{ job.exit_code }}</td>
       </tr>
+      {% if job.follow_up %}
+      <tr class="job-follow-up">
+        <td colspan="9">
+          <span class="status-dot status-warning" aria-hidden="true"></span>
+          <span>{{ job.follow_up }}</span>
+          {% if job.next_command %}<code>{{ job.next_command }}</code>{% endif %}
+        </td>
+      </tr>
+      {% endif %}
     {% else %}
       <tr><td colspan="9"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5"></path></svg><div><strong>No jobs yet</strong><span>New management requests will appear here.</span></div></td></tr>
     {% endfor %}

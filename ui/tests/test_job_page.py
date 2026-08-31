@@ -9,12 +9,18 @@ from haproxy_ui import db, jobs
 from tests.test_login import LoginTestCase
 
 
-def job(*, state: str, outcome: str | None = None) -> db.Job:
+def job(
+    *,
+    state: str,
+    outcome: str | None = None,
+    result: dict | None = None,
+    operation: str = "deploy",
+) -> db.Job:
     now = datetime.now(UTC)
     return db.Job(
         id=19,
         request_id=uuid4(),
-        operation="deploy",
+        operation=operation,
         cluster="alpha",
         payload={},
         state=state,
@@ -23,7 +29,7 @@ def job(*, state: str, outcome: str | None = None) -> db.Job:
         finished_at=None if state in {"pending", "running"} else now - timedelta(minutes=1),
         exit_code=0 if state == "done" else None,
         outcome=outcome,
-        result=None,
+        result=result,
         stderr_excerpt="must not be rendered",
         idempotency_key=uuid4(),
         attempts=1,
@@ -106,6 +112,26 @@ class JobPageTests(LoginTestCase):
             self.assertIn(label, page.text)
         self.assertNotIn("must not be rendered", page.text)
 
+    def test_a_revert_that_still_needs_a_deploy_says_so_on_the_page(self) -> None:
+        """The projection being right is not the same as the page showing it."""
+
+        rows = [job(state="done", outcome="done", operation="revert", result=revert_result())]
+        client = self.client()
+        self.sign_in(client)
+
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=rows):
+            page = client.get("/jobs")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Published, not deployed", page.text)
+        self.assertIn("haproxy-deploy -c alpha", page.text)
+        #
+        # Still says Completed, and should: the job did finish. The two
+        # statements together are the honest answer, which is why the row is
+        # added rather than the state relabelled.
+        #
+        self.assertIn("Completed", page.text)
+
     def test_the_job_page_requires_a_session(self) -> None:
         page = self.client().get("/jobs", follow_redirects=False)
 
@@ -115,3 +141,74 @@ class JobPageTests(LoginTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def revert_result(**changes: object) -> dict:
+    body: dict = {
+        "changed": True,
+        "new_version": 26,
+        "from_version": 25,
+        "deployment_required": True,
+        "next_command": "haproxy-deploy -c alpha",
+    }
+    body.update(changes)
+    return {"ok": True, "outcome": "done", "result": body}
+
+
+class WhatAFinishedJobStillOwes(unittest.TestCase):
+    """A job that reads `Completed` and has left the nodes on the old version.
+
+    A revert publishes; it does not roll out. The state column is honest about
+    the job and silent about the cluster, which is the one combination where a
+    reader can walk away believing the wrong thing. The helper has always
+    answered this in its result - it was simply never projected to the screen.
+    """
+
+    def view(self, **kwargs: object):
+        overview = jobs.build_job_overview([job(**kwargs)])  # type: ignore[arg-type]
+        return overview.jobs[0]
+
+    def test_a_revert_that_still_needs_a_deploy_says_so(self) -> None:
+        view = self.view(state="done", outcome="done", operation="revert", result=revert_result())
+
+        self.assertIsNotNone(view.follow_up)
+        self.assertIn("Published, not deployed", view.follow_up or "")
+        self.assertIn("alpha", view.follow_up or "")
+        self.assertEqual(view.next_command, "haproxy-deploy -c alpha")
+
+    def test_a_deploy_that_finished_owes_nothing(self) -> None:
+        view = self.view(state="done", outcome="done", result={"ok": True, "result": {}})
+
+        self.assertIsNone(view.follow_up)
+        self.assertIsNone(view.next_command)
+
+    def test_a_result_that_answers_something_else_owes_nothing(self) -> None:
+        """Read defensively: the document comes from a helper and is stored as it arrived.
+
+        `deployment_required` is checked for being true rather than for being
+        truthy, so a string, a number or a missing key all mean the same thing
+        here - nothing is owed, and nothing is invented.
+        """
+
+        for value in ("yes", 1, None, {}, "true"):
+            with self.subTest(value=value):
+                view = self.view(
+                    state="done",
+                    outcome="done",
+                    result=revert_result(deployment_required=value),
+                )
+                self.assertIsNone(view.follow_up)
+
+    def test_a_missing_or_malformed_result_owes_nothing(self) -> None:
+        for result in (None, {}, {"result": None}, {"result": "published"}):
+            with self.subTest(result=result):
+                self.assertIsNone(self.view(state="done", outcome="done", result=result).follow_up)
+
+    def test_the_sentence_survives_a_result_without_a_command(self) -> None:
+        """The sentence is the point; the command is the convenience."""
+
+        view = self.view(state="done", outcome="done", result=revert_result(next_command=None))
+
+        self.assertIsNotNone(view.follow_up)
+        self.assertIn("Published, not deployed", view.follow_up or "")
+        self.assertIsNone(view.next_command)

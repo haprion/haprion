@@ -353,12 +353,14 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 /* Deploying is not the same kind of act as the buttons it sits beside.
    Publishing records a version; deploying reaches the nodes, and on a page
    where every other button publishes, the two must not look interchangeable.
-   Same geometry, brand colour: the difference is visible before it is read. */
-.deploy-button { border-color: var(--brand-strong); background: var(--brand-soft); color: var(--brand-strong); }
-.deploy-button:hover { border-color: var(--brand); background: var(--brand); color: white; }
-/* Its own row under the table, right-aligned like the action column above it. */
-.table-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 0 20px 14px; }
-.table-actions form { margin: 0; }
+
+   Filled and neutral rather than coloured, because every hue in this palette
+   already means something about health: green is healthy, amber is warning,
+   red is critical, blue is queued or running. A green button would say the
+   deploy is fine rather than that it is the action - so weight carries the
+   emphasis and no colour has to lie about a state. */
+.deploy-button { border-color: var(--text-strong); background: var(--text-strong); color: var(--panel); }
+.deploy-button:hover { border-color: var(--muted-strong); background: var(--muted-strong); color: var(--panel); }
 .table-scroll { overflow-x: auto; }
 .node-table { width: 100%; border-collapse: collapse; text-align: left; }
 .node-table th { padding: 10px 14px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.055em; text-transform: uppercase; white-space: nowrap; }

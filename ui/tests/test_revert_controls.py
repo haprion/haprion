@@ -37,7 +37,7 @@ class RevertControlsTests(LoginTestCase):
         # once, under the table, rather than under every button where it made
         # every row taller to repeat the same sentence.
         #
-        self.assertIn("does not reach the nodes", page.text)
+        self.assertIn("deploying is what reaches the nodes", page.text)
         #
         # And the deploy that does reach them is on this page, so the two steps
         # are one place rather than two tabs.

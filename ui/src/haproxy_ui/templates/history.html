@@ -24,9 +24,12 @@
       <tr{% if version.published %} class="version-published"{% endif %}><td data-label="Version"><strong>{{ version.version }}</strong>{% if version.published %}<span class="published-badge">Published</span>{% endif %}</td><td data-label="Saved">{{ version.date }}</td><td data-label="Comment"><span class="version-comment">{{ version.comment }}</span></td><td data-label="Commit"><code>{{ version.commit }}</code></td>{% if management_writes and role == 'admin' and cluster.configured %}<td data-label="Action">{% if version.published %}<span class="version-current">Current</span>{% else %}<form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="revert"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="version" value="{{ version.number }}"><input type="hidden" name="expected_commit" value="{{ version.expected_commit }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Publish this version</button></form>{% endif %}</td>{% endif %}</tr>
       {% endfor %}
     </tbody></table></div>
-    {% if management_writes and role == 'admin' and cluster.configured %}<p class="table-note">Publishing records the version and does not reach the nodes. Deploying is what rolls it out.</p>
-    <div class="table-actions"><form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button deploy-button" type="submit">Deploy configuration</button></form></div>{% endif %}
     {% if cluster.truncated %}<p class="table-note">Showing the ten most recent saved versions.</p>{% endif %}
+    {% if management_writes and role == 'admin' and cluster.configured %}
+    <footer class="cluster-actions" aria-label="{{ cluster.cluster }} operations">
+      <div><strong>Deploy</strong><span>Publishing records a version; deploying is what reaches the nodes.</span></div>
+      <div class="action-buttons"><form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button deploy-button" type="submit">Deploy configuration</button></form></div>
+    </footer>{% endif %}
     {% else %}
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>
     {% endif %}

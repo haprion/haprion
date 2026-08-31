@@ -1,0 +1,79 @@
+schema: 1
+name: probes
+hostnames: [probes.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: plain-tcp
+  - path: /tls-handshake
+    backend: tls-tcp
+  - path: /tcp-content
+    backend: tcp-content
+  - path: /http
+    backend: http-plain
+  - path: /http-content
+    backend: http-content
+  - path: /https
+    backend: https-content
+backends:
+  plain-tcp:
+    balance: roundrobin
+    health:
+      type: tcp
+    servers:
+      - host: 198.51.100.10
+        port: 8080
+  tls-tcp:
+    balance: roundrobin
+    health:
+      type: tcp
+      tls: true
+      interval: 30s
+    servers:
+      - host: 198.51.100.11
+        port: 8443
+  tcp-content:
+    balance: roundrobin
+    health:
+      type: tcp
+      send: PING
+      expect: PONG
+      interval: 5s
+      rise: 3
+      fall: 2
+    servers:
+      - host: 198.51.100.12
+        port: 6379
+  http-plain:
+    balance: roundrobin
+    health:
+      type: http
+      path: /healthz
+    servers:
+      - host: 198.51.100.13
+        port: 8080
+  http-content:
+    balance: roundrobin
+    health:
+      type: http
+      path: /healthz
+      host: app.example.com
+      expect_status: 200-299
+      expect_body: ready
+    servers:
+      - host: 198.51.100.14
+        port: 8080
+  https-content:
+    balance: roundrobin
+    health:
+      type: http
+      tls: true
+      path: /healthz
+      host: app.example.com
+      expect_status: "200"
+    tls:
+      verify: system
+    servers:
+      - host: 198.51.100.15
+        port: 8443

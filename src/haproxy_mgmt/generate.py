@@ -33,7 +33,7 @@ from collections.abc import Iterable, Mapping, Sequence
 
 from haproxy_mgmt.config import ConfigError, Vip
 from haproxy_mgmt.guid import backend_guid, frontend_guid, listener_guid_prefix, server_guid
-from haproxy_mgmt.proxy_model import Backend, Proxy, Route
+from haproxy_mgmt.proxy_model import Backend, Health, Proxy, Route
 from haproxy_mgmt.route_match import order_routes
 
 #
@@ -419,17 +419,81 @@ def _backend(proxy: Proxy, backend: Backend, rewrites: list[str], vip: Vip) -> l
         lines.append(f"    source {vip.source}")
     lines.extend(rewrites)
 
-    check = ""
-    if backend.health.type == "http":
-        lines.append("    option httpchk GET " + str(backend.health.path))
-        check = " check"
-    elif backend.health.type == "tcp":
-        lines.append("    option tcp-check")
-        check = " check"
+    lines.extend(_health_lines(backend.health))
 
     for index, server in enumerate(backend.servers):
         lines.append(
             f"    server {_server_name(index)} {server.host}:{server.port}"
-            f" guid {server_guid(proxy.name, backend.name, server)}{check}"
+            f" guid {server_guid(proxy.name, backend.name, server)}"
+            f"{_server_tls(backend)}{_server_check(backend.health)}"
         )
     return lines
+
+
+def _health_lines(health: Health) -> list[str]:
+    """The check itself, in the form the chosen protocol takes.
+
+    The six monitor types an ADC lists are combinations of three choices, and
+    they land on three different HAProxy mechanisms: a bare connection, a
+    `tcp-check` exchange, and an `httpchk` request. Each was validated against
+    3.4.4 on this machine.
+    """
+
+    if health.type == "disabled":
+        return []
+
+    if health.type == "tcp":
+        if health.send is None:
+            #
+            # A plain connection attempt. `ssl-hello-chk` makes it a TLS
+            # handshake instead, which is the difference between "the port
+            # answers" and "the service behind it still has a working
+            # certificate".
+            #
+            return ["    option ssl-hello-chk"] if health.tls else []
+        connect = "    tcp-check connect ssl" if health.tls else "    tcp-check connect"
+        return [
+            "    option tcp-check",
+            connect,
+            f"    tcp-check send {health.send}",
+            f"    tcp-check expect string {health.expect}",
+        ]
+
+    lines = ["    option httpchk"]
+    if health.tls:
+        lines.append("    http-check connect ssl")
+    send = f"    http-check send meth GET uri {health.path}"
+    if health.host is not None:
+        #
+        # Without this a backend doing name-based virtual hosting answers the
+        # check with a 404 or a redirect, and a healthy pool is reported down.
+        #
+        send += f" hdr Host {health.host}"
+    lines.append(send)
+    lines.append(f"    http-check expect status {health.expect_status}")
+    if health.expect_body is not None:
+        lines.append(f"    http-check expect string {health.expect_body}")
+    return lines
+
+
+def _server_check(health: Health) -> str:
+    if health.type == "disabled":
+        return ""
+    return f" check inter {health.interval} rise {health.rise} fall {health.fall}"
+
+
+def _server_tls(backend: Backend) -> str:
+    """How this pool is reached, when it is reached over TLS.
+
+    `@system-ca` is HAProxy's own name for the trust store the operating system
+    maintains. Naming it rather than writing a path keeps an environment value
+    out of the generator - and `verify required` without a CA is refused by
+    HAProxy outright, measured on 3.4.4, so there is no silent third option
+    where verification quietly does nothing.
+    """
+
+    if backend.tls is None:
+        return ""
+    if backend.tls.verify == "none":
+        return " ssl verify none"
+    return " ssl verify required ca-file @system-ca"

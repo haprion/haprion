@@ -123,7 +123,42 @@ PARAMETER = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 # An HTTP field name, as RFC 9110 defines a token.
 #
 HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$")
+#
+# What a health check speaks. The variants an ADC lists separately - TCP,
+# TCP-ECV, HTTP, HTTP-ECV, HTTPS, HTTPS-ECV - are combinations of three
+# independent choices here rather than six names: which protocol, whether it
+# runs over TLS, and whether it looks at the answer. The same reasoning as the
+# path modes: a combination of fields that each say what they do beats a
+# vocabulary somebody has to look up.
+#
 HEALTH_TYPES = ("disabled", "tcp", "http")
+
+#
+# How often, and how many answers in a row it takes to change a server's mind.
+# HAProxy's own defaults, written out rather than inherited, so the generated
+# file says what it does.
+#
+DEFAULT_INTERVAL = "2s"
+DEFAULT_RISE = 2
+DEFAULT_FALL = 3
+
+#
+# The status range a check accepts when nobody said. Also HAProxy's own
+# behaviour made explicit: without it, anything below 500 counts as healthy -
+# including a 302 to a login page, which is exactly the answer a broken
+# application gives.
+#
+DEFAULT_EXPECT_STATUS = "200-399"
+
+DURATION = re.compile(r"^[1-9][0-9]{0,4}(ms|s|m)$")
+STATUS_RANGE = re.compile(r"^[1-5][0-9]{2}(-[1-5][0-9]{2})?$")
+
+#
+# What a check may send and look for. Narrow on purpose: the value is written
+# into a configuration line, and whitespace, quotes or backslashes there change
+# where the line ends rather than what the check looks for.
+#
+PROBE = re.compile(r"^[A-Za-z0-9._:/+=@-]{1,64}$")
 MATCH_MODES = ("exact", "prefix")
 VERIFY_MODES = ("system", "none")
 
@@ -149,10 +184,24 @@ class Health:
     `disabled` is spelled out rather than being the absence of the section. A
     pool with no health checking is a decision somebody made, and it should read
     like one in a diff.
+
+    `host` exists because of a failure mode that looks like something else
+    entirely: a backend doing name-based virtual hosting answers a check with
+    no Host header with a 404 or a redirect, the pool goes down, and the
+    interface reports a dead server that is in fact perfectly healthy.
     """
 
     type: str
+    tls: bool = False
     path: str | None = None
+    host: str | None = None
+    expect_status: str | None = None
+    expect_body: str | None = None
+    send: str | None = None
+    expect: str | None = None
+    interval: str = DEFAULT_INTERVAL
+    rise: int = DEFAULT_RISE
+    fall: int = DEFAULT_FALL
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,18 +319,88 @@ def _server(value: Any, location: str) -> Server:
     return Server(host=host, port=port)
 
 
+_HTTP_ONLY = ("path", "host", "expect_status", "expect_body")
+_TCP_ONLY = ("send", "expect")
+_TIMING = ("tls", "interval", "rise", "fall")
+
+
 def _health(value: Any, location: str) -> Health:
     data = _mapping(value, location)
-    _only_keys(data, {"type", "path"}, location)
+    _only_keys(data, {"type", *_HTTP_ONLY, *_TCP_ONLY, *_TIMING}, location)
     kind = _string(data, "type", location, HEALTH_TYPES)
-    path = data.get("path")
+
+    if kind == "disabled":
+        unusable = sorted(set(data) - {"type"})
+        if unusable:
+            raise ModelError(
+                f"{location} is disabled, so it cannot also be configured: {', '.join(unusable)}"
+            )
+        return Health(type=kind)
+
+    for key in _TCP_ONLY if kind == "http" else _HTTP_ONLY:
+        if data.get(key) is not None:
+            raise ModelError(f"{location}.{key} means nothing for a {kind} health check")
+
+    interval = data.get("interval", DEFAULT_INTERVAL)
+    if not isinstance(interval, str) or not DURATION.match(interval):
+        raise ModelError(f"{location}.interval must be a duration such as 5s or 500ms")
+
+    tls = _boolean(data, "tls", location, default=False)
+    rise = _count(data, "rise", location, DEFAULT_RISE)
+    fall = _count(data, "fall", location, DEFAULT_FALL)
+
     if kind == "http":
+        path = data.get("path")
         if not isinstance(path, str) or not ROUTE_PATH.match(path):
             raise ModelError(f"{location}.path must be an absolute path for an http health check")
-        return Health(type=kind, path=path)
-    if path is not None:
-        raise ModelError(f"{location}.path is only meaningful for an http health check")
-    return Health(type=kind)
+        host = data.get("host")
+        if host is not None and (not isinstance(host, str) or not HOSTNAME.match(host)):
+            raise ModelError(f"{location}.host must be a hostname")
+        status = data.get("expect_status", DEFAULT_EXPECT_STATUS)
+        if not isinstance(status, str) or not STATUS_RANGE.match(status):
+            raise ModelError(f"{location}.expect_status must be a status or range, such as 200-299")
+        return Health(
+            type=kind,
+            path=path,
+            host=host,
+            expect_status=status,
+            expect_body=_probe(data, "expect_body", location),
+            tls=tls,
+            interval=interval,
+            rise=rise,
+            fall=fall,
+        )
+
+    send = _probe(data, "send", location)
+    expect = _probe(data, "expect", location)
+    if (send is None) != (expect is None):
+        #
+        # Sending without looking at the answer proves only that the port is
+        # open, which a plain connection already proved; looking without
+        # sending waits for a greeting that most protocols never volunteer.
+        #
+        raise ModelError(f"{location}.send and {location}.expect belong together")
+    return Health(
+        type=kind, send=send, expect=expect, tls=tls, interval=interval, rise=rise, fall=fall
+    )
+
+
+def _count(data: Mapping[str, Any], key: str, location: str, default: int) -> int:
+    value = data.get(key, default)
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 10:
+        raise ModelError(f"{location}.{key} must be a small number of checks")
+    return value
+
+
+def _probe(data: Mapping[str, Any], key: str, location: str) -> str | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not PROBE.match(value):
+        raise ModelError(
+            f"{location}.{key} must be a short value without spaces, quotes or backslashes"
+        )
+    return value
 
 
 def _balance_key(data: Mapping[str, Any], balance: str, location: str) -> str | None:
@@ -332,12 +451,26 @@ def _backend(name: str, value: Any, location: str) -> Backend:
             verify=_string(tls_data, "verify", f"{location}.tls", VERIFY_MODES)
         )
 
+    health = _health(data.get("health", {"type": "disabled"}), f"{location}.health")
+    if health.type == "http" and health.tls and backend_tls is None:
+        #
+        # Measured on HAProxy 3.4.4: a check that connects with TLS to a server
+        # that has no TLS settings is refused outright - "verify is enabled by
+        # default but no CA file specified". Rather than pick a verification
+        # policy on somebody's behalf, and quietly pick the insecure one at
+        # that, the object has to say which it wants.
+        #
+        raise ModelError(
+            f"{location}.health checks over tls, so {location}.tls must say whether the "
+            f"certificate is verified"
+        )
+
     return Backend(
         name=name,
         balance=balance,
         balance_key=balance_key,
         servers=members,
-        health=_health(data.get("health", {"type": "disabled"}), f"{location}.health"),
+        health=health,
         tls=backend_tls,
     )
 

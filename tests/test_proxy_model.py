@@ -192,7 +192,7 @@ class BackendsAndHealth(unittest.TestCase):
                 "shop", with_lines(("      type: disabled", "      type: tcp\n      path: /x"))
             )
 
-        self.assertIn("only meaningful for an http health check", str(caught.exception))
+        self.assertIn("means nothing for a tcp health check", str(caught.exception))
 
 
 class ThingsThatAreNotAProxyObject(unittest.TestCase):
@@ -283,3 +283,62 @@ class TheBalancingAlgorithms(unittest.TestCase):
             load_proxy("shop", with_lines(("balance: roundrobin", "balance: hash")))
 
         self.assertIn("roundrobin", str(raised.exception))
+
+
+class TheMonitorVariants(unittest.TestCase):
+    """Six monitor types as three independent choices.
+
+    An ADC lists TCP, TCP-ECV, HTTP, HTTP-ECV, HTTPS and HTTPS-ECV as separate
+    monitors. Here they are combinations of which protocol the check speaks,
+    whether it runs over TLS, and whether it reads the answer - the same
+    reasoning that made four path modes two optional fields.
+    """
+
+    def health(self, body: str) -> object:
+        document = with_lines(("    health:\n      type: disabled", f"    health:\n{body}"))
+        return load_proxy("shop", document).backends["web"].health
+
+    def test_a_plain_tcp_check_needs_nothing_but_its_type(self) -> None:
+        health = self.health("      type: tcp")
+
+        self.assertEqual(health.interval, "2s")
+        self.assertEqual((health.rise, health.fall), (2, 3))
+
+    def test_a_content_check_sends_and_expects_together(self) -> None:
+        health = self.health("      type: tcp\n      send: PING\n      expect: PONG")
+
+        self.assertEqual((health.send, health.expect), ("PING", "PONG"))
+
+    def test_sending_without_expecting_proves_nothing_a_connection_did_not(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            self.health("      type: tcp\n      send: PING")
+
+        self.assertIn("belong together", str(raised.exception))
+
+    def test_an_http_check_carries_a_host_header_when_asked(self) -> None:
+        """Without it a name-based backend answers 404 and a healthy pool reads down."""
+
+        health = self.health("      type: http\n      path: /healthz\n      host: app.example.com")
+
+        self.assertEqual(health.host, "app.example.com")
+        self.assertEqual(health.expect_status, "200-399")
+
+    def test_a_disabled_check_cannot_also_be_configured(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            self.health("      type: disabled\n      interval: 5s")
+
+        self.assertIn("disabled", str(raised.exception))
+
+    def test_a_probe_value_that_would_break_the_line_is_refused(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            self.health('      type: tcp\n      send: "a b"\n      expect: c')
+
+        self.assertIn("without spaces", str(raised.exception))
+
+    def test_a_tls_check_forces_the_backend_to_state_its_verification(self) -> None:
+        """HAProxy refuses the alternative, and the safe default is not ours to pick."""
+
+        with self.assertRaises(ModelError) as raised:
+            self.health("      type: http\n      tls: true\n      path: /healthz")
+
+        self.assertIn("verified", str(raised.exception))

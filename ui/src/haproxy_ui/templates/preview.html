@@ -55,7 +55,7 @@
       <label class="check"><input type="checkbox" name="redirect_http"{% if form.redirect_http %} checked{% endif %}> Redirect plain HTTP to HTTPS (301)</label>
       <label class="check"><input type="checkbox" name="hsts"{% if form.hsts %} checked{% endif %}> Send HSTS</label>
       <label class="check"><input type="checkbox" name="hsts_subdomains"{% if form.hsts_subdomains %} checked{% endif %}> …including subdomains</label>
-      <label class="check-value"><span>HSTS lifetime, seconds</span><input name="hsts_max_age" value="{{ form.hsts_max_age }}" size="10"></label>
+      <label class="check-value"><input name="hsts_max_age" value="{{ form.hsts_max_age }}" size="10"><span>HSTS lifetime, seconds</span></label>
     </div>
   </section>
 
@@ -98,21 +98,21 @@
 </form>
 
 {% if result.problem %}
-<section class="cluster-card refusal-card">
+<section class="cluster-card result-card refusal-card">
   <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-critical" aria-hidden="true"></span><div class="section-title"><h3>This object was refused</h3><p>The same refusal a publish would give</p></div></div></header>
   <p class="refusal">{% if result.problem_field %}<code>{{ result.problem_field }}</code> {% endif %}{{ result.problem_text }}</p>
 </section>
 {% endif %}
 
 {% if result.document %}
-<section class="cluster-card">
+<section class="cluster-card result-card">
   <header class="cluster-header"><div class="cluster-identity"><div><h3>The object</h3><p>What would be stored as <code>managed/proxies/{{ form.name }}.yaml</code></p></div></div></header>
   <pre class="config-block"><code>{{ result.document }}</code></pre>
 </section>
 {% endif %}
 
 {% for filename, content in result.files.items() %}
-<section class="cluster-card">
+<section class="cluster-card result-card">
   <header class="cluster-header"><div class="cluster-identity"><div><h3>{{ filename }}</h3><p>Generated</p></div></div></header>
   <pre class="config-block"><code>{{ content }}</code></pre>
 </section>

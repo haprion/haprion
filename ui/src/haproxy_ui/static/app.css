@@ -634,6 +634,13 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .preview-form .warning-text { margin: 12px 20px 0; }
 .form-actions { display: flex; justify-content: flex-end; }
 .form-actions .secondary-button { padding: 9px 22px; }
+/*
+ * Neutral on hover. Every other secondary button in the application turns
+ * brand green there, which reads as "this does something" - and this one only
+ * renders a page.
+ */
+.form-actions .secondary-button:hover { border-color: var(--line-strong); color: var(--text-strong); background: var(--panel-soft); }
+.result-card { margin-top: 18px; }
 .refusal-card { border-left: 3px solid var(--critical); }
 .refusal { margin: 0; padding: 16px 20px; color: var(--text); }
 .refusal code {

@@ -87,7 +87,7 @@ class InventoryHelperTests(unittest.TestCase):
 
         def tree(repo: Path, commit: str) -> dict[str, bytes]:
             called.append((repo, commit))
-            return {"managed/generated/app.cfg": b"frontend app\n  bind :443 ssl\n"}
+            return {"managed/generated/1002-app.cfg": b"frontend app\n  bind :443 ssl\n"}
 
         code, out, _ = self.run_helper(tree_reader=tree)
         self.assertEqual(code, 0)

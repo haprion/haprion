@@ -17,7 +17,7 @@ class CandidateValidationTests(unittest.TestCase):
     def test_manifest_is_deterministic_and_materialized_with_rewrites(self):
         files = {
             "maps/hosts.map": "example.com backend-a\n",
-            "conf.d/site.cfg": "bind :443 ssl crt /etc/haproxy/certs/example.com.pem\n",
+            "conf.d/0074-site.cfg": "bind :443 ssl crt /etc/haproxy/certs/example.com.pem\n",
             "haproxy.cfg": "map(/etc/haproxy/maps/hosts.map)\n",
         }
         first = parse_candidate({"files": files})
@@ -33,14 +33,14 @@ class CandidateValidationTests(unittest.TestCase):
                 validation_certificate=b"dummy PEM\n",
             )
             self.assertIn(b"/candidate/maps/", (root / "haproxy.cfg").read_bytes())
-            self.assertIn(b"/candidate/certs/", (root / "conf.d/site.cfg").read_bytes())
+            self.assertIn(b"/candidate/certs/", (root / "conf.d/0074-site.cfg").read_bytes())
             self.assertEqual((root / "certs/example.com.pem").read_bytes(), b"dummy PEM\n")
             self.assertEqual(os.stat(root / "haproxy.cfg").st_mode & 0o777, 0o600)
 
     def test_invalid_paths_content_and_shape_are_rejected(self):
         invalid = (
             ({"files": {}}, "non-empty"),
-            ({"files": {"conf.d/site.cfg": "x"}}, "haproxy.cfg"),
+            ({"files": {"conf.d/0074-site.cfg": "x"}}, "haproxy.cfg"),
             ({"files": {"haproxy.cfg": "x", "/etc/shadow": "x"}}, "relative path"),
             ({"files": {"haproxy.cfg": "x", "../escape": "x"}}, "relative path"),
             ({"files": {"haproxy.cfg": "x", "scripts/run": "x"}}, "allowlist"),

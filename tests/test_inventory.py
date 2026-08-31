@@ -15,9 +15,9 @@ class InventoryTests(unittest.TestCase):
         result = inventory_result(
             {
                 "core/haproxy.cfg": b"""global\n\ndefaults\n  mode http\n""",
-                "core/conf.d/public.cfg": b"""frontend public\n  bind :80\n  acl app hdr(host) -i app.example.test www.example.test\n  use_backend app_pool if app\n""",
-                "managed/generated/api.cfg": b"""frontend generated-api\n  bind :443 ssl\n  default_backend api_pool\n""",
-                "manual/conf.d/legacy.cfg": b"""listen legacy\n  mode tcp\n  bind 192.0.2.20:8443\n  use_backend legacy_pool\n  use_backend other_pool if TRUE\n""",
+                "core/conf.d/0073-public.cfg": b"""frontend public\n  bind :80\n  acl app hdr(host) -i app.example.test www.example.test\n  use_backend app_pool if app\n""",
+                "managed/generated/1001-api.cfg": b"""frontend generated-api\n  bind :443 ssl\n  default_backend api_pool\n""",
+                "manual/conf.d/0070-legacy.cfg": b"""listen legacy\n  mode tcp\n  bind 192.0.2.20:8443\n  use_backend legacy_pool\n  use_backend other_pool if TRUE\n""",
                 "manual/reservations.yaml": b"reservations: []\n",
                 "manual/maps/hosts.map": b"ignored\n",
             },
@@ -70,7 +70,7 @@ class InventoryTests(unittest.TestCase):
 
     def test_it_never_derives_inventory_from_an_unpublished_tree(self) -> None:
         result = inventory_result(
-            {"managed/generated/staged.cfg": b"frontend staged\n  bind :443 ssl\n"},
+            {"managed/generated/1003-staged.cfg": b"frontend staged\n  bind :443 ssl\n"},
             None,
             generated_at=TIME,
         )
@@ -83,8 +83,8 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(InventoryError, "defines frontend 'public' twice"):
             inventory_result(
                 {
-                    "core/conf.d/one.cfg": b"frontend public\n  bind :80\n",
-                    "manual/conf.d/two.cfg": b"frontend public\n  bind :443 ssl\n",
+                    "core/conf.d/0071-one.cfg": b"frontend public\n  bind :80\n",
+                    "manual/conf.d/0072-two.cfg": b"frontend public\n  bind :443 ssl\n",
                 },
                 TARGET,
                 generated_at=TIME,

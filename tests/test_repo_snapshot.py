@@ -37,7 +37,7 @@ class RepositoryFixture(unittest.TestCase):
         for relative, content in (
             ("core/haproxy.cfg", HAPROXY_CFG),
             ("manual/reservations.yaml", RESERVATIONS),
-            ("managed/generated/40-managed.cfg", GENERATED),
+            ("managed/generated/1040-managed.cfg", GENERATED),
         ):
             target = repo / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -79,7 +79,7 @@ class CandidateTreeTests(RepositoryFixture):
                 },
             )
             files = read_tree_files(repo, snapshot.tree)
-            self.assertEqual(files["managed/generated/40-managed.cfg"], GENERATED)
+            self.assertEqual(files["managed/generated/1040-managed.cfg"], GENERATED)
             self.assertIn(b"httplog", files["core/haproxy.cfg"])
 
     def test_an_unchanged_candidate_is_reported_as_unchanged(self) -> None:
@@ -109,7 +109,7 @@ class CandidateTreeTests(RepositoryFixture):
                 head,
                 {"core/haproxy.cfg": HAPROXY_CFG, "manual/reservations.yaml": RESERVATIONS},
             )
-            self.assertNotIn("manual/conf.d/50-extra.cfg", read_tree_files(repo, snapshot.tree))
+            self.assertNotIn("manual/conf.d/0050-extra.cfg", read_tree_files(repo, snapshot.tree))
 
     def test_the_repository_index_is_never_touched(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -138,10 +138,10 @@ class CandidateTreeTests(RepositoryFixture):
                     {
                         "core/haproxy.cfg": HAPROXY_CFG,
                         "manual/reservations.yaml": RESERVATIONS,
-                        "managed/generated/99-sneaky.cfg": b"# not this path's to publish\n",
+                        "managed/generated/1099-sneaky.cfg": b"# not this path's to publish\n",
                     },
                 )
-            self.assertIn("managed/generated/99-sneaky.cfg", str(caught.exception))
+            self.assertIn("managed/generated/1099-sneaky.cfg", str(caught.exception))
 
 
 class CommitTests(RepositoryFixture):

@@ -50,9 +50,9 @@ class ConfigurationLayerTests(unittest.TestCase):
         artifact = build_node_artifact(
             tree(
                 **{
-                    "core/conf.d/10-stats.cfg": b"frontend stats\n  bind 192.0.2.10:8404\n",
-                    "managed/generated/40-managed.cfg": b"frontend managed\n  bind 192.0.2.20:80\n",
-                    "manual/conf.d/50-extra.cfg": b"backend extra\n  mode http\n",
+                    "core/conf.d/0010-stats.cfg": b"frontend stats\n  bind 192.0.2.10:8404\n",
+                    "managed/generated/1040-managed.cfg": b"frontend managed\n  bind 192.0.2.20:80\n",
+                    "manual/conf.d/0050-extra.cfg": b"backend extra\n  mode http\n",
                 }
             )
         )
@@ -60,15 +60,15 @@ class ConfigurationLayerTests(unittest.TestCase):
             set(artifact),
             {
                 "haproxy.cfg",
-                "conf.d/10-stats.cfg",
-                "conf.d/40-managed.cfg",
-                "conf.d/50-extra.cfg",
+                "conf.d/0010-stats.cfg",
+                "conf.d/1040-managed.cfg",
+                "conf.d/0050-extra.cfg",
             },
         )
 
     def test_nested_paths_keep_their_shape(self) -> None:
-        artifact = build_node_artifact(tree(**{"core/conf.d/sub/dir/11-deep.cfg": b"# deep\n"}))
-        self.assertIn("conf.d/sub/dir/11-deep.cfg", artifact)
+        artifact = build_node_artifact(tree(**{"core/conf.d/sub/dir/0011-deep.cfg": b"# deep\n"}))
+        self.assertIn("conf.d/sub/dir/0011-deep.cfg", artifact)
 
     def test_non_cfg_files_are_ignored_in_conf_d(self) -> None:
         artifact = build_node_artifact(tree(**{"core/conf.d/notes.txt": b"not configuration\n"}))
@@ -79,8 +79,8 @@ class ConfigurationLayerTests(unittest.TestCase):
             build_node_artifact(
                 tree(
                     **{
-                        "core/conf.d/20-shared.cfg": b"# from core\n",
-                        "manual/conf.d/20-shared.cfg": b"# from manual\n",
+                        "core/conf.d/0020-shared.cfg": b"# from core\n",
+                        "manual/conf.d/0020-shared.cfg": b"# from manual\n",
                     }
                 )
             )
@@ -89,17 +89,28 @@ class ConfigurationLayerTests(unittest.TestCase):
         self.assertIn("core", message)
         self.assertIn("manual", message)
 
-    def test_a_collision_is_never_an_overwrite(self) -> None:
-        """The frozen rule: publishing must not silently pick a winner."""
-        with self.assertRaises(LayoutError):
+    def test_a_generated_file_cannot_reach_for_a_handwritten_name(self) -> None:
+        """The frozen rule, now enforced a step earlier.
+
+        A generated file and a handwritten one could once collide on a name and
+        were caught by the collision check. With the numbering bands they can no
+        longer share a name at all - one lives in 1000-1999 and the other cannot
+        - so the refusal happens at the band and says something more useful than
+        "two layers provide this". The protection is the same; it arrives sooner
+        and names the actual rule.
+        """
+
+        with self.assertRaises(LayoutError) as caught:
             build_node_artifact(
                 tree(
                     **{
-                        "core/conf.d/30-x.cfg": b"# core\n",
-                        "managed/generated/30-x.cfg": b"# managed\n",
+                        "core/conf.d/0030-x.cfg": b"# core\n",
+                        "managed/generated/0030-x.cfg": b"# managed\n",
                     }
                 )
             )
+        self.assertIn("0030", str(caught.exception))
+        self.assertIn("1000-1999", str(caught.exception))
 
 
 class ManagedLayerTests(unittest.TestCase):
@@ -147,8 +158,8 @@ class DeterminismTests(unittest.TestCase):
         """The whole privilege split rests on this being true."""
         files = tree(
             **{
-                "core/conf.d/10-a.cfg": b"# a\n",
-                "manual/conf.d/20-b.cfg": b"# b\n",
+                "core/conf.d/0010-a.cfg": b"# a\n",
+                "manual/conf.d/0020-b.cfg": b"# b\n",
                 "core/maps/hosts.map": b"host.example.com backend_a\n",
             }
         )
@@ -179,3 +190,107 @@ class ReleaseStampTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheNumberingBandsAreEnforced(unittest.TestCase):
+    """B18, checked where the layer a file came from is still known.
+
+    Three layers flatten into one `conf.d`, and HAProxy reads it in alphabetical
+    order - `100-a.cfg` before `20-b.cfg`, measured on 2026-08-27. Four fixed
+    digits are what make alphabetical and numeric order the same order, and the
+    band is what keeps an application and a person out of each other's names in
+    a directory they now share.
+
+    Enforced here rather than at candidate validation because by then the layers
+    have been flattened and nothing knows whether a file was written by a person
+    or by the generator.
+    """
+
+    def test_a_handwritten_file_without_four_digits_is_refused(self) -> None:
+        for name in ("stats.cfg", "10-stats.cfg", "010-stats.cfg", "10000-stats.cfg"):
+            with self.subTest(name=name), self.assertRaises(LayoutError) as caught:
+                build_node_artifact(tree(**{f"core/conf.d/{name}": b"# x\n"}))
+
+            self.assertIn("four digits", str(caught.exception))
+
+    def test_four_digits_without_a_dash_is_refused(self) -> None:
+        """`0010stats.cfg` sorts fine and is still refused.
+
+        The dash is not decoration: without a separator `0010stats` and `00101`
+        are both "four digits and then something", and the band a file belongs
+        to stops being readable at a glance.
+        """
+
+        with self.assertRaises(LayoutError):
+            build_node_artifact(tree(**{"core/conf.d/0010stats.cfg": b"# x\n"}))
+
+    def test_a_handwritten_file_inside_the_generated_band_is_refused(self) -> None:
+        """The case that loses somebody's work if it is allowed."""
+
+        for layer in ("core", "manual"):
+            with self.subTest(layer=layer), self.assertRaises(LayoutError) as caught:
+                build_node_artifact(tree(**{f"{layer}/conf.d/1500-mine.cfg": b"# x\n"}))
+
+            self.assertIn("1500", str(caught.exception))
+            self.assertIn("rewritten without warning", str(caught.exception))
+
+    def test_a_generated_file_outside_its_band_is_refused(self) -> None:
+        """The case that leaves configuration nobody meant to keep."""
+
+        with self.assertRaises(LayoutError) as caught:
+            build_node_artifact(tree(**{"managed/generated/0099-sneaky.cfg": b"# x\n"}))
+
+        self.assertIn("0099", str(caught.exception))
+
+    def test_the_edges_of_the_band_are_inside_it(self) -> None:
+        artifact = build_node_artifact(
+            tree(
+                **{
+                    "managed/generated/1000-first.cfg": b"# x\n",
+                    "managed/generated/1999-last.cfg": b"# y\n",
+                }
+            )
+        )
+
+        self.assertIn("conf.d/1000-first.cfg", artifact)
+        self.assertIn("conf.d/1999-last.cfg", artifact)
+
+    def test_the_bands_next_to_it_belong_to_the_person(self) -> None:
+        """0999 and 2000 are handwritten, and one of them is load-bearing.
+
+        `2000`-`2999` is reserved for a second generated layer that does not
+        exist. Reserving it in a document is not the same as refusing to publish
+        into it, and a rule with no writer behind it cannot be tested against
+        anything real - so a person may still write there today.
+        """
+
+        artifact = build_node_artifact(
+            tree(
+                **{
+                    "core/conf.d/0999-last-handwritten.cfg": b"# x\n",
+                    "manual/conf.d/2000-reserved.cfg": b"# y\n",
+                }
+            )
+        )
+
+        self.assertIn("conf.d/0999-last-handwritten.cfg", artifact)
+        self.assertIn("conf.d/2000-reserved.cfg", artifact)
+
+    def test_a_file_haproxy_never_loads_is_left_alone(self) -> None:
+        """A saved copy in conf.d is untidy, not a publishing error.
+
+        `notes.txt` and `50-z.cfg.bak` were both measured as ignored by HAProxy
+        on 2026-08-27. Refusing to publish because of one would enforce
+        tidiness as though it were correctness.
+        """
+
+        artifact = build_node_artifact(
+            tree(
+                **{
+                    "core/conf.d/notes.txt": b"not configuration\n",
+                    "core/conf.d/50-z.cfg.bak": b"an old copy\n",
+                }
+            )
+        )
+
+        self.assertEqual(artifact, {"haproxy.cfg": HAPROXY_CFG})

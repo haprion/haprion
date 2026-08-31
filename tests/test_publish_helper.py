@@ -104,9 +104,9 @@ class PublishFixture(unittest.TestCase):
 
         for relative, content in (
             ("core/haproxy.cfg", HAPROXY_CFG),
-            ("core/conf.d/10-core.cfg", CORE_CFG),
+            ("core/conf.d/0010-core.cfg", CORE_CFG),
             ("manual/reservations.yaml", RESERVATIONS),
-            ("managed/generated/40-managed.cfg", GENERATED),
+            ("managed/generated/1040-managed.cfg", GENERATED),
         ):
             target = draft / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -212,7 +212,7 @@ class PublishTests(PublishFixture):
 
             release = Path(result["release"]) / "alpha"
             self.assertIn(b"httplog", (release / "haproxy.cfg").read_bytes())
-            self.assertEqual((release / "conf.d/40-managed.cfg").read_bytes(), GENERATED)
+            self.assertEqual((release / "conf.d/1040-managed.cfg").read_bytes(), GENERATED)
             self.assertIn("version=2\n", (release / "RELEASE").read_text())
             self.assertEqual(
                 os.readlink(self.publish_path / "current"), f"releases/{result['hash']}"
@@ -253,7 +253,7 @@ class PublishTests(PublishFixture):
             policy_path = self.runtime(Path(raw))
             self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
             self.run_publish(policy_path, self.request())
-            self.assertEqual(self.seen_files["conf.d/40-managed.cfg"], GENERATED)
+            self.assertEqual(self.seen_files["conf.d/1040-managed.cfg"], GENERATED)
             self.assertIn(b"httplog", self.seen_files["haproxy.cfg"])
             self.assertFalse(self.sandbox_roots[0].exists())
 
@@ -335,7 +335,7 @@ class RefusalTests(PublishFixture):
     def test_paths_outside_the_published_layers_are_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))
-            for path in ("managed/generated/50-x.cfg", "../escape.cfg", "/etc/passwd"):
+            for path in ("managed/generated/1050-x.cfg", "../escape.cfg", "/etc/passwd"):
                 stream = self.request(
                     files={
                         "core/haproxy.cfg": HAPROXY_CFG.decode(),

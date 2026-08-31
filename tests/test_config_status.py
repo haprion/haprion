@@ -168,13 +168,13 @@ class WaitingChangeTests(StatusFixture):
         # the directory, and the operator cannot see what is actually waiting.
         #
         (self.repo / "manual/conf.d").mkdir()
-        (self.repo / "manual/conf.d/one.cfg").write_text("# one\n")
-        (self.repo / "manual/conf.d/two.cfg").write_text("# two\n")
+        (self.repo / "manual/conf.d/0071-one.cfg").write_text("# one\n")
+        (self.repo / "manual/conf.d/0072-two.cfg").write_text("# two\n")
 
         _, shown, _ = self.run_status(published=stamp("alpha", 1, self.commit))
 
-        self.assertIn(f"    {'manual/conf.d/one.cfg':<40} new\n", shown)
-        self.assertIn(f"    {'manual/conf.d/two.cfg':<40} new\n", shown)
+        self.assertIn(f"    {'manual/conf.d/0071-one.cfg':<40} new\n", shown)
+        self.assertIn(f"    {'manual/conf.d/0072-two.cfg':<40} new\n", shown)
         self.assertNotIn("manual/conf.d/ ", shown)
 
     def test_interface_owned_changes_are_reported_separately(self) -> None:

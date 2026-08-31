@@ -85,7 +85,7 @@ class RequestTests(CallerFixture):
             parameters = self.requests[0]["parameters"]
             self.assertEqual(
                 sorted(parameters["files"]),
-                ["core/conf.d/10-core.cfg", "core/haproxy.cfg", "manual/reservations.yaml"],
+                ["core/conf.d/0010-core.cfg", "core/haproxy.cfg", "manual/reservations.yaml"],
             )
             self.assertEqual(parameters["expected_head"], head)
             self.assertEqual(parameters["comment"], "Added serverxyz")
@@ -99,35 +99,35 @@ class RequestTests(CallerFixture):
             git(self.repo, "add", "-A")
             git(self.repo, "commit", "-qm", "Ignore editor leftovers")
             (self.repo / "core/.haproxy.cfg.swp").write_bytes(b"vim leftovers\n")
-            (self.repo / "core/conf.d/10-core.cfg.orig").write_bytes(CORE_CFG)
+            (self.repo / "core/conf.d/0010-core.cfg.orig").write_bytes(CORE_CFG)
             self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
 
             code, _ = self.run_caller(policy_path, "-c", "alpha", "Added serverxyz")
             files = self.requests[0]["parameters"]["files"]
             self.assertEqual(code, 0)
             self.assertNotIn("core/.haproxy.cfg.swp", files)
-            self.assertNotIn("core/conf.d/10-core.cfg.orig", files)
+            self.assertNotIn("core/conf.d/0010-core.cfg.orig", files)
 
     def test_an_untracked_file_is_published_and_a_deleted_one_disappears(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))
-            (self.repo / "core/conf.d/20-new.cfg").write_bytes(b"frontend new\n  bind :82\n")
-            (self.repo / "core/conf.d/10-core.cfg").unlink()
+            (self.repo / "core/conf.d/0020-new.cfg").write_bytes(b"frontend new\n  bind :82\n")
+            (self.repo / "core/conf.d/0010-core.cfg").unlink()
 
             code, _ = self.run_caller(policy_path, "-c", "alpha", "Replaced the core frontend")
             self.assertEqual(code, 0)
             listed = git(self.repo, "ls-tree", "-r", "--name-only", "HEAD")
-            self.assertIn("core/conf.d/20-new.cfg", listed)
-            self.assertNotIn("core/conf.d/10-core.cfg", listed)
+            self.assertIn("core/conf.d/0020-new.cfg", listed)
+            self.assertNotIn("core/conf.d/0010-core.cfg", listed)
 
     def test_changes_in_managed_are_reported_rather_than_dropped(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))
-            (self.repo / "managed/generated/40-managed.cfg").write_bytes(GENERATED + b"  # new\n")
+            (self.repo / "managed/generated/1040-managed.cfg").write_bytes(GENERATED + b"  # new\n")
             self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
 
             _, output = self.run_caller(policy_path, "-c", "alpha", "Added serverxyz")
-            self.assertIn("managed/generated/40-managed.cfg", output)
+            self.assertIn("managed/generated/1040-managed.cfg", output)
             self.assertIn("NOT part of this version", output)
             self.assertNotIn("managed/", str(self.requests[0]["parameters"]["files"]))
 

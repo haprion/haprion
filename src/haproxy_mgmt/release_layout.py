@@ -22,6 +22,7 @@ contribute every file except `.gitkeep`.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
@@ -63,6 +64,33 @@ MANAGED_GENERATED = "managed/generated"
 MANAGED_ALLOWED_SUFFIX = ".cfg"
 PLACEHOLDER = ".gitkeep"
 
+#
+# The three layers flatten into one `conf.d`, and HAProxy reads that directory
+# in ALPHABETICAL order - measured on 2026-08-27, where `100-a.cfg` sorted
+# before `20-b.cfg`. Fixed width with leading zeroes is the only thing that
+# makes alphabetical order and numeric order the same order, so every file that
+# HAProxy will load carries exactly four digits and a dash. Decision B18.
+#
+NUMBERED = re.compile(r"^[0-9]{4}-")
+
+#
+# The band the generator owns, and the reason this check exists at all. Once an
+# application writes into the same flat directory a person edits, the two will
+# eventually reach for the same name - and a convention that lives only in a
+# document holds until somebody is in a hurry.
+#
+# Enforced in both directions on purpose. A handwritten file inside the band
+# would be silently replaced the next time the generator runs; a generated file
+# outside it would survive a regeneration that was supposed to remove it. The
+# first loses work, the second leaves configuration nobody meant to keep.
+#
+# `2000`-`2999` is reserved for a second generated layer and is deliberately NOT
+# enforced here: nothing writes there yet, and a rule with no writer behind it
+# is a rule nobody can test against reality.
+#
+GENERATED_BAND = range(1000, 2000)
+GENERATED_LAYER = "managed"
+
 
 class LayoutError(Exception):
     """The repository tree cannot be turned into a node artifact.
@@ -93,6 +121,43 @@ def _children(files: Mapping[str, bytes], prefix: str) -> Iterable[tuple[str, by
             relative = path[len(start) :]
             if relative:
                 yield relative, files[path]
+
+
+def _check_number(relative: str, layer: str) -> None:
+    """Hold one `conf.d` file to the numbering its layer is allowed.
+
+    Checked here rather than at candidate validation because this is the last
+    point that still knows which layer a file came from: by the time a candidate
+    exists the three layers have been flattened into one directory and the
+    provenance is gone.
+
+    Only files HAProxy will actually load are held to the rule. A `.txt` or a
+    `.cfg.bak` left in `conf.d` is ignored by HAProxy - measured the same day as
+    the ordering - so refusing to publish because of one would be a rule about
+    tidiness enforced as though it were a rule about correctness. The caller has
+    already filtered to `.cfg` before this is asked.
+    """
+
+    name = relative.rsplit("/", 1)[-1]
+    if not NUMBERED.match(name):
+        raise LayoutError(
+            f"'{relative}' in layer '{layer}' must start with four digits and a dash, "
+            f"because conf.d is read in alphabetical order."
+        )
+
+    number = int(name[:4])
+    generated = layer == GENERATED_LAYER
+    if generated and number not in GENERATED_BAND:
+        raise LayoutError(
+            f"generated file '{relative}' is numbered {number:04d}, outside the "
+            f"{GENERATED_BAND.start:04d}-{GENERATED_BAND.stop - 1:04d} band the generator owns."
+        )
+    if not generated and number in GENERATED_BAND:
+        raise LayoutError(
+            f"'{relative}' in layer '{layer}' is numbered {number:04d}, inside the "
+            f"{GENERATED_BAND.start:04d}-{GENERATED_BAND.stop - 1:04d} band reserved for "
+            f"generated files, which are rewritten without warning."
+        )
 
 
 def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:
@@ -129,6 +194,7 @@ def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:
         for relative, content in _children(files, prefix):
             if not relative.endswith(".cfg"):
                 continue
+            _check_number(relative, layer)
             target = f"conf.d/{relative}"
             if target in artifact:
                 raise LayoutError(

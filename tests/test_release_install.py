@@ -24,7 +24,7 @@ from haproxy_mgmt.release_layout import NODE_DIRECTORIES, ReleaseMetadata
 
 ARTIFACT = {
     "haproxy.cfg": b"global\n  daemon\n",
-    "conf.d/10-stats.cfg": b"frontend stats\n  bind 192.0.2.10:8404\n",
+    "conf.d/0010-stats.cfg": b"frontend stats\n  bind 192.0.2.10:8404\n",
     "maps/hosts.map": b"host.example.com backend_a\n",
 }
 COMMIT = "a" * 40

@@ -32,7 +32,7 @@ from __future__ import annotations
 import ipaddress
 from collections.abc import Iterable, Mapping, Sequence
 
-from haproxy_mgmt.config import ConfigError, Vip
+from haproxy_mgmt.config import ConfigError, UnknownHost, Vip
 from haproxy_mgmt.guid import backend_guid, frontend_guid, listener_guid_prefix, server_guid
 from haproxy_mgmt.proxy_model import Backend, Health, Proxy, Route, Server
 from haproxy_mgmt.route_match import order_routes
@@ -115,6 +115,8 @@ def generate(
     default_vip: str,
     certificates: Sequence[str] = (),
     resolvers: str | None = None,
+    networks: Mapping[str, Sequence[str]] | None = None,
+    unknown_host: UnknownHost | None = None,
     ports: Mapping[str, int] = PORTS,
 ) -> dict[str, str]:
     """Every file the generated layer consists of, keyed by filename.
@@ -142,10 +144,12 @@ def generate(
             f"this version generates http and https objects; cannot generate: {names}"
         )
     _refuse_unknown_certificates(ordered, certificates)
+    known_networks = dict(networks or {})
+    _refuse_unknown_networks(ordered, known_networks)
 
     placed = [(_vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
 
-    files = {FRONTEND_FILE: _frontend_file(placed, ports)}
+    files = {FRONTEND_FILE: _frontend_file(placed, ports, known_networks, unknown_host)}
     for vip, proxy in placed:
         files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(proxy, vip, resolvers)
     return files
@@ -190,6 +194,27 @@ def _refuse_unknown_certificates(proxies: Sequence[Proxy], certificates: Sequenc
                 f"{proxy.name} asks for the certificate {wanted}, which this cluster does not "
                 f"distribute. Available: {known}"
             )
+
+
+def _refuse_unknown_networks(
+    proxies: Sequence[Proxy], networks: Mapping[str, Sequence[str]]
+) -> None:
+    """A restriction that names nothing would be no restriction at all.
+
+    Refused rather than ignored, and that is the whole point: an allowlist that
+    silently matched no addresses would deny every visitor, and an allowlist
+    silently dropped would admit every visitor. Both are worse than being told
+    the name is unknown.
+    """
+
+    for proxy in proxies:
+        for name in proxy.allow_from:
+            if name not in networks:
+                known = ", ".join(sorted(networks)) or "none"
+                raise GeneratorError(
+                    f"{proxy.name} is restricted to the network {name}, which this cluster does "
+                    f"not define. Known networks: {known}"
+                )
 
 
 def _refuse_duplicate_names(proxies: Sequence[Proxy]) -> None:
@@ -237,7 +262,12 @@ def _lines(*blocks: Iterable[str]) -> str:
     return "\n".join(out) + "\n"
 
 
-def _frontend_file(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping[str, int]) -> str:
+def _frontend_file(
+    placed: Sequence[tuple[Vip, Proxy]],
+    ports: Mapping[str, int],
+    networks: Mapping[str, Sequence[str]],
+    unknown_host: UnknownHost | None,
+) -> str:
     """Where every request is decided: one frontend per address and protocol.
 
     Objects that share an address share a frontend, because an address and
@@ -259,6 +289,7 @@ def _frontend_file(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping[str, int]
             groups.setdefault((vip.name, "http"), []).append((vip, proxy, "redirect"))
 
     body: list[str] = []
+    fallbacks: list[str] = []
     for key in sorted(groups):
         members = sorted(groups[key], key=lambda member: member[1].name)
         vip = members[0][0]
@@ -275,7 +306,11 @@ def _frontend_file(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping[str, int]
             f"    timeout client {TIMEOUT_CLIENT}",
         ]
         for _, proxy, role in members:
-            body.extend(_frontend_rules(proxy, role))
+            body.extend(_frontend_rules(proxy, role, networks))
+        if unknown_host is not None:
+            body.append(f"    default_backend {_fallback_name(vip, protocol)}")
+            fallbacks.extend(_fallback(vip, protocol, unknown_host))
+    body.extend(fallbacks)
     if not body:
         body = ["", "# No object listens anywhere on this cluster."]
     return _lines(HEADER, body)
@@ -300,6 +335,25 @@ def _tls(members: Sequence[tuple[Vip, Proxy, str]], protocol: str) -> str:
     )
     crt = "".join(f" crt {NODE_CERTIFICATE_DIR}/{name}.pem" for name in wanted)
     return f" ssl{crt} alpn {ALPN}"
+
+
+def _allow_rules(proxy: Proxy, networks: Mapping[str, Sequence[str]], host: str) -> list[str]:
+    """Who gets an answer, when the answer is not for everybody.
+
+    Written as a deny rather than as a condition on `use_backend`, so that a
+    restricted object refuses a visitor outright instead of falling through to
+    whatever the next matching rule happens to be. `http-request` rules run
+    before routing, which is the right moment for this question.
+    """
+
+    if not proxy.allow_from:
+        return []
+    allowed = sorted({cidr for name in proxy.allow_from for cidr in networks[name]})
+    acl = _acl_name(proxy.name, "allow")
+    return [
+        f"    acl {acl} src {' '.join(allowed)}",
+        f"    http-request deny deny_status 403 if {host} !{acl}",
+    ]
 
 
 def _host_acl(proxy: Proxy) -> list[str]:
@@ -370,7 +424,33 @@ def _rewrite_rule(route: Route) -> list[str]:
     return [f"    http-request replace-path ^{strip}/?(.*) {add}/\\1"]
 
 
-def _frontend_rules(proxy: Proxy, role: str = "serve") -> list[str]:
+def _fallback_name(vip: Vip, protocol: str) -> str:
+    return f"{PREFIX}-{vip.name}-{protocol}-unknown"
+
+
+def _fallback(vip: Vip, protocol: str, unknown_host: UnknownHost) -> list[str]:
+    """The answer for a name no object claims.
+
+    A backend rather than a rule in the frontend, because `http-request` rules
+    run before `use_backend` and an unconditional one there would answer every
+    request, claimed name or not. A `default_backend` is reached only when no
+    rule matched, which is exactly the question being answered.
+    """
+
+    lines = ["", f"backend {_fallback_name(vip, protocol)}", "    mode http"]
+    if unknown_host.redirect is not None:
+        lines.append(f"    http-request redirect location {unknown_host.redirect} code 301")
+    else:
+        lines.append(
+            f"    http-request return status {unknown_host.status} "
+            f'content-type text/plain string "No site is configured for this name."'
+        )
+    return lines
+
+
+def _frontend_rules(
+    proxy: Proxy, role: str = "serve", networks: Mapping[str, Sequence[str]] | None = None
+) -> list[str]:
     """One object's whole contribution to the shared frontend.
 
     The routes are written in the order `order_routes` decides, and that order
@@ -382,6 +462,9 @@ def _frontend_rules(proxy: Proxy, role: str = "serve") -> list[str]:
 
     host = _acl_name(proxy.name, "host")
     lines = ["", f"    # {proxy.name}", *_host_acl(proxy)]
+
+    allow = _allow_rules(proxy, networks or {}, host)
+    lines.extend(allow)
 
     if role == "redirect":
         #

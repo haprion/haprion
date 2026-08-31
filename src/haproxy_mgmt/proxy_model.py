@@ -332,6 +332,17 @@ class Proxy:
     listen: Listen
     routes: tuple[Route, ...]
     backends: Mapping[str, Backend]
+    allow_from: tuple[str, ...] = ()
+    """Which named networks may reach this object at all.
+
+    Empty means everyone, which is what a public site wants. Named groups
+    rather than addresses: the object says "the office", and which addresses
+    that is stays in the cluster configuration where it can differ between a
+    rehearsal cluster and production.
+
+    This is a different question from the trusted proxy list. That one decides
+    whose forwarded headers are believed; this one decides who gets an answer.
+    """
 
 
 def _string(value: Mapping[str, Any], key: str, location: str, allowed: tuple[str, ...]) -> str:
@@ -593,7 +604,11 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         raise ModelError(f"{name}: the proxy object is not valid YAML: {exc}") from exc
 
     data = _mapping(loaded, name)
-    _only_keys(data, {"schema", "name", "hostnames", "listen", "routes", "backends"}, name)
+    _only_keys(
+        data,
+        {"schema", "name", "hostnames", "listen", "routes", "backends", "allow_from"},
+        name,
+    )
 
     if data.get("schema") != 1:
         raise ModelError(f"{name}.schema must be 1")
@@ -644,8 +659,22 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     if unused:
         raise ModelError(f"{name}.backends defines backends no route uses: {', '.join(unused)}")
 
+    allow_from = data.get("allow_from", [])
+    if not isinstance(allow_from, list):
+        raise ModelError(f"{name}.allow_from must list network names")
+    for network in allow_from:
+        if not isinstance(network, str) or not NAME.match(network):
+            raise ModelError(f"{name}.allow_from contains something that is not a network name")
+    if len(set(allow_from)) != len(allow_from):
+        raise ModelError(f"{name}.allow_from names the same network twice")
+
     return Proxy(
-        name=name, hostnames=tuple(hostnames), listen=listen, routes=routes, backends=backends
+        name=name,
+        hostnames=tuple(hostnames),
+        listen=listen,
+        routes=routes,
+        backends=backends,
+        allow_from=tuple(allow_from),
     )
 
 

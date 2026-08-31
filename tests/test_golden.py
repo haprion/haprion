@@ -23,9 +23,9 @@ from haproxy_mgmt.golden import (
     CERTIFICATES,
     DEFAULT_VIPS,
     GOLDEN,
+    arguments,
     cases,
     expected,
-    network,
     objects,
     produced,
 )
@@ -92,15 +92,10 @@ class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
         for case in cases():
             with self.subTest(case.name):
                 loaded = objects(case)
-                vips, default_vip = network(case)
-                arguments = {
-                    "vips": vips,
-                    "default_vip": default_vip,
-                    "certificates": CERTIFICATES,
-                }
+                cluster = arguments(case)
                 self.assertEqual(
-                    generate(list(reversed(loaded)), **arguments),
-                    generate(loaded, **arguments),
+                    generate(list(reversed(loaded)), **cluster),  # type: ignore[arg-type]
+                    generate(loaded, **cluster),  # type: ignore[arg-type]
                 )
 
 
@@ -297,3 +292,38 @@ class HttpsIsRefusedWhereItCannotBeHonoured(unittest.TestCase):
 
 
 HTTPS = (Path(__file__).parent / "golden" / "https" / "app.yaml").read_bytes()
+
+
+class WhoGetsAnAnswerAndWhoDoesNot(unittest.TestCase):
+    """The two questions a cluster answers rather than an object."""
+
+    def test_a_name_no_object_claims_gets_the_configured_answer(self) -> None:
+        """Reached through default_backend, which only fires when nothing matched.
+
+        A rule in the frontend could not do this: `http-request` runs before
+        `use_backend`, so an unconditional one would answer every request,
+        claimed name or not.
+        """
+
+        frontends = produced(GOLDEN / "https")["1000-frontends.cfg"]
+
+        self.assertIn("default_backend mgd-main-https-unknown", frontends)
+        self.assertIn("http-request return status 404", frontends)
+
+    def test_an_allowlist_denies_before_anything_is_routed(self) -> None:
+        frontends = produced(GOLDEN / "https")["1000-frontends.cfg"]
+
+        self.assertIn("acl mgd-admin-allow src 198.51.100.0/24 203.0.113.0/24", frontends)
+        self.assertIn(
+            "http-request deny deny_status 403 if mgd-admin-host !mgd-admin-allow", frontends
+        )
+
+    def test_a_network_the_cluster_does_not_define_is_refused(self) -> None:
+        """Ignoring it would admit everybody; matching nothing would deny everybody."""
+
+        document = HTTPS.replace(b"routes:", b"allow_from: [nowhere]\nroutes:")
+
+        with self.assertRaises(GeneratorError) as raised:
+            _generate([load_proxy("app", document)])
+
+        self.assertIn("nowhere", str(raised.exception))

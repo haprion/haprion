@@ -88,6 +88,26 @@ backends:
         port: {orders}
 """
 
+RESTRICTED = """
+schema: 1
+name: locked
+hostnames: [locked.example.com]
+listen:
+  protocol: http
+allow_from: [office]
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
 CORE = """
 global
     daemon
@@ -156,10 +176,12 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
         (root / "0000-core.cfg").write_text(CORE)
+        restricted = load_proxy("locked", RESTRICTED.format(web=ports["web"]).encode())
         layer = generate(
-            [cls.proxy],
+            [cls.proxy, restricted],
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
+            networks={"office": ("198.51.100.0/24",)},
             ports={"http": cls.port},
         )
         for name, content in layer.items():
@@ -257,6 +279,19 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
         status, _ = self.request("/", host="other.example.net")
 
         self.assertEqual(status, 503)
+
+    def test_a_restricted_object_refuses_a_visitor_from_outside_its_networks(self) -> None:
+        """The allowlist is a deny, and it fires before routing.
+
+        The request comes from the loopback address, which is in none of the
+        named networks, so the answer has to be a refusal rather than the site.
+        A restriction that quietly fell through to another rule would look like
+        it worked right up until somebody checked.
+        """
+
+        status, _ = self.request("/", host="locked.example.com")
+
+        self.assertEqual(status, 403)
 
     def test_the_host_header_may_carry_a_port_and_any_case(self) -> None:
         for host in (HOSTNAME.upper(), f"{HOSTNAME}:80", f"{HOSTNAME.upper()}:8080"):

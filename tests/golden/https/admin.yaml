@@ -4,6 +4,7 @@ hostnames: [admin.example.net]
 listen:
   protocol: https
   certificate: example.net
+allow_from: [office, vpn]
 routes:
   - path: /
     backend: console

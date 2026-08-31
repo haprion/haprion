@@ -17,7 +17,7 @@ from pathlib import Path
 
 import yaml
 
-from haproxy_mgmt.config import Vip
+from haproxy_mgmt.config import UnknownHost, Vip
 from haproxy_mgmt.generate import generate
 from haproxy_mgmt.proxy_model import Proxy, load_proxy
 
@@ -77,13 +77,31 @@ CERTIFICATES = ("example.com", "example.net", "wildcard-example-com")
 #
 RESOLVERS = "cluster-dns"
 
+#
+# The address groups a case's cluster defines, and what it answers for a name
+# no object claims.
+#
+NETWORKS = {"office": ("198.51.100.0/24",), "vpn": ("203.0.113.0/24",)}
+UNKNOWN_HOST = UnknownHost(status=404)
+
+
+def arguments(case: Path) -> dict[str, object]:
+    """Everything the generator needs besides the objects themselves.
+
+    One place, so the test that compares output and the tool that rewrites it
+    cannot disagree about what cluster the case is generated for.
+    """
+
+    vips, default_vip = network(case)
+    return {
+        "vips": vips,
+        "default_vip": default_vip,
+        "certificates": CERTIFICATES,
+        "resolvers": RESOLVERS,
+        "networks": NETWORKS,
+        "unknown_host": UNKNOWN_HOST,
+    }
+
 
 def produced(case: Path) -> dict[str, str]:
-    vips, default_vip = network(case)
-    return generate(
-        objects(case),
-        vips=vips,
-        default_vip=default_vip,
-        certificates=CERTIFICATES,
-        resolvers=RESOLVERS,
-    )
+    return generate(objects(case), **arguments(case))  # type: ignore[arg-type]

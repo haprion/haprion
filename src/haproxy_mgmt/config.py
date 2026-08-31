@@ -116,6 +116,20 @@ class Vip:
 
 
 @dataclass(frozen=True, slots=True)
+class UnknownHost:
+    """What a request for a name no object claims is answered with.
+
+    Without this HAProxy answers 503, because no rule matched and there is no
+    fallback - a defensible outcome but not a chosen one, and one that reads to
+    a visitor as "the site is broken" rather than "there is no site here".
+    Exactly one of the two fields is set.
+    """
+
+    status: int | None = None
+    redirect: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Cluster:
     cluster_id: str
     display_name: str
@@ -123,6 +137,8 @@ class Cluster:
     vips: Mapping[str, Vip]
     default_vip: str
     resolvers: str | None
+    networks: Mapping[str, tuple[str, ...]]
+    unknown_host: UnknownHost | None
     config_path: Path
     publish_path: Path
     node_path: str
@@ -267,6 +283,65 @@ def _vips(raw: Mapping[str, Any], vip: str, location: str) -> tuple[Mapping[str,
     if default not in vips:
         raise ConfigError(f"{location}.default_vip names no VIP in this cluster: {default}")
     return vips, default
+
+
+def _networks(raw: Mapping[str, Any], location: str) -> Mapping[str, tuple[str, ...]]:
+    """Named groups of addresses an object may be restricted to.
+
+    Named rather than written into the object, for the same reason a VIP is:
+    the addresses of an office or a VPN pool are environment values, and an
+    object that named them directly would mean something different in every
+    cluster it was published to.
+    """
+
+    entries = raw.get("networks")
+    if entries is None:
+        return {}
+    networks: dict[str, tuple[str, ...]] = {}
+    for name, value in _mapping(entries, f"{location}.networks").items():
+        where = f"{location}.networks.{name}"
+        if not NAME.fullmatch(name):
+            raise ConfigError(f"{where} is not a usable network name")
+        if not isinstance(value, list) or not value:
+            raise ConfigError(f"{where} must list at least one CIDR")
+        members: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ConfigError(f"{where} contains a non-string")
+            try:
+                network = ipaddress.ip_network(item, strict=False)
+            except ValueError as exc:
+                raise ConfigError(f"{where} contains an invalid CIDR: {item}") from exc
+            if network.prefixlen == 0:
+                #
+                # A group that means "everywhere" is an allowlist that allows
+                # everything, which is worse than no allowlist: it reads as a
+                # restriction and enforces nothing.
+                #
+                raise ConfigError(f"{where} may not name an entire address family")
+            members.append(str(network))
+        networks[name] = tuple(members)
+    return networks
+
+
+def _unknown_host(value: Any, location: str) -> UnknownHost | None:
+    if value is None:
+        return None
+    data = _mapping(value, location)
+    _only_keys(data, {"status", "redirect"}, location)
+    status = data.get("status")
+    redirect = data.get("redirect")
+    if (status is None) == (redirect is None):
+        raise ConfigError(f"{location} must set exactly one of status or redirect")
+    if status is not None:
+        if not isinstance(status, int) or isinstance(status, bool) or not 200 <= status <= 599:
+            raise ConfigError(f"{location}.status must be an HTTP status code")
+        return UnknownHost(status=status)
+    if not isinstance(redirect, str) or not redirect.startswith(("http://", "https://")):
+        raise ConfigError(f"{location}.redirect must be an absolute http or https URL")
+    if any(character in redirect for character in (" ", '"', "\\", "\r", "\n")):
+        raise ConfigError(f"{location}.redirect may not contain spaces, quotes or line breaks")
+    return UnknownHost(redirect=redirect)
 
 
 def _under_root(raw: str, root: Path, location: str) -> Path:
@@ -426,6 +501,8 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
                 "vips",
                 "default_vip",
                 "resolvers",
+                "networks",
+                "unknown_host",
                 "config_path",
                 "publish_path",
                 "node_path",
@@ -516,6 +593,8 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             vips=vips,
             default_vip=default_vip,
             resolvers=resolvers,
+            networks=_networks(raw, location),
+            unknown_host=_unknown_host(raw.get("unknown_host"), f"{location}.unknown_host"),
             config_path=_under_root(
                 _required_string(raw, "config_path", location),
                 policy.config_root,

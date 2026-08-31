@@ -192,7 +192,13 @@ class DeployIdentityTests(unittest.TestCase):
 _UNSET = object()
 
 
-def _cluster(vips: object = _UNSET, default_vip: object = _UNSET, resolvers: object = _UNSET):
+def _cluster(
+    vips: object = _UNSET,
+    default_vip: object = _UNSET,
+    resolvers: object = _UNSET,
+    networks: object = _UNSET,
+    unknown_host: object = _UNSET,
+):
     """One cluster from the shipped example, with its address table replaced.
 
     Defaults to removing the section entirely, which is the deployment that
@@ -209,6 +215,10 @@ def _cluster(vips: object = _UNSET, default_vip: object = _UNSET, resolvers: obj
         alpha["default_vip"] = default_vip
     if resolvers is not _UNSET:
         alpha["resolvers"] = resolvers
+    if networks is not _UNSET:
+        alpha["networks"] = networks
+    if unknown_host is not _UNSET:
+        alpha["unknown_host"] = unknown_host
 
     with tempfile.TemporaryDirectory() as raw:
         directory = Path(raw)
@@ -303,3 +313,35 @@ class TheResolversSection(unittest.TestCase):
             _cluster(resolvers="not a section")
 
         self.assertIn("resolvers", str(raised.exception))
+
+
+class NamedNetworksAndTheUnknownHostAnswer(unittest.TestCase):
+    def test_networks_are_named_groups_of_cidrs(self) -> None:
+        self.assertEqual(_cluster().networks["office"], ("198.51.100.0/24",))
+
+    def test_a_group_meaning_everywhere_is_refused(self) -> None:
+        """An allowlist that allows everything reads as a restriction and is none."""
+
+        #
+        # A documentation address with a zero prefix, the same spelling the
+        # trusted-proxy test uses: it normalises to the whole address family
+        # without putting a literal default route in the tree.
+        #
+        with self.assertRaises(ConfigError) as raised:
+            _cluster(networks={"anywhere": ["192.0.2.0/0"]})
+
+        self.assertIn("entire address family", str(raised.exception))
+
+    def test_the_unknown_host_answer_is_a_status_or_a_redirect_not_both(self) -> None:
+        self.assertEqual(_cluster().unknown_host.status, 404)
+
+        with self.assertRaises(ConfigError) as raised:
+            _cluster(unknown_host={"status": 404, "redirect": "https://www.example.com/"})
+
+        self.assertIn("exactly one", str(raised.exception))
+
+    def test_a_redirect_must_be_an_absolute_url(self) -> None:
+        with self.assertRaises(ConfigError) as raised:
+            _cluster(unknown_host={"redirect": "/elsewhere"})
+
+        self.assertIn("absolute", str(raised.exception))

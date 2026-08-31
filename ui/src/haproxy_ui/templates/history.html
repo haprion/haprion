@@ -16,7 +16,7 @@
   <article class="cluster-card history-cluster-card cluster-accent-{{ cluster.accent }}">
     <header class="cluster-header">
       <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
-      <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">Observed {{ cluster.age_label|lower }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
+      <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
     {% if cluster.versions %}
     <div class="table-scroll"><table class="node-table version-table"><thead><tr><th>Version</th><th>Saved</th><th>Comment</th><th>Commit</th>{% if management_writes and role == 'admin' and cluster.configured %}<th>Action</th>{% endif %}</tr></thead><tbody>

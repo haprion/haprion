@@ -130,6 +130,21 @@ def prepare(
         )
 
     if operation == "revert":
+        #
+        # No lifeline, and deliberately not by omission.
+        #
+        # A revert reaches no node. It validates the candidate in the sandbox,
+        # commits and publishes - all local, and over in seconds against a
+        # sixty-second lease - so there is no window worth building a checkpoint
+        # protocol for. The case a lifeline would guard against is closed twice
+        # over anyway: `expected_commit` makes a second worker's revert refuse
+        # once the commit has moved, and the engine holds the cluster's lock for
+        # the length of the operation.
+        #
+        # What would change this answer: a revert that grows a step touching a
+        # node. It should get a lifeline the same day, because everything above
+        # stops being true at that point. Reviewed and decided 2026-08-31 as F4.
+        #
         _only(payload, "version", "expected_commit")
         version = payload.get("version")
         commit = payload.get("expected_commit")

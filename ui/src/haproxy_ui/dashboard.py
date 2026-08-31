@@ -108,6 +108,30 @@ def relative_age(observed_at: datetime, now: datetime) -> str:
     return f"{hours // 24}d ago"
 
 
+def observation_label(observed_at: datetime, now: datetime, *, captured: bool) -> str:
+    """What a cluster card says about the freshness of its reading.
+
+    One function for all five pages that carry such a card, because the wording
+    is the part that was wrong and a wording repeated in five builders is a
+    wording that will only be half fixed.
+
+    In snapshot mode the readings are judged against the instant they were
+    captured rather than against the wall clock - which is right, and argued for
+    in `views.read_source` - but the label followed the clock into saying
+    "Observed just now" about data that could be two days old, one line above a
+    badge stating its true age. The relative age is dropped there entirely: it
+    is a fact about the snapshot as a whole and the badge already states it once.
+
+    What survives is the part that is still worth knowing: whether production's
+    own reading was current when the picture was taken. A cluster that was
+    already stale then still says so.
+    """
+
+    if captured:
+        return "Current at capture"
+    return f"Observed {relative_age(observed_at, now).lower()}"
+
+
 def _node_view(value: Any) -> NodeView:
     node = _mapping(value)
     name = _text(node.get("name"), "Unnamed node")
@@ -221,6 +245,13 @@ def _cluster_view(
     configured: bool,
     now: datetime,
     stale_after: timedelta,
+    #
+    # True only in snapshot mode, where the readings describe a moment that has
+    # passed and `now` is that moment rather than the wall clock. It changes
+    # what the freshness line says, not how staleness is judged. See
+    # `dashboard.observation_label`.
+    #
+    captured: bool = False,
 ) -> ClusterView:
     result = _mapping(reading.result)
     summary = _mapping(result.get("summary"))
@@ -290,7 +321,7 @@ def _cluster_view(
         detail=detail,
         observed_at=observed_at,
         observed_iso=observed_at.isoformat(),
-        age_label=relative_age(observed_at, now),
+        age_label=observation_label(observed_at, now, captured=captured),
         stale=stale,
         nodes=nodes,
         configured_nodes=configured_nodes,
@@ -307,6 +338,13 @@ def build_dashboard(
     *,
     now: datetime | None = None,
     stale_after: timedelta,
+    #
+    # True only in snapshot mode, where the readings describe a moment that has
+    # passed and `now` is that moment rather than the wall clock. It changes
+    # what the freshness line says, not how staleness is judged. See
+    # `dashboard.observation_label`.
+    #
+    captured: bool = False,
 ) -> DashboardView:
     """Build one deterministic view from configuration and cached status rows."""
 
@@ -321,6 +359,7 @@ def build_dashboard(
             configured=cluster in configured_set,
             now=clock,
             stale_after=stale_after,
+            captured=captured,
         )
         if cluster in by_cluster
         else _empty_cluster(cluster, configured=True)

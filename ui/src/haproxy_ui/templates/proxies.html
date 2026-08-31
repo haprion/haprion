@@ -17,7 +17,7 @@
   <article class="cluster-card proxy-cluster-card cluster-accent-{{ cluster.accent }}">
     <header class="cluster-header">
       <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
-      <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">Observed {{ cluster.age_label|lower }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
+      <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
     {% if cluster.proxies %}
     <div class="table-scroll"><table class="node-table proxy-table"><thead><tr><th>Proxy</th><th>Protocol</th><th>Hosts / ports</th><th>Backends</th><th>Ownership</th></tr></thead><tbody>

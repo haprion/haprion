@@ -1,9 +1,23 @@
 """The safe, reader-visible projection of queued management jobs.
 
 The job table is an operation record, not a way to control an operation.  It
-deliberately leaves out claim tokens, idempotency keys, payload internals and
-raw stderr: none answers the question a reader has after pressing a button,
-and several would make an implementation detail into part of the UI contract.
+deliberately leaves out claim tokens, idempotency keys and payload internals:
+none answers the question a reader has after pressing a button, and several
+would make an implementation detail into part of the UI contract.
+
+Two things a failure needs are here, and both were missing until 2026-08-31.
+
+The **error code** is the stable, environment-independent string the helper
+blamed. The worker already keeps it in the audit trail because it is the one
+part of a failure a person can act on months later - it simply never reached a
+page, so `failed / exit 65` was the whole of what a reader was told, and a
+locked cluster, a moved target and a refused validation looked identical.
+
+The **diagnostics** are the operation's redacted stderr, and they are shown to
+an admin only. The frozen contract says raw stderr is never returned to a
+*reader role*; hiding it from everyone was a habit rather than a decision, and
+the cost of that habit fell on the one person who had to open an SSH session at
+every failure. See B44.
 """
 
 from __future__ import annotations
@@ -42,6 +56,19 @@ class JobView:
     #
     follow_up: str | None = None
     next_command: str | None = None
+    #
+    # Verbatim, never translated. A table mapping codes to friendlier sentences
+    # would be a second place that has to stay in step with the contract - the
+    # same drift `EXIT_MEANINGS` already documents one instance of - and the
+    # code says more to somebody with proxy experience than a paraphrase would.
+    #
+    error_code: str | None = None
+    #
+    # Admin only, and empty for everyone else. Not merely hidden in the
+    # template: the projection never carries it, so a role that may not see it
+    # cannot be shown it by a later change to a page.
+    #
+    diagnostics: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,8 +144,42 @@ def _owes_deployment(job: Job) -> tuple[bool, str | None]:
     return True, command if isinstance(command, str) and command else None
 
 
-def _view(job: Job, now: datetime, *, follow_up: str | None, next_command: str | None) -> JobView:
+#
+# The states that mean "this did not work". Both the follow-up row under a job
+# and the "Need review" tally read it, so the two cannot drift into disagreeing
+# about what counts as a bad ending.
+#
+ATTENTION = frozenset({"partial", "blocked", "failed", "unknown"})
+
+
+def _error_code(job: Job) -> str | None:
+    """The stable code this job's result blamed, or nothing.
+
+    Read defensively for the same reason `_owes_deployment` is: the document
+    was written by a privileged helper and stored as it arrived, so this asks
+    it questions rather than assuming its shape.
+    """
+
+    envelope = job.result
+    if not isinstance(envelope, dict):
+        return None
+    error = envelope.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code")
+    return code if isinstance(code, str) and code else None
+
+
+def _view(
+    job: Job,
+    now: datetime,
+    *,
+    follow_up: str | None,
+    next_command: str | None,
+    diagnostics: bool,
+) -> JobView:
     label, tone = _state(job.state)
+    ended_badly = job.state in ATTENTION
     return JobView(
         id=job.id,
         operation=_operation(job.operation),
@@ -135,10 +196,15 @@ def _view(job: Job, now: datetime, *, follow_up: str | None, next_command: str |
         exit_meaning=_exit_meaning(job.exit_code),
         follow_up=follow_up,
         next_command=next_command,
+        error_code=_error_code(job) if ended_badly else None,
+        #
+        # Only for a job that ended badly. A successful operation's stderr is
+        # progress output, and putting a diagnostics panel under every green
+        # row would bury the ones that mean something.
+        #
+        diagnostics=(job.stderr_excerpt or None) if diagnostics and ended_badly else None,
     )
 
-
-ATTENTION = frozenset({"partial", "blocked", "failed", "unknown"})
 
 #
 # What the number in the exit column means. It is shown because a maintainer
@@ -176,9 +242,17 @@ def _unresolved(rows: list[Job]) -> int:
     page as "what needs review?", the honest answer is: the clusters where the
     last thing we did did not work.
 
-    A cluster whose newest job is still queued or running is left out. It is not
-    yet an outcome, and calling it one would make the number flicker while an
-    operation the reader started is still going.
+    A queued or running job is skipped rather than counted, and the cluster is
+    then judged on the newest job that did finish. So a re-run in flight neither
+    clears the warning nor replaces it: what is still known about that cluster
+    is that the last completed attempt failed, and it stays known until an
+    attempt completes differently.
+
+    That is deliberate, and it is the opposite of what this docstring claimed
+    until 2026-08-31, when the code review measured the function against its own
+    description. Counting only finished jobs and then letting a running one
+    silence the tally would let an operation in progress hide a warning, which
+    is the wrong direction to be wrong in.
     """
 
     latest: dict[str, str] = {}
@@ -193,6 +267,7 @@ def build_job_overview(
     *,
     now: datetime | None = None,
     awaiting: frozenset[str] = frozenset(),
+    diagnostics: bool = False,
 ) -> JobOverview:
     """Build one bounded, newest-first operation history from database rows.
 
@@ -206,6 +281,10 @@ def build_job_overview(
     So two things have to hold: the cluster has to be behind its target now, and
     this has to be the newest job that left it that way. Anything older is
     history, and history does not need a caption telling the reader to act.
+
+    `diagnostics` says whether the caller is entitled to the operations' stderr.
+    It defaults to false, so a page that forgets to ask the question gets the
+    reader-safe projection rather than the privileged one.
     """
 
     current = now or datetime.now(UTC)
@@ -227,6 +306,7 @@ def build_job_overview(
                     else None
                 ),
                 next_command=command if show else None,
+                diagnostics=diagnostics,
             )
         )
     jobs = tuple(views)

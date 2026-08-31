@@ -455,6 +455,14 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .job-follow-up td { padding-top: 0; padding-bottom: 11px; white-space: normal; color: var(--muted); font-size: 11px; }
 .job-follow-up .status-dot { margin-right: 7px; }
 .job-follow-up code { margin-left: 7px; padding: 1px 6px; border-radius: 4px; background: var(--panel-soft); color: var(--text-primary); font-size: 11px; }
+.job-table tr:has(+ .job-failure) td { border-bottom: 0; }
+.job-diagnostics { margin-top: 8px; }
+.job-diagnostics summary { display: inline-block; padding: 2px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--text-secondary); cursor: pointer; font-size: 11px; }
+.job-diagnostics summary::-webkit-details-marker { display: none; }
+.job-diagnostics summary:hover { border-color: var(--line-strong); color: var(--text-strong); }
+/* The operation's own output, so it keeps its own line breaks and scrolls
+   inside its box rather than widening the table it sits in. */
+.job-diagnostics pre { overflow: auto; max-height: 320px; margin: 8px 0 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--muted-strong); font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Backups. Two tables, because the card answers two questions: whether every
    node is backed up, and which archives are actually there to restore from.

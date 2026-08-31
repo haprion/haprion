@@ -44,6 +44,18 @@ IDLE_SECONDS = 30
 # predictable and small amount of time to be recognised as gone - and long enough
 # that a slow database round trip does not cost a worker its own job.
 #
+# It also has to outlast the slowest way a run can end, which is a number that
+# lives in `execution.py` rather than here: a tick's wait since the last
+# renewal, the lifeline's grace, a SIGTERM grace, a SIGKILL grace, and two
+# thread joins. If the stop path outlives the lease, `finish_job` is refused and
+# an operation that actually completed is re-adjudicated instead of recorded.
+#
+# That fails in the safe direction, and the measured stop was two seconds rather
+# than the arithmetic's worst case - so this is 60 rather than something with
+# more headroom, because doubling it would double how long an abandoned job
+# blocks its cluster to buy margin against a case that has not happened.
+# `tests/test_execution.py` holds the two files to the arithmetic instead.
+#
 LEASE_SECONDS = 60
 
 #

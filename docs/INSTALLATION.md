@@ -786,6 +786,34 @@ same boundary the running services live behind rather than an exception carved
 out for tooling: the web process cannot create an administrator no matter what
 it is asked to do.
 
+#### What the two roles see
+
+A **reader** sees every page and can press nothing. An **admin** can queue the
+operations the interface offers, and sees two things a reader does not.
+
+- **The error code** of an operation that did not end cleanly — the stable,
+  environment-independent string the engine blamed, such as
+  `cluster_not_converged` or `ssh_unreachable`. It is shown verbatim rather than
+  translated, and it is the same string the command line prints beside its
+  message and the audit trail records, so what a terminal said and what the page
+  says can be compared without guessing.
+- **The operation's diagnostics** — its redacted stderr, folded away under the
+  job until asked for. Private keys, `token`/`password`/`secret` assignments and
+  sensitive paths are masked before the text is ever stored, and it is capped at
+  64 KiB.
+
+The diagnostics contain **real host names, node names and the proxy's own
+output**, which is what makes them worth showing. Masking covers secrets, not
+the identity of the environment. So: a screenshot of that panel does not belong
+in an issue, a README, a support ticket or anywhere else outside the
+installation.
+
+Withholding raw diagnostics from a *reader* is what the contract requires;
+withholding them from an administrator as well was a habit that cost the one
+person who had to open an SSH session at every failure, and bought nobody
+anything in an installation where the reader and the administrator are the same
+person.
+
 #### How a session works
 
 - **Passwords are Argon2id**, with parameters stated in the code rather than

@@ -11,7 +11,9 @@ privilege suite that runs against the real database.
 from __future__ import annotations
 
 import re
+import time
 import unittest
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -494,3 +496,44 @@ class SessionsAndSigningOut(LoginTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheLoginFormIsNotAnAccountList(unittest.TestCase):
+    """Both answers cost the same, including the ones nobody thinks about.
+
+    The interesting input is a password that is short enough in characters to
+    pass `Form(max_length=...)` and long enough in bytes to hit the hashing
+    limit. It reached one path's fast refusal and the other path's Argon2
+    verification, which is a difference a script can time. Found by the code
+    review on 2026-08-31.
+    """
+
+    #
+    # Characters, not bytes: two-byte characters are what open the gap between
+    # the form's limit and this module's.
+    #
+    OVERSIZED = "å" * 700
+
+    def test_an_over_long_password_is_refused_by_both_paths(self) -> None:
+        self.assertGreater(len(self.OVERSIZED.encode("utf-8")), auth.MAX_PASSWORD_BYTES)
+        self.assertLessEqual(len(self.OVERSIZED), auth.MAX_PASSWORD_BYTES)
+
+        stored = auth.hash_password("a password somebody actually has")
+
+        existing = _elapsed(lambda: auth.verify_password(stored, self.OVERSIZED))
+        absent = _elapsed(lambda: auth.burn_absent_user_time(self.OVERSIZED))
+
+        #
+        # Asserted as a ratio against a whole Argon2 verification rather than as
+        # an absolute number of milliseconds, so this measures the presence of a
+        # hash rather than the speed of whatever machine is running the suite.
+        #
+        one_verification = _elapsed(lambda: auth.verify_password(stored, "wrong"))
+        self.assertLess(absent, one_verification / 4)
+        self.assertLess(existing, one_verification / 4)
+
+
+def _elapsed(work: Callable[[], object]) -> float:
+    start = time.perf_counter()
+    work()
+    return time.perf_counter() - start

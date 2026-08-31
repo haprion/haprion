@@ -318,6 +318,12 @@ def build_router(config: Config) -> APIRouter:
             status_rows,
             now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            #
+            # The snapshot's readings describe the instant it was taken, so
+            # the freshness line says that rather than claiming the wall
+            # clock. Staleness is still judged the same way.
+            #
+            captured=captured_at is not None,
         )
         return TEMPLATES.TemplateResponse(
             request,
@@ -347,6 +353,12 @@ def build_router(config: Config) -> APIRouter:
             inventory_rows,
             now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            #
+            # The snapshot's readings describe the instant it was taken, so
+            # the freshness line says that rather than claiming the wall
+            # clock. Staleness is still judged the same way.
+            #
+            captured=captured_at is not None,
         )
         return TEMPLATES.TemplateResponse(
             request,
@@ -376,6 +388,12 @@ def build_router(config: Config) -> APIRouter:
             certificate_rows,
             now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            #
+            # The snapshot's readings describe the instant it was taken, so
+            # the freshness line says that rather than claiming the wall
+            # clock. Staleness is still judged the same way.
+            #
+            captured=captured_at is not None,
         )
         return TEMPLATES.TemplateResponse(
             request,
@@ -405,6 +423,12 @@ def build_router(config: Config) -> APIRouter:
             backup_rows,
             now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            #
+            # The snapshot's readings describe the instant it was taken, so
+            # the freshness line says that rather than claiming the wall
+            # clock. Staleness is still judged the same way.
+            #
+            captured=captured_at is not None,
         )
         return TEMPLATES.TemplateResponse(
             request,
@@ -434,6 +458,12 @@ def build_router(config: Config) -> APIRouter:
             history_rows,
             now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            #
+            # The snapshot's readings describe the instant it was taken, so
+            # the freshness line says that rather than claiming the wall
+            # clock. Staleness is still judged the same way.
+            #
+            captured=captured_at is not None,
         )
         return TEMPLATES.TemplateResponse(
             request,
@@ -463,6 +493,12 @@ def build_router(config: Config) -> APIRouter:
             status_rows,
             now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            #
+            # The snapshot's readings describe the instant it was taken, so
+            # the freshness line says that rather than claiming the wall
+            # clock. Staleness is still judged the same way.
+            #
+            captured=captured_at is not None,
         )
         entries = activity.build_activity(current)
         return TEMPLATES.TemplateResponse(
@@ -499,6 +535,13 @@ def build_router(config: Config) -> APIRouter:
             overview = jobs.build_job_overview(
                 db.recent_jobs(connection),
                 awaiting=jobs.awaiting_deployment(db.cluster_statuses(connection)),
+                #
+                # The contract withholds raw stderr from a reader role, and only
+                # from a reader role. Deciding it here rather than in the
+                # template means the projection an unentitled session receives
+                # never contains the diagnostics at all. See B44.
+                #
+                diagnostics=session.role == "admin",
             )
         return TEMPLATES.TemplateResponse(
             request,

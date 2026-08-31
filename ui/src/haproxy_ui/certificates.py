@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from haproxy_ui.cluster_identity import accent_index
-from haproxy_ui.dashboard import relative_age
+from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterCertificates
 
 type Tone = Literal["healthy", "warning", "critical", "unknown"]
@@ -315,6 +315,13 @@ def _cluster_view(
     configured: bool,
     now: datetime,
     stale_after: timedelta,
+    #
+    # True only in snapshot mode, where the readings describe a moment that has
+    # passed and `now` is that moment rather than the wall clock. It changes
+    # what the freshness line says, not how staleness is judged. See
+    # `dashboard.observation_label`.
+    #
+    captured: bool = False,
 ) -> CertificateClusterView:
     result = _mapping(reading.result)
     entries = result.get("certificates")
@@ -337,7 +344,7 @@ def _cluster_view(
         detail=detail,
         observed_at=reading.observed_at,
         observed_iso=reading.observed_at.astimezone(UTC).isoformat(),
-        age_label=relative_age(reading.observed_at, now),
+        age_label=observation_label(reading.observed_at, now, captured=captured),
         stale=stale,
         referenced_count=sum(entry.referenced for entry in certificates),
         available_count=sum(not entry.referenced for entry in certificates),
@@ -351,6 +358,13 @@ def build_certificate_overview(
     *,
     now: datetime | None = None,
     stale_after: timedelta,
+    #
+    # True only in snapshot mode, where the readings describe a moment that has
+    # passed and `now` is that moment rather than the wall clock. It changes
+    # what the freshness line says, not how staleness is judged. See
+    # `dashboard.observation_label`.
+    #
+    captured: bool = False,
 ) -> CertificateOverview:
     """Combine configured clusters and their newest cached certificate listing.
 
@@ -369,11 +383,15 @@ def build_certificate_overview(
         clusters.append(
             _empty(cluster, configured=True)
             if reading is None
-            else _cluster_view(reading, configured=True, now=now, stale_after=stale_after)
+            else _cluster_view(
+                reading, configured=True, now=now, stale_after=stale_after, captured=captured
+            )
         )
     for cluster in sorted(rows):
         clusters.append(
-            _cluster_view(rows[cluster], configured=False, now=now, stale_after=stale_after)
+            _cluster_view(
+                rows[cluster], configured=False, now=now, stale_after=stale_after, captured=captured
+            )
         )
 
     distinct: dict[str, CertificateView] = {}

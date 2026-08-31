@@ -380,7 +380,10 @@ def _released(
     report.outcome = Outcome.PARTIAL if touched else Outcome.BLOCKED
     report.error = Message(code="caller_released", message=reason)
 
-    writer.write(f"\nRESULT: {report.outcome.value.upper()}\n{reason}; stopped at a safe point.\n")
+    writer.write(
+        f"\nRESULT: {report.outcome.value.upper()}  [{report.error.code}]\n"
+        f"{reason}; stopped at a safe point.\n"
+    )
     if touched:
         writer.write("Some nodes carry the target and some do not. Run the same command again.\n")
         return DeployRun(EXIT_INCOMPLETE, report)
@@ -434,13 +437,27 @@ def _report(writer: TextIO, status: ClusterStatus, step: Step, report: DeployRep
         writer.write("\nRESULT: OK\n")
         return 0
 
+    #
+    # The stable code is written beside the prose from here on, because it is
+    # what the jobs page and the audit trail record. A person comparing what
+    # their terminal said with what the interface says should not have to guess
+    # that "one node did not reach the target" and `target_not_reached` are the
+    # same event. Added 2026-08-31 as F1b.
+    #
     if step.outcome is Outcome.FAILED:
         report.outcome = Outcome.FAILED
         report.error = Message(code="deploy_failed", message=step.reason)
-        writer.write(f"\nRESULT: FAILED\n{step.reason}.\n")
+        writer.write(f"\nRESULT: FAILED  [{report.error.code}]\n{step.reason}.\n")
         return step.exit_code
 
     report.outcome = Outcome.PARTIAL
-    writer.write(f"\nRESULT: PARTIAL\n{step.reason}.\n")
+    #
+    # Partial carries warnings rather than one top-level error, so the codes are
+    # the warnings' - listed rather than invented, and skipped entirely when
+    # there are none, so this never prints an empty pair of brackets.
+    #
+    codes = sorted({warning.code for warning in report.warnings})
+    suffix = f"  [{', '.join(codes)}]" if codes else ""
+    writer.write(f"\nRESULT: PARTIAL{suffix}\n{step.reason}.\n")
     writer.write("Run the same command again once every node can be read.\n")
     return step.exit_code or EXIT_INCOMPLETE

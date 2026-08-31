@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from haproxy_ui.cluster_identity import accent_index
-from haproxy_ui.dashboard import relative_age
+from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterInventory
 
 type Tone = Literal["healthy", "warning", "critical", "unknown"]
@@ -119,6 +119,13 @@ def _cluster_view(
     configured: bool,
     now: datetime,
     stale_after: timedelta,
+    #
+    # True only in snapshot mode, where the readings describe a moment that has
+    # passed and `now` is that moment rather than the wall clock. It changes
+    # what the freshness line says, not how staleness is judged. See
+    # `dashboard.observation_label`.
+    #
+    captured: bool = False,
 ) -> ProxyClusterView:
     result = _mapping(reading.result)
     values = result.get("proxies")
@@ -165,7 +172,7 @@ def _cluster_view(
         detail=detail,
         observed_at=reading.observed_at,
         observed_iso=reading.observed_at.astimezone(UTC).isoformat(),
-        age_label=relative_age(reading.observed_at, now),
+        age_label=observation_label(reading.observed_at, now, captured=captured),
         stale=stale,
         version=f"v{version}"
         if isinstance(version, int) and not isinstance(version, bool)
@@ -180,6 +187,13 @@ def build_proxy_overview(
     *,
     now: datetime | None = None,
     stale_after: timedelta,
+    #
+    # True only in snapshot mode, where the readings describe a moment that has
+    # passed and `now` is that moment rather than the wall clock. It changes
+    # what the freshness line says, not how staleness is judged. See
+    # `dashboard.observation_label`.
+    #
+    captured: bool = False,
 ) -> ProxyOverview:
     """Combine configured clusters and their newest cached inventory rows."""
 
@@ -192,11 +206,15 @@ def build_proxy_overview(
         clusters.append(
             _empty(cluster, configured=True)
             if reading is None
-            else _cluster_view(reading, configured=True, now=now, stale_after=stale_after)
+            else _cluster_view(
+                reading, configured=True, now=now, stale_after=stale_after, captured=captured
+            )
         )
     for cluster in sorted(rows):
         clusters.append(
-            _cluster_view(rows[cluster], configured=False, now=now, stale_after=stale_after)
+            _cluster_view(
+                rows[cluster], configured=False, now=now, stale_after=stale_after, captured=captured
+            )
         )
 
     proxies = tuple(proxy for cluster in clusters for proxy in cluster.proxies)

@@ -107,11 +107,24 @@ def burn_absent_user_time(password: str) -> None:
     two answers differ by the cost of an Argon2 verification, which is hundreds
     of milliseconds - a difference a script can measure reliably, turning the
     login form into a list of who has an account here.
+
+    The oversize check has to come first, and be the same check, because
+    `verify_password` refuses before it hashes. Truncating and hashing here
+    instead reopened the very oracle in the other direction: an over-long
+    password answered instantly for an account that exists and slowly for one
+    that does not. Measured on 2026-08-31 as 0.0 ms against 62.6 ms, using 700
+    characters that are 1400 bytes - long enough in bytes to pass the limit,
+    short enough in characters to pass the form's own length check.
+
+    Refusing rather than hashing is also the only answer that keeps what the
+    limit is for: nobody should be able to make this machine run a memory-hard
+    function over a megabyte.
     """
 
     try:
-        _HASHER.verify(_ABSENT_USER_HASH, password[:MAX_PASSWORD_BYTES])
-    except (VerifyMismatchError, VerificationError, InvalidHashError):
+        _refuse_oversized(password)
+        _HASHER.verify(_ABSENT_USER_HASH, password)
+    except (VerifyMismatchError, VerificationError, InvalidHashError, PasswordTooLong):
         return
 
 

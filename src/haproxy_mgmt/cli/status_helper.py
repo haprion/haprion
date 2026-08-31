@@ -122,7 +122,13 @@ def main(
             "no status identity is configured. Add status_identity with "
             "'user' and 'key' to the runtime policy."
         )
-        errors.write(f"ERROR: {message}\n")
+        #
+        # The code beside the message, not instead of it. The terminal, the jobs
+        # page and the audit trail then name the same string for the same
+        # failure, so "what my window said" and "what the page says" can be put
+        # side by side without guessing. Added 2026-08-31 as F1b.
+        #
+        errors.write(f"ERROR: [status_unavailable] {message}\n")
         return write_failure(
             writer,
             operation=OPERATION,

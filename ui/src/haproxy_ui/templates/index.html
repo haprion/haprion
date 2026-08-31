@@ -55,7 +55,7 @@
       <div class="cluster-state">
         <span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>
         {% if cluster.observed_at %}
-        <time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">Observed {{ cluster.age_label|lower }}</time>
+        <time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>
         {% else %}
         <span class="observation-age">Never observed</span>
         {% endif %}

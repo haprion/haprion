@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 from uuid import uuid4
@@ -84,7 +85,7 @@ class JobPageTests(LoginTestCase):
         self.recent_jobs.start()
         self.addCleanup(self.recent_jobs.stop)
 
-    def test_the_job_page_is_authenticated_and_hides_raw_diagnostics(self) -> None:
+    def test_the_job_page_is_authenticated(self) -> None:
         client = self.client()
         self.sign_in(client)
 
@@ -94,7 +95,41 @@ class JobPageTests(LoginTestCase):
         self.assertIn('href="/jobs" aria-current="page"', page.text)
         self.assertIn("Blocked", page.text)
         self.assertIn("Deploy configuration", page.text)
+
+    def test_a_reader_is_never_shown_the_operation_diagnostics(self) -> None:
+        """The line the frozen contract actually draws.
+
+        `CONTRACT.md` withholds raw stderr from a reader role - and only from a
+        reader role. Hiding it from an admin as well was a habit rather than a
+        decision, and the person paying for that habit was the one who had to
+        open an SSH session at every failure. See B44.
+
+        Asserted on the rendered page rather than on the projection, because a
+        template is where such a rule is most easily lost.
+        """
+
+        self.account = replace(self.account, role="reader")
+        client = self.client()
+        self.sign_in(client)
+
+        page = client.get("/jobs")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Blocked", page.text)
         self.assertNotIn("must not be rendered", page.text)
+        self.assertNotIn("Diagnostics", page.text)
+
+    def test_an_admin_is_shown_the_code_and_the_diagnostics(self) -> None:
+        """What a failure has to answer: which failure, and what did it say."""
+
+        client = self.client()
+        self.sign_in(client)
+
+        page = client.get("/jobs")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("must not be rendered", page.text)
+        self.assertIn("Diagnostics", page.text)
 
     def test_the_attention_states_are_rendered_and_told_apart(self) -> None:
         """`partial`, `blocked` and `unknown` are three different answers.
@@ -118,7 +153,6 @@ class JobPageTests(LoginTestCase):
         self.assertEqual(page.status_code, 200)
         for label in ("Completed with gaps", "Blocked", "Outcome unknown"):
             self.assertIn(label, page.text)
-        self.assertNotIn("must not be rendered", page.text)
 
     def test_a_revert_that_still_needs_a_deploy_says_so_on_the_page(self) -> None:
         """The projection being right is not the same as the page showing it."""
@@ -386,3 +420,47 @@ class WhatTheExitNumberMeans(unittest.TestCase):
     def test_an_unrecorded_or_unfamiliar_code_still_says_something(self) -> None:
         self.assertEqual(self.meaning(None), "The job recorded no exit code.")
         self.assertEqual(self.meaning(42), "The command exited with 42.")
+
+
+class TheErrorCodeReachesThePage(LoginTestCase):
+    """The one part of a failure a person can act on months later.
+
+    The helper blames a stable, environment-independent code; the worker keeps
+    it in the audit trail for exactly that reason. Until 2026-08-31 it reached
+    no page at all, so a locked cluster, a moved target and a refused validation
+    were all shown as `failed / exit 65` and told apart by nobody.
+    """
+
+    def page(self, rows: list[db.Job]) -> str:
+        client = self.client()
+        self.sign_in(client)
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=rows):
+            return client.get("/jobs").text
+
+    def test_a_blocked_job_names_the_code_the_helper_blamed(self) -> None:
+        envelope = {"error": {"code": "cluster_not_converged", "message": "not converged"}}
+
+        body = self.page([job(state="blocked", outcome="blocked", result=envelope)])
+
+        self.assertIn("cluster_not_converged", body)
+        #
+        # The code, not the helper's prose. The message varies with the
+        # environment and is not part of the frozen vocabulary; the code is.
+        #
+        self.assertNotIn("not converged", body)
+
+    def test_a_job_that_worked_carries_no_failure_row(self) -> None:
+        body = self.page([job(state="done", outcome="done")])
+
+        self.assertNotIn("Reason:", body)
+        self.assertNotIn("Diagnostics", body)
+
+    def test_a_result_that_is_not_the_expected_shape_is_survived(self) -> None:
+        """The document is a privileged helper's, stored as it arrived."""
+
+        for broken in ({"error": "a string"}, {"error": {"code": 7}}, {"error": {}}, {}, None):
+            with self.subTest(result=broken):
+                body = self.page([job(state="failed", outcome="failed", result=broken)])
+
+                self.assertIn("Failed", body)
+                self.assertNotIn("Reason:", body)

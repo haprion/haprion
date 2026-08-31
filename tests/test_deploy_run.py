@@ -374,3 +374,50 @@ class StoppingBecauseTheCallerLetGo(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(LAST_REPORT[0].outcome.value, "done")
         self.assertEqual(len(cluster.triggered), 2)
+
+
+class TheTerminalNamesTheSameCodeAsThePage(unittest.TestCase):
+    """One failure, one string, wherever a person happens to be reading.
+
+    The stable code is what the jobs page shows and what the audit trail keeps.
+    Printing only prose here left an operator comparing "the deploy trigger
+    failed on node-b" against `deploy_failed` and guessing they were the same
+    event. Added 2026-08-31 as F1b, out of the code review's F1.
+    """
+
+    def test_a_failed_deploy_prints_its_code_beside_the_reason(self) -> None:
+        cluster = pair()
+        cluster.node("node-b").reload_fails = True
+
+        _, shown = deploy(cluster)
+
+        self.assertIn("RESULT: FAILED  [deploy_failed]", shown)
+        self.assertIn("the deploy trigger failed on node-b", shown)
+
+    def test_a_partial_deploy_lists_the_warning_codes_it_recorded(self) -> None:
+        cluster = pair()
+        cluster.node("node-a").reachable = False
+
+        _, shown = deploy(cluster)
+
+        #
+        # Every distinct warning code, sorted, rather than the first one. A
+        # partial deploy usually has more than one thing to say, and picking one
+        # would make the line depend on the order they happened to be recorded
+        # in.
+        #
+        self.assertIn("RESULT: PARTIAL  [cluster_state, node_unverified]", shown)
+        #
+        # The codes come from the warnings the report actually holds, so the
+        # line cannot name one the envelope does not carry.
+        #
+        self.assertEqual(
+            sorted({warning.code for warning in LAST_REPORT[0].warnings}),
+            ["cluster_state", "node_unverified"],
+        )
+
+    def test_a_successful_deploy_carries_no_brackets_at_all(self) -> None:
+        _, shown = deploy(pair())
+
+        self.assertIn("RESULT: OK", shown)
+        self.assertNotIn("[", shown.split("RESULT:")[1])

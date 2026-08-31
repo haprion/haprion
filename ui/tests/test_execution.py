@@ -15,7 +15,7 @@ import time
 import unittest
 import unittest.mock
 
-from haproxy_ui import execution
+from haproxy_ui import execution, worker
 
 PYTHON = sys.executable
 
@@ -356,3 +356,30 @@ class WithoutALifelineThePipeIsClosed(unittest.TestCase):
         )
 
         self.assertEqual(completed.ending, "timeout")
+
+
+class TheStopPathFitsInsideTheLease(unittest.TestCase):
+    """Two files, one deadline, and nothing that connected them.
+
+    A run that has to be stopped spends a tick's wait since its last renewal,
+    then the lifeline's grace, then a SIGTERM grace, then a SIGKILL grace, then
+    two thread joins - all of it after the lease was last pushed forward. Should
+    that outlive the lease, `finish_job` is refused and an operation that
+    completed is re-adjudicated instead of recorded.
+
+    The constants sit in `execution.py` and the lease in `worker.py`, so raising
+    a grace because a slow node needs it used to eat the margin with nothing
+    saying so. This is what says so. Written after the 2026-08-31 code review
+    measured the worst case at 55 seconds against a 60-second lease.
+    """
+
+    def test_the_worst_case_stop_leaves_the_lease_time_to_spare(self) -> None:
+        worst_case = (
+            execution.TICK_SECONDS
+            + execution.LIFELINE_GRACE_SECONDS
+            + execution.GRACE_SECONDS  # waiting out SIGTERM
+            + execution.GRACE_SECONDS  # waiting out SIGKILL
+            + execution.GRACE_SECONDS * 2  # joining the two reader threads
+        )
+
+        self.assertLess(worst_case, worker.LEASE_SECONDS)

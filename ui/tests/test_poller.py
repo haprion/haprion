@@ -8,12 +8,14 @@ unable to tell a broken sudoers rule from a broken cluster.
 
 from __future__ import annotations
 
+import inspect
 import json
 import subprocess
 import unittest
+import unittest.mock
 from typing import Any
 
-from haproxy_ui import poller
+from haproxy_ui import config, db, poller
 
 
 def completed(stdout: str, *, returncode: int = 0, stderr: str = "") -> Any:
@@ -225,3 +227,39 @@ class Passes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheSingletonLockSession(unittest.TestCase):
+    """The lock is only worth having if it outlives the first ten seconds.
+
+    Found on 2026-08-31 by stopping the platform and watching `pg_locks`: the
+    lock was taken at startup and gone ten seconds later, while the poller kept
+    polling. The cause was a lock taken in transaction mode - the roles carry
+    `idle_in_transaction_session_timeout = 10s`, so the server closed the idle
+    session and the session-scoped lock went with it.
+
+    Autocommit is therefore not a style choice here, and this test states it as
+    the requirement it is. It is checked at the connection rather than against a
+    live server because the failure is silent by nature: a second poller starting
+    is what makes it visible, and by then two of them are writing.
+    """
+
+    def test_the_lock_is_taken_on_an_autocommit_connection(self) -> None:
+        recorded: dict[str, Any] = {}
+
+        def fake_connect(conninfo: str, **kwargs: Any) -> object:
+            recorded["conninfo"] = conninfo
+            recorded.update(kwargs)
+            return object()
+
+        database = config.Database(name="haproxy_ui", socket_directory="/var/run/postgresql")
+        with unittest.mock.patch.object(db.psycopg, "connect", fake_connect):
+            db.lock_session(database)
+
+        self.assertTrue(recorded.get("autocommit"), "the lock session must not open a transaction")
+        self.assertEqual(recorded["conninfo"], database.connection_string)
+
+    def test_the_lock_session_is_not_taken_from_a_pool(self) -> None:
+        source = inspect.getsource(poller.main)
+        self.assertIn("db.lock_session(", source)
+        self.assertNotIn("lock_pool", source)

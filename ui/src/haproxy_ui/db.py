@@ -213,6 +213,25 @@ def listener(database: Database, channel: str = JOB_CHANNEL) -> Connection[Any]:
     return connection
 
 
+def lock_session(database: Database) -> Connection[Any]:
+    """A connection whose only job is to hold a singleton advisory lock.
+
+    Its own connection rather than one from the pool, for the same reason the
+    listener has one: it is held for the process's whole life, and the pool
+    exists for short queries.
+
+    `autocommit` is what makes the lock survive. A session-scoped advisory lock
+    lives exactly as long as its session, and taking it in transaction mode
+    leaves an open transaction that nothing ever commits. The roles here carry
+    `idle_in_transaction_session_timeout = 10s`, so the server closes that
+    session ten seconds in and takes the lock with it - while the process that
+    believes it holds the lock keeps running. Autocommit means there is no
+    transaction to sit idle, so the session stays and the lock stays with it.
+    """
+
+    return psycopg.connect(database.connection_string, autocommit=True)
+
+
 def connected_identity(connection: Connection[Any]) -> tuple[str, str]:
     """Who the database thinks we are, and which database this is.
 

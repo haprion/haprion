@@ -222,36 +222,37 @@ def main(argv: list[str] | None = None) -> int:
     pool.open(wait=True, timeout=10)
     try:
         #
-        # The lock is taken on a connection held for the whole run, outside the
-        # pool. A pooled connection would be returned between passes, and a
-        # session-scoped lock goes back with it.
+        # The lock is taken on its own autocommit connection, held for the whole
+        # run and never pooled. Two things would otherwise take it away: a pooled
+        # connection is returned between passes, and a session-scoped lock goes
+        # back with it - and a lock taken in transaction mode leaves an open
+        # transaction that `idle_in_transaction_session_timeout` closes ten
+        # seconds later, releasing the lock while this process keeps polling.
         #
-        with db.pool(config.database, min_size=1, max_size=1) as lock_pool:
-            lock_pool.open(wait=True, timeout=10)
-            with lock_pool.connection() as lock_connection:
-                identity, database = db.connected_identity(lock_connection)
-                if not db.try_singleton_lock(lock_connection, POLLER_LOCK_KEY):
-                    logger.error("another poller holds the lock on %s; exiting", database)
-                    return 75
-                logger.info(
-                    "polling %d cluster(s) every %ds as %s on %s",
-                    len(config.clusters),
-                    config.poller.interval_seconds,
-                    identity,
-                    database,
-                )
+        with db.lock_session(config.database) as lock_connection:
+            identity, database = db.connected_identity(lock_connection)
+            if not db.try_singleton_lock(lock_connection, POLLER_LOCK_KEY):
+                logger.error("another poller holds the lock on %s; exiting", database)
+                return 75
+            logger.info(
+                "polling %d cluster(s) every %ds as %s on %s",
+                len(config.clusters),
+                config.poller.interval_seconds,
+                identity,
+                database,
+            )
 
-                #
-                # A pass is finished before the process leaves. Killing a poller
-                # mid-write would corrupt nothing - each write is one
-                # transaction - but finishing means no row is left looking stale
-                # for no reason.
-                #
-                stopping = StopRequest(what="after this pass")
-                while not stopping.requested():
-                    healthy = poll_once(pool, config)
-                    logger.info("%d/%d cluster(s) fully current", healthy, len(config.clusters))
-                    stopping.sleep(config.poller.interval_seconds)
+            #
+            # A pass is finished before the process leaves. Killing a poller
+            # mid-write would corrupt nothing - each write is one
+            # transaction - but finishing means no row is left looking stale
+            # for no reason.
+            #
+            stopping = StopRequest(what="after this pass")
+            while not stopping.requested():
+                healthy = poll_once(pool, config)
+                logger.info("%d/%d cluster(s) fully current", healthy, len(config.clusters))
+                stopping.sleep(config.poller.interval_seconds)
     finally:
         pool.close()
     return 0

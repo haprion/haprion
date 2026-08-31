@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from haproxy_ui.dashboard import relative_age
-from haproxy_ui.db import Job
+from haproxy_ui.db import ClusterStatus, Job
 
 type Tone = Literal["healthy", "warning", "critical", "info", "unknown"]
 
@@ -78,33 +78,46 @@ def _operation(value: str) -> str:
     }.get(value, value.replace("_", " ").capitalize())
 
 
-def _follow_up(job: Job) -> tuple[str | None, str | None]:
-    """The sentence a finished job still owes its reader, if it owes one.
+def awaiting_deployment(statuses: list[ClusterStatus]) -> frozenset[str]:
+    """Clusters whose newest reading says they are not on their target.
+
+    Read defensively, like everything else that comes out of a stored helper
+    document: a reading that is missing, malformed or simply unknown is not
+    evidence that a cluster is behind, and a job should not be captioned on a
+    guess.
+    """
+
+    pending = set()
+    for status in statuses:
+        summary = status.result.get("summary") if isinstance(status.result, dict) else None
+        if isinstance(summary, dict) and summary.get("release_state") not in {
+            "converged",
+            None,
+        }:
+            pending.add(status.cluster)
+    return frozenset(pending)
+
+
+def _owes_deployment(job: Job) -> tuple[bool, str | None]:
+    """Whether this job recorded that a deploy was still owed when it ran.
 
     Read defensively. The document is written by a privileged helper and stored
-    as it arrived, so this asks it questions rather than assuming its shape: a
-    result that is missing, is not an object, or answers something other than
-    true simply owes nothing.
+    as it arrived, so this asks it questions rather than assuming its shape.
     """
 
     envelope = job.result
     if not isinstance(envelope, dict):
-        return None, None
+        return False, None
     body = envelope.get("result")
     if not isinstance(body, dict) or body.get("deployment_required") is not True:
-        return None, None
+        return False, None
 
     command = body.get("next_command")
-    return (
-        f"Published, not deployed. The nodes still run the previous version "
-        f"until {job.cluster} is deployed.",
-        command if isinstance(command, str) and command else None,
-    )
+    return True, command if isinstance(command, str) and command else None
 
 
-def _view(job: Job, now: datetime) -> JobView:
+def _view(job: Job, now: datetime, *, follow_up: str | None, next_command: str | None) -> JobView:
     label, tone = _state(job.state)
-    follow_up, next_command = _follow_up(job)
     return JobView(
         id=job.id,
         operation=_operation(job.operation),
@@ -123,11 +136,48 @@ def _view(job: Job, now: datetime) -> JobView:
     )
 
 
-def build_job_overview(rows: list[Job], *, now: datetime | None = None) -> JobOverview:
-    """Build one bounded, newest-first operation history from database rows."""
+def build_job_overview(
+    rows: list[Job],
+    *,
+    now: datetime | None = None,
+    awaiting: frozenset[str] = frozenset(),
+) -> JobOverview:
+    """Build one bounded, newest-first operation history from database rows.
+
+    `awaiting` is what keeps the follow-up line honest. A job's result records
+    what was still owed **when it ran**, which for anything but the newest such
+    job is a statement about a moment that has passed - job 15 published, job 16
+    deployed it, and captioning job 15 with "the nodes still run the previous
+    version" was wrong within the hour. Found on 2026-08-31 by a reader looking
+    at the page rather than at the row.
+
+    So two things have to hold: the cluster has to be behind its target now, and
+    this has to be the newest job that left it that way. Anything older is
+    history, and history does not need a caption telling the reader to act.
+    """
 
     current = now or datetime.now(UTC)
-    jobs = tuple(_view(job, current) for job in rows)
+    captioned: set[str] = set()
+    views = []
+    for job in rows:
+        owes, command = _owes_deployment(job)
+        show = owes and job.cluster in awaiting and job.cluster not in captioned
+        if show:
+            captioned.add(job.cluster)
+        views.append(
+            _view(
+                job,
+                current,
+                follow_up=(
+                    f"Published, not deployed. The nodes still run the previous version "
+                    f"until {job.cluster} is deployed."
+                    if show
+                    else None
+                ),
+                next_command=command if show else None,
+            )
+        )
+    jobs = tuple(views)
     return JobOverview(
         jobs=jobs,
         active_count=sum(job.state in {"pending", "running"} for job in jobs),

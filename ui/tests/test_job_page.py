@@ -116,10 +116,24 @@ class JobPageTests(LoginTestCase):
         """The projection being right is not the same as the page showing it."""
 
         rows = [job(state="done", outcome="done", operation="revert", result=revert_result())]
+        behind = [
+            db.ClusterStatus(
+                cluster="alpha",
+                observed_at=datetime.now(UTC),
+                outcome="done",
+                result={"summary": {"release_state": "behind"}},
+                warnings=[],
+                error=None,
+                poll_error=None,
+            )
+        ]
         client = self.client()
         self.sign_in(client)
 
-        with mock.patch("haproxy_ui.db.recent_jobs", return_value=rows):
+        with (
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=rows),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=behind),
+        ):
             page = client.get("/jobs")
 
         self.assertEqual(page.status_code, 200)
@@ -164,8 +178,8 @@ class WhatAFinishedJobStillOwes(unittest.TestCase):
     answered this in its result - it was simply never projected to the screen.
     """
 
-    def view(self, **kwargs: object):
-        overview = jobs.build_job_overview([job(**kwargs)])  # type: ignore[arg-type]
+    def view(self, *, awaiting: frozenset[str] = frozenset({"alpha"}), **kwargs: object):
+        overview = jobs.build_job_overview([job(**kwargs)], awaiting=awaiting)  # type: ignore[arg-type]
         return overview.jobs[0]
 
     def test_a_revert_that_still_needs_a_deploy_says_so(self) -> None:
@@ -175,6 +189,43 @@ class WhatAFinishedJobStillOwes(unittest.TestCase):
         self.assertIn("Published, not deployed", view.follow_up or "")
         self.assertIn("alpha", view.follow_up or "")
         self.assertEqual(view.next_command, "haproxy-deploy -c alpha")
+
+    def test_a_cluster_that_has_caught_up_is_not_captioned(self) -> None:
+        """The rule that was missing, and the reason the line was wrong.
+
+        A job's result records what was owed when it ran. Job 15 published and
+        job 16 deployed it an hour later; captioning job 15 with "the nodes
+        still run the previous version" was a claim about the present built from
+        a record of the past. If the cluster is on its target now, nothing is
+        owed and nothing is said.
+        """
+
+        view = self.view(
+            state="done",
+            outcome="done",
+            operation="revert",
+            result=revert_result(),
+            awaiting=frozenset(),
+        )
+
+        self.assertIsNone(view.follow_up)
+        self.assertIsNone(view.next_command)
+
+    def test_only_the_newest_job_that_left_work_is_captioned(self) -> None:
+        """Two reverts, one cluster, one thing outstanding.
+
+        Repeating the same sentence down the page would read as several
+        outstanding deploys when there is one.
+        """
+
+        rows = [
+            job(state="done", outcome="done", operation="revert", result=revert_result()),
+            job(state="done", outcome="done", operation="revert", result=revert_result()),
+        ]
+        overview = jobs.build_job_overview(rows, awaiting=frozenset({"alpha"}))
+
+        self.assertIsNotNone(overview.jobs[0].follow_up)
+        self.assertIsNone(overview.jobs[1].follow_up)
 
     def test_a_deploy_that_finished_owes_nothing(self) -> None:
         view = self.view(state="done", outcome="done", result={"ok": True, "result": {}})
@@ -212,3 +263,38 @@ class WhatAFinishedJobStillOwes(unittest.TestCase):
         self.assertIsNotNone(view.follow_up)
         self.assertIn("Published, not deployed", view.follow_up or "")
         self.assertIsNone(view.next_command)
+
+
+class WhichClustersAreBehind(unittest.TestCase):
+    """Reading the poller's cached answer, defensively.
+
+    A reading that is missing, malformed or `unknown` is not evidence that a
+    cluster is behind. Captioning a job on that basis would tell an operator to
+    deploy because the interface could not read a status.
+    """
+
+    def status(self, cluster: str, result: object) -> db.ClusterStatus:
+        return db.ClusterStatus(
+            cluster=cluster,
+            observed_at=datetime.now(UTC),
+            outcome="done",
+            result=result,  # type: ignore[arg-type]
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+
+    def test_a_cluster_off_its_target_is_awaiting(self) -> None:
+        rows = [self.status("alpha", {"summary": {"release_state": "behind"}})]
+        self.assertEqual(jobs.awaiting_deployment(rows), frozenset({"alpha"}))
+
+    def test_a_converged_cluster_is_not(self) -> None:
+        rows = [self.status("alpha", {"summary": {"release_state": "converged"}})]
+        self.assertEqual(jobs.awaiting_deployment(rows), frozenset())
+
+    def test_a_reading_that_says_nothing_useful_is_not_evidence(self) -> None:
+        for result in ({}, {"summary": None}, {"summary": {}}, "unreadable", None):
+            with self.subTest(result=result):
+                self.assertEqual(
+                    jobs.awaiting_deployment([self.status("alpha", result)]), frozenset()
+                )

@@ -487,7 +487,15 @@ def build_router(config: Config) -> APIRouter:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         with request.app.state.pool.connection() as connection:
-            overview = jobs.build_job_overview(db.recent_jobs(connection))
+            #
+            # The cluster readings decide whether a job's follow-up line is
+            # still true, so they are read here rather than the job rows being
+            # trusted to describe the present on their own.
+            #
+            overview = jobs.build_job_overview(
+                db.recent_jobs(connection),
+                awaiting=jobs.awaiting_deployment(db.cluster_statuses(connection)),
+            )
         return TEMPLATES.TemplateResponse(
             request,
             "jobs.html",

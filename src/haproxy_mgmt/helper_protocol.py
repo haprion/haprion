@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import uuid
@@ -72,12 +73,39 @@ class Lifeline:
       run for, and continuing on its behalf is not defensible.
     """
 
-    __slots__ = ("_reason", "_stream", "_thread")
+    __slots__ = ("_fd", "_reason", "_thread")
 
-    def __init__(self, stream: BinaryIO) -> None:
-        self._stream = stream
+    def __init__(self, fd: int) -> None:
+        self._fd = fd
         self._reason: str | None = None
         self._thread: threading.Thread | None = None
+
+    @classmethod
+    def take(cls, stream: BinaryIO) -> Lifeline:
+        """Move the lifeline off descriptor 0, and put /dev/null there instead.
+
+        This is the part that is easy to get wrong by doing nothing. A helper
+        spawns children - ssh to every node, git, the validator - and a child
+        inherits descriptor 0 unless it is told otherwise. Left as stdin, the
+        lifeline is handed to every one of them: ssh forwards it to the far end,
+        where the remote command waits for an end of input that will not come
+        until the worker lets go. Measured on 2026-08-31 as a no-op deploy going
+        from 0.58s to 3.42s, which was the cheap symptom of it.
+
+        The alternative is a `stdin=DEVNULL` on twenty call sites and on every
+        one written later. Moving the descriptor once is the same guarantee
+        without depending on anyone remembering it: after this, the lifeline is
+        a private descriptor and stdin is empty, which is what a helper that has
+        already read its request should have anyway.
+        """
+
+        duplicate = os.dup(stream.fileno())
+        empty = os.open(os.devnull, os.O_RDONLY)
+        try:
+            os.dup2(empty, 0)
+        finally:
+            os.close(empty)
+        return cls(duplicate)
 
     def watch(self) -> None:
         """Start watching. Daemon, so it can never hold the helper's exit."""
@@ -88,7 +116,7 @@ class Lifeline:
 
     def _read_until_gone(self) -> None:
         try:
-            extra = self._stream.read(1)
+            extra = os.read(self._fd, 1)
         except OSError:
             #
             # The stream failing IS the caller being gone. Reporting it as an

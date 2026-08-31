@@ -199,7 +199,7 @@ class TheLifeline(unittest.TestCase):
     def lifeline(self, read_fd: int):
         stream = os.fdopen(read_fd, "rb", buffering=0)
         self.addCleanup(stream.close)
-        line = helper_protocol.Lifeline(stream)
+        line = helper_protocol.Lifeline(stream.fileno())
         line.watch()
         return line
 
@@ -238,3 +238,55 @@ class TheLifeline(unittest.TestCase):
         line = self.lifeline(read_fd)
         with self.assertRaises(RuntimeError):
             _ = line.reason
+
+
+class TakingTheLifelineOffStandardInput(unittest.TestCase):
+    """A child must not inherit the lifeline, and not by anyone remembering.
+
+    Found by measurement on 2026-08-31: with the lifeline left on descriptor 0,
+    ssh inherited it and forwarded it to the node, where the remote command
+    waited for an end of input that only came when the worker let go. A no-op
+    deploy went from 0.58s to 3.42s - the cheap symptom of every child of a
+    helper being handed the caller's pipe.
+
+    Run in a forked child, because the whole operation is about descriptor 0 of
+    the process it runs in.
+    """
+
+    def test_descriptor_zero_becomes_empty_and_the_lifeline_survives(self) -> None:
+        read_fd, write_fd = os.pipe()
+        report_read, report_write = os.pipe()
+
+        pid = os.fork()
+        if pid == 0:  # pragma: no cover - the child never returns to the runner
+            code = 1
+            try:
+                os.dup2(read_fd, 0)
+                stream = os.fdopen(0, "rb", buffering=0)
+                line = helper_protocol.Lifeline.take(stream)
+
+                # Descriptor 0 is now empty for this process and every child of
+                # it: a read returns end of input at once instead of blocking.
+                inherited = os.read(0, 1)
+
+                line.watch()
+                os.close(write_fd)
+                for _ in range(200):
+                    if line.released:
+                        break
+                    time.sleep(0.005)
+
+                os.write(report_write, b"1" if (inherited == b"" and line.released) else b"0")
+                code = 0
+            finally:
+                os._exit(code)
+
+        os.close(report_write)
+        os.close(write_fd)
+        _, status = os.waitpid(pid, 0)
+        answer = os.read(report_read, 1)
+        os.close(report_read)
+        os.close(read_fd)
+
+        self.assertEqual(os.waitstatus_to_exitcode(status), 0)
+        self.assertEqual(answer, b"1", "stdin was not emptied, or the lifeline did not survive")

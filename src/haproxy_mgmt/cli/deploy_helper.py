@@ -284,7 +284,7 @@ def main(
     # said nothing has already closed it, and watching that would read the
     # closure as "let go" and stop before the first node.
     #
-    lifeline = Lifeline(input_stream or sys.stdin.buffer) if request.lifeline else None
+    lifeline = Lifeline.take(input_stream or sys.stdin.buffer) if request.lifeline else None
     if lifeline is not None:
         lifeline.watch()
 

@@ -254,7 +254,7 @@ def main(
     # Watched only if the caller said it is holding the stream; see the same
     # note in the deploy helper.
     #
-    lifeline = Lifeline(input_stream or sys.stdin.buffer) if request.lifeline else None
+    lifeline = Lifeline.take(input_stream or sys.stdin.buffer) if request.lifeline else None
     if lifeline is not None:
         lifeline.watch()
 

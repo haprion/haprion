@@ -971,8 +971,10 @@ being ungranted would matter.
 - **Never the twenty most recent rows**, whatever their age. Without that floor
   a quiet fortnight empties the jobs page completely, which reads as the
   interface having lost its history rather than as nothing having happened.
-  Twenty is the number the page itself lists, so the floor is exactly what a
-  reader can see.
+  Twenty is the number the page itself lists, **ordered the way the page orders
+  them**, so the floor is exactly the set a reader can see. Ordered any other
+  way it would select a different twenty rows and quietly stop promising
+  anything.
 
 The timer runs weekly, after the daily dump rather than before it, so the newest
 dump still contains the rows the prune removes.

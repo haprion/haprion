@@ -84,14 +84,21 @@ psql_as() { psql -U "$DB_ROLE" -d "$DB_NAME" -qtAX -v ON_ERROR_STOP=1 "$@"; }
 # operation start on a cluster that is still being changed. `finished_at` is
 # guaranteed non-null for every other state by the table's own constraint, so
 # the age test cannot silently match a row with no timestamp. And the floor is
-# applied as a subquery on id rather than as a second pass, so a run cannot
-# delete rows between counting them and keeping them.
+# applied as a subquery rather than as a second pass, so a run cannot delete
+# rows between counting them and keeping them.
+#
+# The floor's ordering is the jobs page's ordering, character for character,
+# and that is the whole of its correctness. The floor exists to promise that
+# nothing the page can show is ever removed; ordered any other way it selects a
+# different twenty rows than the page does and quietly stops promising that.
+# A rehearsal on 2026-08-31 found exactly this: ordered by id alone, a backdated
+# row the page would never list took one of the twenty places.
 #
 where_removable() {
     cat <<SQL
     state not in ('pending', 'running')
     and finished_at < statement_timestamp() - make_interval(days => ${KEEP_DAYS})
-    and id not in (select id from job order by id desc limit ${KEEP_MINIMUM})
+    and id not in (select id from job order by created_at desc, id desc limit ${KEEP_MINIMUM})
 SQL
 }
 

@@ -1,0 +1,114 @@
+{% extends "layout.html" %}
+{% block title %}Preview — HAProxy Manager{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><h1>Configuration preview</h1><p>Fill in a site and see the HAProxy configuration it produces. Nothing here is saved, published or deployed.</p></div>
+  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-info"></span>Example cluster</span></div>
+</section>
+
+<div class="empty-state">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 4.3 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0z"></path></svg>
+  <div><strong>These are example addresses, not this installation's</strong><span>The web identities cannot read the engine's cluster configuration — that separation is deliberate — so the VIPs, certificates and networks offered below are the documented examples. The generated configuration is produced by the same engine the command line uses.</span></div>
+</div>
+
+<form method="post" action="/proxies/preview" class="preview-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div><h3>The site</h3><p>What visitors ask for</p></div></div></header>
+    <div class="form-grid">
+      <label>Name<input name="name" value="{{ form.name }}" maxlength="40" required></label>
+      <label>Hostnames<input name="hostnames" value="{{ form.hostnames }}" placeholder="app.example.com, www.example.com"></label>
+      <label>Protocol
+        <select name="protocol">
+          <option value="https"{% if form.protocol == 'https' %} selected{% endif %}>HTTPS</option>
+          <option value="http"{% if form.protocol == 'http' %} selected{% endif %}>HTTP</option>
+        </select>
+      </label>
+      <label>VIP
+        <select name="vip">
+          <option value="">Default ({{ choices.default_vip }})</option>
+          {% for vip in choices.vips %}<option value="{{ vip }}"{% if form.vip == vip %} selected{% endif %}>{{ vip }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Certificate
+        <select name="certificate">
+          <option value="">None</option>
+          {% for certificate in choices.certificates %}<option value="{{ certificate }}"{% if form.certificate == certificate %} selected{% endif %}>{{ certificate }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Reachable from
+        <select name="allow_from" multiple size="3">
+          {% for network in choices.networks %}<option value="{{ network }}"{% if network in form.allow_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
+        </select>
+        <small>Nothing selected means everyone.</small>
+      </label>
+    </div>
+    <div class="form-checks">
+      <label class="check"><input type="checkbox" name="redirect_http"{% if form.redirect_http %} checked{% endif %}> Redirect plain HTTP to HTTPS (301)</label>
+      <label class="check"><input type="checkbox" name="hsts"{% if form.hsts %} checked{% endif %}> Send Strict-Transport-Security</label>
+      <label class="check"><input type="checkbox" name="hsts_subdomains"{% if form.hsts_subdomains %} checked{% endif %}> …including subdomains</label>
+      <label class="check-value">Lifetime, seconds<input name="hsts_max_age" value="{{ form.hsts_max_age }}" size="10"></label>
+    </div>
+    <p class="warning-text">HSTS is the one setting here that cannot be taken back by changing configuration: for its lifetime the browser refuses plain HTTP on its own, whatever the server says. <code>includeSubDomains</code> extends that to names this site may not own.</p>
+  </section>
+
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div><h3>The pool</h3><p>Where the traffic goes</p></div></div></header>
+    <div class="form-grid">
+      <label>Servers<textarea name="servers" rows="4" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small>One <code>host:port</code> per line. A hostname is re-resolved while running; an address is not, because it does not need to be.</small></label>
+      <label>Balancing
+        <select name="balance">
+          {% for algorithm in choices.balances %}<option value="{{ algorithm }}"{% if form.balance == algorithm %} selected{% endif %}>{{ algorithm }}</option>{% endfor %}
+        </select>
+        <small><code>hdr</code> and <code>url_param</code> need a name below.</small>
+      </label>
+      <label>Balancing key<input name="balance_key" value="{{ form.balance_key }}" placeholder="X-Tenant"></label>
+      <label>Session cookie<input name="cookie" value="{{ form.cookie }}" placeholder="MGDSRV"><small>Keeps one visitor on one server. Leave empty for none.</small></label>
+      <label>Backend TLS
+        <select name="backend_tls">
+          <option value=""{% if not form.backend_tls %} selected{% endif %}>Plain HTTP</option>
+          <option value="system"{% if form.backend_tls == 'system' %} selected{% endif %}>HTTPS, verify against the system CAs</option>
+          <option value="none"{% if form.backend_tls == 'none' %} selected{% endif %}>HTTPS, do not verify</option>
+        </select>
+      </label>
+    </div>
+  </section>
+
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div><h3>The health check</h3><p>How a server is decided to be usable</p></div></div></header>
+    <div class="form-grid">
+      <label>Type
+        <select name="health_type">
+          {% for kind in choices.health_types %}<option value="{{ kind }}"{% if form.health_type == kind %} selected{% endif %}>{{ kind }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Path<input name="health_path" value="{{ form.health_path }}" placeholder="/healthz"></label>
+      <label>Host header<input name="health_host" value="{{ form.health_host }}" placeholder="app.example.com"><small>Needed when the backend serves several names — without it the check gets a 404 and a healthy pool reads as down.</small></label>
+    </div>
+  </section>
+
+  <div class="form-actions"><button type="submit" class="primary-button">Show the configuration</button></div>
+</form>
+
+{% if result.problem %}
+<section class="cluster-card">
+  <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-critical" aria-hidden="true"></span><div><h3>This object was refused</h3><p>The same refusal a publish would give</p></div></div></header>
+  <p class="warning-text">{{ result.problem }}</p>
+</section>
+{% endif %}
+
+{% if result.document %}
+<section class="cluster-card">
+  <header class="cluster-header"><div class="cluster-identity"><div><h3>The object</h3><p>What would be stored as <code>managed/proxies/{{ form.name }}.yaml</code></p></div></div></header>
+  <pre class="config-block"><code>{{ result.document }}</code></pre>
+</section>
+{% endif %}
+
+{% for filename, content in result.files.items() %}
+<section class="cluster-card">
+  <header class="cluster-header"><div class="cluster-identity"><div><h3>{{ filename }}</h3><p>Generated</p></div></div></header>
+  <pre class="config-block"><code>{{ content }}</code></pre>
+</section>
+{% endfor %}
+{% endblock %}

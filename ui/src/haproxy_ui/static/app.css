@@ -605,3 +605,28 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 @media (prefers-reduced-motion: no-preference) {
   .primary-button, .icon-button, .menu-button, .primary-nav a { transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease; }
 }
+
+/*
+ * Configuration preview. A form beside the configuration it produces, so the
+ * consequence of a field is visible in the same scroll as the field itself.
+ */
+.preview-form { display: grid; gap: 18px; margin-bottom: 18px; }
+.preview-form .cluster-card { padding-bottom: 18px; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; padding: 18px 20px 4px; }
+.form-grid label, .check-value { display: flex; flex-direction: column; gap: 6px; color: var(--text-secondary); font-weight: 620; }
+.form-grid input, .form-grid select, .form-grid textarea, .check-value input {
+  padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: var(--panel); color: var(--text); font: inherit; font-weight: var(--font-weight-regular);
+}
+.form-grid textarea { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; resize: vertical; }
+.form-grid small, .preview-form .warning-text { color: var(--muted); font-weight: var(--font-weight-regular); }
+.form-checks { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 18px; padding: 14px 20px 0; }
+.form-checks .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
+.preview-form .warning-text { margin: 12px 20px 0; }
+.form-actions { display: flex; justify-content: flex-end; }
+.form-actions .primary-button { width: auto; padding: 0 22px; }
+.config-block {
+  margin: 0; padding: 16px 20px; overflow-x: auto; background: var(--panel-soft);
+  color: var(--text); font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.55; white-space: pre;
+}

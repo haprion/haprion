@@ -45,10 +45,18 @@ from haproxy_ui import (
     proxies,
     snapshot,
 )
+from haproxy_ui import preview as preview_module
 from haproxy_ui.config import Config
 from haproxy_ui.db import AuthenticatedSession
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+#
+# A multi-select arrives as repeated fields, so its default has to be a list -
+# and a list built in an argument default would be one list shared by every
+# request. Named here so there is exactly one, and it is never mutated.
+#
+NETWORK_SELECTION = Form(default=[])
 
 STATIC_DIRECTORY = Path(__file__).parent / "static"
 
@@ -374,6 +382,73 @@ def build_router(config: Config) -> APIRouter:
                 "production_snapshot": config.production_snapshot,
                 "snapshot_age": snapshot_age(captured_at),
             },
+        )
+
+    @router.get("/proxies/preview", response_class=HTMLResponse)
+    def proxy_preview_form(request: Request) -> Response:
+        return _preview_page(request, config, dict(preview_module.DEFAULTS))
+
+    @router.post("/proxies/preview", response_class=HTMLResponse)
+    def proxy_preview_submit(
+        request: Request,
+        name: str = Form(default="", max_length=64),
+        hostnames: str = Form(default="", max_length=2048),
+        protocol: str = Form(default="http", max_length=8),
+        vip: str = Form(default="", max_length=64),
+        certificate: str = Form(default="", max_length=255),
+        redirect_http: str = Form(default=""),
+        hsts: str = Form(default=""),
+        hsts_max_age: str = Form(default="", max_length=16),
+        hsts_subdomains: str = Form(default=""),
+        balance: str = Form(default="roundrobin", max_length=16),
+        balance_key: str = Form(default="", max_length=64),
+        cookie: str = Form(default="", max_length=32),
+        servers: str = Form(default="", max_length=4096),
+        health_type: str = Form(default="disabled", max_length=16),
+        health_path: str = Form(default="", max_length=1024),
+        health_host: str = Form(default="", max_length=255),
+        backend_tls: str = Form(default="", max_length=16),
+        allow_from: list[str] = NETWORK_SELECTION,
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Show what this object would generate. Write nothing, anywhere.
+
+        A CSRF token is still required even though the page changes no state.
+        The form is only reachable with a session, and a page that accepted
+        posts from anywhere would be one more thing to reason about for no gain.
+        """
+
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+
+        return _preview_page(
+            request,
+            config,
+            {
+                "name": name,
+                "hostnames": hostnames,
+                "protocol": protocol,
+                "vip": vip,
+                "certificate": certificate,
+                "redirect_http": redirect_http == "on",
+                "hsts": hsts == "on",
+                "hsts_max_age": hsts_max_age,
+                "hsts_subdomains": hsts_subdomains == "on",
+                "balance": balance,
+                "balance_key": balance_key,
+                "cookie": cookie,
+                "servers": servers,
+                "health_type": health_type,
+                "health_path": health_path,
+                "health_host": health_host,
+                "backend_tls": backend_tls,
+                "allow_from": tuple(allow_from),
+            },
+            submitted=True,
         )
 
     @router.get("/certificates", response_class=HTMLResponse)
@@ -798,6 +873,39 @@ def build_router(config: Config) -> APIRouter:
         return response
 
     return router
+
+
+def _preview_page(
+    request: Request,
+    config: Config,
+    form: dict[str, Any],
+    *,
+    submitted: bool = False,
+) -> Response:
+    session = current_session(request)
+    if session is None:
+        return RedirectResponse("/login", status_code=303)
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    cluster = preview_module.PREVIEW_CLUSTER
+    result = preview_module.preview(form, cluster) if submitted else preview_module.Preview()
+    return TEMPLATES.TemplateResponse(
+        request,
+        "preview.html",
+        {
+            "username": session.username,
+            "role": session.role,
+            "csrf_token": auth.csrf_token(token),
+            "section": "preview",
+            "form": form,
+            "choices": preview_module.choices(cluster),
+            "result": result,
+            "submitted": submitted,
+            "management_writes": config.management_writes,
+            "demo_fixture": config.demo_fixture,
+            "production_snapshot": config.production_snapshot,
+            "snapshot_age": None,
+        },
+    )
 
 
 def _login_again(request: Request, config: Config, *, error: str | None = None) -> Response:

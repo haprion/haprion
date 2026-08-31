@@ -573,6 +573,22 @@ def _route(value: Any, location: str, backends: set[str]) -> Route:
     )
 
 
+def dump_document(fields: Mapping[str, Any]) -> str:
+    """Write a proxy object out as the YAML it is stored as.
+
+    The counterpart of `load_proxy`, and here rather than in whichever caller
+    happens to need it: an object written by the interface and an object
+    written by hand have to be the same document, and two serialisers would
+    eventually disagree about quoting or key order in a way that shows up as a
+    confusing diff rather than as an error.
+
+    Key order is preserved rather than sorted, because the order is the reading
+    order - what the site is, then where it listens, then where traffic goes.
+    """
+
+    return yaml.safe_dump(dict(fields), sort_keys=False, default_flow_style=False)
+
+
 def load_proxy(name: str, document: bytes) -> Proxy:
     """Read one proxy object, or say exactly what is wrong with it.
 

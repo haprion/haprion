@@ -29,9 +29,9 @@ meaning without being regenerated.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
-from haproxy_mgmt.config import ConfigError
+from haproxy_mgmt.config import ConfigError, Vip
 from haproxy_mgmt.guid import backend_guid, frontend_guid, listener_guid_prefix, server_guid
 from haproxy_mgmt.proxy_model import Backend, Proxy, Route
 from haproxy_mgmt.route_match import order_routes
@@ -86,10 +86,22 @@ class GeneratorError(ConfigError):
 # default is what makes the generator usable on its own, which is the whole
 # point of proving it before it has a publishing path.
 #
-DEFAULT_HTTP_BIND = ":80"
+#
+# The port each protocol is served on unless a cluster says otherwise. A
+# default rather than a constant: most deployments terminate on the standard
+# ports, but a cluster that sits behind something else does not, and a port
+# nailed into the generator would be an environment value living in code.
+#
+PORTS = {"http": 80}
 
 
-def generate(proxies: Sequence[Proxy], *, http_bind: str = DEFAULT_HTTP_BIND) -> dict[str, str]:
+def generate(
+    proxies: Sequence[Proxy],
+    *,
+    vips: Mapping[str, Vip],
+    default_vip: str,
+    ports: Mapping[str, int] = PORTS,
+) -> dict[str, str]:
     """Every file the generated layer consists of, keyed by filename.
 
     The whole layer at once rather than one object at a time, because the
@@ -103,8 +115,7 @@ def generate(proxies: Sequence[Proxy], *, http_bind: str = DEFAULT_HTTP_BIND) ->
     _refuse_duplicate_names(ordered)
     _refuse_shared_hostnames(ordered)
 
-    http = [proxy for proxy in ordered if proxy.listen.protocol == "http"]
-    unsupported = [proxy for proxy in ordered if proxy.listen.protocol != "http"]
+    unsupported = [proxy for proxy in ordered if proxy.listen.protocol not in ports]
     if unsupported:
         #
         # Refused rather than skipped. Silently generating nothing for an
@@ -114,10 +125,32 @@ def generate(proxies: Sequence[Proxy], *, http_bind: str = DEFAULT_HTTP_BIND) ->
         names = ", ".join(proxy.name for proxy in unsupported)
         raise GeneratorError(f"this version generates only http objects; cannot generate: {names}")
 
-    files = {FRONTEND_FILE: _frontend_file(http, http_bind)}
-    for proxy in ordered:
-        files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(proxy)
+    placed = [(_vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
+
+    files = {FRONTEND_FILE: _frontend_file(placed, ports)}
+    for vip, proxy in placed:
+        files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(proxy, vip)
     return files
+
+
+def _vip_of(proxy: Proxy, vips: Mapping[str, Vip], default_vip: str) -> Vip:
+    """Which of the cluster's addresses this object sits on.
+
+    An object that names an address the cluster does not have is refused here
+    rather than defaulted onto some other address. Publishing a site onto the
+    wrong VIP is not a smaller failure than not publishing it - it is a site
+    reachable from a network that was never meant to reach it.
+    """
+
+    name = proxy.listen.vip or default_vip
+    try:
+        return vips[name]
+    except KeyError:
+        known = ", ".join(sorted(vips))
+        raise GeneratorError(
+            f"{proxy.name} sits on the VIP {name}, which this cluster does not have. "
+            f"Known VIPs: {known}"
+        ) from None
 
 
 def _refuse_duplicate_names(proxies: Sequence[Proxy]) -> None:
@@ -146,8 +179,8 @@ def _refuse_shared_hostnames(proxies: Sequence[Proxy]) -> None:
             owners[hostname] = proxy.name
 
 
-def _frontend_name(protocol: str) -> str:
-    return f"{PREFIX}-{protocol}"
+def _frontend_name(vip: Vip, protocol: str) -> str:
+    return f"{PREFIX}-{vip.name}-{protocol}"
 
 
 def _backend_name(proxy: str, backend: str) -> str:
@@ -165,26 +198,40 @@ def _lines(*blocks: Iterable[str]) -> str:
     return "\n".join(out) + "\n"
 
 
-def _frontend_file(proxies: Sequence[Proxy], bind: str) -> str:
-    """The one place a request is decided, for every object at once."""
+def _frontend_file(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping[str, int]) -> str:
+    """Where every request is decided: one frontend per address and protocol.
 
-    protocol = "http"
-    name = _frontend_name(protocol)
-    body = [
-        "",
-        f"frontend {name}",
-        f"    guid {frontend_guid(protocol)}",
-        f"    bind {bind} guid-prefix {listener_guid_prefix(protocol)}",
-        "    mode http",
-        "    option httplog",
-        f"    timeout client {TIMEOUT_CLIENT}",
-        f"    timeout tunnel {TIMEOUT_TUNNEL}",
-    ]
-    for proxy in proxies:
-        body.extend(_frontend_rules(proxy))
-    if not proxies:
-        body.append("")
-        body.append("    # No object listens on this protocol.")
+    Objects that share an address share a frontend, because an address and
+    port can be bound exactly once. Objects on different addresses end up in
+    different frontends and cannot reach each other's routes at all, which is
+    what makes a second VIP a real separation rather than a label.
+    """
+
+    groups: dict[tuple[str, str], list[tuple[Vip, Proxy]]] = {}
+    for vip, proxy in placed:
+        groups.setdefault((vip.name, proxy.listen.protocol), []).append((vip, proxy))
+
+    body: list[str] = []
+    for key in sorted(groups):
+        members = groups[key]
+        vip = members[0][0]
+        protocol = key[1]
+        identity = f"{vip.name}-{protocol}"
+        body += [
+            "",
+            f"frontend {_frontend_name(vip, protocol)}",
+            f"    guid {frontend_guid(identity)}",
+            f"    bind {vip.address}:{ports[protocol]}"
+            f" guid-prefix {listener_guid_prefix(identity)}",
+            "    mode http",
+            "    option httplog",
+            f"    timeout client {TIMEOUT_CLIENT}",
+            f"    timeout tunnel {TIMEOUT_TUNNEL}",
+        ]
+        for _, proxy in members:
+            body.extend(_frontend_rules(proxy))
+    if not body:
+        body = ["", "# No object listens anywhere on this cluster."]
     return _lines(HEADER, body)
 
 
@@ -288,11 +335,11 @@ def _frontend_rules(proxy: Proxy) -> list[str]:
     return lines + decisions
 
 
-def _object_file(proxy: Proxy) -> str:
+def _object_file(proxy: Proxy, vip: Vip) -> str:
     rewrites = _rewrites_per_backend(proxy)
     body: list[str] = []
     for name in sorted(proxy.backends):
-        body.extend(_backend(proxy, proxy.backends[name], rewrites[name]))
+        body.extend(_backend(proxy, proxy.backends[name], rewrites[name], vip))
     return _lines(HEADER, ["#", f"# Object: {proxy.name}", "#"], body)
 
 
@@ -335,7 +382,7 @@ def _server_name(index: int) -> str:
     return f"s{index + 1}"
 
 
-def _backend(proxy: Proxy, backend: Backend, rewrites: list[str]) -> list[str]:
+def _backend(proxy: Proxy, backend: Backend, rewrites: list[str], vip: Vip) -> list[str]:
     name = _backend_name(proxy.name, backend.name)
     lines = [
         "",
@@ -346,8 +393,16 @@ def _backend(proxy: Proxy, backend: Backend, rewrites: list[str]) -> list[str]:
         f"    timeout connect {TIMEOUT_CONNECT}",
         f"    timeout server {TIMEOUT_SERVER}",
         f"    timeout tunnel {TIMEOUT_TUNNEL}",
-        *rewrites,
     ]
+    if vip.source is not None:
+        #
+        # The address this pool is reached from. Written per backend because
+        # that is the only place HAProxy takes it, but decided by the VIP:
+        # traffic that arrives on one address leaves from the address paired
+        # with it, which is what a firewall rule further in is written against.
+        #
+        lines.append(f"    source {vip.source}")
+    lines.extend(rewrites)
 
     check = ""
     if backend.health.type == "http":

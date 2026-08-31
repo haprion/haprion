@@ -140,7 +140,18 @@ class Route:
 
 @dataclass(frozen=True, slots=True)
 class Listen:
+    """Where this object is reached, and how.
+
+    `vip` names one of the cluster's addresses rather than being an address.
+    An address is an environment value and belongs in the cluster
+    configuration; the object says which of them it sits on, and the same
+    object therefore means the same thing in a rehearsal cluster and in
+    production. Left out, it means the cluster's default VIP, which is the
+    normal case and the only case until somebody adds a second one.
+    """
+
     protocol: str
+    vip: str | None = None
     certificate: str | None = None
     redirect_http: bool = False
 
@@ -362,8 +373,11 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
 
 def _listen(value: Any, location: str) -> Listen:
     data = _mapping(value, location)
-    _only_keys(data, {"protocol", "certificate", "redirect_http"}, location)
+    _only_keys(data, {"protocol", "vip", "certificate", "redirect_http"}, location)
     protocol = _string(data, "protocol", location, PROTOCOLS)
+    vip = data.get("vip")
+    if vip is not None and (not isinstance(vip, str) or not NAME.match(vip)):
+        raise ModelError(f"{location}.vip must name one of the cluster's VIPs")
     certificate = data.get("certificate")
     redirect = _boolean(data, "redirect_http", location, default=False)
 
@@ -381,4 +395,4 @@ def _listen(value: Any, location: str) -> Listen:
     if redirect and protocol != "https":
         raise ModelError(f"{location}.redirect_http requires protocol: https")
 
-    return Listen(protocol=protocol, certificate=certificate, redirect_http=redirect)
+    return Listen(protocol=protocol, vip=vip, certificate=certificate, redirect_http=redirect)

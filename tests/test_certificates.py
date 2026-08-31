@@ -21,7 +21,7 @@ from haproxy_mgmt.certificates import (
     read_reference,
     target_for,
 )
-from haproxy_mgmt.config import Cluster, Node
+from haproxy_mgmt.config import Cluster, Node, Vip
 
 LEAF = b"leaf-certificate-der-bytes"
 INTERMEDIATE = b"intermediate-certificate-der-bytes"
@@ -56,6 +56,8 @@ def cluster(*certificates: str) -> Cluster:
         cluster_id="alpha",
         display_name="Alpha",
         vip="192.0.2.10",
+        vips={"main": Vip(name="main", address="192.0.2.10")},
+        default_vip="main",
         config_path=Path("/configs/alpha"),
         publish_path=Path("/published/alpha"),
         node_path="alpha",

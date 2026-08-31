@@ -15,10 +15,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
+from haproxy_mgmt.config import Vip
 from haproxy_mgmt.generate import generate
 from haproxy_mgmt.proxy_model import Proxy, load_proxy
 
 GOLDEN = Path(__file__).resolve().parents[2] / "tests" / "golden"
+
+#
+# A case may state the cluster's addresses in this file. Most do not: one VIP
+# with no separate source address is the normal deployment, and a case that
+# does not care about addressing should not have to describe one.
+#
+NETWORK = "vips.yaml"
+
+DEFAULT_VIPS = {"main": Vip(name="main", address="192.0.2.20")}
 
 
 def cases(root: Path = GOLDEN) -> list[Path]:
@@ -28,7 +40,25 @@ def cases(root: Path = GOLDEN) -> list[Path]:
 def objects(case: Path) -> list[Proxy]:
     """The case's input, read as bytes exactly as the generator will read it."""
 
-    return [load_proxy(path.stem, path.read_bytes()) for path in sorted(case.glob("*.yaml"))]
+    return [
+        load_proxy(path.stem, path.read_bytes())
+        for path in sorted(case.glob("*.yaml"))
+        if path.name != NETWORK
+    ]
+
+
+def network(case: Path) -> tuple[dict[str, Vip], str]:
+    """The addresses the case's cluster serves on."""
+
+    path = case / NETWORK
+    if not path.exists():
+        return dict(DEFAULT_VIPS), "main"
+    document = yaml.safe_load(path.read_text())
+    vips = {
+        name: Vip(name=name, address=entry["address"], source=entry.get("source"))
+        for name, entry in document["vips"].items()
+    }
+    return vips, document.get("default_vip", next(iter(vips)))
 
 
 def expected(case: Path) -> dict[str, str]:
@@ -36,4 +66,5 @@ def expected(case: Path) -> dict[str, str]:
 
 
 def produced(case: Path) -> dict[str, str]:
-    return generate(objects(case))
+    vips, default_vip = network(case)
+    return generate(objects(case), vips=vips, default_vip=default_vip)

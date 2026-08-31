@@ -1,0 +1,17 @@
+schema: 1
+name: shop
+hostnames: [shop.example.com]
+listen:
+  protocol: http
+  vip: dmz
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 203.0.113.20
+        port: 8080

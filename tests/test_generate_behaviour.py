@@ -30,6 +30,7 @@ from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from haproxy_mgmt.config import Vip
 from haproxy_mgmt.generate import generate
 from haproxy_mgmt.proxy_model import load_proxy
 from haproxy_mgmt.route_match import order_routes, rewrite, select
@@ -154,7 +155,13 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
         (root / "0000-core.cfg").write_text(CORE)
-        for name, content in generate([cls.proxy], http_bind=f"127.0.0.1:{cls.port}").items():
+        layer = generate(
+            [cls.proxy],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            ports={"http": cls.port},
+        )
+        for name, content in layer.items():
             (root / name).write_text(content)
 
         arguments: list[str] = []

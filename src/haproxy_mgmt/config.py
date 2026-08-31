@@ -13,6 +13,11 @@ import yaml
 DEFAULT_POLICY_PATH = Path("/etc/haproxy-manager/runtime-policy.yaml")
 MAX_CONFIG_BYTES = 1024 * 1024
 CLUSTER_ID = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+
+#
+# What a cluster's single VIP is called when it has never had to be named.
+#
+DEFAULT_VIP = "main"
 NODE_PATH = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 CERTIFICATE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
@@ -90,10 +95,33 @@ class Node:
 
 
 @dataclass(frozen=True, slots=True)
+class Vip:
+    """One address traffic arrives on, and the address it leaves from.
+
+    Two things that are always decided together, so they are one object.
+    `address` is what a generated frontend binds - a virtual IP carried by
+    whichever node currently owns it - and `source` is the address HAProxy
+    connects to backends from, which an ADC calls a SNIP. A pair of firewall
+    rules is usually written against exactly these two, which is why pairing
+    them here rather than letting an object pick them separately removes a way
+    to get it wrong.
+
+    `source` is optional. Without it HAProxy connects from whatever address the
+    routing table picks, which is the right answer on a host with one network.
+    """
+
+    name: str
+    address: str
+    source: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Cluster:
     cluster_id: str
     display_name: str
     vip: str
+    vips: Mapping[str, Vip]
+    default_vip: str
     config_path: Path
     publish_path: Path
     node_path: str
@@ -167,6 +195,77 @@ def _absolute_path(raw: str, location: str) -> Path:
     if not path.is_absolute():
         raise ConfigError(f"{location} must be absolute")
     return path.resolve(strict=False)
+
+
+def _address(value: Any, location: str) -> str:
+    if not isinstance(value, str):
+        raise ConfigError(f"{location} must be an IP address")
+    try:
+        ipaddress.ip_address(value)
+    except ValueError as exc:
+        raise ConfigError(f"{location} must be an IP address") from exc
+    return value
+
+
+def _vips(raw: Mapping[str, Any], vip: str, location: str) -> tuple[Mapping[str, Vip], str]:
+    """The addresses this cluster serves on, and which one an object gets by
+    default.
+
+    Optional, and absent it means what the deployments that exist today mean: a
+    single virtual IP, the one whose ownership `deploy` already watches, with no
+    separate source address. A cluster only needs to name its addresses once it
+    has more than one, which is the case this exists for - and until then
+    nothing has to be written down twice.
+    """
+
+    raw_vips = raw.get("vips")
+    if raw_vips is None:
+        single = Vip(name=DEFAULT_VIP, address=vip)
+        default = (
+            _required_string(raw, "default_vip", location) if "default_vip" in raw else DEFAULT_VIP
+        )
+        if default != DEFAULT_VIP:
+            raise ConfigError(f"{location}.default_vip names no VIP in this cluster: {default}")
+        return {DEFAULT_VIP: single}, DEFAULT_VIP
+
+    entries = _mapping(raw_vips, f"{location}.vips")
+    if not entries:
+        raise ConfigError(f"{location}.vips must name at least one VIP")
+
+    vips: dict[str, Vip] = {}
+    for name, value in entries.items():
+        where = f"{location}.vips.{name}"
+        if not isinstance(name, str) or not NAME.fullmatch(name):
+            raise ConfigError(f"{where} is not a usable VIP name")
+        entry = _mapping(value, where)
+        _only_keys(entry, {"address", "source"}, where)
+        source = entry.get("source")
+        vips[name] = Vip(
+            name=name,
+            address=_address(entry.get("address"), f"{where}.address"),
+            source=None if source is None else _address(source, f"{where}.source"),
+        )
+
+    addresses = [entry.address for entry in vips.values()]
+    if len(set(addresses)) != len(addresses):
+        #
+        # Two names for one address is two frontends binding the same port on
+        # the same interface. HAProxy validates that configuration and then
+        # refuses to start, on the node, after a publish reported success.
+        #
+        raise ConfigError(f"{location}.vips gives one address two names")
+
+    if "default_vip" in raw:
+        default = _required_string(raw, "default_vip", location)
+    elif len(vips) == 1:
+        default = next(iter(vips))
+    else:
+        raise ConfigError(
+            f"{location}.default_vip is required when the cluster names more than one VIP"
+        )
+    if default not in vips:
+        raise ConfigError(f"{location}.default_vip names no VIP in this cluster: {default}")
+    return vips, default
 
 
 def _under_root(raw: str, root: Path, location: str) -> Path:
@@ -323,6 +422,8 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             {
                 "display_name",
                 "vip",
+                "vips",
+                "default_vip",
                 "config_path",
                 "publish_path",
                 "node_path",
@@ -339,6 +440,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             ipaddress.ip_address(vip)
         except ValueError as exc:
             raise ConfigError(f"{location}.vip must be an IP address") from exc
+        vips, default_vip = _vips(raw, vip, location)
         node_path = _required_string(raw, "node_path", location)
         if not NODE_PATH.fullmatch(node_path):
             raise ConfigError(f"{location}.node_path is invalid")
@@ -404,6 +506,8 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             cluster_id=cluster_id,
             display_name=_required_string(raw, "display_name", location),
             vip=vip,
+            vips=vips,
+            default_vip=default_vip,
             config_path=_under_root(
                 _required_string(raw, "config_path", location),
                 policy.config_root,

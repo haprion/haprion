@@ -19,8 +19,8 @@ import unittest
 from pathlib import Path
 
 from haproxy_mgmt.generate import GeneratorError, generate
-from haproxy_mgmt.golden import cases, expected, objects, produced
-from haproxy_mgmt.proxy_model import load_proxy
+from haproxy_mgmt.golden import DEFAULT_VIPS, cases, expected, network, objects, produced
+from haproxy_mgmt.proxy_model import Proxy, load_proxy
 
 #
 # Enough of a configuration for `haproxy -c` to have something to attach the
@@ -64,7 +64,11 @@ class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
         for case in cases():
             with self.subTest(case.name):
                 loaded = objects(case)
-                self.assertEqual(generate(list(reversed(loaded))), generate(loaded))
+                vips, default_vip = network(case)
+                self.assertEqual(
+                    generate(list(reversed(loaded)), vips=vips, default_vip=default_vip),
+                    generate(loaded, vips=vips, default_vip=default_vip),
+                )
 
 
 @unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
@@ -99,6 +103,12 @@ class HaproxyAcceptsWhatWeGenerate(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
 
+def _generate(proxies: list[Proxy]) -> dict[str, str]:
+    """The generator on a cluster with one plain address, which most are."""
+
+    return generate(proxies, vips=dict(DEFAULT_VIPS), default_vip="main")
+
+
 class ThingsAWholeLayerRefuses(unittest.TestCase):
     """Refusals that only exist once more than one object is in view.
 
@@ -111,7 +121,7 @@ class ThingsAWholeLayerRefuses(unittest.TestCase):
         second = load_proxy("store", MINIMAL.replace(b"name: shop", b"name: store"))
 
         with self.assertRaises(GeneratorError) as raised:
-            generate([first, second])
+            _generate([first, second])
 
         self.assertIn("shop.example.com", str(raised.exception))
         self.assertIn("store", str(raised.exception))
@@ -122,7 +132,7 @@ class ThingsAWholeLayerRefuses(unittest.TestCase):
         tcp = MINIMAL.replace(b"protocol: http", b"protocol: tcp")
 
         with self.assertRaises(GeneratorError) as raised:
-            generate([load_proxy("shop", tcp)])
+            _generate([load_proxy("shop", tcp)])
 
         self.assertIn("shop", str(raised.exception))
 
@@ -141,7 +151,7 @@ class ThingsAWholeLayerRefuses(unittest.TestCase):
         )
 
         with self.assertRaises(GeneratorError) as raised:
-            generate([load_proxy("shop", conflicting)])
+            _generate([load_proxy("shop", conflicting)])
 
         self.assertIn("separate backends", str(raised.exception))
 

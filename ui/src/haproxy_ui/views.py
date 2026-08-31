@@ -384,6 +384,7 @@ def build_router(config: Config) -> APIRouter:
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
                 "certificates": overview,
+                "management_writes": config.management_writes,
                 "section": "certificates",
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,

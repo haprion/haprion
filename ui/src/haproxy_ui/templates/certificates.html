@@ -31,6 +31,9 @@
       {% endfor %}
     </tbody></table></div>
     <p class="table-note">{{ cluster.referenced_count }} referenced by this cluster{% if cluster.available_count %}, {{ cluster.available_count }} available in the distribution directory{% endif %}.</p>
+    {% if management_writes and role == 'admin' and cluster.configured %}
+    <div class="table-actions"><form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="cert_deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button deploy-button" type="submit">Deploy certificates</button></form></div>
+    {% endif %}
     {% else %}
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>
     {% endif %}

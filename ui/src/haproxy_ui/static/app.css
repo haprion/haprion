@@ -350,6 +350,15 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .action-buttons form { margin: 0; }
 .secondary-button { min-height: 32px; padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel-raised); color: var(--text-primary); font-size: 12px; font-weight: 650; cursor: pointer; }
 .secondary-button:hover { border-color: var(--brand); color: var(--brand-strong); }
+/* Deploying is not the same kind of act as the buttons it sits beside.
+   Publishing records a version; deploying reaches the nodes, and on a page
+   where every other button publishes, the two must not look interchangeable.
+   Same geometry, brand colour: the difference is visible before it is read. */
+.deploy-button { border-color: var(--brand-strong); background: var(--brand-soft); color: var(--brand-strong); }
+.deploy-button:hover { border-color: var(--brand); background: var(--brand); color: white; }
+/* Its own row under the table, right-aligned like the action column above it. */
+.table-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 0 20px 14px; }
+.table-actions form { margin: 0; }
 .table-scroll { overflow-x: auto; }
 .node-table { width: 100%; border-collapse: collapse; text-align: left; }
 .node-table th { padding: 10px 14px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.055em; text-transform: uppercase; white-space: nowrap; }
@@ -404,6 +413,11 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .version-published td { background: var(--panel-soft); }
 .version-comment { display: block; max-width: 460px; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .version-table code { color: var(--muted); font-size: 11px; }
+/* The published version has no button. Publishing it again is the repair of an
+   interrupted publish - a real path, exercised on 2026-08-31 - but it is a
+   maintenance action, and as a button beside nine identical ones it reads as
+   something an operator might reasonably press. */
+.version-current { color: var(--muted); font-size: 11px; }
 .version-table form { margin: 0; }
 /* "Does not deploy" used to sit under every button, which stacked the action
    cell and made every row taller for a sentence that is the same on all of

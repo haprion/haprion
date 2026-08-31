@@ -291,3 +291,86 @@ class ZeroOwnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StoppingBecauseTheCallerLetGo(unittest.TestCase):
+    """The checkpoint, and the three answers it can give.
+
+    The lifeline exists because the caller cannot stop this process: the helper
+    runs as root and the worker does not. So the loop stops itself, and the
+    whole value of stopping at the top of an iteration is that the result is a
+    state the contract already names.
+
+    A fake lifeline rather than a real pipe here: what is under test is where
+    the loop asks and what it reports, not how EOF reaches a thread. That is
+    tested against real file descriptors in test_helper_protocol.
+    """
+
+    class Held:
+        released = False
+
+    class Released:
+        released = True
+        reason = "the caller closed the lifeline"
+
+    class ReleasedAfter:
+        """Held for the first n questions, released from then on."""
+
+        reason = "the caller closed the lifeline"
+
+        def __init__(self, hold_for: int) -> None:
+            self._left = hold_for
+
+        @property
+        def released(self) -> bool:
+            if self._left > 0:
+                self._left -= 1
+                return False
+            return True
+
+    def run_with(self, cluster: FakeCluster, lifeline: object) -> tuple[int, str]:
+        out = io.StringIO()
+        outcome = deploy_run.run(
+            lambda: parse_status(cluster.read_status()),
+            lambda node: cluster.trigger(node.name),
+            out,
+            target=TARGET,
+            lifeline=lifeline,  # type: ignore[arg-type]
+        )
+        LAST_REPORT[:] = [outcome.report]
+        return outcome.exit_code, out.getvalue()
+
+    def test_released_before_anything_ran_is_blocked_and_touches_nothing(self) -> None:
+        cluster = pair()
+        code, text = self.run_with(cluster, self.Released())
+
+        self.assertEqual(code, 65)
+        self.assertEqual(LAST_REPORT[0].outcome.value, "blocked")
+        self.assertIn("No node was touched", text)
+        self.assertEqual(cluster.triggered, [])
+
+    def test_released_after_one_node_is_partial(self) -> None:
+        cluster = pair()
+        code, text = self.run_with(cluster, self.ReleasedAfter(1))
+
+        self.assertEqual(code, 69)
+        self.assertEqual(LAST_REPORT[0].outcome.value, "partial")
+        self.assertEqual(len(cluster.triggered), 1)
+        self.assertIn("Run the same command again", text)
+
+    def test_the_reason_is_carried_into_the_report(self) -> None:
+        cluster = pair()
+        self.run_with(cluster, self.Released())
+
+        error = LAST_REPORT[0].error
+        assert error is not None
+        self.assertEqual(error.code, "caller_released")
+        self.assertEqual(error.message, "the caller closed the lifeline")
+
+    def test_a_held_lifeline_changes_nothing(self) -> None:
+        cluster = pair()
+        code, _ = self.run_with(cluster, self.Held())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(LAST_REPORT[0].outcome.value, "done")
+        self.assertEqual(len(cluster.triggered), 2)

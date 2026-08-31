@@ -52,6 +52,7 @@ from haproxy_mgmt.envelope import failure
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
     JsonValue,
+    Lifeline,
     read_helper_request,
     require_no_arguments,
     write_document,
@@ -144,6 +145,7 @@ def main(
             expected_operation=OPERATION,
             allowed_parameter_keys=PARAMETERS,
             validate_parameters=_validate,
+            lifeline=True,
         )
     except HelperProtocolError as exc:
         #
@@ -248,6 +250,14 @@ def main(
 
     trigger: TriggerNode = node_trigger or default_trigger
 
+    #
+    # Watched only if the caller said it is holding the stream; see the same
+    # note in the deploy helper.
+    #
+    lifeline = Lifeline(input_stream or sys.stdin.buffer) if request.lifeline else None
+    if lifeline is not None:
+        lifeline.watch()
+
     try:
         #
         # The same per-cluster lock configuration deployment takes. The two must
@@ -263,6 +273,7 @@ def main(
                 target=target,
                 allow_vip_unknown=allow_vip_unknown,
                 operation=CERT_OPERATION,
+                lifeline=lifeline,
             )
     except LockBusy as exc:
         return refuse("operation_locked", str(exc), exc.exit_code)

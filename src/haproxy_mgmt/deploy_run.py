@@ -35,9 +35,11 @@ from typing import Any, TextIO
 
 from haproxy_mgmt.cluster_status import ClusterStatus, NodeStatus, StatusError
 from haproxy_mgmt.deploy_plan import (
+    EXIT_BLOCKED,
     NOTHING_DONE,
     Action,
     Outcome,
+    Progress,
     Step,
     Target,
     next_step,
@@ -45,6 +47,7 @@ from haproxy_mgmt.deploy_plan import (
     warnings_for,
 )
 from haproxy_mgmt.envelope import Message, envelope
+from haproxy_mgmt.helper_protocol import Lifeline
 
 type ReadStatus = Callable[[], ClusterStatus]
 type TriggerNode = Callable[[NodeStatus], int]
@@ -199,6 +202,7 @@ def run(
     target: Target | None = None,
     allow_vip_unknown: bool = False,
     operation: str = OPERATION,
+    lifeline: Lifeline | None = None,
 ) -> DeployRun:
     """Reconcile the cluster and report, in text as it goes and in a result."""
 
@@ -229,6 +233,17 @@ def run(
     announced: tuple[str, ...] = ()
 
     while True:
+        #
+        # The checkpoint. Asked before a step is chosen, which is the only place
+        # in this loop where what has happened and what has not are both known
+        # exactly: every node is either handled or untouched, and none is
+        # half-handled. Stopping here therefore produces a state the contract
+        # already has a word for, rather than the arbitrary instant a signal
+        # would have produced.
+        #
+        if lifeline is not None and lifeline.released:
+            return _released(writer, status, report, progress, lifeline.reason)
+
         #
         # Warnings are statements about the cluster, so they are printed when
         # they change rather than once at the start or once per step. A picture
@@ -336,6 +351,41 @@ def run(
         else:
             entry.outcome = "updated"
             entry.verified = bool(landed)
+
+
+def _released(
+    writer: TextIO,
+    status: ClusterStatus,
+    report: DeployReport,
+    progress: Progress,
+    reason: str,
+) -> DeployRun:
+    """Stop because the caller let go, and say so in the report.
+
+    `blocked` when no node was touched: nothing happened, the cluster is as it
+    was found, and the job needs a person rather than a retry. `partial` once
+    anything was deployed - some nodes carry the target and some do not, which
+    is exactly what partial has always meant here.
+
+    Never `failed`. Nothing failed. The caller stopped waiting, and a report
+    that blamed the cluster for that would send the next reader looking for a
+    fault that is not there.
+    """
+
+    writer.write("\n")
+    writer.write(_state_line("Final status", status))
+    report.final_summary = status.summary
+
+    touched = bool(progress.deployed or progress.failed)
+    report.outcome = Outcome.PARTIAL if touched else Outcome.BLOCKED
+    report.error = Message(code="caller_released", message=reason)
+
+    writer.write(f"\nRESULT: {report.outcome.value.upper()}\n{reason}; stopped at a safe point.\n")
+    if touched:
+        writer.write("Some nodes carry the target and some do not. Run the same command again.\n")
+        return DeployRun(EXIT_INCOMPLETE, report)
+    writer.write("No node was touched.\n")
+    return DeployRun(EXIT_BLOCKED, report)
 
 
 def _verify(status: ClusterStatus, node_name: str, target: Target | None) -> bool | None:

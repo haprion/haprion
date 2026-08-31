@@ -52,6 +52,7 @@ from haproxy_mgmt.envelope import failure, new_request_id
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
     JsonValue,
+    Lifeline,
     read_helper_request,
     require_no_arguments,
     write_document,
@@ -179,6 +180,7 @@ def main(
             expected_operation=OPERATION,
             allowed_parameter_keys=PARAMETERS,
             validate_parameters=_validate,
+            lifeline=True,
         )
     except HelperProtocolError as exc:
         #
@@ -277,6 +279,15 @@ def main(
 
     trigger: TriggerNode = node_trigger or default_trigger
 
+    #
+    # Watched only if the caller said it is holding the stream. A caller that
+    # said nothing has already closed it, and watching that would read the
+    # closure as "let go" and stop before the first node.
+    #
+    lifeline = Lifeline(input_stream or sys.stdin.buffer) if request.lifeline else None
+    if lifeline is not None:
+        lifeline.watch()
+
     try:
         with hold(request.cluster, operation="deploy", root=lock_root):
             outcome = run(
@@ -285,6 +296,7 @@ def main(
                 stream,
                 target=read_target(Path(cluster.publish_path), cluster.node_path),
                 allow_vip_unknown=allow_vip_unknown,
+                lifeline=lifeline,
             )
     except LockBusy as exc:
         return refuse("operation_locked", str(exc), exc.exit_code)

@@ -28,7 +28,7 @@
     {% if management_writes and role == 'admin' and cluster.configured %}
     <footer class="cluster-actions" aria-label="{{ cluster.cluster }} operations">
       <div><strong>Deploy</strong><span>Publishing records a version; deploying is what reaches the nodes.</span></div>
-      <div class="action-buttons"><form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button deploy-button" type="submit">Deploy configuration</button></form></div>
+      <div class="action-buttons"><form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Deploy configuration</button></form></div>
     </footer>{% endif %}
     {% else %}
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>

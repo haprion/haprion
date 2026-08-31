@@ -82,13 +82,13 @@ class DeployingFromThePageThatPublishes(LoginTestCase):
         client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
         self.sign_in(client)
 
-        self.assertNotIn("deploy-button", client.get("/history").text)
+        self.assertNotIn('name="operation" value="deploy"', client.get("/history").text)
 
     def test_read_only_mode_gets_no_deploy_button(self) -> None:
         client = self.client(replace(configuration(), clusters=("alpha",)))
         self.sign_in(client)
 
-        self.assertNotIn("deploy-button", client.get("/history").text)
+        self.assertNotIn('name="operation" value="deploy"', client.get("/history").text)
 
 
 class DeployingCertificatesFromTheCertificatePage(LoginTestCase):
@@ -122,15 +122,16 @@ class DeployingCertificatesFromTheCertificatePage(LoginTestCase):
 
         self.assertEqual(page.status_code, 200)
         self.assertIn('name="operation" value="cert_deploy"', page.text)
-        self.assertIn("deploy-button", page.text)
 
     def test_read_only_mode_shows_no_such_button(self) -> None:
-        self.assertNotIn("deploy-button", self.page().text)
+        self.assertNotIn('name="operation" value="cert_deploy"', self.page().text)
 
     def test_a_reader_gets_no_such_button(self) -> None:
         self.account = replace(self.account, role="reader")
 
-        self.assertNotIn("deploy-button", self.page(management_writes=True).text)
+        self.assertNotIn(
+            'name="operation" value="cert_deploy"', self.page(management_writes=True).text
+        )
 
 
 class ThePublishedVersionHasNoButton(LoginTestCase):

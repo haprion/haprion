@@ -29,7 +29,7 @@
         </select>
         <small>Which address this site is served on.</small>
       </label>
-      <label>SOURCE
+      <label>Source address
         <select name="source">
           <option value="">The VIP's own</option>
           {% for source in choices.sources %}<option value="{{ source }}"{% if form.source == source %} selected{% endif %}>{{ source }}</option>{% endfor %}
@@ -47,7 +47,7 @@
           <option value="" {% if not form.allow_from and not form.allow_ranges %}selected{% endif %}>Everywhere</option>
           {% for network in choices.networks %}<option value="{{ network }}"{% if network in form.allow_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
         </select>
-        <small>Groups the cluster defines, in <code>clusters.yaml</code>.</small>
+        <small>Groups the cluster defines, on the <a href="/network">Network</a> page.</small>
       </label>
       <label>Reachable from — addresses<textarea name="allow_ranges" rows="3" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address or range per line.</small></label>
     </div>

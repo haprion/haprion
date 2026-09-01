@@ -1,0 +1,153 @@
+{% extends "layout.html" %}
+{% block title %}Network — HAProxy Manager{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div><h1>Network</h1><p>Where traffic arrives, where it leaves from, and who may reach it.</p></div>
+  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-info"></span>Draft — nothing here saves yet</span></div>
+</section>
+
+<p class="preview-notice"><strong>A first draft to look at, not a working page.</strong> The forms below render and validate nothing; they exist so the shape can be judged before it is wired to the publish path. The addresses shown are the documented examples, not this installation's.</p>
+
+<section class="cluster-card">
+  <header class="cluster-header">
+    <div class="cluster-identity">
+      <div class="section-title">
+        <h3>Virtual addresses</h3>
+        <p>What a frontend binds. An object names a VIP; it never names an address.</p>
+      </div>
+    </div>
+  </header>
+
+  <div class="table-scroll"><table class="node-table">
+    <thead><tr><th>Name</th><th>Address</th><th>Default source</th><th>Default</th><th></th></tr></thead>
+    <tbody>
+      {% for vip in network.vips.values()|sort(attribute='name') %}
+      <tr>
+        <td><code>{{ vip.name }}</code></td>
+        <td>{{ vip.address }}</td>
+        <td>{% if vip.source %}{{ vip.source }}{% else %}<span class="table-empty">whatever routing picks</span>{% endif %}</td>
+        <td>{% if vip.name == network.default_vip %}<span class="status-badge status-badge-info">default</span>{% endif %}</td>
+        <td class="row-actions"><button type="button" class="link-button" disabled>Edit</button></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+
+  <details class="add-form">
+    <summary>Add a virtual address</summary>
+    <p class="network-warning"><strong>This does half the job.</strong> The other half is keepalived on the nodes, which this application does not configure. No node carries the address until someone adds it to the <code>virtual_ipaddress</code> block, and until then no traffic reaches the frontend however correct the generated configuration is. A source address must sit in the <em>same</em> block as its VIP, or replies after a failover go to a node that no longer carries the traffic.</p>
+    <div class="form-grid">
+      <label>Name<input name="vip_name" placeholder="internal" maxlength="63" disabled><small>What objects will refer to.</small></label>
+      <label>Address<input name="vip_address" placeholder="192.0.2.20" maxlength="45" disabled><small>The address the frontend binds.</small></label>
+      <label>Default source<input name="vip_source" placeholder="192.0.2.25" maxlength="45" disabled><small>Optional. What objects on this VIP connect out from unless they say otherwise.</small></label>
+    </div>
+  </details>
+</section>
+
+<section class="cluster-card">
+  <header class="cluster-header">
+    <div class="cluster-identity">
+      <div class="section-title">
+        <h3>Default virtual address</h3>
+        <p>Where an object lands when it names no VIP of its own.</p>
+      </div>
+    </div>
+  </header>
+
+  <div class="form-grid">
+    <label>Default
+      <select name="default_vip" disabled>
+        {% for vip in network.vips.values()|sort(attribute='name') %}
+        <option value="{{ vip.name }}"{% if vip.name == network.default_vip %} selected{% endif %}>{{ vip.name }} — {{ vip.address }}</option>
+        {% endfor %}
+      </select>
+      <small>Currently <code>{{ network.default_vip }}</code>.</small>
+    </label>
+  </div>
+  <p class="network-warning"><strong>Changing this moves traffic for sites nobody touched.</strong> Every object that never named a VIP follows the default, so this is the one change on the page that alters where existing traffic lands. It will ask again before writing, and say how many objects come with it.</p>
+</section>
+
+<section class="cluster-card">
+  <header class="cluster-header">
+    <div class="cluster-identity">
+      <div class="section-title">
+        <h3>Source addresses</h3>
+        <p>What an object may leave from instead of the one its VIP pairs with.</p>
+      </div>
+    </div>
+  </header>
+
+  <p class="table-note">HAProxy takes the source per backend rather than per listener, so a site may leave from a different address than the one it arrived on. Each VIP above already names a default; this table is for the exception, and an exception should have to be named. A NetScaler calls these SNIPs.</p>
+
+  <div class="table-scroll"><table class="node-table">
+    <thead><tr><th>Name</th><th>Address</th><th></th></tr></thead>
+    <tbody>
+      {% for name, address in network.sources.items()|sort %}
+      <tr>
+        <td><code>{{ name }}</code></td>
+        <td>{{ address }}</td>
+        <td class="row-actions"><button type="button" class="link-button" disabled>Edit</button></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="table-empty">None. Every object leaves from its VIP's default.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+
+  <details class="add-form">
+    <summary>Add a source address</summary>
+    <div class="form-grid">
+      <label>Name<input name="source_name" placeholder="outbound" maxlength="63" disabled></label>
+      <label>Address<input name="source_address" placeholder="192.0.2.35" maxlength="45" disabled><small>Must be carried by the nodes, in the same keepalived block as the VIP it is used with.</small></label>
+    </div>
+  </details>
+</section>
+
+<section class="cluster-card">
+  <header class="cluster-header">
+    <div class="cluster-identity">
+      <div class="section-title">
+        <h3>Address groups</h3>
+        <p>Named sets an object may restrict itself to with <code>allow_from</code>.</p>
+      </div>
+    </div>
+  </header>
+
+  <p class="table-note">The object names the group; which addresses that is stays here. That way the same object means the same thing in a rehearsal cluster and in production. An object may also write an address or range directly, for what belongs to one site alone.</p>
+
+  <div class="table-scroll"><table class="node-table">
+    <thead><tr><th>Name</th><th>Members</th><th></th></tr></thead>
+    <tbody>
+      {% for name, members in network.networks.items()|sort %}
+      <tr>
+        <td><code>{{ name }}</code></td>
+        <td>{% for member in members %}<code>{{ member }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</td>
+        <td class="row-actions"><button type="button" class="link-button" disabled>Edit</button></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="table-empty">None defined.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+
+  <details class="add-form">
+    <summary>Add a group</summary>
+    <div class="form-grid">
+      <label>Name<input name="group_name" placeholder="office" maxlength="63" disabled></label>
+      <label>Members<textarea name="group_members" rows="3" placeholder="198.51.100.0/24&#10;203.0.113.10/32" disabled></textarea><small>One address or range per line. A group covering an entire address family is refused: it reads as a restriction and enforces nothing.</small></label>
+    </div>
+  </details>
+</section>
+
+<section class="cluster-card">
+  <header class="cluster-header">
+    <div class="cluster-identity">
+      <div class="section-title">
+        <h3>What is not on this page</h3>
+        <p>And why it is not.</p>
+      </div>
+    </div>
+  </header>
+  <p class="table-note">The <code>vip</code> line that <code>deploy</code> checks node ownership against stays in the engine's own configuration and is not editable here. A control the interface can rewrite is not a control. The same applies to paths, identities, keys, the resolvers section and the certificate allowlist: they describe how the system runs rather than what is published on it.</p>
+</section>
+{% endblock %}

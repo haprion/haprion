@@ -652,3 +652,38 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   color: var(--text); font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: 12.5px; line-height: 1.55; white-space: pre;
 }
+
+/*
+ * The network page. Tables of addresses, each followed by the form that adds
+ * one - collapsed, because reading what a cluster already has is the common
+ * visit and adding to it is the rare one.
+ */
+.table-empty { color: var(--muted); }
+/*
+ * Warnings that are about the world rather than the form. Adding a VIP here
+ * does nothing until keepalived on the nodes carries it, and changing the
+ * default moves traffic for sites nobody touched. Neither is an error, so
+ * neither is red; both have to be read before the button is pressed, so
+ * neither is a footnote.
+ */
+.network-warning {
+  margin: 0; padding: 14px 20px; border-top: 1px solid var(--line);
+  border-left: 3px solid var(--warning); background: var(--warning-soft);
+  color: var(--text); font-size: 12.5px; line-height: 1.6;
+}
+.add-form { border-top: 1px solid var(--line); }
+.add-form > summary {
+  padding: 12px 20px; color: var(--muted-strong); font-size: 12.5px; font-weight: 650;
+  cursor: pointer; user-select: none;
+}
+.add-form > summary:hover { color: var(--text-strong); background: var(--panel-soft); }
+.add-form[open] > summary { border-bottom: 1px solid var(--line); }
+.add-form .form-grid { padding: 16px 20px; }
+.add-form .network-warning { border-top: 0; margin: 0 20px; }
+.row-actions { text-align: right; }
+.link-button {
+  padding: 0; border: 0; background: none; color: var(--brand);
+  font: inherit; font-weight: 650; cursor: pointer;
+}
+.link-button:hover { text-decoration: underline; }
+.link-button:disabled { color: var(--muted); cursor: default; text-decoration: none; }

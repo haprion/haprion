@@ -702,11 +702,12 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 }
 .editor-table textarea { resize: vertical; }
 /*
- * Left, under the heading, and not centred in the column. A centred control
- * sits nowhere in particular: the eye reads the heading and then has to find
- * the box, on every row. Aligned with the heading it is one column to follow.
+ * The heading and the control share the column's centre line. Centring one of
+ * them and not the other is what put the box beside its own heading rather
+ * than under it: every other heading on the page is left-aligned, so the
+ * centring has to be asked for on both cells of these two columns.
  */
-.editor-table .editor-choice { text-align: left; }
+.editor-table th.editor-choice, .editor-table td.editor-choice { text-align: center; }
 .editor-table .editor-choice input { accent-color: var(--brand); width: 16px; height: 16px; }
 /*
  * Removal is the one tick in these tables that takes something away, so it is
@@ -778,6 +779,10 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .follow-up-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .editor-actions { display: flex; justify-content: flex-end; padding: 14px 20px 4px; }
 /* The note keeps the left, the button the right, and they share one line. */
-.editor-submit { align-items: center; justify-content: space-between; gap: 16px; padding-top: 4px; }
+/*
+ * The gap under the button matches the gap beside it. The card ends where this
+ * row ends, so its bottom padding is the card's bottom margin.
+ */
+.editor-submit { align-items: center; justify-content: space-between; gap: 16px; padding: 4px 20px 20px; }
 .editor-submit .table-note { margin: 0; padding: 0; }
 .editor-actions .secondary-button { padding: 9px 22px; }

@@ -90,7 +90,7 @@
           of value.
         #}
         <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-default"><col class="col-remove"></colgroup>
-        <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th>Default</th><th>Remove</th></tr></thead>
+        <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th class="editor-choice">Default</th><th class="editor-choice">Remove</th></tr></thead>
         <tbody>
           {% for vip in cluster.vips %}
           <tr>
@@ -141,7 +141,7 @@
       <h4 class="network-subhead">Source addresses</h4>
       <div class="table-scroll"><table class="node-table network-table editor-table">
         <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-default"><col class="col-remove"></colgroup>
-        <thead><tr><th>Name</th><th></th><th>IP address</th><th></th><th>Remove</th></tr></thead>
+        <thead><tr><th>Name</th><th></th><th>IP address</th><th></th><th class="editor-choice">Remove</th></tr></thead>
         <tbody>
           {#
             The addresses a VIP carries are shown here and not editable here.
@@ -196,7 +196,7 @@
       <h4 class="network-subhead">Reachable-from groups</h4>
       <div class="table-scroll"><table class="node-table network-table network-table-groups editor-table">
         <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-default"><col class="col-remove"></colgroup>
-        <thead><tr><th>Name</th><th colspan="3">Members</th><th>Remove</th></tr></thead>
+        <thead><tr><th>Name</th><th colspan="3">Members</th><th class="editor-choice">Remove</th></tr></thead>
         <tbody>
           {% for group in cluster.groups %}
           <tr>

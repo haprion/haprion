@@ -33,7 +33,7 @@ class TheReadingBecomesTheCard(unittest.TestCase):
 
         self.assertTrue(edge.editable)
         self.assertEqual(edge.head, "a" * 40)
-        self.assertIn("default_vip: public", edge.document or "")
+        self.assertIn('"default_vip": "public"', edge.document or "")
         self.assertEqual(edge.default_vip, "public")
         self.assertEqual([vip.name for vip in edge.vips], ["partner", "public"])
         self.assertEqual([vip.is_default for vip in edge.vips], [False, True])

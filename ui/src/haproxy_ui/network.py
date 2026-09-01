@@ -15,12 +15,11 @@ fail, so the distinction is carried out of the envelope and named here.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
-
-import yaml
 
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
@@ -172,7 +171,10 @@ def _document(result: Mapping[str, Any], default_vip: str) -> str:
     }
     if groups:
         document["networks"] = groups
-    return yaml.safe_dump(document, sort_keys=False, default_flow_style=False)
+    # JSON is YAML 1.2. Rendering this as JSON avoids teaching the UI process a
+    # second YAML emitter; the privileged helper remains the one parser and
+    # canonical publisher of this document.
+    return json.dumps(document, indent=2) + "\n"
 
 
 def _empty(cluster: str) -> NetworkClusterView:

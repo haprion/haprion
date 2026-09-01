@@ -660,6 +660,13 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
  */
 .table-empty { color: var(--muted); }
 /*
+ * The sections are separate cards and are spaced like every other stack of
+ * cards in the application. Flush against one another they read as one panel
+ * with headings in it, which is the opposite of what they are: four tables
+ * that are edited, published and reverted independently.
+ */
+.network-sections .cluster-card > .form-grid { padding-bottom: 18px; }
+/*
  * Warnings that are about the world rather than the form. Adding a VIP here
  * does nothing until keepalived on the nodes carries it, and changing the
  * default moves traffic for sites nobody touched. Neither is an error, so

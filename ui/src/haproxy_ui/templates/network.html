@@ -8,7 +8,9 @@
 
 <p class="preview-notice"><strong>A first draft to look at, not a working page.</strong> The forms below render and validate nothing; they exist so the shape can be judged before it is wired to the publish path. The addresses shown are the documented examples, not this installation's.</p>
 
-<section class="cluster-card">
+<div class="cluster-list network-sections">
+
+<article class="cluster-card">
   <header class="cluster-header">
     <div class="cluster-identity">
       <div class="section-title">
@@ -42,9 +44,9 @@
       <label>Default source<input name="vip_source" placeholder="192.0.2.25" maxlength="45" disabled><small>Optional. What objects on this VIP connect out from unless they say otherwise.</small></label>
     </div>
   </details>
-</section>
+</article>
 
-<section class="cluster-card">
+<article class="cluster-card">
   <header class="cluster-header">
     <div class="cluster-identity">
       <div class="section-title">
@@ -65,9 +67,9 @@
     </label>
   </div>
   <p class="network-warning"><strong>Changing this moves traffic for sites nobody touched.</strong> Every object that never named a VIP follows the default, so this is the one change on the page that alters where existing traffic lands. It will ask again before writing, and say how many objects come with it.</p>
-</section>
+</article>
 
-<section class="cluster-card">
+<article class="cluster-card">
   <header class="cluster-header">
     <div class="cluster-identity">
       <div class="section-title">
@@ -101,9 +103,9 @@
       <label>Address<input name="source_address" placeholder="192.0.2.35" maxlength="45" disabled><small>Must be carried by the nodes, in the same keepalived block as the VIP it is used with.</small></label>
     </div>
   </details>
-</section>
+</article>
 
-<section class="cluster-card">
+<article class="cluster-card">
   <header class="cluster-header">
     <div class="cluster-identity">
       <div class="section-title">
@@ -137,9 +139,9 @@
       <label>Members<textarea name="group_members" rows="3" placeholder="198.51.100.0/24&#10;203.0.113.10/32" disabled></textarea><small>One address or range per line. A group covering an entire address family is refused: it reads as a restriction and enforces nothing.</small></label>
     </div>
   </details>
-</section>
+</article>
 
-<section class="cluster-card">
+<article class="cluster-card">
   <header class="cluster-header">
     <div class="cluster-identity">
       <div class="section-title">
@@ -149,5 +151,7 @@
     </div>
   </header>
   <p class="table-note">The <code>vip</code> line that <code>deploy</code> checks node ownership against stays in the engine's own configuration and is not editable here. A control the interface can rewrite is not a control. The same applies to paths, identities, keys, the resolvers section and the certificate allowlist: they describe how the system runs rather than what is published on it.</p>
-</section>
+</article>
+
+</div>
 {% endblock %}

@@ -29,7 +29,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_status\njob\nlogin_attempt'
+expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_network\ncluster_status\njob\nlogin_attempt'
 actual_tables="$(run -c "select tablename from pg_tables
                           where schemaname = 'public' order by 1")"
 if [[ "$actual_tables" == "$expected_tables" ]]; then
@@ -58,6 +58,9 @@ app_poller	cluster_history	UPDATE	error, outcome, poll_error, result, warnings
 app_poller	cluster_inventory	INSERT	cluster, error, outcome, poll_error, result, warnings
 app_poller	cluster_inventory	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_poller	cluster_inventory	UPDATE	error, outcome, poll_error, result, warnings
+app_poller	cluster_network	INSERT	cluster, error, outcome, poll_error, result, warnings
+app_poller	cluster_network	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_poller	cluster_network	UPDATE	error, outcome, poll_error, result, warnings
 app_poller	cluster_status	INSERT	cluster, error, outcome, poll_error, result, warnings
 app_poller	cluster_status	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_poller	cluster_status	UPDATE	error, outcome, poll_error, result, warnings
@@ -71,14 +74,16 @@ app_web	cluster_backups	SELECT	cluster, error, observed_at, outcome, poll_error,
 app_web	cluster_certificates	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_web	cluster_history	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_web	cluster_inventory	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_web	cluster_network	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_web	cluster_status	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_web	job	INSERT	cluster, idempotency_key, operation, payload
-app_web	job	SELECT	cluster, created_at, exit_code, finished_at, id, idempotency_key, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt
+app_web	job	SELECT	attempts, cluster, created_at, exit_code, finished_at, id, idempotency_key, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt
 app_web	login_attempt	INSERT	client_ip, succeeded, username_normalised
 app_web	login_attempt	SELECT	at, client_ip, id, succeeded, username_normalised
 app_worker	audit_event	INSERT	action, actor, cluster, detail, request_id
-app_worker	job	SELECT	claim_token, cluster, created_at, exit_code, finished_at, id, idempotency_key, lease_until, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt, worker_id
-app_worker	job	UPDATE	claim_token, exit_code, finished_at, lease_until, outcome, result, started_at, state, stderr_excerpt, worker_id
+app_worker	cluster_history	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
+app_worker	job	SELECT	attempts, claim_token, cluster, created_at, exit_code, finished_at, id, idempotency_key, lease_until, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt, worker_id
+app_worker	job	UPDATE	attempts, claim_token, exit_code, finished_at, lease_until, outcome, result, started_at, state, stderr_excerpt, worker_id
 EOF
 )
 actual_grants="$(run -c "

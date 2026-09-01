@@ -708,5 +708,21 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .editor-table .editor-choice input { accent-color: var(--brand); width: 16px; height: 16px; }
 .editor-note { padding-top: 6px; grid-template-columns: minmax(260px, 520px); }
 .network-editor .warning-text { margin: 12px 20px 0; font-size: 12px; }
+/*
+ * Adding a row is the rare visit. The blank rows stay in the form - a closed
+ * `details` still posts its fields, which is what the default-VIP radio's row
+ * numbering counts on - but they are not drawn until somebody asks for them.
+ */
+.editor-add > summary {
+  padding: 8px 20px; color: var(--text-secondary); font-size: 12px; font-weight: 620;
+  cursor: pointer; list-style: none;
+}
+.editor-add > summary::-webkit-details-marker { display: none; }
+.editor-add > summary::before { content: "+ "; color: var(--brand); font-weight: 700; }
+.editor-add[open] > summary::before { content: "\2212  "; }
+.editor-add > summary:hover { color: var(--text-strong); }
+/* An address its VIP carries: shown here, changed one table up. */
+.editor-locked td { color: var(--muted); }
+.locked-hint { color: var(--muted); font-size: 11px; }
 .editor-actions { display: flex; justify-content: flex-end; padding: 14px 20px 4px; }
 .editor-actions .secondary-button { padding: 9px 22px; }

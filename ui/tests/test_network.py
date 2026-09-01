@@ -12,6 +12,7 @@ import json
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest import mock
 
 from haproxy_ui import demo
@@ -234,13 +235,18 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         self.assertNotIn('action="/network"', page.text)
         self.assertIn("cannot be changed from here", page.text)
 
-    def test_an_editable_repository_description_gets_a_fenced_publish_form(self) -> None:
+    def editable_page(self) -> Any:
+        """The page as an admin sees it on a cluster it may publish to."""
+
         with mock.patch("haproxy_ui.db.cluster_networks", return_value=demo.network_rows(NOW)):
             client = self.client(
                 replace(configuration(), management_writes=True, clusters=demo.CLUSTERS)
             )
             self.sign_in(client)
-            page = client.get("/network")
+            return client.get("/network")
+
+    def test_an_editable_repository_description_gets_a_fenced_publish_form(self) -> None:
+        page = self.editable_page()
 
         self.assertIn('name="operation" value="network_publish"', page.text)
         self.assertIn('name="expected_head" value="' + "a" * 40 + '"', page.text)
@@ -253,12 +259,7 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         # document. It published, but it asked a person to hand-write the
         # engine's file - a shape nothing else in the interface asks for.
         #
-        with mock.patch("haproxy_ui.db.cluster_networks", return_value=demo.network_rows(NOW)):
-            client = self.client(
-                replace(configuration(), management_writes=True, clusters=demo.CLUSTERS)
-            )
-            self.sign_in(client)
-            page = client.get("/network")
+        page = self.editable_page()
 
         self.assertIn('name="vip_address" value="192.0.2.20"', page.text)
         self.assertIn('name="source_name" value="outbound"', page.text)
@@ -271,17 +272,38 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         # it. Two tables of the same addresses raise the question of which one
         # is the real one, and the answer would be the one further from the eye.
         #
-        with mock.patch("haproxy_ui.db.cluster_networks", return_value=demo.network_rows(NOW)):
-            client = self.client(
-                replace(configuration(), management_writes=True, clusters=demo.CLUSTERS)
-            )
-            self.sign_in(client)
-            page = client.get("/network")
+        page = self.editable_page()
 
         # Not the default VIP's address: that one is also this cluster's
         # ownership address, and the note naming it is a third mention by
         # design.
         self.assertEqual(page.text.count("192.0.2.21"), 1)
+
+    def test_the_blank_rows_are_folded_away_but_still_in_the_form(self) -> None:
+        #
+        # A closed `details` still posts its fields. That is what the whole
+        # scheme rests on: the default-VIP radio carries a row number, and a
+        # spare row that stopped being submitted would shift every number
+        # after it.
+        #
+        page = self.editable_page()
+
+        self.assertIn('<details class="editor-add">', page.text)
+        self.assertEqual(page.text.count('name="vip_name"'), 4)
+        self.assertEqual(page.text.count('name="source_name"'), 3)
+        self.assertIn('name="default_vip_row" value="3"', page.text)
+
+    def test_an_address_its_vip_carries_is_shown_here_and_changed_one_table_up(self) -> None:
+        #
+        # Leaving it out was right about where it is edited and wrong about
+        # what a person reads: a cluster whose only source is paired with its
+        # VIP got an empty table under the heading it was looking for.
+        #
+        page = self.editable_page()
+
+        self.assertIn("edited in its VIP row above", page.text)
+        self.assertIn("<td>192.0.2.25</td>", page.text)
+        self.assertNotIn('name="source_name" value="public"', page.text)
 
     def test_signing_in_is_required(self) -> None:
         page = self.client().get("/network", follow_redirects=False)

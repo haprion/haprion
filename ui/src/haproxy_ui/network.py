@@ -101,6 +101,7 @@ class NetworkClusterView:
     default_vip: str
     vips: tuple[VipView, ...]
     sources: tuple[SourceView, ...]
+    paired_sources: tuple[SourceView, ...]
     named_sources: tuple[NamedSourceView, ...]
     groups: tuple[GroupView, ...]
 
@@ -128,8 +129,10 @@ def _vips(result: Mapping[str, Any], default_vip: str) -> tuple[VipView, ...]:
     )
 
 
-def _sources(result: Mapping[str, Any]) -> tuple[SourceView, ...]:
-    paired = tuple(
+def _paired_sources(result: Mapping[str, Any]) -> tuple[SourceView, ...]:
+    """The addresses a VIP carries, which are edited in that VIP's own row."""
+
+    return tuple(
         SourceView(
             name=_text(row.get("name")),
             address=_text(row.get("source")),
@@ -138,6 +141,9 @@ def _sources(result: Mapping[str, Any]) -> tuple[SourceView, ...]:
         for row in _rows(result, "vips")
         if isinstance(row.get("source"), str) and row.get("source")
     )
+
+
+def _sources(result: Mapping[str, Any]) -> tuple[SourceView, ...]:
     named = tuple(
         SourceView(
             name=_text(row.get("name")),
@@ -146,7 +152,7 @@ def _sources(result: Mapping[str, Any]) -> tuple[SourceView, ...]:
         )
         for row in _rows(result, "sources")
     )
-    return paired + named
+    return _paired_sources(result) + named
 
 
 def _groups(result: Mapping[str, Any]) -> tuple[GroupView, ...]:
@@ -186,6 +192,7 @@ def _empty(cluster: str) -> NetworkClusterView:
         default_vip="—",
         vips=(),
         sources=(),
+        paired_sources=(),
         named_sources=(),
         groups=(),
     )
@@ -211,6 +218,7 @@ def _unavailable(reading: ClusterNetwork, *, stale: bool, age_label: str) -> Net
         default_vip="—",
         vips=(),
         sources=(),
+        paired_sources=(),
         named_sources=(),
         groups=(),
     )
@@ -251,6 +259,7 @@ def _view(reading: ClusterNetwork, *, stale: bool, age_label: str) -> NetworkClu
         default_vip=default_vip,
         vips=_vips(result, default_vip),
         sources=_sources(result),
+        paired_sources=_paired_sources(result),
         named_sources=_named_sources(result),
         groups=_groups(result),
     )

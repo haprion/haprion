@@ -29,10 +29,10 @@
         </select>
         <small>Which address this site is served on.</small>
       </label>
-      <label>SNIP
-        <select name="snip">
+      <label>SOURCE
+        <select name="source">
           <option value="">The VIP's own</option>
-          {% for snip in choices.snips %}<option value="{{ snip }}"{% if form.snip == snip %} selected{% endif %}>{{ snip }}</option>{% endfor %}
+          {% for source in choices.sources %}<option value="{{ source }}"{% if form.source == source %} selected{% endif %}>{{ source }}</option>{% endfor %}
         </select>
         <small>Which address it connects out from.</small>
       </label>

@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 from haproxy_mgmt.cli.cluster_config import main as cluster_config_main
-from haproxy_mgmt.config import ConfigError, load_policy, load_runtime_config
+from haproxy_mgmt.config import ConfigError, load_network, load_policy, load_runtime_config
 
 BASE = Path(__file__).resolve().parents[1]
 
@@ -197,7 +197,7 @@ def _cluster(
     default_vip: object = _UNSET,
     resolvers: object = _UNSET,
     networks: object = _UNSET,
-    snips: object = _UNSET,
+    sources: object = _UNSET,
     unknown_host: object = _UNSET,
 ):
     """One cluster from the shipped example, with its address table replaced.
@@ -218,8 +218,8 @@ def _cluster(
         alpha["resolvers"] = resolvers
     if networks is not _UNSET:
         alpha["networks"] = networks
-    if snips is not _UNSET:
-        alpha["snips"] = snips
+    if sources is not _UNSET:
+        alpha["sources"] = sources
     if unknown_host is not _UNSET:
         alpha["unknown_host"] = unknown_host
 
@@ -352,10 +352,107 @@ class NamedNetworksAndTheUnknownHostAnswer(unittest.TestCase):
 
 class NamedSourceAddresses(unittest.TestCase):
     def test_a_cluster_may_name_sources_beyond_the_ones_its_vips_pair_with(self) -> None:
-        self.assertEqual(_cluster().snips["outbound"], "192.0.2.35")
+        self.assertEqual(_cluster().sources["outbound"], "192.0.2.35")
 
     def test_a_source_that_is_not_an_address_is_refused(self) -> None:
         with self.assertRaises(ConfigError) as raised:
-            _cluster(snips={"outbound": "not-an-address"})
+            _cluster(sources={"outbound": "not-an-address"})
 
-        self.assertIn("snips.outbound", str(raised.exception))
+        self.assertIn("sources.outbound", str(raised.exception))
+
+
+class TheNetworkDescriptionInTheRepository(unittest.TestCase):
+    """`managed/network.yaml`, and what changes once a cluster has one.
+
+    The tables moved so that they could be edited in the interface without the
+    web identities gaining any say over the engine's own configuration. What
+    the move must not change is how strictly they are read: this file is
+    written by the application rather than by root, which makes it less trusted
+    than `clusters.yaml`, not more.
+    """
+
+    @contextmanager
+    def repository(self, description: object):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "managed").mkdir()
+            if description is not None:
+                (root / "managed" / "network.yaml").write_text(
+                    yaml.safe_dump(description, sort_keys=False), encoding="utf-8"
+                )
+            yield root
+
+    def test_a_repository_without_the_file_answers_nothing_rather_than_failing(self) -> None:
+        with self.repository(None) as root:
+            self.assertIsNone(load_network(root, vip="192.0.2.20"))
+
+    def test_a_cluster_falls_back_to_its_own_tables_while_the_file_is_absent(self) -> None:
+        cluster = _cluster(vips={"internal": {"address": "192.0.2.20"}})
+
+        network = cluster.network()
+
+        self.assertEqual(network.default_vip, "internal")
+        self.assertEqual(network.vips["internal"].address, "192.0.2.20")
+
+    def test_the_file_decides_once_it_exists(self) -> None:
+        with self.repository(
+            {
+                "vips": {"dmz": {"address": "198.51.100.20", "source": "198.51.100.25"}},
+                "sources": {"outbound": "192.0.2.35"},
+                "networks": {"office": ["198.51.100.0/24"]},
+            }
+        ) as root:
+            network = load_network(root, vip="192.0.2.20")
+
+        assert network is not None
+        self.assertEqual(network.default_vip, "dmz")
+        self.assertEqual(network.vips["dmz"].source, "198.51.100.25")
+        self.assertEqual(network.sources["outbound"], "192.0.2.35")
+        self.assertEqual(network.networks["office"], ("198.51.100.0/24",))
+
+    def test_a_description_that_names_no_vip_means_the_one_the_cluster_already_had(self) -> None:
+        with self.repository({"networks": {"office": ["198.51.100.0/24"]}}) as root:
+            network = load_network(root, vip="192.0.2.20")
+
+        assert network is not None
+        self.assertEqual(network.vips["main"].address, "192.0.2.20")
+
+    def test_the_repository_may_not_name_the_address_deploy_checks_ownership_against(self) -> None:
+        #
+        # The whole reason `vip` stayed behind. A file the interface can write
+        # must not be able to move the check that decides which node deploy
+        # believes is carrying traffic.
+        #
+        with self.repository({"vip": "203.0.113.20"}) as root, self.assertRaises(ConfigError):
+            load_network(root, vip="192.0.2.20")
+
+    def test_a_default_that_names_no_vip_in_the_file_is_refused(self) -> None:
+        with (
+            self.repository(
+                {"vips": {"dmz": {"address": "198.51.100.20"}}, "default_vip": "internal"}
+            ) as root,
+            self.assertRaises(ConfigError),
+        ):
+            load_network(root, vip="192.0.2.20")
+
+    def test_a_group_writable_file_is_read_where_clusters_yaml_would_be_refused(self) -> None:
+        #
+        # The one deliberate difference. `clusters.yaml` must be root-owned
+        # because it decides what the engine may do; this file is owned by the
+        # application and group-writable by design.
+        #
+        with self.repository({"sources": {"outbound": "192.0.2.35"}}) as root:
+            (root / "managed" / "network.yaml").chmod(0o664)
+            network = load_network(root, vip="192.0.2.20")
+
+        assert network is not None
+        self.assertEqual(network.sources["outbound"], "192.0.2.35")
+
+    def test_a_symlink_is_refused_wherever_it_points(self) -> None:
+        with self.repository({"sources": {"outbound": "192.0.2.35"}}) as root:
+            target = root / "managed" / "network.yaml"
+            elsewhere = root / "elsewhere.yaml"
+            target.rename(elsewhere)
+            target.symlink_to(elsewhere)
+            with self.assertRaises(ConfigError):
+                load_network(root, vip="192.0.2.20")

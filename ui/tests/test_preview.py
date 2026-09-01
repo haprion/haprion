@@ -199,10 +199,10 @@ class TheSourceAddressMayBeChosen(unittest.TestCase):
         self.assertIn("source 192.0.2.25", result.files["1001-app.cfg"])
 
     def test_a_named_source_overrides_it(self) -> None:
-        result = preview(form(vip="internal", snip="outbound"), PREVIEW_CLUSTER)
+        result = preview(form(vip="internal", source="outbound"), PREVIEW_CLUSTER)
 
         self.assertIn("source 192.0.2.35", result.files["1001-app.cfg"])
-        self.assertIn("snip: outbound", result.document)
+        self.assertIn("source: outbound", result.document)
 
     def test_everywhere_is_not_a_group_name(self) -> None:
         """The `Everywhere` option submits an empty value, which must not be a group."""

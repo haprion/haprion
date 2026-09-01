@@ -55,6 +55,33 @@ Three properties drive the whole design, and every step below follows from one o
    with no caller-supplied paths, reached through exact sudo rules. See
    [`PRIVILEGE.md`](PRIVILEGE.md) for the contract these rules implement.
 
+### Addresses, and what to call them
+
+If you arrive from a NetScaler or an F5, three addresses are worth naming before anything else,
+because only one of the three has a word that every product agrees on.
+
+| What it is | Here, and in HAProxy | In keepalived | NetScaler | F5 |
+|---|---|---|---|---|
+| the address clients connect to | `vip`, bound by a frontend | `virtual_ipaddress` | VIP | virtual server address |
+| the address we connect out from | `source`, per backend | `virtual_ipaddress`, same block | SNIP | SNAT address / self IP |
+| the node's own fixed address | not named; it is just the host | `unicast_src_ip` | NSIP | management address |
+
+Two things follow from the middle row, and both matter more than the vocabulary.
+
+**Keepalived has no separate concept for an outgoing address.** To it, both are entries in the same
+`virtual_ipaddress` block - and they belong in the same block, because only the node currently
+holding an address answers for it. A source address that does not move together with the VIP sends
+its replies to a node that no longer carries the traffic, and that failure appears at failover
+rather than at configuration time.
+
+**HAProxy takes the source per backend, not per listener.** A site may therefore leave from a
+different address than the one it arrived on. Each VIP still names a default source, so the normal
+case needs no words; the `sources` table below exists for the exception.
+
+`unicast_src_ip` is spelled out in full everywhere in this document. It is the node's own address,
+it never moves, and confusing it with a source address produces a cluster that looks correct and
+cannot fail over.
+
 ## Prerequisites
 
 HAProxy Manager manages HAProxy's configuration; it does not install, patch or upgrade
@@ -272,7 +299,7 @@ behaves exactly as the example above.
 
 ```yaml
     # Named addresses the generated frontends bind, each with the source
-    # address it connects to backends from - a SNIP, in ADC vocabulary. A
+    # address it connects to backends from - what an ADC calls a SNIP. A
     # proxy object names the VIP it sits on; it never names an address.
     # Omitted, the cluster has one VIP called `main`, taken from `vip` above.
     vips:
@@ -291,7 +318,7 @@ behaves exactly as the example above.
     # Named source addresses an object may connect out from instead of the one
     # its VIP pairs with. HAProxy takes the source per backend, so the pairing
     # in `vips` is a default rather than a rule.
-    snips:
+    sources:
       outbound: 192.0.2.15
 
     # Named address groups an object may restrict itself to with `allow_from`.
@@ -310,6 +337,43 @@ behaves exactly as the example above.
 `vip` keeps its original meaning and is unchanged: it is the address whose ownership `deploy`
 checks before it acts. One node holds every virtual address at a time, so that single check answers
 for all of them.
+
+**Three of those tables have a second, preferred home.** `vips`, `sources` and `networks` may
+instead live in `managed/network.yaml` inside the cluster repository, and that is where a new
+installation puts them:
+
+```yaml
+# /configs/haproxy/<cluster>/managed/network.yaml
+vips:
+  internal:
+    address: 192.0.2.10
+    source: 192.0.2.15
+default_vip: internal
+sources:
+  outbound: 192.0.2.35
+networks:
+  office:
+    - 198.51.100.0/24
+```
+
+The file wins where it exists; a cluster without one keeps answering from `clusters.yaml`, and
+nothing has to be migrated. The reason for the move is that these three describe *what gets
+published*, while everything left in `clusters.yaml` describes *how the system itself runs* -
+paths, identities, keys, the resolvers section, the certificate allowlist, and the `vip` line
+above. The repository is owned by the application, which means these tables can be edited in the
+interface through the same publish path as a proxy object, with the same lock, the same history and
+the same revert, and without the web identities gaining any access to the engine's configuration.
+
+`vip` deliberately did not move. It is what `deploy` checks node ownership against, and a control
+the interface can rewrite is not a control. `managed/network.yaml` is refused outright if it names
+it.
+
+**Adding a VIP here does half the job.** The other half is keepalived on the nodes, which is not
+this application's to configure: no node carries the address until someone adds it to the
+`virtual_ipaddress` block, and until then no traffic reaches the frontend however correct the
+generated configuration is. The same applies to a source address, which additionally must sit in
+the *same* block as the VIP - see [Addresses, and what to call
+them](#addresses-and-what-to-call-them).
 
 **A cluster that sets `resolvers` must provide the section itself in `core/`**, since nameserver
 addresses are environment values the generator never invents:

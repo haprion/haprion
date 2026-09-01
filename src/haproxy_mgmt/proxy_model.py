@@ -322,7 +322,7 @@ class Listen:
 
     protocol: str
     vip: str | None = None
-    snip: str | None = None
+    source: str | None = None
     certificate: str | None = None
     redirect_http: bool = False
     hsts: Hsts | None = None
@@ -759,7 +759,9 @@ def _allow_from(value: Any, name: str) -> tuple[str, ...]:
 
 def _listen(value: Any, location: str) -> Listen:
     data = _mapping(value, location)
-    _only_keys(data, {"protocol", "vip", "snip", "certificate", "redirect_http", "hsts"}, location)
+    _only_keys(
+        data, {"protocol", "vip", "source", "certificate", "redirect_http", "hsts"}, location
+    )
     protocol = _string(data, "protocol", location, PROTOCOLS)
     vip = data.get("vip")
     if vip is not None and (not isinstance(vip, str) or not NAME.match(vip)):
@@ -768,9 +770,9 @@ def _listen(value: Any, location: str) -> Listen:
     # The address this object leaves from, when it should not be the one the
     # VIP pairs with. Named rather than written, like every other address.
     #
-    snip = data.get("snip")
-    if snip is not None and (not isinstance(snip, str) or not NAME.match(snip)):
-        raise ModelError(f"{location}.snip must name one of the cluster's source addresses")
+    source = data.get("source")
+    if source is not None and (not isinstance(source, str) or not NAME.match(source)):
+        raise ModelError(f"{location}.source must name one of the cluster's source addresses")
     certificate = data.get("certificate")
     redirect = _boolean(data, "redirect_http", location, default=False)
 
@@ -795,7 +797,7 @@ def _listen(value: Any, location: str) -> Listen:
     return Listen(
         protocol=protocol,
         vip=vip,
-        snip=snip,
+        source=source,
         certificate=certificate,
         redirect_http=redirect,
         hsts=hsts,

@@ -5,8 +5,10 @@
 # shared secret that only you know. 04-node-prepare checks the three properties
 # below and complains if they are missing, rather than guessing at them.
 #
-# Copy to /etc/keepalived/keepalived.conf on BOTH nodes and change the three
-# marked lines per node.
+# Copy to /etc/keepalived/keepalived.conf on BOTH nodes and change every line
+# marked CHANGE. Three of them differ between the two nodes - priority, the
+# node's own unicast_src_ip and the peer's address - and the rest describe the
+# cluster and are identical on both.
 #
 # Why it looks like this is in docs/INSTALLATION.md, section 2.1. The short
 # version: a rollout deploys the address owner last, so that a bad configuration
@@ -47,8 +49,21 @@ vrrp_instance alpha {
         auth_pass CHANGE-ME
     }
 
+    #
+    # Both addresses in one block, and that is not a style choice. The first is
+    # the VIP clients connect to; the second is the address backends are
+    # connected out from - what a NetScaler calls a SNIP. Only the node
+    # currently holding an address receives the replies sent to it, so a source
+    # address that does not move together with its VIP produces a cluster that
+    # works until it fails over and then answers into a void.
+    #
+    # The source address is optional. Without one, HAProxy leaves from whatever
+    # address the routing table picks, which is right on a host with one
+    # network. Leave the second line out rather than inventing an address.
+    #
     virtual_ipaddress {
         192.0.2.10                # CHANGE: the cluster's virtual address
+        192.0.2.15                # CHANGE: the cluster's source address
     }
 
     #

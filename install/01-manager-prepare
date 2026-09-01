@@ -118,6 +118,35 @@ for cluster in $(each_cluster); do
             # layout intact through clone, worktree and restore.
             find "$seed" -type d -empty -exec touch {}/.gitkeep \;
             printf '%s\n' '*.swp' '*~' '.#*' > "${seed}/.gitignore"
+
+            #
+            # The network description, seeded rather than left to be created
+            # later. A cluster that has one address still has a table with one
+            # row in it, and a table that exists is a table the interface can
+            # edit; a derived value can be shown but never changed. The name
+            # `main` is what the code falls back to for a cluster that never
+            # named its addresses, so seeding it changes nothing but where the
+            # answer is written down.
+            #
+            seed_vip="$(cluster_value VIP "$cluster")"
+            seed_source="$(cluster_value SOURCE "$cluster")"
+            if [ -n "$seed_vip" ]; then
+                {
+                    echo "# Where traffic arrives, where it leaves from, and who may"
+                    echo "# reach it. Owned by the application: edited through the same"
+                    echo "# publish path as a proxy object, with the same lock, history"
+                    echo "# and revert. See docs/INSTALLATION.md section 1.4."
+                    echo "#"
+                    echo "# Adding a VIP or a source address here does half the job. The"
+                    echo "# other half is keepalived on the nodes, and a source address"
+                    echo "# must sit in the same virtual_ipaddress block as its VIP."
+                    echo "vips:"
+                    echo "  main:"
+                    echo "    address: ${seed_vip}"
+                    if [ -n "$seed_source" ]; then echo "    source: ${seed_source}"; fi
+                    echo "default_vip: main"
+                } > "${seed}/managed/network.yaml"
+            fi
             git -C "$seed" init --initial-branch=main >/dev/null
             git -C "$seed" add -A
             git -C "$seed" -c user.name=install -c user.email=install@localhost \

@@ -53,7 +53,7 @@ PREVIEW_CLUSTER = Cluster(
     },
     default_vip="internal",
     resolvers="cluster-dns",
-    snips={"outbound": "192.0.2.35"},
+    sources={"outbound": "192.0.2.35"},
     networks={"office": ("198.51.100.0/24",), "vpn": ("203.0.113.0/24",)},
     unknown_host=UnknownHost(status=404),
     config_path=Path("/preview"),
@@ -76,7 +76,7 @@ DEFAULTS = {
     "hostnames": "app.example.com",
     "protocol": "https",
     "vip": "",
-    "snip": "",
+    "source": "",
     "certificate": "",
     "redirect_http": True,
     "hsts": False,
@@ -188,8 +188,8 @@ def build_document(form: dict[str, object]) -> str:
     listen: dict[str, object] = {"protocol": protocol}
     if text("vip"):
         listen["vip"] = text("vip")
-    if text("snip"):
-        listen["snip"] = text("snip")
+    if text("source"):
+        listen["source"] = text("source")
     if protocol == "https":
         if text("certificate"):
             listen["certificate"] = text("certificate")
@@ -275,7 +275,7 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
             certificates=cluster.certificate_ids,
             resolvers=cluster.resolvers,
             networks=cluster.networks,
-            snips=cluster.snips,
+            sources=cluster.sources,
             unknown_host=cluster.unknown_host,
         )
     except (ModelError, GeneratorError) as exc:
@@ -291,7 +291,7 @@ def choices(cluster: Cluster) -> dict[str, object]:
         "vips": sorted(cluster.vips),
         "default_vip": cluster.default_vip,
         "certificates": sorted(cluster.certificate_ids),
-        "snips": sorted(cluster.snips),
+        "sources": sorted(cluster.sources),
         "networks": sorted(cluster.networks),
         "balances": BALANCE,
         "health_types": HEALTH_TYPES,

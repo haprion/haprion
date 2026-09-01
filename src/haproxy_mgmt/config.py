@@ -108,7 +108,7 @@ class Vip:
 
     `source` is this VIP's default and not a rule: HAProxy takes the source
     address per backend, so any object may name a different one from the
-    cluster's `snips` table where it has a reason to. Pairing them here is
+    cluster's `sources` table where it has a reason to. Pairing them here is
     about what happens when nobody says otherwise, which is the case that
     should need no words.
 
@@ -143,7 +143,7 @@ class Cluster:
     vips: Mapping[str, Vip]
     default_vip: str
     resolvers: str | None
-    snips: Mapping[str, str]
+    sources: Mapping[str, str]
     networks: Mapping[str, tuple[str, ...]]
     unknown_host: UnknownHost | None
     config_path: Path
@@ -154,6 +154,25 @@ class Cluster:
     certificate_ids: tuple[str, ...]
     trusted_proxy_cidrs: tuple[str, ...]
     nodes: tuple[Node, ...]
+
+    def network(self) -> Network:
+        """This cluster's network description, from the repository if it has one.
+
+        The repository wins when the file exists, because that is where the
+        description is edited once it has moved. An installation that has not
+        moved keeps answering from `clusters.yaml`, and neither has to know
+        which of the two the other is doing.
+        """
+
+        found = load_network(self.config_path, vip=self.vip)
+        if found is not None:
+            return found
+        return Network(
+            vips=self.vips,
+            default_vip=self.default_vip,
+            sources=self.sources,
+            networks=self.networks,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,7 +311,7 @@ def _vips(raw: Mapping[str, Any], vip: str, location: str) -> tuple[Mapping[str,
     return vips, default
 
 
-def _snips(raw: Mapping[str, Any], location: str) -> Mapping[str, str]:
+def _sources(raw: Mapping[str, Any], location: str) -> Mapping[str, str]:
     """Named source addresses an object may connect out from.
 
     Separate from the VIP table because the two are not actually locked
@@ -302,16 +321,16 @@ def _snips(raw: Mapping[str, Any], location: str) -> Mapping[str, str]:
     an exception should have to be named.
     """
 
-    entries = raw.get("snips")
+    entries = raw.get("sources")
     if entries is None:
         return {}
-    snips: dict[str, str] = {}
-    for name, value in _mapping(entries, f"{location}.snips").items():
-        where = f"{location}.snips.{name}"
+    sources: dict[str, str] = {}
+    for name, value in _mapping(entries, f"{location}.sources").items():
+        where = f"{location}.sources.{name}"
         if not NAME.fullmatch(name):
             raise ConfigError(f"{where} is not a usable source name")
-        snips[name] = _address(value, where)
-    return snips
+        sources[name] = _address(value, where)
+    return sources
 
 
 def _networks(raw: Mapping[str, Any], location: str) -> Mapping[str, tuple[str, ...]]:
@@ -351,6 +370,72 @@ def _networks(raw: Mapping[str, Any], location: str) -> Mapping[str, tuple[str, 
             members.append(str(network))
         networks[name] = tuple(members)
     return networks
+
+
+#
+# The network description as a cluster repository carries it.
+#
+# The same three tables the engine's own configuration used to hold, moved to
+# where the application already writes: `managed/`, under review, versioning
+# and revert. What stays behind in `clusters.yaml` is what describes the
+# machine rather than what is published on it - paths, identities, keys, the
+# resolvers section, the certificate allowlist, and the `vip` line `deploy`
+# checks ownership against. A control the interface can rewrite is not a
+# control, which is the whole reason that one line does not move.
+#
+NETWORK_FILE = Path("managed/network.yaml")
+NETWORK_KEYS = {"vips", "default_vip", "sources", "networks"}
+
+
+@dataclass(frozen=True, slots=True)
+class Network:
+    """Where traffic arrives, where it leaves from, and who may reach it."""
+
+    vips: Mapping[str, Vip]
+    default_vip: str
+    sources: Mapping[str, str]
+    networks: Mapping[str, tuple[str, ...]]
+
+
+def parse_network(raw: Mapping[str, Any], *, vip: str, location: str) -> Network:
+    """One network description, from wherever it was read.
+
+    `vip` is the cluster's ownership address, and it is only a fallback: a
+    description that names no VIP table means the single-address deployment
+    that address already describes. Passing it here rather than reading it
+    from the description is deliberate - the repository may not name it, and
+    must not be able to change it.
+    """
+
+    _only_keys(raw, NETWORK_KEYS, location)
+    vips, default_vip = _vips(raw, vip, location)
+    return Network(
+        vips=vips,
+        default_vip=default_vip,
+        sources=_sources(raw, location),
+        networks=_networks(raw, location),
+    )
+
+
+def load_network(config_path: Path, *, vip: str) -> Network | None:
+    """The cluster repository's network description, or None if it has none.
+
+    Read with `require_secure=False`, and that is the one real difference from
+    every other configuration this module reads. `clusters.yaml` must be
+    root-owned because it decides what the engine may do; this file is owned by
+    the application, group-writable by design, and describes only what gets
+    published. It is therefore untrusted input in a way the other is not -
+    which changes nothing about how strictly it is validated, and everything
+    about who is allowed to have written it.
+
+    An absent file is not an error. Installations that predate the move keep
+    their tables in `clusters.yaml`, and the caller falls back to those.
+    """
+
+    path = config_path / NETWORK_FILE
+    if not path.exists():
+        return None
+    return parse_network(_secure_yaml(path, require_secure=False), vip=vip, location=str(path))
 
 
 def _unknown_host(value: Any, location: str) -> UnknownHost | None:
@@ -530,7 +615,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
                 "vips",
                 "default_vip",
                 "resolvers",
-                "snips",
+                "sources",
                 "networks",
                 "unknown_host",
                 "config_path",
@@ -623,7 +708,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             vips=vips,
             default_vip=default_vip,
             resolvers=resolvers,
-            snips=_snips(raw, location),
+            sources=_sources(raw, location),
             networks=_networks(raw, location),
             unknown_host=_unknown_host(raw.get("unknown_host"), f"{location}.unknown_host"),
             config_path=_under_root(

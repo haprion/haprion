@@ -1,0 +1,56 @@
+#
+# managed/network.yaml - the network description a cluster repository carries.
+#
+# Where traffic arrives, where it leaves from, and who may reach it. The
+# application owns this file: it is written through the same publish path as a
+# proxy object, with the same lock, the same review and the same revert, which
+# is what makes these tables editable in the interface without giving the web
+# identities any say over how the engine itself runs.
+#
+# What deliberately stays in clusters.yaml: paths, identities, keys, the
+# resolvers section, the certificate allowlist, and the `vip` line deploy
+# checks node ownership against. A control the interface can rewrite is not a
+# control.
+#
+# Every table here is optional. A cluster that names none of them is the
+# single-address deployment that clusters.yaml already describes.
+#
+
+#
+# The addresses generated frontends bind, and the address each one connects to
+# backends from - what an ADC calls a SNIP. HAProxy has no word for the second
+# beyond the `source` keyword it emits, and keepalived has none at all: to it
+# both are simply entries in the same virtual_ipaddress block, which is also
+# why they must be, since only the node holding an address answers for it.
+#
+vips:
+  internal:
+    address: 192.0.2.20
+    source: 192.0.2.25
+  dmz:
+    address: 198.51.100.20
+    source: 198.51.100.25
+
+#
+# Where an object lands when it names no VIP of its own. Changing this moves
+# traffic for every object that never said anything, so the interface asks
+# again before writing it.
+#
+default_vip: internal
+
+#
+# Named source addresses an object may leave from instead of the one its VIP
+# pairs with. The pairing above is a default rather than a rule - HAProxy takes
+# the source per backend - and this table is for the exception.
+#
+sources:
+  outbound: 192.0.2.35
+
+#
+# Named address groups an object may restrict itself to with `allow_from`.
+# The object names the group; which addresses that is stays here, so the same
+# object means the same thing in a rehearsal cluster and in production.
+#
+networks:
+  office:
+    - 198.51.100.0/24

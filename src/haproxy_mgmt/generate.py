@@ -116,7 +116,7 @@ def generate(
     certificates: Sequence[str] = (),
     resolvers: str | None = None,
     networks: Mapping[str, Sequence[str]] | None = None,
-    snips: Mapping[str, str] | None = None,
+    sources: Mapping[str, str] | None = None,
     unknown_host: UnknownHost | None = None,
     ports: Mapping[str, int] = PORTS,
 ) -> dict[str, str]:
@@ -148,18 +148,18 @@ def generate(
     known_networks = dict(networks or {})
     _refuse_unknown_networks(ordered, known_networks)
 
-    known_snips = dict(snips or {})
+    known_sources = dict(sources or {})
     placed = [(_vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
 
     files = {FRONTEND_FILE: _frontend_file(placed, ports, known_networks, unknown_host)}
     for vip, proxy in placed:
         files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(
-            proxy, _source_of(proxy, vip, known_snips), resolvers
+            proxy, _source_of(proxy, vip, known_sources), resolvers
         )
     return files
 
 
-def _source_of(proxy: Proxy, vip: Vip, snips: Mapping[str, str]) -> str | None:
+def _source_of(proxy: Proxy, vip: Vip, sources: Mapping[str, str]) -> str | None:
     """The address this object connects to backends from.
 
     The VIP's own source unless the object names another. An object that names
@@ -168,14 +168,14 @@ def _source_of(proxy: Proxy, vip: Vip, snips: Mapping[str, str]) -> str | None:
     firewall rule further in will notice, at the worst possible moment.
     """
 
-    if proxy.listen.snip is None:
+    if proxy.listen.source is None:
         return vip.source
     try:
-        return snips[proxy.listen.snip]
+        return sources[proxy.listen.source]
     except KeyError:
-        known = ", ".join(sorted(snips)) or "none"
+        known = ", ".join(sorted(sources)) or "none"
         raise GeneratorError(
-            f"{proxy.name} leaves from the source address {proxy.listen.snip}, which this "
+            f"{proxy.name} leaves from the source address {proxy.listen.source}, which this "
             f"cluster does not define. Known source addresses: {known}"
         ) from None
 

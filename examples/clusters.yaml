@@ -9,7 +9,7 @@ clusters:
     vip: 192.0.2.20
     #
     # The addresses generated frontends bind, and the address each one connects
-    # to backends from - a SNIP, in ADC vocabulary. Optional: a cluster with a
+    # to backends from - what an ADC calls a SNIP. Optional: a cluster with a
     # single address and no separate source can leave the whole section out and
     # gets one VIP named `main` from the line above.
     #
@@ -26,7 +26,7 @@ clusters:
     # its VIP pairs with. HAProxy takes the source per backend, so the pairing
     # above is a default rather than a rule; this table is for the exception.
     #
-    snips:
+    sources:
       outbound: 192.0.2.35
     #
     # The resolvers section in core/ that generated server lines point at, so a

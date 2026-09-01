@@ -2,7 +2,7 @@
 {% block title %}Network — HAProxy Manager{% endblock %}
 {% block content %}
 <section class="page-heading">
-  <div><h1>Network</h1><p>Where traffic arrives, where it leaves from, and who may reach it.</p></div>
+  <div class="heading-title"><h1>Network</h1><p class="page-lede">Where traffic arrives, where it leaves from, and who may reach it.</p></div>
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
 </section>
 
@@ -19,7 +19,7 @@
     {% else %}
 
     <h4 class="network-subhead">Virtual addresses</h4>
-    <div class="table-scroll"><table class="node-table">
+    <div class="table-scroll"><table class="node-table network-table">
       <thead><tr><th>Name</th><th>Address</th><th>Default source</th><th>Default</th></tr></thead>
       <tbody>
         {% for vip in cluster.vips %}
@@ -32,10 +32,10 @@
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="table-note">An object names a VIP; it never names an address. The one it gets when it names none is <code>{{ cluster.default_vip }}</code> — changing that moves traffic for every site that never said anything, so it will ask again before writing and say how many objects come with it. An address only reaches the frontend once a node carries it, which is keepalived's job and not this application's.</p>
+    <p class="table-note">Sites name a VIP, never an address. Nodes carry it through keepalived.</p>
 
     <h4 class="network-subhead">Source addresses</h4>
-    <div class="table-scroll"><table class="node-table">
+    <div class="table-scroll"><table class="node-table network-table">
       <thead><tr><th>Name</th><th>Address</th><th>Used by</th></tr></thead>
       <tbody>
         {% for source in cluster.sources %}
@@ -45,10 +45,10 @@
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="table-note">The address a site's backends are connected out from — what a NetScaler calls a SNIP. Each VIP names one as its default, and a site may name a different one, because HAProxy takes the source per backend rather than per listener. Whichever it is, the address has to be carried by the node doing the proxying: one that does not move together with its VIP answers into a void after a failover.</p>
+    <p class="table-note">Where backends connect out from — a NetScaler calls it a SNIP.</p>
 
     <h4 class="network-subhead">Reachable-from groups</h4>
-    <div class="table-scroll"><table class="node-table">
+    <div class="table-scroll"><table class="node-table network-table">
       <thead><tr><th>Name</th><th>Members</th></tr></thead>
       <tbody>
         {% for group in cluster.groups %}
@@ -58,9 +58,9 @@
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="table-note">A named set of client addresses, used to restrict who may reach a site — an allow-list HAProxy enforces itself, rather than one bound on a firewall. Define <code>office</code> here once, and an internal tool published on a public VIP can be limited to it in one click instead of by repeating the same ranges in every site. A site may also write its own addresses directly, for what belongs to it alone.</p>
+    <p class="table-note">Named client addresses a site can be restricted to.</p>
 
-    <p class="table-note">Node ownership is checked against <code>{{ cluster.ownership_vip }}</code>. That address is deliberately not in any table above and cannot be changed from here: a control the interface can rewrite is not a control.{% if not cluster.editable %} Neither can the tables above — this cluster still keeps them in the engine's own configuration.{% endif %}</p>
+    <p class="table-note">Node ownership is checked against <code>{{ cluster.ownership_vip }}</code>. That address is deliberately not in any table above and cannot be changed from here.{% if not cluster.editable %} Neither can the tables above — this cluster still keeps them in the engine's own configuration.{% endif %}</p>
     {% endif %}
   </article>
 {% else %}

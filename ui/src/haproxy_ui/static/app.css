@@ -668,3 +668,13 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   margin: 0; padding: 16px 20px 6px; color: var(--muted); font-size: 11px; font-weight: 700;
   letter-spacing: 0.055em; text-transform: uppercase;
 }
+/*
+ * The three tables are read down the page as one thing, so their columns line
+ * up rather than each sizing itself to its own longest value. Fixed widths on
+ * the first two put NAME and ADDRESS in the same place in all three, which is
+ * what makes a VIP and the source address it pairs with readable as a pair.
+ */
+.network-table { table-layout: fixed; }
+.network-table th:nth-child(1), .network-table td:nth-child(1) { width: 220px; }
+.network-table th:nth-child(2), .network-table td:nth-child(2) { width: 220px; }
+.network-table td { white-space: normal; overflow-wrap: anywhere; }

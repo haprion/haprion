@@ -104,7 +104,7 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
 
         page = client.get("/network")
 
-        self.assertIn("keepalived's job and not this application's", page.text)
+        self.assertIn("Nodes carry it through keepalived", page.text)
         self.assertNotIn("network-warning", page.text)
 
     def test_the_page_posts_nothing_yet(self) -> None:
@@ -118,7 +118,7 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         page = client.get("/network")
 
         self.assertNotIn('action="/network"', page.text)
-        self.assertIn("a control the interface can rewrite is not a control", page.text)
+        self.assertIn("cannot be changed from here", page.text)
 
     def test_signing_in_is_required(self) -> None:
         page = self.client().get("/network", follow_redirects=False)

@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-from haproxy_ui import db, diagnostics, execution, operations, recovery
+from haproxy_ui import db, diagnostics, execution, operations, recovery, service
 from haproxy_ui.config import DEFAULT_CONFIG_PATH
 from haproxy_ui.config import load as load_config
 from haproxy_ui.service import StopRequest
@@ -384,23 +384,13 @@ def _wait_for_work(listener: Any, stopping: StopRequest, seconds: int) -> None:
     minute of an operator watching a page that says "queued" about a cluster
     nobody is touching.
 
-    A second at a time, for the same reason `StopRequest.sleep` is: systemd
-    waits for a service to go, and one that always takes its full interval to
-    stop teaches everyone that a restart is slow.
-
-    The notification is a hint and never an instruction. It carries no id and is
-    not trusted to mean a job is claimable - it only ends the wait early, and
-    the claim on the next pass decides what is actually there. So a lost
-    notification costs latency and nothing else: the interval still expires, and
-    the loop still asks. That is what keeps this an optimisation rather than a
-    second source of truth.
+    The wait itself lives in `service` because the poller needs the same one for
+    the other direction - it is told when a job finishes. Two copies of a loop
+    this small drift in exactly the way that makes one service stop promptly and
+    the other not.
     """
 
-    for _ in range(seconds):
-        if stopping.requested():
-            return
-        for _notification in listener.notifies(timeout=1.0, stop_after=1):
-            return
+    service.sleep_until_notified(stopping, listener, seconds)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -192,6 +192,51 @@ class WritesAreFenced(unittest.TestCase):
         self.assertIn("lease_until = null", statement)
         self.assertIn("lease_until >= statement_timestamp()", statement)
 
+    def test_finishing_a_job_wakes_the_poller(self) -> None:
+        #
+        # The page reads the poller's cache, so a publish that changed a cluster
+        # used to sit invisible until the next tick - a page saying "observed
+        # just now" about a reading taken before the change it was consulted
+        # about. In the transaction, so it cannot arrive before the row it is
+        # about is visible.
+        #
+        connection = FakeConnection(row=(1,))
+        db.finish_job(  # type: ignore[arg-type]
+            connection,
+            job_id=1,
+            claim_token=TOKEN,
+            state="done",
+            exit_code=0,
+            outcome="done",
+            result={"ok": True},
+            stderr_excerpt=None,
+        )
+
+        self.assertIn("notify cluster_changed", connection.last.statements)
+        # The two ends must name the same channel. Renaming one of them is the
+        # failure this catches: nothing errors, the poller simply never wakes.
+        self.assertIn(f"notify {db.CLUSTER_CHANNEL}", connection.last.statements)
+
+    def test_a_job_that_changed_nothing_does_not_wake_the_poller(self) -> None:
+        #
+        # The lease had elapsed and the update matched no row. Waking the poller
+        # anyway is a helper run against every node to re-read a world nothing
+        # touched.
+        #
+        connection = FakeConnection(row=None)
+        db.finish_job(  # type: ignore[arg-type]
+            connection,
+            job_id=1,
+            claim_token=TOKEN,
+            state="failed",
+            exit_code=1,
+            outcome="failed",
+            result=None,
+            stderr_excerpt=None,
+        )
+
+        self.assertNotIn("notify cluster_changed", connection.last.statements)
+
     def test_a_lost_lease_is_reported_rather_than_raised(self) -> None:
         #
         # No row came back, so another worker holds the job. The caller has to be

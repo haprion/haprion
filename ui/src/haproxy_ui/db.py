@@ -203,6 +203,13 @@ def pool(database: Database, *, min_size: int = 1, max_size: int = 4) -> Connect
 
 JOB_CHANNEL = "job_queued"
 
+#
+# The other direction. `job_queued` tells the worker that something is waiting;
+# this one tells the poller that something has happened, so the cache it feeds
+# every page from is re-read within seconds instead of at the next tick.
+#
+CLUSTER_CHANNEL = "cluster_changed"
+
 
 def listener(database: Database, channel: str = JOB_CHANNEL) -> Connection[Any]:
     """A connection whose only job is to be told when something arrives.
@@ -568,7 +575,21 @@ def finish_job(
                 "stderr_excerpt": stderr_excerpt,
             },
         )
-        return cursor.fetchone() is not None
+        finished = cursor.fetchone() is not None
+        if finished:
+            #
+            # In the transaction, and only when the update actually landed. A
+            # worker whose lease had elapsed changed nothing, and waking the
+            # poller to re-read an unchanged world is a helper run against every
+            # node for no reason.
+            #
+            # Every outcome notifies, not only the successful ones. A deploy
+            # that failed partway still moved some nodes, and a poller told only
+            # about the tidy endings would be most stale exactly when somebody
+            # is looking hardest.
+            #
+            cursor.execute("notify cluster_changed")
+        return finished
 
 
 def expired_leases(connection: Connection[Any]) -> list[AbandonedJob]:

@@ -39,7 +39,7 @@ from haproxy_mgmt.cli.network import run_network_helper
 from haproxy_mgmt.cli.status import run_status_helper
 from haproxy_mgmt.envelope import new_request_id
 
-from haproxy_ui import db
+from haproxy_ui import db, service
 from haproxy_ui.config import DEFAULT_CONFIG_PATH, Config
 from haproxy_ui.config import load as load_config
 from haproxy_ui.service import StopRequest
@@ -222,6 +222,12 @@ def main(argv: list[str] | None = None) -> int:
 
     pool = db.pool(config.database, min_size=1, max_size=2)
     pool.open(wait=True, timeout=10)
+    #
+    # Its own connection, held for the process's life, for the same reason the
+    # worker's listener has one: the pool exists for short queries, and lending
+    # one out permanently leaves it a size smaller than it says it is.
+    #
+    listener = db.listener(config.database, db.CLUSTER_CHANNEL)
     try:
         #
         # The lock is taken on its own autocommit connection, held for the whole
@@ -254,8 +260,15 @@ def main(argv: list[str] | None = None) -> int:
             while not stopping.requested():
                 healthy = poll_once(pool, config)
                 logger.info("%d/%d cluster(s) fully current", healthy, len(config.clusters))
-                stopping.sleep(config.poller.interval_seconds)
+                #
+                # Woken by a finished job as well as by the clock. A publish
+                # that changed a cluster used to sit invisible until the next
+                # tick, so a page said "observed just now" about a reading taken
+                # before the change it was being consulted about.
+                #
+                service.sleep_until_notified(stopping, listener, config.poller.interval_seconds)
     finally:
+        listener.close()
         pool.close()
     return 0
 

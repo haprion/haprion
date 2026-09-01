@@ -32,35 +32,33 @@
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="table-note">An object names a VIP; it never names an address. The one it gets when it names none is <code>{{ cluster.default_vip }}</code> — changing that moves traffic for every site that never said anything, so it will ask again before writing and say how many objects come with it.</p>
-    <p class="network-warning"><strong>Adding a virtual address here does half the job.</strong> The other half is keepalived on the nodes, which this application does not configure. No node carries the address until someone adds it to the <code>virtual_ipaddress</code> block, and until then no traffic reaches the frontend however correct the generated configuration is.</p>
+    <p class="table-note">An object names a VIP; it never names an address. The one it gets when it names none is <code>{{ cluster.default_vip }}</code> — changing that moves traffic for every site that never said anything, so it will ask again before writing and say how many objects come with it. An address only reaches the frontend once a node carries it, which is keepalived's job and not this application's.</p>
 
     <h4 class="network-subhead">Source addresses</h4>
     <div class="table-scroll"><table class="node-table">
-      <thead><tr><th>Name</th><th>Address</th></tr></thead>
+      <thead><tr><th>Name</th><th>Address</th><th>Used by</th></tr></thead>
       <tbody>
         {% for source in cluster.sources %}
-        <tr><td><code>{{ source.name }}</code></td><td>{{ source.address }}</td></tr>
+        <tr><td><code>{{ source.name }}</code></td><td>{{ source.address }}</td><td>{{ source.used_by }}</td></tr>
         {% else %}
-        <tr><td colspan="2" class="table-empty">None. Every object leaves from its VIP's default.</td></tr>
+        <tr><td colspan="3" class="table-empty">None. Connections out leave from whatever address the nodes' routing picks.</td></tr>
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="table-note">HAProxy takes the source per backend rather than per listener, so a site may leave from a different address than the one it arrived on. Each VIP above already names a default; this table is the exception, and an exception should have to be named. A NetScaler calls these SNIPs.</p>
-    <p class="network-warning"><strong>A source address must sit in the same keepalived block as its VIP.</strong> Replies come back to whichever node currently holds the address, so one that does not move together with the VIP answers into a void after a failover — and looks correct until then.</p>
+    <p class="table-note">The address a site's backends are connected out from — what a NetScaler calls a SNIP. Each VIP names one as its default, and a site may name a different one, because HAProxy takes the source per backend rather than per listener. Whichever it is, the address has to be carried by the node doing the proxying: one that does not move together with its VIP answers into a void after a failover.</p>
 
-    <h4 class="network-subhead">Address groups</h4>
+    <h4 class="network-subhead">Reachable-from groups</h4>
     <div class="table-scroll"><table class="node-table">
       <thead><tr><th>Name</th><th>Members</th></tr></thead>
       <tbody>
         {% for group in cluster.groups %}
         <tr><td><code>{{ group.name }}</code></td><td>{% for member in group.members %}<code>{{ member }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
         {% else %}
-        <tr><td colspan="2" class="table-empty">None defined.</td></tr>
+        <tr><td colspan="2" class="table-empty">None. Every site here is reachable from anywhere that can route to its VIP.</td></tr>
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="table-note">An object names the group; which addresses that is stays here, so the same object means the same thing in a rehearsal cluster and in production. An object may also write an address or range directly, for what belongs to one site alone.</p>
+    <p class="table-note">A named set of client addresses, used to restrict who may reach a site — an allow-list HAProxy enforces itself, rather than one bound on a firewall. Define <code>office</code> here once, and an internal tool published on a public VIP can be limited to it in one click instead of by repeating the same ranges in every site. A site may also write its own addresses directly, for what belongs to it alone.</p>
 
     <p class="table-note">Node ownership is checked against <code>{{ cluster.ownership_vip }}</code>. That address is deliberately not in any table above and cannot be changed from here: a control the interface can rewrite is not a control.{% if not cluster.editable %} Neither can the tables above — this cluster still keeps them in the engine's own configuration.{% endif %}</p>
     {% endif %}

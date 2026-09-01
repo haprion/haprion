@@ -59,6 +59,23 @@ class TheReadingBecomesTheCard(unittest.TestCase):
         self.assertEqual(edge.ownership_vip, "192.0.2.20")
         self.assertNotIn(edge.ownership_vip, [source.address for source in edge.sources])
 
+    def test_a_vip_s_own_source_address_is_listed_as_a_source_address(self) -> None:
+        #
+        # It was not, and the page then told a cluster that pairs a source with
+        # its VIP that it had none - under a heading named after exactly that.
+        #
+        edge = next(view for view in overview() if view.cluster == "edge-demo")
+
+        addresses = {source.address: source.used_by for source in edge.sources}
+        self.assertEqual(addresses["192.0.2.25"], "default for VIP public")
+        self.assertEqual(addresses["192.0.2.26"], "default for VIP partner")
+        self.assertEqual(addresses["192.0.2.35"], "named; an object must ask for it")
+
+    def test_a_cluster_with_no_source_address_at_all_still_says_none(self) -> None:
+        service = next(view for view in overview() if view.cluster == "service-demo")
+
+        self.assertEqual(service.sources, ())
+
 
 class ThePageIsReachableAndWritesNothing(LoginTestCase):
     def demo_client(self):
@@ -73,16 +90,22 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("Virtual addresses", page.text)
         self.assertIn("Source addresses", page.text)
-        self.assertIn("Address groups", page.text)
+        self.assertIn("Reachable-from groups", page.text)
 
-    def test_the_keepalived_half_of_the_job_is_stated_on_the_page(self) -> None:
+    def test_the_node_half_of_the_job_is_stated_without_a_standing_warning(self) -> None:
+        #
+        # The hazard belongs where an address is added, not as a permanent
+        # banner about something nobody is doing. Two of those per cluster
+        # taught the reader to skip the colour, which is the one thing a
+        # warning may not do.
+        #
         client = self.demo_client()
         self.sign_in(client)
 
         page = client.get("/network")
 
-        self.assertIn("keepalived", page.text)
-        self.assertIn("virtual_ipaddress", page.text)
+        self.assertIn("keepalived's job and not this application's", page.text)
+        self.assertNotIn("network-warning", page.text)
 
     def test_the_page_posts_nothing_yet(self) -> None:
         #

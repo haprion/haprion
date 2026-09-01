@@ -39,10 +39,19 @@ class VipView:
 
 @dataclass(frozen=True, slots=True)
 class SourceView:
-    """One named address an object may leave from instead of its VIP's."""
+    """One address this cluster connects out from, and what reaches it that way.
+
+    Both kinds of source address are in this list, and that is the point. The
+    configuration separates the address a VIP pairs with from the extra ones an
+    object may ask for by name, because they are decided in different places -
+    but a page that showed only the second told a cluster with a paired source
+    that it had none. The distinction belongs in a column, not in whether the
+    row exists.
+    """
 
     name: str
     address: str
+    used_by: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,10 +110,24 @@ def _vips(result: Mapping[str, Any], default_vip: str) -> tuple[VipView, ...]:
 
 
 def _sources(result: Mapping[str, Any]) -> tuple[SourceView, ...]:
-    return tuple(
-        SourceView(name=_text(row.get("name")), address=_text(row.get("address")))
+    paired = tuple(
+        SourceView(
+            name=_text(row.get("name")),
+            address=_text(row.get("source")),
+            used_by=f"default for VIP {_text(row.get('name'))}",
+        )
+        for row in _rows(result, "vips")
+        if isinstance(row.get("source"), str) and row.get("source")
+    )
+    named = tuple(
+        SourceView(
+            name=_text(row.get("name")),
+            address=_text(row.get("address")),
+            used_by="named; an object must ask for it",
+        )
         for row in _rows(result, "sources")
     )
+    return paired + named
 
 
 def _groups(result: Mapping[str, Any]) -> tuple[GroupView, ...]:

@@ -296,13 +296,17 @@ per-cluster value the node side needs.
 address they carry:
 
 ```yaml
-    address_prefix: 24
-    address_interface: eth0
+    address_prefix: 24          # from the nodes' own virtual_ipaddress block
+    address_interface: ens192   # likewise; names differ between installations
 ```
 
-They are used for one thing: rendering the keepalived address list a release carries. Set them to
-match what already stands in the nodes' `virtual_ipaddress` block - `192.0.2.10/24 dev eth0` means
-`address_prefix: 24` and `address_interface: eth0`. Omitted, an address is written bare, which
+They are used for one thing: rendering the keepalived address list a release carries. **Read both
+values off the nodes rather than choosing them**: whatever stands in their `virtual_ipaddress`
+block today is what the generated list has to reproduce. A line reading `<address>/24 dev ens192`
+means `address_prefix: 24` and `address_interface: ens192`. Nothing here requires a particular
+interface name - the field exists precisely because it differs between installations - and a
+cluster whose nodes name no interface should leave `address_interface` out, so that keepalived
+keeps using the `vrrp_instance`'s own. Omitted, an address is written bare, which
 keepalived reads as `/32` on the `vrrp_instance`'s own interface. **A bare address is not the same
 address:** a `/32` carries no subnet route and is not chosen as a source address for the segment,
 so a cluster whose nodes use a prefix must say so or moving the list into the generated file would
@@ -563,7 +567,7 @@ The two paths only agree if the unit names each path once too.
 ```text
 vrrp_instance alpha {
     state           BACKUP        # both nodes - not MASTER on either
-    interface       eth0
+    interface       eth0          # whatever carries the VIP on your nodes
     virtual_router_id 51          # unique per VRRP domain on the segment
     priority        100           # 100 on one node, 90 on the other
     nopreempt

@@ -56,6 +56,21 @@ class SourceView:
 
 
 @dataclass(frozen=True, slots=True)
+class NamedSourceView:
+    """One named source address, as the document itself stores it.
+
+    Deliberately not `SourceView`. That one is the reading: it merges in the
+    addresses paired with a VIP, because a person asking "what do we leave
+    from" wants both. The form may not, because a paired address belongs to
+    its VIP's own row - editing it in two places would let one submission
+    carry two answers for one value.
+    """
+
+    name: str
+    address: str
+
+
+@dataclass(frozen=True, slots=True)
 class GroupView:
     """One named set of addresses an object may restrict itself to."""
 
@@ -81,12 +96,12 @@ class NetworkClusterView:
     #
     editable: bool
     head: str | None
-    document: str | None
     default_vip_object_count: int
     ownership_vip: str
     default_vip: str
     vips: tuple[VipView, ...]
     sources: tuple[SourceView, ...]
+    named_sources: tuple[NamedSourceView, ...]
     groups: tuple[GroupView, ...]
 
 
@@ -146,35 +161,11 @@ def _groups(result: Mapping[str, Any]) -> tuple[GroupView, ...]:
     )
 
 
-def _document(result: Mapping[str, Any], default_vip: str) -> str:
-    """Rebuild the one editable document from the bounded cached result."""
-
-    vips: dict[str, dict[str, str]] = {}
-    for vip in _vips(result, default_vip):
-        if vip.name != "—" and vip.address != "—":
-            entry = {"address": vip.address}
-            if vip.source:
-                entry["source"] = vip.source
-            vips[vip.name] = entry
-    document: dict[str, object] = {"vips": vips, "default_vip": default_vip}
-    sources = {
-        str(entry["name"]): str(entry["address"])
-        for entry in _rows(result, "sources")
-        if isinstance(entry.get("name"), str) and isinstance(entry.get("address"), str)
-    }
-    if sources:
-        document["sources"] = sources
-    groups = {
-        group.name: list(group.members)
-        for group in _groups(result)
-        if group.name != "—" and group.members
-    }
-    if groups:
-        document["networks"] = groups
-    # JSON is YAML 1.2. Rendering this as JSON avoids teaching the UI process a
-    # second YAML emitter; the privileged helper remains the one parser and
-    # canonical publisher of this document.
-    return json.dumps(document, indent=2) + "\n"
+def _named_sources(result: Mapping[str, Any]) -> tuple[NamedSourceView, ...]:
+    return tuple(
+        NamedSourceView(name=_text(row.get("name")), address=_text(row.get("address")))
+        for row in _rows(result, "sources")
+    )
 
 
 def _empty(cluster: str) -> NetworkClusterView:
@@ -190,12 +181,12 @@ def _empty(cluster: str) -> NetworkClusterView:
         stale=False,
         editable=False,
         head=None,
-        document=None,
         default_vip_object_count=0,
         ownership_vip="—",
         default_vip="—",
         vips=(),
         sources=(),
+        named_sources=(),
         groups=(),
     )
 
@@ -215,12 +206,12 @@ def _unavailable(reading: ClusterNetwork, *, stale: bool, age_label: str) -> Net
         stale=stale,
         editable=False,
         head=None,
-        document=None,
         default_vip_object_count=0,
         ownership_vip="—",
         default_vip="—",
         vips=(),
         sources=(),
+        named_sources=(),
         groups=(),
     )
 
@@ -250,7 +241,6 @@ def _view(reading: ClusterNetwork, *, stale: bool, age_label: str) -> NetworkClu
         stale=stale,
         editable=editable,
         head=head,
-        document=_document(result, default_vip) if editable else None,
         default_vip_object_count=(
             result["default_vip_object_count"]
             if isinstance(result.get("default_vip_object_count"), int)
@@ -261,6 +251,7 @@ def _view(reading: ClusterNetwork, *, stale: bool, age_label: str) -> NetworkClu
         default_vip=default_vip,
         vips=_vips(result, default_vip),
         sources=_sources(result),
+        named_sources=_named_sources(result),
         groups=_groups(result),
     )
 
@@ -292,3 +283,126 @@ def build_network_overview(
             )
         )
     return tuple(views)
+
+
+#
+# The write side. The form is a set of parallel row fields rather than a
+# document to hand-write, so this is where rows become the one shape the
+# engine parses. It stops at the shape: names, pairing and the default's
+# identity are decided here because getting them wrong loses a row silently,
+# while every question about an address's validity is left to the helper,
+# which is the authority and answers it against the cluster.
+#
+
+
+class FormProblem(Exception):
+    """The rows cannot be turned into a document, and saying so is the answer."""
+
+
+@dataclass(frozen=True, slots=True)
+class NetworkForm:
+    """One submission of the network tables, still in the browser's shape."""
+
+    vip_names: tuple[str, ...]
+    vip_addresses: tuple[str, ...]
+    vip_sources: tuple[str, ...]
+    default_vip_row: str
+    source_names: tuple[str, ...]
+    source_addresses: tuple[str, ...]
+    group_names: tuple[str, ...]
+    group_members: tuple[str, ...]
+
+
+def _cell(values: tuple[str, ...], row: int) -> str:
+    return values[row].strip() if row < len(values) else ""
+
+
+def _named_rows(
+    names: tuple[str, ...], values: tuple[str, ...], *, what: str, needs: str
+) -> list[tuple[int, str, str]]:
+    """Keep the rows that were filled in; refuse the ones half filled in.
+
+    A spare row nobody touched is how this form removes and adds: both are
+    blank and both are dropped. A row with a name and no address is neither,
+    and guessing which was meant would either delete an address or publish an
+    empty one.
+
+    A refusal names the row's position and never its contents. These strings
+    are shown to the person who submitted them, and a message built from a
+    field is a field echoed back - the same reason the operations route
+    answers a bad payload without quoting it.
+    """
+
+    rows: list[tuple[int, str, str]] = []
+    seen: set[str] = set()
+    for row in range(max(len(names), len(values))):
+        name = _cell(names, row)
+        value = _cell(values, row)
+        if not name and not value:
+            continue
+        if not name:
+            raise FormProblem(f"{what} row {row + 1} needs a name.")
+        if not value:
+            raise FormProblem(f"{what} row {row + 1} needs {needs}.")
+        if name in seen:
+            raise FormProblem(f"{what} row {row + 1} repeats a name used above it.")
+        seen.add(name)
+        rows.append((row, name, value))
+    return rows
+
+
+def _members(raw: str) -> list[str]:
+    """One address or range per line, the way the preview form takes them."""
+
+    return [member.strip() for member in raw.replace(",", "\n").splitlines() if member.strip()]
+
+
+def document_from_form(form: NetworkForm) -> str:
+    """Render one submission as the document the helper parses.
+
+    JSON is YAML 1.2. Rendering this as JSON avoids teaching the interface a
+    second YAML emitter; the privileged helper remains the one parser and the
+    canonical publisher, so what leaves here only has to be unambiguous.
+    """
+
+    vips = _named_rows(form.vip_names, form.vip_addresses, what="VIP", needs="an address")
+    if not vips:
+        raise FormProblem("A cluster needs at least one VIP.")
+
+    default_vip = ""
+    for row, name, _ in vips:
+        if str(row) == form.default_vip_row:
+            default_vip = name
+    if not default_vip:
+        #
+        # Reachable by clearing the name of the row the radio still points at.
+        # Falling back to the first VIP would move every object that does not
+        # name one, which is the change this form makes a person confirm.
+        #
+        raise FormProblem("Choose which VIP is the default.")
+
+    document: dict[str, object] = {
+        "vips": {
+            name: (
+                {"address": address, "source": source}
+                if (source := _cell(form.vip_sources, row))
+                else {"address": address}
+            )
+            for row, name, address in vips
+        },
+        "default_vip": default_vip,
+    }
+
+    sources = _named_rows(
+        form.source_names, form.source_addresses, what="Source address", needs="an address"
+    )
+    if sources:
+        document["sources"] = {name: address for _, name, address in sources}
+
+    groups = _named_rows(
+        form.group_names, form.group_members, what="Group", needs="at least one address"
+    )
+    if groups:
+        document["networks"] = {name: _members(raw) for _, name, raw in groups}
+
+    return json.dumps(document, indent=2) + "\n"

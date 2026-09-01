@@ -7,6 +7,7 @@ disabled installation is here.
 
 from __future__ import annotations
 
+import json
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -60,7 +61,7 @@ class QueueRouteTestCase(LoginTestCase):
         self.sign_in(client)
         return client
 
-    def post(self, client: Any, **fields: str) -> Any:
+    def post(self, client: Any, **fields: Any) -> Any:
         token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
         form = {
             "operation": "deploy",
@@ -163,33 +164,107 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.queued, [])
 
+    def network_form(self, **overrides: Any) -> dict[str, Any]:
+        """One filled-in network editor, spare rows and all.
+
+        The spare rows are in the fixture deliberately. They are what the
+        browser actually sends, and a route tested only against tidy input
+        would not have caught them becoming empty VIPs.
+        """
+
+        form: dict[str, Any] = {
+            "operation": "network_publish",
+            "cluster": "alpha",
+            "expected_head": "a" * 40,
+            "comment": "Test",
+            "vip_name": ["public", ""],
+            "vip_address": ["192.0.2.20", ""],
+            "vip_source": ["192.0.2.25", ""],
+            "default_vip_row": "0",
+            "source_name": ["egress", ""],
+            "source_address": ["192.0.2.35", ""],
+            "group_name": ["partners", ""],
+            "group_members": ["198.51.100.0/24\n203.0.113.10", ""],
+        }
+        form.update(overrides)
+        return form
+
     def test_a_network_publish_needs_the_default_vip_confirmation(self) -> None:
-        response = self.post(
-            self.writing_client(),
-            operation="network_publish",
-            network="vips: {}\n",
-            expected_head="a" * 40,
-            comment="Test",
-        )
+        response = self.post(self.writing_client(), **self.network_form())
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.queued, [])
 
-    def test_a_confirmed_network_publish_queues_its_fenced_payload(self) -> None:
+    def test_a_confirmed_network_publish_queues_the_document_its_rows_describe(self) -> None:
         response = self.post(
-            self.writing_client(),
-            operation="network_publish",
-            network="vips: {}\n",
-            expected_head="a" * 40,
-            comment="Test",
-            default_vip_confirmation="on",
+            self.writing_client(), **self.network_form(default_vip_confirmation="on")
         )
 
         self.assertEqual(response.status_code, 303)
+        payload = self.queued[0]["payload"]
+        self.assertEqual(payload["expected_head"], "a" * 40)
+        self.assertEqual(payload["comment"], "Test")
         self.assertEqual(
-            self.queued[0]["payload"],
-            {"network": "vips: {}\n", "expected_head": "a" * 40, "comment": "Test"},
+            json.loads(payload["network"]),
+            {
+                "vips": {"public": {"address": "192.0.2.20", "source": "192.0.2.25"}},
+                "default_vip": "public",
+                "sources": {"egress": "192.0.2.35"},
+                "networks": {"partners": ["198.51.100.0/24", "203.0.113.10"]},
+            },
         )
+
+    def test_a_hand_written_document_cannot_reach_the_helper_through_this_route(self) -> None:
+        #
+        # The field the first version of this form posted. A browser that still
+        # sends it - a stale page, or somebody curling the route - must not be
+        # able to put a document of its own choosing on the other side of the
+        # privilege boundary.
+        #
+        response = self.post(
+            self.writing_client(),
+            **self.network_form(default_vip_confirmation="on", network="vips: {}\n"),
+        )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertNotIn("vips: {}", self.queued[0]["payload"]["network"])
+
+    def test_a_half_filled_row_is_refused_without_naming_what_was_typed(self) -> None:
+        response = self.post(
+            self.writing_client(),
+            **self.network_form(
+                default_vip_confirmation="on",
+                vip_name=["public", "secret-name"],
+                vip_address=["192.0.2.20", ""],
+                vip_source=["192.0.2.25", ""],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.text, "VIP row 2 needs an address.")
+        self.assertEqual(self.queued, [])
+
+    def test_a_default_pointing_at_a_row_that_lost_its_name_is_refused(self) -> None:
+        #
+        # Clearing a name is how a row is removed, and the radio does not move
+        # when it happens. Falling back to the first VIP would move every object
+        # that did not name one - silently, under a confirmation that was ticked
+        # for a different change.
+        #
+        response = self.post(
+            self.writing_client(),
+            **self.network_form(
+                default_vip_confirmation="on",
+                vip_name=["", "partner"],
+                vip_address=["", "192.0.2.21"],
+                vip_source=["", ""],
+                default_vip_row="0",
+            ),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.text, "Choose which VIP is the default.")
+        self.assertEqual(self.queued, [])
 
     def test_a_payload_refusal_does_not_echo_request_detail(self) -> None:
         with mock.patch(

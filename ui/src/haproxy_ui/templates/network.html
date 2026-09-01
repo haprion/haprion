@@ -18,6 +18,9 @@
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="2"></circle><circle cx="5" cy="19" r="2"></circle><circle cx="19" cy="19" r="2"></circle><path d="M12 7v5M12 12H5v5M12 12h7v5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>
     {% else %}
 
+    {% set editing = management_writes and role == 'admin' and cluster.editable and not demo_fixture and not production_snapshot %}
+    {% if not editing %}
+
     <h4 class="network-subhead">Virtual addresses</h4>
     <div class="table-scroll"><table class="node-table network-table">
       <thead><tr><th>Name</th><th>Address</th><th>Default source</th><th>Default</th></tr></thead>
@@ -61,24 +64,97 @@
     <p class="table-note">Named client addresses a site can be restricted to.</p>
 
     <p class="table-note">Node ownership is checked against <code>{{ cluster.ownership_vip }}</code>. That address is deliberately not in any table above and cannot be changed from here.{% if not cluster.editable %} Neither can the tables above — this cluster still keeps them in the engine's own configuration.{% endif %}</p>
-    {% if management_writes and role == 'admin' and cluster.editable and not demo_fixture and not production_snapshot %}
-    <section class="preview-form" aria-labelledby="edit-network-{{ cluster.cluster }}">
-      <div class="form-heading"><h3 id="edit-network-{{ cluster.cluster }}">Edit network description</h3><p>Publishes only <code>managed/network.yaml</code> and regenerates every managed object before HAProxy validation.</p></div>
-      <form method="post" action="/operations">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="operation" value="network_publish">
-        <input type="hidden" name="cluster" value="{{ cluster.cluster }}">
-        <input type="hidden" name="expected_head" value="{{ cluster.head }}">
-        <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
-        <div class="form-grid">
-          <label>Network data<textarea name="network" rows="18" required>{{ cluster.document }}</textarea><small>Only <code>vips</code>, <code>default_vip</code>, <code>sources</code> and <code>networks</code> are accepted.</small></label>
-          <label>Change note<input name="comment" maxlength="4096" required placeholder="Why this network change is needed"><small>Saved in the configuration history.</small></label>
-        </div>
-        <div class="check-value"><label><input type="checkbox" name="default_vip_confirmation" value="on" required> I have checked the default VIP impact: {{ cluster.default_vip_object_count }} managed object{% if cluster.default_vip_object_count != 1 %}s{% endif %} follow it unless they name a VIP.</label></div>
-        <p class="warning-text">Adding a VIP or source publishes HAProxy configuration only. A node must also carry the address in keepalived before traffic can reach it or safely return from it.</p>
-        <div class="form-actions"><button class="primary-button" type="submit">Validate and publish network</button></div>
-      </form>
-    </section>
+
+    {% else %}
+    {#
+      The same three tables, with the cells as fields. Deliberately not a
+      second copy of the page below a read-only one: an address shown twice
+      raises the question of which of the two is the real one, and the answer
+      would be the copy further from the eye.
+    #}
+    <form method="post" action="/operations" class="network-editor">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="operation" value="network_publish">
+      <input type="hidden" name="cluster" value="{{ cluster.cluster }}">
+      <input type="hidden" name="expected_head" value="{{ cluster.head }}">
+      <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+
+      <h4 class="network-subhead">Virtual addresses</h4>
+      <div class="table-scroll"><table class="node-table network-table editor-table">
+        <thead><tr><th>Name</th><th>Address</th><th>Default source</th><th>Default</th></tr></thead>
+        <tbody>
+          {% for vip in cluster.vips %}
+          <tr>
+            <td><input name="vip_name" value="{{ vip.name }}" maxlength="40" aria-label="VIP name"></td>
+            <td><input name="vip_address" value="{{ vip.address }}" maxlength="64" aria-label="Address for VIP {{ vip.name }}"></td>
+            <td><input name="vip_source" value="{{ vip.source or '' }}" maxlength="64" placeholder="whatever routing picks" aria-label="Default source for VIP {{ vip.name }}"></td>
+            <td class="editor-choice"><input type="radio" name="default_vip_row" value="{{ loop.index0 }}"{% if vip.is_default %} checked{% endif %} aria-label="Make VIP {{ vip.name }} the default"></td>
+          </tr>
+          {% endfor %}
+          {% for spare in range(2) %}
+          <tr>
+            <td><input name="vip_name" value="" maxlength="40" placeholder="new VIP" aria-label="New VIP name"></td>
+            <td><input name="vip_address" value="" maxlength="64" placeholder="address" aria-label="New VIP address"></td>
+            <td><input name="vip_source" value="" maxlength="64" placeholder="optional" aria-label="New VIP default source"></td>
+            <td class="editor-choice"><input type="radio" name="default_vip_row" value="{{ cluster.vips | length + loop.index0 }}" aria-label="Make the new VIP the default"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+      <p class="table-note">Sites name a VIP, never an address. Nodes carry it through keepalived. A default source is the address that VIP's backends connect out from.</p>
+
+      <h4 class="network-subhead">Source addresses</h4>
+      <div class="table-scroll"><table class="node-table network-table editor-table">
+        <thead><tr><th>Name</th><th>Address</th></tr></thead>
+        <tbody>
+          {% for source in cluster.named_sources %}
+          <tr>
+            <td><input name="source_name" value="{{ source.name }}" maxlength="40" aria-label="Source name"></td>
+            <td><input name="source_address" value="{{ source.address }}" maxlength="64" aria-label="Address for source {{ source.name }}"></td>
+          </tr>
+          {% endfor %}
+          {% for spare in range(2) %}
+          <tr>
+            <td><input name="source_name" value="" maxlength="40" placeholder="new source" aria-label="New source name"></td>
+            <td><input name="source_address" value="" maxlength="64" placeholder="address" aria-label="New source address"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+      <p class="table-note">Named addresses an object has to ask for by name — a NetScaler calls it a SNIP. The ones paired with a VIP are in that VIP's row above.</p>
+
+      <h4 class="network-subhead">Reachable-from groups</h4>
+      <div class="table-scroll"><table class="node-table network-table network-table-groups editor-table">
+        <thead><tr><th>Name</th><th>Members</th></tr></thead>
+        <tbody>
+          {% for group in cluster.groups %}
+          <tr>
+            <td><input name="group_name" value="{{ group.name }}" maxlength="40" aria-label="Group name"></td>
+            <td><textarea name="group_members" rows="{{ [group.members | length, 2] | max }}" aria-label="Members of group {{ group.name }}">{% for member in group.members %}{{ member }}
+{% endfor %}</textarea></td>
+          </tr>
+          {% endfor %}
+          {% for spare in range(2) %}
+          <tr>
+            <td><input name="group_name" value="" maxlength="40" placeholder="new group" aria-label="New group name"></td>
+            <td><textarea name="group_members" rows="2" placeholder="198.51.100.0/24" aria-label="Members of the new group"></textarea></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+      <p class="table-note">Named client addresses a site can be restricted to. One address or range per line. Clear a name to remove its row; every empty row is left out.</p>
+
+      <p class="table-note">Node ownership is checked against <code>{{ cluster.ownership_vip }}</code>. That address is deliberately not in any table above and cannot be changed from here.</p>
+
+      <div class="form-grid editor-note">
+        <label>Change note<input name="comment" maxlength="4096" required placeholder="Why this network change is needed"><small>Saved in the configuration history, next to the version this publish creates.</small></label>
+      </div>
+      <div class="form-checks">
+        <label class="check"><input type="checkbox" name="default_vip_confirmation" value="on" required> I have checked the default VIP impact: {{ cluster.default_vip_object_count }} managed object{% if cluster.default_vip_object_count != 1 %}s{% endif %} follow{% if cluster.default_vip_object_count == 1 %}s{% endif %} it unless they name a VIP.</label>
+      </div>
+      <p class="warning-text">Adding a VIP or source publishes HAProxy configuration only. A node must also carry the address in keepalived before traffic can reach it or safely return from it.</p>
+      <div class="editor-actions"><button class="secondary-button" type="submit">Validate and publish network</button></div>
+    </form>
     {% endif %}
     {% endif %}
   </article>

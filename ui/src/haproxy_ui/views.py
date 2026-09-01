@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -763,7 +763,14 @@ def build_router(config: Config) -> APIRouter:
         version: str = Form(default="", max_length=16),
         expected_commit: str = Form(default="", max_length=64),
         allow_vip_unknown: str = Form(default=""),
-        network: str = Form(default="", max_length=65536),
+        vip_name: Sequence[str] = Form(default=()),
+        vip_address: Sequence[str] = Form(default=()),
+        vip_source: Sequence[str] = Form(default=()),
+        default_vip_row: str = Form(default="", max_length=8),
+        source_name: Sequence[str] = Form(default=()),
+        source_address: Sequence[str] = Form(default=()),
+        group_name: Sequence[str] = Form(default=()),
+        group_members: Sequence[str] = Form(default=()),
         expected_head: str = Form(default="", max_length=64),
         comment: str = Form(default="", max_length=4096),
         default_vip_confirmation: str = Form(default=""),
@@ -812,8 +819,31 @@ def build_router(config: Config) -> APIRouter:
             # the helper remains the authority for the document itself.
             if default_vip_confirmation != "on":
                 return PlainTextResponse("Confirm the default VIP impact", status_code=400)
+            try:
+                #
+                # The rows become a document here rather than in the browser.
+                # A person edits named addresses; the one shape the engine
+                # parses is assembled from them in one place, so a hand-written
+                # document can never reach the helper from this route.
+                #
+                document = network.document_from_form(
+                    network.NetworkForm(
+                        vip_names=tuple(vip_name),
+                        vip_addresses=tuple(vip_address),
+                        vip_sources=tuple(vip_source),
+                        default_vip_row=default_vip_row,
+                        source_names=tuple(source_name),
+                        source_addresses=tuple(source_address),
+                        group_names=tuple(group_name),
+                        group_members=tuple(group_members),
+                    )
+                )
+            except network.FormProblem as problem:
+                # Safe to show: these messages name a row's position, never
+                # anything that was typed into it.
+                return PlainTextResponse(str(problem), status_code=400)
             payload = {
-                "network": network,
+                "network": document,
                 "expected_head": expected_head,
                 "comment": comment,
             }

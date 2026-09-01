@@ -686,3 +686,27 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
  */
 .network-table-groups th:nth-child(1), .network-table-groups td:nth-child(1) { width: 440px; }
 .network-table-groups th:nth-child(2), .network-table-groups td:nth-child(2) { width: auto; }
+
+/*
+ * The network editor: the same three tables, with the cells as fields. The
+ * inputs borrow the form controls' own padding and border rather than a
+ * lighter table variant, because a cell that only looks editable on hover
+ * reads as a reading - and this page shows both kinds on different clusters.
+ */
+.editor-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
+.editor-table input[type="text"], .editor-table input:not([type]), .editor-table textarea {
+  width: 100%; padding: 7px 10px; border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm); background: var(--panel); color: var(--text);
+  font: inherit; font-weight: var(--font-weight-regular);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+.editor-table textarea { resize: vertical; }
+/* A group's name is a name, not the 440px the reading gives its code cell. */
+.editor-table.network-table-groups th:nth-child(1),
+.editor-table.network-table-groups td:nth-child(1) { width: 240px; }
+.editor-table .editor-choice { text-align: center; }
+.editor-table .editor-choice input { accent-color: var(--brand); width: 16px; height: 16px; }
+.editor-note { padding-top: 6px; grid-template-columns: minmax(260px, 520px); }
+.network-editor .warning-text { margin: 12px 20px 0; font-size: 12px; }
+.editor-actions { display: flex; justify-content: flex-end; padding: 14px 20px 4px; }
+.editor-actions .secondary-button { padding: 9px 22px; }

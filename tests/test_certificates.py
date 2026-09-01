@@ -56,6 +56,8 @@ def cluster(*certificates: str) -> Cluster:
         cluster_id="alpha",
         display_name="Alpha",
         vip="192.0.2.10",
+        address_prefix=None,
+        address_interface=None,
         vips={"main": Vip(name="main", address="192.0.2.10")},
         default_vip="main",
         resolvers=None,

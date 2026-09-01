@@ -105,6 +105,9 @@ def managed_files(
     # the same history as every other configuration change.
     #
     result[f"{KEEPALIVED_PREFIX}{KEEPALIVED_NAME}"] = keepalived_addresses(
-        network.vips, network.sources
+        network.vips,
+        network.sources,
+        prefix=cluster.address_prefix,
+        interface=cluster.address_interface,
     ).encode("utf-8")
     return result

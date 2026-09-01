@@ -47,6 +47,8 @@ PREVIEW_CLUSTER = Cluster(
     cluster_id="alpha",
     display_name="Preview",
     vip="192.0.2.20",
+    address_prefix=None,
+    address_interface=None,
     vips={
         "internal": Vip(name="internal", address="192.0.2.20", source="192.0.2.25"),
         "dmz": Vip(name="dmz", address="198.51.100.20", source="198.51.100.25"),

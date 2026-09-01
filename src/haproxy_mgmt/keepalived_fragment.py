@@ -50,7 +50,13 @@ HEADER = """\
 """
 
 
-def render(vips: Mapping[str, Vip], sources: Mapping[str, str]) -> str:
+def render(
+    vips: Mapping[str, Vip],
+    sources: Mapping[str, str],
+    *,
+    prefix: int | None = None,
+    interface: str | None = None,
+) -> str:
     """Every address this cluster's nodes carry, one per line.
 
     Both kinds, because keepalived does not distinguish them: an address is on
@@ -65,6 +71,17 @@ def render(vips: Mapping[str, Vip], sources: Mapping[str, str]) -> str:
     noise in its log.
     """
 
+    #
+    # The prefix and the interface come from `clusters.yaml`, not from the
+    # document this renders. A bare address is not the same address: keepalived
+    # reads one without a prefix as /32, which carries no subnet route and is
+    # not chosen as a source for the segment. Writing the addresses in the form
+    # the nodes already use is what makes moving the list into this file a
+    # change of where it is written and not a change to the network.
+    #
+    suffix = f"/{prefix}" if prefix is not None else ""
+    device = f" dev {interface}" if interface else ""
+
     lines: list[str] = []
     seen: set[str] = set()
 
@@ -72,7 +89,7 @@ def render(vips: Mapping[str, Vip], sources: Mapping[str, str]) -> str:
         if address in seen:
             return
         seen.add(address)
-        lines.append(f"    {address}  # {note}")
+        lines.append(f"    {address}{suffix}{device}  # {note}")
 
     for name in sorted(vips):
         add(vips[name].address, f"vip {name}")

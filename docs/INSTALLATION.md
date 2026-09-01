@@ -292,6 +292,26 @@ clusters:
 `node_path` is the subdirectory a node fetches from on the management host. It is the only
 per-cluster value the node side needs.
 
+`address_prefix` and `address_interface` are optional and describe how this pair's nodes write an
+address they carry:
+
+```yaml
+    address_prefix: 24
+    address_interface: eth0
+```
+
+They are used for one thing: rendering the keepalived address list a release carries. Set them to
+match what already stands in the nodes' `virtual_ipaddress` block - `192.0.2.10/24 dev eth0` means
+`address_prefix: 24` and `address_interface: eth0`. Omitted, an address is written bare, which
+keepalived reads as `/32` on the `vrrp_instance`'s own interface. **A bare address is not the same
+address:** a `/32` carries no subnet route and is not chosen as a source address for the segment,
+so a cluster whose nodes use a prefix must say so or moving the list into the generated file would
+change the network rather than only where the list is written.
+
+They live here rather than in `managed/network.yaml` because a prefix length is a statement about
+the network the pair sits on, not about which addresses the cluster serves - and `clusters.yaml` is
+root-owned, so the interface cannot change them.
+
 #### Optional per-cluster sections
 
 Four sections may be added. All of them are optional, and a cluster that omits every one of them

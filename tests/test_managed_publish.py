@@ -14,6 +14,8 @@ def cluster() -> Cluster:
         cluster_id="alpha",
         display_name="Alpha",
         vip="192.0.2.20",
+        address_prefix=None,
+        address_interface=None,
         vips={},
         default_vip="main",
         resolvers=None,

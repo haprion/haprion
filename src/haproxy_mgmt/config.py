@@ -140,6 +140,13 @@ class Cluster:
     cluster_id: str
     display_name: str
     vip: str
+    #
+    # How a carried address is written into the generated keepalived list.
+    # None means a bare address, which keepalived reads as /32 on the
+    # vrrp_instance's own interface.
+    #
+    address_prefix: int | None
+    address_interface: str | None
     vips: Mapping[str, Vip]
     default_vip: str
     resolvers: str | None
@@ -248,6 +255,42 @@ def _address(value: Any, location: str) -> str:
     except ValueError as exc:
         raise ConfigError(f"{location} must be an IP address") from exc
     return value
+
+
+#
+# A Linux interface name. Fifteen characters is the kernel's own limit, and the
+# character class is what `ip link` accepts without quoting.
+#
+INTERFACE = re.compile(r"^[A-Za-z0-9._-]{1,15}$")
+
+
+def _address_form(raw: Mapping[str, Any], location: str) -> tuple[int | None, str | None]:
+    """How this cluster's nodes write an address they carry.
+
+    Only the generated keepalived address list reads these. They are here and
+    not in `managed/network.yaml` on purpose: a prefix length is a statement
+    about the network the pair sits on, not about which addresses the cluster
+    serves, and getting it wrong changes routing rather than which site
+    answers. `clusters.yaml` is root-owned and the interface cannot write it,
+    so this stays with the person who set the nodes up.
+
+    Both are optional, and absent means what keepalived does with a bare
+    address: /32, on the vrrp_instance's own interface. That is right for a
+    cluster written that way and wrong for one written any other way, which is
+    exactly why it is stated rather than assumed.
+    """
+
+    prefix = raw.get("address_prefix")
+    if prefix is not None and (
+        not isinstance(prefix, int) or isinstance(prefix, bool) or not 1 <= prefix <= 128
+    ):
+        raise ConfigError(f"{location}.address_prefix must be a prefix length between 1 and 128")
+    interface = raw.get("address_interface")
+    if interface is not None and (
+        not isinstance(interface, str) or not INTERFACE.fullmatch(interface)
+    ):
+        raise ConfigError(f"{location}.address_interface must be an interface name")
+    return prefix, interface
 
 
 def _vips(raw: Mapping[str, Any], vip: str, location: str) -> tuple[Mapping[str, Vip], str]:
@@ -630,6 +673,8 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             {
                 "display_name",
                 "vip",
+                "address_prefix",
+                "address_interface",
                 "vips",
                 "default_vip",
                 "resolvers",
@@ -653,6 +698,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
         except ValueError as exc:
             raise ConfigError(f"{location}.vip must be an IP address") from exc
         vips, default_vip = _vips(raw, vip, location)
+        address_prefix, address_interface = _address_form(raw, location)
         resolvers = raw.get("resolvers")
         if resolvers is not None and (
             not isinstance(resolvers, str) or not NAME.fullmatch(resolvers)
@@ -723,6 +769,8 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             cluster_id=cluster_id,
             display_name=_required_string(raw, "display_name", location),
             vip=vip,
+            address_prefix=address_prefix,
+            address_interface=address_interface,
             vips=vips,
             default_vip=default_vip,
             resolvers=resolvers,

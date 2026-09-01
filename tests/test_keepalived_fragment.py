@@ -84,5 +84,26 @@ class TheAddressList(unittest.TestCase):
         for field in ("priority", "virtual_router_id", "auth_pass", "unicast", "notify", "{"):
             self.assertNotIn(field, acted_on)
 
+    def test_the_addresses_are_written_the_way_the_nodes_carry_them(self) -> None:
+        #
+        # Measured on a running node, 2026-09-01: the pair carried its
+        # addresses as `<address>/24 dev eth0`, and a bare address is not the
+        # same address. keepalived reads one without a prefix as /32, which carries
+        # no subnet route and is not chosen as a source for the segment - so
+        # moving the list into this file would have changed the network while
+        # claiming to change only where the list is written.
+        #
+        text = render(vips(public=("192.0.2.20", "192.0.2.25")), {}, prefix=24, interface="eth0")
+
+        self.assertEqual(self.addresses(text), ["192.0.2.20/24 dev eth0", "192.0.2.25/24 dev eth0"])
+
+    def test_a_cluster_that_states_neither_gets_what_keepalived_defaults_to(self) -> None:
+        # A bare address, which is right for a cluster written that way and
+        # wrong for one written any other way. Stated in clusters.yaml rather
+        # than guessed at from the address.
+        text = render(vips(public=("192.0.2.20", None)), {})
+
+        self.assertEqual(self.addresses(text), ["192.0.2.20"])
+
     def test_the_file_is_named_once_for_both_sides_of_the_release(self) -> None:
         self.assertEqual(FRAGMENT, "keepalived/addresses.conf")

@@ -333,9 +333,11 @@ def _network_result(value: Any) -> dict[str, Any]:
         )
     return {
         "cluster": _text(source.get("cluster"), limit=63),
+        "head": _text(source.get("head"), limit=40),
         "origin": _text(source.get("origin"), limit=16),
         "ownership_vip": _text(source.get("ownership_vip"), limit=45),
         "default_vip": _text(source.get("default_vip"), limit=63),
+        "default_vip_object_count": _number(source.get("default_vip_object_count")),
         "vips": vips,
         "sources": sources,
         "groups": groups,

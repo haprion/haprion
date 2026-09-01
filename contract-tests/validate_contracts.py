@@ -299,6 +299,20 @@ def check_revert_semantics(document: dict[str, object], path: Path) -> None:
             raise AssertionError(f"{path}: no-op revert must not require deploy")
 
 
+def check_network_publish_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        return
+    # Even a no-op network publish reinstalls the release from the committed
+    # tree.  The helper therefore always tells the operator to reconcile nodes;
+    # a previous failed deploy must not become invisible merely because the
+    # network document was byte-identical on the retry.
+    if not result["deployment_required"] or result["next_command"] is None:
+        raise AssertionError(f"{path}: network publish must require explicit deploy")
+    if result["changed"] and result["published_at"] is None:
+        raise AssertionError(f"{path}: changed network publish requires a timestamp")
+
+
 def check_reconcile_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -336,6 +350,7 @@ SEMANTIC_CHECKS = {
     "inventory": check_inventory_semantics,
     "publish": check_publish_semantics,
     "revert": check_revert_semantics,
+    "network_publish": check_network_publish_semantics,
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
 }
@@ -364,7 +379,7 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["nodes"][0]["latest_version"] = "2026-01-01_00-00-00"
     elif operation == "inventory":
         result["proxies"].append(deepcopy(result["proxies"][0]))
-    elif operation in ("publish", "revert"):
+    elif operation in ("publish", "revert", "network_publish"):
         result["deployment_required"] = False
     elif operation == "deploy":
         result["converged"] = True

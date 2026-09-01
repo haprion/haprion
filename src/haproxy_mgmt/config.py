@@ -445,11 +445,14 @@ def load_network(config_path: Path, *, vip: str) -> Network | None:
     path = config_path / NETWORK_FILE
     if not path.exists():
         return None
-    return parse_network(
-        _secure_yaml(path, require_secure=False),
-        vip=vip,
-        location=str(path),
-        from_repository=True,
+    # Kept local rather than importing ``managed_network`` at module import:
+    # that module uses the Network type and parser defined above.  The delayed
+    # import preserves one parser for the repository file and for a document
+    # submitted through the managed-publish boundary without a circular import.
+    from haproxy_mgmt.managed_network import load_mapping
+
+    return load_mapping(
+        _secure_yaml(path, require_secure=False), ownership_vip=vip, location=str(path)
     )
 
 

@@ -68,18 +68,22 @@
       "type": "object",
       "required": [
         "cluster",
+        "head",
         "origin",
         "ownership_vip",
         "default_vip",
+        "default_vip_object_count",
         "vips",
         "sources",
         "groups"
       ],
       "properties": {
         "cluster": { "type": "string", "maxLength": 63 },
+        "head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "origin": { "enum": ["repository", "cluster_file"] },
         "ownership_vip": { "$ref": "#/$defs/address" },
         "default_vip": { "$ref": "#/$defs/name" },
+        "default_vip_object_count": { "type": "integer", "minimum": 0 },
         "vips": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/vip" } },
         "sources": { "type": "array", "items": { "$ref": "#/$defs/source_address" } },
         "groups": { "type": "array", "items": { "$ref": "#/$defs/group" } }

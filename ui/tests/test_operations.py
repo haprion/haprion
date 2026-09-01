@@ -12,7 +12,7 @@ import json
 import unittest
 from uuid import uuid4
 
-from haproxy_mgmt.cli import deploy
+from haproxy_mgmt.cli import deploy, managed_network_publish
 
 from haproxy_ui import operations
 
@@ -90,6 +90,31 @@ class TheCommandComesFromTheEngine(unittest.TestCase):
 
         self.assertEqual(parameters["version"], 12)
         self.assertEqual(parameters["expected_commit"], "a" * 40)
+
+    def test_a_network_publish_sends_the_engines_own_envelope(self) -> None:
+        prepared = operations.prepare(
+            operation="network_publish",
+            cluster="alpha",
+            request_id=REQUEST,
+            payload={
+                "network": "vips: {}\n",
+                "expected_head": "a" * 40,
+                "comment": "Add a source",
+            },
+        )
+
+        self.assertEqual(
+            json.loads(prepared.request),
+            json.loads(
+                managed_network_publish.build_request(
+                    "alpha",
+                    str(REQUEST),
+                    network="vips: {}\n",
+                    expected_head="a" * 40,
+                    comment="Add a source",
+                )
+            ),
+        )
 
 
 class PayloadsAreRefusedRatherThanTrimmed(unittest.TestCase):

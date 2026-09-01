@@ -79,6 +79,14 @@ class RepeatableOperations(unittest.TestCase):
 
 
 class RecordedOperations(unittest.TestCase):
+    def test_a_network_publish_uses_the_same_version_evidence_as_a_revert(self) -> None:
+        judgement = recovery.judge(
+            abandoned("network_publish"), history(versions=[version()], published_hash="a" * 40)
+        )
+
+        self.assertEqual(judgement.verdict, "requeue")
+        self.assertEqual(judgement.code, "version_recorded")
+
     def test_a_version_carrying_this_request_is_safe_to_re_run(self) -> None:
         judgement = recovery.judge(
             abandoned(), history(versions=[version()], published_hash="a" * 40)

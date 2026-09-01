@@ -109,6 +109,7 @@ Mutation helper classes:
 - publish/commit/release
 - config deploy trigger
 - revert/publish
+- bounded managed-network publish
 - certificate deploy trigger
 - operation-specific completion proof
 

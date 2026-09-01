@@ -26,7 +26,7 @@ RestartSec=5
 # open rather than the helper being hardened separately.
 #
 # Where the real limit now lives: /etc/sudoers.d/haproxy-ui-worker, which names
-# three helpers and permits no arguments at all. The sandbox never was what
+# four helpers and permits no arguments at all. The sandbox never was what
 # stopped this account from deploying - the absence of a sudo rule was. Widening
 # here does not widen what may be run; only that file does.
 

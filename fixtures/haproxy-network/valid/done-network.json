@@ -7,9 +7,11 @@
   "request_id": "99999999-9999-4999-8999-999999999999",
   "result": {
     "cluster": "alpha",
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "origin": "repository",
     "ownership_vip": "192.0.2.20",
     "default_vip": "internal",
+    "default_vip_object_count": 2,
     "vips": [
       { "name": "dmz", "address": "198.51.100.20", "source": "198.51.100.25" },
       { "name": "internal", "address": "192.0.2.20", "source": "192.0.2.25" }

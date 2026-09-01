@@ -84,8 +84,14 @@ def resolve_head(repo: Path) -> tuple[str, str]:
     return branch, _git(repo, "rev-parse", "HEAD").decode().strip()
 
 
-def build_candidate_tree(repo: Path, base_commit: str, files: Mapping[str, bytes]) -> Snapshot:
-    """Write a tree that is `base_commit` with core/ and manual/ replaced.
+def build_candidate_tree(
+    repo: Path,
+    base_commit: str,
+    files: Mapping[str, bytes],
+    *,
+    prefixes: tuple[str, ...] = SNAPSHOT_PREFIXES,
+) -> Snapshot:
+    """Write a tree that is `base_commit` with exactly `prefixes` replaced.
 
     `files` holds every file the caller is publishing, keyed by repository
     relative path. Paths outside the snapshot prefixes are refused rather than
@@ -93,11 +99,14 @@ def build_candidate_tree(repo: Path, base_commit: str, files: Mapping[str, bytes
     failure mode this whole path exists to prevent.
     """
 
+    if not prefixes or any(not prefix.endswith("/") for prefix in prefixes):
+        raise ValueError("snapshot prefixes must be non-empty repository directory prefixes")
+
     for path in sorted(files):
-        if not path.startswith(SNAPSHOT_PREFIXES):
+        if not path.startswith(prefixes):
             raise PublishError(
                 f"'{path}' is outside the layers this path publishes "
-                f"({', '.join(prefix.rstrip('/') for prefix in SNAPSHOT_PREFIXES)})."
+                f"({', '.join(prefix.rstrip('/') for prefix in prefixes)})."
             )
 
     with tempfile.TemporaryDirectory(prefix="haproxy-publish-index-") as work:
@@ -121,7 +130,7 @@ def build_candidate_tree(repo: Path, base_commit: str, files: Mapping[str, bytes
         # survive in the new version, which is the same silent-drift failure in
         # the other direction.
         #
-        for prefix in SNAPSHOT_PREFIXES:
+        for prefix in prefixes:
             _git(repo, "rm", "--cached", "-r", "--ignore-unmatch", "-q", "--", prefix, env=env)
 
         for path in sorted(files):

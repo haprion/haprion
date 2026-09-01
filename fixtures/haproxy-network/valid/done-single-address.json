@@ -7,9 +7,11 @@
   "request_id": "99999999-9999-4999-8999-999999999998",
   "result": {
     "cluster": "beta",
+    "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "origin": "cluster_file",
     "ownership_vip": "203.0.113.20",
     "default_vip": "main",
+    "default_vip_object_count": 0,
     "vips": [
       { "name": "main", "address": "203.0.113.20", "source": null }
     ],

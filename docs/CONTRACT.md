@@ -14,6 +14,7 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haproxy-list-backups` | `list_backups` | `done`, `partial`, `failed` | Backup metadata only |
 | `haproxy-cert-list` | `cert_list` | `done`, `failed` | Deployable certificate metadata only |
 | `haproxy-network` | `network` | `done`, `failed` | Cluster addresses and address groups |
+| `haproxy-network-publish-helper` | `network_publish` | `done`, `failed`, `blocked` | Bounded publication of `managed/network.yaml` |
 | `haproxy-publish` | `publish` | `done`, `failed`, `blocked` | Validation and new immutable release |
 | `haproxy-deploy` | `deploy` | `done`, `partial`, `failed`, `blocked` | Config reconcile per node |
 | `haproxy-revert` | `revert` | `done`, `failed`, `blocked` | New release built from an older version |
@@ -60,6 +61,7 @@ Command-specific stable codes:
 | `deploy` | `split_brain`, `vip_unknown`, `node_deploy_failed`, `status_unavailable` |
 | `revert` | `dirty_worktree`, `version_not_found`, `candidate_invalid`, `publish_incomplete` |
 | `cert_deploy` | `split_brain`, `vip_unknown`, `certificate_missing`, `fingerprint_mismatch`, `node_cert_deploy_failed` |
+| `network_publish` | `dirty_worktree`, `candidate_invalid`, `publish_incomplete` |
 
 New codes may be added in schema v1 only when an older caller can safely show them as a generic
 failure or warning. Removing or changing the meaning of a code requires a new schema version.

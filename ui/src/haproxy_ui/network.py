@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
+import yaml
+
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterNetwork
@@ -79,6 +81,9 @@ class NetworkClusterView:
     # interface can neither read nor write.
     #
     editable: bool
+    head: str | None
+    document: str | None
+    default_vip_object_count: int
     ownership_vip: str
     default_vip: str
     vips: tuple[VipView, ...]
@@ -142,6 +147,34 @@ def _groups(result: Mapping[str, Any]) -> tuple[GroupView, ...]:
     )
 
 
+def _document(result: Mapping[str, Any], default_vip: str) -> str:
+    """Rebuild the one editable document from the bounded cached result."""
+
+    vips: dict[str, dict[str, str]] = {}
+    for vip in _vips(result, default_vip):
+        if vip.name != "—" and vip.address != "—":
+            entry = {"address": vip.address}
+            if vip.source:
+                entry["source"] = vip.source
+            vips[vip.name] = entry
+    document: dict[str, object] = {"vips": vips, "default_vip": default_vip}
+    sources = {
+        str(entry["name"]): str(entry["address"])
+        for entry in _rows(result, "sources")
+        if isinstance(entry.get("name"), str) and isinstance(entry.get("address"), str)
+    }
+    if sources:
+        document["sources"] = sources
+    groups = {
+        group.name: list(group.members)
+        for group in _groups(result)
+        if group.name != "—" and group.members
+    }
+    if groups:
+        document["networks"] = groups
+    return yaml.safe_dump(document, sort_keys=False, default_flow_style=False)
+
+
 def _empty(cluster: str) -> NetworkClusterView:
     return NetworkClusterView(
         cluster=cluster,
@@ -154,6 +187,9 @@ def _empty(cluster: str) -> NetworkClusterView:
         age_label="Never",
         stale=False,
         editable=False,
+        head=None,
+        document=None,
+        default_vip_object_count=0,
         ownership_vip="—",
         default_vip="—",
         vips=(),
@@ -176,6 +212,9 @@ def _unavailable(reading: ClusterNetwork, *, stale: bool, age_label: str) -> Net
         age_label=age_label,
         stale=stale,
         editable=False,
+        head=None,
+        document=None,
+        default_vip_object_count=0,
         ownership_vip="—",
         default_vip="—",
         vips=(),
@@ -190,7 +229,8 @@ def _view(reading: ClusterNetwork, *, stale: bool, age_label: str) -> NetworkClu
 
     result = reading.result if isinstance(reading.result, Mapping) else {}
     default_vip = _text(result.get("default_vip"))
-    editable = result.get("origin") == "repository"
+    head = result.get("head") if isinstance(result.get("head"), str) else None
+    editable = result.get("origin") == "repository" and head is not None
     detail = (
         "Edited here and published to the cluster repository"
         if editable
@@ -207,6 +247,14 @@ def _view(reading: ClusterNetwork, *, stale: bool, age_label: str) -> NetworkClu
         age_label=age_label,
         stale=stale,
         editable=editable,
+        head=head,
+        document=_document(result, default_vip) if editable else None,
+        default_vip_object_count=(
+            result["default_vip_object_count"]
+            if isinstance(result.get("default_vip_object_count"), int)
+            and not isinstance(result.get("default_vip_object_count"), bool)
+            else 0
+        ),
         ownership_vip=_text(result.get("ownership_vip")),
         default_vip=default_vip,
         vips=_vips(result, default_vip),

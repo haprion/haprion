@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -53,10 +54,32 @@ class FakeCluster:
         )
 
 
+def repository(root: Path) -> None:
+    subprocess.run(["/usr/bin/git", "init", "-q", "-b", "main", str(root)], check=True)
+    (root / "README").write_text("fixture\n", encoding="utf-8")
+    subprocess.run(["/usr/bin/git", "-C", str(root), "add", "README"], check=True)
+    subprocess.run(
+        [
+            "/usr/bin/git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.com",
+            "commit",
+            "-qm",
+            "Initial fixture",
+        ],
+        check=True,
+    )
+
+
 class TheResultSaysWhereItCameFrom(unittest.TestCase):
     def test_a_repository_description_is_reported_as_editable_ground(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
+            repository(root)
             (root / "managed").mkdir()
             (root / "managed" / "network.yaml").write_text(
                 yaml.safe_dump(
@@ -71,6 +94,7 @@ class TheResultSaysWhereItCameFrom(unittest.TestCase):
             result = network_result(FakeCluster(root))  # type: ignore[arg-type]
 
         self.assertEqual(result["origin"], "repository")
+        self.assertRegex(str(result["head"]), r"^[0-9a-f]{40}$")
         self.assertEqual(result["default_vip"], "dmz")
         self.assertEqual(
             result["vips"], [{"name": "dmz", "address": "198.51.100.20", "source": "198.51.100.25"}]
@@ -85,7 +109,9 @@ class TheResultSaysWhereItCameFrom(unittest.TestCase):
         # can be edited by publishing.
         #
         with tempfile.TemporaryDirectory() as raw:
-            result = network_result(FakeCluster(Path(raw)))  # type: ignore[arg-type]
+            root = Path(raw)
+            repository(root)
+            result = network_result(FakeCluster(root))  # type: ignore[arg-type]
 
         self.assertEqual(result["origin"], "cluster_file")
         self.assertEqual(
@@ -94,7 +120,9 @@ class TheResultSaysWhereItCameFrom(unittest.TestCase):
 
     def test_the_ownership_address_is_reported_beside_the_tables_not_inside_them(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            result = network_result(FakeCluster(Path(raw)))  # type: ignore[arg-type]
+            root = Path(raw)
+            repository(root)
+            result = network_result(FakeCluster(root))  # type: ignore[arg-type]
 
         self.assertEqual(result["ownership_vip"], "192.0.2.20")
 
@@ -112,6 +140,7 @@ class TheHelperAnswersInTheFrozenEnvelope(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
+            repository(root)
             (root / "managed").mkdir()
             if description is not None:
                 (root / "managed" / "network.yaml").write_text(

@@ -11,6 +11,7 @@ from __future__ import annotations
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from unittest import mock
 
 from haproxy_ui import demo
 from haproxy_ui.network import build_network_overview
@@ -31,6 +32,8 @@ class TheReadingBecomesTheCard(unittest.TestCase):
         edge = next(view for view in overview() if view.cluster == "edge-demo")
 
         self.assertTrue(edge.editable)
+        self.assertEqual(edge.head, "a" * 40)
+        self.assertIn("default_vip: public", edge.document or "")
         self.assertEqual(edge.default_vip, "public")
         self.assertEqual([vip.name for vip in edge.vips], ["partner", "public"])
         self.assertEqual([vip.is_default for vip in edge.vips], [False, True])
@@ -119,6 +122,19 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
 
         self.assertNotIn('action="/network"', page.text)
         self.assertIn("cannot be changed from here", page.text)
+
+    def test_an_editable_repository_description_gets_a_fenced_publish_form(self) -> None:
+        with mock.patch("haproxy_ui.db.cluster_networks", return_value=demo.network_rows(NOW)):
+            client = self.client(
+                replace(configuration(), management_writes=True, clusters=demo.CLUSTERS)
+            )
+            self.sign_in(client)
+            page = client.get("/network")
+
+        self.assertIn('name="operation" value="network_publish"', page.text)
+        self.assertIn('name="expected_head" value="' + "a" * 40 + '"', page.text)
+        self.assertIn("3 managed objects follow it", page.text)
+        self.assertIn("keepalived", page.text)
 
     def test_signing_in_is_required(self) -> None:
         page = self.client().get("/network", follow_redirects=False)

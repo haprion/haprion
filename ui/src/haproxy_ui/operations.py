@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from haproxy_mgmt.cli import cert_deploy, deploy, revert
+from haproxy_mgmt.cli import cert_deploy, deploy, managed_network_publish, revert
 
 #
 # How long an operation may run before the worker stops it. Deliberately
@@ -161,6 +161,32 @@ def prepare(
             argv=(revert.SUDO, *SUDO_FLAGS, revert.HELPER),
             request=revert.build_request(
                 cluster, str(request_id), version=version, expected_commit=commit
+            ),
+        )
+
+    if operation == "network_publish":
+        _only(payload, "network", "expected_head", "comment")
+        network = payload.get("network")
+        expected_head = payload.get("expected_head")
+        comment = payload.get("comment")
+        if not isinstance(network, str) or not network:
+            raise BadPayload("network must be a non-empty document")
+        if not isinstance(expected_head, str) or not expected_head:
+            raise BadPayload("expected_head must be a commit id")
+        if not isinstance(comment, str) or not comment:
+            raise BadPayload("comment must be a non-empty string")
+        return Prepared(
+            argv=(
+                managed_network_publish.SUDO,
+                *SUDO_FLAGS,
+                managed_network_publish.HELPER,
+            ),
+            request=managed_network_publish.build_request(
+                cluster,
+                str(request_id),
+                network=network,
+                expected_head=expected_head,
+                comment=comment,
             ),
         )
 

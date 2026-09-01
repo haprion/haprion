@@ -137,6 +137,20 @@ class GoodAnswers(WorkerTestCase):
 
         self.assertEqual(self.finished[0]["claim_token"], TOKEN)
 
+    def test_a_network_publish_done_result_is_accepted(self) -> None:
+        job = claimed(
+            operation="network_publish",
+            payload={
+                "network": "vips: {}\n",
+                "expected_head": "a" * 40,
+                "comment": "test",
+            },
+        )
+        with mock.patch.object(execution, "run", return_value=completed(stdout=answer(job))):
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        self.assertEqual(self.finished[0]["state"], "done")
+
 
 class UndeterminedEndings(WorkerTestCase):
     def test_output_that_is_not_an_envelope_is_unknown(self) -> None:

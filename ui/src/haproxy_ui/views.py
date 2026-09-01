@@ -763,6 +763,10 @@ def build_router(config: Config) -> APIRouter:
         version: str = Form(default="", max_length=16),
         expected_commit: str = Form(default="", max_length=64),
         allow_vip_unknown: str = Form(default=""),
+        network: str = Form(default="", max_length=65536),
+        expected_head: str = Form(default="", max_length=64),
+        comment: str = Form(default="", max_length=4096),
+        default_vip_confirmation: str = Form(default=""),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
         """Ask for an operation. Say nothing about what happened to it.
@@ -802,6 +806,17 @@ def build_router(config: Config) -> APIRouter:
             if not version.isdigit():
                 return PlainTextResponse("A version is required", status_code=400)
             payload = {"version": int(version), "expected_commit": expected_commit}
+        elif operation == "network_publish":
+            # A changed default silently moves every object that did not name a
+            # VIP.  The cached page states that count next to this confirmation;
+            # the helper remains the authority for the document itself.
+            if default_vip_confirmation != "on":
+                return PlainTextResponse("Confirm the default VIP impact", status_code=400)
+            payload = {
+                "network": network,
+                "expected_head": expected_head,
+                "comment": comment,
+            }
 
         try:
             key = UUID(idempotency_key)

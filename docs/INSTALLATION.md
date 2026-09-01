@@ -1263,7 +1263,7 @@ If management writes are switched on before that phase exists, the worker exits
 Once writes are on, each pass first settles jobs whose worker died. An expired
 lease says only that the process holding a job stopped renewing its authority,
 so the job is judged by what can be read rather than retried on assumption: a
-publish or a revert by whether a version carrying that request exists and
+publish, a revert or a managed-network publish by whether a version carrying that request exists and
 whether its release was published, a deploy or a certificate deploy by nothing
 at all, because those read the cluster before they act and repeating one is how
 they work. Evidence older than the expired lease is not weak evidence but none —

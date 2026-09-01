@@ -103,6 +103,7 @@ def _operation(value: str) -> str:
         "deploy": "Deploy configuration",
         "cert_deploy": "Deploy certificates",
         "revert": "Publish reverted version",
+        "network_publish": "Publish network description",
     }.get(value, value.replace("_", " ").capitalize())
 
 

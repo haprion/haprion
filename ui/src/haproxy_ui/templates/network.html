@@ -61,6 +61,25 @@
     <p class="table-note">Named client addresses a site can be restricted to.</p>
 
     <p class="table-note">Node ownership is checked against <code>{{ cluster.ownership_vip }}</code>. That address is deliberately not in any table above and cannot be changed from here.{% if not cluster.editable %} Neither can the tables above — this cluster still keeps them in the engine's own configuration.{% endif %}</p>
+    {% if management_writes and role == 'admin' and cluster.editable and not demo_fixture and not production_snapshot %}
+    <section class="preview-form" aria-labelledby="edit-network-{{ cluster.cluster }}">
+      <div class="form-heading"><h3 id="edit-network-{{ cluster.cluster }}">Edit network description</h3><p>Publishes only <code>managed/network.yaml</code> and regenerates every managed object before HAProxy validation.</p></div>
+      <form method="post" action="/operations">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="operation" value="network_publish">
+        <input type="hidden" name="cluster" value="{{ cluster.cluster }}">
+        <input type="hidden" name="expected_head" value="{{ cluster.head }}">
+        <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+        <div class="form-grid">
+          <label>Network data<textarea name="network" rows="18" required>{{ cluster.document }}</textarea><small>Only <code>vips</code>, <code>default_vip</code>, <code>sources</code> and <code>networks</code> are accepted.</small></label>
+          <label>Change note<input name="comment" maxlength="4096" required placeholder="Why this network change is needed"><small>Saved in the configuration history.</small></label>
+        </div>
+        <div class="check-value"><label><input type="checkbox" name="default_vip_confirmation" value="on" required> I have checked the default VIP impact: {{ cluster.default_vip_object_count }} managed object{% if cluster.default_vip_object_count != 1 %}s{% endif %} follow it unless they name a VIP.</label></div>
+        <p class="warning-text">Adding a VIP or source publishes HAProxy configuration only. A node must also carry the address in keepalived before traffic can reach it or safely return from it.</p>
+        <div class="form-actions"><button class="primary-button" type="submit">Validate and publish network</button></div>
+      </form>
+    </section>
+    {% endif %}
     {% endif %}
   </article>
 {% else %}

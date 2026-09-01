@@ -143,6 +143,23 @@ class CandidateTreeTests(RepositoryFixture):
                 )
             self.assertIn("managed/generated/1099-sneaky.cfg", str(caught.exception))
 
+    def test_a_managed_snapshot_changes_only_the_file_it_was_given(self) -> None:
+        """The application cannot replace a human-owned layer by accident."""
+        with tempfile.TemporaryDirectory() as raw:
+            repo = self.repository(Path(raw))
+            _, head = resolve_head(repo)
+            snapshot = build_candidate_tree(
+                repo,
+                head,
+                {"managed/network.yaml": b"vips: {}\n"},
+                prefixes=("managed/",),
+            )
+
+            files = read_tree_files(repo, snapshot.tree)
+            self.assertEqual(files["managed/network.yaml"], b"vips: {}\n")
+            self.assertEqual(files["core/haproxy.cfg"], HAPROXY_CFG)
+            self.assertEqual(files["manual/reservations.yaml"], RESERVATIONS)
+
 
 class CommitTests(RepositoryFixture):
     def test_a_version_is_created_and_the_branch_moves(self) -> None:

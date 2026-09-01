@@ -163,6 +163,34 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.queued, [])
 
+    def test_a_network_publish_needs_the_default_vip_confirmation(self) -> None:
+        response = self.post(
+            self.writing_client(),
+            operation="network_publish",
+            network="vips: {}\n",
+            expected_head="a" * 40,
+            comment="Test",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.queued, [])
+
+    def test_a_confirmed_network_publish_queues_its_fenced_payload(self) -> None:
+        response = self.post(
+            self.writing_client(),
+            operation="network_publish",
+            network="vips: {}\n",
+            expected_head="a" * 40,
+            comment="Test",
+            default_vip_confirmation="on",
+        )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(
+            self.queued[0]["payload"],
+            {"network": "vips: {}\n", "expected_head": "a" * 40, "comment": "Test"},
+        )
+
     def test_a_payload_refusal_does_not_echo_request_detail(self) -> None:
         with mock.patch(
             "haproxy_ui.operations.prepare",

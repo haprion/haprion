@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haproxy-network-publish.schema.json",
+  "title": "haproxy-network-publish JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "network_publish" },
+        "outcome": { "enum": ["done", "failed", "blocked"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/network_publish_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/network_publish_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "network_publish_result": {
+      "type": "object",
+      "required": ["changed", "version", "hash", "published_at", "comment", "deployment_required", "next_command", "release", "already_current"],
+      "properties": {
+        "changed": { "type": "boolean" },
+        "version": { "$ref": "common.schema.json#/$defs/version" },
+        "hash": { "$ref": "common.schema.json#/$defs/hash" },
+        "published_at": { "oneOf": [{ "$ref": "common.schema.json#/$defs/timestamp" }, { "type": "null" }] },
+        "comment": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "deployment_required": { "type": "boolean" },
+        "next_command": { "type": ["string", "null"], "maxLength": 1024 },
+        "release": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "already_current": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

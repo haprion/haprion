@@ -93,6 +93,7 @@ _OPERATION_OUTCOMES = {
     "deploy": frozenset({"done", "partial", "failed", "blocked"}),
     "cert_deploy": frozenset({"done", "partial", "failed", "blocked"}),
     "revert": frozenset({"done", "failed", "blocked"}),
+    "network_publish": frozenset({"done", "failed", "blocked"}),
 }
 
 

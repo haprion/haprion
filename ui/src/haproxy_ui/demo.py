@@ -444,9 +444,11 @@ def network_rows(now: datetime | None = None) -> tuple[ClusterNetwork, ...]:
             outcome="done",
             result={
                 "cluster": "edge-demo",
+                "head": "a" * 40,
                 "origin": "repository",
                 "ownership_vip": "192.0.2.20",
                 "default_vip": "public",
+                "default_vip_object_count": 3,
                 "vips": [
                     {"name": "partner", "address": "192.0.2.21", "source": "192.0.2.26"},
                     {"name": "public", "address": "192.0.2.20", "source": "192.0.2.25"},
@@ -467,9 +469,11 @@ def network_rows(now: datetime | None = None) -> tuple[ClusterNetwork, ...]:
             outcome="done",
             result={
                 "cluster": "service-demo",
+                "head": "b" * 40,
                 "origin": "cluster_file",
                 "ownership_vip": "198.51.100.20",
                 "default_vip": "main",
+                "default_vip_object_count": 0,
                 "vips": [{"name": "main", "address": "198.51.100.20", "source": None}],
                 "sources": [],
                 "groups": [],

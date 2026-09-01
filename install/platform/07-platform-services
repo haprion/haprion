@@ -112,6 +112,7 @@ CACHES=(
     cluster_history
     cluster_backups
     cluster_certificates
+    cluster_network
 )
 
 step "Proving the poller cached every read it makes"
@@ -197,6 +198,9 @@ refuse "$WEB_USER" "cannot write the certificate cache" \
 refuse "$WEB_USER" "cannot write the history cache" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
     -c "update cluster_history set outcome = 'done'"
+refuse "$WEB_USER" "cannot write the network cache" \
+    psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
+    -c "update cluster_network set outcome = 'done'"
 [[ $failed -eq 0 ]] || die "an identity can do something it must not"
 
 echo

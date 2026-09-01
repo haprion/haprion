@@ -678,3 +678,11 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .network-table th:nth-child(1), .network-table td:nth-child(1) { width: 220px; }
 .network-table th:nth-child(2), .network-table td:nth-child(2) { width: 220px; }
 .network-table td { white-space: normal; overflow-wrap: anywhere; }
+/*
+ * The group table has two columns where the others have three or four, so its
+ * second one is widened to start where DEFAULT SOURCE and USED BY start. Left
+ * at the shared width it drifted right instead: with a fixed layout the space
+ * no column claims is shared out among the ones that named a width.
+ */
+.network-table-groups th:nth-child(1), .network-table-groups td:nth-child(1) { width: 440px; }
+.network-table-groups th:nth-child(2), .network-table-groups td:nth-child(2) { width: auto; }

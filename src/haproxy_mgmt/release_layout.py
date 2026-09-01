@@ -65,6 +65,22 @@ MANAGED_ALLOWED_SUFFIX = ".cfg"
 PLACEHOLDER = ".gitkeep"
 
 #
+# The keepalived address list, which travels in the same release and is read by
+# nothing HAProxy runs. It is a layer of its own rather than a fourth `conf.d`
+# contributor: `conf.d` is what the engine loads, and a file in it that the
+# engine must never load would be one careless glob away from being loaded.
+#
+# One writer, so no collision rule and no ordering rule: the application
+# generates this directory whole on every publish, the way it does
+# `managed/generated`. A cluster whose repository predates B57 simply has no
+# such directory, and the release then carries none - which is exactly what a
+# node that has not been given the `include` line expects.
+#
+KEEPALIVED_LAYER = "managed/keepalived"
+KEEPALIVED_TARGET = "keepalived"
+KEEPALIVED_ALLOWED_SUFFIX = ".conf"
+
+#
 # The three layers flatten into one `conf.d`, and HAProxy reads that directory
 # in ALPHABETICAL order - measured on 2026-08-27, where `100-a.cfg` sorted
 # before `20-b.cfg`. Fixed width with leading zeroes is the only thing that
@@ -203,6 +219,14 @@ def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:
                 )
             artifact[target] = content
             origin[target] = layer
+
+    for relative, content in _children(files, KEEPALIVED_LAYER):
+        if relative.rsplit("/", 1)[-1] == PLACEHOLDER:
+            continue
+        if "/" in relative or not relative.endswith(KEEPALIVED_ALLOWED_SUFFIX):
+            raise LayoutError(f"file not allowed in {KEEPALIVED_LAYER}: {relative}")
+        artifact[f"{KEEPALIVED_TARGET}/{relative}"] = content
+        origin[f"{KEEPALIVED_TARGET}/{relative}"] = GENERATED_LAYER
 
     for prefix, layer in MAP_LAYERS:
         for relative, content in _children(files, prefix):

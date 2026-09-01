@@ -16,6 +16,8 @@ from pathlib import PurePosixPath
 
 from haproxy_mgmt.config import Cluster, ConfigError
 from haproxy_mgmt.generate import generate
+from haproxy_mgmt.keepalived_fragment import NAME as KEEPALIVED_NAME
+from haproxy_mgmt.keepalived_fragment import render as keepalived_addresses
 from haproxy_mgmt.managed_network import load_document
 from haproxy_mgmt.managed_network import location as network_location
 from haproxy_mgmt.proxy_model import Proxy, load_proxy
@@ -23,6 +25,13 @@ from haproxy_mgmt.proxy_model import Proxy, load_proxy
 MANAGED_PREFIX = "managed/"
 PROXY_PREFIX = "managed/proxies/"
 GENERATED_PREFIX = "managed/generated/"
+#
+# The second generated layer, and deliberately not inside the first: everything
+# under `managed/generated/` is HAProxy configuration that the node's `conf.d`
+# loads, and a keepalived fragment there would either be loaded by HAProxy or
+# force the rule that keeps that directory to `.cfg` files to be relaxed.
+#
+KEEPALIVED_PREFIX = "managed/keepalived/"
 PLACEHOLDER = ".gitkeep"
 
 
@@ -70,7 +79,7 @@ def managed_files(
     # object deleted in a later UI operation keep serving; carrying all of them
     # would leave source/VIP/group changes invisible.  Start over every time.
     for path in tuple(result):
-        if path.startswith(GENERATED_PREFIX):
+        if path.startswith((GENERATED_PREFIX, KEEPALIVED_PREFIX)):
             del result[path]
 
     generated = generate(
@@ -89,4 +98,13 @@ def managed_files(
             for name, content in generated.items()
         }
     )
+    #
+    # Written into the tree rather than derived when a release is built. The
+    # address list is then part of the version a person can read, revert and
+    # diff - which is what makes "when did this address appear" answerable by
+    # the same history as every other configuration change.
+    #
+    result[f"{KEEPALIVED_PREFIX}{KEEPALIVED_NAME}"] = keepalived_addresses(
+        network.vips, network.sources
+    ).encode("utf-8")
     return result

@@ -368,12 +368,41 @@ the same revert, and without the web identities gaining any access to the engine
 the interface can rewrite is not a control. `managed/network.yaml` is refused outright if it names
 it.
 
-**Adding a VIP here does half the job.** The other half is keepalived on the nodes, which is not
-this application's to configure: no node carries the address until someone adds it to the
-`virtual_ipaddress` block, and until then no traffic reaches the frontend however correct the
-generated configuration is. The same applies to a source address, which additionally must sit in
-the *same* block as the VIP - see [Addresses, and what to call
-them](#addresses-and-what-to-call-them).
+**Adding a VIP here does half the job by default.** The other half is keepalived on the nodes: no
+node carries the address until it is in the `virtual_ipaddress` block, and until then no traffic
+reaches the frontend however correct the generated configuration is. The same applies to a source
+address, which additionally must sit in the *same* block as the VIP - see [Addresses, and what to
+call them](#addresses-and-what-to-call-them).
+
+**The other half can be handed to the deploy.** A published release carries
+`keepalived/addresses.conf`, derived from `managed/network.yaml`: every VIP and every source
+address, one per line, with a comment saying which is which. `haproxy-pull-deploy` installs it at
+`/etc/keepalived/addresses.conf` on each node, and a node whose `keepalived.conf` includes that
+path gets a `keepalived --config-test` and a reload - **only** on exit 0, because keepalived skips
+an address it cannot parse at runtime and carries on, which would turn a mistyped address into a
+VIP that never appears and never says why. A failed test restores the previous list and reports
+the deploy as failed with the HAProxy configuration already live.
+
+The application writes the address list and nothing else. `priority`, `virtual_router_id`,
+`authentication`, `unicast_src_ip`, `unicast_peer` and the `notify_` lines stay in a file a person
+edits. Those decide who owns an address, and getting one wrong gives two masters or none - neither
+of which `--config-test` catches, because both are runtime behaviour rather than syntax. An extra
+line in `virtual_ipaddress` cannot cause either, which is what makes this half safe to generate.
+
+**Switching a node over, in this order:**
+
+1. Deploy once, so `/etc/keepalived/addresses.conf` exists. Until a node's `keepalived.conf`
+   mentions that path the file is installed and inert, and the deploy says so.
+2. Compare it against the addresses in the node's own `virtual_ipaddress` block. They must already
+   agree; this step changes where the list is written, not what is in it.
+3. On **one node at a time, the address owner last**, with a backup of `keepalived.conf`: replace
+   the addresses in the block with `include /etc/keepalived/addresses.conf`, run
+   `keepalived --config-test -f /etc/keepalived/keepalived.conf`, and reload only if it passes.
+4. Prove it from another host - the address still answers ARP from the same node - before touching
+   the second node.
+
+An `include` naming a file that does not exist yet is a keepalived that will not start. That is the
+whole reason step 1 comes first.
 
 **A cluster that sets `resolvers` must provide the section itself in `core/`**, since nameserver
 addresses are environment values the generator never invents:

@@ -294,3 +294,40 @@ class TheNumberingBandsAreEnforced(unittest.TestCase):
         )
 
         self.assertEqual(artifact, {"haproxy.cfg": HAPROXY_CFG})
+
+
+class TheKeepalivedLayer(unittest.TestCase):
+    """One generated directory that HAProxy must never load.
+
+    It travels in the release because the addresses and the configuration that
+    binds them are one change and must not be able to arrive separately.
+    """
+
+    def test_the_fragment_reaches_the_node_under_its_own_directory(self) -> None:
+        artifact = build_node_artifact(
+            tree(**{"managed/keepalived/addresses.conf": b"    192.0.2.20\n"})
+        )
+
+        self.assertEqual(artifact["keepalived/addresses.conf"], b"    192.0.2.20\n")
+        self.assertNotIn("conf.d/addresses.conf", artifact)
+
+    def test_a_repository_without_the_directory_publishes_without_it(self) -> None:
+        #
+        # Every cluster is in this state until its nodes have been given the
+        # include line. A release that started carrying the file before then
+        # would be a file nothing reads, which is harmless, but a release that
+        # REQUIRED it would refuse to publish a cluster nobody had touched yet.
+        #
+        artifact = build_node_artifact(tree())
+
+        self.assertFalse([path for path in artifact if path.startswith("keepalived/")])
+
+    def test_the_directory_takes_conf_files_and_nothing_else(self) -> None:
+        with self.assertRaises(LayoutError):
+            build_node_artifact(tree(**{"managed/keepalived/notes.txt": b"x\n"}))
+
+    def test_it_does_not_nest(self) -> None:
+        # One writer and one shape. A subdirectory here would be a second
+        # convention nobody has a reason to invent.
+        with self.assertRaises(LayoutError):
+            build_node_artifact(tree(**{"managed/keepalived/a/b.conf": b"x\n"}))

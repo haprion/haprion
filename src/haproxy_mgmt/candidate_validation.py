@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 
 from haproxy_mgmt.config import ConfigError
 from haproxy_mgmt.helper_protocol import HelperProtocolError, JsonValue
+from haproxy_mgmt.release_layout import KEEPALIVED_ALLOWED_SUFFIX, KEEPALIVED_TARGET
 
 MAX_CANDIDATE_BYTES = 4 * 1024 * 1024
 MAX_CANDIDATE_FILES = 512
@@ -51,6 +52,20 @@ def _allowed_path(raw: str) -> str:
     if len(path.parts) == 2 and path.parts[0] == "conf.d" and path.suffix == ".cfg":
         return raw
     if path.parts[0] == "maps" and len(path.parts) >= 2:
+        return raw
+    #
+    # The keepalived address list. Widening this allowlist is not a small
+    # decision - it is the list that says what may cross into the privileged
+    # side - so it is widened by exactly one shape: one directory, one level
+    # deep, `.conf` only. The helper still validates the candidate as HAProxy
+    # configuration and this file takes no part in that; it rides along to the
+    # node, which validates it with keepalived's own parser before using it.
+    #
+    if (
+        len(path.parts) == 2
+        and path.parts[0] == KEEPALIVED_TARGET
+        and path.suffix == KEEPALIVED_ALLOWED_SUFFIX
+    ):
         return raw
     raise HelperProtocolError("candidate contains a path outside its allowlist", exit_code=65)
 

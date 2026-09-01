@@ -67,6 +67,25 @@ vrrp_instance alpha {
     }
 
     #
+    # Once the cluster's addresses are managed from the interface, this block
+    # becomes one line instead:
+    #
+    #     virtual_ipaddress {
+    #         include /etc/keepalived/addresses.conf
+    #     }
+    #
+    # That file is written by haproxy-pull-deploy out of the published release,
+    # which derives it from managed/network.yaml - so adding an address in the
+    # interface puts it on the interface here as well.
+    #
+    # THE ORDER MATTERS. Deploy first, so the file exists; then replace the
+    # addresses above with the include, on one node at a time, backup first.
+    # An include naming a file that is not there yet is a keepalived that will
+    # not start. Everything else in this block stays exactly as it is: the
+    # application writes the address list and nothing else.
+    #
+
+    #
     # How the management host learns who owns the address. Without these the
     # state file is never written, node status reports no owner, and a deploy
     # has no way to order the nodes.

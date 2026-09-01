@@ -44,6 +44,10 @@ class CandidateValidationTests(unittest.TestCase):
             ({"files": {"haproxy.cfg": "x", "/etc/shadow": "x"}}, "relative path"),
             ({"files": {"haproxy.cfg": "x", "../escape": "x"}}, "relative path"),
             ({"files": {"haproxy.cfg": "x", "scripts/run": "x"}}, "allowlist"),
+            # The keepalived directory is one shape and not a second free-form
+            # tree: one level deep, and .conf only.
+            ({"files": {"haproxy.cfg": "x", "keepalived/a/b.conf": "x"}}, "allowlist"),
+            ({"files": {"haproxy.cfg": "x", "keepalived/run.sh": "x"}}, "allowlist"),
             ({"files": {"haproxy.cfg": "bad\x00value"}}, "NUL"),
             ({"files": {"haproxy.cfg": 4}}, "strings"),
         )
@@ -53,6 +57,20 @@ class CandidateValidationTests(unittest.TestCase):
                 self.assertRaisesRegex(HelperProtocolError, message),
             ):
                 parse_candidate(parameters)
+
+    def test_the_keepalived_address_list_may_cross_the_boundary(self):
+        #
+        # It is not HAProxy configuration and takes no part in the validation
+        # the helper runs; it rides along to the node, which checks it with
+        # keepalived's own parser before using it. What it must not do is
+        # arrive by a path of its own - a release and its address list have to
+        # be one thing, or they can be published separately and disagree.
+        #
+        candidate = parse_candidate(
+            {"files": {"haproxy.cfg": "x", "keepalived/addresses.conf": "    192.0.2.20\n"}}
+        )
+
+        self.assertIn("keepalived/addresses.conf", candidate.files)
 
     def test_sandbox_command_has_fixed_executable_and_denies_private_roots(self):
         command = sandbox_command(Path("/run/candidate"), "11111111-1111-4111-8111-111111111111")

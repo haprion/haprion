@@ -51,6 +51,85 @@ cleanup() {
 }
 trap cleanup EXIT
 
+#
+# The addresses this node must carry, which travel in the same release as the
+# configuration that binds them. Decision B57: the application owns the address
+# list and nothing else in keepalived.conf - priority, virtual_router_id,
+# authentication, unicast peers and the notify scripts are written by a person
+# and are what decide who owns an address.
+#
+KEEPALIVED_CONF="/etc/keepalived/keepalived.conf"
+KEEPALIVED_ADDRESSES="/etc/keepalived/addresses.conf"
+
+sync_keepalived_addresses() {
+    local published="${CURRENT}/keepalived/addresses.conf"
+    local backup included=0
+
+    #
+    # A cluster whose repository predates B57 publishes no address list, and a
+    # release without one is not a release that empties the node's: an absent
+    # file means "not managed from here", never "no addresses".
+    #
+    [[ -f "$published" ]] || return 0
+    if [[ -f "$KEEPALIVED_ADDRESSES" ]] && cmp -s "$published" "$KEEPALIVED_ADDRESSES"; then
+        return 0
+    fi
+
+    #
+    # The file is installed whether or not keepalived reads it yet, and that
+    # order is deliberate. The include line cannot be added to keepalived.conf
+    # before the file exists - keepalived would be pointed at something absent
+    # - and the file cannot arrive if installing it requires the include. So
+    # the deploy delivers the file first, inert, and a person adds the include
+    # afterwards as one deliberate step on one node at a time.
+    #
+    log "keepalived: the address list changed."
+    backup=""
+    if [[ -f "$KEEPALIVED_ADDRESSES" ]]; then
+        backup="${KEEPALIVED_ADDRESSES}.rollback"
+        cp -a "$KEEPALIVED_ADDRESSES" "$backup"
+    fi
+    install -o root -g root -m 644 "$published" "$KEEPALIVED_ADDRESSES"
+
+    if [[ -f "$KEEPALIVED_CONF" ]] && grep -q "$KEEPALIVED_ADDRESSES" "$KEEPALIVED_CONF"; then
+        included=1
+    fi
+    if (( ! included )); then
+        log "keepalived: ${KEEPALIVED_CONF} does not include ${KEEPALIVED_ADDRESSES}."
+        log "keepalived: the list is installed but NOT in use on this node."
+        [[ -z "$backup" ]] || rm -f "$backup"
+        return 0
+    fi
+
+    #
+    # Reload ONLY on exit 0, and this is the whole reason the test is here.
+    # keepalived skips an address it cannot parse at runtime and carries on -
+    # "skipping IP" in its log - so a reload after a failed test turns a
+    # mistyped address into a VIP that silently never appears. A refusal is
+    # visible; a missing address is not.
+    #
+    if keepalived --config-test -f "$KEEPALIVED_CONF"; then
+        log "keepalived: configuration test passed. Reloading..."
+        if systemctl reload keepalived; then
+            log "keepalived: address list active."
+            [[ -z "$backup" ]] || rm -f "$backup"
+            return 0
+        fi
+        log "ERROR: keepalived reload failed."
+    else
+        log "ERROR: keepalived rejected the published address list."
+    fi
+
+    if [[ -n "$backup" ]]; then
+        mv -f "$backup" "$KEEPALIVED_ADDRESSES"
+        log "keepalived: previous address list restored. keepalived was NOT reloaded."
+    else
+        rm -f "$KEEPALIVED_ADDRESSES"
+        log "keepalived: the published address list was removed again."
+    fi
+    return 1
+}
+
 OLD_RELEASE="$(readlink -f "$CURRENT")"
 
 log "Fetching published configuration from ${MANAGER}..."
@@ -79,6 +158,14 @@ fi
 # Nothing changed?
 if diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
     log "No change. No deploy or reload needed."
+    #
+    # Except possibly the address list. The release is what changes when an
+    # address is added, but the moment the include line is first put into
+    # keepalived.conf the published list is already current and this branch is
+    # the one taken - so a node prepared for B57 would otherwise stay without
+    # its addresses until the next unrelated configuration change.
+    #
+    sync_keepalived_addresses || exit 1
     exit 0
 fi
 
@@ -157,7 +244,18 @@ fi
 log "Reloading HAProxy..."
 
 if systemctl reload haproxy; then
-    log "Deploy complete."
+    #
+    # Explicitly, rather than by letting `set -e` end the script: a deploy that
+    # activated the configuration and could not activate the addresses is a
+    # failure, and it is a different failure from the ones above. HAProxy is
+    # live and correct; what is missing is the address it was told to bind.
+    #
+    if sync_keepalived_addresses; then
+        log "Deploy complete."
+    else
+        log "ERROR: the configuration is live, but the keepalived address list is not."
+        exit 1
+    fi
 else
     log "ERROR: HAProxy reload failed. Rolling back to ${OLD_RELEASE}."
 

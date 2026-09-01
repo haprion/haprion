@@ -307,7 +307,7 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         page = self.editable_page()
 
         self.assertIn("edited in its VIP row above", page.text)
-        self.assertIn("<td>192.0.2.25</td>", page.text)
+        self.assertIn('<span class="locked-value">192.0.2.25</span>', page.text)
         self.assertNotIn('name="source_name" value="public"', page.text)
 
     def test_signing_in_is_required(self) -> None:

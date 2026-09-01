@@ -7,7 +7,7 @@ from unittest import mock
 from uuid import uuid4
 
 from haproxy_ui import db, jobs
-from tests.test_login import LoginTestCase
+from tests.test_login import LoginTestCase, configuration
 
 
 def job(
@@ -95,6 +95,53 @@ class JobPageTests(LoginTestCase):
         self.assertIn('href="/jobs" aria-current="page"', page.text)
         self.assertIn("Blocked", page.text)
         self.assertIn("Deploy configuration", page.text)
+
+    def follow_up_page(self, **config_overrides: object):
+        """The page showing a cluster that is published but not deployed."""
+
+        rows = [job(state="done", outcome="done", operation="revert", result=revert_result())]
+        behind = [
+            db.ClusterStatus(
+                cluster="alpha",
+                observed_at=datetime.now(UTC),
+                outcome="done",
+                result={"summary": {"release_state": "behind"}},
+                warnings=[],
+                error=None,
+                poll_error=None,
+            )
+        ]
+        client = self.client(replace(configuration(), **config_overrides))  # type: ignore[arg-type]
+        self.sign_in(client)
+        with (
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=rows),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=behind),
+        ):
+            return client.get("/jobs")
+
+    def test_the_follow_up_offers_the_button_rather_than_a_terminal(self) -> None:
+        #
+        # The engine's envelope names the command line, because the command line
+        # is what asks it. A person reading this page has a deploy button; being
+        # told to open an SSH session instead says the interface cannot do the
+        # thing it has a button for.
+        #
+        page = self.follow_up_page(management_writes=True)
+
+        self.assertIn("Published, not deployed", page.text)
+        self.assertIn('name="operation" value="deploy"', page.text)
+        self.assertNotIn("haproxy-deploy -c", page.text)
+
+    def test_where_nobody_may_press_it_the_command_is_still_named(self) -> None:
+        #
+        # Writes are off, so there is no button to offer. Hiding the command as
+        # well would leave the caption saying something has to happen without
+        # saying what.
+        #
+        page = self.follow_up_page()
+
+        self.assertNotIn('name="operation" value="deploy"', page.text)
+        self.assertIn("haproxy-deploy -c alpha", page.text)
 
     def test_a_finished_page_does_not_reload_itself(self) -> None:
         #

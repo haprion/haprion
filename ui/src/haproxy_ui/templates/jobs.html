@@ -42,7 +42,24 @@
         <td colspan="9">
           <span class="status-dot status-warning" aria-hidden="true"></span>
           <span>{{ job.follow_up }}</span>
-          {% if job.next_command %}<code>{{ job.next_command }}</code>{% endif %}
+          {#
+            The button, not the command. The engine's envelope names the
+            terminal one because the command line is what asks it - but a person
+            reading this page has a deploy button two clicks away, and telling
+            them to open an SSH session instead is telling them the interface
+            cannot do the thing it has a button for. The command stays for a
+            reader, who may not press it and can still hand it to somebody who
+            may.
+          #}
+          {% if management_writes and role == 'admin' %}
+          <form method="post" action="/operations" class="follow-up-action">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="operation" value="deploy">
+            <input type="hidden" name="cluster" value="{{ job.cluster }}">
+            <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+            <button class="secondary-button" type="submit">Deploy {{ job.cluster }}</button>
+          </form>
+          {% elif job.next_command %}<code>{{ job.next_command }}</code>{% endif %}
         </td>
       </tr>
       {% endif %}

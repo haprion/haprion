@@ -23,7 +23,7 @@
 
     <h4 class="network-subhead">Virtual addresses</h4>
     <div class="table-scroll"><table class="node-table network-table">
-      <thead><tr><th>Name</th><th>Address</th><th>Default source</th><th>Default</th></tr></thead>
+      <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th>Default</th></tr></thead>
       <tbody>
         {% for vip in cluster.vips %}
         <tr>
@@ -39,7 +39,7 @@
 
     <h4 class="network-subhead">Source addresses</h4>
     <div class="table-scroll"><table class="node-table network-table">
-      <thead><tr><th>Name</th><th>Address</th><th>Used by</th></tr></thead>
+      <thead><tr><th>Name</th><th>IP address</th><th>Used by</th></tr></thead>
       <tbody>
         {% for source in cluster.sources %}
         <tr><td><code>{{ source.name }}</code></td><td>{{ source.address }}</td><td>{{ source.used_by }}</td></tr>
@@ -48,7 +48,7 @@
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="table-note">Where backends connect out from — a NetScaler calls it a SNIP.</p>
+    <p class="table-note">The address backend connections leave from. A site uses its VIP's default source unless it names one of these.</p>
 
     <h4 class="network-subhead">Reachable-from groups</h4>
     <div class="table-scroll"><table class="node-table network-table network-table-groups">
@@ -81,7 +81,16 @@
 
       <h4 class="network-subhead">Virtual addresses</h4>
       <div class="table-scroll"><table class="node-table network-table editor-table">
-        <thead><tr><th>Name</th><th>Address</th><th>Default source</th><th>Default</th><th>Remove</th></tr></thead>
+        {#
+          One column grid for all three tables. They are separate tables with
+          different fields, but they are read as one form, and an address in a
+          column of its own on every table made the eye start over at each
+          heading. The source table leaves the second column empty so its
+          address lands under the VIP's default source, which is the same kind
+          of value.
+        #}
+        <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-default"><col class="col-remove"></colgroup>
+        <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th>Default</th><th>Remove</th></tr></thead>
         <tbody>
           {% for vip in cluster.vips %}
           <tr>
@@ -113,12 +122,13 @@
       <details class="editor-add">
         <summary>Add a virtual address</summary>
         <div class="table-scroll"><table class="node-table network-table editor-table">
+          <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-default"><col class="col-remove"></colgroup>
           <tbody>
             {% for spare in range(2) %}
             <tr>
-              <td><input name="vip_name" value="" maxlength="40" placeholder="new VIP" aria-label="New VIP name"></td>
-              <td><input name="vip_address" value="" maxlength="64" placeholder="address" aria-label="New VIP address"></td>
-              <td><input name="vip_source" value="" maxlength="64" placeholder="source, optional" aria-label="New VIP default source"></td>
+              <td><input name="vip_name" value="" maxlength="40" placeholder="new VIP name" aria-label="New VIP name"></td>
+              <td><input name="vip_address" value="" maxlength="64" placeholder="IP address" aria-label="New VIP address"></td>
+              <td><input name="vip_source" value="" maxlength="64" placeholder="source IP, optional" aria-label="New VIP default source"></td>
               <td class="editor-choice"><input type="radio" name="default_vip_row" value="{{ cluster.vips | length + loop.index0 }}" aria-label="Make the new VIP the default"></td>
               <td class="editor-choice editor-remove"></td>
             </tr>
@@ -130,7 +140,8 @@
 
       <h4 class="network-subhead">Source addresses</h4>
       <div class="table-scroll"><table class="node-table network-table editor-table">
-        <thead><tr><th>Name</th><th>Address</th><th>Remove</th></tr></thead>
+        <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-default"><col class="col-remove"></colgroup>
+        <thead><tr><th>Name</th><th></th><th>IP address</th><th></th><th>Remove</th></tr></thead>
         <tbody>
           {#
             The addresses a VIP carries are shown here and not editable here.
@@ -141,19 +152,24 @@
           {% for source in cluster.paired_sources %}
           <tr class="editor-locked">
             <td><span class="locked-value">{{ source.name }}</span><span class="locked-hint">edited in its VIP row above</span></td>
+            <td></td>
             <td><span class="locked-value">{{ source.address }}</span></td>
-            <td class="editor-choice editor-remove"><span class="locked-hint">clear the VIP's source</span></td>
+            <td></td>
+            {# No box: this row is removed by clearing its VIP's source, one table up. #}
+            <td></td>
           </tr>
           {% endfor %}
           {% for source in cluster.named_sources %}
           <tr>
             <td><input name="source_name" value="{{ source.name }}" maxlength="40" aria-label="Source name"></td>
+            <td></td>
             <td><input name="source_address" value="{{ source.address }}" maxlength="64" aria-label="Address for source {{ source.name }}"></td>
+            <td></td>
             <td class="editor-choice editor-remove"><input type="checkbox" name="source_remove" value="{{ loop.index0 }}" aria-label="Remove source {{ source.name }}"></td>
           </tr>
           {% else %}
           {% if not cluster.paired_sources %}
-          <tr><td colspan="3" class="table-empty">None. Connections out leave from whatever address the nodes' routing picks.</td></tr>
+          <tr><td colspan="5" class="table-empty">None. Connections out leave from whatever address the nodes' routing picks.</td></tr>
           {% endif %}
           {% endfor %}
         </tbody>
@@ -161,60 +177,76 @@
       <details class="editor-add">
         <summary>Add a source address</summary>
         <div class="table-scroll"><table class="node-table network-table editor-table">
+          <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-default"><col class="col-remove"></colgroup>
           <tbody>
             {% for spare in range(2) %}
             <tr>
-              <td><input name="source_name" value="" maxlength="40" placeholder="new source" aria-label="New source name"></td>
-              <td><input name="source_address" value="" maxlength="64" placeholder="address" aria-label="New source address"></td>
+              <td><input name="source_name" value="" maxlength="40" placeholder="new source name" aria-label="New source name"></td>
+              <td></td>
+              <td><input name="source_address" value="" maxlength="64" placeholder="IP address" aria-label="New source address"></td>
+              <td></td>
               <td class="editor-choice editor-remove"></td>
             </tr>
             {% endfor %}
           </tbody>
         </table></div>
       </details>
-      <p class="table-note">Named addresses an object has to ask for by name — a NetScaler calls it a SNIP.</p>
+      <p class="table-note">The address backend connections leave from. A site uses its VIP's default source unless it names one of these.</p>
 
       <h4 class="network-subhead">Reachable-from groups</h4>
       <div class="table-scroll"><table class="node-table network-table network-table-groups editor-table">
-        <thead><tr><th>Name</th><th>Members</th><th>Remove</th></tr></thead>
+        <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-default"><col class="col-remove"></colgroup>
+        <thead><tr><th>Name</th><th colspan="3">Members</th><th>Remove</th></tr></thead>
         <tbody>
           {% for group in cluster.groups %}
           <tr>
             <td><input name="group_name" value="{{ group.name }}" maxlength="40" aria-label="Group name"></td>
-            <td><textarea name="group_members" rows="{{ [group.members | length, 2] | max }}" aria-label="Members of group {{ group.name }}">{% for member in group.members %}{{ member }}
+            <td colspan="3"><textarea name="group_members" rows="{{ [group.members | length, 2] | max }}" aria-label="Members of group {{ group.name }}">{% for member in group.members %}{{ member }}
 {% endfor %}</textarea></td>
             <td class="editor-choice editor-remove"><input type="checkbox" name="group_remove" value="{{ loop.index0 }}" aria-label="Remove group {{ group.name }}"></td>
           </tr>
           {% else %}
-          <tr><td colspan="3" class="table-empty">None. Every site here is reachable from anywhere that can route to its VIP.</td></tr>
+          <tr><td colspan="5" class="table-empty">None. Every site here is reachable from anywhere.</td></tr>
           {% endfor %}
         </tbody>
       </table></div>
       <details class="editor-add">
         <summary>Add a reachable-from group</summary>
         <div class="table-scroll"><table class="node-table network-table network-table-groups editor-table">
+          <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-default"><col class="col-remove"></colgroup>
           <tbody>
             {% for spare in range(2) %}
             <tr>
-              <td><input name="group_name" value="" maxlength="40" placeholder="new group" aria-label="New group name"></td>
-              <td><textarea name="group_members" rows="2" placeholder="198.51.100.0/24" aria-label="Members of the new group"></textarea></td>
+              <td><input name="group_name" value="" maxlength="40" placeholder="new group name" aria-label="New group name"></td>
+              <td colspan="3"><textarea name="group_members" rows="2" placeholder="198.51.100.0/24" aria-label="Members of the new group"></textarea></td>
               <td class="editor-choice editor-remove"></td>
             </tr>
             {% endfor %}
           </tbody>
         </table></div>
+        {#
+          Inside the disclosure, not under the table. It answers a question
+          only somebody filling in a row has - and a note that stands there
+          permanently is read once and skipped forever after.
+        #}
+        <p class="table-note">One address or range per line. Names are unique within this table.</p>
       </details>
-      <p class="table-note">Named client addresses a site can be restricted to, one per line. Names are unique within this table.</p>
 
 
+      {#
+        A rule and not another heading. What is above it describes the cluster's
+        addresses; what is below it is about this publish - the note it carries,
+        what it moves, and the button that runs it. They are two different
+        questions and were reading as one list.
+      #}
+      <hr class="editor-break">
       <div class="form-grid editor-note">
-        <label>Change note<input name="comment" maxlength="4096" required placeholder="Why this network change is needed"><small>Saved in the configuration history, next to the version this publish creates.</small></label>
+        <label>Version comment — mandatory<input name="comment" maxlength="4096" required placeholder="Why this network change is needed"></label>
       </div>
       <div class="form-checks">
         <label class="check"><input type="checkbox" name="default_vip_confirmation" value="on" required> I have checked the default VIP impact: {{ cluster.default_vip_object_count }} managed object{% if cluster.default_vip_object_count != 1 %}s{% endif %} follow{% if cluster.default_vip_object_count == 1 %}s{% endif %} it unless they name a VIP.</label>
       </div>
-      <p class="warning-text">Adding a VIP or source publishes HAProxy configuration only. A node must also carry the address in keepalived before traffic can reach it or safely return from it. Removing one is the same job in reverse: the nodes keep the address until it is taken out of keepalived there.</p>
-      <p class="table-note">A ticked <strong>Remove</strong> takes that row out of the document this publish writes. Nothing is removed until the publish below runs, and an object still pointing at the row is the helper's refusal, not this form's.</p>
+      <p class="table-note">A ticked <strong>Remove</strong> takes that row out of the document this publish writes.</p>
       <div class="editor-actions"><button class="secondary-button" type="submit">Validate and publish network</button></div>
     </form>
     {% endif %}

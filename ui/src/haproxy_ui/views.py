@@ -754,6 +754,36 @@ def build_router(config: Config) -> APIRouter:
         response.delete_cookie(auth.PRE_SESSION_COOKIE, path="/login")
         return response
 
+    #
+    # A refused form is answered in the interface rather than as a bare line of
+    # text on a white page. The message is the same; what it now carries is
+    # where it came from, that nothing was written, and that the browser's back
+    # button still holds what was typed. Only the refusals a person meets while
+    # filling in a form come here - a bad CSRF token or a role that may not ask
+    # is not a mistake to explain, and those stay plain.
+    #
+    def _refusal(
+        request: Request, session: Any, token: str, message: str, *, back: str
+    ) -> Response:
+        return TEMPLATES.TemplateResponse(
+            request,
+            "refusal.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "management_writes": config.management_writes,
+                "csrf_token": auth.csrf_token(token),
+                "message": message,
+                "back": back,
+                "back_label": back.lstrip("/") or "the dashboard",
+                "section": back.lstrip("/"),
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": None,
+            },
+            status_code=400,
+        )
+
     @router.post("/operations")
     def queue_operation(
         request: Request,
@@ -821,7 +851,13 @@ def build_router(config: Config) -> APIRouter:
             # VIP.  The cached page states that count next to this confirmation;
             # the helper remains the authority for the document itself.
             if default_vip_confirmation != "on":
-                return PlainTextResponse("Confirm the default VIP impact", status_code=400)
+                return _refusal(
+                    request,
+                    session,
+                    token,
+                    "Confirm the default VIP impact before publishing.",
+                    back="/network",
+                )
             try:
                 #
                 # The rows become a document here rather than in the browser.
@@ -847,7 +883,7 @@ def build_router(config: Config) -> APIRouter:
             except network.FormProblem as problem:
                 # Safe to show: these messages name a row's position, never
                 # anything that was typed into it.
-                return PlainTextResponse(str(problem), status_code=400)
+                return _refusal(request, session, token, str(problem), back="/network")
             payload = {
                 "network": document,
                 "expected_head": expected_head,

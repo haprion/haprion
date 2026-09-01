@@ -147,7 +147,7 @@ def _sources(result: Mapping[str, Any]) -> tuple[SourceView, ...]:
         SourceView(
             name=_text(row.get("name")),
             address=_text(row.get("address")),
-            used_by="named; an object must ask for it",
+            used_by="named; a site must ask for it",
         )
         for row in _rows(result, "sources")
     )

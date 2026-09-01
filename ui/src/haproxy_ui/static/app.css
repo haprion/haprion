@@ -701,19 +701,26 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 .editor-table textarea { resize: vertical; }
-/* A group's name is a name, not the 440px the reading gives its code cell. */
-.editor-table.network-table-groups th:nth-child(1),
-.editor-table.network-table-groups td:nth-child(1) { width: 240px; }
 .editor-table .editor-choice { text-align: center; }
 .editor-table .editor-choice input { accent-color: var(--brand); width: 16px; height: 16px; }
 /*
  * Removal is the one tick in these tables that takes something away, so it is
- * the one that is not the brand colour. The column is narrow on purpose: it
- * sits at the end of the row, where the eye arrives last.
+ * the one that is not the brand colour.
  */
-.editor-table th:last-child, .editor-table .editor-remove { width: 76px; }
 .editor-table .editor-remove input { accent-color: var(--critical); }
-.editor-table .editor-remove .locked-hint { display: block; text-align: center; }
+/*
+ * One column grid across all three editor tables, including the folded-away
+ * spare rows. Each table declares the same five columns and skips the ones it
+ * has no field for, so a name is under a name and an address under an address
+ * however far down the form the eye is. The reading tables keep their own
+ * widths: they have different columns and are not read as one form.
+ */
+.editor-table.network-table th, .editor-table.network-table td { width: auto; }
+.editor-table .col-name { width: 22%; }
+.editor-table .col-address { width: 24%; }
+.editor-table .col-source { width: 26%; }
+.editor-table .col-default { width: 14%; }
+.editor-table .col-remove { width: 14%; }
 .editor-note { padding-top: 6px; grid-template-columns: minmax(260px, 520px); }
 .network-editor .warning-text { margin: 12px 20px 0; font-size: 12px; }
 /*
@@ -743,6 +750,26 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   font-weight: var(--font-weight-regular);
 }
 .locked-hint { color: var(--muted); font-size: 11px; }
+/*
+ * A refused form, in the interface's own chrome rather than as a line of text
+ * on a white page. Sized like a card and not like a page, because it is one
+ * sentence and a way back.
+ */
+.refusal-card {
+  max-width: 720px; padding: 20px 22px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--panel); box-shadow: var(--shadow-sm);
+}
+.refusal-message { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--text-strong); font-size: 15px; }
+.refusal-hint { margin: 10px 0 0; color: var(--text-secondary); font-size: 13px; }
+.refusal-card .editor-actions { justify-content: flex-start; padding: 16px 0 0; }
+.refusal-card a.secondary-button { text-decoration: none; }
+/*
+ * The break between the cluster's addresses and this publish. Heavier than the
+ * rules inside a table, because it separates two subjects rather than two rows.
+ */
+.editor-break { margin: 20px 20px 4px; border: 0; border-top: 2px solid var(--line-strong); }
 .follow-up-action { display: inline-block; margin-left: 8px; }
+/* The note reads from the left; the one control sits at the end of the row. */
+.follow-up-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .editor-actions { display: flex; justify-content: flex-end; padding: 14px 20px 4px; }
 .editor-actions .secondary-button { padding: 9px 22px; }

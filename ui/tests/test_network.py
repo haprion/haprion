@@ -73,7 +73,7 @@ class TheReadingBecomesTheCard(unittest.TestCase):
         addresses = {source.address: source.used_by for source in edge.sources}
         self.assertEqual(addresses["192.0.2.25"], "default for VIP public")
         self.assertEqual(addresses["192.0.2.26"], "default for VIP partner")
-        self.assertEqual(addresses["192.0.2.35"], "named; an object must ask for it")
+        self.assertEqual(addresses["192.0.2.35"], "named; a site must ask for it")
 
     def test_a_cluster_with_no_source_address_at_all_still_says_none(self) -> None:
         service = next(view for view in overview() if view.cluster == "service-demo")

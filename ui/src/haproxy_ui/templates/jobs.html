@@ -13,7 +13,7 @@
 {% block content %}
 <section class="page-heading">
   <div class="heading-title"><h1>Jobs</h1><p class="page-lede">The newest management requests and their recorded outcome.</p></div>
-  <div class="heading-badges">{% if jobs.active_count %}<span class="mode-badge"><span class="status-dot status-info"></span>Refreshing every 5 s while a job is active</span>{% endif %}{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}</div>
+  <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}</div>
 </section>
 
 <section class="metric-grid activity-summary" aria-label="Job summary">
@@ -40,8 +40,14 @@
       {% if job.follow_up %}
       <tr class="job-follow-up">
         <td colspan="9">
-          <span class="status-dot status-warning" aria-hidden="true"></span>
-          <span>{{ job.follow_up }}</span>
+          {#
+            The line is a row of its own rather than a sentence with a button
+            after it: the note stays where the eye already reads, and the one
+            thing on the page that acts sits at the end of the row, away from
+            the text it would otherwise interrupt.
+          #}
+          <div class="follow-up-line">
+          <span><span class="status-dot status-warning" aria-hidden="true"></span>{{ job.follow_up }}</span>
           {#
             The button, not the command. The engine's envelope names the
             terminal one because the command line is what asks it - but a person
@@ -60,6 +66,7 @@
             <button class="secondary-button" type="submit">Deploy {{ job.cluster }}</button>
           </form>
           {% elif job.next_command %}<code>{{ job.next_command }}</code>{% endif %}
+          </div>
         </td>
       </tr>
       {% endif %}

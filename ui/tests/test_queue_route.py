@@ -241,8 +241,29 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.text, "VIP row 2 needs an address.")
+        # Rendered in the interface's own chrome now, so the assertion is that
+        # the message is on the page and what was typed is not.
+        self.assertIn("VIP row 2 needs an address.", response.text)
+        self.assertNotIn("secret-name", response.text)
         self.assertEqual(self.queued, [])
+
+    def test_a_refused_form_is_answered_in_the_interface_rather_than_as_bare_text(self) -> None:
+        #
+        # The message was right and the page around it was missing: a person
+        # mid-edit got a white page with one sentence and no way back that did
+        # not read as "start over".
+        #
+        response = self.post(
+            self.writing_client(),
+            **self.network_form(
+                default_vip_confirmation="on", vip_name=["", ""], vip_address=["", ""]
+            ),
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("A cluster needs at least one VIP.", response.text)
+        self.assertIn('href="/network"', response.text)
+        self.assertIn("Nothing was written", response.text)
 
     def test_a_default_pointing_at_a_row_that_lost_its_name_is_refused(self) -> None:
         #
@@ -263,7 +284,7 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.text, "Choose which VIP is the default.")
+        self.assertIn("Choose which VIP is the default.", response.text)
         self.assertEqual(self.queued, [])
 
     def test_a_payload_refusal_does_not_echo_request_detail(self) -> None:

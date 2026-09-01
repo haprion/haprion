@@ -1,0 +1,23 @@
+{% extends "layout.html" %}
+{% block title %}Not published — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  A refused form, in the interface's own chrome. The message is the same one the
+  route answered with in plain text before; what was missing was everything
+  around it - which page it came from, whether anything was written, and how to
+  get back to what had been typed.
+
+  Nothing here echoes a submitted value. The refusals that reach this page name
+  a row's position and never its contents, and this page must not become the
+  first exception to that.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Not published</h1><p class="page-lede">Nothing was written. The cluster is exactly as it was.</p></div>
+</section>
+
+<div class="refusal-card">
+  <p class="refusal-message"><span class="status-orb status-warning" aria-hidden="true"></span>{{ message }}</p>
+  <p class="refusal-hint">Go back in the browser to return to the form — what you typed is still in it.</p>
+  <div class="editor-actions"><a class="secondary-button" href="{{ back }}">Open {{ back_label }} fresh</a></div>
+</div>
+{% endblock %}

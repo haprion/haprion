@@ -41,6 +41,7 @@ from haproxy_ui import (
     demo,
     history,
     jobs,
+    network,
     operations,
     proxies,
     snapshot,
@@ -190,6 +191,11 @@ CERTIFICATE_SOURCE = Source(
     demo.certificate_rows,
     lambda taken: taken.certificate_rows,
     lambda connection: db.cluster_certificates(connection),
+)
+NETWORK_SOURCE = Source(
+    demo.network_rows,
+    lambda taken: taken.network_rows,
+    lambda connection: db.cluster_networks(connection),
 )
 
 
@@ -922,19 +928,26 @@ def _preview_page(
 
 
 def _network_page(request: Request, config: Config) -> Response:
-    """The cluster's network description, as a draft to be judged.
+    """Each cluster's addresses, as the poller last read them.
 
-    Reading from the documented example for the same reason the preview page
-    does: the web identities cannot read the engine's cluster configuration,
-    and until `managed/network.yaml` is carried here by the poller the way
-    certificates and inventory already are, an invented cluster that says it is
-    invented beats a page that cannot say anything.
+    The page reads the cache like every other page rather than reaching a
+    helper while somebody is looking at a screen. What it adds to the reading
+    is one judgement: whether the description came from the cluster repository,
+    because only then can it be changed from here.
     """
 
     session = current_session(request)
     if session is None:
         return RedirectResponse("/login", status_code=303)
     token = request.cookies.get(auth.SESSION_COOKIE, "")
+    clusters, network_rows, captured_at = read_source(request, config, NETWORK_SOURCE)
+    overview = network.build_network_overview(
+        clusters,
+        network_rows,
+        now=captured_at,
+        stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+        captured=captured_at is not None,
+    )
     return TEMPLATES.TemplateResponse(
         request,
         "network.html",
@@ -943,11 +956,11 @@ def _network_page(request: Request, config: Config) -> Response:
             "role": session.role,
             "csrf_token": auth.csrf_token(token),
             "section": "network",
-            "network": preview_module.PREVIEW_CLUSTER.network(),
+            "clusters": overview,
             "management_writes": config.management_writes,
             "demo_fixture": config.demo_fixture,
             "production_snapshot": config.production_snapshot,
-            "snapshot_age": None,
+            "snapshot_age": snapshot_age(captured_at),
         },
     )
 

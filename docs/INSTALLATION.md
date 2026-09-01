@@ -1161,6 +1161,7 @@ through exact sudoers rules:
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-list-helper ""
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-list-backups-helper ""
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-helper ""
 ```
 
 The rule is exact because the helper **takes no arguments at all** — the cluster
@@ -1176,7 +1177,11 @@ which is what lets an account that must not read password hashes and private
 SSH keys still report that a backup exists. The certificate helper reports
 metadata about the distribution root, and about which certificates certbot is
 renewing on this host; private key material never reaches its output, because
-what it parses is the leaf certificate alone. None takes a lock, so these
+what it parses is the leaf certificate alone. The network helper reads one
+cluster's `managed/network.yaml` — a file whose directory is group-readable by
+the engine's own group and by nobody else, which is why the interface cannot
+simply open it — and reports the three address tables plus which of the two
+possible sources they came from. None takes a lock, so these
 reads stay answerable while a deploy runs.
 
 `haproxy-list` itself does not use that helper: a person running it can already

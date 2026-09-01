@@ -18,6 +18,7 @@ from haproxy_ui.db import (
     ClusterCertificates,
     ClusterHistory,
     ClusterInventory,
+    ClusterNetwork,
     ClusterStatus,
 )
 
@@ -415,6 +416,63 @@ def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
                         "error": None,
                     },
                 ],
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+    )
+
+
+def network_rows(now: datetime | None = None) -> tuple[ClusterNetwork, ...]:
+    """One cluster that has moved its description, and one that has not.
+
+    The difference is the whole point of the fixture. `edge-demo` keeps its
+    tables in the cluster repository and can therefore be edited from the
+    interface; `service-demo` still keeps them in the engine's configuration
+    and can only be read. Both states exist in real installations - the second
+    is every cluster that predates the move - and the page has to be legible in
+    each.
+    """
+
+    moment = now or datetime.now(UTC)
+    observed = moment - timedelta(seconds=22)
+    return (
+        ClusterNetwork(
+            cluster="edge-demo",
+            observed_at=observed,
+            outcome="done",
+            result={
+                "cluster": "edge-demo",
+                "origin": "repository",
+                "ownership_vip": "192.0.2.20",
+                "default_vip": "public",
+                "vips": [
+                    {"name": "partner", "address": "192.0.2.21", "source": "192.0.2.26"},
+                    {"name": "public", "address": "192.0.2.20", "source": "192.0.2.25"},
+                ],
+                "sources": [{"name": "outbound", "address": "192.0.2.35"}],
+                "groups": [
+                    {"name": "office", "members": ["198.51.100.0/24"]},
+                    {"name": "vpn", "members": ["203.0.113.0/24", "203.0.113.64/26"]},
+                ],
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+        ClusterNetwork(
+            cluster="service-demo",
+            observed_at=observed - timedelta(seconds=7),
+            outcome="done",
+            result={
+                "cluster": "service-demo",
+                "origin": "cluster_file",
+                "ownership_vip": "198.51.100.20",
+                "default_vip": "main",
+                "vips": [{"name": "main", "address": "198.51.100.20", "source": None}],
+                "sources": [],
+                "groups": [],
             },
             warnings=[],
             error=None,

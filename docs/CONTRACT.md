@@ -13,6 +13,7 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haproxy-list` | `list` | `done`, `failed` | Published version history |
 | `haproxy-list-backups` | `list_backups` | `done`, `partial`, `failed` | Backup metadata only |
 | `haproxy-cert-list` | `cert_list` | `done`, `failed` | Deployable certificate metadata only |
+| `haproxy-network` | `network` | `done`, `failed` | Cluster addresses and address groups |
 | `haproxy-publish` | `publish` | `done`, `failed`, `blocked` | Validation and new immutable release |
 | `haproxy-deploy` | `deploy` | `done`, `partial`, `failed`, `blocked` | Config reconcile per node |
 | `haproxy-revert` | `revert` | `done`, `failed`, `blocked` | New release built from an older version |

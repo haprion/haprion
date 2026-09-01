@@ -660,12 +660,14 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
  */
 .table-empty { color: var(--muted); }
 /*
- * The sections are separate cards and are spaced like every other stack of
- * cards in the application. Flush against one another they read as one panel
- * with headings in it, which is the opposite of what they are: four tables
- * that are edited, published and reverted independently.
+ * One card per cluster, holding three tables. The subheads separate them
+ * without pretending they are separate objects: they are three parts of one
+ * file, published and reverted together.
  */
-.network-sections .cluster-card > .form-grid { padding-bottom: 18px; }
+.network-subhead {
+  margin: 0; padding: 16px 20px 6px; color: var(--muted); font-size: 11px; font-weight: 700;
+  letter-spacing: 0.055em; text-transform: uppercase;
+}
 /*
  * Warnings that are about the world rather than the form. Adding a VIP here
  * does nothing until keepalived on the nodes carries it, and changing the
@@ -678,19 +680,3 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   border-left: 3px solid var(--warning); background: var(--warning-soft);
   color: var(--text); font-size: 12.5px; line-height: 1.6;
 }
-.add-form { border-top: 1px solid var(--line); }
-.add-form > summary {
-  padding: 12px 20px; color: var(--muted-strong); font-size: 12.5px; font-weight: 650;
-  cursor: pointer; user-select: none;
-}
-.add-form > summary:hover { color: var(--text-strong); background: var(--panel-soft); }
-.add-form[open] > summary { border-bottom: 1px solid var(--line); }
-.add-form .form-grid { padding: 16px 20px; }
-.add-form .network-warning { border-top: 0; margin: 0 20px; }
-.row-actions { text-align: right; }
-.link-button {
-  padding: 0; border: 0; background: none; color: var(--brand);
-  font: inherit; font-weight: 650; cursor: pointer;
-}
-.link-button:hover { text-decoration: underline; }
-.link-button:disabled { color: var(--muted); cursor: default; text-decoration: none; }

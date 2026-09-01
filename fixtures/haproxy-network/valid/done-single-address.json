@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "network",
+  "cluster": "beta",
+  "request_id": "99999999-9999-4999-8999-999999999998",
+  "result": {
+    "cluster": "beta",
+    "origin": "cluster_file",
+    "ownership_vip": "203.0.113.20",
+    "default_vip": "main",
+    "vips": [
+      { "name": "main", "address": "203.0.113.20", "source": null }
+    ],
+    "sources": [],
+    "groups": []
+  },
+  "warnings": [],
+  "error": null
+}

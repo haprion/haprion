@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "network",
+  "cluster": "alpha",
+  "request_id": "99999999-9999-4999-8999-999999999999",
+  "result": {
+    "cluster": "alpha",
+    "origin": "repository",
+    "ownership_vip": "192.0.2.20",
+    "default_vip": "internal",
+    "vips": [
+      { "name": "dmz", "address": "198.51.100.20", "source": "198.51.100.25" },
+      { "name": "internal", "address": "192.0.2.20", "source": "192.0.2.25" }
+    ],
+    "sources": [
+      { "name": "outbound", "address": "192.0.2.35" }
+    ],
+    "groups": [
+      { "name": "office", "members": ["198.51.100.0/24"] }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

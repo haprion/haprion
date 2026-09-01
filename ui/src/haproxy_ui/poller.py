@@ -35,6 +35,7 @@ from haproxy_mgmt.cli.cert_list import run_cert_list_helper
 from haproxy_mgmt.cli.inventory import run_inventory_helper
 from haproxy_mgmt.cli.list import run_list_helper
 from haproxy_mgmt.cli.list_backups import run_list_backups_helper
+from haproxy_mgmt.cli.network import run_network_helper
 from haproxy_mgmt.cli.status import run_status_helper
 from haproxy_mgmt.envelope import new_request_id
 
@@ -78,9 +79,9 @@ class Source:
     # Partial is allowed only where the read has more than one place to fail.
     # Status reaches two nodes and one of them can answer; a backup listing
     # reads one directory per node and one of them can be missing. An inventory,
-    # a version listing and a certificate listing are each read in one place, so
-    # a partial outcome from those would mean the helper is doing something it
-    # should not.
+    # a version listing, a certificate listing and a network description are
+    # each read in one place, so a partial outcome from those would mean the
+    # helper is doing something it should not.
     #
     partial_ok: bool = False
 
@@ -91,6 +92,7 @@ SOURCES: tuple[Source, ...] = (
     Source("list", run_list_helper, db.record_cluster_history),
     Source("list_backups", run_list_backups_helper, db.record_cluster_backups, partial_ok=True),
     Source("cert_list", run_cert_list_helper, db.record_cluster_certificates),
+    Source("network", run_network_helper, db.record_cluster_network),
 )
 
 

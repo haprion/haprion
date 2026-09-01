@@ -395,9 +395,18 @@ class Network:
     default_vip: str
     sources: Mapping[str, str]
     networks: Mapping[str, tuple[str, ...]]
+    #
+    # Whether this came from the repository or from the fallback. Not a detail:
+    # only a description that lives in the repository can be edited through the
+    # publish path, so a reader that offers to edit one has to know which it is
+    # looking at. A derived table can be shown and never changed.
+    #
+    from_repository: bool = False
 
 
-def parse_network(raw: Mapping[str, Any], *, vip: str, location: str) -> Network:
+def parse_network(
+    raw: Mapping[str, Any], *, vip: str, location: str, from_repository: bool = False
+) -> Network:
     """One network description, from wherever it was read.
 
     `vip` is the cluster's ownership address, and it is only a fallback: a
@@ -414,6 +423,7 @@ def parse_network(raw: Mapping[str, Any], *, vip: str, location: str) -> Network
         default_vip=default_vip,
         sources=_sources(raw, location),
         networks=_networks(raw, location),
+        from_repository=from_repository,
     )
 
 
@@ -435,7 +445,12 @@ def load_network(config_path: Path, *, vip: str) -> Network | None:
     path = config_path / NETWORK_FILE
     if not path.exists():
         return None
-    return parse_network(_secure_yaml(path, require_secure=False), vip=vip, location=str(path))
+    return parse_network(
+        _secure_yaml(path, require_secure=False),
+        vip=vip,
+        location=str(path),
+        from_repository=True,
+    )
 
 
 def _unknown_host(value: Any, location: str) -> UnknownHost | None:

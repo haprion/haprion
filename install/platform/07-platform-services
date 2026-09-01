@@ -175,6 +175,10 @@ refuse "$WEB_USER" "cannot run the certificate helper" \
     sudo -n /opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper
 refuse "$WORKER_USER" "cannot run the certificate helper" \
     sudo -n /opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper
+refuse "$WEB_USER" "cannot run the network helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-network-helper
+refuse "$WORKER_USER" "cannot run the network helper" \
+    sudo -n /opt/haproxy-mgmt/current/bin/haproxy-network-helper
 refuse "$POLLER_USER" "cannot write a job row" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
     -c "insert into job (operation, cluster, payload) values ('deploy', 'alpha', '{}')"

@@ -27,6 +27,7 @@ from haproxy_mgmt.config import DEFAULT_POLICY_PATH, load_policy, load_runtime_c
 from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.history import history_result
 from haproxy_mgmt.inventory import inventory_result
+from haproxy_mgmt.network_inventory import network_result
 from haproxy_mgmt.repo_snapshot import read_tree_files
 from haproxy_mgmt.status_collect import read_target
 from haproxy_mgmt.version_history import recent_versions
@@ -36,6 +37,7 @@ from haproxy_ui.db import (
     ClusterCertificates,
     ClusterHistory,
     ClusterInventory,
+    ClusterNetwork,
     ClusterStatus,
 )
 
@@ -57,6 +59,7 @@ class ProductionSnapshot:
     history_rows: tuple[ClusterHistory, ...]
     certificate_rows: tuple[ClusterCertificates, ...]
     backup_rows: tuple[ClusterBackups, ...]
+    network_rows: tuple[ClusterNetwork, ...]
 
 
 def path_for_config(config_path: Path) -> Path:
@@ -286,6 +289,59 @@ def _certificate_result(value: Any) -> dict[str, Any]:
     return {"certificates": certificates}
 
 
+def _network_result(value: Any) -> dict[str, Any]:
+    """Reduce a network description to the fields the interface renders.
+
+    Every value in here is a real address from the production cluster, and this
+    file is carried into a development platform where more people can read it.
+    It is therefore bounded and rebuilt field by field like every other source
+    rather than copied through - a snapshot that passed the helper's output
+    along unchanged would grow whatever the helper grew next.
+    """
+
+    source = _mapping(value)
+    vips: list[dict[str, Any]] = []
+    for entry in source.get("vips", [])[:50] if isinstance(source.get("vips"), list) else []:
+        item = _mapping(entry)
+        vips.append(
+            {
+                "name": _text(item.get("name"), limit=63),
+                "address": _text(item.get("address"), limit=45),
+                "source": _text(item.get("source"), limit=45),
+            }
+        )
+    sources: list[dict[str, Any]] = []
+    for entry in source.get("sources", [])[:50] if isinstance(source.get("sources"), list) else []:
+        item = _mapping(entry)
+        sources.append(
+            {
+                "name": _text(item.get("name"), limit=63),
+                "address": _text(item.get("address"), limit=45),
+            }
+        )
+    groups: list[dict[str, Any]] = []
+    for entry in source.get("groups", [])[:50] if isinstance(source.get("groups"), list) else []:
+        item = _mapping(entry)
+        members = item.get("members")
+        groups.append(
+            {
+                "name": _text(item.get("name"), limit=63),
+                "members": [_text(member, limit=45) for member in members][:50]
+                if isinstance(members, list)
+                else [],
+            }
+        )
+    return {
+        "cluster": _text(source.get("cluster"), limit=63),
+        "origin": _text(source.get("origin"), limit=16),
+        "ownership_vip": _text(source.get("ownership_vip"), limit=45),
+        "default_vip": _text(source.get("default_vip"), limit=63),
+        "vips": vips,
+        "sources": sources,
+        "groups": groups,
+    }
+
+
 def _certificate_document(cluster: str, completed: CompletedProcess[str]) -> dict[str, Any]:
     """Accept only this cluster's own certificate result, and never its stderr."""
 
@@ -356,6 +412,13 @@ def collect_production_snapshot(
             history: dict[str, object] = {"outcome": "done", "result": _history_result(listing)}
         except Exception:  # noqa: BLE001 - snapshot deliberately omits internal error detail
             history = {"outcome": "failed", "result": {"versions": []}}
+        try:
+            network: dict[str, object] = {
+                "outcome": "done",
+                "result": _network_result(network_result(cluster)),
+            }
+        except Exception:  # noqa: BLE001 - snapshot deliberately omits internal error detail
+            network = {"outcome": "failed", "result": {"vips": [], "sources": [], "groups": []}}
         clusters.append(
             {
                 "cluster": cluster_id,
@@ -364,6 +427,7 @@ def collect_production_snapshot(
                 "history": history,
                 "certificates": certificates,
                 "backups": backups,
+                "network": network,
             }
         )
     return {
@@ -423,6 +487,7 @@ def load_production_snapshot(path: Path, *, require_secure: bool = True) -> Prod
         "history": [],
         "certificates": [],
         "backups": [],
+        "network": [],
     }
     #
     # A snapshot taken before a reading existed is loaded rather than refused:
@@ -436,6 +501,7 @@ def load_production_snapshot(path: Path, *, require_secure: bool = True) -> Prod
         "history": ClusterHistory,
         "certificates": ClusterCertificates,
         "backups": ClusterBackups,
+        "network": ClusterNetwork,
     }
     for entry in entries:
         item = _mapping(entry)
@@ -470,6 +536,7 @@ def load_production_snapshot(path: Path, *, require_secure: bool = True) -> Prod
         history_rows=tuple(rows["history"]),
         certificate_rows=tuple(rows["certificates"]),
         backup_rows=tuple(rows["backups"]),
+        network_rows=tuple(rows["network"]),
     )
 
 

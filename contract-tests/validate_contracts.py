@@ -197,6 +197,32 @@ def check_cert_list_semantics(document: dict[str, object], path: Path) -> None:
             raise AssertionError(f"{path}: a deployable certificate cannot have a validation error")
 
 
+def check_network_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        return
+    vips = result["vips"]
+    names = [vip["name"] for vip in vips]
+    if len(names) != len(set(names)):
+        raise AssertionError(f"{path}: VIP names must be unique")
+    addresses = [vip["address"] for vip in vips]
+    if len(addresses) != len(set(addresses)):
+        raise AssertionError(f"{path}: one address may not have two VIP names")
+    #
+    # The default is what every object that names nothing gets. A default
+    # naming a VIP that is not in the table would place those objects nowhere,
+    # and the generator would refuse the whole layer rather than one object.
+    #
+    if result["default_vip"] not in names:
+        raise AssertionError(f"{path}: default_vip must name one of this cluster's VIPs")
+    source_names = [source["name"] for source in result["sources"]]
+    if len(source_names) != len(set(source_names)):
+        raise AssertionError(f"{path}: source address names must be unique")
+    group_names = [group["name"] for group in result["groups"]]
+    if len(group_names) != len(set(group_names)):
+        raise AssertionError(f"{path}: group names must be unique")
+
+
 def check_backup_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -305,6 +331,7 @@ SEMANTIC_CHECKS = {
     "status": check_status_semantics,
     "list": check_list_semantics,
     "cert_list": check_cert_list_semantics,
+    "network": check_network_semantics,
     "list_backups": check_backup_semantics,
     "inventory": check_inventory_semantics,
     "publish": check_publish_semantics,
@@ -331,6 +358,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["total_versions"] = 0
     elif operation == "cert_list":
         result["certificates"].append(deepcopy(result["certificates"][0]))
+    elif operation == "network":
+        result["default_vip"] = "not-a-vip-in-this-table"
     elif operation == "list_backups":
         result["nodes"][0]["latest_version"] = "2026-01-01_00-00-00"
     elif operation == "inventory":

@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haproxy-network.schema.json",
+  "title": "haproxy-network JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "network" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/network_result" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "done" } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/network_result" } } }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,62}$" },
+    "address": { "type": "string", "maxLength": 45 },
+    "vip": {
+      "type": "object",
+      "required": ["name", "address", "source"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "address": { "$ref": "#/$defs/address" },
+        "source": {
+          "oneOf": [
+            { "$ref": "#/$defs/address" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "source_address": {
+      "type": "object",
+      "required": ["name", "address"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "address": { "$ref": "#/$defs/address" }
+      },
+      "additionalProperties": false
+    },
+    "group": {
+      "type": "object",
+      "required": ["name", "members"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "maxLength": 49 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "network_result": {
+      "type": "object",
+      "required": [
+        "cluster",
+        "origin",
+        "ownership_vip",
+        "default_vip",
+        "vips",
+        "sources",
+        "groups"
+      ],
+      "properties": {
+        "cluster": { "type": "string", "maxLength": 63 },
+        "origin": { "enum": ["repository", "cluster_file"] },
+        "ownership_vip": { "$ref": "#/$defs/address" },
+        "default_vip": { "$ref": "#/$defs/name" },
+        "vips": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/vip" } },
+        "sources": { "type": "array", "items": { "$ref": "#/$defs/source_address" } },
+        "groups": { "type": "array", "items": { "$ref": "#/$defs/group" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

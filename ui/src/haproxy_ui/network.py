@@ -97,7 +97,6 @@ class NetworkClusterView:
     editable: bool
     head: str | None
     default_vip_object_count: int
-    ownership_vip: str
     default_vip: str
     vips: tuple[VipView, ...]
     sources: tuple[SourceView, ...]
@@ -188,7 +187,6 @@ def _empty(cluster: str) -> NetworkClusterView:
         editable=False,
         head=None,
         default_vip_object_count=0,
-        ownership_vip="—",
         default_vip="—",
         vips=(),
         sources=(),
@@ -214,7 +212,6 @@ def _unavailable(reading: ClusterNetwork, *, stale: bool, age_label: str) -> Net
         editable=False,
         head=None,
         default_vip_object_count=0,
-        ownership_vip="—",
         default_vip="—",
         vips=(),
         sources=(),
@@ -255,7 +252,6 @@ def _view(reading: ClusterNetwork, *, stale: bool, age_label: str) -> NetworkClu
             and not isinstance(result.get("default_vip_object_count"), bool)
             else 0
         ),
-        ownership_vip=_text(result.get("ownership_vip")),
         default_vip=default_vip,
         vips=_vips(result, default_vip),
         sources=_sources(result),

@@ -96,6 +96,28 @@ class JobPageTests(LoginTestCase):
         self.assertIn("Blocked", page.text)
         self.assertIn("Deploy configuration", page.text)
 
+    def test_a_finished_page_does_not_reload_itself(self) -> None:
+        #
+        # Nothing on it can change, and a page that reloaded anyway would close
+        # the diagnostics somebody opened to read why a job failed - the moment
+        # this page matters most.
+        #
+        client = self.client()
+        self.sign_in(client)
+
+        page = client.get("/jobs")
+
+        self.assertNotIn('http-equiv="refresh"', page.text)
+
+    def test_a_page_with_work_on_it_reloads_until_the_work_is_over(self) -> None:
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[job(state="running")]):
+            client = self.client()
+            self.sign_in(client)
+            page = client.get("/jobs")
+
+        self.assertIn('<meta http-equiv="refresh" content="5">', page.text)
+        self.assertIn("Refreshing every 5 s", page.text)
+
     def test_a_reader_is_never_shown_the_operation_diagnostics(self) -> None:
         """The line the frozen contract actually draws.
 

@@ -63,7 +63,7 @@
     </table></div>
     <p class="table-note">Named client addresses a site can be restricted to.</p>
 
-    <p class="table-note">Node ownership is checked against <code>{{ cluster.ownership_vip }}</code>. That address is deliberately not in any table above and cannot be changed from here.{% if not cluster.editable %} Neither can the tables above — this cluster still keeps them in the engine's own configuration.{% endif %}</p>
+    {% if not cluster.editable %}<p class="table-note">These tables cannot be changed from here — this cluster still keeps them in the engine's own configuration.</p>{% endif %}
 
     {% else %}
     {#
@@ -191,7 +191,6 @@
       </details>
       <p class="table-note">Named client addresses a site can be restricted to, one per line. Names are unique within this table; clear a name to remove its row.</p>
 
-      <p class="table-note">Node ownership is checked against <code>{{ cluster.ownership_vip }}</code>. That address is deliberately not in any table above and cannot be changed from here.</p>
 
       <div class="form-grid editor-note">
         <label>Change note<input name="comment" maxlength="4096" required placeholder="Why this network change is needed"><small>Saved in the configuration history, next to the version this publish creates.</small></label>

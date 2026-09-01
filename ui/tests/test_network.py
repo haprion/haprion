@@ -62,12 +62,6 @@ class TheReadingBecomesTheCard(unittest.TestCase):
         self.assertEqual(missing.vips, ())
         self.assertFalse(missing.editable)
 
-    def test_the_ownership_address_is_carried_but_kept_out_of_every_table(self) -> None:
-        edge = next(view for view in overview() if view.cluster == "edge-demo")
-
-        self.assertEqual(edge.ownership_vip, "192.0.2.20")
-        self.assertNotIn(edge.ownership_vip, [source.address for source in edge.sources])
-
     def test_a_vip_s_own_source_address_is_listed_as_a_source_address(self) -> None:
         #
         # It was not, and the page then told a cluster that pairs a source with
@@ -234,6 +228,17 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
 
         self.assertNotIn('action="/network"', page.text)
         self.assertIn("cannot be changed from here", page.text)
+
+    def test_the_editable_page_says_nothing_about_the_ownership_address(self) -> None:
+        #
+        # The note claimed that address was in none of the tables. On a cluster
+        # whose default VIP is the one `deploy` checks ownership against, it sat
+        # directly under a table containing it. A note that contradicts the
+        # table above it teaches a reader to trust neither.
+        #
+        page = self.editable_page()
+
+        self.assertNotIn("Node ownership is checked against", page.text)
 
     def editable_page(self) -> Any:
         """The page as an admin sees it on a cluster it may publish to."""

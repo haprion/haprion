@@ -35,7 +35,7 @@
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="table-note">Sites name a VIP, never an address. Nodes carry it through keepalived.</p>
+    <p class="table-note">Sites name a VIP, never an IP address. Nodes carry it through keepalived.</p>
 
     <h4 class="network-subhead">Source addresses</h4>
     <div class="table-scroll"><table class="node-table network-table">
@@ -48,7 +48,7 @@
         {% endfor %}
       </tbody>
     </table></div>
-    <p class="table-note">The address backend connections leave from. A site uses its VIP's default source unless it names one of these.</p>
+    <p class="table-note">An extra address a site can leave from instead of its VIP's default source.</p>
 
     <h4 class="network-subhead">Reachable-from groups</h4>
     <div class="table-scroll"><table class="node-table network-table network-table-groups">
@@ -136,7 +136,7 @@
           </tbody>
         </table></div>
       </details>
-      <p class="table-note">Sites name a VIP, never an address. Nodes carry it through keepalived. A default source is the address that VIP's backends connect out from.</p>
+      <p class="table-note">Sites name a VIP, never an IP address. Nodes carry it through keepalived. A default source is the address that VIP's backends connect out from.</p>
 
       <h4 class="network-subhead">Source addresses</h4>
       <div class="table-scroll"><table class="node-table network-table editor-table">
@@ -191,7 +191,7 @@
           </tbody>
         </table></div>
       </details>
-      <p class="table-note">The address backend connections leave from. A site uses its VIP's default source unless it names one of these.</p>
+      <p class="table-note">An extra address a site can leave from instead of its VIP's default source.</p>
 
       <h4 class="network-subhead">Reachable-from groups</h4>
       <div class="table-scroll"><table class="node-table network-table network-table-groups editor-table">
@@ -246,8 +246,15 @@
       <div class="form-checks">
         <label class="check"><input type="checkbox" name="default_vip_confirmation" value="on" required> I have checked the default VIP impact: {{ cluster.default_vip_object_count }} managed object{% if cluster.default_vip_object_count != 1 %}s{% endif %} follow{% if cluster.default_vip_object_count == 1 %}s{% endif %} it unless they name a VIP.</label>
       </div>
-      <p class="table-note">A ticked <strong>Remove</strong> takes that row out of the document this publish writes.</p>
-      <div class="editor-actions"><button class="secondary-button" type="submit">Validate and publish network</button></div>
+      {#
+        The note and the button on one line. They are the same thought - what a
+        tick does, and the click that does it - and stacked they cost a row of
+        height at the bottom of an already tall card.
+      #}
+      <div class="editor-actions editor-submit">
+        <p class="table-note">A ticked <strong>Remove</strong> takes that row out of the document this publish writes.</p>
+        <button class="secondary-button" type="submit">Validate and publish network</button>
+      </div>
     </form>
     {% endif %}
     {% endif %}

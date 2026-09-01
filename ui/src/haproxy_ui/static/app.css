@@ -706,6 +706,14 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .editor-table.network-table-groups td:nth-child(1) { width: 240px; }
 .editor-table .editor-choice { text-align: center; }
 .editor-table .editor-choice input { accent-color: var(--brand); width: 16px; height: 16px; }
+/*
+ * Removal is the one tick in these tables that takes something away, so it is
+ * the one that is not the brand colour. The column is narrow on purpose: it
+ * sits at the end of the row, where the eye arrives last.
+ */
+.editor-table th:last-child, .editor-table .editor-remove { width: 76px; }
+.editor-table .editor-remove input { accent-color: var(--critical); }
+.editor-table .editor-remove .locked-hint { display: block; text-align: center; }
 .editor-note { padding-top: 6px; grid-template-columns: minmax(260px, 520px); }
 .network-editor .warning-text { margin: 12px 20px 0; font-size: 12px; }
 /*

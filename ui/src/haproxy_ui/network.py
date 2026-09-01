@@ -316,6 +316,27 @@ class NetworkForm:
     source_addresses: tuple[str, ...]
     group_names: tuple[str, ...]
     group_members: tuple[str, ...]
+    #
+    # Removal is a row number rather than a cleared field. An unticked checkbox
+    # posts nothing, so what arrives is the short list of rows to drop and the
+    # numbers of the rows that stay are untouched - which is what the
+    # default-VIP radio counts on.
+    #
+    removed_vip_rows: frozenset[int] = frozenset()
+    removed_source_rows: frozenset[int] = frozenset()
+    removed_group_rows: frozenset[int] = frozenset()
+
+
+def row_numbers(values: Iterable[str]) -> frozenset[int]:
+    """The row numbers a set of checkboxes posted, ignoring anything else.
+
+    The browser sends the values this page put in the boxes; a value that is
+    not a row number is a submission this form did not draw, and dropping it
+    silently is right because the rows it could not name are the rows that
+    stay.
+    """
+
+    return frozenset(int(value) for value in values if value.isdigit())
 
 
 def _cell(values: tuple[str, ...], row: int) -> str:
@@ -323,12 +344,21 @@ def _cell(values: tuple[str, ...], row: int) -> str:
 
 
 def _named_rows(
-    names: tuple[str, ...], values: tuple[str, ...], *, what: str, needs: str
+    names: tuple[str, ...],
+    values: tuple[str, ...],
+    *,
+    what: str,
+    needs: str,
+    removed: frozenset[int] = frozenset(),
 ) -> list[tuple[int, str, str]]:
     """Keep the rows that were filled in; refuse the ones half filled in.
 
-    A spare row nobody touched is how this form removes and adds: both are
-    blank and both are dropped. A row with a name and no address is neither,
+    A row ticked for removal is dropped before it is read at all, so a person
+    removing a row never has to empty it first and never meets a complaint
+    about what is still in it.
+
+    A spare row nobody touched is how this form adds: it is blank and it is
+    dropped. A row with a name and no address is neither that nor a removal,
     and guessing which was meant would either delete an address or publish an
     empty one.
 
@@ -341,6 +371,8 @@ def _named_rows(
     rows: list[tuple[int, str, str]] = []
     seen: set[str] = set()
     for row in range(max(len(names), len(values))):
+        if row in removed:
+            continue
         name = _cell(names, row)
         value = _cell(values, row)
         if not name and not value:
@@ -370,9 +402,24 @@ def document_from_form(form: NetworkForm) -> str:
     canonical publisher, so what leaves here only has to be unambiguous.
     """
 
-    vips = _named_rows(form.vip_names, form.vip_addresses, what="VIP", needs="an address")
+    vips = _named_rows(
+        form.vip_names,
+        form.vip_addresses,
+        what="VIP",
+        needs="an address",
+        removed=form.removed_vip_rows,
+    )
     if not vips:
         raise FormProblem("A cluster needs at least one VIP.")
+
+    if form.default_vip_row.isdigit() and int(form.default_vip_row) in form.removed_vip_rows:
+        #
+        # Said before the generic complaint below, because it is a different
+        # mistake with a different fix: the row is gone on purpose, and what
+        # is missing is the answer to which VIP the objects that name none
+        # should follow instead.
+        #
+        raise FormProblem("Choose another default VIP before removing the one that is default.")
 
     default_vip = ""
     for row, name, _ in vips:
@@ -399,13 +446,21 @@ def document_from_form(form: NetworkForm) -> str:
     }
 
     sources = _named_rows(
-        form.source_names, form.source_addresses, what="Source address", needs="an address"
+        form.source_names,
+        form.source_addresses,
+        what="Source address",
+        needs="an address",
+        removed=form.removed_source_rows,
     )
     if sources:
         document["sources"] = {name: address for _, name, address in sources}
 
     groups = _named_rows(
-        form.group_names, form.group_members, what="Group", needs="at least one address"
+        form.group_names,
+        form.group_members,
+        what="Group",
+        needs="at least one address",
+        removed=form.removed_group_rows,
     )
     if groups:
         document["networks"] = {name: _members(raw) for _, name, raw in groups}

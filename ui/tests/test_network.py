@@ -21,6 +21,7 @@ from haproxy_ui.network import (
     NetworkForm,
     build_network_overview,
     document_from_form,
+    row_numbers,
 )
 from tests.test_login import LoginTestCase, configuration
 
@@ -178,6 +179,60 @@ class TheRowsBecomeTheDocument(unittest.TestCase):
 
         self.assertNotIn("<script>", str(refusal.exception))
 
+    def test_a_ticked_row_is_taken_out_of_the_document(self) -> None:
+        document = json.loads(
+            document_from_form(
+                self.form(
+                    vip_names=("public", "partner"),
+                    vip_addresses=("192.0.2.20", "192.0.2.21"),
+                    vip_sources=("192.0.2.25", ""),
+                    removed_vip_rows=frozenset({1}),
+                    removed_source_rows=frozenset({0}),
+                    removed_group_rows=frozenset({0}),
+                )
+            )
+        )
+
+        self.assertEqual(list(document["vips"]), ["public"])
+        self.assertNotIn("sources", document)
+        self.assertNotIn("networks", document)
+
+    def test_a_removed_row_is_not_asked_to_be_filled_in_first(self) -> None:
+        #
+        # The row still posts whatever was in it. Reading it at all would meet
+        # a person who emptied the fields before ticking the box with a
+        # complaint about the row they had just said to remove.
+        #
+        document = json.loads(
+            document_from_form(self.form(source_names=("", ""), removed_source_rows=frozenset({0})))
+        )
+
+        self.assertNotIn("sources", document)
+
+    def test_the_default_vip_cannot_be_removed_without_naming_another(self) -> None:
+        #
+        # Silently moving every object that names no VIP is the one change this
+        # form makes a person confirm, so it may not happen as a side effect of
+        # a tick in the last column.
+        #
+        with self.assertRaises(FormProblem) as refusal:
+            document_from_form(
+                self.form(
+                    vip_names=("public", "partner"),
+                    vip_addresses=("192.0.2.20", "192.0.2.21"),
+                    removed_vip_rows=frozenset({0}),
+                )
+            )
+
+        self.assertIn("default", str(refusal.exception))
+
+    def test_removing_every_vip_is_refused_like_an_emptied_table(self) -> None:
+        with self.assertRaises(FormProblem):
+            document_from_form(self.form(default_vip_row="9", removed_vip_rows=frozenset({0, 1})))
+
+    def test_a_row_number_the_form_never_drew_removes_nothing(self) -> None:
+        self.assertEqual(row_numbers(("0", "", "not-a-row", "2")), frozenset({0, 2}))
+
     def test_members_may_be_separated_by_commas_as_well_as_lines(self) -> None:
         document = json.loads(
             document_from_form(self.form(group_members=("198.51.100.0/24, 203.0.113.10", "")))
@@ -297,6 +352,19 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         self.assertEqual(page.text.count('name="vip_name"'), 4)
         self.assertEqual(page.text.count('name="source_name"'), 3)
         self.assertIn('name="default_vip_row" value="3"', page.text)
+
+    def test_each_editable_row_carries_its_own_removal(self) -> None:
+        #
+        # Removal used to be "clear the fields", which the form then refused as
+        # a half-filled row. The box is the whole difference between a table a
+        # person can edit and one they can only add to.
+        #
+        page = self.editable_page()
+
+        self.assertIn('name="vip_remove" value="0"', page.text)
+        self.assertIn('name="source_remove" value="0"', page.text)
+        # The spare rows below the fold have nothing to remove yet.
+        self.assertEqual(page.text.count('name="vip_remove"'), 2)
 
     def test_an_address_its_vip_carries_is_shown_here_and_changed_one_table_up(self) -> None:
         #

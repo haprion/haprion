@@ -771,6 +771,9 @@ def build_router(config: Config) -> APIRouter:
         source_address: Sequence[str] = Form(default=()),
         group_name: Sequence[str] = Form(default=()),
         group_members: Sequence[str] = Form(default=()),
+        vip_remove: Sequence[str] = Form(default=()),
+        source_remove: Sequence[str] = Form(default=()),
+        group_remove: Sequence[str] = Form(default=()),
         expected_head: str = Form(default="", max_length=64),
         comment: str = Form(default="", max_length=4096),
         default_vip_confirmation: str = Form(default=""),
@@ -836,6 +839,9 @@ def build_router(config: Config) -> APIRouter:
                         source_addresses=tuple(source_address),
                         group_names=tuple(group_name),
                         group_members=tuple(group_members),
+                        removed_vip_rows=network.row_numbers(vip_remove),
+                        removed_source_rows=network.row_numbers(source_remove),
+                        removed_group_rows=network.row_numbers(group_remove),
                     )
                 )
             except network.FormProblem as problem:

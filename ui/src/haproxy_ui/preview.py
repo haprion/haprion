@@ -255,17 +255,28 @@ def build_document(form: dict[str, object]) -> str:
 
     hostnames = [name.strip() for name in text("hostnames").replace(",", "\n").splitlines()]
     document: dict[str, object] = {"schema": 1, "name": text("name")}
+    written = [name for name in hostnames if name]
     if protocol == "tcp":
         #
         # A tcp object is an address, a port and one pool. The page keeps one
-        # form for both shapes, so the fields that mean nothing here are left
-        # out of the document rather than sent along - the engine's refusals
-        # then stay about what the object is instead of about the form.
+        # form for both shapes, so the fields the shape has no use for carry no
+        # document of their own - but anything a person actually typed is sent
+        # along and refused by the engine, in the engine's words. Dropping it
+        # here would leave somebody looking at a preview of an object that
+        # silently lost the name they wrote, and headers already behave this
+        # way; two identical mistakes answered two different ways is the part
+        # that misleads.
         #
         document["listen"] = listen
         document["backend"] = "web"
+        if written:
+            document["hostnames"] = written
+        if text("redirect_path") or text("redirect_location"):
+            document["routes"] = _routes(
+                text("redirect_path"), text("redirect_location"), text("redirect_status")
+            )
     else:
-        document["hostnames"] = [name for name in hostnames if name]
+        document["hostnames"] = written
         document["listen"] = listen
         document["routes"] = _routes(
             text("redirect_path"), text("redirect_location"), text("redirect_status")

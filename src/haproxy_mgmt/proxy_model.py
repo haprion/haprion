@@ -165,12 +165,13 @@ MAX_HEADER_VALUE = 200
 #
 # What a maintenance page may say. The value is written into a double-quoted
 # configuration line, so a quote or a backslash would end that line somewhere
-# other than where it looks like it ends. `$` is out for a measured reason
-# rather than a cautious one: HAProxy 3.4.4 on this machine expands `$HOME`
-# inside double quotes, and a message meant for visitors would then carry a
-# value from the node's environment.
+# other than where it looks like it ends. `$` is allowed and escaped where the
+# line is written: HAProxy 3.4.4 on this machine expands `$HOME` inside double
+# quotes, but reads `\$` as a literal dollar, so a price or a shell name in a
+# sentence costs nothing. The single quote is the field that stays: a message
+# is a sentence for visitors, and "we'll be back" is how one is written.
 #
-MESSAGE = re.compile(r"^[A-Za-z0-9 %#.,:;!?()'/@+-]{1,200}$")
+MESSAGE = re.compile(r"^[A-Za-z0-9 %#.,:;!?()'/@+$-]{1,200}$")
 
 #
 # The one thing a message may ask to have filled in: the site's own name. It is
@@ -235,6 +236,47 @@ STATUS_RANGE = re.compile(r"^[1-5][0-9]{2}(-[1-5][0-9]{2})?$")
 PROBE = re.compile(r"^[A-Za-z0-9._:/+=@-]{1,64}$")
 MATCH_MODES = ("exact", "prefix")
 VERIFY_MODES = ("system", "none")
+
+
+#
+# Every key a proxy document may carry, split by the shape it belongs to. This
+# is one table rather than three lists in three places on purpose, and it is
+# what keeps `mode tcp` honest.
+#
+# HAProxy refuses none of this. Measured on 3.4.4 on this machine: in `mode
+# tcp` a `cookie` line is ignored with a warning, `http-request` rules are
+# ignored, `option forwardfor` is ignored, and `balance hdr` and `balance uri`
+# *fall back to round robin* - and `haproxy -c` exits 0 through all of it. So a
+# site that asked for session persistence would be published successfully,
+# validated successfully, and quietly balanced at random. This is the only
+# place it can be caught.
+#
+# A hand-kept list of forbidden fields would go stale the moment somebody adds
+# an HTTP field and forgets the entry, and the cost of forgetting would be
+# silence. Deriving both the allowlist and the refusal from this table changes
+# what forgetting costs: a key that is in neither group is in no allowlist
+# either, so the object is refused outright, for every shape, in whatever test
+# its author writes first.
+#
+COMMON_KEYS = frozenset({"schema", "name", "listen", "backends", "allow_from"})
+
+HTTP_ONLY_KEYS: Mapping[str, str] = MappingProxyType(
+    {
+        "hostnames": "there is no Host header on a raw connection, and the port identifies it",
+        "routes": "a raw connection carries no path",
+        "maintenance": "there is no way to answer a raw connection with a page",
+        "unavailable": "there is no way to answer a raw connection with a message",
+        "headers": "a raw connection carries no headers",
+    }
+)
+
+TCP_ONLY_KEYS: Mapping[str, str] = MappingProxyType(
+    {
+        "backend": "a pool is named by the route that reaches it",
+    }
+)
+
+PROXY_KEYS = COMMON_KEYS | frozenset(HTTP_ONLY_KEYS) | frozenset(TCP_ONLY_KEYS)
 
 
 class ModelError(ConfigError):
@@ -952,23 +994,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         raise ModelError(f"{name}: the proxy object is not valid YAML: {exc}") from exc
 
     data = _mapping(loaded, name)
-    _only_keys(
-        data,
-        {
-            "schema",
-            "name",
-            "hostnames",
-            "listen",
-            "routes",
-            "backends",
-            "allow_from",
-            "maintenance",
-            "unavailable",
-            "headers",
-            "backend",
-        },
-        name,
-    )
+    _only_keys(data, PROXY_KEYS, name)
 
     if data.get("schema") != 1:
         raise ModelError(f"{name}.schema must be 1")
@@ -978,7 +1004,6 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         raise ModelError(f"{name} is not a usable object name")
 
     listen = _listen(data.get("listen"), f"{name}.listen")
-    hostnames = _hostnames(data.get("hostnames"), listen.protocol, name)
 
     backends_raw = _mapping(data.get("backends"), f"{name}.backends")
     if not backends_raw:
@@ -990,19 +1015,19 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         if not NAME.match(key):
             raise ModelError(f"{name}.backends.{key} is not a usable backend name")
 
+    hostnames: tuple[str, ...]
     routes: tuple[Route, ...]
     if listen.protocol == "tcp":
+        _refuse_keys(data, HTTP_ONLY_KEYS, name, "a tcp object")
+        hostnames = ()
         routes = ()
         backend = _tcp_backend(data, backends, name)
         used = {backend}
-        _refuse_http_only(data, backends, name)
+        _refuse_http_only_pools(backends, name)
     else:
+        _refuse_keys(data, TCP_ONLY_KEYS, name, "an http or https object")
+        hostnames = _hostnames(data.get("hostnames"), name)
         backend = None
-        if "backend" in data:
-            raise ModelError(
-                f"{name}.backend is how a tcp object names its pool; an http or https object "
-                f"names one per route"
-            )
         routes_raw = data.get("routes")
         if not isinstance(routes_raw, list) or not routes_raw:
             raise ModelError(f"{name}.routes must list at least one route")
@@ -1056,7 +1081,7 @@ def _message(data: Mapping[str, Any], location: str) -> str:
     if not isinstance(message, str) or not MESSAGE.match(message):
         raise ModelError(
             f"{location}.message must be a line of readable text, "
-            f"up to 200 characters, without quotes, backslashes or $"
+            f"up to 200 characters, without double quotes or backslashes"
         )
     unknown = sorted({found for found in PLACEHOLDER.findall(message) if found != URL_PLACEHOLDER})
     if unknown:
@@ -1067,33 +1092,30 @@ def _message(data: Mapping[str, Any], location: str) -> str:
     return message
 
 
-def _refuse_http_only(data: Mapping[str, Any], backends: Mapping[str, Backend], name: str) -> None:
-    """Everything a tcp object cannot have, refused rather than written.
+def _refuse_keys(data: Mapping[str, Any], keys: Mapping[str, str], name: str, shape: str) -> None:
+    """The keys the other shape owns, refused with the reason they mean nothing.
 
-    This exists because HAProxy does not refuse any of it. Measured on 3.4.4 on
-    this machine: in `mode tcp` a `cookie` line is ignored with a warning,
-    `http-request` rules are ignored, `option forwardfor` is ignored, and
-    `balance hdr` and `balance uri` *fall back to round robin* - and
-    `haproxy -c` exits 0 through all of it.
-
-    So a site that asked for session persistence would be published
-    successfully, validated successfully, and quietly balanced at random. The
-    only place that can be caught is here.
+    Driven by `HTTP_ONLY_KEYS` and `TCP_ONLY_KEYS` rather than by a list
+    written out here, so that adding a field to the document means classifying
+    it once and nowhere else - see the table for what forgetting costs.
     """
 
-    for field, why in (
-        ("maintenance", "there is no way to answer a raw connection with a page"),
-        ("unavailable", "there is no way to answer a raw connection with a message"),
-        ("headers", "a raw connection carries no headers"),
-    ):
-        if field in data:
-            raise ModelError(f"{name}.{field} means nothing for a tcp object: {why}")
+    for key, why in keys.items():
+        if key in data:
+            raise ModelError(f"{name}.{key} means nothing for {shape}: {why}")
 
-    #
-    # `certificate`, `redirect_http` and `hsts` need no check here: `_listen`
-    # already refuses all three for anything but https, and a second guard that
-    # can never fire is a line the next reader has to prove is dead.
-    #
+
+def _refuse_http_only_pools(backends: Mapping[str, Backend], name: str) -> None:
+    """The pool settings a tcp object cannot have, refused rather than written.
+
+    The document's own keys are handled by `_refuse_keys`; these live one level
+    down, inside a backend, where the same key is legitimate for an http object
+    and meaningless here. `certificate`, `redirect_http` and `hsts` need no
+    check at all: `_listen` already refuses all three for anything but https,
+    and a second guard that can never fire is a line the next reader has to
+    prove is dead.
+    """
+
     for key, pool in backends.items():
         where = f"{name}.backends.{key}"
         if pool.cookie is not None:
@@ -1108,14 +1130,7 @@ def _refuse_http_only(data: Mapping[str, Any], backends: Mapping[str, Backend], 
             )
 
 
-def _hostnames(value: Any, protocol: str, name: str) -> tuple[str, ...]:
-    if protocol == "tcp":
-        if value is not None:
-            raise ModelError(
-                f"{name}.hostnames says nothing about a tcp object: there is no Host header on "
-                f"a raw connection, and the port is what identifies it"
-            )
-        return ()
+def _hostnames(value: Any, name: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not value:
         raise ModelError(f"{name}.hostnames must list at least one hostname")
     for hostname in value:
@@ -1135,10 +1150,6 @@ def _tcp_backend(data: Mapping[str, Any], backends: Mapping[str, Backend], name:
     reached.
     """
 
-    if "routes" in data:
-        raise ModelError(
-            f"{name}.routes says nothing about a tcp object: a raw connection carries no path"
-        )
     backend = _required_string(data, "backend", name)
     if backend not in backends:
         raise ModelError(f"{name}.backend names no backend in this object: {backend}")

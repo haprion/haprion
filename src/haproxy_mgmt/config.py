@@ -4,6 +4,7 @@ import ipaddress
 import re
 import stat
 from collections.abc import Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -274,7 +275,7 @@ def _mapping(value: Any, location: str) -> dict[str, Any]:
     return value
 
 
-def _only_keys(value: Mapping[str, Any], allowed: set[str], location: str) -> None:
+def _only_keys(value: Mapping[str, Any], allowed: AbstractSet[str], location: str) -> None:
     unknown = sorted(set(value) - allowed)
     if unknown:
         raise ConfigError(f"{location} contains unknown field(s): {', '.join(unknown)}")

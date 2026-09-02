@@ -6,11 +6,12 @@ half of the configuration is already using. The generator refuses an object
 that claims one.
 
 It exists because the failure it prevents is silent in the worst possible way.
-Two frontends binding one port pass `haproxy -c` and then kill the process at
-startup - measured on 3.4.4 on this machine, and written down as B47 - so the
-publish reports success and the node stops serving. A hostname claimed twice is
-quieter still: whichever frontend HAProxy reaches first answers, and which one
-that is depends on filenames.
+Two frontends binding one port both come up - HAProxy binds with SO_REUSEPORT,
+measured on 3.4.4 on this machine - and the kernel then hands each new
+connection to one of them at random, so the publish reports success and the
+node answers correctly for about half the traffic. A crash would be noticed.
+A hostname claimed twice is quieter still: whichever frontend HAProxy reaches
+first answers, and which one that is depends on filenames.
 
 The file is a promise a person makes, not a fact the system derives. Deriving
 it would mean parsing handwritten HAProxy configuration, which is the thing

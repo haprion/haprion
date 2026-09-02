@@ -8,10 +8,10 @@ rules come from `route_match`, the stable names from `guid`, and the shape of
 the input from `proxy_model`.
 
 **One shared frontend, many backend files.** A frontend owns its listening
-port, and HAProxy will not bind the same port twice - the configuration passes
-`haproxy -c` and then the process exits at startup, which is the worst place to
-find out. So every object's routing goes into one generated frontend per
-protocol, and each object gets its own file holding only its backends. It is
+port, and two frontends on one port do not fail loudly - HAProxy binds with
+SO_REUSEPORT, both come up, and the kernel splits new connections between them
+at random, which is worse than a crash because nothing reports it. So every
+object's routing goes into one generated frontend per protocol, and each object gets its own file holding only its backends. It is
 the same shape as a content switching virtual server in front of a set of load
 balancing virtual servers: one thing owns the address, many things sit behind
 it.
@@ -304,8 +304,9 @@ def _refuse_reserved(
     Refused here rather than left to the node, because both failures are ones
     HAProxy does not report as failures. A duplicated hostname is answered by
     whichever frontend happens to come first in the directory, and two
-    frontends on one port pass `haproxy -c` and then kill the process at
-    startup - so the publish says it worked and the node stops serving.
+    frontends on one port both bind it under SO_REUSEPORT and then split the
+    traffic at random - so the publish says it worked and the node answers
+    correctly for roughly half the connections.
     """
 
     for proxy in proxies:
@@ -330,8 +331,9 @@ def _refuse_reserved(
                 f"manual/reservations.yaml reserves for handwritten configuration"
             )
 
-    wanted = {proxy.listen.protocol for proxy in proxies if proxy.listen.protocol != "tcp"}
-    wanted |= {"http" for proxy in proxies if proxy.listen.redirect_http}
+    wanted = {
+        protocol for protocol in ports for proxy in proxies if _serves_shared(proxy, protocol)
+    }
     for protocol in sorted(wanted):
         port = ports.get(protocol)
         if port is not None and port in reservations.tcp_ports:
@@ -391,12 +393,31 @@ def _refuse_duplicate_names(proxies: Sequence[Proxy]) -> None:
         raise GeneratorError(f"two objects share a name: {', '.join(duplicates)}")
 
 
+def _serves_shared(proxy: Proxy, protocol: str) -> bool:
+    """Whether this object causes the cluster's shared frontend for a protocol.
+
+    Asking `listen.protocol` alone is not enough: a https object with
+    redirect_http also puts a frontend on the http port, and that frontend
+    binds the port exactly as firmly as one that named it.
+    """
+
+    if proxy.listen.protocol == "tcp":
+        return False
+    if proxy.listen.protocol == protocol:
+        return True
+    return protocol == "http" and proxy.listen.redirect_http
+
+
 def _refuse_shared_listeners(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping[str, int]) -> None:
     """One address and port may be bound exactly once.
 
-    The failure this prevents is the one B47 measured: two frontends on one
-    port pass `haproxy -c` and then kill the process at startup, so a publish
-    reports success and the node stops answering for everything.
+    Measured on 3.4.4 rather than assumed: two frontends on one port do not
+    kill the process. HAProxy binds with SO_REUSEPORT, both listeners come up,
+    and the kernel hands each new connection to one of them at random - so a
+    tcp object and an http frontend on one port split the traffic between two
+    different readings of the same bytes, and nothing anywhere reports it.
+    A crash would at least be noticed, which makes this the only place the
+    collision can be caught.
 
     Only tcp objects can collide this way. Two http objects on one address
     share a frontend by design; a tcp object is a frontend of its own, and its
@@ -422,7 +443,7 @@ def _refuse_shared_listeners(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping
             )
         for protocol, shared in sorted(ports.items()):
             if shared == port and any(
-                other.listen.protocol == protocol and other_vip.name == vip.name
+                other_vip.name == vip.name and _serves_shared(other, protocol)
                 for other_vip, other in placed
             ):
                 raise GeneratorError(
@@ -593,7 +614,15 @@ def _tcp_frontend(
             f"    tcp-request connection reject "
             f"if {{ sc_conn_rate(0) gt {abuse_protection.max_new_connections} }}",
         ]
-    lines.append(f"    default_backend {_backend_name(proxy.name, proxy.backend or '')}")
+    if proxy.backend is None:
+        #
+        # The model requires one for tcp, so reaching this means the two layers
+        # have drifted. Refused rather than written as `mgd-db-`, which is a
+        # name no backend section carries and a configuration HAProxy would
+        # then refuse on the node instead of here.
+        #
+        raise GeneratorError(f"{proxy.name} listens on tcp without naming a backend")
+    lines.append(f"    default_backend {_backend_name(proxy.name, proxy.backend)}")
     return lines
 
 
@@ -759,9 +788,17 @@ def _message(proxy: Proxy, message: str) -> str:
     Substituted here rather than at request time on purpose - see `URL_PLACEHOLDER`.
     A hostname has already been held to `HOSTNAME`, so nothing that could
     change where the configuration line ends can arrive through it.
+
+    The escape is the other half of the model letting a message carry `$`. The
+    line is written in double quotes, where HAProxy would expand `$HOME` into
+    a value from the node's environment; a backslash before it is a literal
+    dollar there, measured on 3.4.4 on this machine. Quotes and backslashes never reach
+    here - the model refuses them - so there is nothing else to escape and
+    nothing that could already be escaped.
     """
 
-    return message.replace(URL_PLACEHOLDER, proxy.hostnames[0])
+    filled = message.replace(URL_PLACEHOLDER, proxy.hostnames[0])
+    return filled.replace("$", "\\$")
 
 
 def _maintenance_rule(proxy: Proxy, host: str) -> list[str]:

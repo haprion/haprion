@@ -119,7 +119,7 @@ hostnames: [closed.example.com]
 listen:
   protocol: http
 maintenance:
-  message: Back at 18:00.
+  message: Back at 18:00, refunds cost $0.
 routes:
   - path: /
     backend: web
@@ -446,7 +446,7 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
             body = response.read().decode()
 
             self.assertEqual(response.status, 503)
-            self.assertEqual(body, "Back at 18:00.")
+            self.assertEqual(body, "Back at 18:00, refunds cost $0.")
             self.assertEqual(response.getheader("cache-control"), "no-store")
         finally:
             connection.close()

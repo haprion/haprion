@@ -10,7 +10,14 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.proxy_model import ModelError, load_proxy
+from haproxy_mgmt.proxy_model import (
+    COMMON_KEYS,
+    HTTP_ONLY_KEYS,
+    PROXY_KEYS,
+    TCP_ONLY_KEYS,
+    ModelError,
+    load_proxy,
+)
 
 MINIMAL = b"""
 schema: 1
@@ -427,15 +434,20 @@ class TakingASiteOutOfServiceWithoutDeletingIt(unittest.TestCase):
         with self.assertRaises(ModelError) as raised:
             load_proxy("shop", self.maintain('  message: Back at 18:00" '))
 
-        self.assertIn("without quotes", str(raised.exception))
+        self.assertIn("double quotes", str(raised.exception))
 
-    def test_a_dollar_sign_is_refused_because_haproxy_expands_it(self) -> None:
-        """Measured on 3.4.4: `$HOME` inside double quotes becomes the node's own path."""
+    def test_a_dollar_sign_is_carried_rather_than_refused(self) -> None:
+        """The expansion is HAProxy's, and the generator escapes it there.
 
-        with self.assertRaises(ModelError) as raised:
-            load_proxy("shop", self.maintain("  message: Back at $HOME"))
+        Measured on 3.4.4: `$HOME` inside double quotes becomes the node's own
+        path, and `\\$HOME` is the four characters a visitor should read. The
+        model has no reason to take a dollar out of a sentence about money.
+        """
 
-        self.assertIn("$", str(raised.exception))
+        proxy = load_proxy("shop", self.maintain("  message: Back at 18:00, refunds cost $0."))
+
+        assert proxy.maintenance is not None
+        self.assertEqual(proxy.maintenance.message, "Back at 18:00, refunds cost $0.")
 
 
 class WhatAVisitorIsToldWhenNothingAnswers(unittest.TestCase):
@@ -457,9 +469,9 @@ class WhatAVisitorIsToldWhenNothingAnswers(unittest.TestCase):
         """Both end up in the same kind of quoted configuration line."""
 
         with self.assertRaises(ModelError) as raised:
-            load_proxy("shop", self.unavailable("  message: Ask $USER"))
+            load_proxy("shop", self.unavailable('  message: Ask " somebody'))
 
-        self.assertIn("$", str(raised.exception))
+        self.assertIn("double quotes", str(raised.exception))
 
     def test_it_is_separate_from_maintenance(self) -> None:
         """One is deliberate and one is a failure; a site may describe both."""
@@ -770,16 +782,52 @@ class ARawPortIsASmallerObject(unittest.TestCase):
 
         self.assertIn("ignores it in tcp mode", str(raised.exception))
 
-    def test_an_answer_a_raw_connection_cannot_carry_is_refused(self) -> None:
-        for field, body in (
-            ("maintenance", b"maintenance:\n  message: Back at 18:00.\n"),
-            ("unavailable", b"unavailable:\n  message: Not answering.\n"),
-            ("headers", b"headers:\n  request:\n    delete: [X-Debug]\n"),
-        ):
-            with self.subTest(field), self.assertRaises(ModelError) as raised:
+    def test_every_http_only_key_is_refused_on_a_raw_port(self) -> None:
+        """Driven by the table, so this cannot go stale while the table grows.
+
+        The refusal fires on the key being present at all, so the value here is
+        only enough YAML to parse.
+        """
+
+        for key in HTTP_ONLY_KEYS:
+            body = f"{key}: []\n".encode()
+            with self.subTest(key), self.assertRaises(ModelError) as raised:
                 load_proxy("db", self.tcp((b"listen:", body + b"listen:")))
 
-            self.assertIn("means nothing for a tcp object", str(raised.exception))
+            self.assertIn(f"db.{key} means nothing for a tcp object", str(raised.exception))
+
+    def test_every_tcp_only_key_is_refused_on_an_http_object(self) -> None:
+        for key in TCP_ONLY_KEYS:
+            body = f"{key}: web\n".encode()
+            with self.subTest(key), self.assertRaises(ModelError) as raised:
+                load_proxy("shop", with_lines(("routes:", body.decode() + "routes:")))
+
+            self.assertIn(
+                f"shop.{key} means nothing for an http or https object", str(raised.exception)
+            )
+
+    def test_a_key_belongs_to_exactly_one_shape(self) -> None:
+        """What makes forgetting loud instead of silent.
+
+        A key in neither group is in no allowlist either, so an object carrying
+        it is refused for every shape rather than being ignored in `mode tcp` -
+        and a key in both groups would be refused for every shape as well,
+        which is why the two sets may not overlap.
+        """
+
+        self.assertEqual(PROXY_KEYS, COMMON_KEYS | set(HTTP_ONLY_KEYS) | set(TCP_ONLY_KEYS))
+        self.assertEqual(set(HTTP_ONLY_KEYS) & set(TCP_ONLY_KEYS), set())
+        self.assertEqual(COMMON_KEYS & (set(HTTP_ONLY_KEYS) | set(TCP_ONLY_KEYS)), set())
+
+    def test_a_key_no_shape_claims_is_refused_for_both(self) -> None:
+        for shape, document in (
+            ("db", self.tcp((b"listen:", b"invented: 1\nlisten:"))),
+            ("shop", MINIMAL + b"invented: 1\n"),
+        ):
+            with self.subTest(shape), self.assertRaises(ModelError) as raised:
+                load_proxy(shape, document)
+
+            self.assertIn("invented", str(raised.exception))
 
     def test_terminating_tls_is_what_https_is_for(self) -> None:
         """Refused by the listener itself, which already allows it only for https."""

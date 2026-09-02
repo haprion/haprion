@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from haproxy_mgmt.deploy_plan import ReleaseTarget
+from haproxy_mgmt.reservations import ReservationError, Reservations, load_reservations
 
 _SECTION = re.compile(r"^(?:frontend|listen)\s+(?P<name>\S+)(?:\s|$)")
 _OTHER_SECTION = re.compile(
@@ -173,6 +174,37 @@ def _proxy_document(proxy: _Proxy) -> dict[str, object]:
     }
 
 
+RESERVATIONS_PATH = "manual/reservations.yaml"
+
+
+def _reservations(files: Mapping[str, bytes]) -> Reservations:
+    """What the published tree says the handwritten half has claimed.
+
+    Read rather than assumed empty. The publishing path reads this same file to
+    refuse an object claiming a reserved name or port, and two readers with two
+    answers is the drift this project keeps finding: an operator asking the
+    inventory what is reserved, right after a publish was refused for claiming
+    something reserved, would be told nothing is.
+
+    A file that cannot be read is an `InventoryError` rather than an empty
+    answer, for the same reason - the tree cannot be described faithfully, and
+    both callers already report that as a failed inventory rather than as an
+    inventory saying nothing is reserved.
+    """
+
+    try:
+        return load_reservations(files.get(RESERVATIONS_PATH, b"{}"))
+    except ReservationError as exc:
+        raise InventoryError(f"published {RESERVATIONS_PATH} cannot be read: {exc}") from exc
+
+
+def _reservations_document(reservations: Reservations) -> dict[str, object]:
+    return {
+        "hostnames": sorted(reservations.hostnames),
+        "tcp_ports": sorted(reservations.tcp_ports),
+    }
+
+
 def inventory_result(
     files: Mapping[str, bytes],
     target: ReleaseTarget | None,
@@ -193,8 +225,9 @@ def inventory_result(
         "hash": target.hash if target is not None else None,
         "generated_at": timestamp.isoformat().replace("+00:00", "Z"),
         "proxies": [],
-        "reservations": {"hostnames": [], "tcp_ports": []},
+        "reservations": _reservations_document(Reservations()),
     }
     if target is not None:
         result["proxies"] = [_proxy_document(proxy) for proxy in _parse(files)]
+        result["reservations"] = _reservations_document(_reservations(files))
     return result

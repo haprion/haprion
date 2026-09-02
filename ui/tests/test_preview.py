@@ -410,12 +410,43 @@ class ARawPortIsPreviewedToo(unittest.TestCase):
     """One form, two shapes: the fields that mean nothing are left out."""
 
     def test_a_tcp_object_becomes_a_port_and_one_pool(self) -> None:
-        result = preview(form(protocol="tcp", tcp_port="5432"), PREVIEW_CLUSTER)
+        result = preview(form(protocol="tcp", tcp_port="5432", hostnames=""), PREVIEW_CLUSTER)
 
         self.assertIsNone(result.problem)
         self.assertIn("frontend mgd-internal-tcp-5432", result.files["1000-frontends.cfg"])
         self.assertIn("mode tcp", result.files["1001-app.cfg"])
         self.assertNotIn("hostnames", result.document)
+
+    def test_a_hostname_left_in_the_form_is_refused_rather_than_dropped(self) -> None:
+        """The same treatment the header box already gets.
+
+        Two identical mistakes - a field filled in for a shape that has no use
+        for it - must be answered the same way. Dropping the name would show a
+        preview of an object the person did not describe, and they would find
+        out at publish time that it was never there.
+        """
+
+        result = preview(
+            form(protocol="tcp", tcp_port="5432", hostnames="db.example.com"), PREVIEW_CLUSTER
+        )
+
+        self.assertIsNotNone(result.problem)
+        self.assertIn("hostnames", str(result.problem))
+
+    def test_a_redirect_left_in_the_form_is_refused_rather_than_dropped(self) -> None:
+        result = preview(
+            form(
+                protocol="tcp",
+                tcp_port="5432",
+                hostnames="",
+                redirect_path="/old",
+                redirect_location="https://example.com/new",
+            ),
+            PREVIEW_CLUSTER,
+        )
+
+        self.assertIsNotNone(result.problem)
+        self.assertIn("routes", str(result.problem))
 
     def test_a_tcp_object_without_a_port_is_named_before_the_engine_sees_it(self) -> None:
         result = preview(form(protocol="tcp"), PREVIEW_CLUSTER)
@@ -425,6 +456,8 @@ class ARawPortIsPreviewedToo(unittest.TestCase):
     def test_session_persistence_on_a_raw_port_is_refused_by_the_engine(self) -> None:
         """HAProxy would ignore it with a warning and balance without it."""
 
-        result = preview(form(protocol="tcp", tcp_port="5432", cookie="SRV"), PREVIEW_CLUSTER)
+        result = preview(
+            form(protocol="tcp", tcp_port="5432", hostnames="", cookie="SRV"), PREVIEW_CLUSTER
+        )
 
         self.assertEqual(result.problem_field, "app.backends.web.cookie")

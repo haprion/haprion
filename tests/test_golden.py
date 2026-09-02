@@ -355,6 +355,19 @@ class AnObjectDeliberatelyOutOfService(unittest.TestCase):
         )
         return _generate([load_proxy("shop", document)])["1000-frontends.cfg"]
 
+    def test_a_dollar_sign_is_escaped_where_the_line_is_written(self) -> None:
+        """HAProxy expands `$HOME` inside double quotes; `\\$` is a literal dollar.
+
+        The model lets a sentence carry a dollar - a price is the ordinary
+        reason to write one - so the escaping has to happen here, in the one
+        place that knows the line is double-quoted.
+        """
+
+        self.assertIn(
+            r'string "Refunds cost \$0, see \$HOME"',
+            self.frontends("Refunds cost $0, see $HOME"),
+        )
+
     def test_the_message_is_returned_for_this_object_s_names_only(self) -> None:
         self.assertIn(
             'http-request return status 503 content-type text/plain string "Back at 18:00." '
@@ -601,7 +614,7 @@ class WhatTheHandwrittenHalfHasAlreadyClaimed(unittest.TestCase):
         self.assertIn("manual/reservations.yaml", str(raised.exception))
 
     def test_a_reserved_port_stops_the_publish(self) -> None:
-        """Two frontends on one port pass `haproxy -c` and kill the process at start."""
+        """Two frontends on one port both bind it and split the traffic at random."""
 
         with self.assertRaises(GeneratorError) as raised:
             generate(
@@ -627,7 +640,7 @@ class WhatTheHandwrittenHalfHasAlreadyClaimed(unittest.TestCase):
 
 
 class OneAddressAndPortIsBoundOnce(unittest.TestCase):
-    """The failure B47 measured: `haproxy -c` says yes, the process then dies."""
+    """`haproxy -c` says yes, and then both listeners quietly share the port."""
 
     def tcp(self, name: str, port: int) -> Proxy:
         document = f"""
@@ -659,6 +672,20 @@ backends:
             _generate([self.tcp("db", 80), load_proxy("shop", MINIMAL)])
 
         self.assertIn("http", str(raised.exception))
+
+    def test_a_tcp_object_may_not_take_the_port_a_redirect_listens_on(self) -> None:
+        """The redirect frontend is not named in any object's listen.protocol.
+
+        A https object with redirect_http puts a frontend on port 80 all the
+        same, and asking each object what protocol it named would miss it - so
+        the tcp object would be accepted and the two would split port 80
+        between them.
+        """
+
+        with self.assertRaises(GeneratorError) as raised:
+            _generate([self.tcp("db", 80), load_proxy("app", HTTPS)])
+
+        self.assertIn("port 80", str(raised.exception))
 
     def test_two_ports_on_one_address_are_two_frontends(self) -> None:
         frontends = _generate([self.tcp("db", 5432), self.tcp("cache", 6379)])["1000-frontends.cfg"]

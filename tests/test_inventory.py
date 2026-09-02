@@ -68,6 +68,48 @@ class InventoryTests(unittest.TestCase):
         )
         self.assertEqual(result["reservations"], {"hostnames": [], "tcp_ports": []})
 
+    def test_it_reports_what_the_reservations_file_actually_says(self) -> None:
+        """The publishing path reads this file to refuse objects; so must this one.
+
+        Two readers of one file with two answers is how an operator ends up
+        being told nothing is reserved moments after a publish was refused for
+        claiming something reserved.
+        """
+
+        result = inventory_result(
+            {
+                "manual/reservations.yaml": (
+                    b"hostnames: [legacy.example.com]\ntcp_ports: [8443]\n"
+                ),
+            },
+            TARGET,
+            generated_at=TIME,
+        )
+
+        self.assertEqual(
+            result["reservations"],
+            {"hostnames": ["legacy.example.com"], "tcp_ports": [8443]},
+        )
+
+    def test_a_reservations_file_that_cannot_be_read_fails_the_inventory(self) -> None:
+        """Rather than an answer that says nothing is reserved."""
+
+        with self.assertRaises(InventoryError) as raised:
+            inventory_result(
+                {"manual/reservations.yaml": b"hostnames: 5\n"},
+                TARGET,
+                generated_at=TIME,
+            )
+
+        self.assertIn("manual/reservations.yaml", str(raised.exception))
+
+    def test_an_unpublished_tree_reserves_nothing(self) -> None:
+        """No RELEASE stamp means there is no published file to have read."""
+
+        result = inventory_result({}, None, generated_at=TIME)
+
+        self.assertEqual(result["reservations"], {"hostnames": [], "tcp_ports": []})
+
     def test_it_never_derives_inventory_from_an_unpublished_tree(self) -> None:
         result = inventory_result(
             {"managed/generated/1003-staged.cfg": b"frontend staged\n  bind :443 ssl\n"},

@@ -352,3 +352,61 @@ class ReachingAnObjectNoFrontendServesYet(unittest.TestCase):
         )
 
         self.assertEqual(stored_only(reading(), published=[frontend]), ())
+
+
+class ThePortAnObjectWillBeServedOn(unittest.TestCase):
+    """Read from the engine, never restated in the interface.
+
+    The port is not a property of the object - the document does not carry one
+    for http or https - it is what the generator binds for that protocol. A
+    number written here instead would be a second opinion, and it would go on
+    looking right for exactly as long as the engine kept the same table.
+    """
+
+    def test_it_is_the_engine_s_own_table(self) -> None:
+        from haproxy_mgmt.generate import PORTS
+
+        view = detail().stored
+
+        self.assertEqual(view.ports, (PORTS["https"],))  # type: ignore[union-attr]
+
+    def test_an_object_this_version_cannot_read_claims_no_port(self) -> None:
+        """Its protocol is unknown, so there is nothing to look up."""
+
+        rows = [
+            reading(
+                objects=[
+                    {
+                        "name": "app",
+                        "document": APP,
+                        "readable": False,
+                        "problem": "app.listen must be a mapping",
+                        "protocol": None,
+                        "hostnames": [],
+                    }
+                ]
+            )
+        ]
+
+        self.assertEqual(detail(readings=rows).stored.ports, ())  # type: ignore[union-attr]
+
+    def test_a_tcp_object_claims_no_port_rather_than_guessing(self) -> None:
+        """Its port is written in the document and is not carried in the
+        envelope, so the honest answer is that this page does not know it."""
+
+        rows = [
+            reading(
+                objects=[
+                    {
+                        "name": "app",
+                        "document": APP,
+                        "readable": True,
+                        "problem": None,
+                        "protocol": "tcp",
+                        "hostnames": [],
+                    }
+                ]
+            )
+        ]
+
+        self.assertEqual(detail(readings=rows).stored.ports, ())  # type: ignore[union-attr]

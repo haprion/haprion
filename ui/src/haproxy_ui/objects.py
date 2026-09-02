@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from haproxy_mgmt.generate import PORTS
+
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterObjects
@@ -37,6 +39,13 @@ class ObjectView:
     protocol: str | None
     hostnames: tuple[str, ...]
     line_count: int
+    #
+    # The port this object will be served on once it is deployed, taken from
+    # the engine's own table rather than restated here - the interface must not
+    # hold a second opinion about what a protocol binds. Empty for tcp, whose
+    # port is written in the document and is not carried in the envelope.
+    #
+    ports: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +138,7 @@ def object_view(value: Any) -> ObjectView | None:
         protocol=protocol if isinstance(protocol, str) and protocol else None,
         hostnames=_hostnames(entry.get("hostnames")),
         line_count=len(document.splitlines()),
+        ports=(PORTS[protocol],) if isinstance(protocol, str) and protocol in PORTS else (),
     )
 
 

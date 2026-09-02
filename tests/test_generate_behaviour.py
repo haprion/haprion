@@ -150,6 +150,27 @@ backends:
         port: {web}
 """
 
+PAIR = """
+schema: 1
+name: pair
+hostnames: [pair.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {dead}
+      - host: 127.0.0.1
+        port: {web}
+"""
+
 CORE = """
 global
     daemon
@@ -225,8 +246,14 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
         # simulated: HAProxy has to try the connection and fail it.
         #
         gone = load_proxy("gone", GONE.format(web=free_port()).encode())
+        #
+        # Half the pool refuses connections. Health checks are off on purpose:
+        # the question is what happens to a request that is already being
+        # dispatched, not whether a check would eventually have removed it.
+        #
+        pair = load_proxy("pair", PAIR.format(dead=free_port(), web=ports["web"]).encode())
         layer = generate(
-            [cls.proxy, restricted, closed, gone],
+            [cls.proxy, restricted, closed, gone, pair],
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
             networks={"office": ("198.51.100.0/24",)},
@@ -376,6 +403,21 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
 
         self.assertEqual(status, 503)
         self.assertEqual(body, "The shop is not answering.")
+
+    def test_a_dead_server_in_a_live_pool_costs_nobody_an_error(self) -> None:
+        """What `option redispatch` buys, and it is not a small thing.
+
+        Without it a retry goes back to the server that just refused the
+        connection, and a pool of two with one dead server answers every other
+        request with 503. Measured that way on 3.4.4 on this machine before the
+        option was written into the generator.
+        """
+
+        for attempt in range(4):
+            with self.subTest(attempt):
+                status, _ = self.request("/", host="pair.example.com")
+
+                self.assertEqual(status, 200)
 
     def test_the_other_objects_on_the_address_go_on_serving(self) -> None:
         self.assertEqual(self.request("/", host=HOSTNAME), (200, "web /"))

@@ -219,7 +219,11 @@ def generate(
     _refuse_duplicate_names(ordered)
     _refuse_shared_hostnames(ordered)
 
-    unsupported = [proxy for proxy in ordered if proxy.listen.protocol not in ports]
+    unsupported = [
+        proxy
+        for proxy in ordered
+        if proxy.listen.protocol != "tcp" and proxy.listen.protocol not in ports
+    ]
     if unsupported:
         #
         # Refused rather than skipped. Silently generating nothing for an
@@ -228,7 +232,7 @@ def generate(
         #
         names = ", ".join(proxy.name for proxy in unsupported)
         raise GeneratorError(
-            f"this version generates http and https objects; cannot generate: {names}"
+            f"this version generates http, https and tcp objects; cannot generate: {names}"
         )
     _refuse_reserved(ordered, reservations, ports)
     _refuse_unknown_certificates(ordered, certificates)
@@ -237,6 +241,7 @@ def generate(
 
     known_sources = dict(sources or {})
     placed = [(_vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
+    _refuse_shared_listeners(placed, ports)
 
     files = {
         FRONTEND_FILE: _frontend_file(
@@ -318,7 +323,14 @@ def _refuse_reserved(
     # nothing generated listens on is a person writing down what the
     # handwritten side uses, which is the file's whole purpose.
     #
-    wanted = {proxy.listen.protocol for proxy in proxies}
+    for proxy in proxies:
+        if proxy.listen.port is not None and proxy.listen.port in reservations.tcp_ports:
+            raise GeneratorError(
+                f"{proxy.name} listens on port {proxy.listen.port}, which "
+                f"manual/reservations.yaml reserves for handwritten configuration"
+            )
+
+    wanted = {proxy.listen.protocol for proxy in proxies if proxy.listen.protocol != "tcp"}
     wanted |= {"http" for proxy in proxies if proxy.listen.redirect_http}
     for protocol in sorted(wanted):
         port = ports.get(protocol)
@@ -377,6 +389,47 @@ def _refuse_duplicate_names(proxies: Sequence[Proxy]) -> None:
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:
         raise GeneratorError(f"two objects share a name: {', '.join(duplicates)}")
+
+
+def _refuse_shared_listeners(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping[str, int]) -> None:
+    """One address and port may be bound exactly once.
+
+    The failure this prevents is the one B47 measured: two frontends on one
+    port pass `haproxy -c` and then kill the process at startup, so a publish
+    reports success and the node stops answering for everything.
+
+    Only tcp objects can collide this way. Two http objects on one address
+    share a frontend by design; a tcp object is a frontend of its own, and its
+    port is written in the object rather than in the cluster.
+    """
+
+    taken: dict[tuple[str, int], str] = {}
+    for vip, proxy in placed:
+        if proxy.listen.protocol != "tcp":
+            continue
+        port = proxy.listen.port
+        if port is None:
+            #
+            # The model requires a port for tcp, so reaching this means the two
+            # layers have drifted. A refusal rather than an assertion, so it
+            # survives running with -O.
+            #
+            raise GeneratorError(f"{proxy.name} listens on tcp without naming a port")
+        earlier = taken.get((vip.name, port))
+        if earlier is not None:
+            raise GeneratorError(
+                f"{earlier} and {proxy.name} both listen on {vip.name} port {port}"
+            )
+        for protocol, shared in sorted(ports.items()):
+            if shared == port and any(
+                other.listen.protocol == protocol and other_vip.name == vip.name
+                for other_vip, other in placed
+            ):
+                raise GeneratorError(
+                    f"{proxy.name} listens on {vip.name} port {port}, which this cluster "
+                    f"already serves {protocol} on"
+                )
+        taken[(vip.name, port)] = proxy.name
 
 
 def _refuse_shared_hostnames(proxies: Sequence[Proxy]) -> None:
@@ -440,7 +493,16 @@ def _frontend_file(
     # really is http cannot end up in two frontends fighting over one port.
     #
     groups: dict[tuple[str, str], list[tuple[Vip, Proxy, str]]] = {}
+    tcp: list[tuple[Vip, Proxy]] = []
     for vip, proxy in placed:
+        if proxy.listen.protocol == "tcp":
+            #
+            # A frontend of its own, not a group. A tcp listener has nothing to
+            # decide with - no name and no path - so two objects on one port
+            # could not be told apart even if HAProxy would bind it twice.
+            #
+            tcp.append((vip, proxy))
+            continue
         groups.setdefault((vip.name, proxy.listen.protocol), []).append((vip, proxy, "serve"))
         if proxy.listen.redirect_http:
             groups.setdefault((vip.name, "http"), []).append((vip, proxy, "redirect"))
@@ -469,10 +531,70 @@ def _frontend_file(
         if unknown_host is not None:
             body.append(f"    default_backend {_fallback_name(vip, protocol)}")
             fallbacks.extend(_fallback(vip, protocol, unknown_host))
+    for vip, proxy in sorted(tcp, key=lambda member: member[1].name):
+        body.extend(_tcp_frontend(vip, proxy, networks, abuse_protection))
     body.extend(fallbacks)
     if not body:
         body = ["", "# No object listens anywhere on this cluster."]
     return _lines(HEADER, body)
+
+
+def _tcp_frontend(
+    vip: Vip,
+    proxy: Proxy,
+    networks: Mapping[str, Sequence[str]],
+    abuse_protection: AbuseProtection | None,
+) -> list[str]:
+    """One raw port, forwarded to one pool.
+
+    Everything the HTTP frontends do with `http-request` happens here at
+    connection time instead: there is no request to inspect, so who may connect
+    and how fast are the only two questions that can be asked at all - and both
+    are answered before a byte is forwarded.
+    """
+
+    port = proxy.listen.port
+    if port is None:
+        raise GeneratorError(f"{proxy.name} listens on tcp without naming a port")
+    identity = f"{vip.name}-tcp-{port}"
+    lines = [
+        "",
+        f"frontend {_frontend_name(vip, f'tcp-{port}')}",
+        f"    guid {frontend_guid(identity)}",
+        f"    bind {vip.address}:{port} guid-prefix {listener_guid_prefix(identity)}",
+        "    mode tcp",
+        "    option tcplog",
+        f"    timeout client {TIMEOUT_CLIENT}",
+    ]
+    if proxy.allow_from:
+        allowed = sorted(
+            {
+                cidr
+                for entry in proxy.allow_from
+                for cidr in ((entry,) if is_range(entry) else networks[entry])
+            }
+        )
+        acl = _acl_name(proxy.name, "allow")
+        lines += [
+            f"    acl {acl} src {' '.join(allowed)}",
+            #
+            # Rejected at connection time rather than denied at request time:
+            # there is no request. The client sees a closed connection, which
+            # is all a raw protocol can be told.
+            #
+            f"    tcp-request connection reject unless {acl}",
+        ]
+    if abuse_protection is not None and abuse_protection.max_new_connections is not None:
+        window = abuse_protection.window
+        lines += [
+            f"    stick-table type ip size {ABUSE_TABLE_SIZE} expire {window} "
+            f"store conn_rate({window})",
+            "    tcp-request connection track-sc0 src",
+            f"    tcp-request connection reject "
+            f"if {{ sc_conn_rate(0) gt {abuse_protection.max_new_connections} }}",
+        ]
+    lines.append(f"    default_backend {_backend_name(proxy.name, proxy.backend or '')}")
+    return lines
 
 
 def _forwarded_rules(protocol: str, trusted_proxies: Sequence[str]) -> list[str]:
@@ -1005,19 +1127,30 @@ def _backend(
     resolvers: str | None = None,
 ) -> list[str]:
     name = _backend_name(proxy.name, backend.name)
+    raw = proxy.listen.protocol == "tcp"
     lines = [
         "",
         f"backend {name}",
         f"    guid {backend_guid(proxy.name, backend.name)}",
-        "    mode http",
+        f"    mode {'tcp' if raw else 'http'}",
         f"    balance {_balance(backend)}",
         f"    timeout connect {TIMEOUT_CONNECT}",
         f"    timeout server {TIMEOUT_SERVER}",
-        f"    timeout tunnel {TIMEOUT_TUNNEL}",
+    ]
+    if not raw:
+        #
+        # Both are HTTP-only and HAProxy says so in a warning rather than an
+        # error: the tunnel timeout is what an upgraded connection lives on,
+        # and a raw stream is already a tunnel, while `forwardfor` writes a
+        # header a raw connection has nowhere to put.
+        #
+        lines.append(f"    timeout tunnel {TIMEOUT_TUNNEL}")
+    lines += [
         f"    retries {RETRIES}",
         "    option redispatch",
-        "    option forwardfor",
     ]
+    if not raw:
+        lines.append("    option forwardfor")
     if source is not None:
         #
         # The address this pool is reached from. Written per backend because

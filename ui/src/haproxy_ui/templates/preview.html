@@ -20,8 +20,11 @@
         <select name="protocol">
           <option value="https"{% if form.protocol == 'https' %} selected{% endif %}>HTTPS</option>
           <option value="http"{% if form.protocol == 'http' %} selected{% endif %}>HTTP</option>
+          <option value="tcp"{% if form.protocol == 'tcp' %} selected{% endif %}>TCP</option>
         </select>
+        <small>TCP forwards a raw port: no hostnames, no routes, no headers.</small>
       </label>
+      <label>TCP port<input name="tcp_port" value="{{ form.tcp_port }}" size="8" placeholder="5432"><small>Only for TCP, and required there. HTTP and HTTPS use the cluster's own ports.</small></label>
       <label>VIP
         <select name="vip">
           <option value="">Default ({{ choices.default_vip }})</option>

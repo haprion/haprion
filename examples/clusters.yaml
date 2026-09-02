@@ -96,6 +96,10 @@ clusters:
       window: 10s
       max_requests: 100
       max_errors: 20
+      # The tcp threshold: new connections per source over the window. A raw
+      # connection has no request and no status to count, so this is the only
+      # question that can be asked, and it is asked before a byte is forwarded.
+      max_new_connections: 50
     trusted_proxy_cidrs:
       - 198.51.100.0/24
     nodes:

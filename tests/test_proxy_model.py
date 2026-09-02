@@ -690,3 +690,101 @@ class ARouteMayAnswerInsteadOfForwarding(unittest.TestCase):
             load_proxy("shop", self.route("  - path: /old\n    redirect:\n      location: /new\n"))
 
         self.assertIn("absolute", str(raised.exception))
+
+
+TCP = b"""
+schema: 1
+name: db
+listen:
+  protocol: tcp
+  port: 5432
+backend: pool
+backends:
+  pool:
+    balance: leastconn
+    health:
+      type: tcp
+    servers:
+      - host: 198.51.100.10
+        port: 5432
+"""
+
+
+class ARawPortIsASmallerObject(unittest.TestCase):
+    """A tcp object is an address, a port and one pool. Nothing else fits."""
+
+    def tcp(self, *replacements: tuple[bytes, bytes]) -> bytes:
+        document = TCP
+        for old, new in replacements:
+            assert old in document, old
+            document = document.replace(old, new)
+        return document
+
+    def test_it_loads_with_no_hostnames_and_no_routes(self) -> None:
+        proxy = load_proxy("db", TCP)
+
+        self.assertEqual((proxy.hostnames, proxy.routes), ((), ()))
+        self.assertEqual((proxy.listen.port, proxy.backend), (5432, "pool"))
+
+    def test_a_port_is_required(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("db", self.tcp((b"  port: 5432\n", b"")))
+
+        self.assertIn("required for tcp", str(raised.exception))
+
+    def test_http_may_not_name_a_port(self) -> None:
+        """The cluster owns those, and an object naming one would be ignored."""
+
+        document = MINIMAL.replace(b"  protocol: http", b"  protocol: http\n  port: 8080")
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", document)
+
+        self.assertIn("only meaningful for tcp", str(raised.exception))
+
+    def test_hostnames_are_refused_rather_than_ignored(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("db", self.tcp((b"listen:", b"hostnames: [db.example.com]\nlisten:")))
+
+        self.assertIn("no Host header", str(raised.exception))
+
+    def test_routes_are_refused_rather_than_ignored(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy(
+                "db", self.tcp((b"backend: pool\n", b"routes:\n  - path: /\n    backend: pool\n"))
+            )
+
+        self.assertIn("no path", str(raised.exception))
+
+    def test_a_balance_that_hashes_an_http_request_is_refused(self) -> None:
+        """HAProxy falls back to roundrobin with a warning and exits 0."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("db", self.tcp((b"balance: leastconn", b"balance: uri")))
+
+        self.assertIn("roundrobin", str(raised.exception))
+
+    def test_session_persistence_is_refused_rather_than_ignored(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("db", self.tcp((b"    health:", b"    cookie: SRV\n    health:")))
+
+        self.assertIn("ignores it in tcp mode", str(raised.exception))
+
+    def test_an_answer_a_raw_connection_cannot_carry_is_refused(self) -> None:
+        for field, body in (
+            ("maintenance", b"maintenance:\n  message: Back at 18:00.\n"),
+            ("unavailable", b"unavailable:\n  message: Not answering.\n"),
+            ("headers", b"headers:\n  request:\n    delete: [X-Debug]\n"),
+        ):
+            with self.subTest(field), self.assertRaises(ModelError) as raised:
+                load_proxy("db", self.tcp((b"listen:", body + b"listen:")))
+
+            self.assertIn("means nothing for a tcp object", str(raised.exception))
+
+    def test_terminating_tls_is_what_https_is_for(self) -> None:
+        """Refused by the listener itself, which already allows it only for https."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("db", self.tcp((b"  port: 5432", b"  port: 5432\n  certificate: example")))
+
+        self.assertIn("only meaningful for https", str(raised.exception))

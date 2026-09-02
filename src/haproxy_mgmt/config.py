@@ -193,6 +193,13 @@ class AbuseProtection:
     window: str
     max_requests: int | None = None
     max_errors: int | None = None
+    max_new_connections: int | None = None
+    """The tcp threshold: new connections per source over the window.
+
+    Separate from the two above because a raw connection has no request and no
+    status to count. It is the only question that can be asked before a byte is
+    forwarded, and it is asked at connection time.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -593,13 +600,13 @@ def _abuse_protection(value: Any, location: str) -> AbuseProtection | None:
     if value is None:
         return None
     data = _mapping(value, location)
-    _only_keys(data, {"window", "max_requests", "max_errors"}, location)
+    _only_keys(data, {"window", "max_requests", "max_errors", "max_new_connections"}, location)
     window = data.get("window", DEFAULT_ABUSE_WINDOW)
     if not isinstance(window, str) or not ABUSE_WINDOW.fullmatch(window):
         raise ConfigError(f"{location}.window must be a duration such as 10s")
 
     thresholds: dict[str, int | None] = {}
-    for key in ("max_requests", "max_errors"):
+    for key in ("max_requests", "max_errors", "max_new_connections"):
         limit = data.get(key)
         if limit is not None and (
             not isinstance(limit, int) or isinstance(limit, bool) or limit < 1
@@ -612,13 +619,16 @@ def _abuse_protection(value: Any, location: str) -> AbuseProtection | None:
     # refused. Refused rather than treated as off, because writing the section
     # is somebody saying they want the protection.
     #
-    if thresholds["max_requests"] is None and thresholds["max_errors"] is None:
-        raise ConfigError(f"{location} must set max_requests, max_errors, or both")
+    if not any(thresholds.values()):
+        raise ConfigError(
+            f"{location} must set at least one of max_requests, max_errors or max_new_connections"
+        )
 
     return AbuseProtection(
         window=window,
         max_requests=thresholds["max_requests"],
         max_errors=thresholds["max_errors"],
+        max_new_connections=thresholds["max_new_connections"],
     )
 
 

@@ -922,3 +922,87 @@ class HeaderEditsReachTheTraffic(unittest.TestCase):
 
         self.assertEqual(answered["x-frame-options"], "DENY")
         self.assertNotIn("server", answered)
+
+
+TCP_OBJECT = """
+schema: 1
+name: db
+listen:
+  protocol: tcp
+  port: {port}
+backend: pool
+backends:
+  pool:
+    balance: leastconn
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
+
+class ARawPortIsForwardedAsItArrives(unittest.TestCase):
+    """A tcp object proved by speaking through it, not by reading the file.
+
+    Worth a running process because everything HTTP-shaped is *ignored* in
+    `mode tcp` rather than refused - measured on 3.4.4 on this machine - so a
+    configuration that reads correctly can behave nothing like it reads.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        backend = free_port()
+        cls.server = echo_server("web", backend)
+        wait_for(backend)
+
+        cls.port = free_port()
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        (root / "0000-core.cfg").write_text(CORE)
+        layer = generate(
+            [load_proxy("db", TCP_OBJECT.format(port=cls.port, web=backend).encode())],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+        )
+        for name, content in layer.items():
+            (root / name).write_text(content)
+
+        arguments: list[str] = []
+        for path in sorted(root.iterdir()):
+            arguments += ["-f", str(path)]
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        cls.haproxy = subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL)
+        wait_for(cls.port)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.haproxy.terminate()
+        cls.haproxy.wait(timeout=5)
+        cls.server.shutdown()
+        cls.directory.cleanup()
+
+    def test_the_stream_reaches_the_pool_untouched(self) -> None:
+        """The backend behind it happens to speak HTTP; the proxy does not care."""
+
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.putrequest("GET", "/raw", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", "anything.example.com")
+            connection.endheaders()
+            response = connection.getresponse()
+            body = response.read().decode()
+        finally:
+            connection.close()
+
+        self.assertEqual((response.status, body), (200, "web /raw"))
+
+    def test_no_forwarded_header_is_added_on_the_way(self) -> None:
+        """`option forwardfor` is HTTP-only, and writing it would be ignored anyway."""
+
+        directory = Path(self.directory.name)
+        written = (directory / "1001-db.cfg").read_text()
+
+        self.assertIn("mode tcp", written)
+        self.assertNotIn("forwardfor", written)

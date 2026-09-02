@@ -101,7 +101,9 @@ TRUSTED_PROXIES = ("198.51.100.0/24",)
 # The brake, in the frozen output, so its shape is reviewed like everything
 # else rather than living only in a unit test.
 #
-ABUSE_PROTECTION = AbuseProtection(window="10s", max_requests=100, max_errors=20)
+ABUSE_PROTECTION = AbuseProtection(
+    window="10s", max_requests=100, max_errors=20, max_new_connections=50
+)
 
 
 def arguments(case: Path) -> dict[str, object]:

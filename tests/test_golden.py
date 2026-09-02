@@ -214,14 +214,24 @@ class ThingsAWholeLayerRefuses(unittest.TestCase):
         self.assertIn("store", str(raised.exception))
 
     def test_an_object_this_version_cannot_generate_is_refused_not_skipped(self) -> None:
-        """Skipping it would take a site down and report success."""
+        """Skipping it would take a site down and report success.
 
-        tcp = MINIMAL.replace(b"protocol: http", b"protocol: tcp")
+        Reached through a cluster that serves no https rather than through an
+        unknown protocol: every protocol the model accepts can now be
+        generated, and the branch that refuses is the one where a cluster does
+        not offer the port an object asks for.
+        """
 
         with self.assertRaises(GeneratorError) as raised:
-            _generate([load_proxy("shop", tcp)])
+            generate(
+                [load_proxy("app", HTTPS)],
+                vips=dict(DEFAULT_VIPS),
+                default_vip="main",
+                certificates=CERTIFICATES,
+                ports={"http": 80},
+            )
 
-        self.assertIn("shop", str(raised.exception))
+        self.assertIn("app", str(raised.exception))
 
     def test_two_routes_to_one_backend_must_rewrite_the_path_the_same_way(self) -> None:
         """The rewrite lives in the backend, so the backend can only have one.
@@ -614,3 +624,44 @@ class WhatTheHandwrittenHalfHasAlreadyClaimed(unittest.TestCase):
         )
 
         self.assertIn("1000-frontends.cfg", files)
+
+
+class OneAddressAndPortIsBoundOnce(unittest.TestCase):
+    """The failure B47 measured: `haproxy -c` says yes, the process then dies."""
+
+    def tcp(self, name: str, port: int) -> Proxy:
+        document = f"""
+schema: 1
+name: {name}
+listen:
+  protocol: tcp
+  port: {port}
+backend: pool
+backends:
+  pool:
+    balance: leastconn
+    health:
+      type: disabled
+    servers:
+      - host: 198.51.100.10
+        port: 5432
+"""
+        return load_proxy(name, document.encode())
+
+    def test_two_tcp_objects_on_one_port_are_refused(self) -> None:
+        with self.assertRaises(GeneratorError) as raised:
+            _generate([self.tcp("db", 5432), self.tcp("cache", 5432)])
+
+        self.assertIn("5432", str(raised.exception))
+
+    def test_a_tcp_object_may_not_take_a_port_the_cluster_serves_http_on(self) -> None:
+        with self.assertRaises(GeneratorError) as raised:
+            _generate([self.tcp("db", 80), load_proxy("shop", MINIMAL)])
+
+        self.assertIn("http", str(raised.exception))
+
+    def test_two_ports_on_one_address_are_two_frontends(self) -> None:
+        frontends = _generate([self.tcp("db", 5432), self.tcp("cache", 6379)])["1000-frontends.cfg"]
+
+        self.assertIn("frontend mgd-main-tcp-5432", frontends)
+        self.assertIn("frontend mgd-main-tcp-6379", frontends)

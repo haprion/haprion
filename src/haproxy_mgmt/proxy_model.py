@@ -25,6 +25,7 @@ import ipaddress
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 import yaml
@@ -112,6 +113,14 @@ BALANCE = (
 # need to be told which name.
 #
 BALANCE_NEEDS_KEY = ("hdr", "url_param")
+
+#
+# The algorithms that hash something only an HTTP request carries. HAProxy does
+# not refuse these in tcp mode - `hdr` and `uri` fall back to roundrobin with a
+# warning, and `url_param` is the only one it rejects outright. Measured on
+# 3.4.4 on this machine.
+#
+BALANCE_HTTP_ONLY = ("hdr", "uri", "url_param")
 
 #
 # A query parameter name. Deliberately narrower than what a URL may carry: this
@@ -509,6 +518,14 @@ class Listen:
 
     protocol: str
     vip: str | None = None
+    port: int | None = None
+    """The port a tcp object is served on. None for http and https.
+
+    A tcp object names its own port because there is no shared one to name it
+    for: http and https have a cluster-wide port each and every object on an
+    address shares it, while a raw tcp service is a port and nothing else.
+    """
+
     source: str | None = None
     certificate: str | None = None
     redirect_http: bool = False
@@ -519,9 +536,21 @@ class Listen:
 class Proxy:
     name: str
     hostnames: tuple[str, ...]
+    """The names this object answers for. Empty for tcp, which has no names.
+
+    There is no Host header on a raw tcp connection, so a hostname on a tcp
+    object would be a label nothing consults - and a label that looks like
+    routing is worse than no label.
+    """
+
     listen: Listen
     routes: tuple[Route, ...]
-    backends: Mapping[str, Backend]
+    """Where each path goes. Empty for tcp, which has no paths."""
+
+    backend: str | None = None
+    """The single pool a tcp object forwards to. None for http and https."""
+
+    backends: Mapping[str, Backend] = MappingProxyType({})
     allow_from: tuple[str, ...] = ()
     """Who may reach this object at all. Empty means everyone.
 
@@ -936,6 +965,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
             "maintenance",
             "unavailable",
             "headers",
+            "backend",
         },
         name,
     )
@@ -947,16 +977,8 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     if not NAME.match(name):
         raise ModelError(f"{name} is not a usable object name")
 
-    hostnames = data.get("hostnames")
-    if not isinstance(hostnames, list) or not hostnames:
-        raise ModelError(f"{name}.hostnames must list at least one hostname")
-    for hostname in hostnames:
-        if not isinstance(hostname, str) or not HOSTNAME.match(hostname):
-            raise ModelError(f"{name}.hostnames contains something that is not a hostname")
-    if len(set(hostnames)) != len(hostnames):
-        raise ModelError(f"{name}.hostnames lists the same hostname twice")
-
     listen = _listen(data.get("listen"), f"{name}.listen")
+    hostnames = _hostnames(data.get("hostnames"), listen.protocol, name)
 
     backends_raw = _mapping(data.get("backends"), f"{name}.backends")
     if not backends_raw:
@@ -968,23 +990,36 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         if not NAME.match(key):
             raise ModelError(f"{name}.backends.{key} is not a usable backend name")
 
-    routes_raw = data.get("routes")
-    if not isinstance(routes_raw, list) or not routes_raw:
-        raise ModelError(f"{name}.routes must list at least one route")
-    routes = tuple(
-        _route(item, f"{name}.routes[{index}]", set(backends))
-        for index, item in enumerate(routes_raw)
-    )
-    paths = [(route.path, route.match) for route in routes]
-    if len(set(paths)) != len(paths):
-        raise ModelError(f"{name}.routes matches the same path twice")
+    routes: tuple[Route, ...]
+    if listen.protocol == "tcp":
+        routes = ()
+        backend = _tcp_backend(data, backends, name)
+        used = {backend}
+        _refuse_http_only(data, backends, name)
+    else:
+        backend = None
+        if "backend" in data:
+            raise ModelError(
+                f"{name}.backend is how a tcp object names its pool; an http or https object "
+                f"names one per route"
+            )
+        routes_raw = data.get("routes")
+        if not isinstance(routes_raw, list) or not routes_raw:
+            raise ModelError(f"{name}.routes must list at least one route")
+        routes = tuple(
+            _route(item, f"{name}.routes[{index}]", set(backends))
+            for index, item in enumerate(routes_raw)
+        )
+        paths = [(item.path, item.match) for item in routes]
+        if len(set(paths)) != len(paths):
+            raise ModelError(f"{name}.routes matches the same path twice")
+        used = {item.backend for item in routes if item.backend is not None}
 
     #
     # Every pool has to be reachable. A backend nothing routes to is either a
     # leftover from an edit or a route somebody forgot to add, and generating
     # configuration for it would hide both.
     #
-    used = {route.backend for route in routes if route.backend is not None}
     unused = sorted(set(backends) - used)
     if unused:
         raise ModelError(f"{name}.backends defines backends no route uses: {', '.join(unused)}")
@@ -1004,6 +1039,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         maintenance=maintenance,
         unavailable=unavailable,
         headers=headers,
+        backend=backend,
     )
 
 
@@ -1029,6 +1065,84 @@ def _message(data: Mapping[str, Any], location: str) -> str:
             f"{', '.join(unknown)}. The only one is {URL_PLACEHOLDER}"
         )
     return message
+
+
+def _refuse_http_only(data: Mapping[str, Any], backends: Mapping[str, Backend], name: str) -> None:
+    """Everything a tcp object cannot have, refused rather than written.
+
+    This exists because HAProxy does not refuse any of it. Measured on 3.4.4 on
+    this machine: in `mode tcp` a `cookie` line is ignored with a warning,
+    `http-request` rules are ignored, `option forwardfor` is ignored, and
+    `balance hdr` and `balance uri` *fall back to round robin* - and
+    `haproxy -c` exits 0 through all of it.
+
+    So a site that asked for session persistence would be published
+    successfully, validated successfully, and quietly balanced at random. The
+    only place that can be caught is here.
+    """
+
+    for field, why in (
+        ("maintenance", "there is no way to answer a raw connection with a page"),
+        ("unavailable", "there is no way to answer a raw connection with a message"),
+        ("headers", "a raw connection carries no headers"),
+    ):
+        if field in data:
+            raise ModelError(f"{name}.{field} means nothing for a tcp object: {why}")
+
+    #
+    # `certificate`, `redirect_http` and `hsts` need no check here: `_listen`
+    # already refuses all three for anything but https, and a second guard that
+    # can never fire is a line the next reader has to prove is dead.
+    #
+    for key, pool in backends.items():
+        where = f"{name}.backends.{key}"
+        if pool.cookie is not None:
+            raise ModelError(
+                f"{where}.cookie means nothing for a tcp object: HAProxy ignores it in tcp mode "
+                f"with a warning, and the pool is then balanced without persistence"
+            )
+        if pool.balance in BALANCE_HTTP_ONLY:
+            raise ModelError(
+                f"{where}.balance: {pool.balance} hashes something only an HTTP request has; "
+                f"HAProxy falls back to roundrobin in tcp mode without failing"
+            )
+
+
+def _hostnames(value: Any, protocol: str, name: str) -> tuple[str, ...]:
+    if protocol == "tcp":
+        if value is not None:
+            raise ModelError(
+                f"{name}.hostnames says nothing about a tcp object: there is no Host header on "
+                f"a raw connection, and the port is what identifies it"
+            )
+        return ()
+    if not isinstance(value, list) or not value:
+        raise ModelError(f"{name}.hostnames must list at least one hostname")
+    for hostname in value:
+        if not isinstance(hostname, str) or not HOSTNAME.match(hostname):
+            raise ModelError(f"{name}.hostnames contains something that is not a hostname")
+    if len(set(value)) != len(value):
+        raise ModelError(f"{name}.hostnames lists the same hostname twice")
+    return tuple(value)
+
+
+def _tcp_backend(data: Mapping[str, Any], backends: Mapping[str, Backend], name: str) -> str:
+    """The single pool a tcp object forwards to.
+
+    Named at the top of the object rather than through a route, because a route
+    is a path condition and a raw connection carries no path. One pool: a tcp
+    frontend has nothing to decide with, so a second one could never be
+    reached.
+    """
+
+    if "routes" in data:
+        raise ModelError(
+            f"{name}.routes says nothing about a tcp object: a raw connection carries no path"
+        )
+    backend = _required_string(data, "backend", name)
+    if backend not in backends:
+        raise ModelError(f"{name}.backend names no backend in this object: {backend}")
+    return backend
 
 
 def _headers(value: Any, location: str) -> Headers:
@@ -1180,7 +1294,9 @@ def _allow_from(value: Any, name: str) -> tuple[str, ...]:
 def _listen(value: Any, location: str) -> Listen:
     data = _mapping(value, location)
     _only_keys(
-        data, {"protocol", "vip", "source", "certificate", "redirect_http", "hsts"}, location
+        data,
+        {"protocol", "vip", "port", "source", "certificate", "redirect_http", "hsts"},
+        location,
     )
     protocol = _string(data, "protocol", location, PROTOCOLS)
     vip = data.get("vip")
@@ -1214,9 +1330,20 @@ def _listen(value: Any, location: str) -> Listen:
     if hsts is not None and protocol != "https":
         raise ModelError(f"{location}.hsts requires protocol: https")
 
+    port = data.get("port")
+    if protocol == "tcp":
+        if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+            raise ModelError(f"{location}.port is required for tcp and must be a port number")
+    elif port is not None:
+        raise ModelError(
+            f"{location}.port is only meaningful for tcp; http and https are served on the "
+            f"cluster's own ports"
+        )
+
     return Listen(
         protocol=protocol,
         vip=vip,
+        port=port,
         source=source,
         certificate=certificate,
         redirect_http=redirect,

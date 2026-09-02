@@ -1,0 +1,16 @@
+schema: 1
+name: site
+hostnames: [site.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 198.51.100.20
+        port: 8080

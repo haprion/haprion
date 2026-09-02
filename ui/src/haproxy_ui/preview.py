@@ -78,6 +78,7 @@ DEFAULTS = {
     "name": "app",
     "hostnames": "app.example.com",
     "protocol": "https",
+    "tcp_port": "",
     "vip": "",
     "source": "",
     "certificate": "",
@@ -199,6 +200,11 @@ def build_document(form: dict[str, object]) -> str:
 
     protocol = text("protocol")
     listen: dict[str, object] = {"protocol": protocol}
+    if protocol == "tcp":
+        port = text("tcp_port")
+        if not port.isdigit():
+            raise ValueError("a tcp object must name the port it is served on")
+        listen["port"] = int(port)
     if text("vip"):
         listen["vip"] = text("vip")
     if text("source"):
@@ -248,16 +254,23 @@ def build_document(form: dict[str, object]) -> str:
         backend["slow_start"] = text("slow_start")
 
     hostnames = [name.strip() for name in text("hostnames").replace(",", "\n").splitlines()]
-    document: dict[str, object] = {
-        "schema": 1,
-        "name": text("name"),
-        "hostnames": [name for name in hostnames if name],
-        "listen": listen,
-        "routes": _routes(
+    document: dict[str, object] = {"schema": 1, "name": text("name")}
+    if protocol == "tcp":
+        #
+        # A tcp object is an address, a port and one pool. The page keeps one
+        # form for both shapes, so the fields that mean nothing here are left
+        # out of the document rather than sent along - the engine's refusals
+        # then stay about what the object is instead of about the form.
+        #
+        document["listen"] = listen
+        document["backend"] = "web"
+    else:
+        document["hostnames"] = [name for name in hostnames if name]
+        document["listen"] = listen
+        document["routes"] = _routes(
             text("redirect_path"), text("redirect_location"), text("redirect_status")
-        ),
-        "backends": {"web": backend},
-    }
+        )
+    document["backends"] = {"web": backend}
     selected = form.get("allow_from", ())
     allowed = (
         [str(name) for name in selected if str(name).strip()]

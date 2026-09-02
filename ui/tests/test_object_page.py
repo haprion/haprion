@@ -85,6 +85,15 @@ class OpeningAnObject(LoginTestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("not written here", page.text)
 
+    def test_a_proxy_with_no_object_never_names_a_file(self) -> None:
+        """The card said "managed/proxies/<name>.yaml at <commit>" beside
+        "nothing stored", because the path was keyed off the reading's commit
+        rather than off this object. It named a file that does not exist."""
+
+        page = self.demo_client().get("/proxies/edge-demo/metrics")  # type: ignore[attr-defined]
+
+        self.assertNotIn("managed/proxies/metrics.yaml", page.text)
+
     def test_a_name_that_is_neither_stored_nor_served_is_not_a_page(self) -> None:
         """Otherwise every typo looks like a proxy somebody deleted."""
 

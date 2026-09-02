@@ -180,6 +180,19 @@ class TheOverviewOrdering(LoginTestCase):
         self.assertIn("Waiting for deploy", row)
         self.assertNotIn("ownership-badge", row)
 
+    def test_the_state_shares_the_line_with_the_hosts(self) -> None:
+        """`.proxy-hosts` is a block elsewhere, which put the badge on its own
+        line and made one row look like two."""
+
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+
+        text = client.get("/proxies").text
+        cell = text.split('data-label="Hosts / ports"', 1)[1].split("</td>", 1)[0]
+
+        self.assertIn("shop.demo.example", cell)
+        self.assertIn("Waiting for deploy", cell)
+
 
 class WhoMayRead(LoginTestCase):
     def test_a_non_admin_is_refused(self) -> None:

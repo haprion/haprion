@@ -521,6 +521,12 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
  * The badge follows the hostnames in the same cell, a readable gap away.
  */
 .proxy-waiting td { background: var(--panel-soft); }
+/*
+ * The hosts cell is a block elsewhere, so it would push the badge onto a line
+ * of its own. On this row the two belong together: hosts and ports read as
+ * normal, then a gap, then the state - one line, as everywhere else.
+ */
+.proxy-waiting .proxy-hosts { display: inline; }
 .waiting-badge { margin-left: 18px; vertical-align: middle; }
 .publication-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; padding: 14px 20px 0; color: var(--muted); font-size: 12px; }
 .proxy-link:hover strong { text-decoration: underline; }

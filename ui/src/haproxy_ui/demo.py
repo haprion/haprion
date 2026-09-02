@@ -534,6 +534,26 @@ backends:
         port: 8443
 """
 
+SHOP = """schema: 1
+name: shop
+hostnames:
+  - shop.demo.example
+listen:
+  protocol: https
+  certificate: wildcard-demo-example
+routes:
+  - path: /
+    backend: storefront
+backends:
+  storefront:
+    balance: roundrobin
+    health:
+      type: system
+    servers:
+      - host: 192.0.2.20
+        port: 8080
+"""
+
 #
 # Deliberately broken, and the most useful entry in the fixture. An object the
 # engine cannot read is the one somebody has to open, so the page has to stay
@@ -580,6 +600,19 @@ def object_rows(now: datetime | None = None) -> tuple[ClusterObjects, ...]:
                         "problem": None,
                         "protocol": "https",
                         "hostnames": ["app.demo.example", "www.demo.example"],
+                    },
+                    {
+                        #
+                        # Written and committed, serving nothing: no published
+                        # frontend carries its hostname yet. The common state
+                        # of an edit, and the one the overview must not hide.
+                        #
+                        "name": "shop",
+                        "document": SHOP,
+                        "readable": True,
+                        "problem": None,
+                        "protocol": "https",
+                        "hostnames": ["shop.demo.example"],
                     },
                     {
                         "name": "staging",

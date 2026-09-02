@@ -135,7 +135,13 @@ def _cluster_view(
             proxy = _proxy_view(value)
             if proxy is not None:
                 parsed_proxies.append(proxy)
-    proxies = tuple(parsed_proxies)
+    #
+    # Alphabetical, not the order the sections happen to sit in the generated
+    # file. That order is an artefact of how the configuration was assembled -
+    # it changes when a frontend is added - and a list whose order moves for
+    # reasons the reader cannot see is one they have to search every time.
+    #
+    proxies = tuple(sorted(parsed_proxies, key=lambda proxy: proxy.name))
     stale = now - reading.observed_at > stale_after
     version = result.get("version")
 

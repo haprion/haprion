@@ -515,11 +515,13 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .proxy-link { color: inherit; text-decoration: none; }
 /* Badge and sentence on one line: the state and why it is that state. */
 /*
- * Content width, not full width. The state belongs beside what it is a state
- * of; stretched to the card's edge it sits a screen away from the object it
- * describes, and the row needs a scrollbar to reach it.
+ * An object that is written but not deployed sits at the top of the same table
+ * as everything else, rather than in a section of its own: it is the row that
+ * changed, and a second table below the first is the last place anybody looks.
+ * The badge follows the hostnames in the same cell, a readable gap away.
  */
-.proxy-waiting-table { width: auto; }
+.proxy-waiting td { background: var(--panel-soft); }
+.waiting-badge { margin-left: 18px; vertical-align: middle; }
 .publication-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; padding: 14px 20px 0; color: var(--muted); font-size: 12px; }
 .proxy-link:hover strong { text-decoration: underline; }
 

@@ -8,6 +8,7 @@ refusal to render a page for a name that does not exist.
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from unittest import mock
@@ -135,6 +136,49 @@ class InSnapshotMode(LoginTestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("Not carried in a snapshot", page.text)
         self.assertNotIn("have not been read yet", page.text)
+
+
+class TheOverviewOrdering(LoginTestCase):
+    def test_an_undeployed_object_is_the_first_row_of_the_cluster(self) -> None:
+        """Not a section below the table, and not sorted in among the rest.
+
+        It is the row that changed, and a published list is long enough that
+        alphabetical order hides it. The rest stay alphabetical, and a row
+        joins that order as soon as it is deployed.
+        """
+
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+
+        text = client.get("/proxies").text
+        rows = re.findall(r'href="/proxies/edge-demo/([a-z-]+)"', text)
+
+        self.assertEqual(rows[:2], ["shop", "staging"])
+        self.assertNotIn("Stored, not yet serving", text)
+
+    def test_published_rows_are_alphabetical_and_not_in_file_order(self) -> None:
+        """Section order is an artefact of how the file was assembled."""
+
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+
+        text = client.get("/proxies").text
+        rows = re.findall(r'href="/proxies/service-demo/([a-z-]+)"', text)
+
+        self.assertEqual(rows, sorted(rows))
+
+    def test_an_undeployed_row_states_no_backend_count_or_ownership(self) -> None:
+        """Both are facts about a published frontend, and it has none yet."""
+
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+
+        text = client.get("/proxies").text
+        row = text.split('class="proxy-waiting"', 1)[1].split("</tr>", 1)[0]
+        self.assertIn("shop", row)
+
+        self.assertIn("Waiting for deploy", row)
+        self.assertNotIn("ownership-badge", row)
 
 
 class WhoMayRead(LoginTestCase):

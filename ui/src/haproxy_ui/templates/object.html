@@ -53,8 +53,13 @@
       <td data-label="Ownership"><span class="ownership-badge ownership-{{ 'managed' if object.published.managed else 'unmanaged' }}">{{ 'Managed' if object.published.managed else 'Unmanaged' }}</span></td>
     </tr></tbody>
   </table></div>
-  {% else %}
-  <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>No frontend names this</strong><span>{% if object.vip %}The object names no VIP, so it takes the cluster default. {% endif %}A managed frontend is named after the address it binds, so an object never appears as a section of its own</span></div></div>
+  {% elif not object.vip %}
+  {#
+    Only when the address is unknown is there nothing to say. When the VIP is
+    known the header above has already named the frontend and its address, and
+    an empty state under it would deny what the line above just stated.
+  #}
+  <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>No address yet</strong><span>The cluster has no network description, so there is no frontend to name</span></div></div>
   {% endif %}
 </article>
 </div>

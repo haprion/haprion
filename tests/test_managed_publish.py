@@ -91,8 +91,103 @@ class ManagedNetworkPublishTests(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
-    unittest.main()
+class OneEditsObjectsReachTheSameSnapshot(unittest.TestCase):
+    """A publish carries the objects somebody clicked, applied to the base."""
+
+    def base(self) -> dict[str, bytes]:
+        return {"managed/network.yaml": NETWORK, "managed/proxies/shop.yaml": PROXY}
+
+    def test_a_changed_object_is_stored_and_generated_from(self) -> None:
+        """Both halves, or the tree says one thing and the nodes serve another."""
+
+        edited = PROXY.replace(b"port: 8080", b"port: 9090")
+
+        files = managed_files(
+            self.base(),
+            network_document=NETWORK,
+            cluster=cluster(),
+            objects={"shop": edited},
+        )
+
+        self.assertEqual(files["managed/proxies/shop.yaml"], edited)
+        self.assertIn(":9090", files["managed/generated/1001-shop.cfg"].decode())
+        self.assertNotIn(":8080", files["managed/generated/1001-shop.cfg"].decode())
+
+    def test_a_new_object_is_added_without_disturbing_the_others(self) -> None:
+        added = PROXY.replace(b"name: shop", b"name: admin").replace(
+            b"shop.example.com", b"admin.example.com"
+        )
+
+        files = managed_files(
+            self.base(),
+            network_document=NETWORK,
+            cluster=cluster(),
+            objects={"admin": added},
+        )
+
+        self.assertEqual(files["managed/proxies/shop.yaml"], PROXY)
+        self.assertIn("managed/generated/1001-admin.cfg", files)
+
+    def test_removing_an_object_takes_its_configuration_with_it(self) -> None:
+        files = managed_files(
+            self.base(),
+            network_document=NETWORK,
+            cluster=cluster(),
+            objects={"shop": None},
+        )
+
+        self.assertNotIn("managed/proxies/shop.yaml", files)
+        self.assertNotIn("managed/generated/1001-shop.cfg", files)
+
+    def test_removing_an_object_this_version_does_not_have_is_refused(self) -> None:
+        """The tree moved under the draft.
+
+        Succeeding quietly would report that a site was taken down when
+        nothing happened.
+        """
+
+        with self.assertRaises(ConfigError) as raised:
+            managed_files(
+                self.base(),
+                network_document=NETWORK,
+                cluster=cluster(),
+                objects={"gone": None},
+            )
+
+        self.assertIn("gone", str(raised.exception))
+
+    def test_a_name_that_is_not_a_name_cannot_build_a_path(self) -> None:
+        """The names arrive in a job payload.
+
+        A path assembled from an unchecked name is how a publish of a proxy
+        object writes somewhere else entirely.
+        """
+
+        for name in ("../../core/haproxy", "shop/../../../etc/passwd", "Shop", ""):
+            with self.subTest(name), self.assertRaises(ConfigError) as raised:
+                managed_files(
+                    self.base(),
+                    network_document=NETWORK,
+                    cluster=cluster(),
+                    objects={name: PROXY},
+                )
+
+            self.assertIn("usable object name", str(raised.exception))
+
+    def test_an_edit_that_breaks_the_cluster_is_refused_before_commit(self) -> None:
+        """The whole layer is regenerated, so a collision with an untouched object shows."""
+
+        clash = PROXY.replace(b"name: shop", b"name: admin")
+
+        with self.assertRaises(ConfigError) as raised:
+            managed_files(
+                self.base(),
+                network_document=NETWORK,
+                cluster=cluster(),
+                objects={"admin": clash},
+            )
+
+        self.assertIn("shop.example.com", str(raised.exception))
 
 
 class ReservationsReachThePublishPath(unittest.TestCase):
@@ -128,3 +223,7 @@ class ReservationsReachThePublishPath(unittest.TestCase):
         )
 
         self.assertIn("managed/generated/1000-frontends.cfg", files)
+
+
+if __name__ == "__main__":
+    unittest.main()

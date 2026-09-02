@@ -20,7 +20,7 @@ from haproxy_mgmt.keepalived_fragment import NAME as KEEPALIVED_NAME
 from haproxy_mgmt.keepalived_fragment import render as keepalived_addresses
 from haproxy_mgmt.managed_network import load_document
 from haproxy_mgmt.managed_network import location as network_location
-from haproxy_mgmt.proxy_model import Proxy, load_proxy
+from haproxy_mgmt.proxy_model import NAME, Proxy, load_proxy
 from haproxy_mgmt.reservations import load_reservations
 
 MANAGED_PREFIX = "managed/"
@@ -58,11 +58,37 @@ def managed_proxies(files: Mapping[str, bytes]) -> list[Proxy]:
     return proxies
 
 
+def _apply_objects(result: dict[str, bytes], objects: Mapping[str, bytes | None]) -> None:
+    """Put one publish's object changes into the managed snapshot.
+
+    A name rather than a path, and held to the model's own pattern before it is
+    used to build one. The names arrive in a job payload, so a path assembled
+    from an unchecked name is how a publish of a proxy object ends up writing
+    somewhere else entirely.
+
+    `None` removes an object. Removing one that is not there is refused rather
+    than ignored: it means the tree moved under the draft, and quietly
+    succeeding would report that a site was taken down when nothing happened.
+    """
+
+    for name, document in sorted(objects.items()):
+        if not NAME.match(name):
+            raise ConfigError(f"{name} is not a usable object name")
+        path = f"{PROXY_PREFIX}{name}.yaml"
+        if document is None:
+            if path not in result:
+                raise ConfigError(f"{name} cannot be removed because this version does not have it")
+            del result[path]
+            continue
+        result[path] = document
+
+
 def managed_files(
     base_files: Mapping[str, bytes],
     *,
     network_document: bytes,
     cluster: Cluster,
+    objects: Mapping[str, bytes | None] | None = None,
     certificate_sans: Mapping[str, Sequence[str]] | None = None,
     allow_certificate_mismatch: bool = False,
 ) -> dict[str, bytes]:
@@ -90,8 +116,16 @@ def managed_files(
         if path.startswith((GENERATED_PREFIX, KEEPALIVED_PREFIX)):
             del result[path]
 
+    _apply_objects(result, objects or {})
+
+    #
+    # Read from `result` and not from `base_files`, which is the whole point of
+    # the line above: the objects being published are the base's with the
+    # snapshot applied, and generating from the base would write configuration
+    # for the version nobody asked to publish while storing the one they did.
+    #
     generated = generate(
-        managed_proxies(base_files),
+        managed_proxies(result),
         vips=network.vips,
         default_vip=network.default_vip,
         certificates=cluster.certificate_ids,

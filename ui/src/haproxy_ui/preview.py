@@ -16,8 +16,10 @@ during a publish rather than here.
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from haproxy_mgmt.config import AbuseProtection, Cluster, Node, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, generate
@@ -27,6 +29,7 @@ from haproxy_mgmt.proxy_model import (
     ModelError,
     dump_document,
     load_proxy,
+    read_document,
 )
 
 #
@@ -103,6 +106,7 @@ DEFAULTS = {
     "hsts": False,
     "hsts_max_age": "31536000",
     "hsts_subdomains": False,
+    "backend": "web",
     "balance": "roundrobin",
     "balance_key": "",
     "cookie": "",
@@ -116,7 +120,7 @@ DEFAULTS = {
     "slow_start": "",
     "allow_from": (),
     "allow_ranges": "",
-    "maintenance": "",
+    "maintenance": False,
     "maintenance_message": "",
     "unavailable_message": "",
     "request_headers": "",
@@ -151,6 +155,14 @@ class Preview:
     document: str = ""
     files: dict[str, str] = field(default_factory=dict)
     problem: str | None = None
+    #
+    # Whether the refusal is about this object or about how it sits beside its
+    # neighbours. The model refuses documents that are not objects; the
+    # generator refuses objects that clash with the ones already there. Only
+    # the first kind means the person has not finished writing something, and
+    # only the first kind should stop them from saving what they have.
+    #
+    about_the_object: bool = False
 
     @property
     def problem_field(self) -> str:
@@ -271,6 +283,13 @@ def build_document(form: dict[str, object]) -> str:
         backend["slow_start"] = text("slow_start")
 
     hostnames = [name.strip() for name in text("hostnames").replace(",", "\n").splitlines()]
+    #
+    # The pool's name is carried rather than fixed. Objects written by hand
+    # name their pool after what it serves, and a form that could only produce
+    # `web` would rename somebody's `console` the first time they opened it -
+    # which reads in a diff as a backend removed and another added.
+    #
+    pool = text("backend") or "web"
     document: dict[str, object] = {"schema": 1, "name": text("name")}
     written = [name for name in hostnames if name]
     if protocol == "tcp":
@@ -285,20 +304,20 @@ def build_document(form: dict[str, object]) -> str:
         # that misleads.
         #
         document["listen"] = listen
-        document["backend"] = "web"
+        document["backend"] = pool
         if written:
             document["hostnames"] = written
         if text("redirect_path") or text("redirect_location"):
             document["routes"] = _routes(
-                text("redirect_path"), text("redirect_location"), text("redirect_status")
+                text("redirect_path"), text("redirect_location"), text("redirect_status"), pool
             )
     else:
         document["hostnames"] = written
         document["listen"] = listen
         document["routes"] = _routes(
-            text("redirect_path"), text("redirect_location"), text("redirect_status")
+            text("redirect_path"), text("redirect_location"), text("redirect_status"), pool
         )
-    document["backends"] = {"web": backend}
+    document["backends"] = {pool: backend}
     selected = form.get("allow_from", ())
     allowed = (
         [str(name) for name in selected if str(name).strip()]
@@ -334,7 +353,7 @@ def build_document(form: dict[str, object]) -> str:
     return dump_document(document)
 
 
-def _routes(path: str, location: str, status: str) -> list[dict[str, object]]:
+def _routes(path: str, location: str, status: str, pool: str) -> list[dict[str, object]]:
     """The object's routes: the pool, plus one redirect where the form asks.
 
     The preview builds one pool and one route, which is what the page is for -
@@ -343,7 +362,7 @@ def _routes(path: str, location: str, status: str) -> list[dict[str, object]]:
     would be a site with nowhere to send anything.
     """
 
-    routes: list[dict[str, object]] = [{"path": "/", "backend": "web"}]
+    routes: list[dict[str, object]] = [{"path": "/", "backend": pool}]
     if not path and not location:
         return routes
     if not (path and location):
@@ -405,10 +424,14 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
     try:
         document = build_document(form)
     except ValueError as exc:
-        return Preview(problem=str(exc))
+        return Preview(problem=str(exc), about_the_object=True)
 
     try:
         proxy = load_proxy(str(form.get("name", "") or "").strip(), document.encode())
+    except ModelError as exc:
+        return Preview(document=document, problem=str(exc), about_the_object=True)
+
+    try:
         files = generate(
             [proxy],
             vips=cluster.vips,
@@ -422,7 +445,7 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
             abuse_protection=cluster.abuse_protection,
             certificate_sans=PREVIEW_CERTIFICATE_SANS,
         )
-    except (ModelError, GeneratorError) as exc:
+    except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))
 
     return Preview(document=document, files=files)
@@ -440,3 +463,199 @@ def choices(cluster: Cluster) -> dict[str, object]:
         "balances": BALANCE,
         "health_types": HEALTH_TYPES,
     }
+
+
+class Unexpressible(Exception):
+    """This object says something the form has no field for.
+
+    Raised rather than opened with the extra parts quietly dropped. An editor
+    that showed nine of an object's ten pools and then wrote back what it
+    showed would delete the tenth on the first save, and every screen in the
+    process would have looked correct.
+    """
+
+
+def _server_lines(servers: Any, pool: str) -> str:
+    """One `host:port` line per server, which is all the form has room for.
+
+    A server carrying anything else - `backup: true`, say - is left to the
+    round trip to refuse. Reading it here and dropping it would produce a form
+    that looks complete and a document that has lost a standby.
+    """
+
+    if not isinstance(servers, list):
+        raise Unexpressible(f"backends.{pool}.servers")
+    lines = []
+    for server in servers:
+        if not isinstance(server, Mapping):
+            raise Unexpressible(f"backends.{pool}.servers")
+        lines.append(f"{server.get('host', '')}:{server.get('port', '')}")
+    return "\n".join(lines)
+
+
+def _header_lines(edits: Any) -> str:
+    """The three shapes written back in the order the form documents them."""
+
+    if not isinstance(edits, Mapping):
+        return ""
+    lines = []
+    for name, value in _sub(edits, "set").items():
+        lines.append(f"{name}: {value}")
+    for name, value in _sub(edits, "add").items():
+        lines.append(f"+{name}: {value}")
+    removed = edits.get("delete")
+    if isinstance(removed, list):
+        lines.extend(f"-{name}" for name in removed)
+    return "\n".join(lines)
+
+
+def _sub(value: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    nested = value.get(key)
+    return nested if isinstance(nested, Mapping) else {}
+
+
+def form_from_document(document: str, *, networks: Collection[str] = ()) -> dict[str, Any]:
+    """The form fields that would produce this stored object.
+
+    The inverse of `build_document`, and checked as one: the fields are read
+    out, the document they would produce is built again, and the two are
+    compared. A difference means the form cannot say what the file says, and
+    the object is refused instead of opened.
+
+    Comparing the round trip is what makes this honest without maintaining a
+    list of unsupported shapes beside the form. Such a list is correct on the
+    day it is written and silently wrong the first time either side grows a
+    field - and the failure it produces is an object edited down to what the
+    form happened to know about.
+
+    `networks` are the cluster's group names, needed only to split `allow_from`
+    back into the groups it offers and the addresses it takes as text. Splitting
+    it by shape instead would put a group whose name looks like an address in
+    the wrong box.
+    """
+
+    try:
+        data = read_document("object", document.encode())
+        form = _form_fields(data, networks)
+    except (ModelError, ValueError) as exc:
+        raise Unexpressible(str(exc)) from exc
+
+    #
+    # `build_document` refuses shapes of its own - a server line that is not a
+    # host and port, a redirect with half its fields. A stored object that
+    # trips one of them is one the form cannot open, which is the same answer
+    # the comparison below gives, so it is reported the same way.
+    #
+    try:
+        rebuilt = read_document("object", build_document(form).encode())
+    except (ModelError, ValueError) as exc:
+        raise Unexpressible(str(exc)) from exc
+    difference = _first_difference(data, rebuilt)
+    if difference:
+        raise Unexpressible(difference)
+    return form
+
+
+def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str, Any]:
+    listen = _sub(data, "listen")
+    backends = _sub(data, "backends")
+    #
+    # Whatever the object's one pool is called. Reading `web` unconditionally
+    # would refuse every object whose pool is named after what it serves, and
+    # would refuse it while pointing at a path the file does not contain.
+    #
+    pool = next(iter(backends), "web")
+    backend = _sub(backends, pool)
+    health = _sub(backend, "health")
+    hsts = _sub(listen, "hsts")
+    headers = _sub(data, "headers")
+    protocol = str(listen.get("protocol", "") or "")
+
+    hostnames = data.get("hostnames")
+    written = [str(entry) for entry in hostnames] if isinstance(hostnames, list) else []
+
+    allowed = data.get("allow_from")
+    allowed = [str(entry) for entry in allowed] if isinstance(allowed, list) else []
+    groups = [entry for entry in allowed if entry in set(networks)]
+    ranges = [entry for entry in allowed if entry not in set(networks)]
+
+    #
+    # The second route is the form's redirect. The first is the pool, which the
+    # form does not show because it has no choice to offer about it - every
+    # object the form can express sends everything else to `web`.
+    #
+    routes = data.get("routes")
+    routes = routes if isinstance(routes, list) else []
+    redirect = _sub(routes[1], "redirect") if len(routes) > 1 else {}
+
+    return {
+        "name": str(data.get("name", "") or ""),
+        "hostnames": ", ".join(written),
+        "protocol": protocol,
+        "tcp_port": str(listen.get("port", "") or ""),
+        "vip": str(listen.get("vip", "") or ""),
+        "source": str(listen.get("source", "") or ""),
+        "certificate": str(listen.get("certificate", "") or ""),
+        "redirect_http": listen.get("redirect_http") is True,
+        "hsts": bool(hsts),
+        "hsts_max_age": str(hsts.get("max_age", "") or ""),
+        "hsts_subdomains": hsts.get("include_subdomains") is True,
+        "balance": str(backend.get("balance", "") or ""),
+        "balance_key": str(backend.get("balance_key", "") or ""),
+        "cookie": str(backend.get("cookie", "") or ""),
+        "backend": pool,
+        "servers": _server_lines(backend.get("servers"), pool),
+        "health_type": str(health.get("type", "") or ""),
+        "health_path": str(health.get("path", "") or ""),
+        "health_host": str(health.get("host", "") or ""),
+        "health_port": str(health.get("port", "") or ""),
+        "backend_tls": str(_sub(backend, "tls").get("verify", "") or ""),
+        "max_connections": str(backend.get("max_connections", "") or ""),
+        "slow_start": str(backend.get("slow_start", "") or ""),
+        "allow_from": tuple(groups),
+        "allow_ranges": "\n".join(ranges),
+        "maintenance": "maintenance" in data,
+        "maintenance_message": str(_sub(data, "maintenance").get("message", "") or ""),
+        "unavailable_message": str(_sub(data, "unavailable").get("message", "") or ""),
+        "request_headers": _header_lines(headers.get("request")),
+        "response_headers": _header_lines(headers.get("response")),
+        "redirect_path": str(routes[1].get("path", "") or "") if redirect else "",
+        "redirect_location": str(redirect.get("location", "") or ""),
+        "redirect_status": str(redirect.get("status", "") or ""),
+    }
+
+
+def _first_difference(stored: Any, rebuilt: Any, path: str = "") -> str:
+    """The first place the round trip did not reproduce the stored object.
+
+    Compared as data rather than as text. The two documents come from the same
+    serialiser, but key order and formatting are the author's and carry no
+    meaning - refusing an object because somebody wrote `backends` above
+    `routes` would be this module mistaking its own habits for the schema.
+
+    The path is returned rather than the value at it. It is enough to say which
+    part of the object the form has no field for, and it keeps a refusal from
+    quoting an object's own contents back onto a page.
+    """
+
+    if isinstance(stored, Mapping) or isinstance(rebuilt, Mapping):
+        left = stored if isinstance(stored, Mapping) else {}
+        right = rebuilt if isinstance(rebuilt, Mapping) else {}
+        for key in list(left) + [key for key in right if key not in left]:
+            if key not in left or key not in right:
+                return f"{path}.{key}".lstrip(".")
+            found = _first_difference(left[key], right[key], f"{path}.{key}".lstrip("."))
+            if found:
+                return found
+        return ""
+    if isinstance(stored, list) or isinstance(rebuilt, list):
+        written = stored if isinstance(stored, list) else []
+        produced = rebuilt if isinstance(rebuilt, list) else []
+        if len(written) != len(produced):
+            return path or "the object"
+        for index, (one, other) in enumerate(zip(written, produced, strict=True)):
+            found = _first_difference(one, other, f"{path}[{index}]")
+            if found:
+                return found
+        return ""
+    return "" if stored == rebuilt else (path or "the object")

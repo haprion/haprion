@@ -985,15 +985,36 @@ def load_proxy(name: str, document: bytes) -> Proxy:
         raise ModelError(str(exc)) from exc
 
 
-def _load_proxy(name: str, document: bytes) -> Proxy:
+def read_document(name: str, document: bytes) -> dict[str, Any]:
+    """The stored object as a plain mapping, without interpreting it.
+
+    `load_proxy` is what answers whether an object is usable. This answers the
+    narrower question an editor asks first - what does the file actually say -
+    and it exists here rather than in the caller so that nothing outside the
+    engine has to own a second YAML reader. A caller that parsed the document
+    itself would be free to disagree with the engine about size, encoding and
+    what counts as a mapping, in exactly the cases where the disagreement is
+    invisible until a publish.
+
+    The defaults the model fills in are deliberately absent from the result. An
+    editor that read them back would offer to write down values nobody typed,
+    and the object would grow every time it was opened.
+    """
+
     if len(document) > MAX_MODEL_BYTES:
         raise ModelError(f"{name}: the proxy object exceeds the size limit")
     try:
         loaded = yaml.safe_load(document.decode("utf-8"))
     except (UnicodeError, yaml.YAMLError) as exc:
         raise ModelError(f"{name}: the proxy object is not valid YAML: {exc}") from exc
+    try:
+        return _mapping(loaded, name)
+    except ConfigError as exc:
+        raise ModelError(str(exc)) from exc
 
-    data = _mapping(loaded, name)
+
+def _load_proxy(name: str, document: bytes) -> Proxy:
+    data = read_document(name, document)
     _only_keys(data, PROXY_KEYS, name)
 
     if data.get("schema") != 1:

@@ -24,7 +24,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
@@ -47,6 +47,7 @@ from haproxy_ui import (
     proxies,
     snapshot,
 )
+from haproxy_ui import editor as editor_module
 from haproxy_ui import preview as preview_module
 from haproxy_ui.config import Config
 from haproxy_ui.db import AuthenticatedSession
@@ -418,6 +419,37 @@ def build_router(config: Config) -> APIRouter:
                 "snapshot_age": snapshot_age(captured_at),
             },
         )
+
+    #
+    # Declared above `/proxies/{cluster}/{name}`, and the order is the whole
+    # reason it works: both are two segments, and the router takes the first
+    # that matches, so a route declared after it would never be reached and
+    # `new` would open the detail page for an object nobody has.
+    #
+    @router.get("/proxies/{cluster}/new", response_class=HTMLResponse)
+    def new_object_form(request: Request, cluster: str) -> Response:
+        return _editor_page(request, config, cluster, "", None)
+
+    @router.post("/proxies/{cluster}/new", response_class=HTMLResponse)
+    def new_object_submit(
+        request: Request,
+        cluster: str,
+        form: Annotated[editor_module.ObjectForm, Form()],
+    ) -> Response:
+        return _editor_submit(request, config, cluster, "", form)
+
+    @router.get("/proxies/{cluster}/{name}/edit", response_class=HTMLResponse)
+    def edit_object_form(request: Request, cluster: str, name: str) -> Response:
+        return _editor_page(request, config, cluster, name, None)
+
+    @router.post("/proxies/{cluster}/{name}/edit", response_class=HTMLResponse)
+    def edit_object_submit(
+        request: Request,
+        cluster: str,
+        name: str,
+        form: Annotated[editor_module.ObjectForm, Form()],
+    ) -> Response:
+        return _editor_submit(request, config, cluster, name, form)
 
     @router.get("/proxies/{cluster}/{name}", response_class=HTMLResponse)
     def proxy_object(request: Request, cluster: str, name: str) -> Response:
@@ -936,24 +968,7 @@ def build_router(config: Config) -> APIRouter:
     def _refusal(
         request: Request, session: Any, token: str, message: str, *, back: str
     ) -> Response:
-        return TEMPLATES.TemplateResponse(
-            request,
-            "refusal.html",
-            {
-                "username": session.username,
-                "role": session.role,
-                "management_writes": config.management_writes,
-                "csrf_token": auth.csrf_token(token),
-                "message": message,
-                "back": back,
-                "back_label": back.lstrip("/") or "the dashboard",
-                "section": back.lstrip("/"),
-                "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": None,
-            },
-            status_code=400,
-        )
+        return _refusal_page(request, config, message, back=back)
 
     @router.post("/operations")
     def queue_operation(
@@ -1182,6 +1197,389 @@ def _preview_page(
             "production_snapshot": config.production_snapshot,
             "snapshot_age": None,
         },
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class EditorState:
+    """Everything the editor reads about one cluster before it draws anything.
+
+    Gathered in one place because the page needs four of the poller's sources
+    to answer one question, and a route that fetched them inline would read as
+    plumbing with a form somewhere inside it. The four are not
+    interchangeable: the objects say what is stored, the network and the
+    certificates say what may be chosen, and the history says which version an
+    edit is being made against.
+    """
+
+    cluster: str
+    #
+    # The commit the stored objects were read at. A draft records it, and a
+    # publish refuses if the tree has moved since - so an edit is always made
+    # against a base somebody can name.
+    #
+    commit: str | None
+    base_version: int | None
+    stored: tuple[objects.ObjectView, ...]
+    choices: editor_module.EditorCluster
+    available: bool
+
+
+def _editor_state(request: Request, config: Config, cluster: str) -> EditorState:
+    clusters, object_rows, captured_at = read_source(request, config, OBJECTS_SOURCE)
+    if cluster not in clusters:
+        raise HTTPException(status_code=404)
+    stale_after = timedelta(seconds=config.poller.interval_seconds * 2)
+    reading = next((row for row in object_rows if row.cluster == cluster), None)
+    result = reading.result if reading is not None and isinstance(reading.result, dict) else {}
+    commit = result.get("commit")
+
+    _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
+    described = next(
+        (
+            view
+            for view in network.build_network_overview(
+                clusters,
+                network_rows,
+                now=captured_at,
+                stale_after=stale_after,
+                captured=captured_at is not None,
+            )
+            if view.cluster == cluster
+        ),
+        None,
+    )
+    _, certificate_rows, _ = read_source(request, config, CERTIFICATE_SOURCE)
+    held = next(
+        (
+            view
+            for view in certificates.build_certificate_overview(
+                clusters,
+                certificate_rows,
+                now=captured_at,
+                stale_after=stale_after,
+                captured=captured_at is not None,
+            ).clusters
+            if view.cluster == cluster
+        ),
+        None,
+    )
+    _, history_rows, _ = read_source(request, config, HISTORY_SOURCE)
+    released = next(
+        (
+            version
+            for view in history.build_history_overview(
+                clusters,
+                history_rows,
+                now=captured_at,
+                stale_after=stale_after,
+                captured=captured_at is not None,
+            ).clusters
+            if view.cluster == cluster
+            for version in view.versions
+            if version.published
+        ),
+        None,
+    )
+    return EditorState(
+        cluster=cluster,
+        commit=commit if isinstance(commit, str) and commit else None,
+        base_version=released.number if released else None,
+        stored=objects.cluster_object_views(reading),
+        choices=editor_module.editor_cluster(cluster, described, held),
+        available=reading is not None and reading.outcome == "done" and not reading.poll_error,
+    )
+
+
+def _editor_page(
+    request: Request,
+    config: Config,
+    cluster: str,
+    name: str,
+    form: editor_module.ObjectForm | None,
+    *,
+    action: str = "check",
+    draft_revision: str = "",
+    notice: str = "",
+) -> Response:
+    """Draw the editor, whether it was reached by a link or by a submission.
+
+    One function for both because the page is the same page: a form, what it
+    produces, and what is wrong with it. Splitting it would give a submission
+    a second chance to disagree with the link about which cluster values it
+    was judged against.
+    """
+
+    session = current_session(request)
+    if session is None:
+        return RedirectResponse("/login", status_code=303)
+    if not config.management_writes:
+        #
+        # 404 and not 403, for the reason `/operations` gives: an installation
+        # that does not do management writes has no editor, and saying
+        # "forbidden" would announce one waiting to be switched on.
+        #
+        return PlainTextResponse("Not found", status_code=404)
+    if session.role != "admin":
+        return PlainTextResponse("Refused", status_code=403)
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    state = _editor_state(request, config, cluster)
+
+    with request.app.state.pool.connection() as connection:
+        draft = db.read_draft(connection, cluster, name) if name else None
+
+    stored = next((view for view in state.stored if view.name == name), None)
+    unexpressible = ""
+    if form is None:
+        #
+        # Opened rather than submitted. A draft is what the person was last
+        # working on, so it wins over the stored document - and its absence is
+        # what makes an untouched object open as it is written.
+        #
+        source = draft.yaml if draft is not None and not draft.deleted else None
+        source = source or (stored.document if stored is not None else "")
+        if not source:
+            fields = dict(preview_module.DEFAULTS, name=name)
+        else:
+            try:
+                fields = preview_module.form_from_document(source, networks=state.choices.networks)
+            except preview_module.Unexpressible as exc:
+                fields = dict(preview_module.DEFAULTS, name=name)
+                unexpressible = str(exc)
+        form = editor_module.ObjectForm(**_form_defaults(fields))
+        draft_revision = str(draft.revision) if draft is not None else ""
+
+    fields = form.fields()
+    result = editor_module.check(
+        fields,
+        state.choices,
+        others=tuple((view.name, view.document) for view in state.stored),
+    )
+    return TEMPLATES.TemplateResponse(
+        request,
+        "editor.html",
+        {
+            "username": session.username,
+            "role": session.role,
+            "csrf_token": auth.csrf_token(token),
+            "section": "proxies",
+            "cluster": cluster,
+            "name": name,
+            "existing": stored is not None,
+            "form": fields,
+            "choices": editor_module.choices(state.choices),
+            "complete": state.choices.complete,
+            "available": state.available,
+            "suggested_cookie": preview_module.suggested_cookie(
+                str(fields.get("name", "")).strip()
+            ),
+            "result": result,
+            "draft": draft,
+            "draft_revision": draft_revision,
+            "unexpressible": unexpressible,
+            "notice": notice,
+            "action": action,
+            "unchanged": editor_module.unchanged(
+                result.document, stored.document if stored else None
+            ),
+            "management_writes": config.management_writes,
+            "demo_fixture": config.demo_fixture,
+            "production_snapshot": config.production_snapshot,
+            "snapshot_age": None,
+        },
+    )
+
+
+def _form_defaults(fields: dict[str, Any]) -> dict[str, Any]:
+    """The form model's own view of a field mapping.
+
+    `allow_from` is the only one that needs saying: the model holds a list and
+    the mapping carries a tuple, and pydantic will not take the tuple for a
+    field it was told is a list.
+    """
+
+    values = dict(fields)
+    values["allow_from"] = list(values.get("allow_from") or ())
+    return values
+
+
+def _editor_submit(
+    request: Request,
+    config: Config,
+    cluster: str,
+    name: str,
+    form: editor_module.ObjectForm,
+) -> Response:
+    """Check the object, save the draft, or throw the draft away.
+
+    Saving is refused for a document the engine cannot read as an object at
+    all. Whether it *fits the cluster* is a different question and does not
+    block a draft: a hostname another object claims is answered at publish
+    time, and a person who cannot save until every neighbour agrees cannot work
+    incrementally.
+    """
+
+    session = current_session(request)
+    if session is None:
+        return RedirectResponse("/login", status_code=303)
+    if not config.management_writes:
+        return PlainTextResponse("Not found", status_code=404)
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    if not auth.csrf_token_is_valid(token, form.csrf_token):
+        return PlainTextResponse("Refused", status_code=403)
+    if session.role != "admin":
+        return PlainTextResponse("Refused", status_code=403)
+
+    if form.action == "check":
+        return _editor_page(
+            request, config, cluster, name, form, draft_revision=form.expected_revision
+        )
+
+    state = _editor_state(request, config, cluster)
+    typed = str(form.name or "").strip()
+    object_id = name or typed
+    if not object_id:
+        return _refusal_page(
+            request, config, "An object needs a name before it can be saved.", back="/proxies"
+        )
+    #
+    # A rename is a new object and a removal, not an edit. Refused here rather
+    # than accepted and half-applied: the URL names what is being edited, and a
+    # form that could change it would write one object while the page claimed
+    # to be looking at another.
+    #
+    if name and typed and typed != name:
+        return _refusal_page(
+            request,
+            config,
+            "An object cannot be renamed here. Create the new name and remove the old one.",
+            back=f"/proxies/{cluster}/{name}/edit",
+        )
+
+    revision = int(form.expected_revision) if form.expected_revision.isdigit() else None
+
+    if form.action == "discard":
+        if revision is None:
+            return _refusal_page(
+                request,
+                config,
+                "There is no draft to discard.",
+                back=f"/proxies/{cluster}/{name}/edit",
+            )
+        with request.app.state.pool.connection() as connection:
+            try:
+                db.discard_draft(
+                    connection, cluster=cluster, object_id=object_id, expected_revision=revision
+                )
+            except db.DraftConflict as conflict:
+                connection.rollback()
+                return _refusal_page(
+                    request, config, str(conflict), back=f"/proxies/{cluster}/{object_id}/edit"
+                )
+            db.record_audit_event(
+                connection,
+                actor=session.username,
+                action="discard_draft",
+                cluster=cluster,
+                request_id=uuid4(),
+                detail={"object": object_id},
+            )
+            connection.commit()
+        return RedirectResponse(f"/proxies/{cluster}/{object_id}", status_code=303)
+
+    if form.action != "save":
+        return PlainTextResponse("Unknown action", status_code=400)
+
+    if state.commit is None:
+        return _refusal_page(
+            request,
+            config,
+            "The stored objects have not been read yet, so there is no base to edit against.",
+            back=f"/proxies/{cluster}/{object_id}/edit",
+        )
+    if not name and any(view.name == object_id for view in state.stored):
+        return _refusal_page(
+            request,
+            config,
+            "An object of that name already exists in this cluster.",
+            back=f"/proxies/{cluster}/new",
+        )
+
+    #
+    # A draft must be an object. Whether it fits beside its neighbours is a
+    # publish question, and refusing to save until every clash is resolved
+    # would stop somebody from working towards resolving them.
+    #
+    result = editor_module.check(form.fields(), state.choices)
+    if result.about_the_object:
+        return _editor_page(
+            request, config, cluster, name, form, draft_revision=form.expected_revision
+        )
+
+    with request.app.state.pool.connection() as connection:
+        try:
+            saved = db.save_draft(
+                connection,
+                cluster=cluster,
+                object_id=object_id,
+                yaml=result.document,
+                base_version=state.base_version,
+                base_hash=state.commit,
+                updated_by=session.username,
+                expected_revision=revision,
+            )
+        except db.DraftConflict as conflict:
+            connection.rollback()
+            return _refusal_page(
+                request, config, str(conflict), back=f"/proxies/{cluster}/{object_id}/edit"
+            )
+        db.record_audit_event(
+            connection,
+            actor=session.username,
+            action="save_draft",
+            cluster=cluster,
+            request_id=uuid4(),
+            detail={"object": object_id, "revision": saved.revision},
+        )
+        connection.commit()
+    #
+    # 303 rather than a rendered page, as everywhere else that writes: a
+    # refresh of this response must not save the draft a second time under a
+    # revision that has since moved.
+    #
+    return RedirectResponse(f"/proxies/{cluster}/{object_id}/edit", status_code=303)
+
+
+def _refusal_page(request: Request, config: Config, message: str, *, back: str) -> Response:
+    """A refusal a person met mid-form, drawn inside the interface's own chrome.
+
+    Module level so the editor can reach it as well as the closure that queues
+    operations. The message is the caller's sentence and never an echo of what
+    was typed - the same rule the network form's refusals follow, and for the
+    same reason.
+    """
+
+    session = current_session(request)
+    if session is None:
+        return RedirectResponse("/login", status_code=303)
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    return TEMPLATES.TemplateResponse(
+        request,
+        "refusal.html",
+        {
+            "username": session.username,
+            "role": session.role,
+            "management_writes": config.management_writes,
+            "csrf_token": auth.csrf_token(token),
+            "message": message,
+            "back": back,
+            "back_label": back.lstrip("/") or "the dashboard",
+            "section": back.lstrip("/").split("/")[0],
+            "demo_fixture": config.demo_fixture,
+            "production_snapshot": config.production_snapshot,
+            "snapshot_age": None,
+        },
+        status_code=400,
     )
 
 

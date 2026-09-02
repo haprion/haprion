@@ -17,7 +17,7 @@
   <article class="cluster-card proxy-cluster-card cluster-accent-{{ cluster.accent }}">
     <header class="cluster-header">
       <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
-      <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
+      <div class="cluster-state">{% if management_writes and role == 'admin' %}<a class="secondary-button" href="/proxies/{{ cluster.cluster }}/new">New object</a>{% endif %}<span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
     {% set pending = (waiting.get(cluster.cluster, ()) if waiting else ()) if role == 'admin' else () %}
     {% if cluster.proxies or pending %}

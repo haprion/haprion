@@ -1,0 +1,55 @@
+{% extends "layout.html" %}
+{% block title %}{% if existing %}{{ name }}{% else %}New object{% endif %} — HAProxy Manager{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <h1>{% if existing %}Editing {{ name }}{% else %}A new object on {{ cluster }}{% endif %}</h1>
+    <p>Changes are kept as a draft on this cluster. Nothing reaches the configuration until it is published, and publishing does not deploy.</p>
+  </div>
+  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-info"></span>{{ cluster }}</span></div>
+</section>
+
+{% if not available %}
+<p class="preview-notice"><strong>The stored objects could not be read.</strong> The form below is still usable, but nothing here has been checked against what the cluster actually holds.</p>
+{% elif not complete %}
+<p class="preview-notice"><strong>This cluster's addresses have not been read.</strong> The object is checked against the model but not against the cluster — a hostname another object already claims, or a certificate that does not answer for a name, would not be caught here.</p>
+{% endif %}
+
+{% if unexpressible %}
+<p class="preview-notice"><strong>This object cannot be opened in the form.</strong> It says something the fields below have no place for, at <code>{{ unexpressible }}</code>. Saving here would write it back without that part, so the form has been left at its defaults instead — edit this object from the command line, or <a href="/proxies/{{ cluster }}/{{ name }}">read it as it is stored</a>.</p>
+{% endif %}
+
+{% if draft %}
+<section class="cluster-card">
+  <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div class="section-title"><h3>An unpublished draft</h3><p>Last changed by {{ draft.updated_by }}, revision {{ draft.revision }}</p></div></div></header>
+  <p class="preview-notice">This is what the form below was opened with. The stored object is unchanged until the draft is published.</p>
+</section>
+{% endif %}
+
+<form method="post" action="{% if existing %}/proxies/{{ cluster }}/{{ name }}/edit{% else %}/proxies/{{ cluster }}/new{% endif %}" class="preview-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="expected_revision" value="{{ draft_revision }}">
+
+  {% with name_locked = existing %}{% include "_object-form.html" %}{% endwith %}
+
+  <div class="form-actions">
+    <button type="submit" name="action" value="check" class="secondary-button">Check it</button>
+    <button type="submit" name="action" value="save" class="primary-button">Save as draft</button>
+    {% if draft %}<button type="submit" name="action" value="discard" class="secondary-button">Discard the draft</button>{% endif %}
+  </div>
+</form>
+
+{% if result.problem %}
+<section class="cluster-card result-card refusal-card">
+  <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-critical" aria-hidden="true"></span><div class="section-title"><h3>{% if result.about_the_object %}This object was refused{% else %}This object does not fit the cluster{% endif %}</h3><p>{% if result.about_the_object %}It has to be answered before the draft can be saved{% else %}The draft can still be saved; a publish would refuse this{% endif %}</p></div></div></header>
+  <p class="refusal">{% if result.problem_field %}<code>{{ result.problem_field }}</code> {% endif %}{{ result.problem_text }}</p>
+</section>
+{% endif %}
+
+{% if result.document %}
+<section class="cluster-card result-card">
+  <header class="cluster-header"><div class="cluster-identity"><div><h3>The object</h3><p>{% if unchanged %}Identical to what is stored as{% else %}What would be stored as{% endif %} <code>managed/proxies/{{ form.name }}.yaml</code></p></div></div></header>
+  <pre class="config-block"><code>{{ result.document }}</code></pre>
+</section>
+{% endif %}
+{% endblock %}

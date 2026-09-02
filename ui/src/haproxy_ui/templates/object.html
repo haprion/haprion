@@ -20,7 +20,12 @@
 <article class="cluster-card cluster-accent-{{ object.accent }}">
   <header class="cluster-header">
     <div class="cluster-identity"><div><h3>Stored object</h3><p>{% if object.stored %}<code>managed/proxies/{{ object.name }}.yaml</code> at {{ object.short_commit }}{% else %}Read from the cluster repository{% endif %}</p></div></div>
-    <div class="cluster-state">{% if object.observed_iso %}<time datetime="{{ object.observed_iso }}" title="{{ object.observed_at }}">{{ object.age_label }}</time>{% else %}<span class="observation-age">Never read</span>{% endif %}</div>
+    {#
+      The link is drawn only where the editor exists. In read-only mode the
+      route answers 404 rather than 403, so a button that led there would
+      offer a page the installation does not have.
+    #}
+    <div class="cluster-state">{% if management_writes and object.stored %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Edit</a>{% endif %}{% if object.observed_iso %}<time datetime="{{ object.observed_iso }}" title="{{ object.observed_at }}">{{ object.age_label }}</time>{% else %}<span class="observation-age">Never read</span>{% endif %}</div>
   </header>
 
   {% if object.stored %}

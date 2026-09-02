@@ -253,6 +253,14 @@ backup_root: /srv/state-backups
 backup_timer: haproxy-state-backup.timer
 ```
 
+`certificate_root` is also what a publish reads to check that each site's certificate answers for
+its hostnames. HAProxy loads a certificate; it does not check it against the objects using it, so a
+name the certificate cannot answer for reaches visitors as a browser error while every layer here
+reports success. **Leave the root unconfigured and that check does not run** - the publish succeeds
+and nothing says the question went unasked. Choosing a certificate that does not cover the name on
+purpose stays possible with the certificate mismatch override, which is asked for per publish rather
+than written into the object.
+
 `backup_root` is where the state backup engine writes one directory per node, and it is what
 `haproxy-list-backups` reads. Called with no cluster, that command lists every configured cluster
 in turn - it reads `clusters.yaml` as the calling user, the same way `haproxy-cluster-config` does,

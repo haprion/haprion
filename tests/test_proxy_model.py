@@ -613,3 +613,80 @@ class EditingTheHeadersThatPassThrough(unittest.TestCase):
             load_proxy("shop", self.headers("  request:\n    delete: ['X Tenant']"))
 
         self.assertIn("not a header name", str(raised.exception))
+
+
+class ARouteMayAnswerInsteadOfForwarding(unittest.TestCase):
+    """Exactly one of `backend` and `redirect`, never both and never neither."""
+
+    def route(self, body: str) -> bytes:
+        return with_lines(
+            ("  - path: /\n    backend: web\n", f"  - path: /\n    backend: web\n{body}")
+        )
+
+    def test_a_redirect_carries_its_location_and_status(self) -> None:
+        proxy = load_proxy(
+            "shop",
+            self.route(
+                "  - path: /old\n    redirect:\n"
+                "      location: https://example.net/new\n      status: 308\n"
+            ),
+        )
+
+        redirect = proxy.routes[1].redirect
+        assert redirect is not None
+        self.assertEqual((redirect.location, redirect.status), ("https://example.net/new", 308))
+        self.assertIsNone(proxy.routes[1].backend)
+
+    def test_permanent_is_the_default(self) -> None:
+        proxy = load_proxy(
+            "shop",
+            self.route("  - path: /old\n    redirect:\n      location: https://example.net/new\n"),
+        )
+
+        redirect = proxy.routes[1].redirect
+        assert redirect is not None
+        self.assertEqual(redirect.status, 301)
+
+    def test_both_at_once_is_refused(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy(
+                "shop",
+                self.route(
+                    "  - path: /old\n    backend: web\n    redirect:\n"
+                    "      location: https://example.net/new\n"
+                ),
+            )
+
+        self.assertIn("exactly one", str(raised.exception))
+
+    def test_a_rewrite_beside_a_redirect_is_refused(self) -> None:
+        """It describes what a pool is handed, and a redirect hands a pool nothing."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy(
+                "shop",
+                self.route(
+                    "  - path: /old\n    strip_prefix: /old\n    redirect:\n"
+                    "      location: https://example.net/new\n"
+                ),
+            )
+
+        self.assertIn("rewrites the path", str(raised.exception))
+
+    def test_a_status_that_is_not_a_redirect_is_refused(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy(
+                "shop",
+                self.route(
+                    "  - path: /old\n    redirect:\n"
+                    "      location: https://example.net/new\n      status: 200\n"
+                ),
+            )
+
+        self.assertIn("308", str(raised.exception))
+
+    def test_a_location_that_is_not_absolute_is_refused(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.route("  - path: /old\n    redirect:\n      location: /new\n"))
+
+        self.assertIn("absolute", str(raised.exception))

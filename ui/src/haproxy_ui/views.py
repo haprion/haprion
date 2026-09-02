@@ -424,6 +424,9 @@ def build_router(config: Config) -> APIRouter:
         unavailable_message: str = Form(default="", max_length=200),
         request_headers: str = Form(default="", max_length=2048),
         response_headers: str = Form(default="", max_length=2048),
+        redirect_path: str = Form(default="", max_length=1024),
+        redirect_location: str = Form(default="", max_length=1024),
+        redirect_status: str = Form(default="301", max_length=3),
         allow_from: list[str] = NETWORK_SELECTION,
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
@@ -473,6 +476,9 @@ def build_router(config: Config) -> APIRouter:
                 "unavailable_message": unavailable_message,
                 "request_headers": request_headers,
                 "response_headers": response_headers,
+                "redirect_path": redirect_path,
+                "redirect_location": redirect_location,
+                "redirect_status": redirect_status,
             },
             submitted=True,
         )

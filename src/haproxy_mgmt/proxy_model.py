@@ -343,6 +343,27 @@ class Backend:
 
 
 @dataclass(frozen=True, slots=True)
+class Redirect:
+    """A route that answers rather than forwards.
+
+    Generated as a backend of its own rather than as a rule in the frontend,
+    for the reason the unknown-name answer is: `http-request` rules run before
+    `use_backend`, so a redirect written there would be evaluated before the
+    routing decision and a short redirect path would shadow a longer route that
+    should have won. As a backend it takes part in the same longest-prefix
+    order as everything else, and the semantics frozen in `route_match` need no
+    exception.
+
+    `location` replaces the whole target rather than keeping the path. One
+    behaviour, said plainly; preserving the path is an additive field the day
+    somebody needs it.
+    """
+
+    location: str
+    status: int = 301
+
+
+@dataclass(frozen=True, slots=True)
 class Route:
     """One matching rule and where it sends what it matched.
 
@@ -354,7 +375,12 @@ class Route:
 
     path: str
     match: str
-    backend: str
+    backend: str | None = None
+    """The pool this route sends to. None where the route redirects instead."""
+
+    redirect: Redirect | None = None
+    """An answer instead of a destination. Exactly one of the two is set."""
+
     strip_prefix: str | None = None
     add_prefix: str | None = None
 
@@ -370,6 +396,14 @@ class Route:
 
         return len([part for part in self.path.split("/") if part])
 
+
+#
+# The answers a redirect may give. Permanent and temporary, and the two that
+# promise the method survives - a browser is free to turn a redirected POST
+# into a GET on 301 and 302, and may not on 307 and 308. Written out as a
+# choice because "redirect" without a code is four different behaviours.
+#
+REDIRECT_STATUS = (301, 302, 303, 307, 308)
 
 #
 # The longest promise HSTS may make. Two years is what the preload lists ask
@@ -780,7 +814,9 @@ def _backend(name: str, value: Any, location: str) -> Backend:
 
 def _route(value: Any, location: str, backends: set[str]) -> Route:
     data = _mapping(value, location)
-    _only_keys(data, {"path", "match", "backend", "strip_prefix", "add_prefix"}, location)
+    _only_keys(
+        data, {"path", "match", "backend", "redirect", "strip_prefix", "add_prefix"}, location
+    )
 
     path = _required_string(data, "path", location)
     if not ROUTE_PATH.match(path):
@@ -791,21 +827,53 @@ def _route(value: Any, location: str, backends: set[str]) -> Route:
     if match not in MATCH_MODES:
         raise ModelError(f"{location}.match must be one of: {', '.join(MATCH_MODES)}")
 
-    backend = _required_string(data, "backend", location)
-    if backend not in backends:
-        raise ModelError(f"{location}.backend names no backend in this object: {backend}")
+    redirect = _redirect(data.get("redirect"), f"{location}.redirect")
+    backend = data.get("backend")
+    if (backend is None) == (redirect is None):
+        raise ModelError(f"{location} must set exactly one of backend or redirect")
+    if backend is not None:
+        backend = _required_string(data, "backend", location)
+        if backend not in backends:
+            raise ModelError(f"{location}.backend names no backend in this object: {backend}")
 
     strip = _optional_prefix(data, "strip_prefix", location)
     if strip is not None and not path.startswith(strip):
         raise ModelError(f"{location}.strip_prefix must be a prefix of the route's own path")
+    #
+    # A rewrite describes what the pool behind the route is handed. A redirect
+    # hands nothing to a pool, so a rewrite beside one is an instruction with
+    # nowhere to land - and silently ignoring it is how somebody spends an
+    # afternoon wondering why the path never changed.
+    #
+    if redirect is not None and (strip is not None or data.get("add_prefix") is not None):
+        raise ModelError(f"{location} rewrites the path of a route that redirects instead")
 
     return Route(
         path=path,
         match=str(match),
         backend=backend,
+        redirect=redirect,
         strip_prefix=strip,
         add_prefix=_optional_prefix(data, "add_prefix", location),
     )
+
+
+def _redirect(value: Any, location: str) -> Redirect | None:
+    if value is None:
+        return None
+    data = _mapping(value, location)
+    _only_keys(data, {"location", "status"}, location)
+    target = data.get("location")
+    if not isinstance(target, str) or not target.startswith(("http://", "https://")):
+        raise ModelError(f"{location}.location must be an absolute http or https URL")
+    if any(character in target for character in FORBIDDEN_IN_VALUE) or " " in target:
+        raise ModelError(f"{location}.location may not contain spaces, quotes or line breaks")
+    status = data.get("status", REDIRECT_STATUS[0])
+    if status not in REDIRECT_STATUS:
+        raise ModelError(
+            f"{location}.status must be one of: {', '.join(str(code) for code in REDIRECT_STATUS)}"
+        )
+    return Redirect(location=target, status=int(status))
 
 
 def dump_document(fields: Mapping[str, Any]) -> str:
@@ -916,7 +984,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     # leftover from an edit or a route somebody forgot to add, and generating
     # configuration for it would hide both.
     #
-    used = {route.backend for route in routes}
+    used = {route.backend for route in routes if route.backend is not None}
     unused = sorted(set(backends) - used)
     if unused:
         raise ModelError(f"{name}.backends defines backends no route uses: {', '.join(unused)}")

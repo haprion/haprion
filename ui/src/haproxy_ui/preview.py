@@ -103,6 +103,9 @@ DEFAULTS = {
     "unavailable_message": "",
     "request_headers": "",
     "response_headers": "",
+    "redirect_path": "",
+    "redirect_location": "",
+    "redirect_status": "301",
 }
 
 
@@ -250,7 +253,9 @@ def build_document(form: dict[str, object]) -> str:
         "name": text("name"),
         "hostnames": [name for name in hostnames if name],
         "listen": listen,
-        "routes": [{"path": "/", "backend": "web"}],
+        "routes": _routes(
+            text("redirect_path"), text("redirect_location"), text("redirect_status")
+        ),
         "backends": {"web": backend},
     }
     selected = form.get("allow_from", ())
@@ -286,6 +291,26 @@ def build_document(form: dict[str, object]) -> str:
         document["headers"] = {phase: edits for phase, edits in headers.items() if edits}
 
     return dump_document(document)
+
+
+def _routes(path: str, location: str, status: str) -> list[dict[str, object]]:
+    """The object's routes: the pool, plus one redirect where the form asks.
+
+    The preview builds one pool and one route, which is what the page is for -
+    seeing what a shape produces. A redirect is the second route rather than a
+    replacement for the first, because a redirect that took the whole object
+    would be a site with nowhere to send anything.
+    """
+
+    routes: list[dict[str, object]] = [{"path": "/", "backend": "web"}]
+    if not path and not location:
+        return routes
+    if not (path and location):
+        raise ValueError("a redirect needs both a path and a location")
+    if not status.isdigit():
+        raise ValueError("the redirect status must be a number")
+    routes.append({"path": path, "redirect": {"location": location, "status": int(status)}})
+    return routes
 
 
 def _header_edits(written: str, phase: str) -> dict[str, object]:

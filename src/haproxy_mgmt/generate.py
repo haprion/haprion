@@ -33,7 +33,13 @@ import ipaddress
 from collections.abc import Iterable, Mapping, Sequence
 
 from haproxy_mgmt.config import AbuseProtection, ConfigError, UnknownHost, Vip
-from haproxy_mgmt.guid import backend_guid, frontend_guid, listener_guid_prefix, server_guid
+from haproxy_mgmt.guid import (
+    backend_guid,
+    frontend_guid,
+    listener_guid_prefix,
+    redirect_name,
+    server_guid,
+)
 from haproxy_mgmt.proxy_model import (
     URL_PLACEHOLDER,
     Backend,
@@ -60,6 +66,12 @@ PREFIX = "mgd"
 # belongs to the cluster and not to any site on it.
 #
 TRUSTED_ACL = f"{PREFIX}-trusted-proxy"
+
+#
+# What a generated redirect backend is called, before the derived part. Named
+# rather than numbered so that reading `show stat` says what the section is.
+#
+REDIRECT_PREFIX = "redirect"
 
 #
 # How many source addresses one frontend keeps counters for. Entries expire
@@ -739,7 +751,7 @@ def _frontend_rules(
 
     decisions: list[str] = []
     for index, route in enumerate(order_routes(proxy.routes)):
-        backend = _backend_name(proxy.name, route.backend)
+        backend = _backend_name(proxy.name, _destination(route))
         if route.path == "/" and route.match == "prefix":
             #
             # The root prefix matches every path, so a path condition would be
@@ -756,11 +768,58 @@ def _frontend_rules(
     return lines + decisions
 
 
+def _destination(route: Route) -> str:
+    """The backend name a route sends to, whether it is a pool or an answer.
+
+    A redirect's name is derived from what it does rather than from where it
+    sits in the list. Adding a route above it then moves no name, and therefore
+    no GUID and no counter - the same reason a server is identified by its
+    address instead of its position.
+    """
+
+    if route.backend is not None:
+        return route.backend
+    redirect = route.redirect
+    if redirect is None:
+        #
+        # The model refuses a route that sets neither, so reaching this means
+        # the two layers have drifted. Said as a refusal rather than as an
+        # assertion, so it survives the day somebody runs with -O.
+        #
+        raise GeneratorError(f"a route sends nowhere: {route.path}")
+    name = redirect_name(route.path, route.match, redirect.location)
+    return f"{REDIRECT_PREFIX}-{name}"
+
+
+def _redirect_backends(proxy: Proxy) -> list[str]:
+    lines: list[str] = []
+    for route in order_routes(proxy.routes):
+        if route.redirect is None:
+            continue
+        name = _destination(route)
+        lines += [
+            "",
+            f"backend {_backend_name(proxy.name, name)}",
+            f"    guid {backend_guid(proxy.name, name)}",
+            "    mode http",
+            #
+            # Written in single quotes: a redirect location is a log-format
+            # string, so `%` has to be doubled, and HAProxy expands `$NAME`
+            # inside double quotes but not inside single ones. Both measured on
+            # 3.4.4 on this machine.
+            #
+            f"    http-request redirect location '{_header_value(route.redirect.location)}' "
+            f"code {route.redirect.status}",
+        ]
+    return lines
+
+
 def _object_file(proxy: Proxy, source: str | None, resolvers: str | None) -> str:
     rewrites = _rewrites_per_backend(proxy)
     body: list[str] = []
     for name in sorted(proxy.backends):
         body.extend(_backend(proxy, proxy.backends[name], rewrites[name], source, resolvers))
+    body.extend(_redirect_backends(proxy))
     return _lines(HEADER, ["#", f"# Object: {proxy.name}", "#"], body)
 
 
@@ -777,6 +836,8 @@ def _rewrites_per_backend(proxy: Proxy) -> dict[str, list[str]]:
     rewrites: dict[str, list[str]] = {name: [] for name in proxy.backends}
     seen: dict[str, Route] = {}
     for route in proxy.routes:
+        if route.backend is None:
+            continue
         earlier = seen.get(route.backend)
         if earlier is None:
             seen[route.backend] = route

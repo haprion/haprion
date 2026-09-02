@@ -15,6 +15,10 @@ routes:
   - path: /health
     match: exact
     backend: web
+  - path: /shop
+    redirect:
+      location: https://example.net/store
+      status: 308
 backends:
   web:
     balance: roundrobin

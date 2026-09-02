@@ -376,3 +376,31 @@ class HeaderEditsAreWrittenAsLines(unittest.TestCase):
 
 def response_headers_form() -> dict[str, object]:
     return form(response_headers="X-Frame-Options: DENY\n-Server")
+
+
+class ARouteMayRedirect(unittest.TestCase):
+    def test_the_redirect_becomes_a_backend_of_its_own(self) -> None:
+        result = preview(
+            form(
+                redirect_path="/old",
+                redirect_location="https://example.net/new",
+                redirect_status="308",
+            ),
+            PREVIEW_CLUSTER,
+        )
+
+        self.assertIsNone(result.problem)
+        self.assertIn(
+            "http-request redirect location 'https://example.net/new' code 308",
+            result.files["1001-app.cfg"],
+        )
+
+    def test_a_path_without_a_location_is_named_before_the_engine_sees_it(self) -> None:
+        result = preview(form(redirect_path="/old"), PREVIEW_CLUSTER)
+
+        self.assertIsNotNone(result.problem)
+
+    def test_no_redirect_leaves_the_object_with_one_route(self) -> None:
+        result = preview(form(), PREVIEW_CLUSTER)
+
+        self.assertNotIn("redirect", result.files["1001-app.cfg"])

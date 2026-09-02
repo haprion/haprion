@@ -64,6 +64,10 @@ routes:
   - path: /health
     match: exact
     backend: web
+  - path: /legacy
+    redirect:
+      location: https://example.net/store
+      status: 308
 backends:
   web:
     balance: roundrobin
@@ -371,6 +375,32 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
                     self.through_haproxy(target),
                     (route.backend, rewrite(route, target)),
                 )
+
+    def test_a_route_may_answer_with_a_redirect_instead_of_a_pool(self) -> None:
+        """Served from a backend, so it takes part in the same longest-prefix order.
+
+        A redirect written as an `http-request` rule in the frontend would be
+        evaluated before any `use_backend`, and a short redirect path would then
+        shadow a longer route that should have won.
+        """
+
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.putrequest("GET", "/legacy", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", HOSTNAME)
+            connection.endheaders()
+            response = connection.getresponse()
+            response.read()
+
+            self.assertEqual(response.status, 308)
+            self.assertEqual(response.getheader("location"), "https://example.net/store")
+        finally:
+            connection.close()
+
+    def test_a_longer_route_still_wins_over_a_shorter_redirect(self) -> None:
+        """Segment matching, not text matching: `/legacyx` is a different path."""
+
+        self.assertEqual(self.through_haproxy("/legacyx"), ("web", "/legacyx"))
 
     def test_a_request_for_another_host_reaches_no_object(self) -> None:
         """The host ACL is a condition, not decoration.

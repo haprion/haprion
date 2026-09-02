@@ -75,6 +75,14 @@
       <label>Session cookie<input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Keeps one visitor on one server through their session. Empty means no persistence. The name is case-sensitive; <code>{{ suggested_cookie }}</code> is a safe choice.</small></label>
       <label>Connections per server<input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>The most one server takes at a time. What does not fit waits in the pool's queue for up to 5 seconds. Empty means no limit.</small></label>
       <label>Slow start<input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>How long a server that has been down ramps up to full load. Needs a health check; must be longer than the check interval.</small></label>
+      <label>Redirect — path<input name="redirect_path" value="{{ form.redirect_path }}" placeholder="/old"><small>A path this site answers with a redirect instead of forwarding. Empty means none.</small></label>
+      <label>Redirect — to<input name="redirect_location" value="{{ form.redirect_location }}" placeholder="https://example.net/new"><small>An absolute URL. It replaces the whole target, not just the host.</small></label>
+      <label>Redirect — status
+        <select name="redirect_status">
+          {% for code in ['301', '302', '303', '307', '308'] %}<option value="{{ code }}"{% if form.redirect_status == code %} selected{% endif %}>{{ code }}</option>{% endfor %}
+        </select>
+        <small>301 and 302 let a browser turn a POST into a GET; 307 and 308 do not.</small>
+      </label>
       <label>Request headers<textarea name="request_headers" rows="3" placeholder="X-Tenant: acme&#10;+X-Trace: 1&#10;-X-Debug">{{ form.request_headers }}</textarea><small>One per line. <code>Name: value</code> sets, <code>+Name: value</code> adds, <code>-Name</code> removes.</small></label>
       <label>Response headers<textarea name="response_headers" rows="3" placeholder="X-Frame-Options: DENY&#10;-Server">{{ form.response_headers }}</textarea><small>Same three shapes, on the way back out.</small></label>
       <label>Backend TLS

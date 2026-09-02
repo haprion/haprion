@@ -65,6 +65,11 @@ SCHEME = "haproxy-mgmt/guid/v1"
 FRONTEND = "fe"
 LISTENER = "li"
 BACKEND = "be"
+#
+# The identity space a redirect route's derived name is hashed in. Its own,
+# so a name here can never collide with a backend GUID.
+#
+REDIRECT = "redirect"
 SERVER = "srv"
 
 #
@@ -110,6 +115,21 @@ def listener_guid_prefix(proxy: str) -> str:
     """
 
     return _guid(LISTENER, proxy)
+
+
+def redirect_name(path: str, match: str, location: str) -> str:
+    """A stable name for the backend a redirect route becomes.
+
+    Derived from what the route is and does, not from where it sits in the
+    list, so adding a route above one moves neither its name nor its GUID. Its
+    counters therefore survive an edit that has nothing to do with it - the
+    same reason `server_guid` is taken from an address instead of a position.
+
+    Short: the name is joined into a backend name that already carries a prefix
+    and the object's name, and HAProxy bounds the whole thing.
+    """
+
+    return _digest(REDIRECT, path, match, location)[:8]
 
 
 def backend_guid(proxy: str, backend: str) -> str:

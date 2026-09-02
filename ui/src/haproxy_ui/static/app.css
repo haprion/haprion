@@ -21,6 +21,18 @@
   --muted-strong: #4d5968;
   --line: #e3e8ef;
   --line-strong: #d4dbe5;
+  /*
+   * What a button's surface becomes under the pointer. A step away from the
+   * button's own ground rather than a tint of the brand colour: green reads as
+   * "this is the thing to press", and it was on every secondary button
+   * regardless of what the button did.
+   *
+   * The step is downwards in both themes, and the light value is not
+   * `--panel-soft`. A white button moving to #f8fafc is a change nobody sees,
+   * so light needs a deeper tone to travel the same visible distance dark
+   * already travels.
+   */
+  --hover-surface: #eef2f7;
   --brand: #2fb344;
   --brand-strong: #258d36;
   --brand-soft: #eaf7ec;
@@ -57,6 +69,7 @@
   --muted-strong: #d7e1ec;
   --line: #2a394b;
   --line-strong: #3a4a5e;
+  --hover-surface: #1b2838;
   --brand: #49c462;
   --brand-strong: #67d47d;
   --brand-soft: #1b3d27;
@@ -349,7 +362,13 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .action-buttons { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 8px; }
 .action-buttons form { margin: 0; }
 .secondary-button { min-height: 32px; padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel-raised); color: var(--text-primary); font-size: 12px; font-weight: 650; cursor: pointer; }
-.secondary-button:hover { border-color: var(--brand); color: var(--brand-strong); }
+.secondary-button:hover { border-color: var(--line-strong); background: var(--hover-surface); color: var(--text-strong); }
+/*
+ * A link wearing the button's clothes is still a link: it arrives underlined
+ * and it lays itself out as text. Both are undone here rather than at each
+ * use, so the next one does not have to remember.
+ */
+a.secondary-button { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 /* Deploying is not the same kind of act as the buttons it sits beside.
    Publishing records a version; deploying reaches the nodes, and on a page
    where every other button publishes, the two must not look interchangeable.
@@ -653,7 +672,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .primary-button, .icon-button, .menu-button, .primary-nav a { transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease; }
+  .primary-button, .secondary-button, .icon-button, .menu-button, .primary-nav a { transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease; }
 }
 
 /*
@@ -717,12 +736,6 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .preview-form .warning-text { margin: 12px 20px 0; }
 .form-actions { display: flex; justify-content: flex-end; }
 .form-actions .secondary-button { padding: 9px 22px; }
-/*
- * Neutral on hover. Every other secondary button in the application turns
- * brand green there, which reads as "this does something" - and this one only
- * renders a page.
- */
-.form-actions .secondary-button:hover { border-color: var(--line-strong); color: var(--text-strong); background: var(--panel-soft); }
 .result-card { margin-top: 18px; }
 .refusal-card { border-left: 3px solid var(--critical); }
 .refusal { margin: 0; padding: 16px 20px; color: var(--text); }
@@ -851,7 +864,6 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .refusal-message { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--text-strong); font-size: 15px; }
 .refusal-hint { margin: 10px 0 0; color: var(--text-secondary); font-size: 13px; }
 .refusal-card .editor-actions { justify-content: flex-start; padding: 16px 0 0; }
-.refusal-card a.secondary-button { text-decoration: none; }
 /*
  * The break between the cluster's addresses and this publish. Heavier than the
  * rules inside a table, because it separates two subjects rather than two rows.

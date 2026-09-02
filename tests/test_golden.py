@@ -327,3 +327,39 @@ class WhoGetsAnAnswerAndWhoDoesNot(unittest.TestCase):
             _generate([load_proxy("app", document)])
 
         self.assertIn("nowhere", str(raised.exception))
+
+
+class AnObjectDeliberatelyOutOfService(unittest.TestCase):
+    """`maintenance` answers for the object's names and routes nothing."""
+
+    def frontends(self, message: str = "Back at 18:00.") -> str:
+        document = MINIMAL.replace(
+            b"routes:", f"maintenance:\n  message: {message}\nroutes:".encode()
+        )
+        return _generate([load_proxy("shop", document)])["1000-frontends.cfg"]
+
+    def test_the_message_is_returned_for_this_object_s_names_only(self) -> None:
+        self.assertIn(
+            'http-request return status 503 content-type text/plain string "Back at 18:00." '
+            'hdr cache-control "no-store" if mgd-shop-host',
+            self.frontends(),
+        )
+
+    def test_the_routes_are_still_written_below_it(self) -> None:
+        """`return` ends the transaction, so they are unreachable while it stands.
+
+        Kept rather than dropped so that turning maintenance off changes one
+        rule instead of regenerating the object's whole contribution, and so
+        the pools stay routed to and therefore stay checked.
+        """
+
+        frontends = self.frontends()
+        rule = frontends.index("http-request return status 503")
+        route = frontends.index("use_backend mgd-shop-web")
+
+        self.assertLess(rule, route)
+
+    def test_a_serving_object_carries_no_such_rule(self) -> None:
+        frontends = _generate([load_proxy("shop", MINIMAL)])["1000-frontends.cfg"]
+
+        self.assertNotIn("http-request return status 503", frontends)

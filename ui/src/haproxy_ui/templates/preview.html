@@ -56,6 +56,8 @@
       <label class="check"><input type="checkbox" name="hsts"{% if form.hsts %} checked{% endif %}> Send HSTS</label>
       <label class="check"><input type="checkbox" name="hsts_subdomains"{% if form.hsts_subdomains %} checked{% endif %}> …including subdomains</label>
       <label class="check-value"><input name="hsts_max_age" value="{{ form.hsts_max_age }}" size="10"><span>HSTS lifetime, seconds</span></label>
+      <label class="check"><input type="checkbox" name="maintenance"{% if form.maintenance %} checked{% endif %}> Out of service for maintenance</label>
+      <label class="check-value"><input name="maintenance_message" value="{{ form.maintenance_message }}" size="40"><span>What visitors are told instead</span></label>
     </div>
   </section>
 

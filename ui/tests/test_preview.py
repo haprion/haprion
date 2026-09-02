@@ -226,3 +226,28 @@ class ARefusalNamesTheFieldItIsAbout(unittest.TestCase):
 
         self.assertEqual(result.problem_field, "")
         self.assertEqual(result.problem_text, str(result.problem))
+
+
+class MaintenanceIsAStateOfTheObject(unittest.TestCase):
+    """The checkbox produces a `maintenance` block, and nothing else moves."""
+
+    def test_the_message_reaches_both_the_object_and_the_configuration(self) -> None:
+        result = preview(
+            form(maintenance=True, maintenance_message="Back at 18:00."), PREVIEW_CLUSTER
+        )
+
+        self.assertIsNone(result.problem)
+        self.assertIn("message: Back at 18:00.", result.document)
+        self.assertIn('string "Back at 18:00."', result.files["1000-frontends.cfg"])
+
+    def test_an_unticked_box_writes_no_block_at_all(self) -> None:
+        result = preview(form(maintenance_message="Back at 18:00."), PREVIEW_CLUSTER)
+
+        self.assertNotIn("maintenance", result.document)
+
+    def test_a_ticked_box_without_a_message_is_refused_by_the_engine(self) -> None:
+        """Not defaulted by the form: what a visitor is told is not this page's to decide."""
+
+        result = preview(form(maintenance=True), PREVIEW_CLUSTER)
+
+        self.assertEqual(result.problem_field, "app.maintenance.message")

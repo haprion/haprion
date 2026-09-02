@@ -132,6 +132,16 @@ COOKIE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 # An HTTP field name, as RFC 9110 defines a token.
 #
 HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$")
+
+#
+# What a maintenance page may say. The value is written into a double-quoted
+# configuration line, so a quote or a backslash would end that line somewhere
+# other than where it looks like it ends. `$` is out for a measured reason
+# rather than a cautious one: HAProxy 3.4.4 on this machine expands `$HOME`
+# inside double quotes, and a message meant for visitors would then carry a
+# value from the node's environment.
+#
+MESSAGE = re.compile(r"^[A-Za-z0-9 #.,:;!?()'/@+-]{1,200}$")
 #
 # What a health check speaks. The variants an ADC lists separately - TCP,
 # TCP-ECV, HTTP, HTTP-ECV, HTTPS, HTTPS-ECV - are combinations of three
@@ -309,6 +319,25 @@ class Hsts:
 
 
 @dataclass(frozen=True, slots=True)
+class Maintenance:
+    """This object is out of service on purpose, and says so.
+
+    Taking a site down by deleting its object loses everything the object
+    knows - its routes, its pools, its checks - and the way back is to write it
+    again from memory. This is the other way: the object stays exactly as it
+    is, and every request for its names is answered with a page instead of
+    being routed.
+
+    The message is required rather than defaulted. A maintenance mode with
+    nothing to say produces the naked 503 that B49 objected to in the first
+    place, only now on purpose; the whole difference between the two is that
+    somebody wrote down what is happening and when it ends.
+    """
+
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
 class Listen:
     """Where this object is reached, and how.
 
@@ -349,6 +378,9 @@ class Proxy:
     This is a different question from the trusted proxy list. That one decides
     whose forwarded headers are believed; this one decides who gets an answer.
     """
+
+    maintenance: Maintenance | None = None
+    """Set while the site is deliberately out of service. None means serving."""
 
 
 def _string(value: Mapping[str, Any], key: str, location: str, allowed: tuple[str, ...]) -> str:
@@ -647,7 +679,16 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     data = _mapping(loaded, name)
     _only_keys(
         data,
-        {"schema", "name", "hostnames", "listen", "routes", "backends", "allow_from"},
+        {
+            "schema",
+            "name",
+            "hostnames",
+            "listen",
+            "routes",
+            "backends",
+            "allow_from",
+            "maintenance",
+        },
         name,
     )
 
@@ -701,6 +742,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         raise ModelError(f"{name}.backends defines backends no route uses: {', '.join(unused)}")
 
     allow_from = _allow_from(data.get("allow_from", []), name)
+    maintenance = _maintenance(data.get("maintenance"), f"{name}.maintenance")
 
     return Proxy(
         name=name,
@@ -709,7 +751,22 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         routes=routes,
         backends=backends,
         allow_from=tuple(allow_from),
+        maintenance=maintenance,
     )
+
+
+def _maintenance(value: Any, location: str) -> Maintenance | None:
+    if value is None:
+        return None
+    data = _mapping(value, location)
+    _only_keys(data, {"message"}, location)
+    message = data.get("message")
+    if not isinstance(message, str) or not MESSAGE.match(message):
+        raise ModelError(
+            f"{location}.message must be a line of readable text, "
+            f"up to 200 characters, without quotes, backslashes or $"
+        )
+    return Maintenance(message=message)
 
 
 def is_range(entry: str) -> bool:

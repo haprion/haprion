@@ -417,6 +417,8 @@ def build_router(config: Config) -> APIRouter:
         health_port: str = Form(default="", max_length=8),
         allow_ranges: str = Form(default="", max_length=2048),
         backend_tls: str = Form(default="", max_length=16),
+        maintenance: str = Form(default=""),
+        maintenance_message: str = Form(default="", max_length=200),
         allow_from: list[str] = NETWORK_SELECTION,
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
@@ -459,6 +461,8 @@ def build_router(config: Config) -> APIRouter:
                 "allow_ranges": allow_ranges,
                 "backend_tls": backend_tls,
                 "allow_from": tuple(allow_from),
+                "maintenance": maintenance == "on",
+                "maintenance_message": maintenance_message,
             },
             submitted=True,
         )

@@ -388,6 +388,33 @@ def _allow_rules(proxy: Proxy, networks: Mapping[str, Sequence[str]], host: str)
     ]
 
 
+def _maintenance_rule(proxy: Proxy, host: str) -> list[str]:
+    """The answer while an object is deliberately out of service.
+
+    Written before this object's `use_backend` lines rather than instead of
+    them. `http-request return` ends the transaction, so nothing below it is
+    reached for these names - and leaving the routing in place means turning
+    maintenance off changes one rule instead of regenerating the object's whole
+    contribution, and the pools stay routed to and therefore stay checked.
+
+    Conditional on the host, which is what makes it safe here at all: an
+    unconditional `http-request` rule in a shared frontend would answer for
+    every object on the address, which is why the unknown-name answer is a
+    backend and this one is not.
+
+    `no-store` because the page is a temporary truth. A browser that cached a
+    503 would keep showing it after the site came back, and the visitor would
+    have no way to tell.
+    """
+
+    if proxy.maintenance is None:
+        return []
+    return [
+        f"    http-request return status 503 content-type text/plain "
+        f'string "{proxy.maintenance.message}" hdr cache-control "no-store" if {host}'
+    ]
+
+
 def _host_acl(proxy: Proxy) -> list[str]:
     """Which requests belong to this object at all.
 
@@ -505,6 +532,8 @@ def _frontend_rules(
         # nothing is served in cleartext, not even a path.
         #
         return [*lines, f"    redirect scheme https code 301 if {host}"]
+
+    lines.extend(_maintenance_rule(proxy, host))
 
     decisions: list[str] = []
     for index, route in enumerate(order_routes(proxy.routes)):

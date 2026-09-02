@@ -95,6 +95,8 @@ DEFAULTS = {
     "backend_tls": "",
     "allow_from": (),
     "allow_ranges": "",
+    "maintenance": "",
+    "maintenance_message": "",
 }
 
 
@@ -251,6 +253,16 @@ def build_document(form: dict[str, object]) -> str:
     ]
     if allowed:
         document["allow_from"] = allowed
+
+    #
+    # Written last because it is the one field that is about the object's state
+    # rather than its shape, and reading it at the end of the document says so.
+    # The message is not defaulted here: the engine requires one, and a default
+    # written by the form would be this module quietly deciding what a visitor
+    # is told.
+    #
+    if flag("maintenance"):
+        document["maintenance"] = {"message": text("maintenance_message")}
 
     return dump_document(document)
 

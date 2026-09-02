@@ -108,6 +108,27 @@ backends:
         port: {web}
 """
 
+MAINTENANCE = """
+schema: 1
+name: closed
+hostnames: [closed.example.com]
+listen:
+  protocol: http
+maintenance:
+  message: Back at 18:00.
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
 CORE = """
 global
     daemon
@@ -177,8 +198,9 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
         root = Path(cls.directory.name)
         (root / "0000-core.cfg").write_text(CORE)
         restricted = load_proxy("locked", RESTRICTED.format(web=ports["web"]).encode())
+        closed = load_proxy("closed", MAINTENANCE.format(web=ports["web"]).encode())
         layer = generate(
-            [cls.proxy, restricted],
+            [cls.proxy, restricted, closed],
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
             networks={"office": ("198.51.100.0/24",)},
@@ -292,6 +314,32 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
         status, _ = self.request("/", host="locked.example.com")
 
         self.assertEqual(status, 403)
+
+    def test_an_object_in_maintenance_answers_instead_of_routing(self) -> None:
+        """The pool behind it is up and answering, and is still not reached.
+
+        Run in a frontend shared with two serving objects, because that is the
+        risk the rule carries: `http-request` rules are evaluated for every
+        request on the address, and one written without its host condition
+        would take the whole cluster down while looking correct in isolation.
+        """
+
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", "closed.example.com")
+            connection.endheaders()
+            response = connection.getresponse()
+            body = response.read().decode()
+
+            self.assertEqual(response.status, 503)
+            self.assertEqual(body, "Back at 18:00.")
+            self.assertEqual(response.getheader("cache-control"), "no-store")
+        finally:
+            connection.close()
+
+    def test_the_other_objects_on_the_address_go_on_serving(self) -> None:
+        self.assertEqual(self.request("/", host=HOSTNAME), (200, "web /"))
 
     def test_the_host_header_may_carry_a_port_and_any_case(self) -> None:
         for host in (HOSTNAME.upper(), f"{HOSTNAME}:80", f"{HOSTNAME.upper()}:8080"):

@@ -393,3 +393,46 @@ class TheHealthCheckMayUseItsOwnPort(unittest.TestCase):
         document = with_lines(("    health:\n      type: disabled", "    health:\n      type: tcp"))
 
         self.assertIsNone(load_proxy("shop", document).backends["web"].health.port)
+
+
+class TakingASiteOutOfServiceWithoutDeletingIt(unittest.TestCase):
+    """`maintenance` keeps the object and stops serving it.
+
+    The alternative people reach for is deleting the object, which loses the
+    routes, the pools and the checks, and makes the way back a rewrite from
+    memory.
+    """
+
+    def maintain(self, body: str) -> bytes:
+        return with_lines(("routes:", f"maintenance:\n{body}\nroutes:"))
+
+    def test_the_message_is_what_the_visitor_is_told(self) -> None:
+        proxy = load_proxy("shop", self.maintain("  message: Back at 18:00."))
+
+        assert proxy.maintenance is not None
+        self.assertEqual(proxy.maintenance.message, "Back at 18:00.")
+
+    def test_an_object_that_says_nothing_is_serving(self) -> None:
+        self.assertIsNone(load_proxy("shop", MINIMAL).maintenance)
+
+    def test_maintenance_without_a_message_is_refused(self) -> None:
+        """A maintenance mode with nothing to say is the naked 503 on purpose."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.maintain("  message: ''"))
+
+        self.assertIn("readable text", str(raised.exception))
+
+    def test_a_quote_is_refused_because_it_would_end_the_line(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.maintain('  message: Back at 18:00" '))
+
+        self.assertIn("without quotes", str(raised.exception))
+
+    def test_a_dollar_sign_is_refused_because_haproxy_expands_it(self) -> None:
+        """Measured on 3.4.4: `$HOME` inside double quotes becomes the node's own path."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.maintain("  message: Back at $HOME"))
+
+        self.assertIn("$", str(raised.exception))

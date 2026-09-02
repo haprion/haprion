@@ -268,6 +268,29 @@ def check_inventory_semantics(document: dict[str, object], path: Path) -> None:
             raise AssertionError(f"{path}: managed flag and source disagree")
 
 
+def check_objects_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        return
+    objects = result["objects"]
+    names = [entry["name"] for entry in objects]
+    if len(names) != len(set(names)):
+        raise AssertionError(f"{path}: object names must be unique")
+    for entry in objects:
+        #
+        # An object that could not be read has no shape to report, and one that
+        # could must not carry a problem. The two fields are one answer written
+        # twice, and a listing where they disagree is a listing nobody can act
+        # on.
+        #
+        if entry["readable"] != (entry["problem"] is None):
+            raise AssertionError(f"{path}: readable and problem disagree")
+        if not entry["readable"] and (entry["protocol"] is not None or entry["hostnames"]):
+            raise AssertionError(f"{path}: an unreadable object cannot report a shape")
+    if result["commit"] is None and objects:
+        raise AssertionError(f"{path}: objects cannot be listed without a commit to read them at")
+
+
 def check_publish_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -348,6 +371,7 @@ SEMANTIC_CHECKS = {
     "network": check_network_semantics,
     "list_backups": check_backup_semantics,
     "inventory": check_inventory_semantics,
+    "objects": check_objects_semantics,
     "publish": check_publish_semantics,
     "revert": check_revert_semantics,
     "network_publish": check_network_publish_semantics,
@@ -379,6 +403,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["nodes"][0]["latest_version"] = "2026-01-01_00-00-00"
     elif operation == "inventory":
         result["proxies"].append(deepcopy(result["proxies"][0]))
+    elif operation == "objects":
+        result["objects"][1]["readable"] = True
     elif operation in ("publish", "revert", "network_publish"):
         result["deployment_required"] = False
     elif operation == "deploy":

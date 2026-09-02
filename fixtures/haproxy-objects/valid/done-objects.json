@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "objects",
+  "cluster": "alpha",
+  "request_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "result": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "generated_at": "2026-09-02T08:05:00Z",
+    "objects": [
+      {
+        "name": "app",
+        "document": "schema: 1\nname: app\nhostnames: [app.example.com]\nlisten:\n  protocol: https\n  certificate: wildcard-example-com\nroutes:\n  - path: /\n    backend: web\nbackends:\n  web:\n    balance: roundrobin\n    health:\n      type: disabled\n    servers:\n      - host: 192.0.2.10\n        port: 8080\n",
+        "readable": true,
+        "problem": null,
+        "protocol": "https",
+        "hostnames": ["app.example.com"]
+      },
+      {
+        "name": "half-written",
+        "document": "schema: 1\nname: half-written\n",
+        "readable": false,
+        "problem": "half-written.listen must be a mapping",
+        "protocol": null,
+        "hostnames": []
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

@@ -1259,7 +1259,12 @@ through exact sudoers rules:
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-list-backups-helper ""
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper ""
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-helper ""
+<poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-helper ""
 ```
+
+**A rule under `/etc/sudoers.d/` does not travel with a release.** Adding a helper here means
+installing its line separately, `visudo`-checked; a release that carries a helper nobody may run
+fails at the first call with sudo's refusal in the diagnostics rather than at install time.
 
 The rule is exact because the helper **takes no arguments at all** — the cluster
 arrives as a bounded JSON request on one line of stdin. `PRIVILEGE.md` forbids wildcards in
@@ -1454,13 +1459,17 @@ Work outward, and stop at the first step that fails:
 2. **Node status** — `haproxy-status -c alpha` reaches both nodes and reports the address owner,
    the release each node runs, and whether that is the published one. This proves the status key,
    its forced command, and the node reporter.
-3. **A converged deploy** — `haproxy-deploy -c alpha` with nodes already current should skip both
+3. **The stored objects** — `haproxy-objects -c alpha` lists the proxy objects as they are written,
+   at the commit the repository is on, and `--show <name>` prints one document exactly as stored.
+   Where `haproxy-inventory` parses what a node is serving, this reads the source that produced it -
+   so an object the generator refuses is listed with the refusal rather than left out.
+4. **A converged deploy** — `haproxy-deploy -c alpha` with nodes already current should skip both
    nodes and change nothing. A run that correctly does nothing is a real test. Step 2 should
    already have said the cluster was converged; if the two disagree, believe neither and find out
    why before deploying anything.
-4. **A deploy that does something** — publish a harmless change and deploy it. Confirm the non-owner
+5. **A deploy that does something** — publish a harmless change and deploy it. Confirm the non-owner
    is deployed first, the owner last, and that the address does not move.
-5. **The negative tests** in [`PRIVILEGE.md`](PRIVILEGE.md), run as the real installed identities
+6. **The negative tests** in [`PRIVILEGE.md`](PRIVILEGE.md), run as the real installed identities
    rather than through mocks.
 
 Do the last two on a cluster that carries no traffic if you have one.

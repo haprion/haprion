@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haproxy-objects.schema.json",
+  "title": "haproxy-objects JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "objects" },
+        "outcome": { "enum": ["done", "failed"] },
+        "result": {
+          "oneOf": [
+            { "$ref": "#/$defs/objects_result" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "done" } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/objects_result" } } }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "object": {
+      "type": "object",
+      "required": ["name", "document", "readable", "problem", "protocol", "hostnames"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "document": { "type": "string", "maxLength": 262144 },
+        "readable": { "type": "boolean" },
+        "problem": { "type": ["string", "null"], "maxLength": 4096 },
+        "protocol": { "oneOf": [{ "enum": ["http", "https", "tcp"] }, { "type": "null" }] },
+        "hostnames": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      },
+      "additionalProperties": true
+    },
+    "objects_result": {
+      "type": "object",
+      "required": ["commit", "generated_at", "objects"],
+      "properties": {
+        "commit": { "oneOf": [{ "$ref": "common.schema.json#/$defs/hash" }, { "type": "null" }] },
+        "generated_at": { "$ref": "common.schema.json#/$defs/timestamp" },
+        "objects": { "type": "array", "items": { "$ref": "#/$defs/object" } }
+      },
+      "additionalProperties": true
+    }
+  }
+}

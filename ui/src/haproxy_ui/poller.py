@@ -36,6 +36,7 @@ from haproxy_mgmt.cli.inventory import run_inventory_helper
 from haproxy_mgmt.cli.list import run_list_helper
 from haproxy_mgmt.cli.list_backups import run_list_backups_helper
 from haproxy_mgmt.cli.network import run_network_helper
+from haproxy_mgmt.cli.objects import run_objects_helper
 from haproxy_mgmt.cli.status import run_status_helper
 from haproxy_mgmt.envelope import new_request_id
 
@@ -93,6 +94,12 @@ SOURCES: tuple[Source, ...] = (
     Source("list_backups", run_list_backups_helper, db.record_cluster_backups, partial_ok=True),
     Source("cert_list", run_cert_list_helper, db.record_cluster_certificates),
     Source("network", run_network_helper, db.record_cluster_network),
+    #
+    # The objects as they are written, which the inventory cannot answer for:
+    # it parses published configuration, and an edit is made against the source
+    # that produced it.
+    #
+    Source("objects", run_objects_helper, db.record_cluster_objects),
 )
 
 

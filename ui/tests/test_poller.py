@@ -213,17 +213,30 @@ class Passes(unittest.TestCase):
         #
         self.assertEqual(
             [source.operation for source in poller.SOURCES],
-            ["status", "inventory", "list", "list_backups", "cert_list", "network"],
+            ["status", "inventory", "list", "list_backups", "cert_list", "network", "objects"],
         )
         #
         # Partial is allowed only where the read has more than one place to
         # fail: status reaches two nodes, and a backup listing reads one
-        # directory per node. The other four are each one read of one place.
+        # directory per node. The other five are each one read of one place.
         #
         self.assertEqual(
             [source.partial_ok for source in poller.SOURCES],
-            [True, False, False, True, False, False],
+            [True, False, False, True, False, False, False],
         )
+
+    def test_the_objects_source_reads_the_source_and_not_the_published_config(self) -> None:
+        #
+        # The two are easy to confuse and answer different questions:
+        # `inventory` parses what a node is serving, `objects` reads the
+        # documents an edit is made against. Wiring the objects row to the
+        # inventory recorder would leave the editor loading generated
+        # configuration and would look like working software.
+        #
+        source = next(item for item in poller.SOURCES if item.operation == "objects")
+
+        self.assertIs(source.record, db.record_cluster_objects)
+        self.assertIsNot(source.record, db.record_cluster_inventory)
 
 
 if __name__ == "__main__":

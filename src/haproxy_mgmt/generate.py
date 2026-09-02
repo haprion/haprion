@@ -475,12 +475,14 @@ def _abuse_rules(protection: AbuseProtection | None, trusted: bool) -> list[str]
     and be fixed; a silent drop looks like a network fault and gets debugged
     for an afternoon.
 
-    Skipped for a trusted proxy, and that exception is not politeness. Behind a
-    front-line proxy every request carries its address, so a rule counting
-    source addresses would see one client making all the traffic in the world
-    and would refuse everything within one window. What a cluster in that shape
-    needs is counting on the forwarded address instead, which is a different
-    decision and not this one.
+    Behind a trusted proxy the address to count is not the one the connection
+    came from - that is the proxy, and counting it would see one client making
+    all the traffic in the world and refuse everybody within one window. The
+    forwarded address is counted instead, and the *last* element of the header
+    rather than the first: a visitor may put anything in front, and the last
+    entry is the one the trusted proxy wrote from what it actually saw.
+    Measured here - two visitors behind one proxy, and braking the noisy one
+    left the other served.
     """
 
     if protection is None:
@@ -492,20 +494,30 @@ def _abuse_rules(protection: AbuseProtection | None, trusted: bool) -> list[str]
     # ACL alongside the counter rather than as a second `unless` - which parses
     # as an ACL named "unless" and is refused by HAProxy, measured here.
     #
-    exception = f" !{TRUSTED_ACL}" if trusted else ""
     lines = [
         f"    stick-table type ip size {ABUSE_TABLE_SIZE} expire {window} "
         f"store {','.join(f'{name}({window})' for name in stored)}",
-        "    http-request track-sc0 src" + (f" unless {TRUSTED_ACL}" if trusted else ""),
     ]
+    if trusted:
+        #
+        # Two rules with opposite conditions rather than one: HAProxy takes the
+        # first that matches, so a request through the proxy is counted by the
+        # forwarded address and every other request by the address it came
+        # from. A request from a trusted proxy with no header at all matches
+        # neither and is counted by nothing, which is the right answer - there
+        # is no address to hold responsible.
+        #
+        lines.append(f"    http-request track-sc0 req.hdr_ip(X-Forwarded-For,-1) if {TRUSTED_ACL}")
+        lines.append(f"    http-request track-sc0 src unless {TRUSTED_ACL}")
+    else:
+        lines.append("    http-request track-sc0 src")
+
     for fetch, limit in (
         ("sc_http_req_rate(0)", protection.max_requests),
         ("sc_http_err_rate(0)", protection.max_errors),
     ):
         if limit is not None:
-            lines.append(
-                f"    http-request deny deny_status 429 if {{ {fetch} gt {limit} }}{exception}"
-            )
+            lines.append(f"    http-request deny deny_status 429 if {{ {fetch} gt {limit} }}")
     return lines
 
 

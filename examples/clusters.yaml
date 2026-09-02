@@ -86,8 +86,9 @@ clusters:
     # the process, so a reload - and a publish reloads - starts them empty. A
     # ban measured in hours would quietly last until the next edit.
     #
-    # Skipped for `trusted_proxy_cidrs`, since behind a front-line proxy every
-    # request carries its address and the rule would refuse everybody.
+    # Behind `trusted_proxy_cidrs` the forwarded address is counted instead of
+    # the one the connection came from, since that one is the proxy and
+    # counting it would refuse everybody within one window.
     #
     # Optional; leave it out and nothing is generated.
     #

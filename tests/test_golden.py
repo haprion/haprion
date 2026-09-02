@@ -18,7 +18,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.config import TLS_POLICY_NAMES, Vip
+from haproxy_mgmt.config import TLS_POLICY_NAMES, AbuseProtection, Vip
 from haproxy_mgmt.generate import (
     NODE_CERTIFICATE_DIR,
     TLS_POLICIES,
@@ -492,6 +492,41 @@ class TheListenerAcceptsWhatTheClusterSaysItAccepts(unittest.TestCase):
 
         self.assertNotIn("ssl-min-ver", frontends)
         self.assertNotIn("ciphers", frontends)
+
+
+class WhoTheBrakeHoldsResponsible(unittest.TestCase):
+    """Which address is counted, which is the whole question behind a proxy."""
+
+    def frontends(self, trusted: tuple[str, ...]) -> str:
+        return generate(
+            [load_proxy("shop", MINIMAL)],
+            vips=dict(DEFAULT_VIPS),
+            default_vip="main",
+            trusted_proxies=trusted,
+            abuse_protection=AbuseProtection(window="10s", max_requests=100),
+        )["1000-frontends.cfg"]
+
+    def test_without_a_trusted_proxy_the_connecting_address_is_counted(self) -> None:
+        frontends = self.frontends(())
+
+        self.assertIn("http-request track-sc0 src\n", frontends)
+        self.assertNotIn("X-Forwarded-For,-1", frontends)
+
+    def test_behind_one_the_forwarded_address_is_counted_instead(self) -> None:
+        """Counting the proxy would refuse everybody within one window."""
+
+        frontends = self.frontends(("198.51.100.0/24",))
+
+        self.assertIn(
+            "http-request track-sc0 req.hdr_ip(X-Forwarded-For,-1) if mgd-trusted-proxy",
+            frontends,
+        )
+        self.assertIn("http-request track-sc0 src unless mgd-trusted-proxy", frontends)
+
+    def test_the_last_element_is_taken_and_not_the_first(self) -> None:
+        """A visitor may put anything in front of what the proxy wrote."""
+
+        self.assertIn("X-Forwarded-For,-1", self.frontends(("198.51.100.0/24",)))
 
 
 class WhatTheBackendIsToldAboutTheVisitor(unittest.TestCase):

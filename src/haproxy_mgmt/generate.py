@@ -34,7 +34,15 @@ from collections.abc import Iterable, Mapping, Sequence
 
 from haproxy_mgmt.config import ConfigError, UnknownHost, Vip
 from haproxy_mgmt.guid import backend_guid, frontend_guid, listener_guid_prefix, server_guid
-from haproxy_mgmt.proxy_model import Backend, Health, Proxy, Route, Server, is_range
+from haproxy_mgmt.proxy_model import (
+    URL_PLACEHOLDER,
+    Backend,
+    Health,
+    Proxy,
+    Route,
+    Server,
+    is_range,
+)
 from haproxy_mgmt.route_match import order_routes
 
 #
@@ -388,6 +396,21 @@ def _allow_rules(proxy: Proxy, networks: Mapping[str, Sequence[str]], host: str)
     ]
 
 
+def _message(proxy: Proxy, message: str) -> str:
+    """One object's message with the site's name filled in.
+
+    The first hostname, where an object claims several. They are aliases for
+    one site, and a message listing all of them would read as a directory
+    rather than as a sentence; the first is the one the object leads with.
+
+    Substituted here rather than at request time on purpose - see `URL_PLACEHOLDER`.
+    A hostname has already been held to `HOSTNAME`, so nothing that could
+    change where the configuration line ends can arrive through it.
+    """
+
+    return message.replace(URL_PLACEHOLDER, proxy.hostnames[0])
+
+
 def _maintenance_rule(proxy: Proxy, host: str) -> list[str]:
     """The answer while an object is deliberately out of service.
 
@@ -411,7 +434,8 @@ def _maintenance_rule(proxy: Proxy, host: str) -> list[str]:
         return []
     return [
         f"    http-request return status 503 content-type text/plain "
-        f'string "{proxy.maintenance.message}" hdr cache-control "no-store" if {host}'
+        f'string "{_message(proxy, proxy.maintenance.message)}" '
+        f'hdr cache-control "no-store" if {host}'
     ]
 
 
@@ -689,6 +713,7 @@ def _backend(
         lines.append(f"    source {source}")
     lines.extend(rewrites)
     lines.extend(_hsts_line(proxy))
+    lines.extend(_unavailable_lines(proxy))
 
     if backend.cookie is not None:
         #
@@ -712,6 +737,31 @@ def _backend(
             f"{_server_check(backend.health)}{cookie}{backup}"
         )
     return lines
+
+
+def _unavailable_lines(proxy: Proxy) -> list[str]:
+    """The three answers that mean the pool could not serve the request.
+
+    502, 503 and 504 look identical to a visitor - a grey page from something
+    that is not the site - and telling them apart is the operator's job, not
+    theirs. One message covers all three so the answer does not depend on which
+    way the pool failed.
+
+    Written per backend because that is where HAProxy takes it, and because a
+    message naming the site would be wrong in a shared frontend.
+
+    A string rather than a file: `errorfile` would need HTML carried to every
+    node and versioned with the release, which is a lot of machinery for a
+    sentence. Measured on 3.4.4 on this machine.
+    """
+
+    if proxy.unavailable is None:
+        return []
+    return [
+        f"    http-error status {status} content-type text/plain "
+        f'string "{_message(proxy, proxy.unavailable.message)}"'
+        for status in (502, 503, 504)
+    ]
 
 
 def _health_lines(health: Health) -> list[str]:

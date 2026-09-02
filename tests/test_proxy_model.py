@@ -436,3 +436,70 @@ class TakingASiteOutOfServiceWithoutDeletingIt(unittest.TestCase):
             load_proxy("shop", self.maintain("  message: Back at $HOME"))
 
         self.assertIn("$", str(raised.exception))
+
+
+class WhatAVisitorIsToldWhenNothingAnswers(unittest.TestCase):
+    """`unavailable` is the page the site cannot serve for itself."""
+
+    def unavailable(self, body: str) -> bytes:
+        return with_lines(("routes:", f"unavailable:\n{body}\nroutes:"))
+
+    def test_the_message_is_carried(self) -> None:
+        proxy = load_proxy("shop", self.unavailable("  message: The shop is not answering."))
+
+        assert proxy.unavailable is not None
+        self.assertEqual(proxy.unavailable.message, "The shop is not answering.")
+
+    def test_absent_means_haproxy_s_own_text(self) -> None:
+        self.assertIsNone(load_proxy("shop", MINIMAL).unavailable)
+
+    def test_it_is_held_to_the_same_rule_as_the_maintenance_message(self) -> None:
+        """Both end up in the same kind of quoted configuration line."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.unavailable("  message: Ask $USER"))
+
+        self.assertIn("$", str(raised.exception))
+
+    def test_it_is_separate_from_maintenance(self) -> None:
+        """One is deliberate and one is a failure; a site may describe both."""
+
+        document = with_lines(
+            (
+                "routes:",
+                "maintenance:\n  message: Back at 18:00.\n"
+                "unavailable:\n  message: The shop is not answering.\nroutes:",
+            )
+        )
+        proxy = load_proxy("shop", document)
+
+        assert proxy.maintenance is not None and proxy.unavailable is not None
+        self.assertNotEqual(proxy.maintenance.message, proxy.unavailable.message)
+
+
+class TheOneThingAMessageMayAskToHaveFilledIn(unittest.TestCase):
+    def message(self, text: str) -> bytes:
+        return with_lines(("routes:", f"unavailable:\n  message: {text}\nroutes:"))
+
+    def test_the_token_is_carried_through_the_model_unchanged(self) -> None:
+        """The model keeps what was written; the generator is where it is filled in."""
+
+        proxy = load_proxy("shop", self.message("The site %URL% is not answering."))
+
+        assert proxy.unavailable is not None
+        self.assertEqual(proxy.unavailable.message, "The site %URL% is not answering.")
+
+    def test_a_token_this_version_does_not_fill_in_is_refused(self) -> None:
+        """Otherwise it reaches a visitor as the literal word between percent signs."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.message("The site %SITE% is not answering."))
+
+        self.assertIn("%SITE%", str(raised.exception))
+        self.assertIn("%URL%", str(raised.exception))
+
+    def test_a_lone_percent_sign_is_still_ordinary_text(self) -> None:
+        proxy = load_proxy("shop", self.message("100% of the pool is down."))
+
+        assert proxy.unavailable is not None
+        self.assertIn("100%", proxy.unavailable.message)

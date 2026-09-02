@@ -251,3 +251,53 @@ class MaintenanceIsAStateOfTheObject(unittest.TestCase):
         result = preview(form(maintenance=True), PREVIEW_CLUSTER)
 
         self.assertEqual(result.problem_field, "app.maintenance.message")
+
+
+class TheAnswerWhenNoServerAnswers(unittest.TestCase):
+    """A message rather than a checkbox: writing one is what turns it on."""
+
+    def test_the_message_reaches_the_backend(self) -> None:
+        result = preview(form(unavailable_message="The shop is not answering."), PREVIEW_CLUSTER)
+
+        self.assertIsNone(result.problem)
+        self.assertIn(
+            'http-error status 503 content-type text/plain string "The shop is not answering."',
+            result.files["1001-app.cfg"],
+        )
+
+    def test_an_empty_field_leaves_haproxy_s_own_text(self) -> None:
+        result = preview(form(), PREVIEW_CLUSTER)
+
+        self.assertNotIn("http-error", result.files["1001-app.cfg"])
+
+
+class TheSiteNameCanBeAskedForRatherThanTyped(unittest.TestCase):
+    def test_the_token_reaches_the_configuration_as_the_site_s_name(self) -> None:
+        result = preview(
+            form(unavailable_message="The site %URL% is not answering."), PREVIEW_CLUSTER
+        )
+
+        self.assertIsNone(result.problem)
+        self.assertIn("message: The site %URL% is not answering.", result.document)
+        self.assertIn(
+            'string "The site app.example.com is not answering."', result.files["1001-app.cfg"]
+        )
+
+    def test_a_message_that_starts_with_the_token_is_written_so_it_can_be_read_back(self) -> None:
+        """YAML gives `%` a meaning at the start of a scalar, and only there.
+
+        The dumper quotes it and the parser accepts it again, which is what
+        keeps the document the interface writes and the document somebody
+        writes by hand the same document.
+        """
+
+        result = preview(form(unavailable_message="%URL% is not answering."), PREVIEW_CLUSTER)
+
+        self.assertIsNone(result.problem)
+        self.assertIn("'%URL% is not answering.'", result.document)
+        self.assertIn('string "app.example.com is not answering."', result.files["1001-app.cfg"])
+
+    def test_a_token_nobody_fills_in_is_refused_before_it_reaches_a_visitor(self) -> None:
+        result = preview(form(unavailable_message="The site %SITE% is down."), PREVIEW_CLUSTER)
+
+        self.assertEqual(result.problem_field, "app.unavailable.message")

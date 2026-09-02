@@ -363,3 +363,57 @@ class AnObjectDeliberatelyOutOfService(unittest.TestCase):
         frontends = _generate([load_proxy("shop", MINIMAL)])["1000-frontends.cfg"]
 
         self.assertNotIn("http-request return status 503", frontends)
+
+
+class ThePoolsOwnAnswerWhenItCannotServe(unittest.TestCase):
+    def backend(self) -> str:
+        document = MINIMAL.replace(
+            b"routes:", b"unavailable:\n  message: The shop is not answering.\nroutes:"
+        )
+        return _generate([load_proxy("shop", document)])["1001-shop.cfg"]
+
+    def test_all_three_failure_answers_carry_the_same_message(self) -> None:
+        """502, 503 and 504 are one grey page to a visitor, whichever way it failed."""
+
+        backend = self.backend()
+
+        for status in (502, 503, 504):
+            with self.subTest(status):
+                self.assertIn(
+                    f"http-error status {status} content-type text/plain "
+                    'string "The shop is not answering."',
+                    backend,
+                )
+
+    def test_a_site_that_says_nothing_gets_haproxy_s_own_text(self) -> None:
+        backend = _generate([load_proxy("shop", MINIMAL)])["1001-shop.cfg"]
+
+        self.assertNotIn("http-error", backend)
+
+
+class TheSiteNameIsFilledInWhereItIsAskedFor(unittest.TestCase):
+    def test_the_token_becomes_the_object_s_first_hostname(self) -> None:
+        document = MINIMAL.replace(
+            b"routes:", b"unavailable:\n  message: The site %URL% is not answering.\nroutes:"
+        )
+
+        backend = _generate([load_proxy("shop", document)])["1001-shop.cfg"]
+
+        self.assertIn('string "The site shop.example.com is not answering."', backend)
+        self.assertNotIn("%URL%", backend)
+
+    def test_it_is_filled_in_for_a_maintenance_message_too(self) -> None:
+        """Quoted, because YAML gives `%` a meaning at the start of a scalar.
+
+        Nothing the interface writes hits this - `dump_document` quotes what
+        needs quoting - but somebody editing an object by hand does, and the
+        answer is the ordinary YAML one.
+        """
+
+        document = MINIMAL.replace(
+            b"routes:", b'maintenance:\n  message: "%URL% is back at 18:00."\nroutes:'
+        )
+
+        frontends = _generate([load_proxy("shop", document)])["1000-frontends.cfg"]
+
+        self.assertIn('string "shop.example.com is back at 18:00."', frontends)

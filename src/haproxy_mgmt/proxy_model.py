@@ -141,7 +141,25 @@ HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$")
 # inside double quotes, and a message meant for visitors would then carry a
 # value from the node's environment.
 #
-MESSAGE = re.compile(r"^[A-Za-z0-9 #.,:;!?()'/@+-]{1,200}$")
+MESSAGE = re.compile(r"^[A-Za-z0-9 %#.,:;!?()'/@+-]{1,200}$")
+
+#
+# The one thing a message may ask to have filled in: the site's own name. It is
+# substituted where the configuration is generated, not where the request is
+# answered, so a visitor reads a name this object actually claims. HAProxy can
+# do the second - `lf-string` with `%[req.hdr(host)]` - and that would print
+# back whatever header the client sent, which is a different and worse thing.
+# `%` is otherwise literal in a HAProxy `string`, measured on 3.4.4 on this
+# machine, so the token is ours alone to read.
+#
+URL_PLACEHOLDER = "%URL%"
+
+#
+# Anything else between percent signs is refused rather than passed through. A
+# message that reads `%SITE%` to its author and prints `%SITE%` to a visitor is
+# the silent kind of wrong this model exists to prevent.
+#
+PLACEHOLDER = re.compile(r"%[A-Za-z_]+%")
 #
 # What a health check speaks. The variants an ADC lists separately - TCP,
 # TCP-ECV, HTTP, HTTP-ECV, HTTPS, HTTPS-ECV - are combinations of three
@@ -338,6 +356,24 @@ class Maintenance:
 
 
 @dataclass(frozen=True, slots=True)
+class Unavailable:
+    """What a visitor is told when no server in the pool can answer.
+
+    The one page a site cannot serve for itself: 502 and 503 arise precisely
+    when nothing behind the proxy is answering, so an error page hosted by the
+    application is unreachable exactly when it is needed. Left out, HAProxy
+    serves its own grey text, which says nothing about which site this was or
+    who to tell.
+
+    A line of text rather than a file. A real HTML page would have to be
+    carried to every node, versioned with the release and reviewed like
+    configuration, and none of that is worth it for a sentence.
+    """
+
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
 class Listen:
     """Where this object is reached, and how.
 
@@ -381,6 +417,9 @@ class Proxy:
 
     maintenance: Maintenance | None = None
     """Set while the site is deliberately out of service. None means serving."""
+
+    unavailable: Unavailable | None = None
+    """What to say when the pool cannot answer. None means HAProxy's own text."""
 
 
 def _string(value: Mapping[str, Any], key: str, location: str, allowed: tuple[str, ...]) -> str:
@@ -688,6 +727,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
             "backends",
             "allow_from",
             "maintenance",
+            "unavailable",
         },
         name,
     )
@@ -743,6 +783,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
 
     allow_from = _allow_from(data.get("allow_from", []), name)
     maintenance = _maintenance(data.get("maintenance"), f"{name}.maintenance")
+    unavailable = _unavailable(data.get("unavailable"), f"{name}.unavailable")
 
     return Proxy(
         name=name,
@@ -752,6 +793,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         backends=backends,
         allow_from=tuple(allow_from),
         maintenance=maintenance,
+        unavailable=unavailable,
     )
 
 
@@ -760,13 +802,31 @@ def _maintenance(value: Any, location: str) -> Maintenance | None:
         return None
     data = _mapping(value, location)
     _only_keys(data, {"message"}, location)
+    return Maintenance(message=_message(data, location))
+
+
+def _message(data: Mapping[str, Any], location: str) -> str:
     message = data.get("message")
     if not isinstance(message, str) or not MESSAGE.match(message):
         raise ModelError(
             f"{location}.message must be a line of readable text, "
             f"up to 200 characters, without quotes, backslashes or $"
         )
-    return Maintenance(message=message)
+    unknown = sorted({found for found in PLACEHOLDER.findall(message) if found != URL_PLACEHOLDER})
+    if unknown:
+        raise ModelError(
+            f"{location}.message uses something this version does not fill in: "
+            f"{', '.join(unknown)}. The only one is {URL_PLACEHOLDER}"
+        )
+    return message
+
+
+def _unavailable(value: Any, location: str) -> Unavailable | None:
+    if value is None:
+        return None
+    data = _mapping(value, location)
+    _only_keys(data, {"message"}, location)
+    return Unavailable(message=_message(data, location))
 
 
 def is_range(entry: str) -> bool:

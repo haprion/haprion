@@ -97,6 +97,7 @@ DEFAULTS = {
     "allow_ranges": "",
     "maintenance": "",
     "maintenance_message": "",
+    "unavailable_message": "",
 }
 
 
@@ -263,6 +264,8 @@ def build_document(form: dict[str, object]) -> str:
     #
     if flag("maintenance"):
         document["maintenance"] = {"message": text("maintenance_message")}
+    if text("unavailable_message"):
+        document["unavailable"] = {"message": text("unavailable_message")}
 
     return dump_document(document)
 

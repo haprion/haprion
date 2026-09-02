@@ -129,6 +129,27 @@ backends:
         port: {web}
 """
 
+GONE = """
+schema: 1
+name: gone
+hostnames: [gone.example.com]
+listen:
+  protocol: http
+unavailable:
+  message: The shop is not answering.
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
 CORE = """
 global
     daemon
@@ -199,8 +220,13 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
         (root / "0000-core.cfg").write_text(CORE)
         restricted = load_proxy("locked", RESTRICTED.format(web=ports["web"]).encode())
         closed = load_proxy("closed", MAINTENANCE.format(web=ports["web"]).encode())
+        #
+        # A pool nothing listens on, so the failure is real rather than
+        # simulated: HAProxy has to try the connection and fail it.
+        #
+        gone = load_proxy("gone", GONE.format(web=free_port()).encode())
         layer = generate(
-            [cls.proxy, restricted, closed],
+            [cls.proxy, restricted, closed, gone],
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
             networks={"office": ("198.51.100.0/24",)},
@@ -337,6 +363,19 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
             self.assertEqual(response.getheader("cache-control"), "no-store")
         finally:
             connection.close()
+
+    def test_a_pool_that_cannot_be_reached_answers_in_the_object_s_own_words(self) -> None:
+        """The one page a site cannot serve for itself.
+
+        Nothing is listening on the pool's port, so this is the answer HAProxy
+        produces on its own behalf - and without `http-error` it would be the
+        grey default that names neither the site nor a way to report it.
+        """
+
+        status, body = self.request("/", host="gone.example.com")
+
+        self.assertEqual(status, 503)
+        self.assertEqual(body, "The shop is not answering.")
 
     def test_the_other_objects_on_the_address_go_on_serving(self) -> None:
         self.assertEqual(self.request("/", host=HOSTNAME), (200, "web /"))

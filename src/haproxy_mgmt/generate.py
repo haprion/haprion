@@ -736,6 +736,16 @@ def _backend(
     lines.extend(_hsts_line(proxy))
     lines.extend(_unavailable_lines(proxy))
 
+    if backend.max_connections is not None:
+        #
+        # What does not fit on a server waits here rather than being refused.
+        # HAProxy takes this wait from `timeout connect` when nobody says
+        # otherwise - read from its documentation on this machine - and it is
+        # written out so the file says how long a queued request may wait
+        # instead of leaving it to be inferred from another line.
+        #
+        lines.append(f"    timeout queue {TIMEOUT_CONNECT}")
+
     if backend.cookie is not None:
         #
         # `insert` adds the cookie, `indirect` removes it again before the
@@ -751,11 +761,18 @@ def _backend(
         name = _server_name(index)
         cookie = f" cookie {name}" if backend.cookie is not None else ""
         backup = " backup" if server.backup else ""
+        limit = f" maxconn {backend.max_connections}" if backend.max_connections else ""
+        #
+        # Per server rather than per backend, because that is where HAProxy
+        # takes both: the limit is one machine's capacity and the ramp is one
+        # machine coming back, and a pool-wide number would be neither.
+        #
+        ramp = f" slowstart {backend.slow_start}" if backend.slow_start else ""
         lines.append(
             f"    server {name} {server.host}:{server.port}"
             f" guid {server_guid(proxy.name, backend.name, server)}"
             f"{_server_tls(backend)}{_server_address(server, resolvers)}"
-            f"{_server_check(backend.health)}{cookie}{backup}"
+            f"{_server_check(backend.health)}{cookie}{backup}{limit}{ramp}"
         )
     return lines
 

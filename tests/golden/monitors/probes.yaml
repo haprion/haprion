@@ -19,6 +19,8 @@ routes:
 backends:
   plain-tcp:
     balance: roundrobin
+    max_connections: 50
+    slow_start: 30s
     health:
       type: tcp
     servers:

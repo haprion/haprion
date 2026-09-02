@@ -188,6 +188,14 @@ DEFAULT_FALL = 3
 DEFAULT_EXPECT_STATUS = "200-399"
 
 DURATION = re.compile(r"^[1-9][0-9]{0,4}(ms|s|m)$")
+
+#
+# The most connections one server is handed at a time. Above it, requests wait
+# in the pool's queue rather than being refused, which is the whole point: a
+# backend that is slow under load stays slow instead of falling over, and the
+# wait is bounded by `timeout queue`.
+#
+MAX_CONNECTIONS = (1, 65535)
 STATUS_RANGE = re.compile(r"^[1-5][0-9]{2}(-[1-5][0-9]{2})?$")
 
 #
@@ -252,6 +260,20 @@ class Health:
     fall: int = DEFAULT_FALL
 
 
+def duration_ms(value: str) -> int:
+    """A duration the model has already accepted, as milliseconds.
+
+    For comparing two of them, which is the only reason this exists: a written
+    duration is otherwise carried through to HAProxy exactly as it was written.
+    """
+
+    if value.endswith("ms"):
+        return int(value[:-2])
+    if value.endswith("m"):
+        return int(value[:-1]) * 60_000
+    return int(value[:-1]) * 1_000
+
+
 @dataclass(frozen=True, slots=True)
 class BackendTls:
     verify: str
@@ -265,6 +287,23 @@ class Backend:
     health: Health
     tls: BackendTls | None = None
     cookie: str | None = None
+    max_connections: int | None = None
+    """How many connections one server takes at once. None means no limit.
+
+    A limit protects the application behind it: a pool of servers that each
+    take what they can serve keeps answering under a load that would otherwise
+    make all of them slow at once. What does not fit waits in the pool's queue.
+    """
+
+    slow_start: str | None = None
+    """How long a server that just came back ramps up to full load.
+
+    A server that has been down usually comes back cold - empty caches, no
+    connection pools, a JIT that has forgotten everything - and handing it its
+    full share immediately is a good way to knock it over again. HAProxy only
+    applies this to a server that was previously seen as failed, so it costs
+    nothing at startup.
+    """
     """The name of the cookie that keeps one visitor on one member.
 
     Session persistence, and deliberately not a balancing algorithm.
@@ -582,7 +621,20 @@ def _balance_key(data: Mapping[str, Any], balance: str, location: str) -> str | 
 
 def _backend(name: str, value: Any, location: str) -> Backend:
     data = _mapping(value, location)
-    _only_keys(data, {"balance", "balance_key", "cookie", "servers", "health", "tls"}, location)
+    _only_keys(
+        data,
+        {
+            "balance",
+            "balance_key",
+            "cookie",
+            "servers",
+            "health",
+            "tls",
+            "max_connections",
+            "slow_start",
+        },
+        location,
+    )
     balance = _string(data, "balance", location, BALANCE)
     balance_key = _balance_key(data, balance, location)
 
@@ -628,6 +680,39 @@ def _backend(name: str, value: Any, location: str) -> Backend:
     if cookie is not None and (not isinstance(cookie, str) or not COOKIE.match(cookie)):
         raise ModelError(f"{location}.cookie must be a usable cookie name")
 
+    max_connections = data.get("max_connections")
+    if max_connections is not None and (
+        not isinstance(max_connections, int)
+        or isinstance(max_connections, bool)
+        or not MAX_CONNECTIONS[0] <= max_connections <= MAX_CONNECTIONS[1]
+    ):
+        raise ModelError(
+            f"{location}.max_connections must be between "
+            f"{MAX_CONNECTIONS[0]} and {MAX_CONNECTIONS[1]} connections per server"
+        )
+
+    slow_start = data.get("slow_start")
+    if slow_start is not None:
+        if not isinstance(slow_start, str) or not DURATION.match(slow_start):
+            raise ModelError(f"{location}.slow_start must be a duration such as 30s")
+        #
+        # Read from HAProxy 3.4.4's own documentation on this machine: the ramp
+        # is applied at each health check, and it never applies at startup -
+        # only to a server that was previously seen as failed. Without checks
+        # there is no such transition and no step to apply, so the field would
+        # be a setting that quietly does nothing.
+        #
+        if health.type == "disabled":
+            raise ModelError(
+                f"{location}.slow_start needs a health check: it is applied when a server "
+                f"that was seen as failed comes back, and without checks that never happens"
+            )
+        if duration_ms(slow_start) <= duration_ms(health.interval):
+            raise ModelError(
+                f"{location}.slow_start must be longer than the check interval "
+                f"({health.interval}); the ramp moves one step per check"
+            )
+
     return Backend(
         name=name,
         balance=balance,
@@ -636,6 +721,8 @@ def _backend(name: str, value: Any, location: str) -> Backend:
         servers=members,
         health=health,
         tls=backend_tls,
+        max_connections=max_connections,
+        slow_start=slow_start,
     )
 
 

@@ -93,6 +93,8 @@ DEFAULTS = {
     "health_host": "",
     "health_port": "",
     "backend_tls": "",
+    "max_connections": "",
+    "slow_start": "",
     "allow_from": (),
     "allow_ranges": "",
     "maintenance": "",
@@ -231,6 +233,13 @@ def build_document(form: dict[str, object]) -> str:
         backend["cookie"] = text("cookie")
     if text("backend_tls"):
         backend["tls"] = {"verify": text("backend_tls")}
+    if text("max_connections"):
+        limit = text("max_connections")
+        if not limit.isdigit():
+            raise ValueError("the connection limit must be a number")
+        backend["max_connections"] = int(limit)
+    if text("slow_start"):
+        backend["slow_start"] = text("slow_start")
 
     hostnames = [name.strip() for name in text("hostnames").replace(",", "\n").splitlines()]
     document: dict[str, object] = {

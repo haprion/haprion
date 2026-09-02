@@ -301,3 +301,23 @@ class TheSiteNameCanBeAskedForRatherThanTyped(unittest.TestCase):
         result = preview(form(unavailable_message="The site %SITE% is down."), PREVIEW_CLUSTER)
 
         self.assertEqual(result.problem_field, "app.unavailable.message")
+
+
+class BoundingWhatOneServerIsHanded(unittest.TestCase):
+    def test_a_limit_reaches_the_server_line_and_bounds_the_queue(self) -> None:
+        result = preview(form(max_connections="50"), PREVIEW_CLUSTER)
+
+        self.assertIsNone(result.problem)
+        self.assertIn(" maxconn 50", result.files["1001-app.cfg"])
+        self.assertIn("timeout queue 5s", result.files["1001-app.cfg"])
+
+    def test_a_ramp_reaches_the_server_line(self) -> None:
+        result = preview(form(slow_start="30s"), PREVIEW_CLUSTER)
+
+        self.assertIsNone(result.problem)
+        self.assertIn(" slowstart 30s", result.files["1001-app.cfg"])
+
+    def test_a_limit_that_is_not_a_number_is_named_before_the_engine_sees_it(self) -> None:
+        result = preview(form(max_connections="fifty"), PREVIEW_CLUSTER)
+
+        self.assertIsNotNone(result.problem)

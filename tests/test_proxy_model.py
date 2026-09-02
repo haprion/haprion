@@ -503,3 +503,51 @@ class TheOneThingAMessageMayAskToHaveFilledIn(unittest.TestCase):
 
         assert proxy.unavailable is not None
         self.assertIn("100%", proxy.unavailable.message)
+
+
+class ProtectingOneServerFromMoreThanItCanServe(unittest.TestCase):
+    """`max_connections` bounds a server; `slow_start` bounds how fast it returns."""
+
+    def backend(self, *lines: str) -> bytes:
+        added = "".join(f"    {line}\n" for line in lines)
+        return with_lines(("  web:\n", f"  web:\n{added}"))
+
+    def checked(self, *lines: str) -> bytes:
+        document = self.backend(*lines).decode()
+        return document.replace("      type: disabled", "      type: tcp").encode()
+
+    def test_a_connection_limit_is_carried(self) -> None:
+        self.assertEqual(
+            load_proxy("shop", self.backend("max_connections: 50")).backends["web"].max_connections,
+            50,
+        )
+
+    def test_absent_means_no_limit(self) -> None:
+        self.assertIsNone(load_proxy("shop", MINIMAL).backends["web"].max_connections)
+
+    def test_a_limit_of_nothing_is_refused(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.backend("max_connections: 0"))
+
+        self.assertIn("per server", str(raised.exception))
+
+    def test_a_ramp_is_carried(self) -> None:
+        proxy = load_proxy("shop", self.checked("slow_start: 30s"))
+
+        self.assertEqual(proxy.backends["web"].slow_start, "30s")
+
+    def test_a_ramp_without_a_health_check_is_refused(self) -> None:
+        """HAProxy applies it when a failed server returns, which needs checks to see."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.backend("slow_start: 30s"))
+
+        self.assertIn("health check", str(raised.exception))
+
+    def test_a_ramp_no_longer_than_the_check_interval_is_refused(self) -> None:
+        """The weight moves one step per check, so a shorter ramp is one step."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.checked("slow_start: 2s"))
+
+        self.assertIn("check interval", str(raised.exception))

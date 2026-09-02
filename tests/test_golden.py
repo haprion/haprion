@@ -417,3 +417,31 @@ class TheSiteNameIsFilledInWhereItIsAskedFor(unittest.TestCase):
         frontends = _generate([load_proxy("shop", document)])["1000-frontends.cfg"]
 
         self.assertIn('string "shop.example.com is back at 18:00."', frontends)
+
+
+class TheLimitAndTheRampAreWrittenPerServer(unittest.TestCase):
+    def test_a_limit_puts_a_bound_on_the_server_and_on_the_queue(self) -> None:
+        document = MINIMAL.replace(
+            b"    balance: roundrobin", b"    balance: roundrobin\n    max_connections: 50"
+        )
+
+        backend = _generate([load_proxy("shop", document)])["1001-shop.cfg"]
+
+        self.assertIn(" maxconn 50", backend)
+        self.assertIn("timeout queue 5s", backend)
+
+    def test_a_ramp_is_written_on_every_server_line(self) -> None:
+        document = MINIMAL.replace(b"      type: disabled", b"      type: tcp").replace(
+            b"    balance: roundrobin", b"    balance: roundrobin\n    slow_start: 30s"
+        )
+
+        backend = _generate([load_proxy("shop", document)])["1001-shop.cfg"]
+
+        self.assertIn(" slowstart 30s", backend)
+
+    def test_neither_appears_where_the_object_asked_for_neither(self) -> None:
+        backend = _generate([load_proxy("shop", MINIMAL)])["1001-shop.cfg"]
+
+        self.assertNotIn("maxconn", backend)
+        self.assertNotIn("slowstart", backend)
+        self.assertNotIn("timeout queue", backend)

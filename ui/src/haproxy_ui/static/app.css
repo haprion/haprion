@@ -513,6 +513,8 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
  * row of buttons.
  */
 .proxy-link { color: inherit; text-decoration: none; }
+/* Badge and sentence on one line: the state and why it is that state. */
+.publication-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; padding: 14px 20px 0; color: var(--muted); font-size: 12px; }
 .proxy-link:hover strong { text-decoration: underline; }
 
 /* The schedule, stated once: one timer takes every node's backup. */

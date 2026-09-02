@@ -12,7 +12,8 @@ import unittest
 from datetime import UTC, datetime, timedelta
 
 from haproxy_ui.db import ClusterObjects
-from haproxy_ui.objects import build_object_detail
+from haproxy_ui.history import VersionView
+from haproxy_ui.objects import build_object_detail, publication, stored_only
 from haproxy_ui.proxies import ProxyView
 
 NOW = datetime(2026, 9, 2, 10, 0, tzinfo=UTC)
@@ -212,3 +213,103 @@ class WhenTheReadingCannotBeTrusted(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhetherTheChangeReachedTheNodes(unittest.TestCase):
+    """Three questions, not one: committed, released, serving.
+
+    Pairing an object with "the published row of the same name" was the first
+    design and it was wrong. The published inventory names frontends -
+    `mgd-<vip>-<protocol>` - and one of them carries every object on that
+    address, so the two never share a name. The fixture agreed with the
+    assumption only because the same hand wrote both.
+    """
+
+    def version(self, number: int, *, published: bool) -> VersionView:
+        return VersionView(
+            number=number,
+            version=f"v{number}",
+            commit=f"{number:040d}",
+            expected_commit=f"{number:040d}",
+            date="2026-09-02",
+            comment="",
+            published=published,
+            current=False,
+        )
+
+    def test_the_release_the_nodes_pull_is_serving(self) -> None:
+        state = publication(
+            f"{29:040d}", [self.version(29, published=True)], release_state="Current"
+        )
+
+        self.assertEqual(state.label, "Serving")
+        self.assertEqual(state.version, "v29")
+
+    def test_a_release_the_nodes_have_not_taken_is_not_serving(self) -> None:
+        """The distinction the whole card exists for.
+
+        Publishing writes a release; a deploy is what makes the nodes pull it.
+        Reporting the first as live would say a change is in traffic while
+        every node still serves the previous one.
+        """
+
+        state = publication(
+            f"{29:040d}",
+            [self.version(29, published=True)],
+            release_state="Deploy Pending",
+            node_version="v25",
+        )
+
+        self.assertEqual(state.label, "Waiting for deploy")
+        self.assertIn("v25", state.detail)
+
+    def test_a_commit_that_is_versioned_but_not_released_is_awaiting_publish(self) -> None:
+        state = publication(
+            f"{30:040d}",
+            [self.version(30, published=False), self.version(29, published=True)],
+        )
+
+        self.assertEqual(state.label, "Awaiting publish")
+        self.assertIn("v29", state.detail)
+
+    def test_a_commit_no_version_names_is_not_released(self) -> None:
+        state = publication(f"{31:040d}", [self.version(29, published=True)])
+
+        self.assertEqual(state.label, "Not released")
+        self.assertIsNone(state.version)
+
+    def test_an_unread_listing_is_unknown_rather_than_a_claim(self) -> None:
+        self.assertEqual(publication(None, []).label, "Unknown")
+
+    def test_an_object_that_is_not_stored_has_no_publication_at_all(self) -> None:
+        """There is nothing to say about the travel of a file that does not exist."""
+
+        self.assertIsNone(detail("legacy", published=[]).publication)
+
+
+class ReachingAnObjectNoFrontendServesYet(unittest.TestCase):
+    def test_an_object_whose_hostnames_are_unserved_is_listed(self) -> None:
+        """Otherwise the object somebody is working on is the one they cannot open."""
+
+        pending = stored_only(reading(), published=[])
+
+        self.assertEqual([view.name for view in pending], ["app"])
+
+    def test_an_object_already_carried_by_a_frontend_is_not_listed(self) -> None:
+        self.assertEqual(stored_only(reading(), published=[PUBLISHED]), ())
+
+    def test_matching_is_by_hostname_and_never_by_name(self) -> None:
+        """A shared frontend is named after the address, never after an object,
+        so comparing names would report every object as unpublished."""
+
+        frontend = ProxyView(
+            name="mgd-main-http",
+            protocol="http",
+            managed=True,
+            enabled=True,
+            hostnames=("app.example.com",),
+            ports=(80,),
+            backend_count=1,
+        )
+
+        self.assertEqual(stored_only(reading(), published=[frontend]), ())

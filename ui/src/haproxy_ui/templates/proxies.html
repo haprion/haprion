@@ -28,6 +28,16 @@
     {% else %}
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>
     {% endif %}
+    {% set pending = waiting.get(cluster.cluster, ()) if waiting else () %}
+    {% if pending and role == 'admin' %}
+    <h4 class="network-subhead">Stored, not yet serving</h4>
+    <div class="table-scroll"><table class="node-table proxy-table"><thead><tr><th>Object</th><th>Protocol</th><th>Hostnames</th><th>State</th></tr></thead><tbody>
+      {% for object in pending %}
+      <tr><td data-label="Object"><a class="proxy-link" href="/proxies/{{ cluster.cluster }}/{{ object.name }}"><strong>{{ object.name }}</strong></a></td><td data-label="Protocol">{% if object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td><td data-label="Hostnames">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }}</td><td data-label="State">{% if object.readable %}<span class="status-badge status-badge-warning">Waiting for deploy</span>{% else %}<span class="status-badge status-badge-critical">Cannot be read</span>{% endif %}</td></tr>
+      {% endfor %}
+    </tbody></table></div>
+    <p class="table-note">Written and committed, but no published frontend carries these hostnames yet.</p>
+    {% endif %}
   </article>
 {% else %}
   <div class="empty-page"><h2>No clusters configured</h2><p>Add a cluster to the platform configuration before starting the poller.</p></div>

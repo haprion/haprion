@@ -566,7 +566,11 @@ def object_rows(now: datetime | None = None) -> tuple[ClusterObjects, ...]:
             observed_at=observed,
             outcome="done",
             result={
-                "commit": "a" * 40,
+                #
+                # The published version's own hash, so the fixture shows an
+                # object that has actually reached the nodes.
+                #
+                "commit": f"{24:040d}",
                 "generated_at": observed.isoformat().replace("+00:00", "Z"),
                 "objects": [
                     {
@@ -596,7 +600,11 @@ def object_rows(now: datetime | None = None) -> tuple[ClusterObjects, ...]:
             observed_at=observed - timedelta(seconds=6),
             outcome="done",
             result={
-                "commit": "b" * 40,
+                #
+                # Committed past the release, which is the other real state: an
+                # edit that is saved and versioned but not published yet.
+                #
+                "commit": f"{26:040d}",
                 "generated_at": (observed - timedelta(seconds=6))
                 .isoformat()
                 .replace("+00:00", "Z"),

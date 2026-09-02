@@ -389,6 +389,19 @@ def build_router(config: Config) -> APIRouter:
             #
             captured=captured_at is not None,
         )
+        #
+        # The listing is built from published frontends, so an object that has
+        # been committed but not deployed appears in none of them - which is
+        # the object somebody is working on. Carried separately rather than
+        # merged into the same table: they are a different state, and half a
+        # table of empty ports and backend counts would say so badly.
+        #
+        _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
+        rows = {reading.cluster: reading for reading in object_rows}
+        waiting = {
+            view.cluster: objects.stored_only(rows.get(view.cluster), view.proxies)
+            for view in overview.clusters
+        }
         return TEMPLATES.TemplateResponse(
             request,
             "proxies.html",
@@ -397,6 +410,7 @@ def build_router(config: Config) -> APIRouter:
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
                 "proxies": overview,
+                "waiting": waiting,
                 "section": "proxies",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
@@ -434,11 +448,42 @@ def build_router(config: Config) -> APIRouter:
         published = tuple(
             proxy for view in overview.clusters if view.cluster == cluster for proxy in view.proxies
         )
+        _, history_rows, _ = read_source(request, config, HISTORY_SOURCE)
+        listing = history.build_history_overview(
+            clusters,
+            history_rows,
+            now=captured_at,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            captured=captured_at is not None,
+        )
+        versions = tuple(
+            version
+            for view in listing.clusters
+            if view.cluster == cluster
+            for version in view.versions
+        )
+        #
+        # Released is not serving, so the deploy state is read too. Reporting a
+        # release as live while every node still pulls the previous one is the
+        # one thing this card must not do.
+        #
+        _, status_rows, _ = read_source(request, config, STATUS_SOURCE)
+        board = dashboard.build_dashboard(
+            clusters,
+            status_rows,
+            now=captured_at,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            captured=captured_at is not None,
+        )
+        serving = next((view for view in board.clusters if view.cluster == cluster), None)
         detail = objects.build_object_detail(
             cluster,
             name,
             object_rows,
             published,
+            versions,
+            release_state=serving.release_state if serving else "",
+            node_version=serving.version if serving else "",
             now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
             captured=captured_at is not None,

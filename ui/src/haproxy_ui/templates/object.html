@@ -28,6 +28,9 @@
   <p class="refusal">This version cannot read the document: <code>{{ object.stored.problem }}</code></p>
   <p class="table-note">It is shown as stored. A publish would refuse it with the same sentence.</p>
   {% endif %}
+  {% if object.publication %}
+  <p class="publication-line"><span class="status-badge status-badge-{{ object.publication.tone }}">{{ object.publication.label }}</span><span>{{ object.publication.detail }}</span></p>
+  {% endif %}
   <pre class="config-block"><code>{{ object.stored.document }}</code></pre>
   <p class="table-note">{{ object.stored.line_count }} lines · the source, not the generated configuration.</p>
   {% else %}
@@ -37,7 +40,7 @@
 
 <article class="cluster-card cluster-accent-{{ object.accent }}">
   <header class="cluster-header">
-    <div class="cluster-identity"><div><h3>Published</h3><p>What the nodes are serving under this name</p></div></div>
+    <div class="cluster-identity"><div><h3>Frontend</h3><p>The published frontend that carries this address, which is shared by every object on it</p></div></div>
   </header>
   {% if object.published %}
   <div class="table-scroll"><table class="node-table">
@@ -51,7 +54,7 @@
     </tr></tbody>
   </table></div>
   {% else %}
-  <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>Not in the published release</strong><span>Stored but never published, or published under another name</span></div></div>
+  <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>No frontend names this</strong><span>Managed objects are served through a shared frontend named after the address, so a name of their own appears in no published section</span></div></div>
   {% endif %}
 </article>
 </div>

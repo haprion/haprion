@@ -297,6 +297,42 @@ class ClaimedJob:
     claim_token: UUID
 
 
+@dataclass(frozen=True, slots=True)
+class ProxyDraft:
+    """One object being edited, and what it was edited against.
+
+    `base_hash` is the commit the draft was derived from; a publish compares
+    its snapshot to it, so a draft made against a tree that has since moved is
+    refused rather than applied to something else. `revision` is the database's
+    own counter, raised by a trigger on every write, and it is what tells two
+    tabs apart.
+
+    `deleted` means the draft asks for the object to be *removed* when it is
+    published. It is not a discarded draft - discarding one deletes the row,
+    because an abandoned edit should leave nothing behind to be mistaken for a
+    decision.
+    """
+
+    cluster: str
+    object_id: str
+    yaml: str
+    base_version: int | None
+    base_hash: str
+    revision: int
+    updated_by: str
+    updated_at: datetime
+    deleted: bool
+
+
+class DraftConflict(Exception):
+    """Somebody else wrote this draft since it was read.
+
+    The revision the caller carried is not the one in the table. Refused rather
+    than merged: the two edits are both somebody's intention, and picking one
+    silently is how the other disappears without anyone noticing.
+    """
+
+
 class ClusterBusy(Exception):
     """A job for this cluster is already pending or running.
 
@@ -1192,3 +1228,122 @@ def try_singleton_lock(connection: Connection[Any], key: int) -> bool:
         cursor.execute("select pg_try_advisory_lock(%s)", (key,))
         row = cursor.fetchone()
     return bool(row and row[0])
+
+
+def cluster_drafts(connection: Connection[Any], cluster: str) -> list[ProxyDraft]:
+    """Every draft for one cluster, in the order a listing shows objects."""
+
+    with connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
+        cursor.execute(
+            "select cluster, object_id, yaml, base_version, base_hash, revision, "
+            "       updated_by, updated_at, deleted "
+            "  from proxy_draft "
+            " where cluster = %(cluster)s "
+            " order by object_id",
+            {"cluster": cluster},
+        )
+        return cursor.fetchall()
+
+
+def read_draft(connection: Connection[Any], cluster: str, object_id: str) -> ProxyDraft | None:
+    """One draft, or None where the object has no unsaved edit."""
+
+    with connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
+        cursor.execute(
+            "select cluster, object_id, yaml, base_version, base_hash, revision, "
+            "       updated_by, updated_at, deleted "
+            "  from proxy_draft "
+            " where cluster = %(cluster)s and object_id = %(object_id)s",
+            {"cluster": cluster, "object_id": object_id},
+        )
+        return cursor.fetchone()
+
+
+def save_draft(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    object_id: str,
+    yaml: str,
+    base_version: int | None,
+    base_hash: str,
+    updated_by: str,
+    deleted: bool = False,
+    expected_revision: int | None,
+) -> ProxyDraft:
+    """Create or replace one draft, refusing a write the caller did not see.
+
+    `expected_revision` is None for a draft that should not exist yet and the
+    revision the caller read for one that should. Both are enforced by the
+    statement rather than by a check-then-write: a read followed by a write is
+    two moments, and the interesting case is precisely somebody writing between
+    them.
+
+    The insert therefore carries `on conflict do nothing` and the update
+    carries the revision in its `where`, so a row that changed underneath
+    matches nothing and comes back as a conflict instead of an overwrite.
+    """
+
+    values = {
+        "cluster": cluster,
+        "object_id": object_id,
+        "yaml": yaml,
+        "base_version": base_version,
+        "base_hash": base_hash,
+        "updated_by": updated_by,
+        "deleted": deleted,
+        "revision": expected_revision,
+    }
+    with connection.transaction(), connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
+        if expected_revision is None:
+            cursor.execute(
+                "insert into proxy_draft "
+                "       (cluster, object_id, yaml, base_version, base_hash, updated_by, deleted) "
+                "values (%(cluster)s, %(object_id)s, %(yaml)s, %(base_version)s, "
+                "        %(base_hash)s, %(updated_by)s, %(deleted)s) "
+                "on conflict do nothing "
+                "returning cluster, object_id, yaml, base_version, base_hash, revision, "
+                "          updated_by, updated_at, deleted",
+                values,
+            )
+        else:
+            cursor.execute(
+                "update proxy_draft "
+                "   set yaml = %(yaml)s, base_version = %(base_version)s, "
+                "       base_hash = %(base_hash)s, updated_by = %(updated_by)s, "
+                "       deleted = %(deleted)s "
+                " where cluster = %(cluster)s and object_id = %(object_id)s "
+                "   and revision = %(revision)s "
+                "returning cluster, object_id, yaml, base_version, base_hash, revision, "
+                "          updated_by, updated_at, deleted",
+                values,
+            )
+        row = cursor.fetchone()
+        if row is None:
+            raise DraftConflict(
+                f"the draft for {object_id} changed since it was read; reload it and try again"
+            )
+        return row
+
+
+def discard_draft(
+    connection: Connection[Any], *, cluster: str, object_id: str, expected_revision: int
+) -> None:
+    """Throw one draft away, and only the revision the caller was looking at.
+
+    A real delete rather than a flag. An abandoned edit that stayed in the table
+    would be indistinguishable from a decision to remove the object, which is
+    what `deleted` means and what this is not.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "delete from proxy_draft "
+            " where cluster = %(cluster)s and object_id = %(object_id)s "
+            "   and revision = %(revision)s",
+            {"cluster": cluster, "object_id": object_id, "revision": expected_revision},
+        )
+        if cursor.rowcount == 0:
+            raise DraftConflict(
+                f"the draft for {object_id} changed since it was read; reload it and try again"
+            )

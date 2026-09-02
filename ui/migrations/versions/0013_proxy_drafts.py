@@ -57,10 +57,14 @@ def upgrade() -> None:
 
         --
         -- The same name the engine's model accepts, so a draft cannot be
-        -- created under a name a publish would then refuse.
+        -- created under a name a publish would then refuse. It is
+        -- `proxy_model.NAME` and not `config.NAME`, which is a different and
+        -- longer pattern for cluster and network identifiers; a test holds the
+        -- two together, because a constraint that drifts from the model is a
+        -- draft somebody writes and cannot publish.
         --
         constraint proxy_draft_object_shape
-            check (object_id ~ '^[a-z][a-z0-9-]{0,62}$'),
+            check (object_id ~ '^[a-z][a-z0-9-]{0,39}$'),
 
         --
         -- `MAX_MODEL_BYTES` in the engine. A document larger than the model

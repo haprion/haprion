@@ -15,7 +15,10 @@ from __future__ import annotations
 import unittest
 from contextlib import nullcontext
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+
+from haproxy_mgmt import proxy_model
 
 from haproxy_ui import db
 
@@ -214,6 +217,35 @@ class ReadingDrafts(unittest.TestCase):
         db.read_draft(connection, "alpha", "shop")  # type: ignore[arg-type]
 
         self.assertEqual(connection.last.parameters, {"cluster": "alpha", "object_id": "shop"})
+
+
+class TheTableAgreesWithTheEngine(unittest.TestCase):
+    """The constraint and the model are one rule written in two languages.
+
+    Nothing makes them agree by construction - one is SQL in a migration, the
+    other a pattern in the engine - so a test holds them together, the same way
+    the TLS policy names and their syntax are held together. A draft accepted
+    under a name the publish refuses is an edit somebody makes and then cannot
+    deliver, and the refusal arrives at the worst possible moment.
+    """
+
+    def migration(self) -> str:
+        path = (
+            Path(__file__).resolve().parents[1] / "migrations" / "versions" / "0013_proxy_drafts.py"
+        )
+        return path.read_text(encoding="utf-8")
+
+    def test_the_object_name_constraint_is_the_model_s_own_pattern(self) -> None:
+        pattern = proxy_model.NAME.pattern
+
+        self.assertIn(f"check (object_id ~ '{pattern}')", self.migration())
+
+    def test_the_document_limit_is_the_model_s_own_limit(self) -> None:
+        """A draft the model would refuse to read has no business being stored."""
+
+        self.assertIn(
+            f"check (octet_length(yaml) <= {proxy_model.MAX_MODEL_BYTES})", self.migration()
+        )
 
 
 if __name__ == "__main__":

@@ -101,6 +101,8 @@ DEFAULTS = {
     "maintenance": "",
     "maintenance_message": "",
     "unavailable_message": "",
+    "request_headers": "",
+    "response_headers": "",
 }
 
 
@@ -277,7 +279,53 @@ def build_document(form: dict[str, object]) -> str:
     if text("unavailable_message"):
         document["unavailable"] = {"message": text("unavailable_message")}
 
+    headers = {
+        phase: _header_edits(text(f"{phase}_headers"), phase) for phase in ("request", "response")
+    }
+    if any(headers.values()):
+        document["headers"] = {phase: edits for phase, edits in headers.items() if edits}
+
     return dump_document(document)
+
+
+def _header_edits(written: str, phase: str) -> dict[str, object]:
+    """One line per edit, which is how somebody writes these by hand.
+
+    `Name: value` sets, `+Name: value` adds another field with the same name,
+    and `-Name` removes every one. Three shapes rather than three text boxes,
+    because the edits belong together and reading them in one place is how a
+    contradiction becomes visible.
+
+    Nothing here decides whether a name or a value is usable - the engine does,
+    and it is the same refusal a hand-written object gets.
+    """
+
+    assigned: dict[str, str] = {}
+    added: dict[str, str] = {}
+    removed: list[str] = []
+    for line in written.splitlines():
+        entry = line.strip()
+        if not entry:
+            continue
+        if entry.startswith("-"):
+            removed.append(entry[1:].strip())
+            continue
+        target = added if entry.startswith("+") else assigned
+        name, separator, value = entry.lstrip("+").partition(":")
+        if not separator:
+            raise ValueError(
+                f"every {phase} header line must be Name: value, +Name: value or -Name"
+            )
+        target[name.strip()] = value.strip()
+
+    edits: dict[str, object] = {}
+    if assigned:
+        edits["set"] = assigned
+    if added:
+        edits["add"] = added
+    if removed:
+        edits["delete"] = removed
+    return edits
 
 
 def preview(form: dict[str, object], cluster: Cluster) -> Preview:

@@ -75,6 +75,8 @@
       <label>Session cookie<input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Keeps one visitor on one server through their session. Empty means no persistence. The name is case-sensitive; <code>{{ suggested_cookie }}</code> is a safe choice.</small></label>
       <label>Connections per server<input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>The most one server takes at a time. What does not fit waits in the pool's queue for up to 5 seconds. Empty means no limit.</small></label>
       <label>Slow start<input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>How long a server that has been down ramps up to full load. Needs a health check; must be longer than the check interval.</small></label>
+      <label>Request headers<textarea name="request_headers" rows="3" placeholder="X-Tenant: acme&#10;+X-Trace: 1&#10;-X-Debug">{{ form.request_headers }}</textarea><small>One per line. <code>Name: value</code> sets, <code>+Name: value</code> adds, <code>-Name</code> removes.</small></label>
+      <label>Response headers<textarea name="response_headers" rows="3" placeholder="X-Frame-Options: DENY&#10;-Server">{{ form.response_headers }}</textarea><small>Same three shapes, on the way back out.</small></label>
       <label>Backend TLS
         <select name="backend_tls">
           <option value=""{% if not form.backend_tls %} selected{% endif %}>Plain HTTP</option>

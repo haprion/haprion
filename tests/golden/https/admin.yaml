@@ -5,6 +5,15 @@ listen:
   protocol: https
   certificate: example.net
 allow_from: [office, 203.0.113.128/25]
+headers:
+  request:
+    set:
+      X-Tenant: '100% admin'
+    delete: [X-Debug]
+  response:
+    set:
+      X-Frame-Options: DENY
+    delete: [Server]
 routes:
   - path: /
     backend: console

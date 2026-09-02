@@ -134,6 +134,26 @@ COOKIE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$")
 
 #
+# What a header value may never hold. CR, LF and NUL are how a value stops
+# being a value and becomes a second header, and refusing them is the whole of
+# response-splitting defence at this layer. The single quote is here because
+# the generator writes values in single quotes: HAProxy expands `$NAME` inside
+# double quotes but not inside single ones, measured on 3.4.4 on this machine,
+# so single quoting is what lets a value contain a dollar sign at all - and a
+# single quote in the value would end the string early.
+#
+FORBIDDEN_IN_VALUE = ("\r", "\n", "\0", "'")
+
+#
+# The headers the cluster decides and an object may not touch. They are written
+# by the frontend from what the connection actually was; an object that set one
+# would be overwriting a measured fact with a guess.
+#
+RESERVED_HEADERS = ("x-forwarded-for", "x-forwarded-proto", "x-forwarded-host")
+
+MAX_HEADER_VALUE = 200
+
+#
 # What a maintenance page may say. The value is written into a double-quoted
 # configuration line, so a quote or a backslash would end that line somewhere
 # other than where it looks like it ends. `$` is out for a measured reason
@@ -376,6 +396,35 @@ class Hsts:
 
 
 @dataclass(frozen=True, slots=True)
+class HeaderActions:
+    """What one direction of the traffic has done to its headers.
+
+    `assign` replaces whatever was there, `append` adds another field with the
+    same name, and `remove` takes every one away. Three separate lists rather
+    than one list of operations, because the YAML then reads as three questions
+    with answers instead of a program.
+    """
+
+    assign: tuple[tuple[str, str], ...] = ()
+    append: tuple[tuple[str, str], ...] = ()
+    remove: tuple[str, ...] = ()
+
+    def __bool__(self) -> bool:
+        return bool(self.assign or self.append or self.remove)
+
+
+@dataclass(frozen=True, slots=True)
+class Headers:
+    """Header edits, in each direction. Absent means the traffic is untouched."""
+
+    request: HeaderActions = HeaderActions()
+    response: HeaderActions = HeaderActions()
+
+    def __bool__(self) -> bool:
+        return bool(self.request or self.response)
+
+
+@dataclass(frozen=True, slots=True)
 class Maintenance:
     """This object is out of service on purpose, and says so.
 
@@ -459,6 +508,9 @@ class Proxy:
 
     unavailable: Unavailable | None = None
     """What to say when the pool cannot answer. None means HAProxy's own text."""
+
+    headers: Headers = Headers()
+    """What this object adds to, replaces in, or removes from the traffic."""
 
 
 def _string(value: Mapping[str, Any], key: str, location: str, allowed: tuple[str, ...]) -> str:
@@ -815,6 +867,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
             "allow_from",
             "maintenance",
             "unavailable",
+            "headers",
         },
         name,
     )
@@ -871,6 +924,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     allow_from = _allow_from(data.get("allow_from", []), name)
     maintenance = _maintenance(data.get("maintenance"), f"{name}.maintenance")
     unavailable = _unavailable(data.get("unavailable"), f"{name}.unavailable")
+    headers = _headers(data.get("headers"), f"{name}.headers")
 
     return Proxy(
         name=name,
@@ -881,6 +935,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         allow_from=tuple(allow_from),
         maintenance=maintenance,
         unavailable=unavailable,
+        headers=headers,
     )
 
 
@@ -906,6 +961,99 @@ def _message(data: Mapping[str, Any], location: str) -> str:
             f"{', '.join(unknown)}. The only one is {URL_PLACEHOLDER}"
         )
     return message
+
+
+def _headers(value: Any, location: str) -> Headers:
+    if value is None:
+        return Headers()
+    data = _mapping(value, location)
+    _only_keys(data, {"request", "response"}, location)
+    return Headers(
+        request=_header_actions(data.get("request"), f"{location}.request"),
+        response=_header_actions(data.get("response"), f"{location}.response"),
+    )
+
+
+def _header_actions(value: Any, location: str) -> HeaderActions:
+    if value is None:
+        return HeaderActions()
+    data = _mapping(value, location)
+    _only_keys(data, {"set", "add", "delete"}, location)
+
+    assign = _header_pairs(data.get("set"), f"{location}.set")
+    append = _header_pairs(data.get("add"), f"{location}.add")
+    remove = _header_names(data.get("delete"), f"{location}.delete")
+
+    #
+    # One header named by two actions is an instruction that contradicts
+    # itself: whichever wins is decided by the order this module happens to
+    # write, which is exactly the kind of answer nobody should have to look up.
+    #
+    seen: dict[str, str] = {}
+    for action, names in (
+        ("set", [name for name, _ in assign]),
+        ("add", [name for name, _ in append]),
+        ("delete", list(remove)),
+    ):
+        for name in names:
+            lowered = name.lower()
+            if lowered in seen:
+                raise ModelError(f"{location} names {name} under both {seen[lowered]} and {action}")
+            seen[lowered] = action
+    return HeaderActions(assign=assign, append=append, remove=remove)
+
+
+def _header_pairs(value: Any, location: str) -> tuple[tuple[str, str], ...]:
+    if value is None:
+        return ()
+    data = _mapping(value, location)
+    pairs = []
+    for name in sorted(data):
+        _header_name(name, location)
+        content = data[name]
+        #
+        # YAML reads `yes`, `no`, `on` and `off` as booleans, so a header value
+        # that looks like a word arrives here as True. Said plainly, because
+        # "must be text" about something that is plainly text reads as a bug in
+        # the parser rather than as missing quotes.
+        #
+        if isinstance(content, bool):
+            raise ModelError(
+                f"{location}.{name} was read as a true/false value; quote it to make it text"
+            )
+        if not isinstance(content, (str, int)):
+            raise ModelError(f"{location}.{name} must be text")
+        text = str(content)
+        if not text or len(text) > MAX_HEADER_VALUE:
+            raise ModelError(
+                f"{location}.{name} must be between 1 and {MAX_HEADER_VALUE} characters"
+            )
+        if any(character in text for character in FORBIDDEN_IN_VALUE):
+            raise ModelError(
+                f"{location}.{name} may not contain line breaks, NUL or a single quote"
+            )
+        pairs.append((name, text))
+    return tuple(pairs)
+
+
+def _header_names(value: Any, location: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ModelError(f"{location} must be a list of header names")
+    for name in value:
+        _header_name(name, location)
+    return tuple(sorted(value))
+
+
+def _header_name(name: Any, location: str) -> None:
+    if not isinstance(name, str) or not HEADER_NAME.match(name):
+        raise ModelError(f"{location} contains something that is not a header name: {name!r}")
+    if name.lower() in RESERVED_HEADERS:
+        raise ModelError(
+            f"{location} may not touch {name}: the cluster writes it from what the "
+            f"connection actually was"
+        )
 
 
 def _unavailable(value: Any, location: str) -> Unavailable | None:

@@ -129,6 +129,36 @@ backends:
         port: {web}
 """
 
+EDITED = """
+schema: 1
+name: edited
+hostnames: [edited.example.com]
+listen:
+  protocol: http
+headers:
+  request:
+    set:
+      X-Tenant: '100% acme'
+    add:
+      X-Trace: '1'
+    delete: [X-Debug]
+  response:
+    set:
+      X-Frame-Options: DENY
+    delete: [Server]
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
 GONE = """
 schema: 1
 name: gone
@@ -637,7 +667,10 @@ class WhatTheBackendLearnsAboutTheVisitor(unittest.TestCase):
             .replace(b"unavailable:\n  message: The shop is not answering.\n", b"")
         )
         layer = generate(
-            [load_proxy("gone", document)],
+            [
+                load_proxy("gone", document),
+                load_proxy("edited", EDITED.format(web=backend).encode()),
+            ],
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
             #
@@ -665,11 +698,13 @@ class WhatTheBackendLearnsAboutTheVisitor(unittest.TestCase):
         cls.server.shutdown()
         cls.directory.cleanup()
 
-    def headers(self, sent: dict[str, str] | None = None) -> dict[str, str]:
+    def headers(
+        self, sent: dict[str, str] | None = None, host: str = "gone.example.com"
+    ) -> dict[str, str]:
         connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
             connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
-            connection.putheader("Host", "gone.example.com")
+            connection.putheader("Host", host)
             for name, value in (sent or {}).items():
                 connection.putheader(name, value)
             connection.endheaders()
@@ -775,3 +810,85 @@ class TheBrakeOnTrafficThatIsNotAVisitor(unittest.TestCase):
         self.assertEqual(answers[0], 200)
         self.assertIn(429, answers)
         self.assertEqual(answers[-1], 429)
+
+
+class HeaderEditsReachTheTraffic(unittest.TestCase):
+    """Read off a running proxy, because the file cannot prove interpretation.
+
+    A value written into a configuration line is not the value that arrives:
+    `%` is a log-format alias, and `$NAME` is expanded inside double quotes.
+    Both were measured on 3.4.4 on this machine, and both decided how the
+    generator quotes.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        backend = free_port()
+        cls.server = header_server(backend)
+        wait_for(backend)
+
+        cls.port = free_port()
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        (root / "0000-core.cfg").write_text(CORE)
+        layer = generate(
+            [load_proxy("edited", EDITED.format(web=backend).encode())],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            ports={"http": cls.port},
+        )
+        for name, content in layer.items():
+            (root / name).write_text(content)
+
+        arguments: list[str] = []
+        for path in sorted(root.iterdir()):
+            arguments += ["-f", str(path)]
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        cls.haproxy = subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL)
+        wait_for(cls.port)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.haproxy.terminate()
+        cls.haproxy.wait(timeout=5)
+        cls.server.shutdown()
+        cls.directory.cleanup()
+
+    def exchange(self, sent: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", "edited.example.com")
+            for name, value in sent.items():
+                connection.putheader(name, value)
+            connection.endheaders()
+            response = connection.getresponse()
+            body = response.read().decode()
+            answered = {name.lower(): value for name, value in response.getheaders()}
+        finally:
+            connection.close()
+        received = {
+            name.strip().lower(): value.strip()
+            for name, _, value in (line.partition(":") for line in body.splitlines())
+        }
+        return received, answered
+
+    def test_a_percent_sign_arrives_as_one_percent_sign(self) -> None:
+        """Written as `%%`, because HAProxy reads a single one as an alias."""
+
+        received, _ = self.exchange({})
+
+        self.assertEqual(received["x-tenant"], "100% acme")
+
+    def test_a_header_is_added_and_another_removed_on_the_way_in(self) -> None:
+        received, _ = self.exchange({"X-Debug": "please"})
+
+        self.assertEqual(received["x-trace"], "1")
+        self.assertNotIn("x-debug", received)
+
+    def test_the_answer_is_edited_on_the_way_out(self) -> None:
+        _, answered = self.exchange({})
+
+        self.assertEqual(answered["x-frame-options"], "DENY")
+        self.assertNotIn("server", answered)

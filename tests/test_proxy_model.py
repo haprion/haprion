@@ -551,3 +551,65 @@ class ProtectingOneServerFromMoreThanItCanServe(unittest.TestCase):
             load_proxy("shop", self.checked("slow_start: 2s"))
 
         self.assertIn("check interval", str(raised.exception))
+
+
+class EditingTheHeadersThatPassThrough(unittest.TestCase):
+    """Three questions with answers, not a list of operations."""
+
+    def headers(self, body: str) -> bytes:
+        return with_lines(("routes:", f"headers:\n{body}\nroutes:"))
+
+    def test_each_direction_is_read_separately(self) -> None:
+        proxy = load_proxy(
+            "shop",
+            self.headers(
+                "  request:\n    set:\n      X-Tenant: acme\n  response:\n    delete: [Server]"
+            ),
+        )
+
+        self.assertEqual(proxy.headers.request.assign, (("X-Tenant", "acme"),))
+        self.assertEqual(proxy.headers.response.remove, ("Server",))
+
+    def test_an_object_that_says_nothing_touches_nothing(self) -> None:
+        self.assertFalse(load_proxy("shop", MINIMAL).headers)
+
+    def test_one_header_under_two_actions_is_refused(self) -> None:
+        """Which one wins would be decided by whichever order this module writes."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy(
+                "shop",
+                self.headers("  request:\n    set:\n      X-Tenant: acme\n    delete: [x-tenant]"),
+            )
+
+        self.assertIn("both", str(raised.exception))
+
+    def test_the_forwarded_headers_belong_to_the_cluster(self) -> None:
+        """An object setting one would overwrite a measured fact with a guess."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy(
+                "shop", self.headers("  request:\n    set:\n      X-Forwarded-For: 203.0.113.1")
+            )
+
+        self.assertIn("the connection actually was", str(raised.exception))
+
+    def test_a_value_with_a_single_quote_is_refused(self) -> None:
+        """The generator writes values in single quotes, so one would end the line."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.headers('  request:\n    set:\n      X-Note: "it\'s here"'))
+
+        self.assertIn("single quote", str(raised.exception))
+
+    def test_a_value_yaml_read_as_a_boolean_says_so(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.headers("  request:\n    set:\n      X-Trace: yes"))
+
+        self.assertIn("quote it", str(raised.exception))
+
+    def test_a_name_that_is_not_a_header_name_is_refused(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", self.headers("  request:\n    delete: ['X Tenant']"))
+
+        self.assertIn("not a header name", str(raised.exception))

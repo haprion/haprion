@@ -818,6 +818,39 @@ def _balance(backend: Backend) -> str:
     return backend.balance
 
 
+def _header_lines(proxy: Proxy) -> list[str]:
+    """The object's own header edits, in the backend where they cannot spread.
+
+    In the backend rather than the frontend for the same reason the rewrites
+    are: a frontend is shared between every object on an address, and a rule
+    there would need a condition on every line to stay this object's.
+
+    Values are written in single quotes. HAProxy expands `$NAME` inside double
+    quotes and not inside single ones, measured on 3.4.4 on this machine, so
+    single quoting is what lets a value hold a dollar sign at all. `%` is a
+    log-format alias even there and has to be doubled - HAProxy says so itself
+    when it refuses to start: "Maybe you want to write a single '%', use the
+    syntax '%%'".
+    """
+
+    lines: list[str] = []
+    for phase, actions in (
+        ("request", proxy.headers.request),
+        ("response", proxy.headers.response),
+    ):
+        for name, value in actions.assign:
+            lines.append(f"    http-{phase} set-header {name} '{_header_value(value)}'")
+        for name, value in actions.append:
+            lines.append(f"    http-{phase} add-header {name} '{_header_value(value)}'")
+        for name in actions.remove:
+            lines.append(f"    http-{phase} del-header {name}")
+    return lines
+
+
+def _header_value(value: str) -> str:
+    return value.replace("%", "%%")
+
+
 def _hsts_line(proxy: Proxy) -> list[str]:
     """The Strict-Transport-Security header, written where it can be written.
 
@@ -894,6 +927,7 @@ def _backend(
         lines.append(f"    source {source}")
     lines.extend(rewrites)
     lines.extend(_hsts_line(proxy))
+    lines.extend(_header_lines(proxy))
     lines.extend(_unavailable_lines(proxy))
 
     if backend.max_connections is not None:

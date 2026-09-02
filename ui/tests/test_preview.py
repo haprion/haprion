@@ -342,3 +342,37 @@ class TheClusterWideRulesAreVisibleInThePreview(unittest.TestCase):
 
         self.assertIn("stick-table type ip", frontends)
         self.assertIn("sc_http_req_rate(0) gt 100", frontends)
+
+
+class HeaderEditsAreWrittenAsLines(unittest.TestCase):
+    """One line per edit, in the three shapes the note describes."""
+
+    def test_the_three_shapes_become_the_three_actions(self) -> None:
+        result = preview(
+            form(request_headers="X-Tenant: acme\n+X-Trace: 1\n-X-Debug"), PREVIEW_CLUSTER
+        )
+
+        self.assertIsNone(result.problem)
+        backend = result.files["1001-app.cfg"]
+        self.assertIn("http-request set-header X-Tenant 'acme'", backend)
+        self.assertIn("http-request add-header X-Trace '1'", backend)
+        self.assertIn("http-request del-header X-Debug", backend)
+
+    def test_the_response_direction_is_separate(self) -> None:
+        result = preview(response_headers_form(), PREVIEW_CLUSTER)
+
+        self.assertIn("http-response del-header Server", result.files["1001-app.cfg"])
+
+    def test_a_line_that_is_not_an_edit_is_named_before_the_engine_sees_it(self) -> None:
+        result = preview(form(request_headers="X-Tenant acme"), PREVIEW_CLUSTER)
+
+        self.assertIsNotNone(result.problem)
+
+    def test_a_forwarded_header_is_refused_by_the_engine(self) -> None:
+        result = preview(form(request_headers="X-Forwarded-For: 203.0.113.1"), PREVIEW_CLUSTER)
+
+        self.assertEqual(result.problem_field, "app.headers.request.set")
+
+
+def response_headers_form() -> dict[str, object]:
+    return form(response_headers="X-Frame-Options: DENY\n-Server")

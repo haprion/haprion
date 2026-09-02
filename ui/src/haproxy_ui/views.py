@@ -422,6 +422,8 @@ def build_router(config: Config) -> APIRouter:
         maintenance: str = Form(default=""),
         maintenance_message: str = Form(default="", max_length=200),
         unavailable_message: str = Form(default="", max_length=200),
+        request_headers: str = Form(default="", max_length=2048),
+        response_headers: str = Form(default="", max_length=2048),
         allow_from: list[str] = NETWORK_SELECTION,
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
@@ -469,6 +471,8 @@ def build_router(config: Config) -> APIRouter:
                 "maintenance": maintenance == "on",
                 "maintenance_message": maintenance_message,
                 "unavailable_message": unavailable_message,
+                "request_headers": request_headers,
+                "response_headers": response_headers,
             },
             submitted=True,
         )

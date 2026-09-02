@@ -28,10 +28,10 @@ surprise people:
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable, Sequence
 
-from haproxy_mgmt.proxy_model import Route
+from haproxy_mgmt.proxy_model import FORBIDDEN_IN_VALUE, Route
+from haproxy_mgmt.proxy_model import HEADER_NAME as MODEL_HEADER_NAME
 
 #
 # An HTTP field name, as RFC 9110 defines a token. Header names are generated
@@ -39,15 +39,12 @@ from haproxy_mgmt.proxy_model import Route
 # spelling - it is something that would change what the surrounding
 # configuration line means.
 #
-HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
-
+# Taken from the model rather than written again here. The predicates below
+# were the frozen semantics before the model had header fields; now that it
+# does, one definition has to serve both or they will drift apart in the way
+# only a visitor notices.
 #
-# A header value may hold anything printable, but never a character that ends a
-# line or a string. CR, LF and NUL are how a value stops being a value and
-# becomes a second header, and refusing them is the whole of response splitting
-# defence at this layer.
-#
-FORBIDDEN_IN_VALUE = ("\r", "\n", "\0")
+HEADER_NAME = MODEL_HEADER_NAME
 
 
 def split_target(target: str) -> tuple[str, str]:

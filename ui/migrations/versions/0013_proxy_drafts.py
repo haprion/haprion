@@ -98,8 +98,11 @@ def upgrade() -> None:
             check (deleted or length(yaml) > 0)
     );
 
-    create index proxy_draft_cluster_idx on proxy_draft (cluster, object_id);
-
+    --
+    -- No index beyond the primary key. `(cluster, object_id)` is the key, so
+    -- the listing a cluster page makes - every draft for one cluster, ordered
+    -- by name - is already served by it. A second index on the same columns in
+    -- the same order costs every write and answers nothing.
     --
     -- Both fields are the database's answer and not the caller's. A writer
     -- cannot backdate an edit or hold a revision still, which is what lets a

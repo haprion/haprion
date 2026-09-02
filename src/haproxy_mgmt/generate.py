@@ -74,6 +74,33 @@ NODE_CERTIFICATE_DIR = "/etc/haproxy/certs"
 ALPN = "h2,http/1.1"
 
 #
+# What each TLS policy a VIP may name means on a bind line. The names are
+# `config.TLS_POLICY_NAMES`; the syntax is here, because this is the module
+# that writes HAProxy.
+#
+# The cipher sets are Mozilla's, and they are written as one string per policy
+# rather than assembled from parts: a cipher list is an ordered preference, and
+# code that builds one out of pieces makes the order an accident.
+#
+# Both were put through `haproxy -c` on this machine on 3.4.4, and `modern` was
+# run: a client held to TLS 1.2 got no handshake at all, and a TLS 1.3 client
+# was served.
+#
+TLS_1_2_CIPHERS = (
+    "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
+    "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:"
+    "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:"
+    "DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305"
+)
+TLS_1_3_CIPHERSUITES = "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
+TLS_POLICIES = {
+    "intermediate": (
+        f" ssl-min-ver TLSv1.2 ciphers {TLS_1_2_CIPHERS} ciphersuites {TLS_1_3_CIPHERSUITES}"
+    ),
+    "modern": f" ssl-min-ver TLSv1.3 ciphersuites {TLS_1_3_CIPHERSUITES}",
+}
+
+#
 # The V1 defaults from the plan, written into every generated section. `tunnel`
 # is what makes a WebSocket upgrade survive without a separate switch in the
 # interface: an upgraded connection stops being a series of requests, and the
@@ -387,7 +414,14 @@ def _tls(members: Sequence[tuple[Vip, Proxy, str]], protocol: str) -> str:
         }
     )
     crt = "".join(f" crt {NODE_CERTIFICATE_DIR}/{name}.pem" for name in wanted)
-    return f" ssl{crt} alpn {ALPN}"
+    #
+    # Absent, the listener takes whatever `core/` sets. Written only where the
+    # cluster named a policy, because a bind line overrides `core/` in both
+    # directions and a default here could loosen a cluster nobody looked at.
+    #
+    vip = members[0][0]
+    policy = "" if vip.tls_policy is None else TLS_POLICIES[vip.tls_policy]
+    return f" ssl{crt} alpn {ALPN}{policy}"
 
 
 def _allow_rules(proxy: Proxy, networks: Mapping[str, Sequence[str]], host: str) -> list[str]:

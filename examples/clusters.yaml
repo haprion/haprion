@@ -17,6 +17,14 @@ clusters:
       internal:
         address: 192.0.2.20
         source: 192.0.2.25
+        #
+        # Which TLS versions and ciphers this listener accepts: `intermediate`
+        # for TLS 1.2 and 1.3, `modern` for 1.3 alone. Optional, and left out
+        # the listener takes what `core/` sets. Read that file before naming a
+        # policy here - a bind line overrides those defaults in both
+        # directions.
+        #
+        tls: intermediate
       dmz:
         address: 198.51.100.20
         source: 198.51.100.25

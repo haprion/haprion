@@ -332,6 +332,14 @@ behaves exactly as the example above.
         source: 192.0.2.15
       dmz:
         address: 198.51.100.10
+        # Which TLS versions and ciphers this listener accepts: `intermediate`
+        # for TLS 1.2 and 1.3, `modern` for 1.3 alone. Optional, and left out
+        # the listener takes what core/ sets through ssl-default-bind-*, which
+        # is what every cluster does today. Read that file before naming a
+        # policy here: the bind line overrides those defaults in both
+        # directions, so a policy can loosen a stricter cluster as well as
+        # tighten a looser one.
+        tls: modern
     default_vip: internal
 
     # The resolvers section in core/ that generated server lines point at.

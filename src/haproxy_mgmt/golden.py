@@ -55,7 +55,12 @@ def network(case: Path) -> tuple[dict[str, Vip], str]:
         return dict(DEFAULT_VIPS), "main"
     document = yaml.safe_load(path.read_text())
     vips = {
-        name: Vip(name=name, address=entry["address"], source=entry.get("source"))
+        name: Vip(
+            name=name,
+            address=entry["address"],
+            source=entry.get("source"),
+            tls_policy=entry.get("tls"),
+        )
         for name, entry in document["vips"].items()
     }
     return vips, document.get("default_vip", next(iter(vips)))

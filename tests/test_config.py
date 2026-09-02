@@ -456,3 +456,26 @@ class TheNetworkDescriptionInTheRepository(unittest.TestCase):
             target.symlink_to(elsewhere)
             with self.assertRaises(ConfigError):
                 load_network(root, vip="192.0.2.20")
+
+
+class AVipMayNameATlsPolicy(unittest.TestCase):
+    """Named rather than written out: a cipher string is raw OpenSSL syntax."""
+
+    def test_a_named_policy_is_carried(self) -> None:
+        cluster = _cluster(vips={"internal": {"address": "192.0.2.20", "tls": "modern"}})
+
+        self.assertEqual(cluster.vips["internal"].tls_policy, "modern")
+
+    def test_absent_means_core_keeps_deciding(self) -> None:
+        """Which is what every cluster does today, and the reason there is no default."""
+
+        cluster = _cluster(vips={"internal": {"address": "192.0.2.20"}})
+
+        self.assertIsNone(cluster.vips["internal"].tls_policy)
+
+    def test_a_policy_nobody_defined_is_refused_with_the_ones_that_exist(self) -> None:
+        with self.assertRaises(ConfigError) as raised:
+            _cluster(vips={"internal": {"address": "192.0.2.20", "tls": "paranoid"}})
+
+        self.assertIn("intermediate", str(raised.exception))
+        self.assertIn("modern", str(raised.exception))

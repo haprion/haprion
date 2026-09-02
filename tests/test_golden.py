@@ -18,7 +18,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.generate import NODE_CERTIFICATE_DIR, GeneratorError, generate
+from haproxy_mgmt.config import TLS_POLICY_NAMES, Vip
+from haproxy_mgmt.generate import (
+    NODE_CERTIFICATE_DIR,
+    TLS_POLICIES,
+    GeneratorError,
+    generate,
+)
 from haproxy_mgmt.golden import (
     CERTIFICATES,
     DEFAULT_VIPS,
@@ -445,3 +451,44 @@ class TheLimitAndTheRampAreWrittenPerServer(unittest.TestCase):
         self.assertNotIn("maxconn", backend)
         self.assertNotIn("slowstart", backend)
         self.assertNotIn("timeout queue", backend)
+
+
+class TheListenerAcceptsWhatTheClusterSaysItAccepts(unittest.TestCase):
+    """A VIP may name a TLS policy; without one it inherits from `core/`."""
+
+    def frontends(self, policy: str | None) -> str:
+        vip = Vip(name="main", address="192.0.2.20", tls_policy=policy)
+        return generate(
+            [load_proxy("app", HTTPS)],
+            vips={"main": vip},
+            default_vip="main",
+            certificates=CERTIFICATES,
+        )["1000-frontends.cfg"]
+
+    def test_every_name_the_configuration_accepts_can_be_written(self) -> None:
+        """Otherwise a cluster is refused on the node after a publish said it worked."""
+
+        self.assertEqual(sorted(TLS_POLICIES), sorted(TLS_POLICY_NAMES))
+
+    def test_modern_binds_to_tls_1_3_alone(self) -> None:
+        """Measured on 3.4.4: a client held to TLS 1.2 gets no handshake at all."""
+
+        self.assertIn("ssl-min-ver TLSv1.3", self.frontends("modern"))
+
+    def test_intermediate_keeps_tls_1_2_with_a_named_cipher_set(self) -> None:
+        frontends = self.frontends("intermediate")
+
+        self.assertIn("ssl-min-ver TLSv1.2", frontends)
+        self.assertIn("ECDHE-ECDSA-AES128-GCM-SHA256", frontends)
+
+    def test_a_vip_that_says_nothing_writes_nothing(self) -> None:
+        """`core/` keeps deciding, which is what every cluster does today.
+
+        A bind line overrides `core/` in both directions, so a policy defaulted
+        here would quietly loosen a cluster whose own defaults are stricter.
+        """
+
+        frontends = self.frontends(None)
+
+        self.assertNotIn("ssl-min-ver", frontends)
+        self.assertNotIn("ciphers", frontends)

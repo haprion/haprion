@@ -18,6 +18,20 @@ CLUSTER_ID = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 # What a cluster's single VIP is called when it has never had to be named.
 #
 DEFAULT_VIP = "main"
+
+#
+# The TLS policies a VIP may name. Only the names live here; what each one
+# means in HAProxy syntax lives in the generator, which is the module that
+# speaks that language. A test holds the two together, since a name this file
+# accepts and the generator cannot write would be refused on the node after a
+# publish reported success.
+#
+#   intermediate  TLS 1.2 and 1.3, the cipher set Mozilla calls intermediate.
+#                 What a public site serves unless it knows every client.
+#   modern        TLS 1.3 only. Everything current speaks it; nothing older
+#                 gets a handshake at all.
+#
+TLS_POLICY_NAMES = ("intermediate", "modern")
 NODE_PATH = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 CERTIFICATE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
@@ -119,6 +133,21 @@ class Vip:
     name: str
     address: str
     source: str | None = None
+    tls_policy: str | None = None
+    """Which TLS versions and ciphers this listener accepts. None inherits.
+
+    Named rather than written out, because a cipher string is raw OpenSSL
+    syntax and this project has decided not to have a field somebody pastes
+    raw syntax into. `TLS_POLICIES` in the generator holds what each name
+    means.
+
+    None means the listener takes whatever `core/` sets through
+    `ssl-default-bind-*`, which is what every cluster does today. It is left
+    that way rather than defaulted here because a policy written on the bind
+    line overrides `core/` in both directions: a cluster whose `core/` is
+    stricter than the named policy would be quietly loosened by a default
+    nobody asked for.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +322,14 @@ def _address_form(raw: Mapping[str, Any], location: str) -> tuple[int | None, st
     return prefix, interface
 
 
+def _tls_policy(value: Any, location: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in TLS_POLICY_NAMES:
+        raise ConfigError(f"{location} must be one of: {', '.join(TLS_POLICY_NAMES)}")
+    return value
+
+
 def _vips(raw: Mapping[str, Any], vip: str, location: str) -> tuple[Mapping[str, Vip], str]:
     """The addresses this cluster serves on, and which one an object gets by
     default.
@@ -324,12 +361,13 @@ def _vips(raw: Mapping[str, Any], vip: str, location: str) -> tuple[Mapping[str,
         if not isinstance(name, str) or not NAME.fullmatch(name):
             raise ConfigError(f"{where} is not a usable VIP name")
         entry = _mapping(value, where)
-        _only_keys(entry, {"address", "source"}, where)
+        _only_keys(entry, {"address", "source", "tls"}, where)
         source = entry.get("source")
         vips[name] = Vip(
             name=name,
             address=_address(entry.get("address"), f"{where}.address"),
             source=None if source is None else _address(source, f"{where}.source"),
+            tls_policy=_tls_policy(entry.get("tls"), f"{where}.tls"),
         )
 
     addresses = [entry.address for entry in vips.values()]

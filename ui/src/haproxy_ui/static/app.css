@@ -452,7 +452,19 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
    The job's own row keeps its bottom border and this one carries it instead, so
    the two read as one entry rather than two. */
 .job-table tr:has(+ .job-follow-up) td { border-bottom: 0; }
-.job-follow-up td { padding-top: 0; padding-bottom: 11px; white-space: normal; color: var(--muted); font-size: 11px; }
+/*
+ * Padded the same above and below. It read as an afterthought stuck to the row
+ * above because the top padding was zero: the note and the button sat against
+ * the divider while the space below them was empty.
+ */
+.job-follow-up td { padding-top: 8px; padding-bottom: 10px; white-space: normal; color: var(--muted); font-size: 11px; vertical-align: middle; }
+/*
+ * The button's own cell, centred in it. The columns are fixed widths, so a
+ * button wider than an exit code overhangs evenly on both sides and stays
+ * centred under the heading rather than pressed against the table's edge.
+ */
+.follow-up-cell { padding-top: 8px; padding-bottom: 10px; text-align: center; vertical-align: middle; }
+.follow-up-cell .secondary-button { white-space: nowrap; }
 .job-follow-up .status-dot { margin-right: 7px; }
 .job-follow-up code { margin-left: 7px; padding: 1px 6px; border-radius: 4px; background: var(--panel-soft); color: var(--text-primary); font-size: 11px; }
 .job-table tr:has(+ .job-failure) td { border-bottom: 0; }
@@ -626,6 +638,12 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   .node-table td, .node-table td:first-child, .node-table td:last-child { position: relative; min-width: 0; padding: 9px 8px 9px 88px; border: 0; white-space: normal; }
   .node-table td::before { position: absolute; top: 10px; left: 8px; color: var(--muted); content: attr(data-label); font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
   .node-table td:nth-child(1), .node-table td:nth-child(2) { grid-column: 1 / -1; }
+  /*
+   * The follow-up cells carry no data-label, so they need neither the room a
+   * label takes nor the centring that placed the button under a column that
+   * no longer exists at this width.
+   */
+  .job-follow-up td, .follow-up-cell { padding-left: 8px; text-align: left; }
   .login-card { padding: 27px 23px; }
 }
 
@@ -839,9 +857,12 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
  * rules inside a table, because it separates two subjects rather than two rows.
  */
 .editor-break { margin: 20px 20px 4px; border: 0; border-top: 2px solid var(--line-strong); }
-.follow-up-action { display: inline-block; margin-left: 8px; }
+.follow-up-action { display: inline-block; margin: 0; }
 /* The note reads from the left; the one control sits at the end of the row. */
-.follow-up-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* No longer `space-between`: the button it used to push to the far end now
+ * has a cell of its own, and pushing the note's own code block out there
+ * would leave a sentence and a command with a gap between them. */
+.follow-up-line { display: flex; align-items: center; gap: 12px; }
 .editor-actions { display: flex; justify-content: flex-end; padding: 14px 20px 4px; }
 /* The note keeps the left, the button the right, and they share one line. */
 /*

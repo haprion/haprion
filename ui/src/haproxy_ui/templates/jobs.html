@@ -39,23 +39,31 @@
       </tr>
       {% if job.follow_up %}
       <tr class="job-follow-up">
-        <td colspan="9">
-          {#
-            The line is a row of its own rather than a sentence with a button
-            after it: the note stays where the eye already reads, and the one
-            thing on the page that acts sits at the end of the row, away from
-            the text it would otherwise interrupt.
-          #}
+        {#
+          The note spans the columns it reads across, and the button sits in
+          the last one - the same cell the row above ends in. Aligned by the
+          table rather than by a margin measured off a screenshot: the columns
+          are fixed widths, so a button placed in the ninth cell stays under
+          the ninth heading whatever the window does.
+        #}
+        <td colspan="8">
           <div class="follow-up-line">
-          <span><span class="status-dot status-warning" aria-hidden="true"></span>{{ job.follow_up }}</span>
+            <span><span class="status-dot status-warning" aria-hidden="true"></span>{{ job.follow_up }}</span>
+            {#
+              The command is for a reader, who may not press the button and can
+              still hand the line to somebody who may. It stays in the note
+              because it does not fit a column sized for an exit code.
+            #}
+            {% if not (management_writes and role == 'admin') and job.next_command %}<code>{{ job.next_command }}</code>{% endif %}
+          </div>
+        </td>
+        <td class="follow-up-cell">
           {#
             The button, not the command. The engine's envelope names the
             terminal one because the command line is what asks it - but a person
             reading this page has a deploy button two clicks away, and telling
             them to open an SSH session instead is telling them the interface
-            cannot do the thing it has a button for. The command stays for a
-            reader, who may not press it and can still hand it to somebody who
-            may.
+            cannot do the thing it has a button for.
           #}
           {% if management_writes and role == 'admin' %}
           <form method="post" action="/operations" class="follow-up-action">
@@ -65,8 +73,7 @@
             <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
             <button class="secondary-button" type="submit">Deploy {{ job.cluster }}</button>
           </form>
-          {% elif job.next_command %}<code>{{ job.next_command }}</code>{% endif %}
-          </div>
+          {% endif %}
         </td>
       </tr>
       {% endif %}

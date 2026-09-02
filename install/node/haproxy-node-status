@@ -49,40 +49,88 @@ def service_active(name):
     return r.returncode == 0 and r.stdout.strip() == "active"
 
 
-def parse_keepalived():
+#
+# A directive and its argument, with the trailing comment keepalived allows.
+# The comment is why these are not `\s*$`: the configuration this project ships
+# writes `interface eth0  # CHANGE`, and a pattern that insists on the end of
+# the line reads that as no interface at all - which reports no VIP owner and
+# blocks every deploy, without saying why.
+#
+INTERFACE = re.compile(r"^\s*interface\s+(\S+)\s*(?:#.*)?$", re.MULTILINE)
+INCLUDE = re.compile(r"^include\s+(\S+)\s*(?:#.*)?$")
+ADDRESS = re.compile(r"^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(?:/\d+)?")
+VIP_BLOCK = re.compile(r"virtual_ipaddress\s*\{(.*?)\}", re.DOTALL)
+
+# One include deep is what this project's own layout uses. Deeper is not
+# followed, and an address that cannot be found is reported as unknown rather
+# than guessed at.
+MAX_INCLUDE_DEPTH = 1
+MAX_KEEPALIVED_BYTES = 1024 * 1024
+
+
+def read_config(path):
     try:
-        text = KEEPALIVED_CONFIG.read_text(encoding="utf-8")
+        if path.stat().st_size > MAX_KEEPALIVED_BYTES:
+            return None
+        return path.read_text(encoding="utf-8")
     except Exception:
+        return None
+
+
+def first_address(block, base, depth=0):
+    """The first address a virtual_ipaddress block puts on the interface.
+
+    Follows an `include`, because since the address list became a generated
+    file the block on a managed node holds exactly one line:
+
+        virtual_ipaddress {
+            include /etc/keepalived/addresses.conf
+        }
+
+    Reading only the block would then find no address, and this node would
+    report that it does not know whether it owns the VIP - which is not a
+    cosmetic answer: a deploy refuses to run without a known owner.
+    """
+
+    for line in block.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        include = INCLUDE.match(line)
+        if include:
+            if depth >= MAX_INCLUDE_DEPTH:
+                continue
+            path = Path(include.group(1))
+            if not path.is_absolute():
+                path = base / path
+            text = read_config(path)
+            if text is None:
+                continue
+            address = first_address(text, path.parent, depth + 1)
+            if address:
+                return address
+            continue
+
+        match = ADDRESS.match(line)
+        if match:
+            return match.group(1)
+
+    return None
+
+
+def parse_keepalived():
+    text = read_config(KEEPALIVED_CONFIG)
+    if text is None:
         return None, None
 
-    interface_match = re.search(
-        r"^\s*interface\s+(\S+)\s*$",
-        text,
-        re.MULTILINE,
-    )
-
-    vip_block = re.search(
-        r"virtual_ipaddress\s*\{(.*?)\}",
-        text,
-        re.DOTALL,
-    )
-
+    interface_match = INTERFACE.search(text)
     interface = interface_match.group(1) if interface_match else None
+
     vip = None
-
+    vip_block = VIP_BLOCK.search(text)
     if vip_block:
-        for line in vip_block.group(1).splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-
-            match = re.match(
-                r"([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(?:/\d+)?",
-                line,
-            )
-            if match:
-                vip = match.group(1)
-                break
+        vip = first_address(vip_block.group(1), KEEPALIVED_CONFIG.parent)
 
     return interface, vip
 

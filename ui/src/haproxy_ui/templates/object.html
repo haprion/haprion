@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+{% block title %}{{ object.name }} — HAProxy Manager{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div class="heading-title">
+    <p class="page-breadcrumb"><a href="/proxies">Proxies</a> · {{ object.cluster }}</p>
+    <h1>{{ object.name }}</h1>
+    <p class="page-lede">{{ object.detail }}</p>
+  </div>
+  <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
+</section>
+
+<article class="cluster-card cluster-accent-{{ object.accent }}">
+  <header class="cluster-header">
+    <div class="cluster-identity"><div><h3>Stored object</h3><p>{% if object.commit %}<code>managed/proxies/{{ object.name }}.yaml</code> at {{ object.short_commit }}{% else %}Read from the cluster repository{% endif %}</p></div></div>
+    <div class="cluster-state">{% if object.observed_iso %}<time datetime="{{ object.observed_iso }}" title="{{ object.observed_at }}">{{ object.age_label }}</time>{% else %}<span class="observation-age">Never read</span>{% endif %}</div>
+  </header>
+
+  {% if object.stored %}
+  {% if not object.stored.readable %}
+  <p class="refusal">This version cannot read the document: <code>{{ object.stored.problem }}</code></p>
+  <p class="table-note">It is shown as stored. A publish would refuse it with the same sentence.</p>
+  {% endif %}
+  <pre class="config-block"><code>{{ object.stored.document }}</code></pre>
+  <p class="table-note">{{ object.stored.line_count }} lines · the source, not the generated configuration.</p>
+  {% else %}
+  <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>Nothing stored</strong><span>{{ object.detail }}</span></div></div>
+  {% endif %}
+</article>
+
+<article class="cluster-card cluster-accent-{{ object.accent }}">
+  <header class="cluster-header">
+    <div class="cluster-identity"><div><h3>Published</h3><p>What the nodes are serving under this name</p></div></div>
+  </header>
+  {% if object.published %}
+  <div class="table-scroll"><table class="node-table">
+    <thead><tr><th>Protocol</th><th>Hostnames</th><th>Ports</th><th>Backends</th><th>Ownership</th></tr></thead>
+    <tbody><tr>
+      <td data-label="Protocol"><span class="protocol-badge protocol-{{ object.published.protocol }}">{{ object.published.protocol | upper }}</span></td>
+      <td data-label="Hostnames">{{ object.published.hostnames | join(', ') if object.published.hostnames else 'No hostname rule' }}</td>
+      <td data-label="Ports">{{ object.published.ports | join(', ') if object.published.ports else '—' }}</td>
+      <td data-label="Backends">{{ object.published.backend_count }}</td>
+      <td data-label="Ownership"><span class="ownership-badge ownership-{{ 'managed' if object.published.managed else 'unmanaged' }}">{{ 'Managed' if object.published.managed else 'Unmanaged' }}</span></td>
+    </tr></tbody>
+  </table></div>
+  {% else %}
+  <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>Not in the published release</strong><span>Stored but never published, or published under another name</span></div></div>
+  {% endif %}
+</article>
+{% endblock %}

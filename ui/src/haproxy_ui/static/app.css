@@ -498,6 +498,22 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .heading-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-width: 0; }
 .heading-title .page-lede { margin: 0; }
 .page-lede { max-width: 720px; margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+/*
+ * The path back, on a page reached from a row rather than from the navigation.
+ * It carries the cluster because a proxy name is only unique within one, and a
+ * reader who arrived from a link has no other way to see which cluster this is.
+ */
+.page-breadcrumb { margin: 0 0 2px; color: var(--muted); font-size: 11.5px; }
+.page-breadcrumb a { color: var(--muted-strong); text-decoration: none; }
+.page-breadcrumb a:hover { color: var(--text); text-decoration: underline; }
+/*
+ * Only the name is a link, and only for an admin - the detail page shows
+ * certificates and backend addresses that the overview deliberately does not.
+ * It is styled as text until hovered, so a table of names does not read as a
+ * row of buttons.
+ */
+.proxy-link { color: inherit; text-decoration: none; }
+.proxy-link:hover strong { text-decoration: underline; }
 
 /* The schedule, stated once: one timer takes every node's backup. */
 .schedule-strip { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 10px 16px; border-radius: var(--radius); background: var(--panel); color: var(--text-primary); font-size: 12px; }

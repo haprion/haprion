@@ -42,6 +42,7 @@ from haproxy_ui import (
     history,
     jobs,
     network,
+    objects,
     operations,
     proxies,
     snapshot,
@@ -196,6 +197,20 @@ NETWORK_SOURCE = Source(
     demo.network_rows,
     lambda taken: taken.network_rows,
     lambda connection: db.cluster_networks(connection),
+)
+#
+# A production snapshot carries no objects, and that is a decision rather than
+# an omission. The snapshot is a file copied into the development platform,
+# where more people can read it, so every other source in it is rebuilt field by
+# field and bounded. A stored object is the one thing that cannot be reduced
+# that way and still be worth reading - it is the document itself, carrying
+# every backend address the cluster talks to, which no other source in the
+# snapshot exposes. Dev exercises this page against the fixture instead.
+#
+OBJECTS_SOURCE = Source(
+    demo.object_rows,
+    lambda taken: (),
+    lambda connection: db.cluster_objects(connection),
 )
 
 
@@ -383,6 +398,67 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "proxies": overview,
                 "section": "proxies",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": snapshot_age(captured_at),
+            },
+        )
+
+    @router.get("/proxies/{cluster}/{name}", response_class=HTMLResponse)
+    def proxy_object(request: Request, cluster: str, name: str) -> Response:
+        """One proxy as it is written, beside the row the nodes are serving.
+
+        Admin only, for the reason B68 gives about the preview: the stored
+        document names certificates and every backend address behind a site,
+        and the overview this is reached from deliberately shows neither.
+        """
+
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if session.role != "admin":
+            return PlainTextResponse("Refused", status_code=403)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        clusters, object_rows, captured_at = read_source(request, config, OBJECTS_SOURCE)
+        if cluster not in clusters:
+            raise HTTPException(status_code=404)
+        _, inventory_rows, _ = read_source(request, config, INVENTORY_SOURCE)
+        overview = proxies.build_proxy_overview(
+            clusters,
+            inventory_rows,
+            now=captured_at,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            captured=captured_at is not None,
+        )
+        published = tuple(
+            proxy for view in overview.clusters if view.cluster == cluster for proxy in view.proxies
+        )
+        detail = objects.build_object_detail(
+            cluster,
+            name,
+            object_rows,
+            published,
+            now=captured_at,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            captured=captured_at is not None,
+        )
+        #
+        # A name that is neither stored nor served is not a page. Rendering an
+        # empty detail for any string would make every typo look like a proxy
+        # somebody had deleted.
+        #
+        if detail.stored is None and detail.published is None and detail.available:
+            raise HTTPException(status_code=404)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "object.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "section": "proxies",
+                "object": detail,
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,

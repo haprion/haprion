@@ -19,6 +19,7 @@ from haproxy_ui.db import (
     ClusterHistory,
     ClusterInventory,
     ClusterNetwork,
+    ClusterObjects,
     ClusterStatus,
 )
 
@@ -477,6 +478,138 @@ def network_rows(now: datetime | None = None) -> tuple[ClusterNetwork, ...]:
                 "vips": [{"name": "main", "address": "198.51.100.20", "source": None}],
                 "sources": [],
                 "groups": [],
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+    )
+
+
+PUBLIC_WEB = """schema: 1
+name: public-web
+hostnames:
+  - app.demo.example
+  - www.demo.example
+listen:
+  protocol: https
+  certificate: wildcard-demo-example
+  redirect_http: true
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: system
+    servers:
+      - host: 192.0.2.10
+        port: 8080
+      - host: 192.0.2.11
+        port: 8080
+      - host: 192.0.2.12
+        port: 8080
+"""
+
+API = """schema: 1
+name: api
+hostnames:
+  - api.demo.example
+listen:
+  protocol: https
+  certificate: api-demo-example
+routes:
+  - path: /
+    backend: service
+backends:
+  service:
+    balance: leastconn
+    health:
+      type: system
+    servers:
+      - host: 198.51.100.10
+        port: 8443
+      - host: 198.51.100.11
+        port: 8443
+"""
+
+#
+# Deliberately broken, and the most useful entry in the fixture. An object the
+# engine cannot read is the one somebody has to open, so the page has to stay
+# legible for it - it is listed with the refusal instead of its shape, and the
+# document is still there to be read. A fixture without this case would let a
+# page ship that renders only objects that parse.
+#
+HALF_WRITTEN = """schema: 1
+name: staging
+listen:
+  protocol: https
+"""
+
+
+def object_rows(now: datetime | None = None) -> tuple[ClusterObjects, ...]:
+    """The objects as written, beside the inventory that shows them published.
+
+    `public-web` and `api` are the managed rows the inventory carries, so the
+    two readings describe the same sites; `metrics` and `legacy-tcp` have no
+    object, because they are unmanaged and their configuration was not written
+    here. That asymmetry is the point - it is what a real cluster looks like
+    part-way through the move.
+    """
+
+    moment = now or datetime.now(UTC)
+    observed = moment - timedelta(seconds=15)
+    return (
+        ClusterObjects(
+            cluster="edge-demo",
+            observed_at=observed,
+            outcome="done",
+            result={
+                "commit": "a" * 40,
+                "generated_at": observed.isoformat().replace("+00:00", "Z"),
+                "objects": [
+                    {
+                        "name": "public-web",
+                        "document": PUBLIC_WEB,
+                        "readable": True,
+                        "problem": None,
+                        "protocol": "https",
+                        "hostnames": ["app.demo.example", "www.demo.example"],
+                    },
+                    {
+                        "name": "staging",
+                        "document": HALF_WRITTEN,
+                        "readable": False,
+                        "problem": "staging.routes is required for an http object",
+                        "protocol": None,
+                        "hostnames": [],
+                    },
+                ],
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+        ClusterObjects(
+            cluster="service-demo",
+            observed_at=observed - timedelta(seconds=6),
+            outcome="done",
+            result={
+                "commit": "b" * 40,
+                "generated_at": (observed - timedelta(seconds=6))
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "objects": [
+                    {
+                        "name": "api",
+                        "document": API,
+                        "readable": True,
+                        "problem": None,
+                        "protocol": "https",
+                        "hostnames": ["api.demo.example"],
+                    }
+                ],
             },
             warnings=[],
             error=None,

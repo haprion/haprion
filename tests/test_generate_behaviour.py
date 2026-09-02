@@ -19,6 +19,9 @@ cannot answer the question, and a green result there would mean nothing.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import os
 import shutil
 import socket
 import ssl
@@ -1006,3 +1009,395 @@ class ARawPortIsForwardedAsItArrives(unittest.TestCase):
 
         self.assertIn("mode tcp", written)
         self.assertNotIn("forwardfor", written)
+
+
+BACKEND_TLS = """
+schema: 1
+name: secure
+hostnames: [secure.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    tls:
+      verify: {verify}
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
+
+def self_signed(directory: Path, name: str, *, expired: bool) -> tuple[Path, Path]:
+    """A certificate no trust store knows, optionally already out of date.
+
+    Two separate reasons a peer should be rejected, and `verify none` ignores
+    both. Proving them apart matters because they fail differently in the
+    world: an unknown issuer is a deployment that was never finished, and an
+    expired certificate is one that was and then lapsed.
+    """
+
+    openssl = shutil.which("openssl")
+    assert openssl is not None
+    key = directory / f"{name}-key.pem"
+    certificate = directory / f"{name}-cert.pem"
+    validity = (
+        ["-not_before", "20200101000000Z", "-not_after", "20200102000000Z"]
+        if expired
+        else ["-days", "1"]
+    )
+    subprocess.run(
+        [
+            openssl,
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-keyout",
+            str(key),
+            "-out",
+            str(certificate),
+            "-nodes",
+            "-subj",
+            "/CN=127.0.0.1",
+            *validity,
+        ],
+        capture_output=True,
+        check=True,
+    )
+    return certificate, key
+
+
+def tls_server(port: int, certificate: Path, key: Path) -> ThreadingHTTPServer:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - the name is the library's
+            body = b"reached"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_: object) -> None:
+            """Silence."""
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile=str(certificate), keyfile=str(key))
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@unittest.skipUnless(
+    shutil.which("haproxy") and shutil.which("openssl"),
+    "haproxy or openssl is not installed here",
+)
+class ReachingAPoolOverTls(unittest.TestCase):
+    """What `verify` actually decides, proved against a real TLS backend.
+
+    The generator writes one of two lines and there is no third: `ssl verify
+    none` for `verify: none`, and `ssl verify required ca-file @system-ca` for
+    `verify: system`. Reading the file cannot tell whether the second one is
+    enforced - HAProxy refuses `verify required` without a CA outright, so a
+    silent "verifying nothing" is not among the outcomes - but only a
+    connection can show that the first really does accept what the second
+    rejects.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.root = Path(cls.directory.name)
+        cls.servers: list[ThreadingHTTPServer] = []
+        cls.running: list[subprocess.Popen[bytes]] = []
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        for process in cls.running:
+            process.terminate()
+            process.wait(timeout=5)
+        for server in cls.servers:
+            server.shutdown()
+        cls.directory.cleanup()
+
+    def reach(self, *, verify: str, expired: bool) -> int:
+        """One request through a proxy whose pool speaks TLS, as a status."""
+
+        name = f"{verify}-{'expired' if expired else 'unknown'}"
+        certificate, key = self_signed(self.root, name, expired=expired)
+        backend = free_port()
+        server = tls_server(backend, certificate, key)
+        self.servers.append(server)
+        wait_for(backend)
+
+        port = free_port()
+        root = self.root / name
+        root.mkdir()
+        (root / "0000-core.cfg").write_text(CORE)
+        layer = generate(
+            [load_proxy("secure", BACKEND_TLS.format(verify=verify, web=backend).encode())],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            ports={"http": port},
+        )
+        for filename, content in layer.items():
+            (root / filename).write_text(content)
+
+        arguments: list[str] = []
+        for path in sorted(root.iterdir()):
+            arguments += ["-f", str(path)]
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        self.running.append(subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL))
+        wait_for(port)
+
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", "secure.example.com")
+            connection.endheaders()
+            return int(connection.getresponse().status)
+        finally:
+            connection.close()
+
+    def test_verify_none_accepts_a_certificate_no_trust_store_knows(self) -> None:
+        self.assertEqual(self.reach(verify="none", expired=False), 200)
+
+    def test_verify_none_accepts_an_expired_certificate_too(self) -> None:
+        """The cost of the setting, stated rather than assumed.
+
+        `none` is not "check the dates but not the issuer" - it is no check at
+        all, and a pool whose certificate lapsed keeps being served.
+        """
+
+        self.assertEqual(self.reach(verify="none", expired=True), 200)
+
+    def test_verify_system_refuses_an_issuer_the_system_does_not_trust(self) -> None:
+        """503, because the connection to the pool is what fails."""
+
+        self.assertEqual(self.reach(verify="system", expired=False), 503)
+
+    def test_verify_system_refuses_an_expired_certificate(self) -> None:
+        self.assertEqual(self.reach(verify="system", expired=True), 503)
+
+
+UPGRADE = """
+schema: 1
+name: live
+hostnames: [live.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
+
+def upgrade_server(port: int) -> socket.socket:
+    """A backend that speaks the upgrade and then just moves bytes.
+
+    Raw sockets rather than a WebSocket library: what is being measured is
+    HAProxy's behaviour once the connection stops being a series of requests,
+    and framing the payload would only add something else that can fail.
+
+    `/slow` is the other half of the case - an ordinary response that arrives
+    too late - and it is served on the same backend so that both outcomes come
+    from one configuration.
+    """
+
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", port))
+    listener.listen(8)
+
+    def serve() -> None:
+        while True:
+            try:
+                client, _ = listener.accept()
+            except OSError:
+                return
+            threading.Thread(target=handle, args=(client,), daemon=True).start()
+
+    def handle(client: socket.socket) -> None:
+        with client:
+            client.settimeout(30)
+            request = b""
+            try:
+                while b"\r\n\r\n" not in request:
+                    chunk = client.recv(4096)
+                    if not chunk:
+                        return
+                    request += chunk
+            except OSError:
+                return
+
+            if b"upgrade: websocket" in request.lower():
+                #
+                # The accept value is computed rather than canned, because
+                # HAProxy checks the response as well as the request: a 101
+                # without it is rejected as an invalid answer and the client
+                # sees 502 instead of a tunnel.
+                #
+                key = ""
+                for line in request.decode("latin-1").splitlines():
+                    name, _, value = line.partition(":")
+                    if name.strip().lower() == "sec-websocket-key":
+                        key = value.strip()
+                accept = base64.b64encode(
+                    hashlib.sha1(  # noqa: S324 - the value the protocol specifies
+                        (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()
+                    ).digest()
+                ).decode()
+                client.sendall(
+                    b"HTTP/1.1 101 Switching Protocols\r\n"
+                    b"Upgrade: websocket\r\n"
+                    b"Connection: Upgrade\r\n"
+                    b"Sec-WebSocket-Accept: " + accept.encode() + b"\r\n\r\n"
+                )
+                try:
+                    while True:
+                        data = client.recv(4096)
+                        if not data:
+                            return
+                        client.sendall(data)
+                except OSError:
+                    return
+
+            #
+            # Deliberately later than the shortened server timeout below, so
+            # the request that is not a tunnel is cut while this one waits.
+            #
+            time.sleep(3)
+            body = b"late"
+            try:
+                client.sendall(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n"
+                    b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+                )
+            except OSError:
+                #
+                # Expected in the case this branch exists for: HAProxy has
+                # already given up on the response and closed the connection,
+                # which is the outcome being measured.
+                #
+                return
+
+    threading.Thread(target=serve, daemon=True).start()
+    return listener
+
+
+@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
+class AnUpgradedConnectionLivesOnTheTunnelTimeout(unittest.TestCase):
+    """What keeps a WebSocket open, proved without waiting an hour for it.
+
+    An upgraded connection stops being a series of requests, and `timeout
+    server` would otherwise close it while it is idle and perfectly healthy.
+    The generator writes `timeout tunnel 1h` into every http backend for
+    exactly this, and there is no switch for it in the interface - a site that
+    upgrades gets it because every site does.
+
+    The generated `timeout server 50s` is shortened to 1s here, and nothing
+    else is touched. Waiting out the real value would make this a minute-long
+    test measuring the same thing, and the tunnel timeout is left exactly as
+    the generator wrote it - it is the value under test.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.backend = free_port()
+        cls.listener = upgrade_server(cls.backend)
+        wait_for(cls.backend)
+
+        cls.port = free_port()
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        (root / "0000-core.cfg").write_text(CORE)
+        layer = generate(
+            [load_proxy("live", UPGRADE.format(web=cls.backend).encode())],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            ports={"http": cls.port},
+        )
+        for name, content in layer.items():
+            shortened = content.replace("timeout server 50s", "timeout server 1s")
+            assert "timeout tunnel 1h" in content or "1001-" not in name
+            (root / name).write_text(shortened)
+
+        arguments: list[str] = []
+        for path in sorted(root.iterdir()):
+            arguments += ["-f", str(path)]
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        cls.haproxy = subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL)
+        wait_for(cls.port)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.haproxy.terminate()
+        cls.haproxy.wait(timeout=5)
+        cls.listener.close()
+        cls.directory.cleanup()
+
+    def test_an_ordinary_response_is_cut_by_the_server_timeout(self) -> None:
+        """The control. Without it the case below proves only that bytes move."""
+
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            connection.putrequest("GET", "/slow", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", "live.example.com")
+            connection.endheaders()
+
+            self.assertEqual(connection.getresponse().status, 504)
+        finally:
+            connection.close()
+
+    def test_an_upgraded_connection_outlives_it_and_keeps_carrying_bytes(self) -> None:
+        client = socket.create_connection(("127.0.0.1", self.port), timeout=10)
+        #
+        # A complete handshake, key and version included. HAProxy checks the
+        # shape of a websocket upgrade and answers 400 to one that is missing
+        # them - so an abbreviated request here would test the refusal rather
+        # than the tunnel.
+        #
+        # The key is generated, which is what the protocol says it is: sixteen
+        # random bytes, base64. A literal one would also be a base64 blob in a
+        # repository that scans for exactly those.
+        #
+        key = base64.b64encode(os.urandom(16))
+        try:
+            client.sendall(
+                b"GET / HTTP/1.1\r\n"
+                b"Host: live.example.com\r\n"
+                b"Connection: Upgrade\r\n"
+                b"Upgrade: websocket\r\n"
+                b"Sec-WebSocket-Key: " + key + b"\r\n"
+                b"Sec-WebSocket-Version: 13\r\n\r\n"
+            )
+            answer = client.recv(4096)
+            self.assertIn(b"101", answer)
+
+            #
+            # Longer than the shortened server timeout and shorter than
+            # anything else in the configuration, so the only rule that can
+            # keep this connection alive is the tunnel timeout.
+            #
+            time.sleep(2.5)
+
+            client.sendall(b"still here")
+            self.assertEqual(client.recv(4096), b"still here")
+        finally:
+            client.close()

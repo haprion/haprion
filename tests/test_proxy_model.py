@@ -614,6 +614,44 @@ class EditingTheHeadersThatPassThrough(unittest.TestCase):
 
         self.assertIn("single quote", str(raised.exception))
 
+    def test_a_line_break_is_refused_where_it_is_still_a_value(self) -> None:
+        """The one injection an HTTP header carries, stopped at the model.
+
+        A CR or an LF inside a value ends the header and starts whatever
+        follows it - a second header, or a response body. It has to be refused
+        here rather than escaped where the line is written: the generator
+        writes a configuration line, and by the time HAProxy reads that line
+        the break has already become structure.
+
+        Written as YAML escapes in a double-quoted scalar, so the bytes really
+        do reach the model rather than being folded away by the parser.
+        """
+
+        for name, written in (("carriage return", "\\r"), ("line feed", "\\n")):
+            document = self.headers(
+                f'  request:\n    set:\n      X-Note: "a{written}X-Admin: true"'
+            )
+            with self.subTest(name), self.assertRaises(ModelError) as raised:
+                load_proxy("shop", document)
+
+            self.assertIn("line breaks", str(raised.exception))
+
+    def test_a_redirect_target_may_not_carry_a_line_break_either(self) -> None:
+        """Same value, same injection, a different field that writes a line."""
+
+        document = with_lines(
+            (
+                "  - path: /\n    backend: web\n",
+                "  - path: /old\n    redirect:\n"
+                '      location: "https://example.com/\\r\\nX-Admin: true"\n',
+            )
+        )
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", document)
+
+        self.assertIn("location", str(raised.exception))
+
     def test_a_value_yaml_read_as_a_boolean_says_so(self) -> None:
         with self.assertRaises(ModelError) as raised:
             load_proxy("shop", self.headers("  request:\n    set:\n      X-Trace: yes"))

@@ -199,6 +199,7 @@ def _cluster(
     networks: object = _UNSET,
     sources: object = _UNSET,
     unknown_host: object = _UNSET,
+    abuse_protection: object = _UNSET,
 ):
     """One cluster from the shipped example, with its address table replaced.
 
@@ -210,6 +211,11 @@ def _cluster(
     alpha = clusters["clusters"]["alpha"]
     alpha.pop("vips", None)
     alpha.pop("default_vip", None)
+    #
+    # Removed like the address table: the section is optional, and a test about
+    # what a cluster without one does has to start from a cluster without one.
+    #
+    alpha.pop("abuse_protection", None)
     if vips is not _UNSET:
         alpha["vips"] = vips
     if default_vip is not _UNSET:
@@ -222,6 +228,8 @@ def _cluster(
         alpha["sources"] = sources
     if unknown_host is not _UNSET:
         alpha["unknown_host"] = unknown_host
+    if abuse_protection is not _UNSET:
+        alpha["abuse_protection"] = abuse_protection
 
     with tempfile.TemporaryDirectory() as raw:
         directory = Path(raw)
@@ -479,3 +487,43 @@ class AVipMayNameATlsPolicy(unittest.TestCase):
 
         self.assertIn("intermediate", str(raised.exception))
         self.assertIn("modern", str(raised.exception))
+
+
+class TheBrakeOnAbusiveTraffic(unittest.TestCase):
+    """A brake and not a ban list, because a reload empties the counters."""
+
+    def protection(self, section: object):
+        return _cluster(abuse_protection=section).abuse_protection
+
+    def test_absent_means_nothing_is_generated(self) -> None:
+        self.assertIsNone(_cluster().abuse_protection)
+
+    def test_the_window_has_a_default_and_the_thresholds_do_not(self) -> None:
+        protection = self.protection({"max_requests": 100})
+
+        assert protection is not None
+        self.assertEqual(protection.window, "10s")
+        self.assertEqual(protection.max_requests, 100)
+        self.assertIsNone(protection.max_errors)
+
+    def test_a_flood_and_a_scanner_are_counted_separately(self) -> None:
+        """Many ordinary requests and few requests that are nearly all errors."""
+
+        protection = self.protection({"max_requests": 100, "max_errors": 20})
+
+        assert protection is not None
+        self.assertEqual((protection.max_requests, protection.max_errors), (100, 20))
+
+    def test_a_section_with_no_threshold_is_refused(self) -> None:
+        """It would count every visitor and refuse nobody."""
+
+        with self.assertRaises(ConfigError) as raised:
+            self.protection({"window": "10s"})
+
+        self.assertIn("max_requests", str(raised.exception))
+
+    def test_a_window_that_is_not_a_duration_is_refused(self) -> None:
+        with self.assertRaises(ConfigError) as raised:
+            self.protection({"window": "soon", "max_requests": 10})
+
+        self.assertIn("duration", str(raised.exception))

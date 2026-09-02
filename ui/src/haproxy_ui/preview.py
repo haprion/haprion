@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from haproxy_mgmt.config import Cluster, Node, UnknownHost, Vip
+from haproxy_mgmt.config import AbuseProtection, Cluster, Node, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, generate
 from haproxy_mgmt.proxy_model import (
     BALANCE,
@@ -58,6 +58,7 @@ PREVIEW_CLUSTER = Cluster(
     sources={"outbound": "192.0.2.35"},
     networks={"office": ("198.51.100.0/24",), "vpn": ("203.0.113.0/24",)},
     unknown_host=UnknownHost(status=404),
+    abuse_protection=AbuseProtection(window="10s", max_requests=100, max_errors=20),
     config_path=Path("/preview"),
     publish_path=Path("/preview"),
     node_path="preview",
@@ -303,6 +304,8 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
             networks=cluster.networks,
             sources=cluster.sources,
             unknown_host=cluster.unknown_host,
+            trusted_proxies=cluster.trusted_proxy_cidrs,
+            abuse_protection=cluster.abuse_protection,
         )
     except (ModelError, GeneratorError) as exc:
         return Preview(document=document, problem=str(exc))

@@ -77,6 +77,24 @@ clusters:
     # extended rather than thrown away. Leave the list empty where HAProxy is
     # the first thing traffic reaches.
     #
+    #
+    # A brake on one source address that is plainly not a visitor. Counted per
+    # address over `window`; a request rate above `max_requests` or an error
+    # rate above `max_errors` is refused with 429 until the rate falls again.
+    #
+    # A brake and not a ban list on purpose: HAProxy keeps these counters in
+    # the process, so a reload - and a publish reloads - starts them empty. A
+    # ban measured in hours would quietly last until the next edit.
+    #
+    # Skipped for `trusted_proxy_cidrs`, since behind a front-line proxy every
+    # request carries its address and the rule would refuse everybody.
+    #
+    # Optional; leave it out and nothing is generated.
+    #
+    abuse_protection:
+      window: 10s
+      max_requests: 100
+      max_errors: 20
     trusted_proxy_cidrs:
       - 198.51.100.0/24
     nodes:

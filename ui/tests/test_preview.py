@@ -211,7 +211,12 @@ class TheSourceAddressMayBeChosen(unittest.TestCase):
 
         self.assertIsNone(result.problem)
         self.assertNotIn("allow_from", result.document)
-        self.assertNotIn("http-request deny", result.files["1000-frontends.cfg"])
+        #
+        # Named for the object's own allowlist rather than any deny: the
+        # cluster's abuse brake writes denies of its own, and they are not what
+        # this is about.
+        #
+        self.assertNotIn("mgd-app-allow", result.files["1000-frontends.cfg"])
 
 
 class ARefusalNamesTheFieldItIsAbout(unittest.TestCase):
@@ -321,3 +326,19 @@ class BoundingWhatOneServerIsHanded(unittest.TestCase):
         result = preview(form(max_connections="fifty"), PREVIEW_CLUSTER)
 
         self.assertIsNotNone(result.problem)
+
+
+class TheClusterWideRulesAreVisibleInThePreview(unittest.TestCase):
+    """The page shows the whole frontend, not only the object's part of it."""
+
+    def test_the_forwarded_headers_are_written_before_any_routing(self) -> None:
+        frontends = preview(form(), PREVIEW_CLUSTER).files["1000-frontends.cfg"]
+
+        self.assertIn("http-request del-header X-Forwarded-For", frontends)
+        self.assertIn("set-header X-Forwarded-Proto https", frontends)
+
+    def test_the_abuse_brake_is_written_with_its_thresholds(self) -> None:
+        frontends = preview(form(), PREVIEW_CLUSTER).files["1000-frontends.cfg"]
+
+        self.assertIn("stick-table type ip", frontends)
+        self.assertIn("sc_http_req_rate(0) gt 100", frontends)

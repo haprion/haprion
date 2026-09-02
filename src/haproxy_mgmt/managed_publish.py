@@ -92,6 +92,7 @@ def managed_files(
         sources=network.sources,
         unknown_host=cluster.unknown_host,
         trusted_proxies=cluster.trusted_proxy_cidrs,
+        abuse_protection=cluster.abuse_protection,
     )
     result.update(
         {

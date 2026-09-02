@@ -31,7 +31,7 @@ from http.client import HTTPConnection, HTTPSConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from haproxy_mgmt.config import Vip
+from haproxy_mgmt.config import AbuseProtection, Vip
 from haproxy_mgmt.generate import NODE_CERTIFICATE_DIR, generate
 from haproxy_mgmt.proxy_model import load_proxy
 from haproxy_mgmt.route_match import order_routes, rewrite, select
@@ -706,3 +706,72 @@ class WhatTheBackendLearnsAboutTheVisitor(unittest.TestCase):
         self.assertEqual(headers["x-forwarded-for"], "127.0.0.1")
         self.assertEqual(headers["x-forwarded-proto"], "http")
         self.assertEqual(headers["x-forwarded-host"], "gone.example.com")
+
+
+class TheBrakeOnTrafficThatIsNotAVisitor(unittest.TestCase):
+    """Proved by flooding a real HAProxy, not by reading the rule.
+
+    A threshold written into a file says nothing about whether the counter it
+    names is the one HAProxy increments.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        backend = free_port()
+        cls.server = echo_server("web", backend)
+        wait_for(backend)
+
+        cls.port = free_port()
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        (root / "0000-core.cfg").write_text(CORE)
+        document = (
+            GONE.format(web=backend)
+            .encode()
+            .replace(b"unavailable:\n  message: The shop is not answering.\n", b"")
+        )
+        layer = generate(
+            [load_proxy("gone", document)],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            abuse_protection=AbuseProtection(window="10s", max_requests=5),
+            ports={"http": cls.port},
+        )
+        for name, content in layer.items():
+            (root / name).write_text(content)
+
+        arguments: list[str] = []
+        for path in sorted(root.iterdir()):
+            arguments += ["-f", str(path)]
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        cls.haproxy = subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL)
+        wait_for(cls.port)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.haproxy.terminate()
+        cls.haproxy.wait(timeout=5)
+        cls.server.shutdown()
+        cls.directory.cleanup()
+
+    def status(self) -> int:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", "gone.example.com")
+            connection.endheaders()
+            response = connection.getresponse()
+            response.read()
+            return int(response.status)
+        finally:
+            connection.close()
+
+    def test_a_burst_is_served_until_the_threshold_and_refused_after(self) -> None:
+        """429, not a silent drop: a retry loop that can read a code can be fixed."""
+
+        answers = [self.status() for _ in range(12)]
+
+        self.assertEqual(answers[0], 200)
+        self.assertIn(429, answers)
+        self.assertEqual(answers[-1], 429)

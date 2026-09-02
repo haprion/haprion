@@ -22,6 +22,7 @@ def cluster() -> Cluster:
         sources={},
         networks={},
         unknown_host=UnknownHost(status=404),
+        abuse_protection=None,
         config_path=Path("/config"),
         publish_path=Path("/published"),
         node_path="node",

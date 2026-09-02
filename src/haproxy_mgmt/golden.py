@@ -17,7 +17,7 @@ from pathlib import Path
 
 import yaml
 
-from haproxy_mgmt.config import UnknownHost, Vip
+from haproxy_mgmt.config import AbuseProtection, UnknownHost, Vip
 from haproxy_mgmt.generate import generate
 from haproxy_mgmt.proxy_model import Proxy, load_proxy
 
@@ -97,6 +97,12 @@ UNKNOWN_HOST = UnknownHost(status=404)
 #
 TRUSTED_PROXIES = ("198.51.100.0/24",)
 
+#
+# The brake, in the frozen output, so its shape is reviewed like everything
+# else rather than living only in a unit test.
+#
+ABUSE_PROTECTION = AbuseProtection(window="10s", max_requests=100, max_errors=20)
+
 
 def arguments(case: Path) -> dict[str, object]:
     """Everything the generator needs besides the objects themselves.
@@ -115,6 +121,7 @@ def arguments(case: Path) -> dict[str, object]:
         "sources": SOURCES,
         "unknown_host": UNKNOWN_HOST,
         "trusted_proxies": TRUSTED_PROXIES,
+        "abuse_protection": ABUSE_PROTECTION,
     }
 
 

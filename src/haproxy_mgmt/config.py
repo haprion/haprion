@@ -32,6 +32,13 @@ DEFAULT_VIP = "main"
 #                 gets a handshake at all.
 #
 TLS_POLICY_NAMES = ("intermediate", "modern")
+
+#
+# How long the abuse counters look back. Seconds or minutes: the window is a
+# burst, and HAProxy keeps one bucket per source for it.
+#
+ABUSE_WINDOW = re.compile(r"^[1-9][0-9]{0,3}(s|m)$")
+DEFAULT_ABUSE_WINDOW = "10s"
 NODE_PATH = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 CERTIFICATE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
@@ -165,6 +172,30 @@ class UnknownHost:
 
 
 @dataclass(frozen=True, slots=True)
+class AbuseProtection:
+    """A brake on traffic that is obviously not a visitor.
+
+    Deliberately a brake and not a ban list. HAProxy keeps these counters in
+    the process, and a reload starts a new one - measured on this machine, an
+    address added to a running process was gone after a reload. Since a publish
+    reloads, a ban measured in hours would quietly become a ban measured in
+    "until somebody edits a site". A brake that releases on its own when the
+    traffic stops is honest about what it is.
+
+    Counted per source address over a window. Two independent thresholds
+    because two different things look nothing alike: a flood is many requests
+    that each look ordinary, and a scanner is few requests that are almost all
+    errors.
+
+    None means nothing is generated at all.
+    """
+
+    window: str
+    max_requests: int | None = None
+    max_errors: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Cluster:
     cluster_id: str
     display_name: str
@@ -189,6 +220,7 @@ class Cluster:
     default_certificate: str
     certificate_ids: tuple[str, ...]
     trusted_proxy_cidrs: tuple[str, ...]
+    abuse_protection: AbuseProtection | None
     nodes: tuple[Node, ...]
 
     def network(self) -> Network:
@@ -557,6 +589,39 @@ def _unknown_host(value: Any, location: str) -> UnknownHost | None:
     return UnknownHost(redirect=redirect)
 
 
+def _abuse_protection(value: Any, location: str) -> AbuseProtection | None:
+    if value is None:
+        return None
+    data = _mapping(value, location)
+    _only_keys(data, {"window", "max_requests", "max_errors"}, location)
+    window = data.get("window", DEFAULT_ABUSE_WINDOW)
+    if not isinstance(window, str) or not ABUSE_WINDOW.fullmatch(window):
+        raise ConfigError(f"{location}.window must be a duration such as 10s")
+
+    thresholds: dict[str, int | None] = {}
+    for key in ("max_requests", "max_errors"):
+        limit = data.get(key)
+        if limit is not None and (
+            not isinstance(limit, int) or isinstance(limit, bool) or limit < 1
+        ):
+            raise ConfigError(f"{location}.{key} must be a count of at least 1")
+        thresholds[key] = limit
+    #
+    # A section that sets no threshold would generate a counter nobody reads:
+    # the table would fill, the file would grow, and nothing would ever be
+    # refused. Refused rather than treated as off, because writing the section
+    # is somebody saying they want the protection.
+    #
+    if thresholds["max_requests"] is None and thresholds["max_errors"] is None:
+        raise ConfigError(f"{location} must set max_requests, max_errors, or both")
+
+    return AbuseProtection(
+        window=window,
+        max_requests=thresholds["max_requests"],
+        max_errors=thresholds["max_errors"],
+    )
+
+
 def _under_root(raw: str, root: Path, location: str) -> Path:
     path = _absolute_path(raw, location)
     resolved_root = root.resolve(strict=False)
@@ -719,6 +784,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
                 "sources",
                 "networks",
                 "unknown_host",
+                "abuse_protection",
                 "config_path",
                 "publish_path",
                 "node_path",
@@ -815,6 +881,9 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             sources=_sources(raw, location),
             networks=_networks(raw, location),
             unknown_host=_unknown_host(raw.get("unknown_host"), f"{location}.unknown_host"),
+            abuse_protection=_abuse_protection(
+                raw.get("abuse_protection"), f"{location}.abuse_protection"
+            ),
             config_path=_under_root(
                 _required_string(raw, "config_path", location),
                 policy.config_root,

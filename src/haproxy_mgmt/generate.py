@@ -32,7 +32,7 @@ from __future__ import annotations
 import ipaddress
 from collections.abc import Iterable, Mapping, Sequence
 
-from haproxy_mgmt.config import ConfigError, UnknownHost, Vip
+from haproxy_mgmt.config import AbuseProtection, ConfigError, UnknownHost, Vip
 from haproxy_mgmt.guid import backend_guid, frontend_guid, listener_guid_prefix, server_guid
 from haproxy_mgmt.proxy_model import (
     URL_PLACEHOLDER,
@@ -60,6 +60,14 @@ PREFIX = "mgd"
 # belongs to the cluster and not to any site on it.
 #
 TRUSTED_ACL = f"{PREFIX}-trusted-proxy"
+
+#
+# How many source addresses one frontend keeps counters for. Entries expire
+# after a single window, so this bounds a burst of distinct addresses rather
+# than a day of traffic; HAProxy allocates it up front, and 1m of ip entries is
+# a few tens of megabytes.
+#
+ABUSE_TABLE_SIZE = "1m"
 
 FRONTEND_FILE = "1000-frontends.cfg"
 OBJECT_BAND = "1001"
@@ -181,6 +189,7 @@ def generate(
     sources: Mapping[str, str] | None = None,
     unknown_host: UnknownHost | None = None,
     trusted_proxies: Sequence[str] = (),
+    abuse_protection: AbuseProtection | None = None,
     ports: Mapping[str, int] = PORTS,
 ) -> dict[str, str]:
     """Every file the generated layer consists of, keyed by filename.
@@ -216,7 +225,7 @@ def generate(
 
     files = {
         FRONTEND_FILE: _frontend_file(
-            placed, ports, known_networks, unknown_host, tuple(trusted_proxies)
+            placed, ports, known_networks, unknown_host, tuple(trusted_proxies), abuse_protection
         )
     }
     for vip, proxy in placed:
@@ -361,6 +370,7 @@ def _frontend_file(
     networks: Mapping[str, Sequence[str]],
     unknown_host: UnknownHost | None,
     trusted_proxies: Sequence[str],
+    abuse_protection: AbuseProtection | None,
 ) -> str:
     """Where every request is decided: one frontend per address and protocol.
 
@@ -399,6 +409,7 @@ def _frontend_file(
             "    option httplog",
             f"    timeout client {TIMEOUT_CLIENT}",
             *_forwarded_rules(protocol, trusted_proxies),
+            *_abuse_rules(abuse_protection, bool(trusted_proxies)),
         ]
         for _, proxy, role in members:
             body.extend(_frontend_rules(proxy, role, networks))
@@ -450,6 +461,52 @@ def _forwarded_rules(protocol: str, trusted_proxies: Sequence[str]) -> list[str]
         f"    http-request set-header X-Forwarded-Proto {protocol}{condition}",
         f"    http-request set-header X-Forwarded-Host %[req.hdr(host),field(1,:),lower]{condition}",
     ]
+
+
+def _abuse_rules(protection: AbuseProtection | None, trusted: bool) -> list[str]:
+    """A brake on one source address that is plainly not a visitor.
+
+    The table lives in the frontend because the address is what gets flooded,
+    not the site. `expire` is one window: an entry that has stopped counting
+    has nothing left to say, and a longer life would only hold memory.
+
+    Refused with 429 rather than dropped silently. A client that is merely
+    misconfigured - a retry loop, a monitoring script - can read a status code
+    and be fixed; a silent drop looks like a network fault and gets debugged
+    for an afternoon.
+
+    Skipped for a trusted proxy, and that exception is not politeness. Behind a
+    front-line proxy every request carries its address, so a rule counting
+    source addresses would see one client making all the traffic in the world
+    and would refuse everything within one window. What a cluster in that shape
+    needs is counting on the forwarded address instead, which is a different
+    decision and not this one.
+    """
+
+    if protection is None:
+        return []
+    window = protection.window
+    stored = ["http_req_rate", "http_err_rate"]
+    #
+    # A rule carries one condition, so the exception is written as a negated
+    # ACL alongside the counter rather than as a second `unless` - which parses
+    # as an ACL named "unless" and is refused by HAProxy, measured here.
+    #
+    exception = f" !{TRUSTED_ACL}" if trusted else ""
+    lines = [
+        f"    stick-table type ip size {ABUSE_TABLE_SIZE} expire {window} "
+        f"store {','.join(f'{name}({window})' for name in stored)}",
+        "    http-request track-sc0 src" + (f" unless {TRUSTED_ACL}" if trusted else ""),
+    ]
+    for fetch, limit in (
+        ("sc_http_req_rate(0)", protection.max_requests),
+        ("sc_http_err_rate(0)", protection.max_errors),
+    ):
+        if limit is not None:
+            lines.append(
+                f"    http-request deny deny_status 429 if {{ {fetch} gt {limit} }}{exception}"
+            )
+    return lines
 
 
 def _tls(members: Sequence[tuple[Vip, Proxy, str]], protocol: str) -> str:

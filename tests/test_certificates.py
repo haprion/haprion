@@ -64,6 +64,7 @@ def cluster(*certificates: str) -> Cluster:
         sources={},
         networks={},
         unknown_host=None,
+        abuse_protection=None,
         config_path=Path("/configs/alpha"),
         publish_path=Path("/published/alpha"),
         node_path="alpha",

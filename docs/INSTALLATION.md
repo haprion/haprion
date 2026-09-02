@@ -455,6 +455,15 @@ line in `virtual_ipaddress` cannot cause either, which is what makes this half s
 An `include` naming a file that does not exist yet is a keepalived that will not start. That is the
 whole reason step 1 comes first.
 
+**The node's status helper has to be able to follow that include.** `haproxy-node-status` reports
+whether this node currently carries the address by reading the `virtual_ipaddress` block and
+looking the address up on the interface. Once the block holds nothing but the include, a helper
+that reads only the block finds no address and answers that ownership is unknown - on both nodes.
+That is not a cosmetic answer: a deploy refuses to run without a known owner, so the whole cluster's
+deployment path stops. Install the node scripts from the same release as the manager before
+switching a node over, and confirm afterwards with `haproxy-status -c <cluster>` that the owner is
+named and the state is `single_owner`.
+
 **A cluster that sets `resolvers` must provide the section itself in `core/`**, since nameserver
 addresses are environment values the generator never invents:
 

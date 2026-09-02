@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "objects_publish",
+  "cluster": "alpha",
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "result": {
+    "changed": true,
+    "version": 10,
+    "hash": "cccccccccccccccccccccccccccccccccccccccc",
+    "published_at": "2026-09-02T12:00:00Z",
+    "comment": "Point shop at the new pool",
+    "deployment_required": true,
+    "next_command": "haproxy-deploy -c alpha",
+    "release": "/configs/haproxy-published/alpha/releases/10",
+    "already_current": false,
+    "objects": ["shop"],
+    "removed": ["staging"]
+  },
+  "warnings": [],
+  "error": null
+}

@@ -336,6 +336,26 @@ def check_network_publish_semantics(document: dict[str, object], path: Path) -> 
         raise AssertionError(f"{path}: changed network publish requires a timestamp")
 
 
+def check_objects_publish_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        return
+    # Same reason as the network publish above: even a byte-identical retry
+    # reinstalls the release, so the operator is always told to reconcile.
+    if not result["deployment_required"] or result["next_command"] is None:
+        raise AssertionError(f"{path}: objects publish must require explicit deploy")
+    if result["changed"] and result["published_at"] is None:
+        raise AssertionError(f"{path}: changed objects publish requires a timestamp")
+    # An object cannot be both written and removed by one version.  The two
+    # lists are what the audit record and the job page read, and a name in both
+    # would describe a publish that did not happen.
+    overlap = sorted(set(result["objects"]) & set(result["removed"]))
+    if overlap:
+        raise AssertionError(f"{path}: {', '.join(overlap)} is both published and removed")
+    if result["changed"] and not (result["objects"] or result["removed"]):
+        raise AssertionError(f"{path}: a changed objects publish names what it changed")
+
+
 def check_reconcile_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -375,6 +395,7 @@ SEMANTIC_CHECKS = {
     "publish": check_publish_semantics,
     "revert": check_revert_semantics,
     "network_publish": check_network_publish_semantics,
+    "objects_publish": check_objects_publish_semantics,
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
 }
@@ -405,7 +426,7 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["proxies"].append(deepcopy(result["proxies"][0]))
     elif operation == "objects":
         result["objects"][1]["readable"] = True
-    elif operation in ("publish", "revert", "network_publish"):
+    elif operation in ("publish", "revert", "network_publish", "objects_publish"):
         result["deployment_required"] = False
     elif operation == "deploy":
         result["converged"] = True

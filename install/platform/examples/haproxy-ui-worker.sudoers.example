@@ -33,3 +33,4 @@ haproxy-ui-worker ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-dep
 haproxy-ui-worker ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-deploy-helper ""
 haproxy-ui-worker ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-revert-helper ""
 haproxy-ui-worker ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-publish-helper ""
+haproxy-ui-worker ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-publish-helper ""

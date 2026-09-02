@@ -188,6 +188,25 @@ group is a separate action against an already existing account.
 /etc/haproxy-manager/runtime-policy.yaml          the outer path boundary
 ```
 
+`manual/reservations.yaml` is what the handwritten half of the configuration declares about itself:
+
+```yaml
+# Hostnames a handwritten frontend already answers for, and ports it already
+# binds. A generated object claiming one is refused before anything is
+# committed. Both lists are optional; `{}` reserves nothing, which is what a
+# cluster that has never needed one carries.
+hostnames:
+  - legacy.example.com
+tcp_ports:
+  - 8443
+```
+
+Nothing derives this file — `manual/` is read, never interpreted, and a promise a person writes is
+the only thing available. It exists because both collisions are silent: two frontends binding one
+port pass `haproxy -c` and then kill the process at startup, so the publish reports success and the
+node stops serving, and a hostname claimed twice is answered by whichever frontend HAProxy reached
+first.
+
 Only two of these paths are fixed by the software: `/etc/haproxy-manager/runtime-policy.yaml`, which
 is where the code looks unless told otherwise, and `/opt/haproxy-mgmt`, where releases are installed.
 Everything else above is a deployment choice — put the trees wherever your environment keeps them,

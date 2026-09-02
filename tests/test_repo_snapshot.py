@@ -17,7 +17,7 @@ from haproxy_mgmt.repo_snapshot import (
 )
 
 HAPROXY_CFG = b"global\n  daemon\ndefaults\n  mode http\n"
-RESERVATIONS = b"reservations: []\n"
+RESERVATIONS = b"{}\n"
 GENERATED = b"frontend managed\n  bind 192.0.2.20:80\n"
 
 
@@ -195,7 +195,9 @@ class CommitTests(RepositoryFixture):
                 },
             )
             # Someone else publishes first.
-            (repo / "manual" / "reservations.yaml").write_bytes(b"reservations: [1]\n")
+            (repo / "manual" / "reservations.yaml").write_bytes(
+                b"hostnames: [legacy.example.com]\n"
+            )
             git(repo, "add", "-A")
             git(repo, "commit", "-qm", "Concurrent version")
             moved = git(repo, "rev-parse", "HEAD")

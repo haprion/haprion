@@ -16,7 +16,7 @@ from haproxy_mgmt.release_layout import (
 )
 
 HAPROXY_CFG = b"global\n  daemon\ndefaults\n  mode http\n"
-RESERVATIONS = b"reservations: []\n"
+RESERVATIONS = b"{}\n"
 
 
 def tree(**overrides: bytes) -> dict[str, bytes]:

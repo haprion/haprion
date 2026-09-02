@@ -18,7 +18,7 @@ class InventoryTests(unittest.TestCase):
                 "core/conf.d/0073-public.cfg": b"""frontend public\n  bind :80\n  acl app hdr(host) -i app.example.test www.example.test\n  use_backend app_pool if app\n""",
                 "managed/generated/1001-api.cfg": b"""frontend generated-api\n  bind :443 ssl\n  default_backend api_pool\n""",
                 "manual/conf.d/0070-legacy.cfg": b"""listen legacy\n  mode tcp\n  bind 192.0.2.20:8443\n  use_backend legacy_pool\n  use_backend other_pool if TRUE\n""",
-                "manual/reservations.yaml": b"reservations: []\n",
+                "manual/reservations.yaml": b"{}\n",
                 "manual/maps/hosts.map": b"ignored\n",
             },
             TARGET,

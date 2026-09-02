@@ -30,7 +30,7 @@ BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "22222222-2222-4222-8222-222222222222"
 
 HAPROXY_CFG = b"global\n  daemon\ndefaults\n  mode http\n"
-RESERVATIONS = b"reservations: []\n"
+RESERVATIONS = b"{}\n"
 GENERATED = b"frontend managed\n  bind 192.0.2.20:80\n"
 CORE_CFG = b"frontend core\n  bind 192.0.2.20:81\n"
 

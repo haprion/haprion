@@ -112,7 +112,7 @@ class NetworkPublicationTests(NetworkPublishFixture):
         with tempfile.TemporaryDirectory() as raw:
             policy = self.runtime(Path(raw))
             before = git(self.repo, "rev-parse", "HEAD")
-            (self.repo / "manual/reservations.yaml").write_text("reservations: [x]\n")
+            (self.repo / "manual/reservations.yaml").write_text("hostnames: [legacy.example.com]\n")
             git(self.repo, "add", "manual/reservations.yaml")
             git(self.repo, "commit", "-qm", "Human update")
 

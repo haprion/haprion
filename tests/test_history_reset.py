@@ -52,7 +52,7 @@ class ResetFixture(unittest.TestCase):
         git(seed, "config", "user.email", "maintainer@example.com")
         (seed / "core").mkdir()
         (seed / "manual").mkdir()
-        (seed / "manual" / "reservations.yaml").write_bytes(b"reservations: []\n")
+        (seed / "manual" / "reservations.yaml").write_bytes(b"{}\n")
         (seed / ".gitignore").write_bytes(b"*.swp\n")
         for number in range(versions):
             (seed / "core" / "haproxy.cfg").write_bytes(HAPROXY_CFG + f"# {number}\n".encode())

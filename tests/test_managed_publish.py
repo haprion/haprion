@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.config import Cluster, Node, UnknownHost
+from haproxy_mgmt.config import Cluster, ConfigError, Node, UnknownHost
 from haproxy_mgmt.managed_publish import managed_files
 
 
@@ -93,3 +93,38 @@ class ManagedNetworkPublishTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReservationsReachThePublishPath(unittest.TestCase):
+    """The file is read from the committed base, like everything else."""
+
+    def publish(self, reservations: bytes) -> dict[str, bytes]:
+        return managed_files(
+            {
+                "managed/network.yaml": NETWORK,
+                "managed/proxies/shop.yaml": PROXY,
+                "manual/reservations.yaml": reservations,
+            },
+            network_document=NETWORK,
+            cluster=cluster(),
+        )
+
+    def test_the_empty_mapping_both_clusters_carry_publishes_as_before(self) -> None:
+        self.assertIn("managed/generated/1000-frontends.cfg", self.publish(b"{}\n"))
+
+    def test_an_object_claiming_a_reserved_hostname_is_refused_before_commit(self) -> None:
+        with self.assertRaises(ConfigError) as raised:
+            self.publish(b"hostnames: [shop.example.com]\n")
+
+        self.assertIn("shop.example.com", str(raised.exception))
+
+    def test_a_missing_file_is_read_as_reserving_nothing(self) -> None:
+        """Older repositories predate the format; none of them reserve anything."""
+
+        files = managed_files(
+            {"managed/network.yaml": NETWORK, "managed/proxies/shop.yaml": PROXY},
+            network_document=NETWORK,
+            cluster=cluster(),
+        )
+
+        self.assertIn("managed/generated/1000-frontends.cfg", files)

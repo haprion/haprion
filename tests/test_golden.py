@@ -36,6 +36,7 @@ from haproxy_mgmt.golden import (
     produced,
 )
 from haproxy_mgmt.proxy_model import Proxy, load_proxy
+from haproxy_mgmt.reservations import Reservations
 
 #
 # Enough of a configuration for `haproxy -c` to have something to attach the
@@ -570,3 +571,46 @@ class WhatTheBackendIsToldAboutTheVisitor(unittest.TestCase):
         backend = _generate([load_proxy("shop", MINIMAL)])["1001-shop.cfg"]
 
         self.assertIn("option forwardfor", backend)
+
+
+class WhatTheHandwrittenHalfHasAlreadyClaimed(unittest.TestCase):
+    """Both failures are ones HAProxy does not report as failures."""
+
+    def test_a_reserved_hostname_stops_the_publish(self) -> None:
+        """Otherwise whichever frontend comes first in the directory answers."""
+
+        with self.assertRaises(GeneratorError) as raised:
+            generate(
+                [load_proxy("shop", MINIMAL)],
+                vips=dict(DEFAULT_VIPS),
+                default_vip="main",
+                reservations=Reservations(hostnames=frozenset({"shop.example.com"})),
+            )
+
+        self.assertIn("shop.example.com", str(raised.exception))
+        self.assertIn("manual/reservations.yaml", str(raised.exception))
+
+    def test_a_reserved_port_stops_the_publish(self) -> None:
+        """Two frontends on one port pass `haproxy -c` and kill the process at start."""
+
+        with self.assertRaises(GeneratorError) as raised:
+            generate(
+                [load_proxy("shop", MINIMAL)],
+                vips=dict(DEFAULT_VIPS),
+                default_vip="main",
+                reservations=Reservations(tcp_ports=frozenset({80})),
+            )
+
+        self.assertIn("port 80", str(raised.exception))
+
+    def test_a_port_no_object_causes_to_be_bound_is_not_a_conflict(self) -> None:
+        """Writing down what the handwritten side uses is the file's whole purpose."""
+
+        files = generate(
+            [load_proxy("shop", MINIMAL)],
+            vips=dict(DEFAULT_VIPS),
+            default_vip="main",
+            reservations=Reservations(tcp_ports=frozenset({8443})),
+        )
+
+        self.assertIn("1000-frontends.cfg", files)

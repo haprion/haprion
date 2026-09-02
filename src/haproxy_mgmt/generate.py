@@ -49,6 +49,7 @@ from haproxy_mgmt.proxy_model import (
     Server,
     is_range,
 )
+from haproxy_mgmt.reservations import NOTHING_RESERVED, Reservations
 from haproxy_mgmt.route_match import order_routes
 
 #
@@ -202,6 +203,7 @@ def generate(
     unknown_host: UnknownHost | None = None,
     trusted_proxies: Sequence[str] = (),
     abuse_protection: AbuseProtection | None = None,
+    reservations: Reservations = NOTHING_RESERVED,
     ports: Mapping[str, int] = PORTS,
 ) -> dict[str, str]:
     """Every file the generated layer consists of, keyed by filename.
@@ -228,6 +230,7 @@ def generate(
         raise GeneratorError(
             f"this version generates http and https objects; cannot generate: {names}"
         )
+    _refuse_reserved(ordered, reservations, ports)
     _refuse_unknown_certificates(ordered, certificates)
     known_networks = dict(networks or {})
     _refuse_unknown_networks(ordered, known_networks)
@@ -286,6 +289,44 @@ def _vip_of(proxy: Proxy, vips: Mapping[str, Vip], default_vip: str) -> Vip:
             f"{proxy.name} sits on the VIP {name}, which this cluster does not have. "
             f"Known VIPs: {known}"
         ) from None
+
+
+def _refuse_reserved(
+    proxies: Sequence[Proxy], reservations: Reservations, ports: Mapping[str, int]
+) -> None:
+    """What the handwritten half of the configuration has already claimed.
+
+    Refused here rather than left to the node, because both failures are ones
+    HAProxy does not report as failures. A duplicated hostname is answered by
+    whichever frontend happens to come first in the directory, and two
+    frontends on one port pass `haproxy -c` and then kill the process at
+    startup - so the publish says it worked and the node stops serving.
+    """
+
+    for proxy in proxies:
+        taken = sorted(set(proxy.hostnames) & reservations.hostnames)
+        if taken:
+            raise GeneratorError(
+                f"{proxy.name} claims a hostname reserved in manual/reservations.yaml: "
+                f"{', '.join(taken)}"
+            )
+
+    if not reservations.tcp_ports:
+        return
+    #
+    # Only the ports objects actually cause to be bound. Reserving a port
+    # nothing generated listens on is a person writing down what the
+    # handwritten side uses, which is the file's whole purpose.
+    #
+    wanted = {proxy.listen.protocol for proxy in proxies}
+    wanted |= {"http" for proxy in proxies if proxy.listen.redirect_http}
+    for protocol in sorted(wanted):
+        port = ports.get(protocol)
+        if port is not None and port in reservations.tcp_ports:
+            raise GeneratorError(
+                f"this cluster serves {protocol} on port {port}, which "
+                f"manual/reservations.yaml reserves for handwritten configuration"
+            )
 
 
 def _refuse_unknown_certificates(proxies: Sequence[Proxy], certificates: Sequence[str]) -> None:

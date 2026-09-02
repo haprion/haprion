@@ -53,6 +53,14 @@ from haproxy_mgmt.route_match import order_routes
 #
 PREFIX = "mgd"
 
+#
+# The ACL naming the addresses whose forwarded headers are believed. One per
+# frontend and named for the whole layer rather than for an object, because
+# the question it answers - who is allowed to say where a request came from -
+# belongs to the cluster and not to any site on it.
+#
+TRUSTED_ACL = f"{PREFIX}-trusted-proxy"
+
 FRONTEND_FILE = "1000-frontends.cfg"
 OBJECT_BAND = "1001"
 
@@ -172,6 +180,7 @@ def generate(
     networks: Mapping[str, Sequence[str]] | None = None,
     sources: Mapping[str, str] | None = None,
     unknown_host: UnknownHost | None = None,
+    trusted_proxies: Sequence[str] = (),
     ports: Mapping[str, int] = PORTS,
 ) -> dict[str, str]:
     """Every file the generated layer consists of, keyed by filename.
@@ -205,7 +214,11 @@ def generate(
     known_sources = dict(sources or {})
     placed = [(_vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
 
-    files = {FRONTEND_FILE: _frontend_file(placed, ports, known_networks, unknown_host)}
+    files = {
+        FRONTEND_FILE: _frontend_file(
+            placed, ports, known_networks, unknown_host, tuple(trusted_proxies)
+        )
+    }
     for vip, proxy in placed:
         files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(
             proxy, _source_of(proxy, vip, known_sources), resolvers
@@ -347,6 +360,7 @@ def _frontend_file(
     ports: Mapping[str, int],
     networks: Mapping[str, Sequence[str]],
     unknown_host: UnknownHost | None,
+    trusted_proxies: Sequence[str],
 ) -> str:
     """Where every request is decided: one frontend per address and protocol.
 
@@ -384,6 +398,7 @@ def _frontend_file(
             "    mode http",
             "    option httplog",
             f"    timeout client {TIMEOUT_CLIENT}",
+            *_forwarded_rules(protocol, trusted_proxies),
         ]
         for _, proxy, role in members:
             body.extend(_frontend_rules(proxy, role, networks))
@@ -394,6 +409,47 @@ def _frontend_file(
     if not body:
         body = ["", "# No object listens anywhere on this cluster."]
     return _lines(HEADER, body)
+
+
+def _forwarded_rules(protocol: str, trusted_proxies: Sequence[str]) -> list[str]:
+    """What the backend is told about a visitor it never speaks to directly.
+
+    Behind a proxy an application has no way of its own to learn who connected
+    or how. Measured on this machine: a request that arrived over TLS reached
+    the backend as plain HTTP carrying only `host`, `user-agent` and `accept`.
+    The client address and the scheme exist only here, and are lost unless they
+    are written into headers.
+
+    The scheme matters more than it looks. An application that believes it is
+    reached over plain http builds `http://` redirects, the proxy sends the
+    visitor back to https, and the login loops - a proxy fault that reads as an
+    application fault.
+
+    Every one of these headers is deleted before it is set, and that is the
+    whole security of the arrangement: they are ordinary request headers, so a
+    visitor can send `X-Forwarded-For: 127.0.0.1` and claim to be anybody.
+    Believing one is worse than having none. The exception is a request that
+    arrives from an address the cluster named as a trusted proxy, which is a
+    machine that has already established these facts and whose chain should be
+    extended rather than thrown away.
+
+    `option forwardfor` sits in the backend, since that is the only section
+    HAProxy takes it in, and it appends rather than replaces - so behind a
+    trusted proxy the address it adds extends the chain.
+    """
+
+    lines = []
+    condition = ""
+    if trusted_proxies:
+        lines.append(f"    acl {TRUSTED_ACL} src {' '.join(sorted(trusted_proxies))}")
+        condition = f" unless {TRUSTED_ACL}"
+    return lines + [
+        f"    http-request del-header X-Forwarded-For{condition}",
+        f"    http-request del-header X-Forwarded-Proto{condition}",
+        f"    http-request del-header X-Forwarded-Host{condition}",
+        f"    http-request set-header X-Forwarded-Proto {protocol}{condition}",
+        f"    http-request set-header X-Forwarded-Host %[req.hdr(host),field(1,:),lower]{condition}",
+    ]
 
 
 def _tls(members: Sequence[tuple[Vip, Proxy, str]], protocol: str) -> str:
@@ -756,6 +812,7 @@ def _backend(
         f"    timeout tunnel {TIMEOUT_TUNNEL}",
         f"    retries {RETRIES}",
         "    option redispatch",
+        "    option forwardfor",
     ]
     if source is not None:
         #

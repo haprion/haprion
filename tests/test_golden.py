@@ -492,3 +492,46 @@ class TheListenerAcceptsWhatTheClusterSaysItAccepts(unittest.TestCase):
 
         self.assertNotIn("ssl-min-ver", frontends)
         self.assertNotIn("ciphers", frontends)
+
+
+class WhatTheBackendIsToldAboutTheVisitor(unittest.TestCase):
+    """The forwarded headers, and who is allowed to have written them already."""
+
+    def frontends(self, trusted: tuple[str, ...]) -> str:
+        return generate(
+            [load_proxy("shop", MINIMAL)],
+            vips=dict(DEFAULT_VIPS),
+            default_vip="main",
+            trusted_proxies=trusted,
+        )["1000-frontends.cfg"]
+
+    def test_the_headers_are_deleted_before_they_are_written(self) -> None:
+        """A visitor may send any of them, so what arrives cannot be trusted."""
+
+        frontends = self.frontends(())
+
+        for header in ("X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host"):
+            with self.subTest(header):
+                deleted = frontends.index(f"del-header {header}")
+                self.assertLess(deleted, frontends.index("use_backend"))
+
+        self.assertIn("set-header X-Forwarded-Proto http", frontends)
+
+    def test_without_a_trusted_network_no_request_is_an_exception(self) -> None:
+        frontends = self.frontends(())
+
+        self.assertNotIn("mgd-trusted-proxy", frontends)
+        self.assertNotIn("unless", frontends.split("# shop")[0])
+
+    def test_a_trusted_proxy_keeps_the_chain_it_arrived_with(self) -> None:
+        frontends = self.frontends(("198.51.100.0/24",))
+
+        self.assertIn("acl mgd-trusted-proxy src 198.51.100.0/24", frontends)
+        self.assertIn("del-header X-Forwarded-For unless mgd-trusted-proxy", frontends)
+
+    def test_the_address_is_appended_in_the_backend(self) -> None:
+        """`option forwardfor` is only taken there, and it appends rather than replaces."""
+
+        backend = _generate([load_proxy("shop", MINIMAL)])["1001-shop.cfg"]
+
+        self.assertIn("option forwardfor", backend)

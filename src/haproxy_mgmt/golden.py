@@ -90,6 +90,13 @@ NETWORKS = {"office": ("198.51.100.0/24",), "vpn": ("203.0.113.0/24",)}
 SOURCES = {"outbound": "192.0.2.35"}
 UNKNOWN_HOST = UnknownHost(status=404)
 
+#
+# The address the golden cases pretend a front-line proxy sits on, so the
+# trusted-proxy branch of the forwarded-header rules is in the frozen output
+# rather than only in a unit test.
+#
+TRUSTED_PROXIES = ("198.51.100.0/24",)
+
 
 def arguments(case: Path) -> dict[str, object]:
     """Everything the generator needs besides the objects themselves.
@@ -107,6 +114,7 @@ def arguments(case: Path) -> dict[str, object]:
         "networks": NETWORKS,
         "sources": SOURCES,
         "unknown_host": UNKNOWN_HOST,
+        "trusted_proxies": TRUSTED_PROXIES,
     }
 
 

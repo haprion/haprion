@@ -587,3 +587,122 @@ class TlsIsServedTheWayTheObjectAsksFor(unittest.TestCase):
             )
         finally:
             connection.close()
+
+
+def header_server(port: int) -> ThreadingHTTPServer:
+    """A backend that answers with the request headers it was handed.
+
+    The only way to see what a backend actually learns about a visitor. The
+    file says which headers are written; this says which ones arrive.
+    """
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - the name is the library's
+            body = "".join(f"{name}: {value}\n" for name, value in self.headers.items()).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_: object) -> None:
+            """Silence."""
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+class WhatTheBackendLearnsAboutTheVisitor(unittest.TestCase):
+    """Behind a proxy an application knows nothing it is not told.
+
+    Measured before this was built: a request that arrived over TLS reached the
+    backend as plain HTTP carrying `host`, `user-agent` and `accept`, and
+    nothing else. The client address and the scheme exist only in the proxy.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        backend = free_port()
+        cls.server = header_server(backend)
+        wait_for(backend)
+
+        cls.port = free_port()
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        (root / "0000-core.cfg").write_text(CORE)
+        document = (
+            GONE.format(web=backend)
+            .encode()
+            .replace(b"unavailable:\n  message: The shop is not answering.\n", b"")
+        )
+        layer = generate(
+            [load_proxy("gone", document)],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            #
+            # Loopback is the address every request in this test arrives from,
+            # so it stands in for the front-line proxy a cluster names.
+            #
+            trusted_proxies=("198.51.100.0/24",),
+            ports={"http": cls.port},
+        )
+        for name, content in layer.items():
+            (root / name).write_text(content)
+
+        arguments: list[str] = []
+        for path in sorted(root.iterdir()):
+            arguments += ["-f", str(path)]
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        cls.haproxy = subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL)
+        wait_for(cls.port)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.haproxy.terminate()
+        cls.haproxy.wait(timeout=5)
+        cls.server.shutdown()
+        cls.directory.cleanup()
+
+    def headers(self, sent: dict[str, str] | None = None) -> dict[str, str]:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", "gone.example.com")
+            for name, value in (sent or {}).items():
+                connection.putheader(name, value)
+            connection.endheaders()
+            body = connection.getresponse().read().decode()
+        finally:
+            connection.close()
+        return {
+            name.strip().lower(): value.strip()
+            for name, _, value in (line.partition(":") for line in body.splitlines())
+        }
+
+    def test_the_backend_is_told_the_address_and_the_scheme(self) -> None:
+        headers = self.headers()
+
+        self.assertEqual(headers["x-forwarded-for"], "127.0.0.1")
+        self.assertEqual(headers["x-forwarded-proto"], "http")
+        self.assertEqual(headers["x-forwarded-host"], "gone.example.com")
+
+    def test_a_header_a_visitor_sent_is_thrown_away(self) -> None:
+        """They are ordinary request headers, so anybody can claim to be anybody.
+
+        The request arrives from loopback, which is in no trusted network, so
+        what it claims about itself counts for nothing.
+        """
+
+        headers = self.headers(
+            {
+                "X-Forwarded-For": "203.0.113.99",
+                "X-Forwarded-Proto": "https",
+                "X-Forwarded-Host": "bank.example.com",
+            }
+        )
+
+        self.assertEqual(headers["x-forwarded-for"], "127.0.0.1")
+        self.assertEqual(headers["x-forwarded-proto"], "http")
+        self.assertEqual(headers["x-forwarded-host"], "gone.example.com")

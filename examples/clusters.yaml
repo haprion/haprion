@@ -68,6 +68,15 @@ clusters:
     certificate_ids:
       - example.com
       - example.net
+    #
+    # Whose forwarded headers are believed. Every generated frontend deletes
+    # X-Forwarded-For, -Proto and -Host and writes its own, because they are
+    # ordinary request headers and a visitor can claim to be anybody. A request
+    # arriving from one of these addresses is the exception: it comes from a
+    # machine that has already established those facts, so its chain is
+    # extended rather than thrown away. Leave the list empty where HAProxy is
+    # the first thing traffic reaches.
+    #
     trusted_proxy_cidrs:
       - 198.51.100.0/24
     nodes:

@@ -11,7 +11,7 @@ YAML and HAProxy configuration disagree.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 
 from haproxy_mgmt.config import Cluster, ConfigError
@@ -63,6 +63,8 @@ def managed_files(
     *,
     network_document: bytes,
     cluster: Cluster,
+    certificate_sans: Mapping[str, Sequence[str]] | None = None,
+    allow_certificate_mismatch: bool = False,
 ) -> dict[str, bytes]:
     """Return the complete managed snapshot created by one network document.
 
@@ -100,6 +102,14 @@ def managed_files(
         trusted_proxies=cluster.trusted_proxy_cidrs,
         abuse_protection=cluster.abuse_protection,
         reservations=load_reservations(base_files.get(RESERVATIONS_PATH, b"{}")),
+        #
+        # Read by the caller, which has the path policy, and passed in. This
+        # module takes a Git tree and a cluster and opens nothing itself - the
+        # same discipline as `inventory` - and certificate coverage is not a
+        # reason to break it (B66).
+        #
+        certificate_sans=certificate_sans,
+        allow_certificate_mismatch=allow_certificate_mismatch,
     )
     result.update(
         {

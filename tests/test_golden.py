@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from haproxy_mgmt.config import TLS_POLICY_NAMES, AbuseProtection, Vip
 from haproxy_mgmt.generate import (
@@ -151,10 +152,16 @@ class HaproxyAcceptsWhatWeGenerate(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
 
-def _generate(proxies: list[Proxy]) -> dict[str, str]:
+def _generate(proxies: list[Proxy], **cluster: Any) -> dict[str, str]:
     """The generator on a cluster with one plain address, which most are."""
 
-    return generate(proxies, vips=dict(DEFAULT_VIPS), default_vip="main", certificates=CERTIFICATES)
+    return generate(
+        proxies,
+        vips=dict(DEFAULT_VIPS),
+        default_vip="main",
+        certificates=CERTIFICATES,
+        **cluster,
+    )
 
 
 def _certificate_directory(root: Path) -> Path:
@@ -278,6 +285,75 @@ class HttpsIsRefusedWhereItCannotBeHonoured(unittest.TestCase):
 
         self.assertIn("not-issued", str(raised.exception))
         self.assertIn("example.net", str(raised.exception))
+
+    def test_a_certificate_that_does_not_answer_for_the_name_is_refused(self) -> None:
+        """HAProxy serves it; the visitor's browser is what refuses.
+
+        A certificate is a file HAProxy loads, not a claim it checks against
+        the objects using it - so the site looks broken to visitors while every
+        layer here reports success.
+        """
+
+        with self.assertRaises(GeneratorError) as raised:
+            _generate(
+                [load_proxy("app", HTTPS)],
+                certificate_sans={"wildcard-example-com": ("*.example.net",)},
+            )
+
+        self.assertIn("wildcard-example-com", str(raised.exception))
+        self.assertIn("*.example.net", str(raised.exception))
+
+    def test_a_wildcard_answers_for_one_label_and_not_two(self) -> None:
+        """`*.example.com` is not a certificate for `a.b.example.com`.
+
+        The mistake this rule exists for: it reads as covered, it passes every
+        check the node makes, and it fails in the visitor's browser.
+        """
+
+        deeper = HTTPS.replace(b"app.example.com", b"api.internal.example.com")
+
+        with self.assertRaises(GeneratorError) as raised:
+            _generate(
+                [load_proxy("app", deeper)],
+                certificate_sans={"wildcard-example-com": ("*.example.com",)},
+            )
+
+        self.assertIn("api.internal.example.com", str(raised.exception))
+
+    def test_the_wildcard_answers_for_a_single_label(self) -> None:
+        files = _generate(
+            [load_proxy("app", HTTPS)],
+            certificate_sans={"wildcard-example-com": ("*.example.com",)},
+        )
+
+        self.assertIn("1000-frontends.cfg", files)
+
+    def test_the_override_is_what_makes_a_deliberate_mismatch_possible(self) -> None:
+        """Picking the "wrong" certificate on purpose is a real thing to do.
+
+        It is temporary, which is why the override is asked for per publish
+        rather than written into the object, where the next reader would take
+        it for a decision (B66).
+        """
+
+        files = _generate(
+            [load_proxy("app", HTTPS)],
+            certificate_sans={"wildcard-example-com": ("*.example.net",)},
+            allow_certificate_mismatch=True,
+        )
+
+        self.assertIn("1000-frontends.cfg", files)
+
+    def test_a_certificate_that_could_not_be_read_is_not_a_refusal(self) -> None:
+        """An absent entry means "not measured", never "covers nothing".
+
+        Refusing a publish because a file was briefly unreadable would block a
+        change for a reason that has nothing to do with the object.
+        """
+
+        files = _generate([load_proxy("app", HTTPS)], certificate_sans={})
+
+        self.assertIn("1000-frontends.cfg", files)
 
     def test_a_redirect_puts_the_object_on_port_80_as_well(self) -> None:
         """An https object that redirects needs a listener on 80 to redirect from."""

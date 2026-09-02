@@ -70,6 +70,23 @@ PREVIEW_CLUSTER = Cluster(
 )
 
 #
+# What each of the example certificates answers for. A publish reads this from
+# the certificates themselves; the page has no certificate directory, so the
+# example cluster carries its own coverage - and picking a certificate that
+# does not answer for the hostname is then refused here in the engine's words,
+# exactly as it would be at publish time (B66).
+#
+# The wildcard is the one worth having in an example. `*.example.com` answers
+# for `shop.example.com` and not for `a.b.example.com`, which is the mistake
+# that looks right until a browser refuses.
+#
+PREVIEW_CERTIFICATE_SANS = {
+    "example.com": ("example.com", "www.example.com"),
+    "example.net": ("example.net", "www.example.net"),
+    "wildcard-example-com": ("*.example.com", "example.com"),
+}
+
+#
 # What the form starts with. A single site on the cluster's default address,
 # one backend, one server - the shape most objects have, so the first thing
 # somebody sees is the common case rather than an empty page.
@@ -403,6 +420,7 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
             unknown_host=cluster.unknown_host,
             trusted_proxies=cluster.trusted_proxy_cidrs,
             abuse_protection=cluster.abuse_protection,
+            certificate_sans=PREVIEW_CERTIFICATE_SANS,
         )
     except (ModelError, GeneratorError) as exc:
         return Preview(document=document, problem=str(exc))

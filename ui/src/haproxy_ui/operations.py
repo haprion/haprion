@@ -165,16 +165,23 @@ def prepare(
         )
 
     if operation == "network_publish":
-        _only(payload, "network", "expected_head", "comment")
+        _only(payload, "network", "expected_head", "comment", "allow_certificate_mismatch")
         network = payload.get("network")
         expected_head = payload.get("expected_head")
         comment = payload.get("comment")
+        override = payload.get("allow_certificate_mismatch", False)
         if not isinstance(network, str) or not network:
             raise BadPayload("network must be a non-empty document")
         if not isinstance(expected_head, str) or not expected_head:
             raise BadPayload("expected_head must be a commit id")
         if not isinstance(comment, str) or not comment:
             raise BadPayload("comment must be a non-empty string")
+        #
+        # Only a real boolean reaches the helper. A string "false" arriving as
+        # true is how an override turns itself on without anybody deciding to.
+        #
+        if not isinstance(override, bool):
+            raise BadPayload("allow_certificate_mismatch must be true or false")
         return Prepared(
             argv=(
                 managed_network_publish.SUDO,
@@ -187,6 +194,7 @@ def prepare(
                 network=network,
                 expected_head=expected_head,
                 comment=comment,
+                allow_certificate_mismatch=override,
             ),
         )
 

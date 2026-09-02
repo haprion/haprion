@@ -215,6 +215,45 @@ def _one(
     return entry
 
 
+def coverage(root: Path, cluster: Cluster) -> dict[str, tuple[str, ...]]:
+    """What each of the cluster's certificates answers for, by name.
+
+    The publishing path asks this so the generator can refuse a site served
+    under a certificate that does not cover its hostnames (B66). Separate from
+    `cert_list_result` because it answers one question and must never raise:
+    a listing is something a person asked for, and this is a check that runs
+    inside somebody else's publish.
+
+    A certificate that cannot be read is left out rather than reported as
+    covering nothing. The generator reads an absence as "not checked", which is
+    the honest answer - the alternative is refusing a publish because a file
+    was briefly unreadable.
+    """
+
+    if not root.is_dir():
+        return {}
+
+    covered: dict[str, tuple[str, ...]] = {}
+    for identifier in cluster.certificate_ids:
+        try:
+            path = certificate_path(root, identifier)
+            if path.stat().st_size > MAX_CERTIFICATE_BYTES:
+                continue
+            facts = describe(leaf_block(path.read_text(encoding="ascii", errors="strict")))
+        except (OSError, UnicodeDecodeError, CertificateError, CertInventoryError):
+            continue
+        names = list(facts.sans)
+        #
+        # The common name counts where there are no SANs at all. Every current
+        # issuer writes them, but a certificate old enough to predate that is
+        # still a certificate a client would accept.
+        #
+        if not names and facts.common_name:
+            names = [facts.common_name]
+        covered[identifier] = tuple(names)
+    return covered
+
+
 def cert_list_result(
     root: Path,
     cluster: Cluster,

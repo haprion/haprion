@@ -205,6 +205,8 @@ def generate(
     abuse_protection: AbuseProtection | None = None,
     reservations: Reservations = NOTHING_RESERVED,
     ports: Mapping[str, int] = PORTS,
+    certificate_sans: Mapping[str, Sequence[str]] | None = None,
+    allow_certificate_mismatch: bool = False,
 ) -> dict[str, str]:
     """Every file the generated layer consists of, keyed by filename.
 
@@ -236,6 +238,8 @@ def generate(
         )
     _refuse_reserved(ordered, reservations, ports)
     _refuse_unknown_certificates(ordered, certificates)
+    if certificate_sans is not None and not allow_certificate_mismatch:
+        _refuse_uncovered_hostnames(ordered, certificate_sans)
     known_networks = dict(networks or {})
     _refuse_unknown_networks(ordered, known_networks)
 
@@ -361,6 +365,75 @@ def _refuse_unknown_certificates(proxies: Sequence[Proxy], certificates: Sequenc
             raise GeneratorError(
                 f"{proxy.name} asks for the certificate {wanted}, which this cluster does not "
                 f"distribute. Available: {known}"
+            )
+
+
+def covers(san: str, hostname: str) -> bool:
+    """Whether one name in a certificate answers for one hostname.
+
+    A wildcard stands for exactly one label - `*.example.com` answers for
+    `shop.example.com` and not for `a.b.example.com`, and not for
+    `example.com` itself. That rule is the whole reason this function exists:
+    it is the part people get wrong, it looks right until a browser refuses,
+    and HAProxy serves the certificate either way without a word.
+
+    Compared lowercased. Hostnames have already been held to `HOSTNAME` by the
+    model, and a certificate's own names are matched case-insensitively by
+    every client that reads them.
+    """
+
+    san = san.lower()
+    hostname = hostname.lower()
+    if not san.startswith("*."):
+        return san == hostname
+    suffix = san[1:]
+    if not hostname.endswith(suffix):
+        return False
+    label = hostname[: -len(suffix)]
+    return bool(label) and "." not in label
+
+
+def _refuse_uncovered_hostnames(
+    proxies: Sequence[Proxy], certificate_sans: Mapping[str, Sequence[str]]
+) -> None:
+    """A name served under a certificate that does not answer for it.
+
+    HAProxy does not refuse this and cannot: a certificate is a file it loads,
+    not a claim it checks against the objects using it. The client is what
+    refuses, which makes the site look broken to visitors while every layer
+    here reports success.
+
+    Only checked where the caller supplied coverage data. A cluster whose
+    installation has no certificate root configured cannot answer the question
+    at all, and refusing every https object there would be worse than not
+    asking - see `docs/INSTALLATION.md`.
+
+    A certificate the caller has no entry for is not treated as covering
+    nothing. `_refuse_unknown_certificates` has already held every name to the
+    cluster's own list, so an absence here means the file could not be read,
+    and inventing a refusal from a failed read would block a publish for a
+    reason that has nothing to do with the object.
+    """
+
+    for proxy in proxies:
+        wanted = proxy.listen.certificate
+        if wanted is None:
+            continue
+        sans = certificate_sans.get(wanted)
+        if sans is None:
+            continue
+        uncovered = [
+            hostname
+            for hostname in proxy.hostnames
+            if not any(covers(san, hostname) for san in sans)
+        ]
+        if uncovered:
+            known = ", ".join(sorted(sans)) or "nothing"
+            raise GeneratorError(
+                f"{proxy.name} serves {', '.join(uncovered)} under the certificate {wanted}, "
+                f"which does not answer for {'that name' if len(uncovered) == 1 else 'those names'}. "
+                f"{wanted} covers: {known}. To do this deliberately, publish again with the "
+                f"certificate mismatch override."
             )
 
 

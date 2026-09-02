@@ -13,7 +13,7 @@ import json
 import os
 import re
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
@@ -28,6 +28,7 @@ from haproxy_mgmt.candidate_validation import (
     validate_candidate,
     validate_in_sandbox,
 )
+from haproxy_mgmt.cert_inventory import coverage
 from haproxy_mgmt.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haproxy_mgmt.envelope import BLOCKED_EXIT, envelope, failure
@@ -62,7 +63,7 @@ from haproxy_mgmt.repo_snapshot import (
 from haproxy_mgmt.version_history import count_versions, restore_worktree, with_request_trailer
 
 OPERATION = "network_publish"
-PARAMETERS = frozenset({"network", "expected_head", "comment"})
+PARAMETERS = frozenset({"network", "expected_head", "comment", "allow_certificate_mismatch"})
 COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 MAX_COMMENT_BYTES = 4096
@@ -73,9 +74,21 @@ SUDO = "/usr/bin/sudo"
 
 
 def build_request(
-    cluster: str, request_id: str, *, network: str, expected_head: str, comment: str
+    cluster: str,
+    request_id: str,
+    *,
+    network: str,
+    expected_head: str,
+    comment: str,
+    allow_certificate_mismatch: bool = False,
 ) -> str:
-    """Build the exact bounded request the UI worker sends to this helper."""
+    """Build the exact bounded request the UI worker sends to this helper.
+
+    The override defaults to off here as well as in the helper. A default that
+    had to be spelled out by every caller is a default one caller eventually
+    gets wrong, and this one silently publishes a site under a certificate that
+    does not answer for it.
+    """
 
     return json.dumps(
         {
@@ -83,7 +96,12 @@ def build_request(
             "operation": OPERATION,
             "cluster": cluster,
             "request_id": request_id,
-            "parameters": {"network": network, "expected_head": expected_head, "comment": comment},
+            "parameters": {
+                "network": network,
+                "expected_head": expected_head,
+                "comment": comment,
+                "allow_certificate_mismatch": allow_certificate_mismatch,
+            },
         },
         separators=(",", ":"),
     )
@@ -125,7 +143,20 @@ def _text(parameters: Mapping[str, JsonValue], key: str, *, limit: int) -> str:
     return value
 
 
-def _parameters(parameters: Mapping[str, JsonValue]) -> tuple[bytes, str, str]:
+def _flag(parameters: Mapping[str, JsonValue], key: str) -> bool:
+    """An override somebody had to ask for, absent by default.
+
+    Only a real boolean. A string "false" arriving as true is exactly how an
+    override turns itself on without anybody deciding to.
+    """
+
+    value = parameters.get(key, False)
+    if not isinstance(value, bool):
+        raise HelperProtocolError(f"parameters.{key} must be true or false", exit_code=65)
+    return value
+
+
+def _parameters(parameters: Mapping[str, JsonValue]) -> tuple[bytes, str, str, bool]:
     network = _text(parameters, "network", limit=MAX_NETWORK_BYTES).encode("utf-8")
     expected_head = _text(parameters, "expected_head", limit=40)
     if not COMMIT_ID.fullmatch(expected_head):
@@ -135,7 +166,7 @@ def _parameters(parameters: Mapping[str, JsonValue]) -> tuple[bytes, str, str]:
         raise HelperProtocolError(
             "parameters.comment may not contain control characters", exit_code=65
         )
-    return network, expected_head, comment
+    return network, expected_head, comment, _flag(parameters, "allow_certificate_mismatch")
 
 
 def _result(
@@ -170,6 +201,8 @@ def _publish(
     network: bytes,
     expected_head: str,
     comment: str,
+    allow_certificate_mismatch: bool,
+    certificate_sans: Mapping[str, Sequence[str]] | None,
     output: TextIO,
     run_root: Path,
     require_secure: bool,
@@ -199,7 +232,13 @@ def _publish(
         )
 
     base_files = read_tree_files(repo, head)
-    managed = managed_files(base_files, network_document=network, cluster=cluster)
+    managed = managed_files(
+        base_files,
+        network_document=network,
+        cluster=cluster,
+        certificate_sans=certificate_sans,
+        allow_certificate_mismatch=allow_certificate_mismatch,
+    )
     snapshot = build_candidate_tree(repo, head, managed, prefixes=(MANAGED_PREFIX,))
     artifact = build_node_artifact(read_tree_files(repo, snapshot.tree))
     version = count_versions(repo, head)
@@ -344,7 +383,9 @@ def main(
 
     refuse = Refuse(request, output, errors)
     try:
-        network, expected_head, comment = _parameters(request.parameters)
+        network, expected_head, comment, allow_certificate_mismatch = _parameters(
+            request.parameters
+        )
         policy = load_policy(policy_path, require_secure=require_secure)
         cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
             request.cluster
@@ -366,6 +407,18 @@ def main(
                 network=network,
                 expected_head=expected_head,
                 comment=comment,
+                allow_certificate_mismatch=allow_certificate_mismatch,
+                #
+                # Read here rather than inside the publishing module, which
+                # takes a Git tree and a cluster and opens nothing itself
+                # (B66). No certificate root configured means the question
+                # cannot be answered, and None says exactly that.
+                #
+                certificate_sans=(
+                    coverage(policy.certificate_root, cluster)
+                    if policy.certificate_root is not None
+                    else None
+                ),
                 output=output,
                 run_root=run_root,
                 require_secure=require_secure,

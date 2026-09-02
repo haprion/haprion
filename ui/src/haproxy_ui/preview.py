@@ -96,7 +96,12 @@ PREVIEW_CERTIFICATE_SANS = {
 #
 DEFAULTS = {
     "name": "app",
-    "hostnames": "app.example.com",
+    #
+    # Left empty so the placeholder shows. It names two hostnames, which is how
+    # somebody learns the field takes more than one - and a prefilled value is
+    # a value that can be saved by not being looked at.
+    #
+    "hostnames": "",
     "protocol": "https",
     "tcp_port": "",
     "vip": "",
@@ -451,14 +456,37 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
     return Preview(document=document, files=files)
 
 
+def named_addresses(addresses: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Name and address together, in the one shape the form's options take.
+
+    Carried as a pair rather than as a name the reader has to look up on
+    another page. Which address a site is served on is the thing being chosen;
+    a list of names asks somebody to remember the mapping, and the mapping is
+    exactly what they came here to be sure about.
+
+    An address that has not been read is left empty rather than guessed. The
+    option still names the VIP, because the choice is real either way.
+    """
+
+    pairs = []
+    for name in sorted(addresses):
+        value = addresses[name]
+        address = getattr(value, "address", value)
+        pairs.append({"name": name, "address": str(address or "")})
+    return pairs
+
+
 def choices(cluster: Cluster) -> dict[str, object]:
     """What the form may offer, taken from the cluster rather than invented."""
 
     return {
-        "vips": sorted(cluster.vips),
+        "vips": named_addresses(cluster.vips),
         "default_vip": cluster.default_vip,
+        "default_vip_address": (
+            cluster.vips[cluster.default_vip].address if cluster.default_vip in cluster.vips else ""
+        ),
         "certificates": sorted(cluster.certificate_ids),
-        "sources": sorted(cluster.sources),
+        "sources": named_addresses(cluster.sources),
         "networks": sorted(cluster.networks),
         "balances": BALANCE,
         "health_types": HEALTH_TYPES,
@@ -598,7 +626,13 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "certificate": str(listen.get("certificate", "") or ""),
         "redirect_http": listen.get("redirect_http") is True,
         "hsts": bool(hsts),
-        "hsts_max_age": str(hsts.get("max_age", "") or ""),
+        #
+        # Falls back to the offered lifetime for an object that sends no HSTS.
+        # The value only reaches the document when the box is ticked, so a
+        # suggestion costs nothing - and the alternative is an empty field that
+        # refuses the moment somebody ticks the box beside it.
+        #
+        "hsts_max_age": str(hsts.get("max_age", "") or "") or str(DEFAULTS["hsts_max_age"]),
         "hsts_subdomains": hsts.get("include_subdomains") is True,
         "balance": str(backend.get("balance", "") or ""),
         "balance_key": str(backend.get("balance_key", "") or ""),

@@ -23,7 +23,17 @@ from tests.test_login import LoginTestCase
 
 
 def form(**overrides: object) -> dict[str, object]:
-    return dict(DEFAULTS) | {"certificate": "wildcard-example-com"} | overrides
+    #
+    # A hostname is supplied here rather than taken from `DEFAULTS`. The form
+    # deliberately opens with that field empty so the placeholder can show what
+    # several names look like, and a prefilled value is one that can be saved
+    # by not being looked at - but every object below has to have one.
+    #
+    return (
+        dict(DEFAULTS)
+        | {"hostnames": "app.example.com", "certificate": "wildcard-example-com"}
+        | overrides
+    )
 
 
 class TheFormBecomesTheObjectTheEngineReads(unittest.TestCase):

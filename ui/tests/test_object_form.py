@@ -190,3 +190,40 @@ hostnames: [shop.example.com]
     def test_a_document_that_is_not_an_object_is_refused(self) -> None:
         with self.assertRaises(Unexpressible):
             form_from_document("- not a mapping\n")
+
+
+class WhatTheFormMayOffer(unittest.TestCase):
+    """The choices carry addresses, not just names.
+
+    Which address a site is served on is the thing being chosen. A list of
+    names asks the reader to remember a mapping that lives on another page,
+    and the mapping is what they came here to be sure about.
+    """
+
+    def test_a_vip_is_offered_with_its_address(self) -> None:
+        from haproxy_ui.preview import PREVIEW_CLUSTER, choices
+
+        offered = choices(PREVIEW_CLUSTER)
+
+        self.assertIn({"name": "dmz", "address": "198.51.100.20"}, offered["vips"])
+        self.assertEqual(offered["default_vip_address"], "192.0.2.20")
+
+    def test_a_source_is_offered_with_its_address(self) -> None:
+        from haproxy_ui.preview import PREVIEW_CLUSTER, choices
+
+        self.assertEqual(
+            choices(PREVIEW_CLUSTER)["sources"],
+            [{"name": "outbound", "address": "192.0.2.35"}],
+        )
+
+    def test_an_address_that_has_not_been_read_is_left_empty(self) -> None:
+        """Never guessed. The option still names the VIP; the choice is real."""
+
+        from haproxy_ui.preview import named_addresses
+
+        self.assertEqual(named_addresses({"main": ""}), [{"name": "main", "address": ""}])
+
+    def test_the_form_opens_without_a_hostname(self) -> None:
+        """So the placeholder shows what several names look like."""
+
+        self.assertEqual(DEFAULTS["hostnames"], "")

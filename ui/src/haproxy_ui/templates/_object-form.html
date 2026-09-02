@@ -10,31 +10,54 @@
   URL being edited, and a form that could change it would write one object
   while the page said it was looking at another.
 #}
+
+{#
+  Loaded with the form rather than from the shell: it is the only page-level
+  behaviour in the interface, and every other page would carry it for nothing.
+  Deferred, unlike the theme script - it has nothing to say before the first
+  paint, and the field it greys out is already correct when the page arrives.
+#}
+<script defer src="{{ url_for('static', path='/object-form.js') }}?v={{ asset_token }}"></script>
+
   <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>The site</h3><p>What visitors ask for</p></div></div></header>
     <div class="form-grid">
       <label>Name<input name="name" value="{{ form.name }}" maxlength="40" required{% if name_locked %} readonly{% endif %}><small>{% if name_locked %}An object cannot be renamed here. Create the new name and remove the old one.{% else %}This object's identity, unique per cluster.{% endif %}</small></label>
-      <label>Hostnames<input name="hostnames" value="{{ form.hostnames }}" placeholder="app.example.com, www.example.com"><small>One name may belong to one object only, cluster-wide.</small></label>
+      <label>Hostnames<input name="hostnames" value="{{ form.hostnames }}" placeholder="app.example.com, www.example.com"><small>Separate several names with commas.</small></label>
       <label>Protocol
         <select name="protocol">
           <option value="https"{% if form.protocol == 'https' %} selected{% endif %}>HTTPS</option>
           <option value="http"{% if form.protocol == 'http' %} selected{% endif %}>HTTP</option>
           <option value="tcp"{% if form.protocol == 'tcp' %} selected{% endif %}>TCP</option>
         </select>
-        <small>TCP forwards a raw port: no hostnames, no routes, no headers.</small>
+        <small>TCP forwards a raw port.</small>
       </label>
-      <label>TCP port<input name="tcp_port" value="{{ form.tcp_port }}" size="8" placeholder="5432"><small>Only for TCP, and required there. HTTP and HTTPS use the cluster's own ports.</small></label>
+      {#
+        Disabled rather than hidden. A field that vanishes takes the reader's
+        place on the page with it; one that greys out says the shape above
+        decided this, which is the thing worth learning. `tcp-only` is what the
+        script re-evaluates when the protocol changes, and the server ignores
+        the field for http and https either way - the browser is a convenience
+        here, never the control.
+      #}
+      <label class="tcp-only" data-protocol="tcp">TCP port<input name="tcp_port" value="{{ form.tcp_port }}" size="8" placeholder="5432"{% if form.protocol != 'tcp' %} disabled{% endif %}><small>The port this object listens on, on the VIP.</small></label>
+      {#
+        Each option names its address beside its name. The name alone asks the
+        reader to remember a mapping that lives on another page, and the
+        mapping is what they came here to be sure about. An address the poller
+        has not read yet is left off rather than guessed.
+      #}
       <label>VIP
         <select name="vip">
-          <option value="">Default ({{ choices.default_vip }})</option>
-          {% for vip in choices.vips %}<option value="{{ vip }}"{% if form.vip == vip %} selected{% endif %}>{{ vip }}</option>{% endfor %}
+          <option value="">Default ({{ choices.default_vip }}{% if choices.default_vip_address %} — {{ choices.default_vip_address }}{% endif %})</option>
+          {% for vip in choices.vips %}<option value="{{ vip.name }}"{% if form.vip == vip.name %} selected{% endif %}>{{ vip.name }}{% if vip.address %} — {{ vip.address }}{% endif %}</option>{% endfor %}
         </select>
         <small>Which address this site is served on.</small>
       </label>
       <label>Source address
         <select name="source">
           <option value="">The VIP's own</option>
-          {% for source in choices.sources %}<option value="{{ source }}"{% if form.source == source %} selected{% endif %}>{{ source }}</option>{% endfor %}
+          {% for source in choices.sources %}<option value="{{ source.name }}"{% if form.source == source.name %} selected{% endif %}>{{ source.name }}{% if source.address %} — {{ source.address }}{% endif %}</option>{% endfor %}
         </select>
         <small>Which address it connects out from.</small>
       </label>
@@ -44,6 +67,14 @@
           {% for certificate in choices.certificates %}<option value="{{ certificate }}"{% if form.certificate == certificate %} selected{% endif %}>{{ certificate }}</option>{% endfor %}
         </select>
       </label>
+    </div>
+    {#
+      Who may reach the site gets a row to itself, in two boxes of one size.
+      The two are one decision made in two ways - named groups the cluster
+      defines, and addresses typed here - and side by side with fields of a
+      different shape they read as two unrelated settings.
+    #}
+    <div class="form-grid form-grid-pair">
       <label>Reachable from — groups
         <select name="allow_from" multiple size="4">
           <option value="" {% if not form.allow_from and not form.allow_ranges %}selected{% endif %}>Everywhere</option>
@@ -51,16 +82,27 @@
         </select>
         <small>Groups the cluster defines, on the <a href="/network">Network</a> page.</small>
       </label>
-      <label>Reachable from — addresses<textarea name="allow_ranges" rows="3" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address or range per line.</small></label>
+      <label>Reachable from — addresses<textarea name="allow_ranges" rows="4" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address or range per line.</small></label>
     </div>
     <div class="form-checks">
       <label class="check"><input type="checkbox" name="redirect_http"{% if form.redirect_http %} checked{% endif %}> Redirect plain HTTP to HTTPS (301)</label>
       <label class="check"><input type="checkbox" name="hsts"{% if form.hsts %} checked{% endif %}> Send HSTS</label>
       <label class="check"><input type="checkbox" name="hsts_subdomains"{% if form.hsts_subdomains %} checked{% endif %}> …including subdomains</label>
       <label class="check-value"><input name="hsts_max_age" value="{{ form.hsts_max_age }}" size="10"><span>HSTS lifetime, seconds</span></label>
-      <label class="check"><input type="checkbox" name="maintenance"{% if form.maintenance %} checked{% endif %}> Out of service for maintenance</label>
-      <label class="check-value"><input name="maintenance_message" value="{{ form.maintenance_message }}" size="40"><span>What visitors are told instead</span></label>
-      <label class="check-value"><input name="unavailable_message" value="{{ form.unavailable_message }}" size="40"><span>What visitors are told when no server answers. <code>%URL%</code> becomes the site's first hostname.</span></label>
+    </div>
+    {#
+      Maintenance is a statement about the site's *state*, not about its shape,
+      and it is the one group here a person turns on deliberately and turns off
+      again. Kept behind its own rule so it cannot be reached by drifting down
+      the same row of checkboxes.
+    #}
+    <div class="form-subsection">
+      <h4>Maintenance options <span>optional</span></h4>
+      <div class="form-checks">
+        <label class="check"><input type="checkbox" name="maintenance"{% if form.maintenance %} checked{% endif %}> Out of service for maintenance</label>
+        <label class="check-value"><input name="maintenance_message" value="{{ form.maintenance_message }}" size="40"><span>What visitors are told instead</span></label>
+        <label class="check-value"><input name="unavailable_message" value="{{ form.unavailable_message }}" size="40"><span>What visitors are told when no server answers. <code>%URL%</code> becomes the site's first hostname.</span></label>
+      </div>
     </div>
   </section>
 

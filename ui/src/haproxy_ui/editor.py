@@ -32,7 +32,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from haproxy_ui.certificates import CertificateClusterView
 from haproxy_ui.network import NetworkClusterView
-from haproxy_ui.preview import Preview, build_document
+from haproxy_ui.preview import Preview, build_document, named_addresses
 
 #
 # The policy the validation runs under, and it is not this cluster's. Every
@@ -108,10 +108,13 @@ def choices(cluster: EditorCluster) -> dict[str, object]:
     """The same shape `preview.choices` returns, from real values."""
 
     return {
-        "vips": sorted(cluster.vips),
+        "vips": named_addresses(cluster.vips),
         "default_vip": cluster.default_vip,
+        "default_vip_address": (
+            cluster.vips[cluster.default_vip].address if cluster.default_vip in cluster.vips else ""
+        ),
         "certificates": list(cluster.certificate_ids),
-        "sources": sorted(cluster.sources),
+        "sources": named_addresses(cluster.sources),
         "networks": sorted(cluster.networks),
         "balances": BALANCE,
         "health_types": HEALTH_TYPES,

@@ -308,3 +308,26 @@ class WorkingFromADraft(EditorTestCase):
 
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(self.discarded, [("alpha", "shop", 3)])
+
+
+class TheShapeDecidesWhichFieldsApply(EditorTestCase):
+    """The tcp port is greyed out where it means nothing.
+
+    Rendered by the server as well as maintained by the script, because a page
+    that arrived correct and then changed under a reader would be the worse of
+    the two behaviours.
+    """
+
+    def test_the_tcp_port_is_disabled_for_an_http_object(self) -> None:
+        page = self.editor().get("/proxies/alpha/shop/edit")
+
+        self.assertRegex(page.text, r'name="tcp_port"[^>]*disabled')
+
+    def test_the_tcp_port_is_usable_for_a_tcp_object(self) -> None:
+        client = self.editor()
+
+        page = self.submit(
+            client, "/proxies/alpha/shop/edit", action="check", protocol="tcp", tcp_port="5432"
+        )
+
+        self.assertNotRegex(page.text, r'name="tcp_port"[^>]*disabled')

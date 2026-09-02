@@ -652,6 +652,33 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .preview-form .cluster-card { padding-bottom: 18px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; padding: 18px 20px 4px; }
 .form-grid label { display: flex; flex-direction: column; gap: 6px; color: var(--text-secondary); font-weight: 620; }
+/*
+ * Two fields of one size on a row of their own. Fixed at two columns rather
+ * than left to `auto-fit`, because the pair is one decision made in two ways
+ * and a row that reflowed to one column at some widths and three at others
+ * would keep taking them apart.
+ */
+.form-grid-pair { grid-template-columns: repeat(2, minmax(260px, 1fr)); align-items: start; }
+.form-grid-pair select, .form-grid-pair textarea { min-height: 108px; }
+/*
+ * A group inside a card, with a rule above it. The heading is small and the
+ * word beside it is quieter still: "optional" is a fact about the fields, not
+ * a second heading.
+ */
+.form-subsection { border-top: 1px solid var(--line); margin: 18px 20px 0; padding-top: 4px; }
+.form-subsection h4 {
+  display: flex; align-items: baseline; gap: 8px; margin: 10px 0 0;
+  color: var(--text-secondary); font-size: 0.95rem; font-weight: 660;
+}
+.form-subsection h4 span { color: var(--muted); font-size: 0.85rem; font-weight: var(--font-weight-regular); }
+.form-subsection .form-checks { padding-left: 0; padding-right: 0; }
+/*
+ * A field the shape above has no use for. Greyed rather than removed, so the
+ * page does not change height when a protocol is chosen and the reader keeps
+ * their place.
+ */
+.form-grid input:disabled, .form-grid select:disabled { opacity: 0.45; cursor: not-allowed; }
+.form-grid label:has(input:disabled) { opacity: 0.7; }
 .check-value { display: flex; align-items: center; gap: 10px; color: var(--text-secondary); font-weight: 620; }
 .section-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .section-title p { margin: 0; }
@@ -661,7 +688,13 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 }
 .form-grid textarea { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; resize: vertical; }
 .form-grid small, .preview-form .warning-text { color: var(--muted); font-weight: var(--font-weight-regular); }
-.form-checks { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 18px; padding: 14px 20px 0; }
+/*
+ * Centred, not bottom-aligned. A `.check` is one line of text and a
+ * `.check-value` is a padded input beside its label; aligning their bottoms
+ * left the input sitting half a line above everything on the row, which read
+ * as a mistake rather than as a group.
+ */
+.form-checks { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; padding: 14px 20px 0; }
 .form-checks .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
 .preview-form .warning-text { margin: 12px 20px 0; }
 .form-actions { display: flex; justify-content: flex-end; }

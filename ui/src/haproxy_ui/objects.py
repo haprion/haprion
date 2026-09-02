@@ -73,6 +73,15 @@ class ObjectDetail:
     stored: ObjectView | None
     publication: Publication | None
     #
+    # The address the object is served on. An object that names no VIP is
+    # served on the cluster's default one, which is a fact about the cluster
+    # rather than about the object - so the page says which, and says the
+    # address, instead of leaving the reader to look it up.
+    #
+    vip: str | None
+    vip_address: str | None
+    vip_is_default: bool
+    #
     # The frontend this object is served through, when one can be named. It is
     # plumbing rather than an answer, so it is carried for reference and never
     # used to decide whether the object is published.
@@ -180,7 +189,12 @@ def publication(
     # makes the nodes pull it, and saying "published" for both would report a
     # change as live while every node still serves the previous one.
     #
-    if release_state and release_state.lower() != "current":
+    # `converged` is the dashboard's word for "every node is on the release".
+    # The first version of this compared against "current" - a word nothing
+    # produces - so every object read as waiting, including ones the nodes were
+    # already serving.
+    #
+    if release_state and release_state.lower() != "converged":
         return Publication(
             "Waiting for deploy",
             f"{match.version} is the release, and the nodes are on {node_version or 'an older one'}",
@@ -201,6 +215,9 @@ def build_object_detail(
     *,
     release_state: str = "",
     node_version: str = "",
+    vip: str | None = None,
+    vip_address: str | None = None,
+    vip_is_default: bool = False,
     now: datetime | None = None,
     stale_after: timedelta,
     captured: bool = False,
@@ -247,6 +264,9 @@ def build_object_detail(
             if stored is not None
             else None
         ),
+        vip=vip,
+        vip_address=vip_address,
+        vip_is_default=vip_is_default,
         published=running,
         commit=commit,
         short_commit=commit[:12] if commit else None,

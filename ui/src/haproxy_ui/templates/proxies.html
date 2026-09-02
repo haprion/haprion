@@ -31,12 +31,12 @@
     {% set pending = waiting.get(cluster.cluster, ()) if waiting else () %}
     {% if pending and role == 'admin' %}
     <h4 class="network-subhead">Stored, not yet serving</h4>
-    <div class="table-scroll"><table class="node-table proxy-table"><thead><tr><th>Object</th><th>Protocol</th><th>Hostnames</th><th>State</th></tr></thead><tbody>
+    <div class="table-scroll"><table class="node-table proxy-waiting-table"><thead><tr><th>Object</th><th>Protocol</th><th>Hostnames</th><th>State</th></tr></thead><tbody>
       {% for object in pending %}
       <tr><td data-label="Object"><a class="proxy-link" href="/proxies/{{ cluster.cluster }}/{{ object.name }}"><strong>{{ object.name }}</strong></a></td><td data-label="Protocol">{% if object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td><td data-label="Hostnames">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }}</td><td data-label="State">{% if object.readable %}<span class="status-badge status-badge-warning">Waiting for deploy</span>{% else %}<span class="status-badge status-badge-critical">Cannot be read</span>{% endif %}</td></tr>
       {% endfor %}
     </tbody></table></div>
-    <p class="table-note">Written and committed, but no published frontend carries these hostnames yet.</p>
+    <p class="table-note">Written and committed, but no published frontend carries these hostnames yet. Ordered by name.</p>
     {% endif %}
   </article>
 {% else %}

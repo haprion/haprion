@@ -40,7 +40,7 @@
 
 <article class="cluster-card cluster-accent-{{ object.accent }}">
   <header class="cluster-header">
-    <div class="cluster-identity"><div><h3>Frontend</h3><p>The published frontend that carries this address, which is shared by every object on it</p></div></div>
+    <div class="cluster-identity"><div><h3>Frontend</h3><p>{% if object.vip %}Served on the {% if object.vip_is_default %}default {% endif %}VIP <code>{{ object.vip }}</code>{% if object.vip_address %} · {{ object.vip_address }}{% endif %}, through a frontend shared by every object on that address{% else %}The published frontend that carries this address, shared by every object on it{% endif %}</p></div></div>
   </header>
   {% if object.published %}
   <div class="table-scroll"><table class="node-table">
@@ -54,7 +54,7 @@
     </tr></tbody>
   </table></div>
   {% else %}
-  <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>No frontend names this</strong><span>Managed objects are served through a shared frontend named after the address, so a name of their own appears in no published section</span></div></div>
+  <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>No frontend names this</strong><span>{% if object.vip %}The object names no VIP, so it takes the cluster default. {% endif %}A managed frontend is named after the address it binds, so an object never appears as a section of its own</span></div></div>
   {% endif %}
 </article>
 </div>

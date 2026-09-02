@@ -514,6 +514,12 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
  */
 .proxy-link { color: inherit; text-decoration: none; }
 /* Badge and sentence on one line: the state and why it is that state. */
+/*
+ * Content width, not full width. The state belongs beside what it is a state
+ * of; stretched to the card's edge it sits a screen away from the object it
+ * describes, and the row needs a scrollbar to reach it.
+ */
+.proxy-waiting-table { width: auto; }
 .publication-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; padding: 14px 20px 0; color: var(--muted); font-size: 12px; }
 .proxy-link:hover strong { text-decoration: underline; }
 

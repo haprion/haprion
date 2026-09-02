@@ -11,6 +11,7 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime, timedelta
 
+from haproxy_ui import dashboard
 from haproxy_ui.db import ClusterObjects
 from haproxy_ui.history import VersionView
 from haproxy_ui.objects import build_object_detail, publication, stored_only
@@ -239,11 +240,49 @@ class WhetherTheChangeReachedTheNodes(unittest.TestCase):
 
     def test_the_release_the_nodes_pull_is_serving(self) -> None:
         state = publication(
-            f"{29:040d}", [self.version(29, published=True)], release_state="Current"
+            f"{29:040d}", [self.version(29, published=True)], release_state="Converged"
         )
 
         self.assertEqual(state.label, "Serving")
         self.assertEqual(state.version, "v29")
+
+    def test_the_word_for_deployed_is_the_dashboard_s_own(self) -> None:
+        """This compared against "Current", which nothing produces.
+
+        The dashboard says `converged`, title-cased for display. The mismatch
+        made every object read as waiting for a deploy - including ones the
+        nodes were already serving - and the first version of the test above
+        agreed with the bug because it was written from the same wrong word.
+        The state must therefore be checked against a value the dashboard
+        actually emits.
+        """
+
+        emitted = dashboard.ClusterView(
+            cluster="alpha",
+            accent=0,
+            configured=True,
+            label="",
+            tone="healthy",
+            detail="",
+            observed_at=NOW,
+            observed_iso=NOW.isoformat(),
+            age_label="",
+            stale=False,
+            nodes=(),
+            configured_nodes=2,
+            reachable_nodes=2,
+            vip="",
+            version="v29",
+            release_state="converged".replace("_", " ").title(),
+        )
+
+        state = publication(
+            f"{29:040d}",
+            [self.version(29, published=True)],
+            release_state=emitted.release_state,
+        )
+
+        self.assertEqual(state.label, "Serving")
 
     def test_a_release_the_nodes_have_not_taken_is_not_serving(self) -> None:
         """The distinction the whole card exists for.

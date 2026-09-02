@@ -476,6 +476,31 @@ def build_router(config: Config) -> APIRouter:
             captured=captured_at is not None,
         )
         serving = next((view for view in board.clusters if view.cluster == cluster), None)
+        #
+        # What the nodes report, not the target they were given. The cluster
+        # view's `version` is the version they are meant to reach, so using it
+        # here would have the page say "the nodes are on v29" at the exact
+        # moment they are not.
+        #
+        running = sorted({node.version for node in serving.nodes}) if serving else []
+        node_version = running[0] if len(running) == 1 else ", ".join(running)
+        #
+        # An object that names no VIP is served on the cluster's default, which
+        # is why the address is read from the network description rather than
+        # from the object.
+        #
+        _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
+        addresses = network.build_network_overview(
+            clusters,
+            network_rows,
+            now=captured_at,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            captured=captured_at is not None,
+        )
+        described = next((view for view in addresses if view.cluster == cluster), None)
+        vip = (
+            next((item for item in described.vips if item.is_default), None) if described else None
+        )
         detail = objects.build_object_detail(
             cluster,
             name,
@@ -483,7 +508,10 @@ def build_router(config: Config) -> APIRouter:
             published,
             versions,
             release_state=serving.release_state if serving else "",
-            node_version=serving.version if serving else "",
+            node_version=node_version,
+            vip=vip.name if vip else None,
+            vip_address=vip.address if vip else None,
+            vip_is_default=vip is not None,
             now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
             captured=captured_at is not None,

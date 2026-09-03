@@ -103,14 +103,15 @@
       the same row of checkboxes.
     #}
     <div class="form-subsection">
-      <h4>Maintenance options <span class="optional">(optional)</span></h4>
       {#
-        The switch heads the column its two messages are read in, rather than
-        riding on the heading's line: it is the thing that is turned on, and
-        what is written below is what it then shows.
+        The switch shares the heading's line - it is a state, not a message -
+        and stands in the column the two explanations below are read in.
       #}
-      <div class="field-rows">
+      <h4>
+        <span class="subsection-title">Maintenance options <span class="optional">(optional)</span></span>
         <label class="check maintenance-switch"><input type="checkbox" name="maintenance"{% if form.maintenance %} checked{% endif %}> Out of service for maintenance</label>
+      </h4>
+      <div class="field-rows">
         <label class="check-value"><input name="maintenance_message" value="{{ form.maintenance_message }}"><span>What visitors are told instead</span></label>
         <label class="check-value"><input name="unavailable_message" value="{{ form.unavailable_message }}"><span>What visitors are told when no server answers. <code>%URL%</code> becomes the site's first hostname.</span></label>
       </div>

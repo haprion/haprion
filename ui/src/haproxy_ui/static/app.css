@@ -719,16 +719,24 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * a second heading.
  */
 .form-subsection { border-top: 1px solid var(--line); margin: 18px 20px 0; padding-top: 4px; }
+/*
+ * Two columns, the same two the rows below use: the heading over the inputs,
+ * the switch over their explanations. A flex row cannot do this - `margin-left`
+ * there is measured from the heading's own end, so the switch moved with every
+ * change to the words beside it.
+ */
 .form-subsection h4 {
-  display: flex; align-items: baseline; gap: 8px; margin: 10px 0 0;
+  display: grid; grid-template-columns: var(--field-column) 1fr; column-gap: 10px;
+  align-items: center; margin: 10px 0 0;
   color: var(--text-secondary); font-size: 0.95rem; font-weight: 660;
 }
+.subsection-title { display: flex; align-items: baseline; gap: 8px; }
 /*
- * The switch begins where the explanations below it begin: the input column,
- * plus that row's gap, less the box and gap this label carries in front of its
- * own text. The box itself hangs into the gap, the way a bullet does.
+ * Pulled back by the box and the gap it carries, so the switch's words begin
+ * exactly where the explanations below begin and the box hangs into the column
+ * gap the way a bullet does.
  */
-.maintenance-switch { margin-left: calc(var(--field-column) + 10px - 21px); }
+.maintenance-switch { margin-left: -21px; font-size: var(--font-size-ui); font-weight: 620; }
 /*
  * One input per row, all of one width, so every explanation beside them starts
  * at the same place.
@@ -765,7 +773,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * as a mistake rather than as a group.
  */
 .form-checks { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; padding: 14px 20px 0; }
-.form-checks .check, .field-rows .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
+.form-checks .check, .maintenance-switch { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
 
 .preview-form .warning-text { margin: 12px 20px 0; }
 .form-actions { display: flex; justify-content: flex-end; }

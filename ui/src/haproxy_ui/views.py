@@ -443,7 +443,19 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/proxies/{cluster}/{name}/edit", response_class=HTMLResponse)
     def edit_object_form(request: Request, cluster: str, name: str) -> Response:
-        return _editor_page(request, config, cluster, name, None)
+        saved = request.query_params.get("saved") == "1"
+        return _editor_page(
+            request,
+            config,
+            cluster,
+            name,
+            None,
+            notice=(
+                "Saved as a draft. It reaches no configuration until it is published."
+                if saved
+                else ""
+            ),
+        )
 
     @router.post("/proxies/{cluster}/{name}/edit", response_class=HTMLResponse)
     def edit_object_submit(
@@ -1610,7 +1622,12 @@ def _editor_submit(
     # refresh of this response must not save the draft a second time under a
     # revision that has since moved.
     #
-    return RedirectResponse(f"/proxies/{cluster}/{object_id}/edit", status_code=303)
+    #
+    # The flag is what the page says afterwards. A 303 leaves nothing behind,
+    # so without it a save that worked and a page that was merely opened look
+    # exactly alike - which is the moment somebody presses save again.
+    #
+    return RedirectResponse(f"/proxies/{cluster}/{object_id}/edit?saved=1", status_code=303)
 
 
 def _refusal_page(request: Request, config: Config, message: str, *, back: str) -> Response:

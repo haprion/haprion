@@ -206,9 +206,9 @@
           {% for kind in choices.health_types %}<option value="{{ kind }}"{% if form.health_type == kind %} selected{% endif %}>{{ kind }}</option>{% endfor %}
         </select>
       </label>
-      <label><span class="field-title">Port <span class="optional">(optional)</span></span><input name="health_port" value="{{ form.health_port }}" placeholder="the server's own"><small>Left empty the check uses each server's traffic port. Set it where health answers somewhere else, such as a management port.</small></label>
+      <label><span class="field-title">Port <span class="optional">(optional)</span></span><input name="health_port" value="{{ form.health_port }}" placeholder="the server's own"><small>Empty means the server's traffic port.</small></label>
       <label><span class="field-title">Path <span class="optional">(optional)</span></span><input name="health_path" value="{{ form.health_path }}" placeholder="/healthz"></label>
-      <label><span class="field-title">Host header <span class="optional">(optional)</span></span><input name="health_host" value="{{ form.health_host }}" placeholder="app.example.com"><small>Needed when the backend serves several names — without it the check gets a 404 and a healthy pool reads as down.</small></label>
+      <label><span class="field-title">Host header <span class="optional">(optional)</span></span><input name="health_host" value="{{ form.health_host }}" placeholder="app.example.com"><small>Needed when the backend serves several names, or the check gets a 404.</small></label>
     </div>
     {#
       How often, and how many answers in a row it takes to change a server's
@@ -217,9 +217,9 @@
       to write it into every object it saves.
     #}
     <div class="form-grid form-grid-ruled form-grid-fixed">
-      <label><span class="field-title">Check interval <span class="optional">(optional)</span></span><input name="health_interval" value="{{ form.health_interval }}" size="10" placeholder="{{ check_interval }}"><small>How often each server is checked. A duration, such as <code>5s</code> or <code>500ms</code>.</small></label>
-      <label><span class="field-title">Checks to rise <span class="optional">(optional)</span></span><input name="health_rise" value="{{ form.health_rise }}" size="10" placeholder="{{ check_rise }}"><small>Good answers in a row before a failed server is used again.</small></label>
-      <label><span class="field-title">Checks to fall <span class="optional">(optional)</span></span><input name="health_fall" value="{{ form.health_fall }}" size="10" placeholder="{{ check_fall }}"><small>Failures in a row before a server is taken out. Lower is quicker; too low takes a server out over one slow answer.</small></label>
+      <label><span class="field-title">Check interval <span class="optional">(optional)</span></span><input name="health_interval" value="{{ form.health_interval }}" size="10" placeholder="{{ check_interval }}"><small>How often each server is checked, such as <code>5s</code>.</small></label>
+      <label><span class="field-title">Checks to rise <span class="optional">(optional)</span></span><input name="health_rise" value="{{ form.health_rise }}" size="10" placeholder="{{ check_rise }}"><small>Good answers in a row before a server is used again.</small></label>
+      <label><span class="field-title">Checks to fall <span class="optional">(optional)</span></span><input name="health_fall" value="{{ form.health_fall }}" size="10" placeholder="{{ check_fall }}"><small>Failures in a row before a server is taken out. Too low, and one slow answer does it.</small></label>
     </div>
     {#
       HAProxy's own verdict, from the nodes, on the pool this object names. It
@@ -232,9 +232,9 @@
     <div class="node-health">
       <h4><span class="subsection-title">What the nodes report <span class="optional">{{ pool_health.backend }}</span></span></h4>
       {% if not pool_health.nodes %}
-      <p class="node-health-note">No node has been read yet, so there is nothing to report.</p>
+      <p class="node-health-note">No node has been read yet.</p>
       {% elif not pool_health.known %}
-      <p class="node-health-note">The nodes know nothing about this pool. An object is checked once it has been published and deployed.</p>
+      <p class="node-health-note">The nodes know nothing about this pool. It is checked once it has been deployed.</p>
       {% else %}
       <table class="node-health-table">
         <thead><tr><th>Node</th><th>Server</th><th>State</th><th>Last check</th></tr></thead>
@@ -250,7 +250,7 @@
         </tbody>
       </table>
       {% endif %}
-      <p class="node-health-note">{% if pool_health.observed_at %}Read {{ pool_health.observed_at.strftime('%H:%M:%S') }}. {% endif %}“Test health” asks the nodes again.</p>
+      <p class="node-health-note">{% if pool_health.observed_at %}Read {{ pool_health.observed_at.strftime('%H:%M:%S') }}.{% endif %}</p>
     </div>
     {% endif %}
   </section>

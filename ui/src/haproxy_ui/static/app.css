@@ -736,7 +736,12 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * One input per row, all of one width, so every explanation beside them starts
  * at the same place.
  */
-.field-rows { display: grid; gap: 12px; padding: 14px 20px 0; }
+/*
+ * No side padding: the group already sits inside `.form-subsection`, which
+ * carries the card's own 20px. Adding it again indented the inputs past the
+ * heading they belong to, so they read as a second, nested group.
+ */
+.field-rows { display: grid; gap: 12px; padding: 14px 0 0; }
 .field-rows .check-value input { width: var(--field-column); }
 .form-subsection h4 .optional, .form-grid .optional { color: var(--muted); font-size: 0.85rem; font-weight: var(--font-weight-regular); }
 .form-subsection .form-checks { padding-left: 0; padding-right: 0; }

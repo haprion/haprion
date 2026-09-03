@@ -1343,10 +1343,15 @@ def _editor_page(
     stored = next((view for view in state.stored if view.name == name), None)
     unexpressible = ""
     #
-    # Whether this page is an answer or an opening. Read before `form` is
-    # replaced below, because from there on the two are indistinguishable.
+    # Whether this page is an answer to a question about the object. Read
+    # before `form` is replaced below, because from there on the two are
+    # indistinguishable.
     #
-    submitted = form is not None
+    # "Test health" is a submission too, and it is not that question: it asks
+    # the nodes about the pool, and a page that answered it with a verdict on
+    # the document would be reporting on work the person did not ask about.
+    #
+    submitted = form is not None and form.action != "recheck"
     if form is None:
         #
         # Opened rather than submitted. A draft is what the person was last

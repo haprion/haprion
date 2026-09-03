@@ -130,7 +130,7 @@
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>The pool</h3><p>Where the traffic goes</p></div></div></header>
     <div class="form-grid">
       <label>Pool name<input name="backend" value="{{ form.backend }}" placeholder="web"><small>What you call the backend.</small></label>
-      <label>Servers<textarea name="servers" rows="3" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small>One <code>address</code> or <code>hostname:port</code> per line.</small></label>
+      <label>Servers<textarea name="servers" rows="3" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small>One <code>address</code> or <code>hostname:port</code> per line. Add <code>backup</code> after one to make it a standby, taking traffic only when every other member is down.</small></label>
       <label>Balancing
         <select name="balance">
           {% for algorithm in choices.balances %}<option value="{{ algorithm }}"{% if form.balance == algorithm %} selected{% endif %}>{{ algorithm }}</option>{% endfor %}
@@ -209,6 +209,28 @@
       <label><span class="field-title">Port <span class="optional">(optional)</span></span><input name="health_port" value="{{ form.health_port }}" placeholder="the server's own"><small>Empty means the server's traffic port.</small></label>
       <label><span class="field-title">Path <span class="optional">(optional)</span></span><input name="health_path" value="{{ form.health_path }}" placeholder="/healthz"></label>
       <label><span class="field-title">Host header <span class="optional">(optional)</span></span><input name="health_host" value="{{ form.health_host }}" placeholder="app.example.com"><small>Needed when the backend serves several names, or the check gets a 404.</small></label>
+    </div>
+    {#
+      What counts as a good answer, and whether the check itself speaks TLS.
+      Separate from the listener and from the backend's own TLS: a pool served
+      over plain HTTP can still be checked on a TLS port, and the model keeps
+      the two apart for that reason.
+
+      Left empty, a check passes on any 2xx or 3xx - which is HAProxy's rule
+      and not this form's, so nothing is written into the object to say it.
+    #}
+    <div class="form-grid form-grid-ruled">
+      <label class="check"><input type="checkbox" name="health_tls"{% if form.health_tls %} checked{% endif %}> The check speaks TLS</label>
+      <label><span class="field-title">Expected status <span class="optional">(optional)</span></span><input name="health_expect_status" value="{{ form.health_expect_status }}" size="10" placeholder="any 2xx or 3xx"><small>One status the server must answer with, such as <code>204</code>.</small></label>
+      <label><span class="field-title">Expected body <span class="optional">(optional)</span></span><input name="health_expect_body" value="{{ form.health_expect_body }}" placeholder="ok"><small>Text the answer must contain. Checked as well as the status, not instead of it.</small></label>
+    </div>
+    {#
+      A tcp check that sends nothing is a connect check, which is what the type
+      already means. These two turn it into a conversation.
+    #}
+    <div class="form-grid form-grid-ruled">
+      <label><span class="field-title">Send <span class="optional">(optional, tcp)</span></span><input name="health_send" value="{{ form.health_send }}" placeholder="PING\r\n"><small>Written to the server once the connection is up.</small></label>
+      <label><span class="field-title">Expect <span class="optional">(optional, tcp)</span></span><input name="health_expect" value="{{ form.health_expect }}" placeholder="PONG"><small>Text the server must answer with for the check to pass.</small></label>
     </div>
     {#
       How often, and how many answers in a row it takes to change a server's

@@ -265,6 +265,17 @@ class ObjectForm(BaseModel):
     health_interval: Annotated[str, StringConstraints(max_length=8)] = ""
     health_rise: Annotated[str, StringConstraints(max_length=2)] = ""
     health_fall: Annotated[str, StringConstraints(max_length=2)] = ""
+    #
+    # The rest of the model's health check, so the form can express every one it
+    # allows rather than most of them. An object using a field the form lacked
+    # was refused outright - honestly, but with nothing to do about it except
+    # edit the file by hand.
+    #
+    health_tls: bool = False
+    health_expect_status: Annotated[str, StringConstraints(max_length=3)] = ""
+    health_expect_body: Annotated[str, StringConstraints(max_length=255)] = ""
+    health_send: Annotated[str, StringConstraints(max_length=255)] = ""
+    health_expect: Annotated[str, StringConstraints(max_length=255)] = ""
     backend_tls: Annotated[str, StringConstraints(max_length=16)] = ""
     max_connections: Annotated[str, StringConstraints(max_length=8)] = ""
     slow_start: Annotated[str, StringConstraints(max_length=8)] = ""

@@ -129,6 +129,11 @@ DEFAULTS = {
     "health_path": "/",
     "health_host": "",
     "health_port": "",
+    "health_tls": False,
+    "health_expect_status": "",
+    "health_expect_body": "",
+    "health_send": "",
+    "health_expect": "",
     "health_interval": "",
     "health_rise": "",
     "health_fall": "",
@@ -208,11 +213,16 @@ class Preview:
 
 
 def _servers(raw: str) -> list[dict[str, object]]:
-    """One `host:port` per line, in the order they were typed.
+    """One `host:port` per line, `backup` after it for a standby member.
 
     Parsed here rather than in the model because this is the only place the
-    shorthand exists: the stored object spells host and port out, and a reader
-    of that file should not have to know a form convention to understand it.
+    shorthand exists: the stored object spells host, port and backup out, and a
+    reader of that file should not have to know a form convention to understand
+    it.
+
+    `backup` is the model's whole remaining server field, so a pool written here
+    can say everything a pool may say. It was the last thing that made an
+    otherwise ordinary object impossible to open.
     """
 
     servers: list[dict[str, object]] = []
@@ -220,13 +230,31 @@ def _servers(raw: str) -> list[dict[str, object]]:
         entry = line.strip()
         if not entry:
             continue
-        host, separator, port = entry.rpartition(":")
+        #
+        # Only the exact word counts as the marker. Anything else is part of a
+        # line that is not an address, and saying so names the real mistake -
+        # a line reading "not a server" is not a server carrying an unknown
+        # flag.
+        #
+        address, backup = entry, False
+        head, _, tail = entry.rpartition(" ")
+        if tail.lower() == "backup" and head.strip():
+            address, backup = head.strip(), True
+        host, separator, port = address.rpartition(":")
         if not separator or not port.isdigit():
             raise ValueError(f"{entry!r} is not a host and port, such as 198.51.100.10:8080")
         server: dict[str, object] = {"host": host, "port": int(port)}
+        if backup:
+            server["backup"] = True
         servers.append(server)
     if not servers:
         raise ValueError("a backend needs at least one server")
+    #
+    # Every member a standby is a pool with nothing serving it. HAProxy would
+    # accept it; the person writing it meant something else.
+    #
+    if all(server.get("backup") for server in servers):
+        raise ValueError("every server is a backup, so nothing would take traffic")
     return servers
 
 
@@ -295,10 +323,33 @@ def build_document(form: dict[str, object]) -> str:
             if not asked.isdigit():
                 raise ValueError(f"the health check {key} must be a number of checks")
             health[key] = int(asked)
+    #
+    # Whether the check itself speaks TLS. Independent of the listener and of
+    # `backend.tls`: a pool served over plain HTTP can still be checked on a
+    # TLS port, and the model keeps them apart for that reason.
+    #
+    if text("health_type") != "disabled" and flag("health_tls"):
+        health["tls"] = True
     if text("health_type") == "http":
         health["path"] = text("health_path") or "/"
         if text("health_host"):
             health["host"] = text("health_host")
+        if text("health_expect_status"):
+            status = text("health_expect_status")
+            if not status.isdigit():
+                raise ValueError("the expected status must be a number")
+            health["expect_status"] = int(status)
+        if text("health_expect_body"):
+            health["expect_body"] = text("health_expect_body")
+    if text("health_type") == "tcp":
+        #
+        # A tcp check that sends nothing is a connect check, which is what the
+        # type means on its own. These two turn it into a conversation.
+        #
+        if text("health_send"):
+            health["send"] = text("health_send")
+        if text("health_expect"):
+            health["expect"] = text("health_expect")
 
     backend: dict[str, object] = {
         "balance": text("balance"),
@@ -549,11 +600,12 @@ class Unexpressible(Exception):
 
 
 def _server_lines(servers: Any, pool: str) -> str:
-    """One `host:port` line per server, which is all the form has room for.
+    """One `host:port` line per server, with `backup` where it stands.
 
-    A server carrying anything else - `backup: true`, say - is left to the
-    round trip to refuse. Reading it here and dropping it would produce a form
-    that looks complete and a document that has lost a standby.
+    Written out rather than dropped: a form that showed a standby as an
+    ordinary member would turn it into one on the first save, and both screens
+    would have looked right. Anything the model grows beyond these three is
+    left to the round trip to refuse for the same reason.
     """
 
     if not isinstance(servers, list):
@@ -562,7 +614,8 @@ def _server_lines(servers: Any, pool: str) -> str:
     for server in servers:
         if not isinstance(server, Mapping):
             raise Unexpressible(f"backends.{pool}.servers")
-        lines.append(f"{server.get('host', '')}:{server.get('port', '')}")
+        line = f"{server.get('host', '')}:{server.get('port', '')}"
+        lines.append(f"{line} backup" if server.get("backup") is True else line)
     return "\n".join(lines)
 
 
@@ -699,6 +752,11 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "health_path": str(health.get("path", "") or ""),
         "health_host": str(health.get("host", "") or ""),
         "health_port": str(health.get("port", "") or ""),
+        "health_tls": health.get("tls") is True,
+        "health_expect_status": str(health.get("expect_status", "") or ""),
+        "health_expect_body": str(health.get("expect_body", "") or ""),
+        "health_send": str(health.get("send", "") or ""),
+        "health_expect": str(health.get("expect", "") or ""),
         #
         # Empty when the object does not say, rather than filled in with the
         # default. The three carry HAProxy's own values when nobody writes

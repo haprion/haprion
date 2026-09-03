@@ -11,10 +11,14 @@ interface formed on its own.
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+
+import yaml
 
 from haproxy_ui.preview import (
     DEFAULTS,
     PREVIEW_CLUSTER,
+    Unexpressible,
     build_document,
     form_from_document,
     preview,
@@ -479,3 +483,134 @@ class TheCheckTimingTheObjectAsksFor(unittest.TestCase):
         document = build_document(form(health_type="disabled", health_interval="5s"))
 
         self.assertNotIn("interval", document)
+
+
+class EverythingTheModelAllowsInOneRouteAndOnePool(unittest.TestCase):
+    """The form expresses every field of a health check and of a server.
+
+    It expressed most of them, and an object using one of the rest was refused
+    outright - honestly, with the field named, but with nothing to do about it
+    except edit the file by hand. The round trip is what proves the boundary is
+    where it is claimed to be: one route and one backend, and inside those,
+    everything.
+    """
+
+    def document(self, **fields: object) -> dict:
+        form = dict(DEFAULTS)
+        form.update(
+            {
+                "name": "shop",
+                "hostnames": "shop.example.com",
+                "protocol": "http",
+                "backend": "web",
+                "servers": "198.51.100.10:8080",
+            }
+        )
+        form.update(fields)
+        return yaml.safe_load(build_document(form))
+
+    def test_a_check_may_speak_tls(self) -> None:
+        document = self.document(health_type="http", health_tls=True, health_port="9443")
+
+        self.assertEqual(document["backends"]["web"]["health"]["tls"], True)
+        self.assertEqual(document["backends"]["web"]["health"]["port"], 9443)
+
+    def test_an_http_check_may_name_what_a_good_answer_is(self) -> None:
+        document = self.document(
+            health_type="http", health_expect_status="204", health_expect_body="ok"
+        )
+        health = document["backends"]["web"]["health"]
+
+        self.assertEqual((health["expect_status"], health["expect_body"]), (204, "ok"))
+
+    def test_a_tcp_check_may_hold_a_conversation(self) -> None:
+        document = self.document(health_type="tcp", health_send="PING", health_expect="PONG")
+        health = document["backends"]["web"]["health"]
+
+        self.assertEqual((health["send"], health["expect"]), ("PING", "PONG"))
+
+    def test_the_expectations_belong_to_the_kind_of_check_that_has_them(self) -> None:
+        #
+        # The model refuses an http field on a tcp check and the other way
+        # round, so the form must not write one there - it would build a
+        # document nothing can read.
+        #
+        tcp = self.document(health_type="tcp", health_expect_status="204", health_expect_body="ok")
+        http = self.document(health_type="http", health_send="PING", health_expect="PONG")
+
+        self.assertNotIn("expect_status", tcp["backends"]["web"]["health"])
+        self.assertNotIn("send", http["backends"]["web"]["health"])
+
+    def test_a_disabled_check_writes_none_of_them(self) -> None:
+        document = self.document(health_type="disabled", health_tls=True, health_send="PING")
+
+        self.assertEqual(document["backends"]["web"]["health"], {"type": "disabled"})
+
+    def test_a_server_may_be_a_standby(self) -> None:
+        document = self.document(servers="198.51.100.10:8080\n198.51.100.11:8080 backup")
+        servers = document["backends"]["web"]["servers"]
+
+        self.assertEqual(servers[0], {"host": "198.51.100.10", "port": 8080})
+        self.assertEqual(servers[1], {"host": "198.51.100.11", "port": 8080, "backup": True})
+
+    def test_a_pool_of_nothing_but_standbys_is_refused(self) -> None:
+        #
+        # HAProxy would take it. The person writing it meant something else.
+        #
+        with self.assertRaises(ValueError):
+            self.document(servers="198.51.100.10:8080 backup")
+
+    def test_a_standby_survives_the_round_trip(self) -> None:
+        written = build_document(
+            {
+                **DEFAULTS,
+                "name": "shop",
+                "hostnames": "shop.example.com",
+                "protocol": "http",
+                "backend": "web",
+                "servers": "198.51.100.10:8080\n198.51.100.11:8080 backup",
+            }
+        )
+
+        back = form_from_document(written)
+
+        self.assertEqual(back["servers"], "198.51.100.10:8080\n198.51.100.11:8080 backup")
+
+
+class WhereTheFormStops(unittest.TestCase):
+    """One route and one backend, and the boundary is deliberate.
+
+    Everything inside it the form can now say. Beyond it - a second path going
+    somewhere else, a second pool - is a repeating group, which is a different
+    form rather than more fields on this one, and it is refused with the field
+    named rather than opened with the extra routes silently dropped.
+
+    The golden objects are the proof: they are the shapes the engine is tested
+    against, so an object refused here is one somebody could plausibly write.
+    """
+
+    def golden(self) -> list[tuple[str, str]]:
+        root = Path(__file__).resolve().parents[2] / "tests" / "golden"
+        refused = []
+        for path in sorted(root.rglob("*.yaml")):
+            #
+            # Network documents describe a cluster's addresses. They are not
+            # objects and the editor never opens one.
+            #
+            if path.name == "vips.yaml":
+                continue
+            try:
+                form_from_document(path.read_text(encoding="utf-8"))
+            except Unexpressible as refusal:
+                refused.append((f"{path.parent.name}/{path.name}", str(refusal)))
+        return refused
+
+    def test_only_a_second_route_is_still_out_of_reach(self) -> None:
+        refused = self.golden()
+
+        self.assertEqual(
+            [name for name, _ in refused], ["monitors/probes.yaml", "routes/shop.yaml"]
+        )
+        for name, reason in refused:
+            with self.subTest(object=name):
+                self.assertEqual(reason, "routes")

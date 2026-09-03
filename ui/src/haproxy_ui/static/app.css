@@ -724,14 +724,11 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   color: var(--text-secondary); font-size: 0.95rem; font-weight: 660;
 }
 /*
- * The switch on the heading's line, indented so its words begin where the
- * explanations below begin: the input column, plus that row's gap, less the
- * box and gap this label carries in front of its own text.
+ * The switch begins where the explanations below it begin: the input column,
+ * plus that row's gap, less the box and gap this label carries in front of its
+ * own text. The box itself hangs into the gap, the way a bullet does.
  */
-.form-subsection h4 .check {
-  align-self: center;
-  margin-left: calc(var(--field-column) + 10px - 21px);
-}
+.maintenance-switch { margin-left: calc(var(--field-column) + 10px - 21px); }
 /*
  * One input per row, all of one width, so every explanation beside them starts
  * at the same place.
@@ -768,13 +765,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * as a mistake rather than as a group.
  */
 .form-checks { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; padding: 14px 20px 0; }
-.form-checks .check, .form-subsection h4 .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
-/*
- * A field label, not a second heading. Left to inherit, it took the h4's
- * 0.95rem - which is 15.2px against the 14px every other label carries here,
- * and reads as a title for the two rows below rather than as an option.
- */
-.form-subsection h4 .check { font-size: var(--font-size-ui); }
+.form-checks .check, .field-rows .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
+
 .preview-form .warning-text { margin: 12px 20px 0; }
 .form-actions { display: flex; justify-content: flex-end; }
 .form-actions .secondary-button { padding: 9px 22px; }

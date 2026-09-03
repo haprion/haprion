@@ -1,0 +1,209 @@
+"""`haproxy-probe` - ask the nodes whether a health check would reach a pool.
+
+The thin half. It runs as the calling user, turns arguments into a structured
+request, and prints what the helper produced. It decides nothing: which nodes
+are asked, and with which identity, is the helper's to know.
+
+The question this command exists to answer
+------------------------------------------
+`haproxy-status` says whether the nodes are healthy and `show stat` on a node
+says what HAProxy currently thinks of a pool it is already serving. Neither
+answers the question somebody has while writing an object: would this check,
+against these servers, from this source address, actually work - before it is
+published to anybody.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from typing import Any, TextIO
+
+from haproxy_mgmt.cli.caller import usage
+from haproxy_mgmt.envelope import new_request_id
+
+HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-probe-helper"
+SUDO = "/usr/bin/sudo"
+OPERATION = "probe"
+
+USAGE = (
+    "Usage:\n"
+    "  haproxy-probe -c <cluster> -t <host:port>[,<host:port>...] "
+    "[--http <path>] [--host <name>] [--tls [--verify]] [--source <address>] [--json]\n"
+    "\n"
+    "Examples:\n"
+    "  haproxy-probe -c alpha -t 198.51.100.10:8080\n"
+    "  haproxy-probe -c alpha -t 198.51.100.10:8443 --tls --http /healthz --json\n"
+)
+
+
+def run_probe_helper(
+    cluster_id: str,
+    request_id: str,
+    targets: list[dict[str, Any]],
+    *,
+    source: str = "",
+    timeout_ms: int = 2000,
+) -> subprocess.CompletedProcess[str]:
+    """Ask the privileged helper to probe one cluster's pool.
+
+    Public because the interface calls it too, and for the same reason the
+    status caller is: two constructions of one request are two things to keep in
+    step, and each looks correct on its own until they differ.
+    """
+
+    request = {
+        "schema_version": 1,
+        "operation": OPERATION,
+        "cluster": cluster_id,
+        "request_id": request_id,
+        "parameters": {"targets": targets, "source": source, "timeout_ms": timeout_ms},
+    }
+    return subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
+        [SUDO, "-n", HELPER],
+        input=json.dumps(request, separators=(",", ":")),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _targets(
+    written: str, *, path: str, host: str, tls: bool, verify: bool
+) -> list[dict[str, Any]]:
+    targets = []
+    for entry in written.split(","):
+        address = entry.strip()
+        if not address:
+            continue
+        host_part, separator, port = address.rpartition(":")
+        if not separator or not port.isdigit():
+            usage(USAGE)
+        targets.append(
+            {
+                "host": host_part,
+                "port": int(port),
+                "type": "http" if path else "tcp",
+                "tls": tls,
+                "verify": verify,
+                "path": path or "/",
+                "host_header": host,
+            }
+        )
+    if not targets:
+        usage(USAGE)
+    return targets
+
+
+def _parse(argv: list[str]) -> dict[str, Any]:
+    options: dict[str, Any] = {
+        "cluster": "",
+        "targets": "",
+        "path": "",
+        "host": "",
+        "tls": False,
+        "verify": False,
+        "source": "",
+        "json": False,
+    }
+    index = 0
+    while index < len(argv):
+        argument = argv[index]
+        if argument in ("-c", "--cluster") and index + 1 < len(argv):
+            options["cluster"] = argv[index + 1]
+            index += 2
+        elif argument in ("-t", "--targets") and index + 1 < len(argv):
+            options["targets"] = argv[index + 1]
+            index += 2
+        elif argument == "--http" and index + 1 < len(argv):
+            options["path"] = argv[index + 1]
+            index += 2
+        elif argument == "--host" and index + 1 < len(argv):
+            options["host"] = argv[index + 1]
+            index += 2
+        elif argument == "--source" and index + 1 < len(argv):
+            options["source"] = argv[index + 1]
+            index += 2
+        elif argument == "--tls":
+            options["tls"] = True
+            index += 1
+        elif argument == "--verify":
+            options["verify"] = True
+            index += 1
+        elif argument == "--json":
+            options["json"] = True
+            index += 1
+        else:
+            usage(USAGE)
+    if not options["cluster"] or not options["targets"]:
+        usage(USAGE)
+    return options
+
+
+def _render(envelope: dict[str, Any], writer: TextIO) -> None:
+    result = envelope.get("result") or {}
+    source = result.get("source")
+    writer.write(f"Cluster: {envelope.get('cluster')}\n")
+    writer.write(f"From:    {source or 'the node itself'}\n\n")
+
+    for node in result.get("nodes") or []:
+        writer.write(f"{node.get('node')}\n")
+        if not node.get("reachable"):
+            writer.write(f"  UNREACHABLE   {node.get('error') or ''}\n\n")
+            continue
+        if node.get("error"):
+            writer.write(f"  REFUSED       {node['error']}\n\n")
+            continue
+        for entry in node.get("results") or []:
+            verdict = "OK    " if entry.get("ok") else "FAILED"
+            detail = entry.get("error") or (
+                f"status {entry['status']}" if entry.get("status") else ""
+            )
+            timing = f"{entry['ms']} ms" if entry.get("ms") is not None else ""
+            writer.write(
+                f"  {verdict}  {entry.get('host')}:{entry.get('port')}   {detail}   {timing}\n"
+            )
+        writer.write("\n")
+
+
+def main(argv: list[str] | None = None, *, writer: TextIO | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    out: TextIO = writer or sys.stdout
+    options = _parse(argv)
+
+    completed = run_probe_helper(
+        options["cluster"],
+        new_request_id(),
+        _targets(
+            options["targets"],
+            path=options["path"],
+            host=options["host"],
+            tls=options["tls"],
+            verify=options["verify"],
+        ),
+        source=options["source"],
+    )
+    if not completed.stdout.strip():
+        sys.stderr.write(completed.stderr or "ERROR: the helper produced no answer\n")
+        return completed.returncode or 70
+    try:
+        envelope = json.loads(completed.stdout)
+    except ValueError:
+        sys.stderr.write("ERROR: the helper did not answer with JSON\n")
+        return 70
+
+    if options["json"]:
+        out.write(json.dumps(envelope, separators=(",", ":"), sort_keys=True) + "\n")
+        return completed.returncode
+
+    error = envelope.get("error")
+    if error:
+        sys.stderr.write(f"ERROR: [{error.get('code')}] {error.get('message')}\n")
+        return completed.returncode
+    _render(envelope, out)
+    return completed.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

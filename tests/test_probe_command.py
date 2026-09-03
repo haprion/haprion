@@ -1,0 +1,250 @@
+"""The probe command and its privileged half, at the boundary between them.
+
+The helper is where a request from a web form stops being text somebody typed,
+so the cases here are mostly refusals: what it will not send to a node, and what
+it does when the nodes cannot answer. The node validates the same fields again,
+and that is not redundant - this check protects a node from this manager, and
+the node's protects it from whoever holds the key.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+import yaml
+
+from haproxy_mgmt.cli import probe_helper
+
+BASE = Path(__file__).resolve().parents[1]
+
+
+def answer(results: list[dict[str, object]]) -> subprocess.CompletedProcess[str]:
+    payload = {
+        "schema_version": 1,
+        "ok": True,
+        "node": "node",
+        "source": "",
+        "error": None,
+        "results": results,
+    }
+    return subprocess.CompletedProcess(
+        args=["ssh"], returncode=0, stdout=json.dumps(payload), stderr=""
+    )
+
+
+class HelperFixture(unittest.TestCase):
+    """A real policy and a real cluster file, built from the shipped example.
+
+    Rewriting the cluster file here by hand would be a second description of a
+    cluster to keep in step with the first, and the fields this helper does not
+    read are exactly the ones that would be forgotten.
+    """
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        config_root = self.root / "config"
+        publish_root = self.root / "published"
+        cert_root = self.root / "certs"
+        for directory in (config_root, publish_root, cert_root):
+            directory.mkdir(parents=True, exist_ok=True)
+        (cert_root / "validation.pem").write_text("dummy PEM\n", encoding="utf-8")
+        (config_root / "alpha").mkdir(exist_ok=True)
+
+        clusters = yaml.safe_load((BASE / "examples/clusters.yaml").read_text())
+        entry = clusters["clusters"]["alpha"]
+        entry["config_path"] = str(config_root / "alpha")
+        entry["publish_path"] = str(publish_root / "alpha")
+        entry["validation_certs"] = str(cert_root)
+        self.clusters = self.root / "clusters.yaml"
+        self.clusters.write_text(yaml.safe_dump(clusters), encoding="utf-8")
+        self.nodes = [node["name"] for node in entry["nodes"]]
+
+        self.policy = self.root / "runtime-policy.yaml"
+        self.write_policy(identity=True)
+
+    def write_policy(self, *, identity: bool) -> None:
+        document: dict[str, object] = {
+            "schema_version": 1,
+            "cluster_file": str(self.clusters),
+            "config_root": str(self.root / "config"),
+            "publish_root": str(self.root / "published"),
+            "validation_certs_root": str(self.root / "certs"),
+        }
+        if identity:
+            document["probe_identity"] = {
+                "user": "svc-probe",
+                "key": str(self.root / "probe.key"),
+            }
+        self.policy.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    def run_helper(self, parameters: dict[str, object], *, ask=None):
+        request = {
+            "schema_version": 1,
+            "operation": "probe",
+            "cluster": "alpha",
+            "request_id": "3f1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f",
+            "parameters": parameters,
+        }
+        out, err = io.StringIO(), io.StringIO()
+        code = probe_helper.main(
+            [],
+            policy_path=self.policy,
+            input_stream=io.BytesIO(json.dumps(request).encode()),
+            output_stream=out,
+            error_stream=err,
+            require_secure=False,
+            require_root=False,
+            ask=ask or (lambda node, identity, body: answer([])),
+        )
+        return code, out.getvalue(), err.getvalue()
+
+    def target(self, **fields: object) -> dict[str, object]:
+        entry: dict[str, object] = {"host": "198.51.100.10", "port": 8080, "type": "tcp"}
+        entry.update(fields)
+        return entry
+
+
+class WhatTheHelperRefusesToSend(HelperFixture):
+    def refusal(self, parameters: dict[str, object]) -> str:
+        code, out, err = self.run_helper(parameters)
+        self.assertEqual(code, 65)
+        self.assertEqual(out, "")
+        return err
+
+    def test_a_probe_with_no_targets(self) -> None:
+        self.assertIn("targets", self.refusal({"targets": []}))
+
+    def test_a_host_that_is_not_a_name_or_an_address(self) -> None:
+        self.assertIn("host", self.refusal({"targets": [self.target(host="198.51.100.10:8080")]}))
+
+    def test_a_port_that_is_not_a_port(self) -> None:
+        self.assertIn("port", self.refusal({"targets": [self.target(port=0)]}))
+
+    def test_a_type_nobody_asked_for(self) -> None:
+        self.assertIn("tcp or http", self.refusal({"targets": [self.target(type="smtp")]}))
+
+    def test_a_path_that_is_not_a_path(self) -> None:
+        self.assertIn(
+            "path",
+            self.refusal({"targets": [self.target(type="http", path="healthz")]}),
+        )
+
+    def test_more_targets_than_a_pool_has(self) -> None:
+        many = [self.target(port=port) for port in range(1, 25)]
+        self.assertIn("at most", self.refusal({"targets": many}))
+
+
+class WhatTheHelperAnswers(HelperFixture):
+    def test_every_node_is_asked_and_the_answers_are_carried(self) -> None:
+        asked = []
+
+        def ask(node, identity, body):
+            asked.append((node.name, json.loads(body)))
+            return answer(
+                [
+                    {
+                        "host": "198.51.100.10",
+                        "port": 8080,
+                        "ok": True,
+                        "status": None,
+                        "error": None,
+                        "ms": 2,
+                    }
+                ]
+            )
+
+        code, out, _ = self.run_helper(
+            {"targets": [self.target()], "source": "192.0.2.25"}, ask=ask
+        )
+        self.assertEqual(code, 0)
+        envelope = json.loads(out)
+        self.assertEqual(envelope["outcome"], "done")
+        self.assertEqual([name for name, _ in asked], self.nodes)
+        self.assertEqual(asked[0][1]["source"], "192.0.2.25")
+        self.assertEqual(len(envelope["result"]["nodes"]), 2)
+        self.assertTrue(envelope["result"]["nodes"][0]["results"][0]["ok"])
+
+    def test_a_server_that_is_down_is_a_finding_and_not_a_failed_command(self) -> None:
+        """A red job every time somebody checks a broken pool teaches nothing."""
+
+        def ask(node, identity, body):
+            return answer(
+                [
+                    {
+                        "host": "198.51.100.10",
+                        "port": 8080,
+                        "ok": False,
+                        "status": 503,
+                        "error": "answered 503",
+                        "ms": 4,
+                    }
+                ]
+            )
+
+        code, out, _ = self.run_helper({"targets": [self.target()]}, ask=ask)
+        self.assertEqual(code, 0)
+        envelope = json.loads(out)
+        self.assertEqual(envelope["outcome"], "done")
+        self.assertFalse(envelope["result"]["nodes"][0]["results"][0]["ok"])
+
+    def test_no_node_answering_is_a_failure_of_the_command(self) -> None:
+        def ask(node, identity, body):
+            return subprocess.CompletedProcess(args=["ssh"], returncode=255, stdout="", stderr="")
+
+        code, out, _ = self.run_helper({"targets": [self.target()]}, ask=ask)
+        self.assertEqual(code, 68)
+        envelope = json.loads(out)
+        self.assertEqual(envelope["outcome"], "failed")
+        self.assertEqual(envelope["error"]["code"], "probe_unavailable")
+
+    def test_an_installation_without_an_identity_says_what_is_missing(self) -> None:
+        """Named, never guessed: a wrong guess reaches a node as somebody else."""
+
+        self.write_policy(identity=False)
+        request = {
+            "schema_version": 1,
+            "operation": "probe",
+            "cluster": "alpha",
+            "request_id": "3f1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f",
+            "parameters": {"targets": [self.target()]},
+        }
+        out, err = io.StringIO(), io.StringIO()
+        code = probe_helper.main(
+            [],
+            policy_path=self.policy,
+            input_stream=io.BytesIO(json.dumps(request).encode()),
+            output_stream=out,
+            error_stream=err,
+            require_secure=False,
+            require_root=False,
+        )
+        self.assertEqual(code, 78)
+        self.assertIn("probe_identity", err.getvalue())
+        self.assertEqual(json.loads(out.getvalue())["error"]["code"], "probe_unavailable")
+
+
+class WhatTheHelperWillNotBeCalledAs(HelperFixture):
+    def test_it_refuses_command_line_arguments(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        code = probe_helper.main(
+            ["-c", "alpha"],
+            policy_path=self.policy,
+            input_stream=io.BytesIO(b"{}"),
+            output_stream=out,
+            error_stream=err,
+            require_secure=False,
+            require_root=False,
+        )
+        self.assertNotEqual(code, 0)
+        self.assertEqual(out.getvalue(), "")
+
+
+if __name__ == "__main__":
+    unittest.main()

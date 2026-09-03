@@ -1311,7 +1311,7 @@ def _backend(
             f"    server {name} {server.host}:{server.port}"
             f" guid {server_guid(proxy.name, backend.name, server)}"
             f"{_server_tls(backend)}{_server_address(server, resolvers)}"
-            f"{_server_check(backend.health)}{cookie}{backup}{limit}{ramp}"
+            f"{_server_check(backend)}{cookie}{backup}{limit}{ramp}"
         )
     return lines
 
@@ -1387,11 +1387,29 @@ def _health_lines(health: Health) -> list[str]:
     return lines
 
 
-def _server_check(health: Health) -> str:
+def _server_check(backend: Backend) -> str:
+    """The check on the server line, and whether it is encrypted.
+
+    A pool reached over TLS is checked over TLS - but HAProxy only inherits
+    that when the check goes to the traffic port. Its own documentation for
+    3.4.4 on this machine, under `ssl`: "health checks are automatically sent
+    in SSL too unless there is a 'port' or an 'addr' directive indicating the
+    check should be sent to a different location."
+
+    So a check port on a TLS pool silently turned the probe into plaintext
+    against a port that speaks TLS. Nothing answers it, every server is marked
+    down, and the configuration reads as if it should work. `check-ssl` is
+    written for exactly that case, and only that case: without a check port the
+    inheritance already does it, and writing it anyway would say that this is
+    where the decision is made.
+    """
+
+    health = backend.health
     if health.type == "disabled":
         return ""
     port = f" port {health.port}" if health.port is not None else ""
-    return f" check{port} inter {health.interval} rise {health.rise} fall {health.fall}"
+    encrypted = " check-ssl" if backend.tls is not None and health.port is not None else ""
+    return f" check{port}{encrypted} inter {health.interval} rise {health.rise} fall {health.fall}"
 
 
 def _server_tls(backend: Backend) -> str:

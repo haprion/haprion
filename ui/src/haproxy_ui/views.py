@@ -1341,6 +1341,11 @@ def _editor_page(
 
     stored = next((view for view in state.stored if view.name == name), None)
     unexpressible = ""
+    #
+    # Whether this page is an answer or an opening. Read before `form` is
+    # replaced below, because from there on the two are indistinguishable.
+    #
+    submitted = form is not None
     if form is None:
         #
         # Opened rather than submitted. A draft is what the person was last
@@ -1402,6 +1407,7 @@ def _editor_page(
             "draft": draft,
             "draft_revision": draft_revision,
             "unexpressible": unexpressible,
+            "submitted": submitted,
             "notice": notice,
             "action": action,
             "unchanged": editor_module.unchanged(

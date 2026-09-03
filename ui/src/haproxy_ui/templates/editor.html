@@ -33,13 +33,19 @@
   {% with name_locked = existing %}{% include "_object-form.html" %}{% endwith %}
 
   <div class="form-actions">
-    <button type="submit" name="action" value="check" class="secondary-button">Check it</button>
+    <button type="submit" name="action" value="check" class="secondary-button">Validate the object</button>
     <button type="submit" name="action" value="save" class="primary-button">Save as draft</button>
     {% if draft %}<button type="submit" name="action" value="discard" class="secondary-button">Discard the draft</button>{% endif %}
   </div>
 </form>
 
-{% if result.problem %}
+{#
+  Only after the person has asked. The page runs the same check when it opens,
+  so that the form knows what it is looking at - but a refusal shown before
+  anybody submitted anything reads as a verdict on work not yet done, and the
+  first thing a new object says should not be that it is wrong.
+#}
+{% if submitted and result.problem %}
 <section class="cluster-card result-card refusal-card">
   <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-critical" aria-hidden="true"></span><div class="section-title"><h3>{% if result.about_the_object %}This object was refused{% else %}This object does not fit the cluster{% endif %}</h3><p>{% if result.about_the_object %}It has to be answered before the draft can be saved{% else %}The draft can still be saved; a publish would refuse this{% endif %}</p></div></div></header>
   <p class="refusal">{% if result.problem_field %}<code>{{ result.problem_field }}</code> {% endif %}{{ result.problem_text }}</p>

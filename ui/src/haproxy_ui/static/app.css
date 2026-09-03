@@ -793,8 +793,16 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .form-checks .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
 
 .preview-form .warning-text { margin: 12px 20px 0; }
-.form-actions { display: flex; justify-content: flex-end; }
-.form-actions .secondary-button { padding: 9px 22px; }
+/*
+ * One row of buttons of one size. `.primary-button` is full width because the
+ * login form has a single button and nothing to sit beside; here that made it
+ * take the whole row and squeeze the button next to it into two lines.
+ */
+.form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.form-actions .primary-button, .form-actions .secondary-button {
+  width: auto; min-width: 160px; height: 40px; margin-top: 0;
+  padding: 0 22px; font-size: var(--font-size-ui); white-space: nowrap;
+}
 .result-card { margin-top: 18px; }
 .refusal-card { border-left: 3px solid var(--critical); }
 .refusal { margin: 0; padding: 16px 20px; color: var(--text); }

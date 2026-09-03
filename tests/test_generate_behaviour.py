@@ -1187,6 +1187,122 @@ class ReachingAPoolOverTls(unittest.TestCase):
         self.assertEqual(self.reach(verify="system", expired=True), 503)
 
 
+CHECKED_ON_ITS_OWN_PORT = """
+schema: 1
+name: secure
+hostnames: [secure.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    tls:
+      verify: none
+    health:
+      type: http
+      path: /
+      port: {health}
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
+
+@unittest.skipUnless(
+    shutil.which("haproxy") and shutil.which("openssl"),
+    "haproxy or openssl is not installed here",
+)
+class CheckingATlsPoolOnAnotherPort(unittest.TestCase):
+    """A pool over TLS, checked on a port of its own.
+
+    HAProxy sends checks over TLS on its own when the check goes to the traffic
+    port, and stops doing so the moment the check is given a port - documented
+    under `ssl` in 3.4.4 on this machine. A management port on a TLS pool is an
+    ordinary thing to configure, and without `check-ssl` the probe arrives as
+    plaintext at a port that speaks TLS: every server is marked down and the
+    pool answers 503 while the file reads as though it should work.
+
+    Proved against a real HAProxy rather than by reading the emitted line,
+    because what is at stake is not the word on the server line but whether the
+    servers come up.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.root = Path(cls.directory.name)
+        cls.servers: list[ThreadingHTTPServer] = []
+        cls.running: list[subprocess.Popen[bytes]] = []
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        for process in cls.running:
+            process.terminate()
+            process.wait(timeout=5)
+        for server in cls.servers:
+            server.shutdown()
+        cls.directory.cleanup()
+
+    def test_the_pool_is_served_because_the_check_speaks_tls_too(self) -> None:
+        certificate, key = self_signed(self.root, "checked", expired=False)
+        web = free_port()
+        health = free_port()
+        for port in (web, health):
+            server = tls_server(port, certificate, key)
+            self.servers.append(server)
+            wait_for(port)
+
+        port = free_port()
+        root = self.root / "checked"
+        root.mkdir()
+        (root / "0000-core.cfg").write_text(CORE)
+        layer = generate(
+            [
+                load_proxy(
+                    "secure",
+                    CHECKED_ON_ITS_OWN_PORT.format(web=web, health=health).encode(),
+                )
+            ],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            ports={"http": port},
+        )
+        for filename, content in layer.items():
+            (root / filename).write_text(content)
+
+        arguments: list[str] = []
+        for path in sorted(root.iterdir()):
+            arguments += ["-f", str(path)]
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        self.running.append(subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL))
+        wait_for(port)
+
+        #
+        # Two checks at two seconds have to pass before a server rises, so the
+        # first request after the proxy accepts connections is too early to say
+        # anything either way.
+        #
+        deadline = time.monotonic() + 15
+        status = 0
+        while time.monotonic() < deadline:
+            connection = HTTPConnection("127.0.0.1", port, timeout=5)
+            try:
+                connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
+                connection.putheader("Host", "secure.example.com")
+                connection.endheaders()
+                status = int(connection.getresponse().status)
+            finally:
+                connection.close()
+            if status == 200:
+                break
+            time.sleep(0.5)
+        self.assertEqual(status, 200)
+
+
 UPGRADE = """
 schema: 1
 name: live

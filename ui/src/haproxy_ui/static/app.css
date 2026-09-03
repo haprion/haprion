@@ -696,7 +696,14 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * would keep taking them apart.
  */
 .form-grid-pair { grid-template-columns: repeat(2, minmax(260px, 1fr)); align-items: start; }
-.form-grid-pair select, .form-grid-pair textarea { min-height: 108px; }
+/*
+ * Kept close to the height of the single-line fields above. Two visible rows
+ * is the least that still shows a list is a list and can be scrolled; taller
+ * than that, the pair dominated the card over fields that matter more.
+ */
+.form-grid-pair select, .form-grid-pair textarea { min-height: 0; height: 62px; }
+.form-grid .field { display: flex; flex-direction: column; gap: 6px; }
+.form-grid .field > label { color: var(--text-secondary); font-weight: 620; }
 /*
  * A group inside a card, with a rule above it. The heading is small and the
  * word beside it is quieter still: "optional" is a fact about the fields, not
@@ -707,6 +714,14 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   display: flex; align-items: baseline; gap: 8px; margin: 10px 0 0;
   color: var(--text-secondary); font-size: 0.95rem; font-weight: 660;
 }
+/* The switch on the heading's line, set well right of the words themselves. */
+.form-subsection h4 .check { margin-left: 56px; align-self: center; }
+/*
+ * One input per row, all of one width, so every explanation beside them starts
+ * at the same place.
+ */
+.field-rows { display: grid; gap: 12px; padding: 14px 20px 0; }
+.field-rows .check-value input { width: 320px; }
 .form-subsection h4 span { color: var(--muted); font-size: 0.85rem; font-weight: var(--font-weight-regular); }
 .form-subsection .form-checks { padding-left: 0; padding-right: 0; }
 /*
@@ -732,7 +747,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * as a mistake rather than as a group.
  */
 .form-checks { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; padding: 14px 20px 0; }
-.form-checks .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
+.form-checks .check, .form-subsection h4 .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
+.form-subsection h4 .check { font-size: 1rem; font-weight: 620; }
 .preview-form .warning-text { margin: 12px 20px 0; }
 .form-actions { display: flex; justify-content: flex-end; }
 .form-actions .secondary-button { padding: 9px 22px; }

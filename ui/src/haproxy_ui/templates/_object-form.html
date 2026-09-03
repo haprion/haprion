@@ -75,14 +75,20 @@
       different shape they read as two unrelated settings.
     #}
     <div class="form-grid form-grid-pair">
-      <label>Reachable from — groups
-        <select name="allow_from" multiple size="4">
-          <option value="" {% if not form.allow_from and not form.allow_ranges %}selected{% endif %}>Everywhere</option>
-          {% for network in choices.networks %}<option value="{{ network }}"{% if network in form.allow_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
-        </select>
-        <small>Groups the cluster defines, on the <a href="/network">Network</a> page.</small>
-      </label>
-      <label>Reachable from — addresses<textarea name="allow_ranges" rows="4" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address or range per line.</small></label>
+      {#
+        The hint sits outside the label so its link is a link: inside one, a
+        click on it is also a click on the field's own label.
+      #}
+      <div class="field">
+        <label>Reachable from — groups
+          <select name="allow_from" multiple size="2">
+            <option value="" {% if not form.allow_from and not form.allow_ranges %}selected{% endif %}>Everywhere</option>
+            {% for network in choices.networks %}<option value="{{ network }}"{% if network in form.allow_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
+          </select>
+        </label>
+        <small>Defined on the <a href="/network">Network</a> page.</small>
+      </div>
+      <label>Reachable from — addresses<textarea name="allow_ranges" rows="2" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address or range per line.</small></label>
     </div>
     <div class="form-checks">
       <label class="check"><input type="checkbox" name="redirect_http"{% if form.redirect_http %} checked{% endif %}> Redirect plain HTTP to HTTPS (301)</label>
@@ -97,11 +103,17 @@
       the same row of checkboxes.
     #}
     <div class="form-subsection">
-      <h4>Maintenance options <span>optional</span></h4>
-      <div class="form-checks">
+      {#
+        Taking the site out of service is its own switch, not one of the two
+        message fields, so it rides on the heading's line - well clear of it -
+        and the two messages line up beneath as one column.
+      #}
+      <h4>Maintenance options <span>optional</span>
         <label class="check"><input type="checkbox" name="maintenance"{% if form.maintenance %} checked{% endif %}> Out of service for maintenance</label>
-        <label class="check-value"><input name="maintenance_message" value="{{ form.maintenance_message }}" size="40"><span>What visitors are told instead</span></label>
-        <label class="check-value"><input name="unavailable_message" value="{{ form.unavailable_message }}" size="40"><span>What visitors are told when no server answers. <code>%URL%</code> becomes the site's first hostname.</span></label>
+      </h4>
+      <div class="field-rows">
+        <label class="check-value"><input name="maintenance_message" value="{{ form.maintenance_message }}"><span>What visitors are told instead</span></label>
+        <label class="check-value"><input name="unavailable_message" value="{{ form.unavailable_message }}"><span>What visitors are told when no server answers. <code>%URL%</code> becomes the site's first hostname.</span></label>
       </div>
     </div>
   </section>

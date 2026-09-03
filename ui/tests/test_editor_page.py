@@ -598,3 +598,28 @@ class WhereTheFormOpens(EditorTestCase):
         """A fresh visit or a second tab opens at the top either way."""
 
         self.assertIn("removeItem(POSITION)", self.script())
+
+
+class AnObjectTheFormCannotOpen(EditorTestCase):
+    """A stored document the form cannot express is refused, not crashed on.
+
+    The round trip is what decides that, and it reports the refusal by raising
+    `Unexpressible`. A shape that raised something else instead - a route that
+    is a string, where reading it called `.get` on it - went past the catch and
+    left the editor answering 500 to a question it has a sentence for.
+    """
+
+    def test_a_route_that_is_not_a_mapping_is_a_refusal_and_not_a_crash(self) -> None:
+        from haproxy_ui import preview
+
+        document = (
+            "schema_version: 1\n"
+            "name: bad-routes\n"
+            "hostnames: [a.example.com]\n"
+            "listen: {vip: main, protocol: http}\n"
+            "routes: [{backend: web}, just-a-string]\n"
+            "backends: {web: {servers: [{host: 192.0.2.10, port: 80}]}}\n"
+        )
+
+        with self.assertRaises(preview.Unexpressible):
+            preview.form_from_document(document)

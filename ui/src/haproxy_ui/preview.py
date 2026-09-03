@@ -582,7 +582,18 @@ def _header_lines(edits: Any) -> str:
     return "\n".join(lines)
 
 
-def _sub(value: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+def _sub(value: Any, key: str) -> Mapping[str, Any]:
+    """One nested mapping, or an empty one.
+
+    `value` is typed loosely on purpose: it is read out of a stored document,
+    where a route may be a string and a backend a list. Requiring a mapping
+    here raised `AttributeError` from inside `form_from_document`, which
+    catches `ModelError` and `ValueError` - so an object the form could not
+    open answered 500 instead of saying it could not be opened.
+    """
+
+    if not isinstance(value, Mapping):
+        return {}
     nested = value.get(key)
     return nested if isinstance(nested, Mapping) else {}
 

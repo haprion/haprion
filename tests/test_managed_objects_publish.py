@@ -144,6 +144,26 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             )
             self.assertEqual(git(self.repo, "status", "--porcelain"), "")
 
+    def test_a_name_with_an_underscore_publishes_and_fits_its_own_contract(self) -> None:
+        #
+        # The model was widened to allow an underscore and the frozen schema
+        # was not, so the envelope this command emits failed the contract it is
+        # published under. Nothing refused it at runtime - only a fixture
+        # without an underscore in it kept the two looking agreed.
+        #
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+
+            code, document, err = self.run_publish(
+                policy,
+                self.request(objects={"web_app": proxy("web_app", "web-app.example.com")}),
+            )
+
+            self.assertEqual((code, err), (0, ""))
+            assert_contract("haproxy-objects-publish", json.dumps(document))
+            self.assertEqual(document["result"]["objects"], ["web_app"])
+
     def test_the_network_description_is_read_from_the_base_and_never_from_the_caller(self) -> None:
         """A stale tab may not undo an address change through the object path."""
 

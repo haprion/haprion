@@ -206,7 +206,24 @@ def prepare(
         )
 
     if operation == "objects_publish":
-        _only(payload, "objects", "expected_head", "comment", "allow_certificate_mismatch")
+        _only(payload, "objects", "expected_head", "comment", "allow_certificate_mismatch", "draft")
+        #
+        # `draft` is the interface's own bookkeeping: which draft row this
+        # publish came from, so the row can be recognised as published
+        # afterwards rather than guessed at from its text. It is checked here
+        # because everything in a payload is - a job is what the worker runs as
+        # root, and an unchecked field in one is an unchecked field either way -
+        # and it is deliberately not passed on below. The helper's parameters
+        # are named one at a time, so nothing reaches it that is not listed.
+        #
+        draft = payload.get("draft")
+        if draft is not None:
+            if not isinstance(draft, Mapping) or set(draft) != {"id", "revision"}:
+                raise BadPayload("draft must name an id and a revision")
+            if not isinstance(draft.get("id"), str) or not draft["id"]:
+                raise BadPayload("the draft id must be a non-empty string")
+            if not isinstance(draft.get("revision"), int) or isinstance(draft["revision"], bool):
+                raise BadPayload("the draft revision must be a whole number")
         objects = payload.get("objects")
         expected_head = payload.get("expected_head")
         comment = payload.get("comment")

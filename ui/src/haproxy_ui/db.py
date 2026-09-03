@@ -340,6 +340,14 @@ class ProxyDraft:
     updated_by: str
     updated_at: datetime
     deleted: bool
+    #
+    # Set by the database and never by the caller. A draft is deleted once its
+    # publish is done, so the next edit of the same object starts again at
+    # revision 1 under the same key - and this is what tells the two apart. The
+    # job that publishes a draft names it, and the row that appears afterwards
+    # is visibly not the row that was published.
+    #
+    id: UUID | None = None
 
 
 class DraftConflict(Exception):
@@ -1312,7 +1320,7 @@ def cluster_drafts(connection: Connection[Any], cluster: str) -> list[ProxyDraft
 
     with connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
         cursor.execute(
-            "select cluster, object_id, yaml, base_version, base_hash, revision, "
+            "select id, cluster, object_id, yaml, base_version, base_hash, revision, "
             "       updated_by, updated_at, deleted "
             "  from proxy_draft "
             " where cluster = %(cluster)s "
@@ -1327,7 +1335,7 @@ def read_draft(connection: Connection[Any], cluster: str, object_id: str) -> Pro
 
     with connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
         cursor.execute(
-            "select cluster, object_id, yaml, base_version, base_hash, revision, "
+            "select id, cluster, object_id, yaml, base_version, base_hash, revision, "
             "       updated_by, updated_at, deleted "
             "  from proxy_draft "
             " where cluster = %(cluster)s and object_id = %(object_id)s",
@@ -1379,7 +1387,7 @@ def save_draft(
                 "values (%(cluster)s, %(object_id)s, %(yaml)s, %(base_version)s, "
                 "        %(base_hash)s, %(updated_by)s, %(deleted)s) "
                 "on conflict do nothing "
-                "returning cluster, object_id, yaml, base_version, base_hash, revision, "
+                "returning id, cluster, object_id, yaml, base_version, base_hash, revision, "
                 "          updated_by, updated_at, deleted",
                 values,
             )
@@ -1391,7 +1399,7 @@ def save_draft(
                 "       deleted = %(deleted)s "
                 " where cluster = %(cluster)s and object_id = %(object_id)s "
                 "   and revision = %(revision)s "
-                "returning cluster, object_id, yaml, base_version, base_hash, revision, "
+                "returning id, cluster, object_id, yaml, base_version, base_hash, revision, "
                 "          updated_by, updated_at, deleted",
                 values,
             )

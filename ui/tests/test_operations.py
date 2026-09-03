@@ -202,6 +202,31 @@ class PublishingObjects(unittest.TestCase):
         self.assertEqual(prepared.argv[-1], managed_objects_publish.HELPER)
         self.assertIn("objects_publish", prepared.request)
 
+    def test_the_draft_it_came_from_is_checked_and_never_forwarded(self) -> None:
+        #
+        # Which draft row this publish came from, so the row can be recognised
+        # as published rather than guessed at from its text. Checked like every
+        # other field - a job is what the worker runs as root - and deliberately
+        # absent from the helper's request, whose parameters are named one at a
+        # time.
+        #
+        prepared = self.prepare(draft={"id": "11111111-2222-3333-4444-555555555555", "revision": 4})
+
+        self.assertNotIn("draft", prepared.request)
+        self.assertNotIn("11111111", prepared.request)
+
+    def test_a_draft_that_is_not_an_id_and_a_revision_is_refused(self) -> None:
+        for value in (
+            {"id": "", "revision": 1},
+            {"id": "11111111-2222-3333-4444-555555555555"},
+            {"id": "11111111-2222-3333-4444-555555555555", "revision": "4"},
+            {"id": "11111111-2222-3333-4444-555555555555", "revision": True},
+            {"id": "11111111-2222-3333-4444-555555555555", "revision": 4, "extra": 1},
+            "not a mapping",
+        ):
+            with self.subTest(draft=value), self.assertRaises(operations.BadPayload):
+                self.prepare(draft=value)
+
     def test_a_removal_is_a_null_document(self) -> None:
         prepared = self.prepare(objects={"gone": None})
 

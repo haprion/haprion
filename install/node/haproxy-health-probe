@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -117,6 +118,19 @@ def read_request(stream):
     source = payload.get("source") or ""
     if source and not isinstance(source, str):
         refuse("source must be an address")
+    #
+    # Checked as an address here, and not only where it is used. `holds` keeps
+    # anything unbindable away from `bind` by comparing it with the node's own
+    # addresses, so nothing reaches the socket - but this was the one field in
+    # the request with no format of its own, in a function whose whole claim is
+    # that every field has one. A refusal that names the field beats a request
+    # that travels and answers "not here".
+    #
+    if source:
+        try:
+            ipaddress.ip_address(source)
+        except ValueError:
+            refuse("source must be an IP address")
 
     targets = payload.get("targets")
     if not isinstance(targets, list) or not targets:

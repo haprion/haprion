@@ -12,7 +12,7 @@ import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from unittest import mock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from haproxy_ui import demo
 from haproxy_ui.db import ClusterInventory, Job, ProxyDraft
@@ -462,28 +462,39 @@ class ADraftThatWasPublished(DraftReading):
     published - and the next save writes it back.
     """
 
-    def drafted(self, yaml: str = "schema: 1\n") -> ProxyDraft:
+    #
+    # One draft row, named the way the job names it. Fixed rather than random,
+    # because the pairing between the two is the thing under test.
+    #
+    DRAFT_ID = UUID("11111111-2222-3333-4444-555555555555")
+
+    def drafted(self, yaml: str = "schema: 1\n", *, revision: int = 1) -> ProxyDraft:
         return ProxyDraft(
             cluster="edge-demo",
             object_id="half-done",
             yaml=yaml,
             base_version=1,
             base_hash="abc",
-            revision=1,
+            revision=revision,
             updated_by="operator",
             updated_at=CAPTURED,
             deleted=False,
+            id=self.DRAFT_ID,
         )
 
-    def job(self, state: str, yaml: str = "schema: 1\n") -> Job:
+    def job(self, state: str, yaml: str = "schema: 1\n", *, revision: int = 1) -> Job:
         from haproxy_ui.views import _publish_key
 
+        payload = {
+            "objects": {"half-done": "schema: 1"},
+            "draft": {"id": str(self.DRAFT_ID), "revision": revision},
+        }
         return Job(
             id=1,
             request_id=uuid4(),
             operation="objects_publish",
             cluster="edge-demo",
-            payload={"objects": {"half-done": "schema: 1"}},
+            payload=payload,
             state=state,
             created_at=CAPTURED,
             started_at=None,
@@ -492,7 +503,7 @@ class ADraftThatWasPublished(DraftReading):
             outcome=None,
             result=None,
             stderr_excerpt=None,
-            idempotency_key=_publish_key("edge-demo", "half-done", yaml),
+            idempotency_key=_publish_key("edge-demo", "objects_publish", payload),
             attempts=0,
         )
 
@@ -528,11 +539,22 @@ class ADraftThatWasPublished(DraftReading):
         self.assertNotIn(">Draft<", body)
 
     def test_a_draft_edited_after_the_publish_is_left_alone(self) -> None:
-        """The key carries the document, so different content is another publish."""
+        """An edit raises the revision, and the job published the one before it."""
 
         body, discarded = self.listing(
-            self.drafted(yaml="schema: 1\nname: changed\n"), [self.job("done")]
+            self.drafted(yaml="schema: 1\nname: changed\n", revision=2), [self.job("done")]
         )
+
+        self.assertEqual(discarded, [])
+        self.assertIn(">Draft<", body)
+
+    def test_a_draft_reverted_to_a_published_text_is_not_thrown_away(self) -> None:
+        #
+        # The same bytes as a version published earlier, which is somebody
+        # deliberately going back - and while the key was derived from the
+        # document, that read as work already finished and deleted it.
+        #
+        body, discarded = self.listing(self.drafted(revision=3), [self.job("done", revision=1)])
 
         self.assertEqual(discarded, [])
         self.assertIn(">Draft<", body)

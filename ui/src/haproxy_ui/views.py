@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -1770,12 +1771,24 @@ def _editor_submit(
     # a double-click is the same request and not a second one. The revision is
     # in it because the next edit of the same object is a different publish.
     #
-    key = _publish_key(cluster, object_id, saved.yaml)
     payload = {
         "objects": {object_id: None if saved.deleted else result.document},
         "expected_head": state.commit,
         "comment": f"Publish {object_id}",
+        #
+        # Which draft, and which revision of it. Carried by the job and never
+        # forwarded to the helper - `operations.prepare` builds the helper's
+        # request field by field - so this says what the interface has to know
+        # afterwards without widening what runs as root.
+        #
+        # It is what lets a published draft be recognised as published. The row
+        # is deleted once its publish is done, so a later edit of the same
+        # object is a new row with a new id, and reverting one to a text
+        # published earlier no longer looks like work that is already finished.
+        #
+        "draft": {"id": str(saved.id), "revision": saved.revision},
     }
+    key = _publish_key(cluster, "objects_publish", payload)
     try:
         operations.prepare(
             operation="objects_publish", cluster=cluster, request_id=uuid4(), payload=payload
@@ -1841,27 +1854,58 @@ def _editor_submit(
 PUBLISH_NAMESPACE = UUID("6f1d5f8e-1a2b-4c3d-8e9f-0a1b2c3d4e5f")
 
 
-def _publish_key(cluster: str, object_id: str, document: str) -> UUID:
-    """The idempotency key one publish of one document is asked under.
+def _publish_key(cluster: str, operation: str, payload: Mapping[str, Any]) -> UUID:
+    """The idempotency key one request is asked under: a digest of the request.
 
-    Derived rather than generated, so a double-click is the same request - and
-    so the same key can be recognised afterwards, which is how a draft that has
-    been published is told apart from one that has been edited since.
+    Derived from everything the job will carry, and that is the whole point.
+    The queue treats a repeated key as a retry only when the payload hashes the
+    same, so a key covering less than the payload can be handed two different
+    requests - and it answers the second with "already asked for with different
+    content", permanently, for a publish somebody is looking at.
 
-    Derived from the *document*, and it was the draft revision before. That was
-    wrong in a way that only shows on the third go: a draft is cleared once it
-    is published, so the next one starts at revision 1 again - and publishing an
-    object, changing it back, and publishing again asked twice under one key
-    with two different contents. The queue refused it, correctly, and the person
-    was told their publish had already been asked for with different content
-    while looking at a form that said otherwise.
+    That is what happened. The key was derived from cluster, object and
+    document while the payload also carried `expected_head`, so the same
+    document published again after the tree had moved was one key with two
+    contents and could never be published again.
 
-    The content cannot repeat that way. Publishing the same document twice is
-    genuinely the same request; publishing a different one is genuinely another.
+    Deriving it from the payload makes the two agree by construction rather
+    than by remembering to add each new field here. A double-click is the same
+    request because it is the same bytes; anything else is another request.
     """
 
-    digest = sha256(document.encode("utf-8")).hexdigest()
-    return uuid5(PUBLISH_NAMESPACE, f"{cluster}/{object_id}/{digest}")
+    #
+    # Sorted keys, because a mapping's order is not part of what was asked and
+    # two orderings of one request must not be two requests.
+    #
+    body = json.dumps(
+        {"cluster": cluster, "operation": operation, "payload": payload},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return uuid5(PUBLISH_NAMESPACE, sha256(body.encode("utf-8")).hexdigest())
+
+
+def _published_drafts(connection: Any, cluster: str) -> set[tuple[str, int]]:
+    """Which draft revisions a finished publish has already carried away.
+
+    Named by identity - the draft's own id and the revision that was published -
+    and never by what the document says. Content matched a draft that had been
+    edited back to a text published earlier, which is somebody deliberately
+    reverting, and it deleted their work as though it were finished.
+    """
+
+    settled = set()
+    for job in db.recent_jobs(connection, cluster=cluster):
+        if job.operation != "objects_publish" or job.state != "done":
+            continue
+        draft = job.payload.get("draft") if isinstance(job.payload, Mapping) else None
+        if not isinstance(draft, Mapping):
+            continue
+        identity, revision = draft.get("id"), draft.get("revision")
+        if isinstance(identity, str) and isinstance(revision, int):
+            settled.add((identity, revision))
+    return settled
 
 
 def _settled_draft(connection: Any, cluster: str, object_id: str) -> db.ProxyDraft | None:
@@ -1876,12 +1920,25 @@ def _settled_draft(connection: Any, cluster: str, object_id: str) -> db.ProxyDra
     draft = db.read_draft(connection, cluster, object_id)
     if draft is None:
         return None
-    jobs = db.recent_jobs(connection, cluster=cluster)
-    if not objects.drafts_now_published([draft], jobs, _publish_key):
+    if (str(draft.id), draft.revision) not in _published_drafts(connection, cluster):
         return draft
-    db.discard_draft(
-        connection, cluster=cluster, object_id=object_id, expected_revision=draft.revision
-    )
+    #
+    # A conflict here is somebody saving in another tab between the read and
+    # the delete, and their draft is the newer one - so it stays, and the page
+    # shows it. Uncaught it took the whole listing down with it, which is a
+    # 500 for a tidying step that was allowed to change nothing.
+    #
+    try:
+        db.discard_draft(
+            connection, cluster=cluster, object_id=object_id, expected_revision=draft.revision
+        )
+    except db.DraftConflict:
+        #
+        # No rollback: the conflict is a delete that matched no row, not a
+        # failed statement, so the transaction is still good - and rolling it
+        # back here would throw away work the caller had already done.
+        #
+        return db.read_draft(connection, cluster, object_id)
     connection.commit()
     return None
 
@@ -1902,20 +1959,36 @@ def _settled_drafts(connection: Any, cluster: str) -> list[db.ProxyDraft]:
     """
 
     drafts = db.cluster_drafts(connection, cluster)
-    jobs = db.recent_jobs(connection, cluster=cluster)
-    published = objects.drafts_now_published(drafts, jobs, _publish_key)
+    settled = _published_drafts(connection, cluster)
+    published = {draft.object_id for draft in drafts if (str(draft.id), draft.revision) in settled}
     if not published:
         return drafts
+    #
+    # As above: a draft saved between the read and the delete is the newer one
+    # and is kept. Counted rather than assumed, because the rows returned below
+    # have to match what the table now holds.
+    #
+    kept: set[str] = set()
     for draft in drafts:
-        if draft.object_id in published:
+        if draft.object_id not in published:
+            continue
+        try:
             db.discard_draft(
                 connection,
                 cluster=cluster,
                 object_id=draft.object_id,
                 expected_revision=draft.revision,
             )
+        except db.DraftConflict:
+            #
+            # As above, and it matters more here: a rollback would undo the
+            # deletes this loop has already made.
+            #
+            kept.add(draft.object_id)
     connection.commit()
-    return [draft for draft in drafts if draft.object_id not in published]
+    return [
+        draft for draft in drafts if draft.object_id not in published or draft.object_id in kept
+    ]
 
 
 #

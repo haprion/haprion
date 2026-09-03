@@ -266,5 +266,36 @@ class TheTableAgreesWithTheEngine(unittest.TestCase):
         )
 
 
+class TheIdentityIsTheDatabases(unittest.TestCase):
+    """A draft's id is set by the database and readable by the web role only.
+
+    It is what a finished publish names, so the row that appears after one is
+    visibly not the row that was published. A role that could write it could
+    hand its own edit somebody else's identity - which would delete that
+    somebody's work the next time a listing tidied up - so it is granted the
+    way `revision` and `updated_at` are: select, and nothing else.
+    """
+
+    def migration(self) -> str:
+        versions = Path(__file__).resolve().parents[1] / "migrations" / "versions"
+        speaking = [
+            path
+            for path in sorted(versions.glob("[0-9]*.py"))
+            if "add column id uuid" in path.read_text(encoding="utf-8")
+        ]
+        self.assertTrue(speaking, "no migration gives a draft an identity")
+        return speaking[-1].read_text(encoding="utf-8")
+
+    def test_the_database_fills_it_in(self) -> None:
+        self.assertIn("default gen_random_uuid()", self.migration())
+
+    def test_the_web_role_may_read_it_and_not_write_it(self) -> None:
+        text = self.migration()
+
+        self.assertIn("grant select (id) on proxy_draft to app_web", text)
+        self.assertNotIn("grant insert (id)", text)
+        self.assertNotIn("grant update (id)", text)
+
+
 if __name__ == "__main__":
     unittest.main()

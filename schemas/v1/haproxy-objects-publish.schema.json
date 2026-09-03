@@ -36,7 +36,7 @@
     "object_names": {
       "type": "array",
       "maxItems": 16,
-      "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" }
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$" }
     }
   }
 }

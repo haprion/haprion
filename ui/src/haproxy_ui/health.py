@@ -43,6 +43,11 @@ class NodeMembers:
     # knows nothing about this backend, which is a deploy that has not happened.
     #
     said: bool
+    #
+    # Whether this node carries the cluster's VIP, and with it the source
+    # address an object leaves from. `None` is a node that did not say.
+    #
+    vip_owner: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +57,17 @@ class PoolHealth:
     backend: str
     nodes: tuple[NodeMembers, ...]
     observed_at: datetime | None
+
+    @property
+    def held_by(self) -> tuple[str, ...]:
+        """The nodes carrying the VIP, named when the others were left out.
+
+        Once a node is off the card, a single row reads as a cluster with one
+        node - and which one it is happens to be the most useful fact here,
+        because it is the node the traffic is on.
+        """
+
+        return tuple(node.node for node in self.nodes if node.vip_owner is True)
 
     @property
     def known(self) -> bool:
@@ -81,7 +97,9 @@ def _count(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def pool_health(rows: Iterable[Any], *, cluster: str, obj: str, pool: str) -> PoolHealth:
+def pool_health(
+    rows: Iterable[Any], *, cluster: str, obj: str, pool: str, source: str = ""
+) -> PoolHealth:
     """The nodes' verdict on one object's pool, from the poller's newest reading.
 
     Read out of the stored status document rather than through `parse_status`,
@@ -115,7 +133,29 @@ def pool_health(rows: Iterable[Any], *, cluster: str, obj: str, pool: str) -> Po
             for row in rows_for_node
             if row.get("backend") == name and _text(row.get("server"))
         )
-        nodes.append(NodeMembers(node=str(entry.get("name", "")), members=members, said=said))
+        status = entry.get("status")
+        vip = status.get("vip") if isinstance(status, dict) else None
+        held = vip.get("owner") if isinstance(vip, dict) else None
+        nodes.append(
+            NodeMembers(
+                node=str(entry.get("name", "")),
+                members=members,
+                said=said,
+                vip_owner=held if isinstance(held, bool) else None,
+            )
+        )
+
+    #
+    # An object that leaves from a source address can only be checked from the
+    # node that carries it. The other one runs the same check, binds an address
+    # it does not have, and reports the pool down - which is HAProxy telling the
+    # truth about the binding and a lie about the pool.
+    #
+    # A node that did not say whether it owns the VIP is kept. Hiding a node on
+    # a fact nobody stated is worse than one row too many.
+    #
+    if source:
+        nodes = [node for node in nodes if node.vip_owner is not False]
 
     return PoolHealth(
         backend=name,

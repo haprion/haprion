@@ -266,7 +266,7 @@
     {% endif %}
     {% if pool_health is defined %}
     <div class="node-health">
-      <h4><span class="subsection-title">What the nodes report <span class="optional">{{ pool_health.backend }}</span></span></h4>
+      <h4><span class="subsection-title">What the nodes report <span class="optional">{{ pool_health.backend }}{% if pool_health.held_by %}, held by {{ pool_health.held_by|join(' and ') }}{% endif %}</span></span></h4>
       {% if not pool_health.nodes %}
       <p class="node-health-note">No node has been read yet.</p>
       {% elif not pool_health.known %}

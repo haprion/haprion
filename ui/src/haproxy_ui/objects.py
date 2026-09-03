@@ -358,15 +358,15 @@ def names_being_published(jobs: Iterable[Job]) -> frozenset[str]:
 
 
 def drafts_now_published(
-    drafts: Iterable[ProxyDraft], jobs: Iterable[Job], key_for: Callable[[str, str, int], UUID]
+    drafts: Iterable[ProxyDraft], jobs: Iterable[Job], key_for: Callable[[str, str, str], UUID]
 ) -> tuple[str, ...]:
     """Drafts whose own publish has finished. They are not drafts any more.
 
     Matched on the publish's idempotency key rather than on the object's name,
     and that is the whole care in this function. The key is derived from the
-    cluster, the object and the *revision* being published, so a draft somebody
-    edited after pressing publish has a different key and is left alone - which
-    is the one mistake here that would destroy work rather than tidy up.
+    document, so a draft somebody edited after pressing publish has different
+    content, a different key, and is left alone - which is the one mistake here
+    that would destroy work rather than tidy up.
 
     Only `done`. A publish that failed leaves the draft exactly where it is,
     because that is the copy of the work somebody would otherwise have lost.
@@ -380,7 +380,7 @@ def drafts_now_published(
     return tuple(
         draft.object_id
         for draft in drafts
-        if key_for(draft.cluster, draft.object_id, draft.revision) in finished
+        if key_for(draft.cluster, draft.object_id, draft.yaml) in finished
     )
 
 

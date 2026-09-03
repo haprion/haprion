@@ -23,6 +23,7 @@ import ipaddress
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID, uuid4, uuid5
@@ -1332,6 +1333,12 @@ def _editor_page(
         cluster=cluster,
         obj=str(fields.get("name", "")).strip() or name,
         pool=str(fields.get("backend", "")).strip() or "web",
+        #
+        # The same address the probe binds, and read the same way. With one set,
+        # only the node that carries it can answer for this pool - the other
+        # runs the same check against an address it does not have.
+        #
+        source=probe_module.source_address(fields, editor_module.choices(state.choices)),
     )
     #
     # Only when somebody pressed the button. A page that probed on every open
@@ -1596,7 +1603,7 @@ def _editor_submit(
     # a double-click is the same request and not a second one. The revision is
     # in it because the next edit of the same object is a different publish.
     #
-    key = _publish_key(cluster, object_id, saved.revision)
+    key = _publish_key(cluster, object_id, saved.yaml)
     payload = {
         "objects": {object_id: None if saved.deleted else result.document},
         "expected_head": state.commit,
@@ -1667,15 +1674,27 @@ def _editor_submit(
 PUBLISH_NAMESPACE = UUID("6f1d5f8e-1a2b-4c3d-8e9f-0a1b2c3d4e5f")
 
 
-def _publish_key(cluster: str, object_id: str, revision: int) -> UUID:
-    """The idempotency key one publish of one draft revision is asked under.
+def _publish_key(cluster: str, object_id: str, document: str) -> UUID:
+    """The idempotency key one publish of one document is asked under.
 
     Derived rather than generated, so a double-click is the same request - and
     so the same key can be recognised afterwards, which is how a draft that has
     been published is told apart from one that has been edited since.
+
+    Derived from the *document*, and it was the draft revision before. That was
+    wrong in a way that only shows on the third go: a draft is cleared once it
+    is published, so the next one starts at revision 1 again - and publishing an
+    object, changing it back, and publishing again asked twice under one key
+    with two different contents. The queue refused it, correctly, and the person
+    was told their publish had already been asked for with different content
+    while looking at a form that said otherwise.
+
+    The content cannot repeat that way. Publishing the same document twice is
+    genuinely the same request; publishing a different one is genuinely another.
     """
 
-    return uuid5(PUBLISH_NAMESPACE, f"{cluster}/{object_id}/{revision}")
+    digest = sha256(document.encode("utf-8")).hexdigest()
+    return uuid5(PUBLISH_NAMESPACE, f"{cluster}/{object_id}/{digest}")
 
 
 def _settled_draft(connection: Any, cluster: str, object_id: str) -> db.ProxyDraft | None:

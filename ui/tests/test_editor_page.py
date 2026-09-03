@@ -15,7 +15,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_ui import auth
+from haproxy_ui import auth, health
 from haproxy_ui import probe as probe_module
 from haproxy_ui.db import ClusterNetwork, ClusterObjects, DraftConflict, ProxyDraft
 from tests.test_login import LoginTestCase, configuration
@@ -484,6 +484,31 @@ class SaveAndPublish(EditorTestCase):
         self.assertEqual(first.status_code, 303)
         self.assertEqual(len(keys), 1)
 
+    def test_publishing_a_change_and_changing_it_back_asks_twice(self) -> None:
+        """The key was the draft revision, and a cleared draft starts at 1 again.
+
+        So publishing an object, changing it, and changing it back asked twice
+        under one key with two different documents. The queue refused the third
+        - correctly - and told somebody their publish had already been asked for
+        with different content, while they looked at a form that said otherwise.
+        """
+
+        client = self.editor()
+        self.submit(client, "/proxies/alpha/shop/edit", action="publish")
+        self.submit(
+            client, "/proxies/alpha/shop/edit", action="publish", hostnames="other.example.com"
+        )
+        self.submit(client, "/proxies/alpha/shop/edit", action="publish")
+
+        keys = [entry["idempotency_key"] for entry in self.queued]
+        self.assertEqual(len(keys), 3)
+        #
+        # The first and the third are the same document and so the same
+        # request; the middle one is a different document and its own.
+        #
+        self.assertEqual(keys[0], keys[2])
+        self.assertNotEqual(keys[0], keys[1])
+
     def test_an_object_the_model_refuses_is_never_published(self) -> None:
         client = self.editor()
         answer = self.submit(client, "/proxies/alpha/shop/edit", action="publish", servers="")
@@ -491,3 +516,60 @@ class SaveAndPublish(EditorTestCase):
         self.assertEqual(answer.status_code, 200)
         self.assertEqual(self.queued, [])
         self.assertEqual(self.saved, [])
+
+
+class WhichNodeReportsOnThePool(EditorTestCase):
+    """The passive card follows the same rule the probe does.
+
+    An object that leaves from a source address can only be checked from the
+    node carrying it. The other runs the same check, binds an address it does
+    not have, and reports the pool down - HAProxy telling the truth about the
+    binding and a lie about the pool.
+    """
+
+    def node(self, name: str, *, owner: bool | None, up: bool) -> dict[str, Any]:
+        return {
+            "name": name,
+            "status": {
+                "vip": {"owner": owner},
+                "pool_members": [
+                    {
+                        "backend": "mgd-shop-web",
+                        "server": "s1",
+                        "status": "UP" if up else "DOWN",
+                        "up": up,
+                    }
+                ],
+            },
+        }
+
+    def card(self, nodes: list[dict[str, Any]], source: str):
+        row = SimpleNamespace(cluster="alpha", result={"nodes": nodes}, observed_at=OBSERVED)
+        return health.pool_health([row], cluster="alpha", obj="shop", pool="web", source=source)
+
+    def test_a_node_without_the_address_is_left_off(self) -> None:
+        card = self.card(
+            [self.node("node-a", owner=True, up=True), self.node("node-b", owner=False, up=False)],
+            source="192.0.2.25",
+        )
+
+        self.assertEqual([node.node for node in card.nodes], ["node-a"])
+        self.assertEqual(card.held_by, ("node-a",))
+
+    def test_without_a_source_every_node_still_answers(self) -> None:
+        card = self.card(
+            [self.node("node-a", owner=True, up=True), self.node("node-b", owner=False, up=False)],
+            source="",
+        )
+
+        self.assertEqual([node.node for node in card.nodes], ["node-a", "node-b"])
+
+    def test_a_node_that_did_not_say_is_kept(self) -> None:
+        """Hiding a node on a fact nobody stated is worse than one row too many."""
+
+        card = self.card(
+            [self.node("node-a", owner=None, up=True), self.node("node-b", owner=False, up=False)],
+            source="192.0.2.25",
+        )
+
+        self.assertEqual([node.node for node in card.nodes], ["node-a"])

@@ -462,20 +462,20 @@ class ADraftThatWasPublished(DraftReading):
     published - and the next save writes it back.
     """
 
-    def drafted(self, revision: int = 1) -> ProxyDraft:
+    def drafted(self, yaml: str = "schema: 1\n") -> ProxyDraft:
         return ProxyDraft(
             cluster="edge-demo",
             object_id="half-done",
-            yaml="",
+            yaml=yaml,
             base_version=1,
             base_hash="abc",
-            revision=revision,
+            revision=1,
             updated_by="operator",
             updated_at=CAPTURED,
             deleted=False,
         )
 
-    def job(self, state: str, revision: int) -> Job:
+    def job(self, state: str, yaml: str = "schema: 1\n") -> Job:
         from haproxy_ui.views import _publish_key
 
         return Job(
@@ -492,7 +492,7 @@ class ADraftThatWasPublished(DraftReading):
             outcome=None,
             result=None,
             stderr_excerpt=None,
-            idempotency_key=_publish_key("edge-demo", "half-done", revision),
+            idempotency_key=_publish_key("edge-demo", "half-done", yaml),
             attempts=0,
         )
 
@@ -521,22 +521,24 @@ class ADraftThatWasPublished(DraftReading):
             return client.get("/proxies").text, discarded
 
     def test_a_finished_publish_clears_the_draft(self) -> None:
-        body, discarded = self.listing(self.drafted(), [self.job("done", 1)])
+        body, discarded = self.listing(self.drafted(), [self.job("done")])
 
         self.assertEqual(len(discarded), 1)
         self.assertEqual(discarded[0]["object_id"], "half-done")
         self.assertNotIn(">Draft<", body)
 
     def test_a_draft_edited_after_the_publish_is_left_alone(self) -> None:
-        """The key carries the revision, so a later edit is a different publish."""
+        """The key carries the document, so different content is another publish."""
 
-        body, discarded = self.listing(self.drafted(revision=2), [self.job("done", 1)])
+        body, discarded = self.listing(
+            self.drafted(yaml="schema: 1\nname: changed\n"), [self.job("done")]
+        )
 
         self.assertEqual(discarded, [])
         self.assertIn(">Draft<", body)
 
     def test_a_publish_that_failed_keeps_the_work(self) -> None:
-        body, discarded = self.listing(self.drafted(), [self.job("failed", 1)])
+        body, discarded = self.listing(self.drafted(), [self.job("failed")])
 
         self.assertEqual(discarded, [])
         self.assertIn(">Draft<", body)

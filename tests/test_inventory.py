@@ -3,8 +3,12 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime
 
+from haproxy_mgmt import inventory
+from haproxy_mgmt.config import Vip
 from haproxy_mgmt.deploy_plan import ReleaseTarget
+from haproxy_mgmt.generate import generate
 from haproxy_mgmt.inventory import InventoryError, inventory_result
+from haproxy_mgmt.proxy_model import load_proxy
 
 TARGET = ReleaseTarget(version=12, hash="a" * 40)
 TIME = datetime(2026, 8, 29, 12, 30, tzinfo=UTC)
@@ -139,3 +143,53 @@ class InventoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheHostnamesTheGeneratorActuallyWrites(unittest.TestCase):
+    """Read from a generated configuration, not from a line written by hand.
+
+    The parser knew one spelling of a host match and the generator writes
+    another, so the inventory found no hostnames at all in anything this
+    project produces. Nothing failed. The listing said "No hostname rule", and
+    every managed object stayed in the undeployed list for ever - the check
+    that would have taken it out compares hostnames, and one side was empty.
+
+    So the case is built by generating a configuration rather than by quoting a
+    line: a line quoted here can go stale in exactly the way that caused this.
+    """
+
+    def generated(self) -> str:
+        proxy = load_proxy(
+            "shop",
+            b"schema: 1\n"
+            b"name: shop\n"
+            b"hostnames:\n- admin.example.com\n"
+            b"listen:\n  protocol: http\n"
+            b"routes:\n- path: /\n  backend: web\n"
+            b"backends:\n  web:\n    balance: roundrobin\n"
+            b"    health:\n      type: disabled\n"
+            b"    servers:\n    - host: 198.51.100.10\n      port: 80\n",
+        )
+        layer = generate(
+            [proxy],
+            vips={"main": Vip(name="main", address="192.0.2.25")},
+            default_vip="main",
+            networks={},
+            ports={"http": 80},
+        )
+        return "\n".join(layer.values())
+
+    def test_the_generated_host_match_is_read(self) -> None:
+        found: set[str] = set()
+        for line in self.generated().splitlines():
+            found |= inventory._hostnames(line)
+
+        self.assertEqual(found, {"admin.example.com"})
+
+    def test_the_hand_written_spelling_still_works(self) -> None:
+        line = "  acl app hdr(host) -i app.example.com www.example.com"
+
+        self.assertEqual(inventory._hostnames(line), {"app.example.com", "www.example.com"})
+
+    def test_a_path_match_is_not_a_hostname(self) -> None:
+        self.assertEqual(inventory._hostnames("  acl api path -m str /api"), set())

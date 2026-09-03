@@ -30,7 +30,23 @@ _OTHER_SECTION = re.compile(
     re.IGNORECASE,
 )
 _BIND_PORT = re.compile(r"(?::|^)(?P<port>[1-9][0-9]{0,4})(?:-[0-9]{1,5})?$")
-_HOST_ACL = re.compile(r"\bhdr\(host\)\s+-i\s+(?P<hosts>[^#]+)", re.IGNORECASE)
+#
+# Two spellings, and both are real configuration on this machine.
+#
+# `hdr(host) -i a b c` is what a hand-written frontend uses, and what this
+# parser was built for. `req.hdr(host),field(1,:),lower -m str <host>` is what
+# the generator writes - the converters strip a port and fold the case before
+# the comparison, which the `-i` form cannot do.
+#
+# Reading only the first meant the inventory found no hostnames at all in
+# anything this project generates. Nothing failed: the listing simply said "No
+# hostname rule", and every managed object stayed in the undeployed list for
+# ever, because the check that would have taken it out compares hostnames.
+#
+_HOST_ACL = re.compile(
+    r"\bhdr\(host\)(?:,[^\s]+)?\s+(?:-i|-m\s+str)\s+(?P<hosts>[^#]+)",
+    re.IGNORECASE,
+)
 _BACKEND = re.compile(r"^(?:default_backend|use_backend)\s+(?P<name>\S+)(?:\s|$)")
 _MODE_TCP = re.compile(r"^mode\s+tcp(?:\s|$)", re.IGNORECASE)
 _SSL = re.compile(r"(?:^|\s)ssl(?:\s|$)", re.IGNORECASE)

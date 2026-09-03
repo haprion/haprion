@@ -14,6 +14,7 @@ from typing import Any
 from unittest import mock
 
 from haproxy_ui import auth
+from haproxy_ui import probe as probe_module
 from haproxy_ui.db import ClusterNetwork, ClusterObjects, DraftConflict, ProxyDraft
 from tests.test_login import LoginTestCase, configuration
 
@@ -331,3 +332,53 @@ class TheShapeDecidesWhichFieldsApply(EditorTestCase):
         )
 
         self.assertNotRegex(page.text, r'name="tcp_port"[^>]*disabled')
+
+
+class TheHealthCardOnThePage(EditorTestCase):
+    """What the probe's answer looks like once it is rendered.
+
+    The filtering is in the template, so asserting on the report alone proves
+    nothing about the page. These render it.
+    """
+
+    def probe(self, nodes: list[probe_module.NodeReport], source: str = "192.0.2.25") -> str:
+        report = probe_module.ProbeReport(ran=True, source=source, nodes=tuple(nodes))
+        with (
+            mock.patch("haproxy_ui.probe.run", return_value=report),
+            mock.patch("haproxy_ui.db.wake_poller"),
+        ):
+            client = self.editor()
+            response = self.submit(client, "/proxies/alpha/shop/edit", action="recheck")
+        self.assertEqual(response.status_code, 200)
+        return response.text
+
+    def node(self, name: str, *, held: bool | None, ok: bool = True) -> probe_module.NodeReport:
+        return probe_module.NodeReport(
+            node=name,
+            reachable=True,
+            error=None,
+            source_held=held,
+            results=(
+                probe_module.Reached(
+                    host="198.51.100.10", port=8080, ok=ok, status=200, error=None, ms=2
+                ),
+            )
+            if held is not False
+            else (),
+        )
+
+    def test_a_node_without_the_address_is_not_on_the_page_at_all(self) -> None:
+        body = self.probe([self.node("node-a", held=True), self.node("node-b", held=False)])
+        self.assertIn("node-a", body)
+        self.assertNotIn("node-b", body)
+
+    def test_the_heading_says_which_node_holds_the_address(self) -> None:
+        body = self.probe([self.node("node-a", held=True), self.node("node-b", held=False)])
+        self.assertIn("from 192.0.2.25, held by node-a", body)
+
+    def test_without_a_source_every_node_is_still_listed(self) -> None:
+        body = self.probe(
+            [self.node("node-a", held=None), self.node("node-b", held=None)], source=""
+        )
+        self.assertIn("node-a", body)
+        self.assertIn("node-b", body)

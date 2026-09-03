@@ -139,7 +139,7 @@
       <label class="keyed-only" data-balances="hdr url_param">Balancing key<input name="balance_key" value="{{ form.balance_key }}" placeholder="X-Tenant"{% if form.balance not in ["hdr", "url_param"] %} disabled{% endif %}><small>Only for <code>hdr</code> and <code>url_param</code>: the header or query parameter whose value decides the server. Same value, same server.</small></label>
       <label><span class="field-title">Session cookie <span class="optional">(optional)</span></span><input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Case-sensitive, empty means no persistence.</small></label>
       <label><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>Connections one server takes at once; the rest queue for 5 s.</small></label>
-      <label><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; must be longer than the {{ form.health_interval or check_interval }} check interval.</small></label>
+      <label><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; must be longer than the <span class="slow-start-interval" data-default="{{ check_interval }}">{{ form.health_interval or check_interval }}</span> check interval.</small></label>
     </div>
     {#
       A setting with three boxes needs the room to be one thing. Left among the
@@ -235,23 +235,22 @@
     #}
     {% if probe %}
     <div class="node-health">
-      <h4><span class="subsection-title">What the nodes just tried{% if probe.source %} <span class="optional">from {{ probe.source }}</span>{% endif %}</span></h4>
+      <h4><span class="subsection-title">What the nodes just tried{% if probe.source %} <span class="optional">from {{ probe.source }}{% if probe.held_by %}, held by {{ probe.held_by|join(' and ') }}{% endif %}</span>{% endif %}</span></h4>
       {% if not probe.ran %}
       <p class="node-health-note">{{ probe.problem }}</p>
       {% else %}
       <table class="node-health-table">
         <thead><tr><th>Node</th><th>Server</th><th>Result</th><th>Detail</th></tr></thead>
         <tbody>
-          {% for node in probe.nodes %}{% if not node.reachable or node.error %}
-          <tr><td>{{ node.node }}</td><td colspan="3"><span class="status-dot status-unknown"></span>{{ node.error or 'The node could not be reached' }}</td></tr>
           {#
-            A node that does not hold the source address probed nothing, and
-            that is not a finding about the pool. Binding a foreign address and
-            failing the route lookup is what it would have reported instead -
-            a red row saying the servers are unreachable, which they are not.
+            Only the nodes that could answer. A node that does not carry the
+            source address tried nothing, and a row saying so is a row about
+            this cluster's failover rather than about the pool being edited -
+            the heading names which node holds the address, which is the part
+            that is worth knowing.
           #}
-          {% elif node.source_held is false %}
-          <tr><td>{{ node.node }}</td><td colspan="3"><span class="status-dot status-unknown"></span>Does not hold {{ probe.source }}, so nothing was tried from here</td></tr>
+          {% for node in probe.nodes if node.source_held is not false %}{% if not node.reachable or node.error %}
+          <tr><td>{{ node.node }}</td><td colspan="3"><span class="status-dot status-unknown"></span>{{ node.error or 'The node could not be reached' }}</td></tr>
           {% else %}{% for entry in node.results %}
           <tr>
             <td>{{ node.node }}</td>

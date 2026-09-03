@@ -121,11 +121,31 @@
     apply();
   };
 
+  //
+  // Slow start has to outlast the check interval, and the hint that says so
+  // named the interval the page was rendered with. Typing 10s into the field
+  // directly above it left the sentence saying 2s until the form was posted -
+  // a hint that describes a value the reader can see is wrong is worse than no
+  // hint, because it is read as the rule rather than as a stale echo.
+  //
+  const wireSlowStartHint = () => {
+    const interval = document.querySelector("input[name='health_interval']");
+    const shown = document.querySelector(".slow-start-interval");
+    if (!interval || !shown) return;
+
+    const apply = () => {
+      shown.textContent = interval.value.trim() || shown.dataset.default || "";
+    };
+    interval.addEventListener("input", apply);
+    apply();
+  };
+
   window.addEventListener("DOMContentLoaded", () => {
     wire();
     wireBalanceKey();
     wireRedirectStatus();
     keepPosition();
     wireOwnSource();
+    wireSlowStartHint();
   });
 })();

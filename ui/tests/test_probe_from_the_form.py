@@ -193,6 +193,52 @@ class WhichNodeCouldAnswer(unittest.TestCase):
     def report(self, nodes: list[dict[str, object]]):
         return run("alpha", form(), CHOICES, call=lambda *a, **k: answered(nodes))
 
+    def test_the_node_that_holds_the_address_is_named(self) -> None:
+        """With the other rows gone, one row would read as a one-node cluster."""
+
+        report = self.report(
+            [
+                {
+                    "node": "node-a",
+                    "reachable": True,
+                    "error": None,
+                    "source_held": False,
+                    "results": [],
+                },
+                {
+                    "node": "node-b",
+                    "reachable": True,
+                    "error": None,
+                    "source_held": True,
+                    "results": [],
+                },
+            ]
+        )
+        self.assertEqual(report.held_by, ("node-b",))
+
+    def test_two_nodes_claiming_one_address_are_both_named(self) -> None:
+        """A keepalived pair can do this, and the page must not hide it."""
+
+        report = self.report(
+            [
+                {
+                    "node": "node-a",
+                    "reachable": True,
+                    "error": None,
+                    "source_held": True,
+                    "results": [],
+                },
+                {
+                    "node": "node-b",
+                    "reachable": True,
+                    "error": None,
+                    "source_held": True,
+                    "results": [],
+                },
+            ]
+        )
+        self.assertEqual(report.held_by, ("node-a", "node-b"))
+
     def test_it_is_neither_a_failure_nor_a_node_that_went_missing(self) -> None:
         report = self.report(
             [

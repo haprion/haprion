@@ -68,6 +68,22 @@ class ProbeReport:
     def failing(self) -> int:
         return sum(not entry.ok for node in self.nodes for entry in node.results)
 
+    @property
+    def held_by(self) -> tuple[str, ...]:
+        """The nodes that carry the source address, and so could answer.
+
+        Named rather than left implicit. Once the nodes that do not hold it are
+        off the page, a single row would otherwise read as a cluster with one
+        node - and which node it was is the part worth knowing, because it is
+        the one carrying the VIP at this moment.
+
+        More than one is not filtered out. Two nodes claiming the same address
+        is a real thing that can happen to a keepalived pair, and hiding it here
+        would be this page deciding what the reader is allowed to notice.
+        """
+
+        return tuple(node.node for node in self.nodes if node.source_held is True)
+
 
 def targets_from(form: Mapping[str, Any]) -> list[dict[str, Any]]:
     """What a check against this object's pool would be, per server.

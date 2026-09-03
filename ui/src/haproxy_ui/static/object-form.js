@@ -99,10 +99,33 @@
     }
   };
 
+  //
+  // "The VIP's own" names an address the reader cannot see, and which one it is
+  // depends on the VIP chosen above. The address rides on each option, so the
+  // label follows the choice instead of going stale the moment it is changed.
+  //
+  const wireOwnSource = () => {
+    const vip = document.querySelector("select[name='vip']");
+    const source = document.querySelector("select[name='source']");
+    const own = source && source.querySelector("option[data-label]");
+    if (!vip || !own) return;
+
+    const apply = () => {
+      const chosen = vip.options[vip.selectedIndex];
+      const address = chosen
+        ? chosen.dataset.source || (chosen.value ? "" : vip.dataset.defaultSource || "")
+        : "";
+      own.textContent = address ? `${own.dataset.label} — ${address}` : own.dataset.label;
+    };
+    vip.addEventListener("change", apply);
+    apply();
+  };
+
   window.addEventListener("DOMContentLoaded", () => {
     wire();
     wireBalanceKey();
     wireRedirectStatus();
     keepPosition();
+    wireOwnSource();
   });
 })();

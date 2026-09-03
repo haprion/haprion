@@ -456,6 +456,18 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
     return Preview(document=document, files=files)
 
 
+def vip_sources(vips: Mapping[str, Any]) -> dict[str, str]:
+    """Each VIP's own source address, by VIP name.
+
+    The source a site leaves from when it names none of its own is a property of
+    the VIP - what an ADC calls the SNIP - so the form cannot show it until it
+    knows which VIP was chosen. Carried as a map for exactly that: the page
+    renders the chosen one and swaps it when the choice changes.
+    """
+
+    return {name: str(getattr(value, "source", "") or "") for name, value in vips.items()}
+
+
 def named_addresses(addresses: Mapping[str, Any]) -> list[dict[str, str]]:
     """Name and address together, in the one shape the form's options take.
 
@@ -481,6 +493,7 @@ def choices(cluster: Cluster) -> dict[str, object]:
 
     return {
         "vips": named_addresses(cluster.vips),
+        "vip_sources": vip_sources(cluster.vips),
         "default_vip": cluster.default_vip,
         "default_vip_address": (
             cluster.vips[cluster.default_vip].address if cluster.default_vip in cluster.vips else ""

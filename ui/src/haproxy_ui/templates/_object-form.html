@@ -48,15 +48,22 @@
         has not read yet is left off rather than guessed.
       #}
       <label>VIP
-        <select name="vip">
+        {#
+          Each option carries its VIP's source address as well, because the
+          field below names it without naming it: "the VIP's own" is an answer
+          only if the page can say which address that is, and it changes with
+          the choice made here.
+        #}
+        <select name="vip" data-default-source="{{ choices.vip_sources.get(choices.default_vip, '') }}">
           <option value="">Default ({{ choices.default_vip }}{% if choices.default_vip_address %} — {{ choices.default_vip_address }}{% endif %})</option>
-          {% for vip in choices.vips %}<option value="{{ vip.name }}"{% if form.vip == vip.name %} selected{% endif %}>{{ vip.name }}{% if vip.address %} — {{ vip.address }}{% endif %}</option>{% endfor %}
+          {% for vip in choices.vips %}<option value="{{ vip.name }}" data-source="{{ choices.vip_sources.get(vip.name, '') }}"{% if form.vip == vip.name %} selected{% endif %}>{{ vip.name }}{% if vip.address %} — {{ vip.address }}{% endif %}</option>{% endfor %}
         </select>
         <small>Which address this site is served on.</small>
       </label>
       <label>Source address
         <select name="source">
-          <option value="">The VIP's own</option>
+          {% set own = choices.vip_sources.get(form.vip or choices.default_vip, '') %}
+          <option value="" data-label="The VIP's own">The VIP's own{% if own %} — {{ own }}{% endif %}</option>
           {% for source in choices.sources %}<option value="{{ source.name }}"{% if form.source == source.name %} selected{% endif %}>{{ source.name }}{% if source.address %} — {{ source.address }}{% endif %}</option>{% endfor %}
         </select>
         <small>Which address it connects out from.</small>

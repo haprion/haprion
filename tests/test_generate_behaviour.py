@@ -1517,3 +1517,82 @@ class AnUpgradedConnectionLivesOnTheTunnelTimeout(unittest.TestCase):
             self.assertEqual(client.recv(4096), b"still here")
         finally:
             client.close()
+
+
+UNDERSCORED = """
+schema: 1
+name: monitor-server-admin_web
+hostnames: [admin.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: admin_web
+backends:
+  admin_web:
+    balance: roundrobin
+    servers:
+      - host: 198.51.100.10
+        port: 8080
+"""
+
+
+@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
+class AnUnderscoreInAName(unittest.TestCase):
+    """Proved against the running binary, not against what a manual says.
+
+    The object's name is the filename, part of every generated proxy name and
+    the seed of its GUID, so widening what it may contain is a change to an
+    identity rule. Underscore was let in because people already call these
+    things that - and the only answer worth having on whether HAProxy minds is
+    the one its own parser gives.
+
+    A hyphen and an underscore side by side, in both the object name and the
+    backend name, because that is where the generated names concatenate them.
+    """
+
+    def test_the_generated_configuration_is_accepted(self) -> None:
+        proxy = load_proxy("monitor-server-admin_web", UNDERSCORED.encode())
+        layer = generate(
+            [proxy],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            networks={},
+            ports={"http": free_port()},
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "0000-core.cfg").write_text(CORE)
+            for name, content in layer.items():
+                (root / name).write_text(content)
+
+            arguments: list[str] = []
+            for path in sorted(root.iterdir()):
+                arguments += ["-f", str(path)]
+            binary = shutil.which("haproxy")
+            assert binary is not None
+            completed = subprocess.run(  # noqa: S603 - fixed binary, generated files
+                [binary, "-c", *arguments],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_the_name_reaches_the_generated_proxy_names_intact(self) -> None:
+        """An underscore silently rewritten would make two objects collide."""
+
+        proxy = load_proxy("monitor-server-admin_web", UNDERSCORED.encode())
+        layer = generate(
+            [proxy],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            networks={},
+            ports={"http": free_port()},
+        )
+        written = "\n".join(layer.values())
+
+        self.assertIn("monitor-server-admin_web", written)
+        self.assertIn("admin_web", written)

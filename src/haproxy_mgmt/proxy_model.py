@@ -43,14 +43,28 @@ MAX_MODEL_BYTES = 256 * 1024
 # the seed of every GUID, so it has to be stable, lowercase and free of anything
 # that means something to a path or to HAProxy.
 #
-NAME = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+# Underscore is in, since 2026-09-03 (B72). It is what people already call these
+# things, and it means nothing to a path or to HAProxy - proved against a real
+# 3.4 rather than read out of the documentation. The characters kept out are the
+# ones that do mean something: a dot collides with the numbering scheme and with
+# file extensions, a slash is a path, whitespace and `#` end a token in HAProxy's
+# own parser, and a capital makes two names that differ only in case land on one
+# file on a case-insensitive filesystem.
+#
+# Widening is safe in the one direction that matters: every name that was valid
+# before is valid still, so nothing that exists has to be renamed or migrated.
+#
+NAME = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 #
 # The same rule as a sentence, so a refusal can say what would be accepted.
 # A message that only says a name is unusable leaves the person to guess which
 # character was the problem - and the two most common ones, a dot and an
 # uppercase letter, look entirely innocent.
 #
-NAME_RULE = "lowercase letters, digits and hyphens, starting with a letter, at most 40 characters"
+NAME_RULE = (
+    "lowercase letters, digits, hyphens and underscores, "
+    "starting with a letter, at most 40 characters"
+)
 
 
 def name_refusal(name: str) -> str:
@@ -90,7 +104,7 @@ def name_refusal(name: str) -> str:
     return NAME_RULE
 
 
-ALLOWED = re.compile(r"[a-z0-9-]")
+ALLOWED = re.compile(r"[a-z0-9_-]")
 
 #
 # A hostname as it appears in a Host header. Not a full RFC validation - that

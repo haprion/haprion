@@ -22,7 +22,7 @@
   <section class="cluster-card cluster-accent-{{ accent }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>The site</h3><p>What visitors ask for</p></div></div></header>
     <div class="form-grid">
-      <label>Name<input name="name" value="{{ form.name }}" maxlength="40" pattern="[a-z][a-z0-9-]*" title="Lowercase letters, digits and hyphens, starting with a letter" required{% if name_locked %} readonly{% endif %}><small>{% if name_locked %}An object cannot be renamed here. Create the new name and remove the old one.{% else %}This object's identity, unique per cluster. Lowercase letters, digits and hyphens — no dots, and it starts with a letter.{% endif %}</small></label>
+      <label>Name<input name="name" value="{{ form.name }}" maxlength="40" pattern="[a-z][a-z0-9_-]*" title="Lowercase letters, digits, hyphens and underscores, starting with a letter" required{% if name_locked %} readonly{% endif %}><small>{% if name_locked %}An object cannot be renamed here. Create the new name and remove the old one.{% else %}This object's identity, unique per cluster. Lowercase letters, digits, hyphens and underscores — no dots, and it starts with a letter.{% endif %}</small></label>
       <label>Hostnames<input name="hostnames" value="{{ form.hostnames }}" placeholder="app.example.com, www.example.com"><small>Separate several names with commas.</small></label>
       <label>Protocol
         <select name="protocol">

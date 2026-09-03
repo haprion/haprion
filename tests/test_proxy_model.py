@@ -13,6 +13,7 @@ import unittest
 from haproxy_mgmt.proxy_model import (
     COMMON_KEYS,
     HTTP_ONLY_KEYS,
+    NAME,
     PROXY_KEYS,
     TCP_ONLY_KEYS,
     ModelError,
@@ -887,7 +888,14 @@ class WhyANameWasRefused(unittest.TestCase):
 
     def test_the_offending_character_is_quoted_back(self) -> None:
         self.assertEqual(name_refusal("ftp2.example.com"), "'.' is not allowed")
-        self.assertEqual(name_refusal("ftp_2"), "'_' is not allowed")
+        self.assertEqual(name_refusal("ftp:2"), "':' is not allowed")
+
+    def test_an_underscore_is_a_name_and_not_a_refusal(self) -> None:
+        """Let in by B72, and proved against a real HAProxy before it was."""
+
+        self.assertIsNotNone(NAME.match("monitor-server-admin_web"))
+        self.assertIsNotNone(NAME.match("admin_web"))
+        self.assertIsNone(NAME.match("_leading"))
 
     def test_capitals_are_one_rule_rather_than_a_list_of_letters(self) -> None:
         self.assertEqual(name_refusal("FTP2"), "capital letters are not allowed")

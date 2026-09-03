@@ -235,10 +235,28 @@ class TheTableAgreesWithTheEngine(unittest.TestCase):
         )
         return path.read_text(encoding="utf-8")
 
+    def latest_shape(self) -> str:
+        """The last migration that has an opinion about the object name.
+
+        Reading 0013 alone stopped being enough the first time the constraint
+        was widened: the original text still says what it always said, and a
+        test that only reads it would keep passing while the database had moved
+        on. What has to match the model is whichever migration spoke last.
+        """
+
+        versions = Path(__file__).resolve().parents[1] / "migrations" / "versions"
+        speaking = [
+            path
+            for path in sorted(versions.glob("[0-9]*.py"))
+            if "proxy_draft_object_shape" in path.read_text(encoding="utf-8")
+        ]
+        self.assertTrue(speaking, "no migration constrains the object name")
+        return speaking[-1].read_text(encoding="utf-8")
+
     def test_the_object_name_constraint_is_the_model_s_own_pattern(self) -> None:
         pattern = proxy_model.NAME.pattern
 
-        self.assertIn(f"check (object_id ~ '{pattern}')", self.migration())
+        self.assertIn(f"check (object_id ~ '{pattern}')", self.latest_shape())
 
     def test_the_document_limit_is_the_model_s_own_limit(self) -> None:
         """A draft the model would refuse to read has no business being stored."""

@@ -56,6 +56,19 @@ def _entry(name: str, document: str) -> dict[str, object]:
         "problem": None,
         "protocol": None,
         "hostnames": [],
+        #
+        # Added 2026-09-03, additively: an entry from an older release carries
+        # neither, and a reader must treat that as "did not say" rather than as
+        # "none" - the difference between a pool with no backends and a helper
+        # that was not asked.
+        #
+        # They are here rather than derived by the interface because the
+        # interface must not become a second reader of this document. One file
+        # with two interpretations is the hardest kind of divergence to find:
+        # both look correct on their own.
+        #
+        "backend_count": None,
+        "redirect_http": None,
     }
     try:
         proxy = load_proxy(name, document.encode("utf-8"))
@@ -71,6 +84,14 @@ def _entry(name: str, document: str) -> dict[str, object]:
 
     entry["protocol"] = proxy.listen.protocol
     entry["hostnames"] = sorted(proxy.hostnames)
+    entry["backend_count"] = len(proxy.backends)
+    #
+    # A property of this object, not a second object. An https listener that
+    # redirects plain HTTP produces routing in two generated frontends - the
+    # one on 443 that serves it and the one on 80 that redirects it - but the
+    # person wrote one thing and the interface has to say one thing.
+    #
+    entry["redirect_http"] = bool(proxy.listen.redirect_http)
     return entry
 
 

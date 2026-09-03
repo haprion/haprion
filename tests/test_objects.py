@@ -152,3 +152,36 @@ class ReadingTheStoredObjects(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhatAnEntryCarriesForTheListing(unittest.TestCase):
+    """Counted and answered here, so the interface never reads the document.
+
+    One file with two readers is the hardest kind of divergence to find: both
+    look correct on their own. The interface shows a backend count and says
+    whether an object redirects plain HTTP, and both come from here.
+    """
+
+    def entry(self, document: bytes) -> dict[str, object]:
+        result = objects_result({"managed/proxies/shop.yaml": document}, COMMIT, generated_at=TIME)
+        return result["objects"][0]
+
+    def test_the_backends_are_counted(self) -> None:
+        entry = self.entry(SHOP)
+
+        self.assertEqual(entry["backend_count"], 1)
+
+    def test_a_redirect_is_a_property_of_the_object(self) -> None:
+        """Not a second object, however many frontends it takes to implement."""
+
+        plain = self.entry(SHOP)
+        self.assertIs(plain["redirect_http"], False)
+
+    def test_an_object_that_cannot_be_read_says_nothing_rather_than_zero(self) -> None:
+        """A pool with no backends and a file nobody could parse are different."""
+
+        entry = self.entry(b"schema: 1\nname: shop\nthis is not a document\n")
+
+        self.assertFalse(entry["readable"])
+        self.assertIsNone(entry["backend_count"])
+        self.assertIsNone(entry["redirect_http"])

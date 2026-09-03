@@ -411,9 +411,24 @@ def build_router(config: Config) -> APIRouter:
         #
         _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
         rows = {reading.cluster: reading for reading in object_rows}
-        waiting = {
-            view.cluster: objects.stored_only(rows.get(view.cluster), view.proxies)
+        #
+        # Objects, not frontends. The generator names a frontend after the
+        # address and protocol it binds, and every object on that address goes
+        # through it - so a listing of frontends showed the implementation
+        # rather than the work, and an https object that redirects plain HTTP
+        # appeared twice under two names its author never chose.
+        #
+        listed = {
+            view.cluster: objects.listed_objects(rows.get(view.cluster), view.proxies)
             for view in overview.clusters
+        }
+        #
+        # What is left of the published inventory once the managed frontends are
+        # accounted for above: configuration this platform does not own, where
+        # the frontend really is the only thing there is to show.
+        #
+        unmanaged = {
+            view.cluster: objects.unmanaged_only(view.proxies) for view in overview.clusters
         }
         #
         # And a step earlier than that: a draft has not reached the cluster
@@ -449,7 +464,8 @@ def build_router(config: Config) -> APIRouter:
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
                 "proxies": overview,
-                "waiting": waiting,
+                "listed": listed,
+                "unmanaged": unmanaged,
                 "drafts": drafts,
                 "publishing": publishing,
                 "section": "proxies",

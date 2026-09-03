@@ -47,6 +47,13 @@ class ObjectView:
     # port is written in the document and is not carried in the envelope.
     #
     ports: tuple[int, ...]
+    #
+    # From the envelope, never re-derived here. `None` is an entry written by a
+    # release that predates the field: it said nothing, which is not the same
+    # as an object with no backends.
+    #
+    backend_count: int | None = None
+    redirect_http: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +124,12 @@ def _hostnames(value: Any) -> tuple[str, ...]:
     return tuple(hostname for hostname in value if isinstance(hostname, str) and hostname)
 
 
+def _count(value: Any) -> int | None:
+    """A whole number, or nothing. `True` is 1 in Python and is not a count."""
+
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def object_view(value: Any) -> ObjectView | None:
     entry = _mapping(value)
     name = entry.get("name")
@@ -140,6 +153,10 @@ def object_view(value: Any) -> ObjectView | None:
         hostnames=_hostnames(entry.get("hostnames")),
         line_count=len(document.splitlines()),
         ports=(PORTS[protocol],) if isinstance(protocol, str) and protocol in PORTS else (),
+        backend_count=_count(entry.get("backend_count")),
+        redirect_http=(
+            entry.get("redirect_http") if isinstance(entry.get("redirect_http"), bool) else None
+        ),
     )
 
 
@@ -365,3 +382,79 @@ def drafts_now_published(
         for draft in drafts
         if key_for(draft.cluster, draft.object_id, draft.revision) in finished
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ListedObject:
+    """One object as the listing shows it: the thing somebody wrote.
+
+    Not a frontend. The generator names frontends after the address and the
+    protocol - `mgd-<vip>-<protocol>` - and every object on that address shares
+    them, so listing frontends showed the implementation instead of the work.
+    An https object that redirects plain HTTP appeared twice, under two names
+    its author never chose, neither of which was the name in the document.
+    """
+
+    name: str
+    protocol: str | None
+    hostnames: tuple[str, ...]
+    ports: tuple[int, ...]
+    backend_count: int | None
+    redirect_http: bool | None
+    readable: bool
+    problem: str | None
+    serving: bool
+
+
+def listed_objects(
+    reading: ClusterObjects | None, published: Iterable[ProxyView] = ()
+) -> tuple[ListedObject, ...]:
+    """This cluster's objects, each saying whether the nodes are serving it yet.
+
+    Matched on hostname, because an object and a frontend never share a name -
+    the frontend is named after the address it binds. An object whose hostnames
+    are all answered by a published frontend is being served; one whose are not
+    has been written and not yet deployed.
+
+    An object that names no hostname cannot be matched this way and is reported
+    as not yet serving. That is the safe direction: claiming a deployment that
+    has not happened is the answer somebody acts on.
+    """
+
+    serving = {hostname for proxy in published for hostname in proxy.hostnames}
+    #
+    # Not yet serving first, then alphabetical. It is the row that changed, and
+    # a cluster's list is long enough that an alphabetical position hides it. A
+    # row joins the ordinary order the moment the nodes are serving it.
+    #
+    return tuple(
+        sorted(
+            (
+                ListedObject(
+                    name=view.name,
+                    protocol=view.protocol,
+                    hostnames=view.hostnames,
+                    ports=view.ports,
+                    backend_count=view.backend_count,
+                    redirect_http=view.redirect_http,
+                    readable=view.readable,
+                    problem=view.problem,
+                    serving=bool(view.hostnames) and set(view.hostnames) <= serving,
+                )
+                for view in cluster_object_views(reading)
+            ),
+            key=lambda listed: (listed.serving, listed.name),
+        )
+    )
+
+
+def unmanaged_only(published: Iterable[ProxyView]) -> tuple[ProxyView, ...]:
+    """Published frontends this platform did not generate.
+
+    The managed ones are left out because the objects above already describe
+    them, and better: they carry the names their authors gave. What remains is
+    configuration this platform does not own, where the frontend really is the
+    only thing there is to show.
+    """
+
+    return tuple(proxy for proxy in published if not proxy.managed)

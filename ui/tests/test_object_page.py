@@ -171,7 +171,7 @@ class TheOverviewOrdering(LoginTestCase):
         text = client.get("/proxies").text
         rows = re.findall(r'href="/proxies/edge-demo/([a-z-]+)"', text)
 
-        self.assertEqual(rows[:2], ["shop", "staging"])
+        self.assertEqual(rows[0], "shop")
         self.assertNotIn("Stored, not yet serving", text)
 
     def test_published_rows_are_alphabetical_and_not_in_file_order(self) -> None:
@@ -185,8 +185,13 @@ class TheOverviewOrdering(LoginTestCase):
 
         self.assertEqual(rows, sorted(rows))
 
-    def test_an_undeployed_row_states_no_backend_count_or_ownership(self) -> None:
-        """Both are facts about a published frontend, and it has none yet."""
+    def test_an_undeployed_row_is_still_an_object_of_ours(self) -> None:
+        """It is the object somebody wrote, whether or not a node serves it yet.
+
+        The row used to describe a published frontend, so an undeployed one had
+        no backend count and no ownership to state. It describes the object
+        now, and an object has backends and is ours from the moment it exists.
+        """
 
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)
@@ -196,7 +201,7 @@ class TheOverviewOrdering(LoginTestCase):
         self.assertIn("shop", row)
 
         self.assertIn("Waiting for deploy", row)
-        self.assertNotIn("ownership-badge", row)
+        self.assertIn("ownership-managed", row)
 
     def test_the_state_shares_the_line_with_the_hosts(self) -> None:
         """`.proxy-hosts` is a block elsewhere, which put the badge on its own
@@ -535,3 +540,28 @@ class ADraftThatWasPublished(DraftReading):
 
         self.assertEqual(discarded, [])
         self.assertIn(">Draft<", body)
+
+
+class OneObjectIsOneRow(DraftReading):
+    """The name in the document, once, whatever it takes to implement.
+
+    The listing used to show frontends. The generator names those after the
+    address and protocol they bind - `mgd-<vip>-<protocol>` - and every object
+    on that address shares them, so an https object that redirects plain HTTP
+    appeared as two rows, under two names its author never chose, neither of
+    which was the name in the document.
+    """
+
+    def listing(self) -> str:
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        return client.get("/proxies").text
+
+    def test_no_row_is_named_after_a_generated_frontend(self) -> None:
+        body = self.listing()
+
+        self.assertNotIn("mgd-main-http", body)
+        self.assertNotIn("mgd-main-https", body)
+
+    def test_the_object_is_named_as_its_author_named_it(self) -> None:
+        self.assertIn("public-web", self.listing())

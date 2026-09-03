@@ -48,10 +48,17 @@ class ProxyClusterView:
 
 @dataclass(frozen=True, slots=True)
 class ProxyOverview:
+    """The clusters and their published frontends.
+
+    It counts nothing. A frontend is not a proxy anybody wrote: the generator
+    names one after the address and protocol it binds, so an https object that
+    redirects plain HTTP is two of them, and every object on one address shares
+    the same one. Counting frontends therefore both over- and under-counted the
+    work, and disagreed with the table underneath it. `objects.counted` does the
+    counting now, from the same rows the table draws.
+    """
+
     clusters: tuple[ProxyClusterView, ...]
-    proxy_count: int
-    managed_count: int
-    unmanaged_count: int
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -223,10 +230,4 @@ def build_proxy_overview(
             )
         )
 
-    proxies = tuple(proxy for cluster in clusters for proxy in cluster.proxies)
-    return ProxyOverview(
-        clusters=tuple(clusters),
-        proxy_count=len(proxies),
-        managed_count=sum(proxy.managed for proxy in proxies),
-        unmanaged_count=sum(not proxy.managed for proxy in proxies),
-    )
+    return ProxyOverview(clusters=tuple(clusters))

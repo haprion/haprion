@@ -34,7 +34,22 @@
     {% if management_writes and role == 'admin' and cluster.configured %}
     <footer class="cluster-actions" aria-label="{{ cluster.cluster }} certificate operations">
       <div><strong>Deploy</strong><span>Sends the referenced certificates to the nodes and reloads them.</span></div>
+      {#
+        One job per cluster at a time, so this is one state and not two: while
+        something is running here the button is gone and the operation that is
+        running says so. Leaving it drawn would offer an action the queue
+        refuses, and the refusal would arrive as a 409 somebody has to read.
+        The same state the dashboard draws, drawn the same way.
+      #}
+      {% set running = in_flight.get(cluster.cluster) if in_flight else none %}
+      {% if running %}
+      <div class="action-buttons">
+        <span class="status-badge status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>{{ running }}</span>
+        <a class="secondary-button" href="/jobs">Follow it</a>
+      </div>
+      {% else %}
       <div class="action-buttons"><form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="cert_deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="certificates"><button class="secondary-button" type="submit">Deploy certificates</button></form></div>
+      {% endif %}
     </footer>
     {% endif %}
     {% else %}

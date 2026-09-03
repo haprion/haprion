@@ -19,16 +19,31 @@
       <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
     {% if cluster.versions %}
+    {% set running = in_flight.get(cluster.cluster) if in_flight else none %}
     <div class="table-scroll"><table class="node-table version-table"><thead><tr><th>Version</th><th>Saved</th><th>Comment</th><th>Commit</th>{% if management_writes and role == 'admin' and cluster.configured %}<th>Action</th>{% endif %}</tr></thead><tbody>
       {% for version in cluster.versions %}
-      <tr{% if version.published %} class="version-published"{% endif %}><td data-label="Version"><strong>{{ version.version }}</strong>{% if version.published %}<span class="published-badge">Published</span>{% endif %}</td><td data-label="Saved">{{ version.date }}</td><td data-label="Comment"><span class="version-comment">{{ version.comment }}</span></td><td data-label="Commit"><code>{{ version.commit }}</code></td>{% if management_writes and role == 'admin' and cluster.configured %}<td data-label="Action">{% if version.published %}<span class="version-current">Current</span>{% else %}<form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="revert"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="return_to" value="history"><input type="hidden" name="version" value="{{ version.number }}"><input type="hidden" name="expected_commit" value="{{ version.expected_commit }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Publish this version</button></form>{% endif %}</td>{% endif %}</tr>
+      <tr{% if version.published %} class="version-published"{% endif %}><td data-label="Version"><strong>{{ version.version }}</strong>{% if version.published %}<span class="published-badge">Published</span>{% endif %}</td><td data-label="Saved">{{ version.date }}</td><td data-label="Comment"><span class="version-comment">{{ version.comment }}</span></td><td data-label="Commit"><code>{{ version.commit }}</code></td>{% if management_writes and role == 'admin' and cluster.configured %}<td data-label="Action">{% if version.published %}<span class="version-current">Current</span>{% else %}{% if running %}<span class="table-empty" title="{{ running }} — one job per cluster runs at a time">—</span>{% else %}<form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="revert"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="return_to" value="history"><input type="hidden" name="version" value="{{ version.number }}"><input type="hidden" name="expected_commit" value="{{ version.expected_commit }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Publish this version</button></form>{% endif %}{% endif %}</td>{% endif %}</tr>
       {% endfor %}
     </tbody></table></div>
     {% if cluster.truncated %}<p class="table-note">Showing the ten most recent saved versions.</p>{% endif %}
     {% if management_writes and role == 'admin' and cluster.configured %}
     <footer class="cluster-actions" aria-label="{{ cluster.cluster }} operations">
       <div><strong>Deploy</strong><span>Publishing records a version; deploying is what reaches the nodes.</span></div>
+      {#
+        One job per cluster at a time, so this is one state and not two: while
+        something is running here the button is gone and the operation that is
+        running says so. Leaving it drawn would offer an action the queue
+        refuses, and the refusal would arrive as a 409 somebody has to read.
+        The same state the dashboard draws, drawn the same way.
+      #}
+      {% if running %}
+      <div class="action-buttons">
+        <span class="status-badge status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>{{ running }}</span>
+        <a class="secondary-button" href="/jobs">Follow it</a>
+      </div>
+      {% else %}
       <div class="action-buttons"><form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="history"><button class="secondary-button" type="submit">Deploy configuration</button></form></div>
+      {% endif %}
     </footer>{% endif %}
     {% else %}
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>

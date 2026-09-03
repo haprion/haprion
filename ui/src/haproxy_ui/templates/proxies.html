@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% import "_proxy-rows.html" as rows %}
 {% block title %}Proxies — HAProxy Manager{% endblock %}
 {% block content %}
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
@@ -8,9 +9,9 @@
 </section>
 
 <section class="metric-grid proxy-summary" aria-label="Proxy summary">
-  <article class="metric-card"><span class="metric-icon metric-icon-cluster" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong>{{ proxies.proxy_count }}</strong><span>Proxies</span><small>Published</small></div></article>
-  <article class="metric-card"><span class="metric-icon metric-icon-node" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"></path></svg></span><div><strong>{{ proxies.managed_count }}</strong><span>Managed</span><small>Platform owned</small></div></article>
-  <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong>{{ proxies.unmanaged_count }}</strong><span>Unmanaged</span><small>Read-only</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-cluster" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong data-count="published">{{ counts.published }}</strong><span>Proxies</span><small>Published</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-node" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"></path></svg></span><div><strong data-count="managed">{{ counts.managed }}</strong><span>Managed</span><small>Platform owned</small></div></article>
+  <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong data-count="unmanaged">{{ counts.unmanaged }}</strong><span>Unmanaged</span><small>Read-only</small></div></article>
 </section>
 
 <div class="cluster-list proxy-cluster-list">
@@ -22,7 +23,6 @@
     </header>
     {% set unpublished = (drafts.get(cluster.cluster, ()) if drafts else ()) if role == 'admin' else () %}
     {% set queued = (publishing.get(cluster.cluster, ()) if publishing else ()) %}
-    {% set drafted = unpublished | map(attribute='object_id') | list %}
     {#
       Shown to a reader as well. These rows carry a name, hostnames, ports and
       a count - the same facts the frontend rows carried before them, and never
@@ -32,38 +32,8 @@
     {% set written = listed.get(cluster.cluster, ()) if listed else () %}
     {% set foreign = (unmanaged.get(cluster.cluster, ()) if unmanaged else ()) %}
     {% if written or foreign or unpublished %}
-    <div class="table-scroll"><table class="node-table proxy-table"><thead><tr><th>Proxy</th><th>Protocol</th><th>Hosts / ports</th><th>Backends</th><th>Ownership</th></tr></thead><tbody>
-      {#
-        Drafts first, then objects written but not deployed, then the rest.
-        The published list is long enough that an alphabetical position would
-        hide the one row that changed, and a row joins that order the moment
-        the nodes are serving it.
-      #}
-      {% for draft in unpublished %}
-      <tr class="proxy-draft"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster.cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol"><span class="table-empty">—</span></td><td data-label="Hosts / ports">{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}</td><td data-label="Backends"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
-      {% endfor %}
-      {#
-        One row per object, under the name its author gave it. The redirect an
-        https object carries is a property of that object and is said on its
-        own line - it is not a second proxy, however many frontends it takes to
-        implement.
-      #}
-      {% for object in written if object.name not in drafted %}
-      <tr{% if not object.serving %} class="proxy-waiting"{% endif %}>
-        <td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster.cluster }}/{{ object.name }}"><strong>{{ object.name }}</strong></a>{% else %}<strong>{{ object.name }}</strong>{% endif %}{% if object.redirect_http %}<small>Redirects HTTP</small>{% endif %}</td>
-        <td data-label="Protocol">{% if object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
-        <td data-label="Hosts / ports"><span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span>{% if not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Waiting for deploy</span>{% endif %}</td>
-        <td data-label="Backends">{% if object.backend_count is not none %}{{ object.backend_count }}{% else %}<span class="table-empty">—</span>{% endif %}</td>
-        <td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td>
-      </tr>
-      {% endfor %}
-      {#
-        And what this platform does not own. Here the frontend is the only
-        thing there is to show, so it is shown as itself.
-      #}
-      {% for proxy in foreign %}
-      <tr><td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster.cluster }}/{{ proxy.name }}"><strong>{{ proxy.name }}</strong></a>{% else %}<strong>{{ proxy.name }}</strong>{% endif %}{% if not proxy.enabled %}<small class="warning-text">Disabled</small>{% endif %}</td><td data-label="Protocol"><span class="protocol-badge protocol-{{ proxy.protocol }}">{{ proxy.protocol | upper }}</span></td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ proxy.hostnames | join(', ') if proxy.hostnames else 'No hostname rule' }} · {{ proxy.ports | join(', ') if proxy.ports else '—' }}</span></td><td data-label="Backends">{{ proxy.backend_count }}</td><td data-label="Ownership"><span class="ownership-badge ownership-unmanaged">Unmanaged</span></td></tr>
-      {% endfor %}
+    <div class="table-scroll"><table class="node-table proxy-table"><thead><tr><th>Proxy</th><th>Protocol</th><th>Hosts / ports</th><th>Health</th><th>Backends</th><th>Ownership</th></tr></thead><tbody data-cluster="{{ cluster.cluster }}">
+{{ rows.proxy_rows(cluster.cluster, role, unpublished, queued, written, foreign, health.get(cluster.cluster, {}) if health else {}) }}
     </tbody></table></div>
     {% else %}
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>

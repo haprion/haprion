@@ -29,7 +29,7 @@ from typing import Annotated, Any
 from uuid import UUID, uuid4, uuid5
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from haproxy_mgmt.proxy_model import DEFAULT_FALL, DEFAULT_INTERVAL, DEFAULT_RISE
 
@@ -384,12 +384,16 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
-    @router.get("/proxies", response_class=HTMLResponse)
-    def proxy_overview(request: Request) -> Response:
-        session = current_session(request)
-        if session is None:
-            return RedirectResponse("/login", status_code=303)
-        token = request.cookies.get(auth.SESSION_COOKIE, "")
+    def _proxy_listing(request: Request, role: str) -> dict[str, Any]:
+        """Everything the proxy table draws, for the page and for its refresh.
+
+        Read once here rather than twice in two handlers. The refresh replaces
+        the rows in place while something is on its way, and a second gathering
+        of the same facts would be free to disagree with the first about what a
+        row says - which is the disagreement nobody would see until a row
+        changed shape halfway through a deploy.
+        """
+
         clusters, inventory_rows, captured_at = read_source(request, config, INVENTORY_SOURCE)
         overview = proxies.build_proxy_overview(
             clusters,
@@ -432,6 +436,28 @@ def build_router(config: Config) -> APIRouter:
             view.cluster: objects.unmanaged_only(view.proxies) for view in overview.clusters
         }
         #
+        # The passive health answer, per object, for the lamp in the listing.
+        # Not a probe: probing is an SSH operation against a node, and a page
+        # that ran one per row on every load would turn opening a list into a
+        # burst of connections nobody asked for. This is what HAProxy on the
+        # nodes has already decided, read out of the same status reading the
+        # dashboard draws.
+        #
+        _, health_rows, _ = read_source(request, config, STATUS_SOURCE)
+        pool_lamps = {
+            view.cluster: {
+                obj.name: health.object_health(
+                    health_rows,
+                    cluster=view.cluster,
+                    obj=obj.name,
+                    others=[other.name for other in listed[view.cluster]],
+                    checked=health.has_health_check(obj.document),
+                )
+                for obj in objects.cluster_object_views(rows.get(view.cluster))
+            }
+            for view in overview.clusters
+        }
+        #
         # And a step earlier than that: a draft has not reached the cluster
         # repository at all, so it is in neither the inventory nor the objects
         # cache. It is listed for the same reason the waiting objects are - the
@@ -457,6 +483,37 @@ def build_router(config: Config) -> APIRouter:
                 )
                 for view in overview.clusters
             }
+        #
+        # The three numbers above the table, counted from the table's own rows
+        # rather than from published frontends. A frontend is not a proxy
+        # anybody wrote - an https object that redirects plain HTTP is two of
+        # them, and every object on one address shares one - so the old count
+        # disagreed with the list underneath it in both directions.
+        #
+        counts = objects.counted(listed, unmanaged)
+        return {
+            "proxies": overview,
+            "listed": listed,
+            "counts": counts,
+            "health": pool_lamps,
+            "unmanaged": unmanaged,
+            #
+            # A reader has no drafts to see: a draft is somebody's unfinished
+            # edit, and the row exists so its author can find it again.
+            #
+            "drafts": drafts if role == "admin" else {},
+            "publishing": publishing,
+            "captured_at": captured_at,
+        }
+
+    @router.get("/proxies", response_class=HTMLResponse)
+    def proxy_overview(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        listing = _proxy_listing(request, session.role)
+        captured_at = listing.pop("captured_at")
         return TEMPLATES.TemplateResponse(
             request,
             "proxies.html",
@@ -464,17 +521,63 @@ def build_router(config: Config) -> APIRouter:
                 "username": session.username,
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
-                "proxies": overview,
-                "listed": listed,
-                "unmanaged": unmanaged,
-                "drafts": drafts,
-                "publishing": publishing,
+                **listing,
                 "section": "proxies",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
                 "snapshot_age": snapshot_age(captured_at),
             },
+        )
+
+    #
+    # The rows on their own, so a listing can catch up without the page being
+    # drawn again. A row moves for reasons that happen elsewhere - a publish
+    # finishes, a deploy reaches the nodes - and until this existed the only
+    # way to see it was to reload, which loses the scroll position and blinks
+    # the whole page for one changed cell.
+    #
+    # Rendered from the same macro the page uses, and never from a second copy
+    # of the markup. What comes back is markup for a `tbody` and the three
+    # numbers above it; the browser puts each where it belongs.
+    #
+    @router.get("/proxies/rows")
+    def proxy_rows(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return JSONResponse({"detail": "not signed in"}, status_code=401)
+        listing = _proxy_listing(request, session.role)
+        #
+        # Fetched by name because a template module carries no type: the macro
+        # is declared in the template and the checker cannot see it. The name
+        # is bound to a test, which is what actually keeps the two in step.
+        #
+        template: Any = TEMPLATES.env.get_template("_proxy-rows.html").module
+        macro = template.proxy_rows
+        clusters = {
+            view.cluster: str(
+                macro(
+                    view.cluster,
+                    session.role,
+                    listing["drafts"].get(view.cluster, ()),
+                    listing["publishing"].get(view.cluster, ()),
+                    listing["listed"].get(view.cluster, ()),
+                    listing["unmanaged"].get(view.cluster, ()),
+                    listing["health"].get(view.cluster, {}),
+                )
+            )
+            for view in listing["proxies"].clusters
+        }
+        counts = listing["counts"]
+        return JSONResponse(
+            {
+                "clusters": clusters,
+                "counts": {
+                    "published": counts.published,
+                    "managed": counts.managed,
+                    "unmanaged": counts.unmanaged,
+                },
+            }
         )
 
     #
@@ -679,6 +782,8 @@ def build_router(config: Config) -> APIRouter:
             #
             captured=captured_at is not None,
         )
+        with request.app.state.pool.connection() as connection:
+            running = jobs.in_flight(db.recent_jobs(connection))
         return TEMPLATES.TemplateResponse(
             request,
             "certificates.html",
@@ -687,6 +792,13 @@ def build_router(config: Config) -> APIRouter:
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
                 "certificates": overview,
+                #
+                # What this cluster is busy with, read the same way the
+                # dashboard reads it. One job per cluster, so the buttons
+                # below are replaced by it rather than left drawn to offer an
+                # action the queue would refuse with a 409.
+                #
+                "in_flight": running,
                 "management_writes": config.management_writes,
                 "section": "certificates",
                 "demo_fixture": config.demo_fixture,
@@ -749,6 +861,8 @@ def build_router(config: Config) -> APIRouter:
             #
             captured=captured_at is not None,
         )
+        with request.app.state.pool.connection() as connection:
+            running = jobs.in_flight(db.recent_jobs(connection))
         return TEMPLATES.TemplateResponse(
             request,
             "history.html",
@@ -757,6 +871,13 @@ def build_router(config: Config) -> APIRouter:
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
                 "history": overview,
+                #
+                # What this cluster is busy with, read the same way the
+                # dashboard reads it. One job per cluster, so the buttons
+                # below are replaced by it rather than left drawn to offer an
+                # action the queue would refuse with a 409.
+                #
+                "in_flight": running,
                 "management_writes": config.management_writes,
                 "section": "history",
                 "demo_fixture": config.demo_fixture,

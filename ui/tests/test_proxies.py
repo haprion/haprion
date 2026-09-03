@@ -48,9 +48,11 @@ class ProxyOverviewTests(unittest.TestCase):
         overview = build_proxy_overview(
             ("alpha",), (reading(),), now=NOW, stale_after=timedelta(minutes=2)
         )
-        self.assertEqual(
-            (overview.proxy_count, overview.managed_count, overview.unmanaged_count), (2, 1, 1)
-        )
+        #
+        # The overview counts nothing any more: a frontend is not a proxy
+        # anybody wrote, and `objects.counted` does the counting from the rows
+        # the table draws. What is asserted here is the distinction itself.
+        #
         self.assertTrue(overview.clusters[0].proxies[0].managed)
         self.assertFalse(overview.clusters[0].proxies[1].managed)
         self.assertEqual(overview.clusters[0].proxies[0].hostnames, ("app.example.test",))

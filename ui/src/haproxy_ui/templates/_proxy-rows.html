@@ -1,0 +1,49 @@
+{#
+  The rows of one cluster's proxy table, in one place because they are rendered
+  from two: the page, and the refresh that replaces them while something is on
+  its way. A second copy of this markup would drift from the first, and the
+  drift would show as a row that changes shape when it updates.
+#}
+{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps) %}
+{% set drafted = unpublished | map(attribute='object_id') | list %}
+{#
+  Drafts first, then objects written but not deployed, then the rest. The
+  published list is long enough that an alphabetical position would hide the one
+  row that changed, and a row joins that order the moment the nodes are serving
+  it - which is why these rows are replaced in place rather than left until
+  somebody reloads.
+#}
+{% for draft in unpublished %}
+      <tr class="proxy-draft"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol"><span class="table-empty">—</span></td><td data-label="Hosts / ports">{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}</td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Backends"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
+{% endfor %}
+{#
+  One row per object, under the name its author gave it. Not one per frontend:
+  the generator names those after the address and protocol they bind, and an
+  https object that redirects plain HTTP takes two of them.
+#}
+{% for object in written if object.name not in drafted %}
+      <tr{% if not object.serving %} class="proxy-waiting"{% endif %}>
+        <td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ object.name }}"><strong>{{ object.name }}</strong></a>{% else %}<strong>{{ object.name }}</strong>{% endif %}</td>
+        <td data-label="Protocol">{% if object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        <td data-label="Hosts / ports"><span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span>{% if not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Waiting for deploy</span>{% endif %}</td>
+        {#
+          The nodes' own verdict on this object's servers, not a probe. An
+          unlit lamp is an object with no health check: HAProxy reports an
+          unchecked server as up, so a green one here would claim a
+          reachability nothing measured. Grey is a check nobody has reported
+          on yet - an object waiting for a deploy, or a node running an older
+          status script.
+        #}
+        <td data-label="Health">{% set lamp = lamps.get(object.name) if lamps else none %}{% if lamp %}<span class="pool-health" title="{{ lamp.detail }}"><span class="status-dot status-{{ lamp.tone }}" aria-hidden="true"></span>{{ lamp.label }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        <td data-label="Backends">{% if object.backend_count is not none %}{{ object.backend_count }}{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        <td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td>
+      </tr>
+{% endfor %}
+{#
+  And what this platform does not own. Here the frontend is the only thing there
+  is to show, so it is shown as itself.
+#}
+{% for proxy in foreign %}
+      <tr><td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ proxy.name }}"><strong>{{ proxy.name }}</strong></a>{% else %}<strong>{{ proxy.name }}</strong>{% endif %}{% if not proxy.enabled %}<small class="warning-text">Disabled</small>{% endif %}</td><td data-label="Protocol"><span class="protocol-badge protocol-{{ proxy.protocol }}">{{ proxy.protocol | upper }}</span></td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ proxy.hostnames | join(', ') if proxy.hostnames else 'No hostname rule' }} · {{ proxy.ports | join(', ') if proxy.ports else '—' }}</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Backends">{{ proxy.backend_count }}</td><td data-label="Ownership"><span class="ownership-badge ownership-unmanaged">Unmanaged</span></td></tr>
+{% endfor %}
+{% endmacro %}

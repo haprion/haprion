@@ -14,7 +14,7 @@ no longer say the same thing.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -458,3 +458,36 @@ def unmanaged_only(published: Iterable[ProxyView]) -> tuple[ProxyView, ...]:
     """
 
     return tuple(proxy for proxy in published if not proxy.managed)
+
+
+@dataclass(frozen=True, slots=True)
+class ProxyCounts:
+    """The three numbers above the table, counted from the table's own rows.
+
+    They were counted from published frontends and were wrong in both
+    directions. An https object that redirects plain HTTP is two frontends and
+    was counted twice; every object sharing one address goes through one
+    frontend and they were counted once between them. Neither is a number
+    anybody could check against the list below, which is the only thing a
+    summary is for.
+    """
+
+    published: int
+    managed: int
+    unmanaged: int
+
+
+def counted(
+    listed: Mapping[str, Sequence[ListedObject]], unmanaged: Mapping[str, Sequence[ProxyView]]
+) -> ProxyCounts:
+    """The summary for every cluster on the page.
+
+    `managed` is objects, not frontends: the work somebody wrote. `unmanaged` is
+    frontends, because for configuration this platform does not own the frontend
+    really is all there is. The total is the two added up, so the cards and the
+    rows agree.
+    """
+
+    managed = sum(len(objects) for objects in listed.values())
+    foreign = sum(len(proxies) for proxies in unmanaged.values())
+    return ProxyCounts(published=managed + foreign, managed=managed, unmanaged=foreign)

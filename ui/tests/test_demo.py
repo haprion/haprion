@@ -29,9 +29,7 @@ class DemoFixtureTests(unittest.TestCase):
         #
         self.assertEqual(dashboard.attention_clusters, 0)
         self.assertEqual(dashboard.behind_clusters, 1)
-        self.assertEqual(
-            (proxies.proxy_count, proxies.managed_count, proxies.unmanaged_count), (4, 2, 2)
-        )
+        self.assertEqual(tuple(len(cluster.proxies) for cluster in proxies.clusters), (2, 2))
 
     def test_the_version_fixture_shows_both_a_published_and_a_waiting_cluster(self) -> None:
         #

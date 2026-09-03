@@ -52,7 +52,11 @@
 </section>
 {% endif %}
 
-{% if result.document %}
+{#
+  Shown for the same reason the refusal is: it is the answer to a question
+  somebody asked. Before that it named a file whose object has no name yet.
+#}
+{% if submitted and result.document %}
 <section class="cluster-card result-card cluster-accent-{{ accent }}">
   <header class="cluster-header"><div class="cluster-identity"><div><h3>The object</h3><p>{% if unchanged %}Identical to what is stored as{% else %}What would be stored as{% endif %} <code>managed/proxies/{{ form.name }}.yaml</code></p></div></div></header>
   <pre class="config-block"><code>{{ result.document }}</code></pre>

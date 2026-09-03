@@ -6,8 +6,10 @@ host header, whether the pool is reached over TLS, and which address the object
 leaves from - and every one of them changes what the node should try. Building
 the request anywhere else would mean reading those fields twice.
 
-Nothing here reaches a node. It builds a request, hands it to the privileged
-helper, and reads what came back.
+Nothing here reaches a node, and nothing here is privileged. It builds a
+request, writes it to the socket the probe service answers on, and reads what
+came back. The privilege sits on the other end of that socket and stays there;
+this service could not sudo if it tried, which is deliberate.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from haproxy_mgmt.cli.probe import run_probe_helper
+from haproxy_mgmt.probe_socket import ProbeUnavailable, ask, build_request
 
 #
 # The same bound the helper and the node hold. Named here so a pool with more
@@ -157,11 +159,10 @@ def run(
 ) -> ProbeReport:
     """One probe, and a report that says plainly when it did not happen.
 
-    A missing sudoers rule, a helper that is not installed, a policy without a
-    probe identity: all of them arrive here as an answer that is not an
-    envelope, and all of them have to read as "the probe did not run" rather
-    than as a pool that failed. The two look the same to a reader who is only
-    shown a red mark.
+    A socket nothing is listening on, an account not in its group, a policy
+    without a probe identity: all of them have to read as "the probe did not
+    run" rather than as a pool that failed. The two look the same to a reader
+    who is only shown a red mark, so each says which it was.
     """
 
     targets = targets_from(form)
@@ -170,22 +171,27 @@ def run(
             ran=False, source="", nodes=(), problem="This pool names no server to check."
         )
 
-    caller = call if call is not None else run_probe_helper
-    completed = caller(
+    request = build_request(
         cluster,
         str(uuid4()),
         targets,
         source=source_address(form, choices),
     )
-    if not (completed.stdout or "").strip():
+    caller = call if call is not None else ask
+    try:
+        answer = caller(request)
+    except ProbeUnavailable as unavailable:
+        return ProbeReport(ran=False, source="", nodes=(), problem=str(unavailable))
+
+    if not answer.strip():
         return ProbeReport(
             ran=False,
             source="",
             nodes=(),
-            problem="The probe could not be run here. It needs the probe helper and its sudo rule.",
+            problem="The probe service answered with nothing at all.",
         )
     try:
-        payload = json.loads(completed.stdout)
+        payload = json.loads(answer)
     except ValueError:
         return ProbeReport(
             ran=False, source="", nodes=(), problem="The probe helper did not answer with JSON."

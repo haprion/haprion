@@ -22,6 +22,7 @@ from typing import Any, TextIO
 
 from haproxy_mgmt.cli.caller import usage
 from haproxy_mgmt.envelope import new_request_id
+from haproxy_mgmt.probe_socket import build_request
 
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-probe-helper"
 SUDO = "/usr/bin/sudo"
@@ -48,18 +49,13 @@ def run_probe_helper(
 ) -> subprocess.CompletedProcess[str]:
     """Ask the privileged helper to probe one cluster's pool.
 
-    Public because the interface calls it too, and for the same reason the
-    status caller is: two constructions of one request are two things to keep in
-    step, and each looks correct on its own until they differ.
+    Through sudo, because a person running this command has a terminal and a
+    `%sudo` rule. The interface reaches the same helper over a socket instead -
+    its account is built so that it cannot gain privilege at all - but both
+    build the request in `build_request`, so the two cannot drift apart.
     """
 
-    request = {
-        "schema_version": 1,
-        "operation": OPERATION,
-        "cluster": cluster_id,
-        "request_id": request_id,
-        "parameters": {"targets": targets, "source": source, "timeout_ms": timeout_ms},
-    }
+    request = build_request(cluster_id, request_id, targets, source=source, timeout_ms=timeout_ms)
     return subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
         [SUDO, "-n", HELPER],
         input=json.dumps(request, separators=(",", ":")),

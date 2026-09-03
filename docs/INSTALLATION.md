@@ -1392,6 +1392,47 @@ This too is below the writes check. With writes off nothing moves at all,
 including a job somebody would rather see moved — which is what makes the flag a
 rollback rather than a pause.
 
+#### The web service, and why it has no sudoers rule at all
+
+The web service asks the nodes exactly one thing: try this health check. Nothing
+else it does reaches outside the database.
+
+That one thing needs root, because the probe identity's key is root-owned — no
+application account may hold a key that reaches a node. The obvious way to grant
+it would be a sudoers rule, one exact no-argument helper, the way the poller's
+seven are granted. **That does not work here, and it is worth knowing why before
+somebody writes the rule again.**
+
+The web unit carries `NoNewPrivileges=yes`, an empty `CapabilityBoundingSet=`
+and `RestrictSUIDSGID=yes`. Under `NoNewPrivileges` the kernel ignores the setuid
+bit, so `sudo` fails *before it reads `/etc/sudoers.d/`* — it fails however the
+rule is written, and the rule then sits on disk saying this account may become
+root while granting nothing at all. The poller solves the same problem by
+relaxing its own sandbox (`NoNewPrivileges=no`, a capability set that permits
+changing uid); doing that to the web service would trade the one boundary most
+worth keeping for a button.
+
+So the privilege stays still and the request travels instead:
+
+```
+/run/haproxy-mgmt/probe.sock   root:<web> 0660, created by haproxy-probe-helper.socket
+haproxy-probe-helper@.service  runs the helper as root, one instance per connection
+```
+
+The web service opens the socket, writes one JSON request, closes its write side,
+and reads one JSON answer. The far end takes no arguments and does exactly one
+thing, so reaching it is worth no more than the sudo rule would have been — and
+the web account keeps a sandbox in which nothing it runs can gain privilege.
+
+`haproxy-probe` on the command line still goes through `sudo`, because a person
+running it has a terminal and a `%sudo` rule. Both build the request with the
+same function, so the two paths cannot come to describe the same probe
+differently.
+
+**A development platform must not get this socket.** It reaches the real nodes.
+`PROBE_SOCKET=no` in its answers file is the default, and its interface then says
+the probe is unavailable rather than showing an empty result.
+
 #### Which clusters get polled
 
 `clusters` in `ui.toml`, because the application accounts cannot read the

@@ -4,16 +4,17 @@ Everything here is about the mapping. What a check would do lives across half a
 dozen fields, and each one changes what a node should try - so the request is
 built once, from the form, and these tests are what say it was built right.
 
-The other half is what happens when the probe cannot run at all. A missing sudo
-rule and a pool that is down must not look the same on the page, so they are
-kept apart here first.
+The other half is what happens when the probe cannot run at all. A socket
+nothing answers on and a pool that is down must not look the same on the page,
+so they are kept apart here first.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
 import unittest
+
+from haproxy_mgmt.probe_socket import ProbeUnavailable
 
 from haproxy_ui.probe import MAX_TARGETS, run, source_address, targets_from
 
@@ -40,9 +41,7 @@ CHOICES = {
 }
 
 
-def answered(
-    nodes: list[dict[str, object]], error: object = None
-) -> subprocess.CompletedProcess[str]:
+def answered(nodes: list[dict[str, object]], error: object = None) -> str:
     payload = {
         "schema_version": 1,
         "ok": error is None,
@@ -54,9 +53,7 @@ def answered(
         "warnings": [],
         "error": error,
     }
-    return subprocess.CompletedProcess(
-        args=["sudo"], returncode=0, stdout=json.dumps(payload), stderr=""
-    )
+    return json.dumps(payload)
 
 
 class WhatTheNodesAreAskedToTry(unittest.TestCase):
@@ -110,8 +107,8 @@ class WhichAddressTheProbeLeavesFrom(unittest.TestCase):
 
 
 class WhatThePageIsToldAfterwards(unittest.TestCase):
-    def report(self, completed: subprocess.CompletedProcess[str], **fields: object):
-        return run("alpha", form(**fields), CHOICES, call=lambda *a, **k: completed)
+    def report(self, answer: str, **fields: object):
+        return run("alpha", form(**fields), CHOICES, call=lambda *a, **k: answer)
 
     def test_a_probe_that_ran_carries_every_node_s_answer(self) -> None:
         report = self.report(
@@ -149,16 +146,21 @@ class WhatThePageIsToldAfterwards(unittest.TestCase):
         self.assertEqual(report.failing, 1)
         self.assertFalse(report.nodes[1].reachable)
 
-    def test_a_helper_that_could_not_run_is_not_a_pool_that_failed(self) -> None:
+    def test_a_service_that_is_not_there_is_not_a_pool_that_failed(self) -> None:
         """The distinction the page depends on: nothing was tried."""
 
-        silent = subprocess.CompletedProcess(
-            args=["sudo"], returncode=1, stdout="", stderr="sudo: a password is required"
-        )
-        report = self.report(silent)
+        def refuse(*_args: object, **_fields: object) -> str:
+            raise ProbeUnavailable("The probe service is not running here.")
+
+        report = run("alpha", form(), CHOICES, call=refuse)
         self.assertFalse(report.ran)
         self.assertEqual(report.nodes, ())
-        self.assertIn("sudo", str(report.problem))
+        self.assertIn("not running", str(report.problem))
+
+    def test_an_answer_of_nothing_at_all_is_reported_as_such(self) -> None:
+        report = self.report("")
+        self.assertFalse(report.ran)
+        self.assertIn("nothing at all", str(report.problem))
 
     def test_a_refusal_from_the_helper_is_shown_in_its_own_words(self) -> None:
         report = self.report(

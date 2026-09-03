@@ -5,20 +5,28 @@ so the cases here are mostly refusals: what it will not send to a node, and what
 it does when the nodes cannot answer. The node validates the same fields again,
 and that is not redundant - this check protects a node from this manager, and
 the node's protects it from whoever holds the key.
+
+The last class is a different question: not what the helper decides, but whether
+the interface can reach it at all. That is the half that was written on an
+assumption once and found to be impossible on the machine, so it is proved here
+over a real socket rather than reasoned about.
 """
 
 from __future__ import annotations
 
 import io
 import json
+import socket
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
 import yaml
 
 from haproxy_mgmt.cli import probe_helper
+from haproxy_mgmt.probe_socket import ask, build_request
 
 BASE = Path(__file__).resolve().parents[1]
 
@@ -248,3 +256,75 @@ class WhatTheHelperWillNotBeCalledAs(HelperFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HowTheInterfaceReachesIt(HelperFixture):
+    """The helper behind a socket, asked by the client the interface uses.
+
+    The web service cannot sudo - its unit forbids gaining privilege at all -
+    so the request travels to the privilege instead. Both halves of that are
+    exercised here: the client half-closes its write side, and the helper reads
+    stdin to end of file and answers on the same connection. Each looked right
+    on its own before; what had never been run was the pair.
+    """
+
+    def serve_one(self, path: str) -> threading.Thread:
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(path)
+        listener.listen(1)
+        self.addCleanup(listener.close)
+
+        def answer_one() -> None:
+            connection, _ = listener.accept()
+            with connection, connection.makefile("rb") as reader:
+                writer = io.StringIO()
+                probe_helper.main(
+                    [],
+                    policy_path=self.policy,
+                    input_stream=reader,
+                    output_stream=writer,
+                    error_stream=io.StringIO(),
+                    require_secure=False,
+                    require_root=False,
+                    ask=lambda node, identity, body: answer(
+                        [
+                            {
+                                "host": "198.51.100.10",
+                                "port": 8080,
+                                "ok": True,
+                                "status": None,
+                                "error": None,
+                                "ms": 3,
+                            }
+                        ]
+                    ),
+                )
+                connection.sendall(writer.getvalue().encode())
+
+        thread = threading.Thread(target=answer_one, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        return thread
+
+    def test_a_request_written_to_the_socket_comes_back_as_an_envelope(self) -> None:
+        path = str(self.root / "probe.sock")
+        self.serve_one(path)
+
+        envelope = json.loads(
+            ask(
+                build_request(
+                    "alpha",
+                    "3f1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f",
+                    [{"host": "198.51.100.10", "port": 8080, "type": "tcp"}],
+                    source="192.0.2.25",
+                ),
+                path=path,
+                timeout=10,
+            )
+        )
+
+        self.assertTrue(envelope["ok"])
+        self.assertEqual(envelope["operation"], "probe")
+        self.assertEqual(envelope["cluster"], "alpha")
+        self.assertEqual(envelope["result"]["source"], "192.0.2.25")
+        self.assertEqual(len(envelope["result"]["nodes"]), len(self.nodes))

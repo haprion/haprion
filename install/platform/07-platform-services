@@ -58,22 +58,45 @@ install -o root -g root -m 440 "$sudoers_staging" "/etc/sudoers.d/${sudoers_name
 rm -f "$sudoers_staging"
 log "  installed /etc/sudoers.d/${sudoers_name}  (visudo accepted it)"
 
-step "The web service's one privilege"
+step "The web service's way to the probe"
 #
-# One rule, in its own file named after the account: the probe helper, so the
-# editor can ask a node to try a health check while somebody is looking at the
-# form. Its own file rather than a line in the poller's, because the two
-# accounts are separate identities and a shared file is a shared decision.
+# Not a sudoers rule. The web unit carries NoNewPrivileges=yes, an empty
+# capability bounding set and RestrictSUIDSGID=yes, so a setuid sudo there does
+# not fail for want of a rule - it fails before it reads sudoers, and it fails
+# however the rule is written. A rule installed for that account would grant
+# nothing and would read as though the web service could escalate.
 #
-sudoers_staging="$(mktemp)"
-sed "s|WEB_USER|${WEB_USER}|g" examples/haproxy-ui-web.sudoers.example > "$sudoers_staging"
-if ! visudo -cqf "$sudoers_staging"; then
-    rm -f "$sudoers_staging"
-    die "the rendered web sudoers rule does not parse; nothing was installed"
+# So the privilege stays still and the request travels: a root-owned socket,
+# group this account, answered by a short-lived instance of the helper that
+# takes no arguments and does one thing.
+#
+# Off unless the answers file asks for it. Handing this socket to a development
+# platform's web account would give it the real nodes, which is the one thing
+# that platform is built not to have.
+#
+if [[ "${PROBE_SOCKET:-no}" == "yes" ]]; then
+    install_file "/etc/systemd/system/haproxy-probe-helper@.service" root:root 644 \
+        "$(cat 'examples/haproxy-probe-helper@.service.example')"
+    install_file "/etc/systemd/system/haproxy-probe-helper.socket" root:root 644 \
+        "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haproxy-probe-helper.socket.example)"
+    systemctl daemon-reload
+    systemctl enable --quiet haproxy-probe-helper.socket
+    systemctl restart haproxy-probe-helper.socket
+    systemctl is-active --quiet haproxy-probe-helper.socket \
+        || die "haproxy-probe-helper.socket did not start"
+    log "  listening on /run/haproxy-mgmt/probe.sock  (group ${WEB_USER})"
+else
+    log "  skipped: PROBE_SOCKET is not yes, so this platform cannot probe"
 fi
-install -o root -g root -m 440 "$sudoers_staging" "/etc/sudoers.d/${WEB_USER}"
-rm -f "$sudoers_staging"
-log "  installed /etc/sudoers.d/${WEB_USER}  (visudo accepted it)"
+
+#
+# A rule from before the socket existed is worse than no rule: it cannot work,
+# and it says in /etc/sudoers.d that this account may become root.
+#
+if [[ -f "/etc/sudoers.d/${WEB_USER}" ]]; then
+    rm -f "/etc/sudoers.d/${WEB_USER}"
+    log "  removed /etc/sudoers.d/${WEB_USER}  (a sudo rule this account cannot use)"
+fi
 
 #
 # Taken before anything is restarted, and read from the database rather than

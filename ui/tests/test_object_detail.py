@@ -263,6 +263,7 @@ class WhetherTheChangeReachedTheNodes(unittest.TestCase):
             configured=True,
             label="",
             tone="healthy",
+            behind=False,
             detail="",
             observed_at=NOW,
             observed_iso=NOW.isoformat(),

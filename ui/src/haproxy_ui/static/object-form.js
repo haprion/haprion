@@ -67,9 +67,42 @@
     apply();
   };
 
+  //
+  // Where the reader was. Every button on this form posts and the answer is a
+  // new page, so the browser starts at the top - and the thing that changed is
+  // usually the part they were looking at when they pressed it. The position is
+  // remembered for this URL only, and consumed once, so a fresh visit or a
+  // second tab still opens at the top.
+  //
+  const POSITION = "object-form-scroll";
+
+  const keepPosition = () => {
+    const form = document.querySelector("form.preview-form");
+    if (!form) return;
+
+    form.addEventListener("submit", () => {
+      try {
+        sessionStorage.setItem(POSITION, String(window.scrollY));
+      } catch (error) {
+        // A browser that refuses storage still gets a working form.
+      }
+    });
+
+    try {
+      const saved = sessionStorage.getItem(POSITION);
+      sessionStorage.removeItem(POSITION);
+      if (saved !== null && Number.isFinite(Number(saved))) {
+        window.scrollTo(0, Number(saved));
+      }
+    } catch (error) {
+      // As above.
+    }
+  };
+
   window.addEventListener("DOMContentLoaded", () => {
     wire();
     wireBalanceKey();
     wireRedirectStatus();
+    keepPosition();
   });
 })();

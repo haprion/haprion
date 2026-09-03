@@ -22,7 +22,13 @@ class DemoFixtureTests(unittest.TestCase):
             demo.CLUSTERS, demo.inventory_rows(NOW), now=NOW, stale_after=timedelta(minutes=2)
         )
         self.assertEqual(len(dashboard.clusters), 2)
-        self.assertEqual(dashboard.attention_clusters, 1)
+        #
+        # The second cluster is behind, which the fixture exists to show - and
+        # being behind is not something to investigate, so it is counted there
+        # and not here.
+        #
+        self.assertEqual(dashboard.attention_clusters, 0)
+        self.assertEqual(dashboard.behind_clusters, 1)
         self.assertEqual(
             (proxies.proxy_count, proxies.managed_count, proxies.unmanaged_count), (4, 2, 2)
         )

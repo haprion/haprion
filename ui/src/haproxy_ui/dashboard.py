@@ -41,6 +41,13 @@ class ClusterView:
     configured: bool
     label: str
     tone: Tone
+    #
+    # Behind, and nothing worse. Kept beside the tone rather than folded into
+    # it: the badge should still be amber, because a deploy is outstanding, but
+    # the counters must not report an outstanding deploy as a cluster in
+    # trouble.
+    #
+    behind: bool
     detail: str
     observed_at: datetime | None
     observed_iso: str | None
@@ -58,11 +65,20 @@ class ClusterView:
 class DashboardView:
     clusters: tuple[ClusterView, ...]
     healthy_clusters: int
+    behind_clusters: int
     attention_clusters: int
     online_nodes: int
     total_nodes: int
     active_vips: int
     converged_clusters: int
+
+
+#
+# The one label for "the nodes are not running the published release". Named
+# rather than written twice, because the counters below decide what to exclude
+# by comparing against it.
+#
+BEHIND = "Not on the latest version"
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -225,6 +241,7 @@ def _empty_cluster(cluster: str, *, configured: bool) -> ClusterView:
         configured=configured,
         label="No data",
         tone="unknown",
+        behind=False,
         detail="Waiting for the first status collection",
         observed_at=None,
         observed_iso=None,
@@ -307,7 +324,7 @@ def _cluster_view(
         #
         if all(node.current is False for node in warned):
             label, tone, detail = (
-                "Not on the latest version",
+                BEHIND,
                 "warning",
                 f"{len(warned)} node(s) are not running the published release",
             )
@@ -318,11 +335,7 @@ def _cluster_view(
                 f"{len(warned)} node(s) report a warning",
             )
     elif release_state != "converged":
-        label, tone, detail = (
-            "Not on the latest version",
-            "warning",
-            "Nodes are not on one target release",
-        )
+        label, tone, detail = BEHIND, "warning", "Nodes are not on one target release"
     else:
         label, tone, detail = "Healthy", "healthy", "All nodes are serving on the target release"
 
@@ -337,6 +350,7 @@ def _cluster_view(
     return ClusterView(
         cluster=reading.cluster,
         accent=accent_index(reading.cluster),
+        behind=label == BEHIND,
         configured=configured,
         label=label,
         tone=tone,
@@ -392,8 +406,15 @@ def build_dashboard(
     return DashboardView(
         clusters=clusters,
         healthy_clusters=sum(cluster.tone == "healthy" for cluster in configured_views),
+        behind_clusters=sum(cluster.behind for cluster in configured_views),
+        #
+        # A cluster that is only behind is not counted here. An undeployed
+        # release is a thing to finish, not a thing to investigate, and a
+        # counter that cannot tell them apart makes both easy to ignore.
+        #
         attention_clusters=sum(
-            cluster.tone in {"critical", "warning"} for cluster in configured_views
+            cluster.tone in {"critical", "warning"} and not cluster.behind
+            for cluster in configured_views
         ),
         online_nodes=sum(
             node.tone in {"healthy", "warning"}

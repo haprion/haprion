@@ -181,30 +181,44 @@ class ARemovalIsStillServedUntilItIsDeployed(LoginTestCase):
             attempts=1,
         )
 
-    def status(self, release_state: str) -> ClusterStatus:
+    def status(self, *backends: str) -> ClusterStatus:
+        """What the nodes report, which is what decides whether a row stays."""
+
         return ClusterStatus(
             cluster="alpha",
             observed_at=OBSERVED,
             outcome="done",
-            result={"summary": {"release_state": release_state}},
+            result={
+                "nodes": [
+                    {
+                        "node": "node-a",
+                        "status": {
+                            "servers": [
+                                {"backend": f"mgd-{name}-web", "server": "s1", "status": "UP"}
+                                for name in backends
+                            ]
+                        },
+                    }
+                ]
+            },
             warnings=[],
             error=None,
             poll_error=None,
         )
 
-    def listing(self, jobs: list[Job], release_state: str) -> str:
+    def listing(self, jobs: list[Job], *backends: str) -> str:
         client = self.client(replace(configuration(), clusters=("alpha",)))
         self.sign_in(client)
         with (
             mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects_reading("shop")]),
             mock.patch("haproxy_ui.db.cluster_inventories", return_value=[inventory("shop")]),
             mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[self.status(release_state)]),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[self.status(*backends)]),
         ):
             return client.get("/proxies").text
 
-    def test_a_removed_object_stays_listed_until_the_nodes_are_deployed(self) -> None:
-        body = self.listing([self.job("gone")], "behind")
+    def test_a_removed_object_stays_listed_while_a_node_still_serves_it(self) -> None:
+        body = self.listing([self.job("gone")], "shop", "gone")
 
         self.assertIn("gone", body)
         self.assertIn("Active · deploy to remove", body)
@@ -214,18 +228,28 @@ class ARemovalIsStillServedUntilItIsDeployed(LoginTestCase):
         #
         self.assertNotIn("Removed · waiting for deploy", body)
 
-    def test_it_is_gone_from_the_page_once_the_cluster_is_converged(self) -> None:
-        body = self.listing([self.job("gone")], "converged")
+    def test_it_leaves_the_page_when_the_nodes_stop_reporting_it(self) -> None:
+        body = self.listing([self.job("gone")], "shop")
 
         self.assertNotIn("Active · deploy to remove", body)
 
+    def test_a_removal_the_nodes_never_served_never_appears(self) -> None:
+        #
+        # An object published and removed without a deploy in between. Asking
+        # the jobs alone listed it for as long as the cluster was behind, which
+        # on a cluster nobody had deployed was for ever.
+        #
+        body = self.listing([self.job("never-deployed")], "shop")
+
+        self.assertNotIn("never-deployed", body)
+
     def test_a_publish_that_carried_a_document_put_it_there_rather_than_took_it_away(self) -> None:
-        body = self.listing([self.job("gone", document="schema: 1\n")], "behind")
+        body = self.listing([self.job("gone", document="schema: 1\n")], "shop", "gone")
 
         self.assertNotIn("Active · deploy to remove", body)
 
     def test_an_unfinished_removal_is_not_one_yet(self) -> None:
-        body = self.listing([self.job("gone", state="running")], "behind")
+        body = self.listing([self.job("gone", state="running")], "shop", "gone")
 
         self.assertNotIn("Active · deploy to remove", body)
 
@@ -235,7 +259,7 @@ class ARemovalIsStillServedUntilItIsDeployed(LoginTestCase):
         # it is an ordinary row - naming it twice would be a page arguing with
         # itself.
         #
-        body = self.listing([self.job("shop")], "behind")
+        body = self.listing([self.job("shop")], "shop")
 
         self.assertNotIn("Active · deploy to remove", body)
 
@@ -269,11 +293,24 @@ class TheTwoDeployBadgesAreAPair(LoginTestCase):
             idempotency_key=uuid4(),
             attempts=1,
         )
+        #
+        # The node still has the removed object and does not have the new one:
+        # one row each way, in one listing.
+        #
         behind = ClusterStatus(
             cluster="alpha",
             observed_at=OBSERVED,
             outcome="done",
-            result={"summary": {"release_state": "behind"}},
+            result={
+                "nodes": [
+                    {
+                        "node": "node-a",
+                        "status": {
+                            "servers": [{"backend": "mgd-gone-web", "server": "s1", "status": "UP"}]
+                        },
+                    }
+                ]
+            },
             warnings=[],
             error=None,
             poll_error=None,

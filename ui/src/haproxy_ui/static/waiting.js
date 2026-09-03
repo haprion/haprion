@@ -50,9 +50,48 @@
   // drawing one of these there is nothing left to wait for, and the asking
   // stops with it.
   //
+  //
+  // When each cluster on this page was last read. A job finishing and the
+  // poller seeing what it did are two moments, and only the first is a job -
+  // so a page reloaded on the job alone shows the deploy's buttons back and
+  // every number beside them still describing the release before it.
+  //
+  const drawnObserved = () =>
+    new Map(
+      Array.from(document.querySelectorAll("[data-observed]"), (el) => [
+        el.dataset.observed,
+        el.dataset.observed,
+      ]),
+    );
+
+  //
+  // Set when a job finishes, cleared when the reading that followed it arrives.
+  // Without it the page would stop asking the moment the spinner went, which is
+  // one poll too early.
+  //
+  const WATCH = "waiting-observe";
+
+  const watching = () => {
+    try {
+      return sessionStorage.getItem(WATCH) === "1";
+    } catch (error) {
+      return false;
+    }
+  };
+
+  const watch = (on) => {
+    try {
+      if (on) sessionStorage.setItem(WATCH, "1");
+      else sessionStorage.removeItem(WATCH);
+    } catch (error) {
+      // A browser that refuses storage simply stops at the spinner, as before.
+    }
+  };
+
   const pending = () =>
     document.querySelectorAll("tr.proxy-draft, tr.proxy-waiting").length > 0 ||
-    drawnBusy().size > 0;
+    drawnBusy().size > 0 ||
+    watching();
 
   const apply = (payload) => {
     const clusters = payload && payload.clusters ? payload.clusters : {};
@@ -104,7 +143,26 @@
         const busy = new Set(Object.keys(payload.busy || {}));
         const drawn = drawnBusy();
         const same = busy.size === drawn.size && Array.from(drawn).every((one) => busy.has(one));
-        if (!same) window.location.reload();
+        if (!same) {
+          //
+          // A job started or finished. The page is redrawn, and it keeps
+          // asking afterwards: what the job did is not on the screen until the
+          // poller has read the nodes again.
+          //
+          watch(true);
+          window.location.reload();
+          return;
+        }
+        if (!watching()) return;
+        const readings = payload.observed || {};
+        const drawnReadings = drawnObserved();
+        const moved = Object.keys(readings).some(
+          (cluster) => readings[cluster] && !drawnReadings.has(readings[cluster]),
+        );
+        if (moved) {
+          watch(false);
+          window.location.reload();
+        }
       })
       .catch(() => {
         //

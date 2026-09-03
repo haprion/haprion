@@ -44,7 +44,7 @@
 
 <div class="cluster-list">
   {% for cluster in dashboard.clusters %}
-  <article class="cluster-card cluster-accent-{{ cluster.accent }}">
+  <article class="cluster-card cluster-accent-{{ cluster.accent }}" data-observed="{{ cluster.observed_iso or '' }}">
     <header class="cluster-header">
       <div class="cluster-identity">
         <span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span>

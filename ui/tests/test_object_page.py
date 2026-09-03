@@ -203,9 +203,9 @@ class TheOverviewOrdering(LoginTestCase):
         self.assertIn("Inactive · deploy to add", row)
         self.assertIn("ownership-managed", row)
 
-    def test_the_state_shares_the_line_with_the_hosts(self) -> None:
-        """`.proxy-hosts` is a block elsewhere, which put the badge on its own
-        line and made one row look like two."""
+    def test_the_state_takes_the_cell_rather_than_crowding_it(self) -> None:
+        """A badge beside the hostnames was a second thing in a column sized for
+        one, and on a narrow screen it ran into the column after it."""
 
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)
@@ -213,8 +213,22 @@ class TheOverviewOrdering(LoginTestCase):
         text = client.get("/proxies").text
         cell = text.split('data-label="Hosts / ports"', 1)[1].split("</td>", 1)[0]
 
-        self.assertIn("shop.demo.example", cell)
         self.assertIn("Inactive · deploy to add", cell)
+        self.assertNotIn("shop.demo.example", cell)
+
+    def test_a_row_with_nothing_to_report_shows_its_hosts(self) -> None:
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+
+        text = client.get("/proxies").text
+        serving = [
+            cell.split("</td>", 1)[0]
+            for cell in text.split('data-label="Hosts / ports"')[1:]
+            if "waiting-badge" not in cell.split("</td>", 1)[0]
+        ]
+
+        self.assertTrue(serving, "every row is reporting something")
+        self.assertTrue(any("example" in cell for cell in serving))
 
 
 class WhoMayRead(LoginTestCase):

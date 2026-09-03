@@ -444,30 +444,15 @@ def unmanaged_only(published: Iterable[ProxyView]) -> tuple[ProxyView, ...]:
     return tuple(proxy for proxy in published if not proxy.managed)
 
 
-def removed_awaiting_deploy(
-    jobs: Iterable[Job], listed: Iterable[ListedObject], *, converged: bool
-) -> tuple[str, ...]:
-    """Objects a finished removal took out of the repository, still being served.
+def removed_names(jobs: Iterable[Job]) -> tuple[str, ...]:
+    """Every object a finished publish asked to remove.
 
-    A removal is a publish: the object leaves the repository, and the nodes go
-    on serving the release they have until somebody deploys. So between the two
-    the interface had nothing to show - the object was gone from the objects
-    cache, and a managed frontend with no object behind it is listed nowhere -
-    and a site that was still answering had vanished from the page that lists
-    what is being served.
-
-    That is the one direction this must not fail in. A row too many says "this
-    is on its way out"; a row too few says a site is gone while it is up.
-
-    Named from the job rather than from the repository, because the repository
-    is precisely where it no longer is. It stops being shown when the cluster
-    reports itself converged, which is the moment the nodes stopped serving it.
+    Candidates, not an answer: the repository is where these no longer are, so
+    the job is the only place their names survive. Whether one is still being
+    served is the nodes' to say.
     """
 
-    if converged:
-        return ()
-    present = {listing.name for listing in listed}
-    removed = []
+    names: list[str] = []
     for job in jobs:
         if job.operation != "objects_publish" or job.state != "done":
             continue
@@ -475,14 +460,33 @@ def removed_awaiting_deploy(
         asked = payload.get("objects")
         if not isinstance(asked, Mapping):
             continue
-        for name, document in asked.items():
-            #
-            # `None` is what asks for a removal. A publish that carried a
-            # document put the object there rather than taking it away.
-            #
-            if document is None and isinstance(name, str) and name not in present:
-                removed.append(name)
-    return tuple(sorted(set(removed)))
+        names.extend(
+            name for name, document in asked.items() if document is None and isinstance(name, str)
+        )
+    return tuple(sorted(set(names)))
+
+
+def removed_awaiting_deploy(
+    jobs: Iterable[Job], listed: Iterable[ListedObject], served: Collection[str]
+) -> tuple[str, ...]:
+    """Objects a removal took out of the repository that the nodes still serve.
+
+    A removal is a publish: the object leaves the repository, and the nodes go
+    on serving the release they have until somebody deploys. Between the two the
+    interface had nothing to show - the object was gone from the objects cache,
+    and a managed frontend with no object behind it is listed nowhere - so a
+    site that was still answering had vanished from the page that lists what is
+    being served.
+
+    The jobs say which names to *ask* about; the nodes say whether the answer is
+    yes. That division matters: the first version asked only the jobs, and
+    listed every removal in the last twenty as long as the cluster was not
+    converged - so an object removed weeks ago, or one removed before it had
+    ever been deployed, stayed on the page for ever.
+    """
+
+    present = {listing.name for listing in listed}
+    return tuple(name for name in removed_names(jobs) if name not in present and name in served)
 
 
 @dataclass(frozen=True, slots=True)

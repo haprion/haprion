@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
+from haproxy_ui.db import ClusterStatus
 from tests.test_certificates import reading as certificate_reading
 from tests.test_history import reading as history_reading
 from tests.test_job_page import job
@@ -117,12 +119,12 @@ class TheBusyStateIsAlsoAvailableAsData(LoginTestCase):
         answer = self.busy([job(state="running", operation="deploy", cluster="alpha")])
 
         self.assertEqual(answer.status_code, 200)
-        self.assertEqual(answer.json(), {"busy": {"alpha": "Deploying"}})
+        self.assertEqual(answer.json()["busy"], {"alpha": "Deploying"})
 
     def test_a_finished_job_leaves_nothing_busy(self) -> None:
         answer = self.busy([job(state="done", operation="deploy", cluster="alpha")])
 
-        self.assertEqual(answer.json(), {"busy": {}})
+        self.assertEqual(answer.json()["busy"], {})
 
     def test_it_is_not_served_to_somebody_who_is_not_signed_in(self) -> None:
         client = self.client(replace(configuration(), clusters=("alpha",)))
@@ -144,3 +146,54 @@ class TheBusyStateIsAlsoAvailableAsData(LoginTestCase):
     PAGES = EveryPageThatDeploysSaysTheClusterIsBusy.PAGES
     reading_for = EveryPageThatDeploysSaysTheClusterIsBusy.reading_for
     page = EveryPageThatDeploysSaysTheClusterIsBusy.page
+
+
+class WhenTheReadingCatchesUp(LoginTestCase):
+    """A job finishing and the poller seeing what it did are two moments.
+
+    Only the first is a job. A page reloaded on that alone has the buttons back
+    and every number beside them still describing the release before the
+    deploy - which is the state somebody reads as "it did not work".
+    """
+
+    def answer(self, statuses: list) -> Any:
+        client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
+        self.sign_in(client)
+        with (
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=statuses),
+        ):
+            return client.get("/clusters/busy").json()
+
+    def status(self, observed: datetime | None) -> ClusterStatus:
+        return ClusterStatus(
+            cluster="alpha",
+            observed_at=observed,
+            outcome="done",
+            result={},
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+
+    def test_it_says_when_each_cluster_was_last_read(self) -> None:
+        moment = datetime(2026, 9, 3, 21, 0, tzinfo=UTC)
+
+        self.assertEqual(
+            self.answer([self.status(moment)])["observed"], {"alpha": moment.isoformat()}
+        )
+
+    def test_a_cluster_never_read_names_no_moment(self) -> None:
+        self.assertEqual(self.answer([self.status(None)])["observed"], {})
+
+    def test_the_cards_carry_the_reading_they_were_drawn_from(self) -> None:
+        #
+        # The comparison is against what is on the screen, so the screen has to
+        # say what it was drawn from.
+        #
+        for path, source, _ in EveryPageThatDeploysSaysTheClusterIsBusy.PAGES:
+            with self.subTest(page=path):
+                page = EveryPageThatDeploysSaysTheClusterIsBusy.page(self, path, source, [])
+                self.assertIn("data-observed=", page.text)
+
+    reading_for = EveryPageThatDeploysSaysTheClusterIsBusy.reading_for

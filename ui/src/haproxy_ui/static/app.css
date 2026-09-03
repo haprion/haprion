@@ -565,7 +565,10 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * normal, then a gap, then the state - one line, as everywhere else.
  */
 .proxy-waiting .proxy-hosts { display: inline; }
-.waiting-badge { margin-left: 18px; vertical-align: middle; }
+/* A badge that stands in a cell of its own rather than beside a value. It
+   used to sit after the hostnames, in a column sized for one thing, and ran
+   into the column after it. */
+.waiting-badge { vertical-align: middle; white-space: nowrap; }
 
 /*
  * A publish is a job, so there is a stretch between the click and the row where

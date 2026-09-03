@@ -477,9 +477,25 @@ def build_router(config: Config) -> APIRouter:
         #
         _, health_rows, _ = read_source(request, config, STATUS_SOURCE)
         listed = {}
+        served: dict[str, frozenset[str]] = {}
+        with request.app.state.pool.connection() as connection:
+            #
+            # Names a finished removal took away, asked about beside the ones
+            # still in the repository. The nodes can only answer about a name
+            # somebody names, and these are precisely the names the repository
+            # no longer has.
+            #
+            gone = {
+                view.cluster: objects.removed_names(
+                    db.recent_jobs(connection, cluster=view.cluster)
+                )
+                for view in overview.clusters
+            }
         for view in overview.clusters:
             names = [obj.name for obj in objects.cluster_object_views(rows.get(view.cluster))]
-            reported = health.served_objects(health_rows, cluster=view.cluster, names=names)
+            served[view.cluster] = health.served_objects(
+                health_rows, cluster=view.cluster, names=[*names, *gone[view.cluster]]
+            )
             listed[view.cluster] = objects.listed_objects(
                 rows.get(view.cluster),
                 view.proxies,
@@ -487,7 +503,7 @@ def build_router(config: Config) -> APIRouter:
                 # `None` where no node said anything, so the hostname match
                 # answers instead. Silence is not "nothing is served".
                 #
-                served=reported if _nodes_reported(health_rows, view.cluster) else None,
+                served=served[view.cluster] if _nodes_reported(health_rows, view.cluster) else None,
             )
         #
         # What is left of the published inventory once the managed frontends are
@@ -570,12 +586,11 @@ def build_router(config: Config) -> APIRouter:
             # still answering - and until this the listing showed neither,
             # which is the one direction it must not fail in.
             #
-            behind = jobs.awaiting_deployment(db.cluster_statuses(connection))
             removed = {
                 view.cluster: objects.removed_awaiting_deploy(
                     db.recent_jobs(connection, cluster=view.cluster),
                     listed[view.cluster],
-                    converged=view.cluster not in behind,
+                    served[view.cluster],
                 )
                 for view in overview.clusters
             }
@@ -620,7 +635,19 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return JSONResponse({"detail": "not signed in"}, status_code=401)
         with request.app.state.pool.connection() as connection:
-            return JSONResponse({"busy": jobs.in_flight(db.recent_jobs(connection))})
+            busy = jobs.in_flight(db.recent_jobs(connection))
+            #
+            # And when each cluster was last read. A job finishing is not the
+            # same moment as the poller seeing what it did, so a page that
+            # reloaded on the first still showed the reading from before the
+            # deploy: the spinner gone, and every number beside it stale.
+            #
+            observed = {
+                status.cluster: status.observed_at.isoformat()
+                for status in db.cluster_statuses(connection)
+                if status.observed_at is not None
+            }
+        return JSONResponse({"busy": busy, "observed": observed})
 
     @router.get("/proxies", response_class=HTMLResponse)
     def proxy_overview(request: Request) -> Response:

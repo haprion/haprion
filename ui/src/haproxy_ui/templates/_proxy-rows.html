@@ -47,7 +47,14 @@
       <tr{% if not object.serving %} class="proxy-waiting"{% endif %}>
         <td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ object.name }}"><strong>{{ object.name }}</strong></a>{% else %}<strong>{{ object.name }}</strong>{% endif %}</td>
         <td data-label="Protocol">{% if object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
-        <td data-label="Hosts / ports"><span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span>{% if not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Inactive · deploy to add</span>{% endif %}</td>
+        {#
+          The badge takes the cell rather than sitting beside the hostnames.
+          Beside them it was a second thing in a column sized for one, and on a
+          narrow screen it ran into the column after it. The rows above do the
+          same: a row with something to say says that, and the hostnames are on
+          the object's own page.
+        #}
+        <td data-label="Hosts / ports">{% if not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Inactive · deploy to add</span>{% else %}<span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span>{% endif %}</td>
         {#
           The nodes' own verdict on this object's servers, not a probe. Grey
           is no answer, and it covers both ways of having none: an object with

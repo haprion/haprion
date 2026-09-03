@@ -708,7 +708,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 /* Five rows: the whole of a short list, without a scrollbar to find it in. */
 .form-grid-pair select, .form-grid-pair textarea { min-height: 0; height: 124px; }
 /* A rule instead of a heading: these belong with the card, one step apart. */
-.form-grid-ruled { border-top: 1px solid var(--line); margin: 18px 20px 0; padding: 14px 0 4px; }
+.form-grid-ruled { border-top: 2px solid var(--line-strong); margin: 18px 20px 0; padding: 14px 0 4px; }
 .form-grid .field { display: flex; flex-direction: column; gap: 6px; }
 .form-grid .field > label { color: var(--text-secondary); font-weight: 620; }
 /* Label and its "(optional)" on one line, above the control the label opens. */
@@ -718,7 +718,12 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * word beside it is quieter still: "optional" is a fact about the fields, not
  * a second heading.
  */
-.form-subsection { border-top: 1px solid var(--line); margin: 18px 20px 0; padding-top: 4px; }
+/*
+ * A heavier rule than the hairlines that separate rows elsewhere. These two
+ * divide the groups a person reads the card in, and at one pixel of `--line`
+ * they were quiet enough to be missed.
+ */
+.form-subsection { border-top: 2px solid var(--line-strong); margin: 18px 20px 0; padding-top: 4px; }
 /*
  * Two columns, the same two the rows below use: the heading over the inputs,
  * the switch over their explanations. A flex row cannot do this - `margin-left`
@@ -768,7 +773,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * their place.
  */
 .form-grid input:disabled, .form-grid select:disabled { opacity: 0.45; cursor: not-allowed; }
-.form-grid label:has(input:disabled) { opacity: 0.7; }
+.form-grid label:has(input:disabled), .form-grid label:has(select:disabled) { opacity: 0.7; }
 .check-value { display: flex; align-items: center; gap: 10px; color: var(--text-secondary); font-weight: 620; }
 .section-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .section-title p { margin: 0; }

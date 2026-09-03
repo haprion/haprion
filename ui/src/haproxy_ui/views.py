@@ -30,6 +30,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from haproxy_mgmt.proxy_model import DEFAULT_INTERVAL
 
 from haproxy_ui import (
     activity,
@@ -1199,6 +1200,7 @@ def _preview_page(
             "suggested_cookie": preview_module.suggested_cookie(
                 str(form.get("name", "") or "").strip()
             ),
+            "check_interval": DEFAULT_INTERVAL,
             "result": result,
             "submitted": submitted,
             "management_writes": config.management_writes,
@@ -1389,6 +1391,13 @@ def _editor_page(
             "suggested_cookie": preview_module.suggested_cookie(
                 str(fields.get("name", "")).strip()
             ),
+            #
+            # Read from the model rather than written into the template. The
+            # form has no field for the check interval, so every object it
+            # writes carries the default - and a hint that names it has to name
+            # the value the engine will actually use.
+            #
+            "check_interval": DEFAULT_INTERVAL,
             "result": result,
             "draft": draft,
             "draft_revision": draft_revision,

@@ -732,11 +732,23 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 }
 .subsection-title { display: flex; align-items: baseline; gap: 8px; }
 /*
- * Pulled back by the box and the gap it carries, so the switch's words begin
- * exactly where the explanations below begin and the box hangs into the column
- * gap the way a bullet does.
+ * The words begin at the column edge and the box hangs outside it, in the
+ * column gap, the way a bullet does.
+ *
+ * Taken out of the flow rather than pulled back by a measured margin. The box
+ * is drawn by the browser and carries its own margin on top of its width, so
+ * every number written here was a guess about someone else's stylesheet - and
+ * it was wrong by exactly that margin. Positioned against the text, the
+ * alignment holds whatever the box turns out to be.
  */
-.maintenance-switch { margin-left: -21px; font-size: var(--font-size-ui); font-weight: 620; }
+.maintenance-switch {
+  position: relative; display: block;
+  color: var(--text-secondary); font-size: var(--font-size-ui); font-weight: 620;
+}
+.maintenance-switch input {
+  position: absolute; right: calc(100% + 8px); top: 50%;
+  margin: 0; transform: translateY(-50%);
+}
 /*
  * One input per row, all of one width, so every explanation beside them starts
  * at the same place.
@@ -773,7 +785,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * as a mistake rather than as a group.
  */
 .form-checks { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; padding: 14px 20px 0; }
-.form-checks .check, .maintenance-switch { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
+.form-checks .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
 
 .preview-form .warning-text { margin: 12px 20px 0; }
 .form-actions { display: flex; justify-content: flex-end; }

@@ -109,7 +109,8 @@
       #}
       <h4>
         <span class="subsection-title">Maintenance options <span class="optional">(optional)</span></span>
-        <label class="check maintenance-switch"><input type="checkbox" name="maintenance"{% if form.maintenance %} checked{% endif %}> Out of service for maintenance</label>
+        <label class="check maintenance-switch"><input type="checkbox" name="maintenance"{% if form.maintenance %} checked{% endif %}>{#
+          #}Out of service for maintenance</label>
       </h4>
       <div class="field-rows">
         <label class="check-value"><input name="maintenance_message" value="{{ form.maintenance_message }}"><span>What visitors are told instead</span></label>

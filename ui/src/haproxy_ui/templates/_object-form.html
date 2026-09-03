@@ -133,19 +133,28 @@
       <label><span class="field-title">Session cookie <span class="optional">(optional)</span></span><input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Case-sensitive, empty means no persistence.</small></label>
       <label><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>Connections one server takes at once; the rest queue for 5 s.</small></label>
       <label><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; must be longer than the {{ check_interval }} check interval.</small></label>
-      <label><span class="field-title">Redirect — path <span class="optional">(optional)</span></span><input name="redirect_path" value="{{ form.redirect_path }}" placeholder="/old"><small>A path this site answers with a redirect instead of forwarding. Needs a target beside it.</small></label>
-      <label><span class="field-title">Redirect — to <span class="optional">(optional)</span></span><input name="redirect_location" value="{{ form.redirect_location }}" placeholder="https://example.net/new"><small>An absolute URL, and a path beside it. It replaces the whole target, not just the host.</small></label>
       {#
-        Greyed out until there is a redirect to give a status to. The two
-        fields above are what make one, and the engine writes this code only
-        when both carry something - so on its own it decides nothing.
+        One setting in three boxes, not three settings. A path on its own has
+        nowhere to send anything and a target on its own says nothing about
+        which requests it applies to - and the engine refuses both halves - so
+        reading them as separate optional fields was the form's own fault.
+
+        The status is greyed out until the pair carries something, because
+        until then there is no redirect for it to be the status of.
       #}
-      <label class="redirect-only">Redirect — status
-        <select name="redirect_status"{% if not (form.redirect_path and form.redirect_location) %} disabled{% endif %}>
-          {% for code in ['301', '302', '303', '307', '308'] %}<option value="{{ code }}"{% if form.redirect_status == code %} selected{% endif %}>{{ code }}</option>{% endfor %}
-        </select>
-        <small>301 and 302 let a browser turn a POST into a GET; 307 and 308 do not.</small>
-      </label>
+      <div class="field field-wide">
+        <span class="field-title">Redirect <span class="optional">(optional)</span></span>
+        <div class="field-row">
+          <label class="sub-field"><span>Path</span><input name="redirect_path" value="{{ form.redirect_path }}" placeholder="/old"></label>
+          <label class="sub-field"><span>To</span><input name="redirect_location" value="{{ form.redirect_location }}" placeholder="https://example.net/new"></label>
+          <label class="sub-field redirect-only"><span>Status</span>
+            <select name="redirect_status"{% if not (form.redirect_path and form.redirect_location) %} disabled{% endif %}>
+              {% for code in ['301', '302', '303', '307', '308'] %}<option value="{{ code }}"{% if form.redirect_status == code %} selected{% endif %}>{{ code }}</option>{% endfor %}
+            </select>
+          </label>
+        </div>
+        <small>Requests for that path are answered with a redirect to that URL instead of reaching the pool; the target replaces the whole address, not just the host. 301 and 302 let a browser turn a POST into a GET; 307 and 308 do not.</small>
+      </div>
       <label><span class="field-title">Request headers <span class="optional">(optional)</span></span><textarea name="request_headers" rows="3" placeholder="X-Tenant: acme&#10;+X-Trace: 1&#10;-X-Debug">{{ form.request_headers }}</textarea><small>One per line. <code>Name: value</code> sets, <code>+Name: value</code> adds, <code>-Name</code> removes.</small></label>
       <label><span class="field-title">Response headers <span class="optional">(optional)</span></span><textarea name="response_headers" rows="3" placeholder="X-Frame-Options: DENY&#10;-Server">{{ form.response_headers }}</textarea><small>Same three shapes, on the way back out.</small></label>
       <label>Backend TLS

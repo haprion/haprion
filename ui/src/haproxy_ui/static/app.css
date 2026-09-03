@@ -714,6 +714,18 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 /* Label and its "(optional)" on one line, above the control the label opens. */
 .form-grid .field-title { display: block; }
 /*
+ * A setting that needs more than one box. It takes the width of three fields
+ * so its boxes are not narrower than the ones around them, and the boxes carry
+ * quiet captions rather than labels of their own - the heading above names the
+ * setting, and three headings would read as three settings, which is exactly
+ * the misreading this shape exists to end.
+ */
+.form-grid .field-wide { grid-column: span 3; }
+.field-row { display: flex; align-items: flex-end; gap: 12px; }
+.field-row .sub-field { display: flex; flex: 1 1 0; flex-direction: column; gap: 4px; min-width: 0; }
+.field-row .sub-field span { color: var(--muted); font-size: 13px; font-weight: var(--font-weight-regular); }
+.field-row .sub-field:has(select) { flex: 0 0 110px; }
+/*
  * A group inside a card, with a rule above it. The heading is small and the
  * word beside it is quieter still: "optional" is a fact about the fields, not
  * a second heading.

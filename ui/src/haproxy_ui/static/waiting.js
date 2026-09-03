@@ -23,14 +23,36 @@
   //
   const LIMIT = 75;
 
-  const ENDPOINT = "/proxies/rows";
+  const ROWS = "/proxies/rows";
+  const BUSY = "/clusters/busy";
+
+  //
+  // Two pages, two ways of being out of date.
+  //
+  // The listing has rows that move, and they are swapped in place. Every other
+  // page draws a spinner where its buttons were, and what it needs back is
+  // those buttons - a form carrying a CSRF token and a fresh idempotency key,
+  // neither of which a browser may mint. So that page asks the server for
+  // itself again, once, at the moment the answer changed. It is a redraw, but
+  // one per finished job rather than one every few seconds.
+  //
+  const rows = () => document.querySelectorAll("tbody[data-cluster]").length > 0;
+
+  //
+  // What the page was drawn with: the clusters it is showing as busy.
+  //
+  const drawnBusy = () =>
+    new Set(Array.from(document.querySelectorAll("[data-busy]"), (el) => el.dataset.busy));
 
   //
   // What is still on its way: a draft, a publish in flight, an object the nodes
-  // are not serving yet. When the server stops drawing one of these there is
-  // nothing left to wait for, and the asking stops with it.
+  // are not serving yet, or a job this page is watching. When the server stops
+  // drawing one of these there is nothing left to wait for, and the asking
+  // stops with it.
   //
-  const pending = () => document.querySelectorAll("tr.proxy-draft, tr.proxy-waiting").length > 0;
+  const pending = () =>
+    document.querySelectorAll("tr.proxy-draft, tr.proxy-waiting").length > 0 ||
+    drawnBusy().size > 0;
 
   const apply = (payload) => {
     const clusters = payload && payload.clusters ? payload.clusters : {};
@@ -62,10 +84,27 @@
       window.setTimeout(tick, INTERVAL);
       return;
     }
-    fetch(ENDPOINT, { credentials: "same-origin", headers: { Accept: "application/json" } })
+    fetch(rows() ? ROWS : BUSY, {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    })
       .then((response) => (response.ok ? response.json() : null))
       .then((payload) => {
-        if (payload) apply(payload);
+        if (!payload) return;
+        if (rows()) {
+          apply(payload);
+          return;
+        }
+        //
+        // Reloaded only when the answer differs from what is on the screen. A
+        // cluster that is still busy leaves the page alone; one that has
+        // finished, or a new one that has started, is a page that no longer
+        // describes anything true.
+        //
+        const busy = new Set(Object.keys(payload.busy || {}));
+        const drawn = drawnBusy();
+        const same = busy.size === drawn.size && Array.from(drawn).every((one) => busy.has(one));
+        if (!same) window.location.reload();
       })
       .catch(() => {
         //

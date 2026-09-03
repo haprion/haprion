@@ -110,7 +110,7 @@
       #}
       {% set running = in_flight.get(cluster.cluster) if in_flight else none %}
       {% if running %}
-      <div class="action-buttons">
+      <div class="action-buttons" data-busy="{{ cluster.cluster }}">
         <span class="status-badge status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>{{ running }}</span>
         <a class="secondary-button" href="/jobs">Follow it</a>
       </div>

@@ -570,6 +570,25 @@ def build_router(config: Config) -> APIRouter:
             "captured_at": captured_at,
         }
 
+    #
+    # What each cluster is busy with, as data. The pages that draw a spinner
+    # instead of their buttons need to know when to stop, and they cannot ask
+    # the rows endpoint - the answer they want is not a row.
+    #
+    # It returns the state rather than markup because the markup those pages
+    # would need back is a form carrying a CSRF token and a fresh idempotency
+    # key. A browser must not be the one to mint either, so when the answer
+    # differs from what a page was drawn with, the page asks the server for
+    # itself again.
+    #
+    @router.get("/clusters/busy")
+    def clusters_busy(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return JSONResponse({"detail": "not signed in"}, status_code=401)
+        with request.app.state.pool.connection() as connection:
+            return JSONResponse({"busy": jobs.in_flight(db.recent_jobs(connection))})
+
     @router.get("/proxies", response_class=HTMLResponse)
     def proxy_overview(request: Request) -> Response:
         session = current_session(request)

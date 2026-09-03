@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
+from typing import Any
 from unittest import mock
 
 from tests.test_certificates import reading as certificate_reading
@@ -94,3 +95,52 @@ class EveryPageThatDeploysSaysTheClusterIsBusy(LoginTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheBusyStateIsAlsoAvailableAsData(LoginTestCase):
+    """A page drawing a spinner has to learn when to stop drawing it.
+
+    It cannot ask the rows endpoint - the answer it wants is not a row - and it
+    must not be handed markup either, because what it needs back is a form
+    carrying a CSRF token and a fresh idempotency key. Neither is a browser's
+    to mint. So it gets the state, compares it with what it was drawn with, and
+    asks the server for itself again when the two differ.
+    """
+
+    def busy(self, jobs: list) -> Any:
+        client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
+        self.sign_in(client)
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs):
+            return client.get("/clusters/busy")
+
+    def test_a_running_job_names_its_cluster_and_what_it_is(self) -> None:
+        answer = self.busy([job(state="running", operation="deploy", cluster="alpha")])
+
+        self.assertEqual(answer.status_code, 200)
+        self.assertEqual(answer.json(), {"busy": {"alpha": "Deploying"}})
+
+    def test_a_finished_job_leaves_nothing_busy(self) -> None:
+        answer = self.busy([job(state="done", operation="deploy", cluster="alpha")])
+
+        self.assertEqual(answer.json(), {"busy": {}})
+
+    def test_it_is_not_served_to_somebody_who_is_not_signed_in(self) -> None:
+        client = self.client(replace(configuration(), clusters=("alpha",)))
+
+        self.assertEqual(client.get("/clusters/busy").status_code, 401)
+
+    def test_every_page_that_draws_a_spinner_names_the_cluster_it_is_for(self) -> None:
+        #
+        # The comparison is by cluster, so a page that drew the spinner without
+        # saying which cluster it belonged to could never stop drawing it.
+        #
+        running = [job(state="running", operation="deploy", cluster="alpha")]
+        for path, source, _ in self.PAGES:
+            with self.subTest(page=path):
+                page = self.page(path, source, running)
+                self.assertIn('data-busy="alpha"', page.text)
+                self.assertIn("waiting.js", page.text)
+
+    PAGES = EveryPageThatDeploysSaysTheClusterIsBusy.PAGES
+    reading_for = EveryPageThatDeploysSaysTheClusterIsBusy.reading_for
+    page = EveryPageThatDeploysSaysTheClusterIsBusy.page

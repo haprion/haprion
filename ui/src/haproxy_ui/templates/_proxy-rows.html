@@ -30,6 +30,15 @@
       <tr class="proxy-waiting"><td data-label="Proxy"><strong>{{ name }}</strong></td><td data-label="Protocol"><span class="table-empty">—</span></td><td data-label="Hosts / ports"><span class="status-badge status-badge-warning waiting-badge">Active · deploy to remove</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Backends"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td></tr>
 {% endfor %}
 {#
+  The two badges are a pair, and the first word of each is what is true now:
+  an object the nodes do not serve is inactive and a deploy adds it, one whose
+  removal is published is active and a deploy takes it away. Saying "waiting
+  for deploy" on both would have described the same wait for opposite ends.
+
+  The object page keeps its own words. It answers a different question - how
+  far this version has travelled, written to released to serving - and an edit
+  to a site that is up is waiting for deploy without being inactive.
+
   One row per object, under the name its author gave it. Not one per frontend:
   the generator names those after the address and protocol they bind, and an
   https object that redirects plain HTTP takes two of them.
@@ -38,7 +47,7 @@
       <tr{% if not object.serving %} class="proxy-waiting"{% endif %}>
         <td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ object.name }}"><strong>{{ object.name }}</strong></a>{% else %}<strong>{{ object.name }}</strong>{% endif %}</td>
         <td data-label="Protocol">{% if object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
-        <td data-label="Hosts / ports"><span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span>{% if not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Waiting for deploy</span>{% endif %}</td>
+        <td data-label="Hosts / ports"><span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span>{% if not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Inactive · deploy to add</span>{% endif %}</td>
         {#
           The nodes' own verdict on this object's servers, not a probe. Grey
           is no answer, and it covers both ways of having none: an object with

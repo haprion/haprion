@@ -200,7 +200,7 @@ class TheOverviewOrdering(LoginTestCase):
         row = text.split('class="proxy-waiting"', 1)[1].split("</tr>", 1)[0]
         self.assertIn("shop", row)
 
-        self.assertIn("Waiting for deploy", row)
+        self.assertIn("Inactive · deploy to add", row)
         self.assertIn("ownership-managed", row)
 
     def test_the_state_shares_the_line_with_the_hosts(self) -> None:
@@ -214,7 +214,7 @@ class TheOverviewOrdering(LoginTestCase):
         cell = text.split('data-label="Hosts / ports"', 1)[1].split("</td>", 1)[0]
 
         self.assertIn("shop.demo.example", cell)
-        self.assertIn("Waiting for deploy", cell)
+        self.assertIn("Inactive · deploy to add", cell)
 
 
 class WhoMayRead(LoginTestCase):
@@ -468,10 +468,12 @@ class ADraftThatWasPublished(DraftReading):
     #
     DRAFT_ID = UUID("11111111-2222-3333-4444-555555555555")
 
-    def drafted(self, yaml: str = "schema: 1\n", *, revision: int = 1) -> ProxyDraft:
+    def drafted(
+        self, yaml: str = "schema: 1\n", *, revision: int = 1, name: str = "half-done"
+    ) -> ProxyDraft:
         return ProxyDraft(
             cluster="edge-demo",
-            object_id="half-done",
+            object_id=name,
             yaml=yaml,
             base_version=1,
             base_hash="abc",
@@ -482,11 +484,13 @@ class ADraftThatWasPublished(DraftReading):
             id=self.DRAFT_ID,
         )
 
-    def job(self, state: str, yaml: str = "schema: 1\n", *, revision: int = 1) -> Job:
+    def job(
+        self, state: str, yaml: str = "schema: 1\n", *, revision: int = 1, name: str = "half-done"
+    ) -> Job:
         from haproxy_ui.views import _publish_key
 
         payload = {
-            "objects": {"half-done": "schema: 1"},
+            "objects": {name: "schema: 1"},
             "draft": {"id": str(self.DRAFT_ID), "revision": revision},
         }
         return Job(
@@ -531,11 +535,29 @@ class ADraftThatWasPublished(DraftReading):
         ):
             return client.get("/proxies").text, discarded
 
-    def test_a_finished_publish_clears_the_draft(self) -> None:
+    def test_a_finished_publish_holds_the_draft_until_the_object_is_readable(self) -> None:
+        #
+        # The publish is done and the poller has not read the repository again,
+        # so the object is in no cache yet. Clearing the draft here made the row
+        # vanish from every page for that stretch: the spinner said "waiting for
+        # publish", the publish finished, and the work was nowhere.
+        #
         body, discarded = self.listing(self.drafted(), [self.job("done")])
 
+        self.assertEqual(discarded, [])
+        self.assertIn(">Draft<", body)
+
+    def test_the_draft_is_cleared_once_the_object_can_be_read(self) -> None:
+        #
+        # `public-web` is in the cluster's objects reading, so the publish this
+        # draft asked for is visible and the draft has nothing left to carry.
+        #
+        body, discarded = self.listing(
+            self.drafted(name="public-web"), [self.job("done", name="public-web")]
+        )
+
         self.assertEqual(len(discarded), 1)
-        self.assertEqual(discarded[0]["object_id"], "half-done")
+        self.assertEqual(discarded[0]["object_id"], "public-web")
         self.assertNotIn(">Draft<", body)
 
     def test_a_draft_edited_after_the_publish_is_left_alone(self) -> None:

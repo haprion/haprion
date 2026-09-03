@@ -211,16 +211,21 @@
       <label><span class="field-title">Host header <span class="optional">(optional)</span></span><input name="health_host" value="{{ form.health_host }}" placeholder="app.example.com"><small>Needed when the backend serves several names, or the check gets a 404.</small></label>
     </div>
     {#
-      What counts as a good answer, and whether the check itself speaks TLS.
-      Separate from the listener and from the backend's own TLS: a pool served
-      over plain HTTP can still be checked on a TLS port, and the model keeps
-      the two apart for that reason.
+      What counts as a good answer, and whether the check does its own TLS.
+
+      The TLS box is not the backend's - they are different layers, and the
+      question "does the check follow the pool" has a footnote. HAProxy sends
+      checks in SSL automatically for a pool reached over SSL, but only while
+      the check goes to the traffic port; a check port breaks the inheritance,
+      which is what the generator writes `check-ssl` for. This box is the other
+      case: a plain pool whose health endpoint speaks TLS, or a tcp pool to be
+      checked by handshake.
 
       Left empty, a check passes on any 2xx or 3xx - which is HAProxy's rule
       and not this form's, so nothing is written into the object to say it.
     #}
     <div class="form-grid form-grid-ruled">
-      <label class="check"><input type="checkbox" name="health_tls"{% if form.health_tls %} checked{% endif %}> The check speaks TLS</label>
+      <label class="check"><input type="checkbox" name="health_tls"{% if form.health_tls %} checked{% endif %}> The check does its own TLS handshake<small>Rarely needed. A pool reached over TLS is already checked over TLS. Tick this when the pool is plain but the health endpoint speaks TLS, or for a tcp pool you want checked by handshake.</small></label>
       <label><span class="field-title">Expected status <span class="optional">(optional)</span></span><input name="health_expect_status" value="{{ form.health_expect_status }}" size="10" placeholder="any 2xx or 3xx"><small>One status the server must answer with, such as <code>204</code>.</small></label>
       <label><span class="field-title">Expected body <span class="optional">(optional)</span></span><input name="health_expect_body" value="{{ form.health_expect_body }}" placeholder="ok"><small>Text the answer must contain. Checked as well as the status, not instead of it.</small></label>
     </div>

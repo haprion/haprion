@@ -21,7 +21,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -508,7 +508,13 @@ def build_router(config: Config) -> APIRouter:
         #
         with request.app.state.pool.connection() as connection:
             drafts = {
-                view.cluster: tuple(_settled_drafts(connection, view.cluster))
+                view.cluster: tuple(
+                    _settled_drafts(
+                        connection,
+                        view.cluster,
+                        {listing.name for listing in listed[view.cluster]},
+                    )
+                )
                 for view in overview.clusters
             }
             #
@@ -848,7 +854,12 @@ def build_router(config: Config) -> APIRouter:
         # saving their first draft of it.
         #
         with request.app.state.pool.connection() as connection:
-            draft = _settled_draft(connection, cluster, name)
+            #
+            # `detail.stored` is this cluster's own reading of the object, so a
+            # draft whose publish has finished is kept until that reading shows
+            # it. Otherwise the page loses both between the job and the poll.
+            #
+            draft = _settled_draft(connection, cluster, name, {name} if detail.stored else set())
         #
         # A name that is neither stored, nor served, nor drafted is not a page.
         # Rendering an empty detail for any string would make every typo look
@@ -1530,7 +1541,11 @@ def _editor_page(
     state = _editor_state(request, config, cluster)
 
     with request.app.state.pool.connection() as connection:
-        draft = _settled_draft(connection, cluster, name) if name else None
+        draft = (
+            _settled_draft(connection, cluster, name, {view.name for view in state.stored})
+            if name
+            else None
+        )
 
     stored = next((view for view in state.stored if view.name == name), None)
     unexpressible = ""
@@ -1980,7 +1995,7 @@ def _removal_submit(
         )
 
     with request.app.state.pool.connection() as connection:
-        existing = _settled_draft(connection, cluster, name)
+        existing = _settled_draft(connection, cluster, name, {name})
         try:
             saved = db.save_draft(
                 connection,
@@ -2125,7 +2140,26 @@ def _published_drafts(connection: Any, cluster: str) -> set[tuple[str, int]]:
     return settled
 
 
-def _settled_draft(connection: Any, cluster: str, object_id: str) -> db.ProxyDraft | None:
+def _reflects(draft: db.ProxyDraft, stored: Collection[str]) -> bool:
+    """Whether the objects cache has caught up with what this draft published.
+
+    A publish finishes before the poller reads the repository again, so between
+    the two there is a stretch where the job is done and the object is not yet
+    in the cache. Clearing the draft on the job alone made the row vanish for
+    that stretch: the spinner said "waiting for publish", the publish finished,
+    and the work was on no page at all until the next poll.
+
+    So the draft is what carries the row until the object it published can. An
+    edit is reflected the moment it is published, because the object was
+    already listed; a new object, or a removal, has to be waited for.
+    """
+
+    return (draft.object_id not in stored) if draft.deleted else (draft.object_id in stored)
+
+
+def _settled_draft(
+    connection: Any, cluster: str, object_id: str, stored: Collection[str] = ()
+) -> db.ProxyDraft | None:
     """One draft, cleared away if its own publish has finished.
 
     The editor reads this rather than the row directly, and that is the case
@@ -2138,6 +2172,12 @@ def _settled_draft(connection: Any, cluster: str, object_id: str) -> db.ProxyDra
     if draft is None:
         return None
     if (str(draft.id), draft.revision) not in _published_drafts(connection, cluster):
+        return draft
+    if not _reflects(draft, stored):
+        #
+        # Published, but the cache has not caught up. The draft is the only
+        # thing that can carry the row until it does.
+        #
         return draft
     #
     # A conflict here is somebody saving in another tab between the read and
@@ -2160,7 +2200,9 @@ def _settled_draft(connection: Any, cluster: str, object_id: str) -> db.ProxyDra
     return None
 
 
-def _settled_drafts(connection: Any, cluster: str) -> list[db.ProxyDraft]:
+def _settled_drafts(
+    connection: Any, cluster: str, stored: Collection[str] = ()
+) -> list[db.ProxyDraft]:
     """This cluster's drafts, with the ones already published cleared away.
 
     Published work is not a draft any more. Left behind it is worse than untidy:
@@ -2177,7 +2219,11 @@ def _settled_drafts(connection: Any, cluster: str) -> list[db.ProxyDraft]:
 
     drafts = db.cluster_drafts(connection, cluster)
     settled = _published_drafts(connection, cluster)
-    published = {draft.object_id for draft in drafts if (str(draft.id), draft.revision) in settled}
+    published = {
+        draft.object_id
+        for draft in drafts
+        if (str(draft.id), draft.revision) in settled and _reflects(draft, stored)
+    }
     if not published:
         return drafts
     #

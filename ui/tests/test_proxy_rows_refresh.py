@@ -238,3 +238,57 @@ class ARemovalIsStillServedUntilItIsDeployed(LoginTestCase):
         body = self.listing([self.job("shop")], "behind")
 
         self.assertNotIn("Active · deploy to remove", body)
+
+
+class TheTwoDeployBadgesAreAPair(LoginTestCase):
+    """First word what is true now, then what the deploy does.
+
+    They are opposite ends of the same wait: one object is not on the nodes and
+    a deploy adds it, another's removal is published and a deploy takes it
+    away. Both said "waiting for deploy" once, which described the wait and hid
+    the direction - and the direction is the whole of what a reader needs.
+    """
+
+    def test_the_two_rows_say_opposite_things(self) -> None:
+        client = self.client(replace(configuration(), clusters=("alpha",)))
+        self.sign_in(client)
+        removal = Job(
+            id=9,
+            request_id=uuid4(),
+            operation="objects_publish",
+            cluster="alpha",
+            payload={"objects": {"gone": None}},
+            state="done",
+            created_at=OBSERVED,
+            started_at=None,
+            finished_at=None,
+            exit_code=None,
+            outcome="done",
+            result=None,
+            stderr_excerpt=None,
+            idempotency_key=uuid4(),
+            attempts=1,
+        )
+        behind = ClusterStatus(
+            cluster="alpha",
+            observed_at=OBSERVED,
+            outcome="done",
+            result={"summary": {"release_state": "behind"}},
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        with (
+            mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects_reading("shop")]),
+            #
+            # Nothing served, so `shop` is written and not on the nodes.
+            #
+            mock.patch("haproxy_ui.db.cluster_inventories", return_value=[inventory()]),
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=[removal]),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[behind]),
+        ):
+            body = client.get("/proxies").text
+
+        self.assertIn("Inactive · deploy to add", body)
+        self.assertIn("Active · deploy to remove", body)
+        self.assertNotIn("Waiting for deploy", body)

@@ -359,6 +359,8 @@ def build_router(config: Config) -> APIRouter:
             #
             captured=captured_at is not None,
         )
+        with request.app.state.pool.connection() as connection:
+            running = jobs.in_flight(db.recent_jobs(connection))
         return TEMPLATES.TemplateResponse(
             request,
             "index.html",
@@ -368,6 +370,12 @@ def build_router(config: Config) -> APIRouter:
                 "management_writes": config.management_writes,
                 "csrf_token": auth.csrf_token(token),
                 "dashboard": dashboard_view,
+                #
+                # What each cluster is busy with. The buttons below it are
+                # replaced by this while a job runs, rather than left drawn to
+                # offer an action the queue would refuse with a 409.
+                #
+                "in_flight": running,
                 "section": "dashboard",
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
@@ -958,6 +966,7 @@ def build_router(config: Config) -> APIRouter:
         expected_head: str = Form(default="", max_length=64),
         comment: str = Form(default="", max_length=4096),
         default_vip_confirmation: str = Form(default=""),
+        return_to: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
         """Ask for an operation. Say nothing about what happened to it.
@@ -1100,7 +1109,13 @@ def build_router(config: Config) -> APIRouter:
         # would catch that anyway; not relying on it is cheaper than explaining
         # why it did.
         #
-        return RedirectResponse("/jobs", status_code=303)
+        # Back where it was asked for, when the form said where that was. Being
+        # moved to the jobs page was the same failure the publish badge had: the
+        # page somebody acted on could not show that the action was running, so
+        # the interface moved them to one that could. The page says it now, so
+        # it can keep them.
+        #
+        return RedirectResponse(_return_path(return_to), status_code=303)
 
     @router.post("/logout")
     def logout(
@@ -1699,6 +1714,31 @@ def _settled_drafts(connection: Any, cluster: str) -> list[db.ProxyDraft]:
             )
     connection.commit()
     return [draft for draft in drafts if draft.object_id not in published]
+
+
+#
+# Where an operation may send somebody afterwards. A closed set and not the
+# submitted string: this value arrives in a form, and a redirect that trusts one
+# is how a page is turned into a way of sending somebody somewhere else.
+#
+RETURN_PATHS = {
+    "dashboard": "/",
+    "proxies": "/proxies",
+    "certificates": "/certificates",
+    "history": "/history",
+    "network": "/network",
+    "jobs": "/jobs",
+}
+
+
+def _return_path(name: str) -> str:
+    """The page an operation returns to, or the jobs page.
+
+    The jobs page is the fallback rather than the default, so a form that has
+    not been told where it lives still lands somewhere that shows what happened.
+    """
+
+    return RETURN_PATHS.get(name, "/jobs")
 
 
 def _refusal_page(request: Request, config: Config, message: str, *, back: str) -> Response:

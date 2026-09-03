@@ -13,15 +13,18 @@ over, and nothing about that looks wrong in a diff.
 
 from __future__ import annotations
 
+import re
 import unittest
 from contextlib import nullcontext
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
 
-from haproxy_ui import db
+from haproxy_ui import db, jobs, operations
+from haproxy_ui.db import Job
 
 TOKEN = uuid4()
 
@@ -288,3 +291,68 @@ class TokensAreSentAsText(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhatEachClusterIsBusyWith(unittest.TestCase):
+    """One state per cluster, which is what lets a page draw it instead of the buttons.
+
+    The queue permits one pending job per cluster. So a page does not need a
+    list here - it needs the answer to "is this cluster busy, and with what",
+    and it can replace the actions with it rather than leaving them drawn to
+    offer something the queue would refuse with a 409.
+    """
+
+    def job(self, cluster: str, operation: str, state: str) -> Job:
+        return Job(
+            id=1,
+            request_id=uuid4(),
+            operation=operation,
+            cluster=cluster,
+            payload={},
+            state=state,
+            created_at=datetime(2026, 9, 3, tzinfo=UTC),
+            started_at=None,
+            finished_at=None,
+            exit_code=None,
+            outcome=None,
+            result=None,
+            stderr_excerpt=None,
+            idempotency_key=None,
+            attempts=0,
+        )
+
+    def test_a_running_job_names_what_it_is_doing(self) -> None:
+        busy = jobs.in_flight([self.job("alpha", "deploy", "running")])
+
+        self.assertEqual(busy, {"alpha": "Deploying"})
+
+    def test_a_queued_job_counts_as_busy_too(self) -> None:
+        busy = jobs.in_flight([self.job("alpha", "cert_deploy", "pending")])
+
+        self.assertEqual(busy, {"alpha": "Deploying certificates"})
+
+    def test_a_finished_job_leaves_the_cluster_free(self) -> None:
+        self.assertEqual(jobs.in_flight([self.job("alpha", "deploy", "done")]), {})
+
+    def test_each_cluster_answers_for_itself(self) -> None:
+        busy = jobs.in_flight(
+            [
+                self.job("alpha", "deploy", "running"),
+                self.job("beta", "objects_publish", "pending"),
+            ]
+        )
+
+        self.assertEqual(busy, {"alpha": "Deploying", "beta": "Publishing"})
+
+    def test_an_operation_without_a_label_is_still_busy(self) -> None:
+        """A cluster that looks idle while it is not is the worse mistake."""
+
+        busy = jobs.in_flight([self.job("alpha", "something_new", "running")])
+
+        self.assertEqual(busy, {"alpha": "something_new"})
+
+    def test_every_operation_the_code_prepares_has_a_word_for_it(self) -> None:
+        source = Path(operations.__file__).read_text(encoding="utf-8")
+        for operation in sorted(set(re.findall(r'if operation == "([a-z_]+)"', source))):
+            with self.subTest(operation=operation):
+                self.assertIn(operation, jobs.RUNNING_LABELS)

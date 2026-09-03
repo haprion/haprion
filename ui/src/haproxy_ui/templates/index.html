@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {% block title %}Dashboard — HAProxy Manager{% endblock %}
 {% block content %}
+<script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
   <div>
     <h1>Dashboard</h1>
@@ -97,10 +98,28 @@
     {% if management_writes and role == 'admin' and cluster.configured %}
     <footer class="cluster-actions" aria-label="{{ cluster.cluster }} operations">
       <div><strong>Operations</strong></div>
+      {#
+        One job per cluster at a time, so this is one state and not two: while
+        something is running here, both buttons are gone and the operation that
+        is running says so. Leaving them drawn would offer an action the queue
+        refuses, and the refusal would arrive as a 409 somebody has to read.
+
+        The spinner is the same one the listing uses, and deliberately so: "a
+        job for this cluster is in flight" is one fact, and it should not look
+        different depending on which page found it.
+      #}
+      {% set running = in_flight.get(cluster.cluster) if in_flight else none %}
+      {% if running %}
       <div class="action-buttons">
-        <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Deploy configuration</button></form>
-        <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="cert_deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Deploy certificates</button></form>
+        <span class="status-badge status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>{{ running }}</span>
+        <a class="secondary-button" href="/jobs">Follow it</a>
       </div>
+      {% else %}
+      <div class="action-buttons">
+        <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="dashboard"><button class="secondary-button" type="submit">Deploy configuration</button></form>
+        <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="cert_deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="dashboard"><button class="secondary-button" type="submit">Deploy certificates</button></form>
+      </div>
+      {% endif %}
     </footer>
     {% endif %}
   </article>

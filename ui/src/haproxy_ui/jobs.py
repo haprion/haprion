@@ -22,6 +22,7 @@ every failure. See B44.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -317,3 +318,38 @@ def build_job_overview(
         attention_count=_unresolved(rows),
         completed_count=sum(job.state == "done" for job in jobs),
     )
+
+
+#
+# What each operation is called while it is happening. Present tense and short,
+# because it is read inside a badge beside a spinner - and named here rather
+# than in the template so the dashboard, the listing and anything built later
+# say the same word for the same job.
+#
+RUNNING_LABELS = {
+    "deploy": "Deploying",
+    "cert_deploy": "Deploying certificates",
+    "revert": "Reverting",
+    "network_publish": "Publishing addresses",
+    "objects_publish": "Publishing",
+}
+
+
+def in_flight(jobs: Iterable[Job]) -> dict[str, str]:
+    """What each cluster is busy with, by cluster.
+
+    One entry at most per cluster, because the queue permits one pending job per
+    cluster - which is what lets a page draw this as a single state rather than
+    a list, and why the buttons can be replaced by it instead of sitting there
+    offering an action the queue would refuse.
+
+    An operation with no label still counts as busy. Falling back to the plain
+    name is better than a cluster that looks idle while it is not.
+    """
+
+    busy: dict[str, str] = {}
+    for job in jobs:
+        if job.state not in {"pending", "running"} or job.cluster in busy:
+            continue
+        busy[job.cluster] = RUNNING_LABELS.get(job.operation, job.operation)
+    return busy

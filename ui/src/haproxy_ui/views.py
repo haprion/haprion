@@ -664,6 +664,68 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         return _editor_submit(request, config, cluster, name, form)
 
+    #
+    # Removing an object. Declared before `/proxies/{cluster}/{name}` for the
+    # reason `new` is: the router takes the first route that matches, and both
+    # are two segments.
+    #
+    # It is a page of its own rather than a fifth button in the editor. It is
+    # the one action here that takes a site off the internet, going back cannot
+    # undo it, and a confirmation inside a browser dialog is one people click
+    # through without reading.
+    #
+    @router.get("/proxies/{cluster}/{name}/remove", response_class=HTMLResponse)
+    def remove_object_form(request: Request, cluster: str, name: str) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if not config.management_writes:
+            #
+            # 404 and not 403, for the reason `/operations` gives: an
+            # installation that does not do management writes has no editor,
+            # and saying "forbidden" would announce one waiting to be switched
+            # on.
+            #
+            return PlainTextResponse("Not found", status_code=404)
+        if session.role != "admin":
+            return PlainTextResponse("Refused", status_code=403)
+        state = _editor_state(request, config, cluster)
+        stored = next((view for view in state.stored if view.name == name), None)
+        if stored is None:
+            return _refusal_page(
+                request,
+                config,
+                "This cluster has no object of that name to remove.",
+                back="/proxies",
+            )
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        return TEMPLATES.TemplateResponse(
+            request,
+            "remove.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "cluster": cluster,
+                "name": name,
+                "hostnames": stored.hostnames,
+                "section": "proxies",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
+    @router.post("/proxies/{cluster}/{name}/remove", response_class=HTMLResponse)
+    def remove_object_submit(
+        request: Request,
+        cluster: str,
+        name: str,
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        return _removal_submit(request, config, cluster, name, csrf_token)
+
     @router.get("/proxies/{cluster}/{name}", response_class=HTMLResponse)
     def proxy_object(request: Request, cluster: str, name: str) -> Response:
         """One proxy as it is written, beside the row the nodes are serving.
@@ -1853,6 +1915,133 @@ def _editor_submit(
         connection.commit()
 
     return RedirectResponse(f"/proxies?published={object_id}", status_code=303)
+
+
+def _removal_submit(
+    request: Request, config: Config, cluster: str, name: str, csrf_token: str
+) -> Response:
+    """Publish the removal of one object.
+
+    A removal is a publish like any other: the object leaves the repository and
+    the configuration generated from it leaves with it, as one version. So this
+    goes through the same queue, the same helper and the same lock, and differs
+    only in carrying `null` where a document would be.
+
+    It writes a draft first, exactly as saving does, and for the same reason -
+    the draft is what the job names afterwards, so a removal can be told from
+    an edit that happened to look like one. `deleted` is what the draft says:
+    not that somebody abandoned an edit, but that they decided the object
+    should go.
+    """
+
+    session = current_session(request)
+    if session is None:
+        return RedirectResponse("/login", status_code=303)
+    if not config.management_writes:
+        return PlainTextResponse("Not found", status_code=404)
+    if session.role != "admin":
+        return PlainTextResponse("Refused", status_code=403)
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    if not token or not auth.csrf_token_is_valid(token, csrf_token):
+        return _refusal_page(
+            request, config, "That form had expired. Open the page again.", back="/proxies"
+        )
+
+    state = _editor_state(request, config, cluster)
+    if state.commit is None:
+        return _refusal_page(
+            request,
+            config,
+            "The stored objects have not been read yet, so there is no base to remove from.",
+            back="/proxies",
+        )
+    stored = next((view for view in state.stored if view.name == name), None)
+    if stored is None:
+        return _refusal_page(
+            request, config, "This cluster has no object of that name to remove.", back="/proxies"
+        )
+
+    with request.app.state.pool.connection() as connection:
+        existing = _settled_draft(connection, cluster, name)
+        try:
+            saved = db.save_draft(
+                connection,
+                cluster=cluster,
+                object_id=name,
+                #
+                # The stored document, kept as the draft's text. The publish
+                # sends `null` and never this - it is here so the row says what
+                # is being removed rather than being empty, and so a removal
+                # that is refused leaves the object's own text to look at.
+                #
+                yaml=stored.document,
+                base_version=state.base_version,
+                base_hash=state.commit,
+                updated_by=session.username,
+                deleted=True,
+                expected_revision=existing.revision if existing else None,
+            )
+        except db.DraftConflict as conflict:
+            connection.rollback()
+            return _refusal_page(request, config, str(conflict), back=f"/proxies/{cluster}/{name}")
+        connection.commit()
+
+    payload = {
+        "objects": {name: None},
+        "expected_head": state.commit,
+        "comment": f"Remove {name}",
+        "draft": {"id": str(saved.id), "revision": saved.revision},
+    }
+    key = _publish_key(cluster, "objects_publish", payload)
+    try:
+        operations.prepare(
+            operation="objects_publish", cluster=cluster, request_id=uuid4(), payload=payload
+        )
+    except operations.BadPayload:
+        return _refusal_page(
+            request,
+            config,
+            "This interface could not build a removal for that object.",
+            back=f"/proxies/{cluster}/{name}",
+        )
+
+    with request.app.state.pool.connection() as connection:
+        try:
+            job = db.queue_job(
+                connection,
+                operation="objects_publish",
+                cluster=cluster,
+                payload=payload,
+                idempotency_key=key,
+            )
+        except db.ClusterBusy:
+            connection.rollback()
+            return _refusal_page(
+                request,
+                config,
+                "This cluster is already running a job. The removal is saved as a draft; "
+                "publish it when that job has finished.",
+                back=f"/proxies/{cluster}/{name}",
+            )
+        except db.RequestConflict:
+            connection.rollback()
+            return _refusal_page(
+                request,
+                config,
+                "That removal was already asked for with different content.",
+                back=f"/proxies/{cluster}/{name}",
+            )
+        db.record_audit_event(
+            connection,
+            actor=session.username,
+            action="queue_job",
+            cluster=cluster,
+            request_id=job.request_id,
+            detail={"operation": "objects_publish", "job": job.id, "object": name, "removed": True},
+        )
+        connection.commit()
+
+    return RedirectResponse(f"/proxies?published={name}", status_code=303)
 
 
 #

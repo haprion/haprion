@@ -993,6 +993,12 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 }
 .refusal-message { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--text-strong); font-size: 15px; }
 .refusal-hint { margin: 10px 0 0; color: var(--text-secondary); font-size: 13px; }
+/* The one button that takes a site off the internet. It carries the critical
+   colour rather than the brand one, because it is not the action a page is for
+   - it is the one somebody has come to this page on purpose to press. */
+.danger-button { min-height: 32px; padding: 5px 12px; border: 1px solid var(--critical); border-radius: var(--radius-sm); background: var(--critical); color: white; font-size: 12px; font-weight: 650; cursor: pointer; }
+.danger-button:hover { filter: brightness(1.08); }
+.removal-consequences { margin: 12px 0 0; padding-left: 18px; color: var(--text-secondary); font-size: 13px; line-height: 1.7; }
 .refusal-card .editor-actions { justify-content: flex-start; padding: 16px 0 0; }
 /*
  * The break between the cluster's addresses and this publish. Heavier than the

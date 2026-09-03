@@ -1,0 +1,32 @@
+{% extends "layout.html" %}
+{% block title %}Remove {{ name }} — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  A removal asked for on its own page rather than as a button beside four
+  others. It is the one action here that takes a site off the internet, it
+  cannot be answered by going back, and a confirmation that lives in a browser
+  dialog is one a person clicks through without reading.
+
+  The page names what will happen in the order it happens: the object is
+  removed from the cluster's repository, the configuration it generated goes
+  with it, and the nodes keep serving the old release until somebody deploys.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Remove {{ name }}</h1><p class="page-lede">From {{ cluster }}. Nothing is written until you confirm.</p></div>
+</section>
+
+<div class="refusal-card">
+  <p class="refusal-message"><span class="status-orb status-critical" aria-hidden="true"></span>This publishes a removal: the object and the configuration generated from it leave the cluster's repository as one version.</p>
+  <ul class="removal-consequences">
+    <li>The hostnames it answered for stop being served once the nodes are deployed.</li>
+    <li><strong>Deploy is a separate step.</strong> Until it runs, the nodes keep serving the release they have.</li>
+    <li>It can be brought back: a published version is a version, and <code>haproxy-revert</code> returns to the one before this.</li>
+  </ul>
+  {% if hostnames %}<p class="refusal-hint">It answers for {{ hostnames | join(', ') }}.</p>{% endif %}
+  <form method="post" action="/proxies/{{ cluster }}/{{ name }}/remove" class="editor-actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="danger-button">Publish the removal</button>
+    <a class="secondary-button" href="/proxies/{{ cluster }}/{{ name }}">Keep it</a>
+  </form>
+</div>
+{% endblock %}

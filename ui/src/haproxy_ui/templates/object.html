@@ -50,7 +50,7 @@
       route answers 404 rather than 403, so a button that led there would
       offer a page the installation does not have.
     #}
-    <div class="cluster-state">{% if management_writes and object.stored %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Edit</a>{% endif %}{% if object.observed_iso %}<time datetime="{{ object.observed_iso }}" title="{{ object.observed_at }}">{{ object.age_label }}</time>{% else %}<span class="observation-age">Never read</span>{% endif %}</div>
+    <div class="cluster-state">{% if management_writes and object.stored %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Edit</a><a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/remove">Remove</a>{% endif %}{% if object.observed_iso %}<time datetime="{{ object.observed_iso }}" title="{{ object.observed_at }}">{{ object.age_label }}</time>{% else %}<span class="observation-age">Never read</span>{% endif %}</div>
   </header>
 
   {% if object.stored %}

@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from haproxy_ui import auth, health
 from haproxy_ui import probe as probe_module
-from haproxy_ui.db import ClusterNetwork, ClusterObjects, DraftConflict, ProxyDraft
+from haproxy_ui.db import ClusterNetwork, ClusterObjects, DraftConflict, Job, ProxyDraft
 from tests.test_login import LoginTestCase, configuration
 
 OBSERVED = datetime(2026, 9, 2, 9, 0, tzinfo=UTC)
@@ -679,3 +679,112 @@ class SavingSaysSo(EditorTestCase):
         answer = self.save("/proxies/alpha/new", name="console")
 
         self.assertEqual(answer.headers["location"], "/proxies/alpha/console/edit?saved=1")
+
+
+class RemovingAnObject(EditorTestCase):
+    """A removal is a publish like any other, asked for on a page of its own.
+
+    It is the one action here that takes a site off the internet, going back
+    cannot undo it, and a confirmation inside a browser dialog is one people
+    click through without reading. So it is a page that says what will happen,
+    and the button on it is the only thing that writes.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.queued: list[dict[str, Any]] = []
+
+        def queue(_c: object, **values: Any) -> Any:
+            self.queued.append(values)
+            return Job(
+                id=7,
+                request_id=uuid4(),
+                operation="objects_publish",
+                cluster="alpha",
+                payload=values["payload"],
+                state="pending",
+                created_at=OBSERVED,
+                started_at=None,
+                finished_at=None,
+                exit_code=None,
+                outcome=None,
+                result=None,
+                stderr_excerpt=None,
+                idempotency_key=values["idempotency_key"],
+                attempts=0,
+            )
+
+        patch = mock.patch("haproxy_ui.db.queue_job", side_effect=queue)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_the_page_says_what_will_happen_and_writes_nothing(self) -> None:
+        page = self.editor().get("/proxies/alpha/shop/remove")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Publish the removal", page.text)
+        self.assertIn("Deploy is a separate step", page.text)
+        self.assertEqual(self.queued, [])
+        self.assertEqual(self.saved, [])
+
+    def test_an_object_that_is_not_there_is_a_refusal_and_not_a_form(self) -> None:
+        page = self.editor().get("/proxies/alpha/nothing-here/remove")
+
+        self.assertNotIn("Publish the removal", page.text)
+        self.assertIn("no object of that name", page.text)
+
+    def test_confirming_publishes_a_null_document_for_that_object(self) -> None:
+        client = self.editor()
+
+        answer = client.post(
+            "/proxies/alpha/shop/remove",
+            data={auth.CSRF_FIELD: self.token(client)},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(answer.headers["location"], "/proxies?published=shop")
+        self.assertEqual(len(self.queued), 1)
+        payload = self.queued[0]["payload"]
+        #
+        # `null` is what asks the helper to remove it. The draft carries the
+        # stored text so the row says what is going, and the publish never
+        # sends that text.
+        #
+        self.assertEqual(payload["objects"], {"shop": None})
+        self.assertEqual(payload["comment"], "Remove shop")
+        self.assertIn("draft", payload)
+
+    def test_the_draft_it_writes_says_the_object_should_go(self) -> None:
+        client = self.editor()
+        client.post(
+            "/proxies/alpha/shop/remove",
+            data={auth.CSRF_FIELD: self.token(client)},
+            follow_redirects=False,
+        )
+
+        self.assertEqual(len(self.saved), 1)
+        self.assertTrue(self.saved[0]["deleted"])
+
+    def test_a_form_without_its_token_writes_nothing(self) -> None:
+        client = self.editor()
+
+        answer = client.post("/proxies/alpha/shop/remove", data={}, follow_redirects=False)
+
+        self.assertEqual(self.queued, [])
+        self.assertEqual(self.saved, [])
+        self.assertIn("expired", answer.text)
+
+    def test_a_reader_may_not_reach_it(self) -> None:
+        self.account = replace(self.account, role="reader")
+        client = self.client(writing_configuration())
+        self.sign_in(client)
+
+        self.assertEqual(client.get("/proxies/alpha/shop/remove").status_code, 403)
+        self.assertEqual(client.post("/proxies/alpha/shop/remove", data={}).status_code, 403)
+
+    def test_an_installation_without_management_writes_has_no_such_page(self) -> None:
+        client = self.client(replace(configuration(), clusters=("alpha",)))
+        self.sign_in(client)
+
+        self.assertEqual(client.get("/proxies/alpha/shop/remove").status_code, 404)

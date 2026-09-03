@@ -116,10 +116,19 @@ DEFAULTS = {
     "balance_key": "",
     "cookie": "",
     "servers": "198.51.100.10:8080",
-    "health_type": "http",
+    #
+    # No check until somebody asks for one. The field is optional and the model
+    # agrees - `disabled` is its own default - and a form that arrived with a
+    # check already chosen was deciding on the reader's behalf, in the one place
+    # where a wrong choice is invisible until a server is wrongly marked down.
+    #
+    "health_type": "disabled",
     "health_path": "/",
     "health_host": "",
     "health_port": "",
+    "health_interval": "",
+    "health_rise": "",
+    "health_fall": "",
     "backend_tls": "",
     "max_connections": "",
     "slow_start": "",
@@ -263,6 +272,26 @@ def build_document(form: dict[str, object]) -> str:
         if not port.isdigit():
             raise ValueError("the health check port must be a number")
         health["port"] = int(port)
+    if text("health_type") != "disabled":
+        #
+        # Left out when nobody wrote them, so the engine's own values stay the
+        # engine's. A form that wrote 2s/2/3 into every object would freeze
+        # today's defaults into every file it ever saved.
+        #
+        for field, key in (
+            ("health_interval", "interval"),
+            ("health_rise", "rise"),
+            ("health_fall", "fall"),
+        ):
+            asked = text(field)
+            if not asked:
+                continue
+            if key == "interval":
+                health[key] = asked
+                continue
+            if not asked.isdigit():
+                raise ValueError(f"the health check {key} must be a number of checks")
+            health[key] = int(asked)
     if text("health_type") == "http":
         health["path"] = text("health_path") or "/"
         if text("health_host"):
@@ -656,6 +685,15 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "health_path": str(health.get("path", "") or ""),
         "health_host": str(health.get("host", "") or ""),
         "health_port": str(health.get("port", "") or ""),
+        #
+        # Empty when the object does not say, rather than filled in with the
+        # default. The three carry HAProxy's own values when nobody writes
+        # them, and a form that showed those as if they had been chosen would
+        # write them into every object it saved.
+        #
+        "health_interval": str(health.get("interval", "") or ""),
+        "health_rise": str(health.get("rise", "") or ""),
+        "health_fall": str(health.get("fall", "") or ""),
         "backend_tls": str(_sub(backend, "tls").get("verify", "") or ""),
         "max_connections": str(backend.get("max_connections", "") or ""),
         "slow_start": str(backend.get("slow_start", "") or ""),

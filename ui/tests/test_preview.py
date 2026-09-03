@@ -16,6 +16,7 @@ from haproxy_ui.preview import (
     DEFAULTS,
     PREVIEW_CLUSTER,
     build_document,
+    form_from_document,
     preview,
     suggested_cookie,
 )
@@ -174,18 +175,18 @@ class TheFieldsAddedAfterTheFirstLook(unittest.TestCase):
         )
 
     def test_the_health_check_may_answer_on_its_own_port(self) -> None:
-        result = preview(form(health_port="8413"), PREVIEW_CLUSTER)
+        result = preview(form(health_type="http", health_port="8413"), PREVIEW_CLUSTER)
 
         self.assertIn("check port 8413", result.files["1001-app.cfg"])
 
     def test_no_port_means_the_server_s_own(self) -> None:
-        result = preview(form(), PREVIEW_CLUSTER)
+        result = preview(form(health_type="http"), PREVIEW_CLUSTER)
 
         self.assertNotIn("check port", result.files["1001-app.cfg"])
         self.assertIn("check inter", result.files["1001-app.cfg"])
 
     def test_a_port_that_is_not_a_number_says_so(self) -> None:
-        result = preview(form(health_port="eight"), PREVIEW_CLUSTER)
+        result = preview(form(health_type="http", health_port="eight"), PREVIEW_CLUSTER)
 
         self.assertIn("port must be a number", str(result.problem))
 
@@ -327,7 +328,7 @@ class BoundingWhatOneServerIsHanded(unittest.TestCase):
         self.assertIn("timeout queue 5s", result.files["1001-app.cfg"])
 
     def test_a_ramp_reaches_the_server_line(self) -> None:
-        result = preview(form(slow_start="30s"), PREVIEW_CLUSTER)
+        result = preview(form(health_type="http", slow_start="30s"), PREVIEW_CLUSTER)
 
         self.assertIsNone(result.problem)
         self.assertIn(" slowstart 30s", result.files["1001-app.cfg"])
@@ -471,3 +472,50 @@ class ARawPortIsPreviewedToo(unittest.TestCase):
         )
 
         self.assertEqual(result.problem_field, "app.backends.web.cookie")
+
+
+class TheCheckTimingTheObjectAsksFor(unittest.TestCase):
+    """Interval, rise and fall, which the form had no field for until now.
+
+    Every object written here carried HAProxy's own values because nothing
+    could say otherwise - which was invisible, since the generated file states
+    them either way. The three are optional, and left empty they must stay out
+    of the document rather than be written into it as though somebody chose
+    them.
+    """
+
+    def test_nothing_written_leaves_the_defaults_to_the_engine(self) -> None:
+        document = build_document(form(health_type="http"))
+
+        self.assertNotIn("interval:", document)
+        self.assertNotIn("rise:", document)
+        self.assertNotIn("fall:", document)
+
+    def test_what_is_written_reaches_the_server_line(self) -> None:
+        result = preview(
+            form(health_type="http", health_interval="5s", health_rise="3", health_fall="2"),
+            PREVIEW_CLUSTER,
+        )
+
+        self.assertIsNone(result.problem)
+        self.assertIn("check inter 5s rise 3 fall 2", result.files["1001-app.cfg"])
+
+    def test_a_count_that_is_not_a_count_is_named_before_the_engine_sees_it(self) -> None:
+        result = preview(form(health_type="http", health_rise="twice"), PREVIEW_CLUSTER)
+
+        self.assertIn("rise must be a number", str(result.problem))
+
+    def test_the_timing_survives_a_round_trip_through_the_document(self) -> None:
+        """Opened, saved and opened again must not change what it says."""
+
+        written = form(health_type="http", health_interval="5s", health_rise="3", health_fall="2")
+        reopened = form_from_document(build_document(written), networks=())
+
+        self.assertEqual(reopened["health_interval"], "5s")
+        self.assertEqual(reopened["health_rise"], "3")
+        self.assertEqual(reopened["health_fall"], "2")
+
+    def test_a_disabled_check_carries_no_timing_at_all(self) -> None:
+        document = build_document(form(health_type="disabled", health_interval="5s"))
+
+        self.assertNotIn("interval", document)

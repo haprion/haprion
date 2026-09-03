@@ -30,7 +30,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from haproxy_mgmt.proxy_model import DEFAULT_INTERVAL
+from haproxy_mgmt.proxy_model import DEFAULT_FALL, DEFAULT_INTERVAL, DEFAULT_RISE
 
 from haproxy_ui import (
     activity,
@@ -1214,6 +1214,8 @@ def _preview_page(
                 str(form.get("name", "") or "").strip()
             ),
             "check_interval": DEFAULT_INTERVAL,
+            "check_rise": DEFAULT_RISE,
+            "check_fall": DEFAULT_FALL,
             "result": result,
             "submitted": submitted,
             "management_writes": config.management_writes,
@@ -1433,6 +1435,8 @@ def _editor_page(
             # the value the engine will actually use.
             #
             "check_interval": DEFAULT_INTERVAL,
+            "check_rise": DEFAULT_RISE,
+            "check_fall": DEFAULT_FALL,
             "result": result,
             "draft": draft,
             "draft_revision": draft_revision,

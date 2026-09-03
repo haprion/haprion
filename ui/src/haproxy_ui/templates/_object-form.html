@@ -139,7 +139,7 @@
       <label class="keyed-only" data-balances="hdr url_param">Balancing key<input name="balance_key" value="{{ form.balance_key }}" placeholder="X-Tenant"{% if form.balance not in ["hdr", "url_param"] %} disabled{% endif %}><small>Only for <code>hdr</code> and <code>url_param</code>: the header or query parameter whose value decides the server. Same value, same server.</small></label>
       <label><span class="field-title">Session cookie <span class="optional">(optional)</span></span><input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Case-sensitive, empty means no persistence.</small></label>
       <label><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>Connections one server takes at once; the rest queue for 5 s.</small></label>
-      <label><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; must be longer than the {{ check_interval }} check interval.</small></label>
+      <label><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; must be longer than the {{ form.health_interval or check_interval }} check interval.</small></label>
     </div>
     {#
       A setting with three boxes needs the room to be one thing. Left among the
@@ -209,6 +209,17 @@
       <label><span class="field-title">Port <span class="optional">(optional)</span></span><input name="health_port" value="{{ form.health_port }}" placeholder="the server's own"><small>Left empty the check uses each server's traffic port. Set it where health answers somewhere else, such as a management port.</small></label>
       <label><span class="field-title">Path <span class="optional">(optional)</span></span><input name="health_path" value="{{ form.health_path }}" placeholder="/healthz"></label>
       <label><span class="field-title">Host header <span class="optional">(optional)</span></span><input name="health_host" value="{{ form.health_host }}" placeholder="app.example.com"><small>Needed when the backend serves several names — without it the check gets a 404 and a healthy pool reads as down.</small></label>
+    </div>
+    {#
+      How often, and how many answers in a row it takes to change a server's
+      mind. Left empty they are HAProxy's own values, written out in the
+      placeholders - so the boxes say what will happen without the form having
+      to write it into every object it saves.
+    #}
+    <div class="form-grid form-grid-ruled form-grid-fixed">
+      <label><span class="field-title">Check interval <span class="optional">(optional)</span></span><input name="health_interval" value="{{ form.health_interval }}" size="10" placeholder="{{ check_interval }}"><small>How often each server is checked. A duration, such as <code>5s</code> or <code>500ms</code>.</small></label>
+      <label><span class="field-title">Checks to rise <span class="optional">(optional)</span></span><input name="health_rise" value="{{ form.health_rise }}" size="10" placeholder="{{ check_rise }}"><small>Good answers in a row before a failed server is used again.</small></label>
+      <label><span class="field-title">Checks to fall <span class="optional">(optional)</span></span><input name="health_fall" value="{{ form.health_fall }}" size="10" placeholder="{{ check_fall }}"><small>Failures in a row before a server is taken out. Lower is quicker; too low takes a server out over one slow answer.</small></label>
     </div>
     {#
       HAProxy's own verdict, from the nodes, on the pool this object names. It

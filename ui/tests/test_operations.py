@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 
 from haproxy_mgmt.cli import deploy, managed_network_publish, managed_objects_publish
 
-from haproxy_ui import operations
+from haproxy_ui import operations, worker
 
 REQUEST = uuid4()
 
@@ -257,6 +257,49 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
         #
         text = speaking[-1].read_text(encoding="utf-8")
         return text[: text.index("def downgrade")]
+
+    def test_every_operation_has_an_answer_the_worker_will_accept(self) -> None:
+        """Otherwise the operation runs, takes effect, and is recorded as unknown.
+
+        The worker judges a helper's envelope against the outcomes that
+        operation may produce, and an operation missing from that table has an
+        empty set - so every answer it gives is rejected. The command still ran.
+        `objects_publish` did exactly this: the commit was written and the job
+        said nobody could tell.
+        """
+
+        for operation in sorted(self.operations_prepare_accepts()):
+            with self.subTest(operation=operation):
+                self.assertIn(operation, worker._OPERATION_OUTCOMES)
+                self.assertTrue(worker._OPERATION_OUTCOMES[operation])
+
+    def test_the_accepted_outcomes_are_the_schema_s_own(self) -> None:
+        """The contract says which answers exist; the worker must not invent more."""
+
+        #
+        # From this file rather than from the installed package: a release
+        # carries the interface, not the engine's schema directory, and the
+        # contract these are held against lives in the repository.
+        #
+        schemas = Path(__file__).resolve().parents[2] / "schemas" / "v1"
+        for name, path in (
+            ("network_publish", "haproxy-network-publish.schema.json"),
+            ("objects_publish", "haproxy-objects-publish.schema.json"),
+        ):
+            with self.subTest(operation=name):
+                document = json.loads((schemas / path).read_text(encoding="utf-8"))
+                #
+                # The envelope's shared fields come in by `$ref`, so the branch
+                # that names this operation's own outcomes is the one carrying
+                # `properties`. Found rather than indexed by position: the order
+                # of an `allOf` is not part of the contract.
+                #
+                declared = next(
+                    set(branch["properties"]["outcome"]["enum"])
+                    for branch in document["allOf"]
+                    if "properties" in branch and "outcome" in branch["properties"]
+                )
+                self.assertEqual(worker._OPERATION_OUTCOMES[name], declared)
 
     def test_every_operation_the_code_prepares_may_be_queued(self) -> None:
         permitted = self.constraint()

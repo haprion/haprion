@@ -1392,6 +1392,36 @@ This too is below the writes check. With writes off nothing moves at all,
 including a job somebody would rather see moved — which is what makes the flag a
 rollback rather than a pause.
 
+#### What the worker may run
+
+Five helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
+
+```
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-deploy-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-revert-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-publish-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-publish-helper ""
+```
+
+Publishing was deliberately absent from that list until the editor existed, on the reasoning that
+it was an operator's decision made at a terminal. What changed is that the interface became where
+those decisions are made: an editor that can only save a draft is an editor whose work has to be
+finished somewhere else, and asking somebody to leave the screen and log in to a shell to complete
+a change is how a change gets left unfinished. Publishing still writes nothing to a node — that is
+deploy, a separate helper and a separate decision.
+
+**`07-platform-services` installs this file**, `visudo`-checked, since 2026-09-03. Before that it
+was installed by hand, and it fell behind exactly as this document warns: the file predated the
+objects-publish helper, so the publish button would have met sudo's refusal on its first use. If you
+are upgrading an installation that was built earlier, rerun that step.
+
+**The worker may not touch `proxy_draft`.** Only the web role holds grants on it. The worker
+publishes from the job payload, never from the table, which is why a draft that has been published
+is cleared by the interface on its next read rather than by the worker as it finishes. The clearing
+matches on the publish's idempotency key, which carries the draft revision — so a draft edited after
+the publish was asked for has a different key and is left alone.
+
 #### The web service, and why it has no sudoers rule at all
 
 The web service asks the nodes exactly one thing: try this health check. Nothing

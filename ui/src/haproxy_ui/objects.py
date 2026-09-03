@@ -14,16 +14,17 @@ no longer say the same thing.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 from haproxy_mgmt.generate import PORTS
 
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
-from haproxy_ui.db import ClusterObjects, Job
+from haproxy_ui.db import ClusterObjects, Job, ProxyDraft
 from haproxy_ui.history import VersionView
 from haproxy_ui.proxies import ProxyView, Tone
 
@@ -337,3 +338,30 @@ def names_being_published(jobs: Iterable[Job]) -> frozenset[str]:
         if isinstance(named, Mapping):
             waiting.update(name for name in named if isinstance(name, str))
     return frozenset(waiting)
+
+
+def drafts_now_published(
+    drafts: Iterable[ProxyDraft], jobs: Iterable[Job], key_for: Callable[[str, str, int], UUID]
+) -> tuple[str, ...]:
+    """Drafts whose own publish has finished. They are not drafts any more.
+
+    Matched on the publish's idempotency key rather than on the object's name,
+    and that is the whole care in this function. The key is derived from the
+    cluster, the object and the *revision* being published, so a draft somebody
+    edited after pressing publish has a different key and is left alone - which
+    is the one mistake here that would destroy work rather than tidy up.
+
+    Only `done`. A publish that failed leaves the draft exactly where it is,
+    because that is the copy of the work somebody would otherwise have lost.
+    """
+
+    finished = {
+        job.idempotency_key
+        for job in jobs
+        if job.operation == "objects_publish" and job.state == "done" and job.idempotency_key
+    }
+    return tuple(
+        draft.object_id
+        for draft in drafts
+        if key_for(draft.cluster, draft.object_id, draft.revision) in finished
+    )

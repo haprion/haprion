@@ -417,7 +417,7 @@ def build_router(config: Config) -> APIRouter:
         #
         with request.app.state.pool.connection() as connection:
             drafts = {
-                view.cluster: tuple(db.cluster_drafts(connection, view.cluster))
+                view.cluster: tuple(_settled_drafts(connection, view.cluster))
                 for view in overview.clusters
             }
             #
@@ -599,7 +599,7 @@ def build_router(config: Config) -> APIRouter:
         # saving their first draft of it.
         #
         with request.app.state.pool.connection() as connection:
-            draft = db.read_draft(connection, cluster, name)
+            draft = _settled_draft(connection, cluster, name)
         #
         # A name that is neither stored, nor served, nor drafted is not a page.
         # Rendering an empty detail for any string would make every typo look
@@ -1256,7 +1256,7 @@ def _editor_page(
     state = _editor_state(request, config, cluster)
 
     with request.app.state.pool.connection() as connection:
-        draft = db.read_draft(connection, cluster, name) if name else None
+        draft = _settled_draft(connection, cluster, name) if name else None
 
     stored = next((view for view in state.stored if view.name == name), None)
     unexpressible = ""
@@ -1565,7 +1565,7 @@ def _editor_submit(
     # a double-click is the same request and not a second one. The revision is
     # in it because the next edit of the same object is a different publish.
     #
-    key = uuid5(PUBLISH_NAMESPACE, f"{cluster}/{object_id}/{saved.revision}")
+    key = _publish_key(cluster, object_id, saved.revision)
     payload = {
         "objects": {object_id: None if saved.deleted else result.document},
         "expected_head": state.commit,
@@ -1634,6 +1634,71 @@ def _editor_submit(
 # rather than a second publish of the same work.
 #
 PUBLISH_NAMESPACE = UUID("6f1d5f8e-1a2b-4c3d-8e9f-0a1b2c3d4e5f")
+
+
+def _publish_key(cluster: str, object_id: str, revision: int) -> UUID:
+    """The idempotency key one publish of one draft revision is asked under.
+
+    Derived rather than generated, so a double-click is the same request - and
+    so the same key can be recognised afterwards, which is how a draft that has
+    been published is told apart from one that has been edited since.
+    """
+
+    return uuid5(PUBLISH_NAMESPACE, f"{cluster}/{object_id}/{revision}")
+
+
+def _settled_draft(connection: Any, cluster: str, object_id: str) -> db.ProxyDraft | None:
+    """One draft, cleared away if its own publish has finished.
+
+    The editor reads this rather than the row directly, and that is the case
+    that matters most: a draft opens in preference to the stored object, so a
+    stale one would hand somebody their pre-publish copy of a document they
+    have already published - and the next save would write it back.
+    """
+
+    draft = db.read_draft(connection, cluster, object_id)
+    if draft is None:
+        return None
+    jobs = db.recent_jobs(connection, cluster=cluster)
+    if not objects.drafts_now_published([draft], jobs, _publish_key):
+        return draft
+    db.discard_draft(
+        connection, cluster=cluster, object_id=object_id, expected_revision=draft.revision
+    )
+    connection.commit()
+    return None
+
+
+def _settled_drafts(connection: Any, cluster: str) -> list[db.ProxyDraft]:
+    """This cluster's drafts, with the ones already published cleared away.
+
+    Published work is not a draft any more. Left behind it is worse than untidy:
+    the editor opens the draft in preference to the stored object, so a stale
+    row would hand somebody yesterday's copy of a document they published.
+
+    Done here and not in the worker because only the web role may touch this
+    table - the privilege split keeps the worker out of it on purpose, and it
+    publishes from the job payload rather than from the row. So the clearing
+    happens the next time the interface reads, which is a write during a read
+    and deliberately a narrow one: it deletes nothing but a draft whose own
+    publish is recorded as done.
+    """
+
+    drafts = db.cluster_drafts(connection, cluster)
+    jobs = db.recent_jobs(connection, cluster=cluster)
+    published = objects.drafts_now_published(drafts, jobs, _publish_key)
+    if not published:
+        return drafts
+    for draft in drafts:
+        if draft.object_id in published:
+            db.discard_draft(
+                connection,
+                cluster=cluster,
+                object_id=draft.object_id,
+                expected_revision=draft.revision,
+            )
+    connection.commit()
+    return [draft for draft in drafts if draft.object_id not in published]
 
 
 def _refusal_page(request: Request, config: Config, message: str, *, back: str) -> Response:

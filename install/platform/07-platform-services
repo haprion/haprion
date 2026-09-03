@@ -58,6 +58,27 @@ install -o root -g root -m 440 "$sudoers_staging" "/etc/sudoers.d/${sudoers_name
 rm -f "$sudoers_staging"
 log "  installed /etc/sudoers.d/${sudoers_name}  (visudo accepted it)"
 
+step "The worker's privileges"
+#
+# Installed here rather than by hand, which is how it was done until 2026-09-03
+# and how it fell behind: the file dated from before the objects-publish helper
+# existed, so the editor's publish button would have met sudo's refusal on its
+# first use. A rule that lives only in an operator's memory drifts from the
+# release that needs it.
+#
+# The account name is written into the example rather than substituted, because
+# the worker's identity is the decision this file records.
+#
+sudoers_staging="$(mktemp)"
+cp examples/haproxy-ui-worker.sudoers.example "$sudoers_staging"
+if ! visudo -cqf "$sudoers_staging"; then
+    rm -f "$sudoers_staging"
+    die "the worker sudoers rule does not parse; nothing was installed"
+fi
+install -o root -g root -m 440 "$sudoers_staging" "/etc/sudoers.d/${WORKER_USER}"
+rm -f "$sudoers_staging"
+log "  installed /etc/sudoers.d/${WORKER_USER}  (visudo accepted it)"
+
 step "The web service's way to the probe"
 #
 # Not a sudoers rule. The web unit carries NoNewPrivileges=yes, an empty

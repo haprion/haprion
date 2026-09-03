@@ -437,3 +437,91 @@ class ADraftOnItsWay(DraftReading):
         body = self.listing([self.job("pending", name="something-else")])
 
         self.assertNotIn("Waiting for publish", body)
+
+
+class ADraftThatWasPublished(DraftReading):
+    """Published work is not a draft any more, and a stale row is not tidy-up.
+
+    The editor opens a draft in preference to the stored object, so one left
+    behind hands somebody their pre-publish copy of a document they already
+    published - and the next save writes it back.
+    """
+
+    def drafted(self, revision: int = 1) -> ProxyDraft:
+        return ProxyDraft(
+            cluster="edge-demo",
+            object_id="half-done",
+            yaml="",
+            base_version=1,
+            base_hash="abc",
+            revision=revision,
+            updated_by="operator",
+            updated_at=CAPTURED,
+            deleted=False,
+        )
+
+    def job(self, state: str, revision: int) -> Job:
+        from haproxy_ui.views import _publish_key
+
+        return Job(
+            id=1,
+            request_id=uuid4(),
+            operation="objects_publish",
+            cluster="edge-demo",
+            payload={"objects": {"half-done": "schema: 1"}},
+            state=state,
+            created_at=CAPTURED,
+            started_at=None,
+            finished_at=None,
+            exit_code=None,
+            outcome=None,
+            result=None,
+            stderr_excerpt=None,
+            idempotency_key=_publish_key("edge-demo", "half-done", revision),
+            attempts=0,
+        )
+
+    def listing(self, draft: ProxyDraft, jobs: list[Job]) -> tuple[str, list[object]]:
+        discarded: list[object] = []
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+
+        #
+        # Per cluster, because the fixture has more than one and a draft that
+        # belonged to all of them would count every deletion twice.
+        #
+        def drafts(_c: object, cluster: str) -> list[ProxyDraft]:
+            return [draft] if cluster == draft.cluster else []
+
+        def only(_c: object, cluster: str) -> list[Job]:
+            return jobs if cluster == draft.cluster else []
+
+        with (
+            mock.patch("haproxy_ui.db.cluster_drafts", side_effect=drafts),
+            mock.patch("haproxy_ui.db.recent_jobs", side_effect=only),
+            mock.patch(
+                "haproxy_ui.db.discard_draft", side_effect=lambda *a, **k: discarded.append(k)
+            ),
+        ):
+            return client.get("/proxies").text, discarded
+
+    def test_a_finished_publish_clears_the_draft(self) -> None:
+        body, discarded = self.listing(self.drafted(), [self.job("done", 1)])
+
+        self.assertEqual(len(discarded), 1)
+        self.assertEqual(discarded[0]["object_id"], "half-done")
+        self.assertNotIn(">Draft<", body)
+
+    def test_a_draft_edited_after_the_publish_is_left_alone(self) -> None:
+        """The key carries the revision, so a later edit is a different publish."""
+
+        body, discarded = self.listing(self.drafted(revision=2), [self.job("done", 1)])
+
+        self.assertEqual(discarded, [])
+        self.assertIn(">Draft<", body)
+
+    def test_a_publish_that_failed_keeps_the_work(self) -> None:
+        body, discarded = self.listing(self.drafted(), [self.job("failed", 1)])
+
+        self.assertEqual(discarded, [])
+        self.assertIn(">Draft<", body)

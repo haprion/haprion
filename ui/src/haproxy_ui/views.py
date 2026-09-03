@@ -49,6 +49,7 @@ from haproxy_ui import (
 )
 from haproxy_ui import editor as editor_module
 from haproxy_ui import preview as preview_module
+from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.config import Config
 from haproxy_ui.db import AuthenticatedSession
 
@@ -1185,6 +1186,14 @@ def _preview_page(
             "role": session.role,
             "csrf_token": auth.csrf_token(token),
             "section": "preview",
+            #
+            # No accent. The colours name a real cluster, and the preview is
+            # deliberately not one - the form here writes nothing anywhere.
+            # Passed as empty rather than left out, so the shared form template
+            # renders a class that matches no rule instead of relying on an
+            # undefined name.
+            #
+            "accent": "",
             "form": form,
             "choices": preview_module.choices(cluster),
             "suggested_cookie": preview_module.suggested_cookie(
@@ -1364,6 +1373,13 @@ def _editor_page(
             "csrf_token": auth.csrf_token(token),
             "section": "proxies",
             "cluster": cluster,
+            #
+            # The same colour this cluster carries on every other page. The
+            # editor is the one place a person writes rather than reads, and it
+            # was the one page that did not say which cluster they are writing
+            # to in the way the rest of the interface says it.
+            #
+            "accent": accent_index(cluster),
             "name": name,
             "existing": stored is not None,
             "form": fields,

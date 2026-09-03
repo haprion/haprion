@@ -19,7 +19,7 @@
 #}
 <script defer src="{{ url_for('static', path='/object-form.js') }}?v={{ asset_token }}"></script>
 
-  <section class="cluster-card">
+  <section class="cluster-card cluster-accent-{{ accent }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>The site</h3><p>What visitors ask for</p></div></div></header>
     <div class="form-grid">
       <label>Name<input name="name" value="{{ form.name }}" maxlength="40" required{% if name_locked %} readonly{% endif %}><small>{% if name_locked %}An object cannot be renamed here. Create the new name and remove the old one.{% else %}This object's identity, unique per cluster.{% endif %}</small></label>
@@ -117,7 +117,7 @@
     </div>
   </section>
 
-  <section class="cluster-card">
+  <section class="cluster-card cluster-accent-{{ accent }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>The pool</h3><p>Where the traffic goes</p></div></div></header>
     <div class="form-grid">
       <label>Pool name<input name="backend" value="{{ form.backend }}" placeholder="web"><small>What this object's one pool is called in the stored document and in the generated configuration. Objects written by hand often name it after what it serves.</small></label>
@@ -151,7 +151,7 @@
     </div>
   </section>
 
-  <section class="cluster-card">
+  <section class="cluster-card cluster-accent-{{ accent }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>The health check</h3><p>How a server is decided to be usable</p></div></div></header>
     <div class="form-grid">
       <label>Type

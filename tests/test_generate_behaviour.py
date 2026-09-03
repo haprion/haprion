@@ -20,9 +20,11 @@ cannot answer the question, and a green result there would mean nothing.
 from __future__ import annotations
 
 import base64
+import ctypes
 import hashlib
 import os
 import shutil
+import signal
 import socket
 import ssl
 import subprocess
@@ -244,6 +246,67 @@ def echo_server(pool: str, port: int) -> ThreadingHTTPServer:
     return server
 
 
+#
+# What the kernel is asked to do to a spawned HAProxy when this process goes.
+# `prctl(PR_SET_PDEATHSIG)`, which is Linux's own answer to exactly this: the
+# child is signalled the moment its parent dies, whatever killed the parent.
+#
+_PR_SET_PDEATHSIG = 1
+
+
+def _die_with_the_test_run() -> None:
+    """Ask the kernel to kill this child when the test process goes.
+
+    These tests start a real HAProxy, which is the whole point of them - a
+    generated configuration is only proved by the program that reads it. The
+    cost is a process that outlives its test if teardown never runs, and
+    teardown never runs when the run is interrupted, times out, or is killed.
+
+    That happened here: they accumulated until 177 of them held 4.6 GB between
+    them and the machine went to the OOM killer. This is the second half of the
+    fix - `-db` above is the first - and it covers the case teardown cannot: a
+    run that is interrupted, times out, or is killed never reaches one.
+
+    Set in the child between fork and exec, so it holds for a parent that is
+    given no chance to do anything.
+    """
+
+    ctypes.CDLL("libc.so.6", use_errno=True).prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
+
+
+def start_haproxy(binary: str, arguments: list[str], port: int) -> subprocess.Popen[bytes]:
+    """One HAProxy, bound to this run's lifetime and proved to be listening.
+
+    A start that never comes up is terminated here rather than left to a
+    teardown that will not be called - `setUpClass` raising means the class
+    never gets one.
+    """
+
+    #
+    # `-db` is what makes the process this returns the actual HAProxy. The core
+    # fixture says `daemon`, as a real one does, so without this HAProxy forks
+    # into the background and the child Python is holding exits at once -
+    # `terminate()` then kills something that has already gone, `wait()` returns
+    # cleanly, and the server itself runs on with init as its parent.
+    #
+    # Every spawn leaked that way, in every run, until the machine ran out of
+    # memory. The flag is a harness concern and not a change to what is being
+    # tested: the configuration under test is still the one with `daemon` in it.
+    #
+    process = subprocess.Popen(
+        [binary, "-db", *arguments],
+        stderr=subprocess.DEVNULL,
+        preexec_fn=_die_with_the_test_run,
+    )
+    try:
+        wait_for(port)
+    except BaseException:
+        process.terminate()
+        process.wait(timeout=5)
+        raise
+    return process
+
+
 def wait_for(port: int, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -304,8 +367,7 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
             arguments += ["-f", str(path)]
         binary = shutil.which("haproxy")
         assert binary is not None
-        cls.haproxy = subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL)
-        wait_for(cls.port)
+        cls.haproxy = start_haproxy(binary, arguments, cls.port)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -596,8 +658,7 @@ class TlsIsServedTheWayTheObjectAsksFor(unittest.TestCase):
                 arguments += ["-f", str(path)]
         binary = shutil.which("haproxy")
         assert binary is not None
-        cls.haproxy = subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL)
-        wait_for(cls.https_port)
+        cls.haproxy = start_haproxy(binary, arguments, cls.https_port)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -721,8 +782,7 @@ class WhatTheBackendLearnsAboutTheVisitor(unittest.TestCase):
             arguments += ["-f", str(path)]
         binary = shutil.which("haproxy")
         assert binary is not None
-        cls.haproxy = subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL)
-        wait_for(cls.port)
+        cls.haproxy = start_haproxy(binary, arguments, cls.port)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -813,8 +873,7 @@ class TheBrakeOnTrafficThatIsNotAVisitor(unittest.TestCase):
             arguments += ["-f", str(path)]
         binary = shutil.which("haproxy")
         assert binary is not None
-        cls.haproxy = subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL)
-        wait_for(cls.port)
+        cls.haproxy = start_haproxy(binary, arguments, cls.port)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -878,8 +937,7 @@ class HeaderEditsReachTheTraffic(unittest.TestCase):
             arguments += ["-f", str(path)]
         binary = shutil.which("haproxy")
         assert binary is not None
-        cls.haproxy = subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL)
-        wait_for(cls.port)
+        cls.haproxy = start_haproxy(binary, arguments, cls.port)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -976,8 +1034,7 @@ class ARawPortIsForwardedAsItArrives(unittest.TestCase):
             arguments += ["-f", str(path)]
         binary = shutil.which("haproxy")
         assert binary is not None
-        cls.haproxy = subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL)
-        wait_for(cls.port)
+        cls.haproxy = start_haproxy(binary, arguments, cls.port)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -1154,8 +1211,7 @@ class ReachingAPoolOverTls(unittest.TestCase):
             arguments += ["-f", str(path)]
         binary = shutil.which("haproxy")
         assert binary is not None
-        self.running.append(subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL))
-        wait_for(port)
+        self.running.append(start_haproxy(binary, arguments, port))
 
         connection = HTTPConnection("127.0.0.1", port, timeout=5)
         try:
@@ -1278,8 +1334,7 @@ class CheckingATlsPoolOnAnotherPort(unittest.TestCase):
             arguments += ["-f", str(path)]
         binary = shutil.which("haproxy")
         assert binary is not None
-        self.running.append(subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL))
-        wait_for(port)
+        self.running.append(start_haproxy(binary, arguments, port))
 
         #
         # Two checks at two seconds have to pass before a server rises, so the
@@ -1458,8 +1513,7 @@ class AnUpgradedConnectionLivesOnTheTunnelTimeout(unittest.TestCase):
             arguments += ["-f", str(path)]
         binary = shutil.which("haproxy")
         assert binary is not None
-        cls.haproxy = subprocess.Popen([binary, *arguments], stderr=subprocess.DEVNULL)
-        wait_for(cls.port)
+        cls.haproxy = start_haproxy(binary, arguments, cls.port)
 
     @classmethod
     def tearDownClass(cls) -> None:

@@ -854,6 +854,11 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  */
 .form-checks { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; padding: 14px 20px 0; }
 .form-checks .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
+/* A checkbox that needs a sentence under it rather than beside it. The row
+   stacks instead of running along, so the note belongs to the box above it and
+   not to whatever the flex row wrapped next. */
+.form-checks-noted { flex-direction: column; align-items: flex-start; gap: 6px; border-top: 2px solid var(--line-strong); margin: 18px 20px 0; padding: 14px 0 4px; }
+.check-note { margin: 0; max-width: 68ch; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
 
 .preview-form .warning-text { margin: 12px 20px 0; }
 /*

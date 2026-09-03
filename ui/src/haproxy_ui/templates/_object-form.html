@@ -137,6 +137,13 @@
         </select>
       </label>
       <label class="keyed-only" data-balances="hdr url_param">Balancing key<input name="balance_key" value="{{ form.balance_key }}" placeholder="X-Tenant"{% if form.balance not in ["hdr", "url_param"] %} disabled{% endif %}><small>Only for <code>hdr</code> and <code>url_param</code>: the header or query parameter whose value decides the server. Same value, same server.</small></label>
+      <label>Backend TLS
+        <select name="backend_tls">
+          <option value=""{% if not form.backend_tls %} selected{% endif %}>Plain HTTP</option>
+          <option value="system"{% if form.backend_tls == 'system' %} selected{% endif %}>HTTPS, verify against the system CAs</option>
+          <option value="none"{% if form.backend_tls == 'none' %} selected{% endif %}>HTTPS, do not verify</option>
+        </select>
+      </label>
       <label><span class="field-title">Session cookie <span class="optional">(optional)</span></span><input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Case-sensitive, empty means no persistence.</small></label>
       <label><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>Connections one server takes at once; the rest queue for 5 s.</small></label>
       <label><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; must be longer than the <span class="slow-start-interval" data-default="{{ check_interval }}">{{ form.health_interval or check_interval }}</span> check interval.</small></label>
@@ -172,20 +179,17 @@
       </div>
     </div>
     {#
-      What is done to the traffic on the way through, and how the pool is
-      reached. Neither is about choosing a server, which is what everything
-      above this rule decides.
+      What is done to the traffic on the way through. Not about choosing a
+      server, which is what everything above this rule decides.
+
+      How the pool is *reached* used to be down here beside the headers. It is
+      a property of the pool rather than of the traffic passing through it, so
+      it sits with the servers it describes - and beside the health check it is
+      read against, which is the question it is most often confused with.
     #}
     <div class="form-grid form-grid-ruled form-grid-fixed">
       <label><span class="field-title">Request headers <span class="optional">(optional)</span></span><textarea name="request_headers" rows="3" placeholder="X-Tenant: acme&#10;+X-Trace: 1&#10;-X-Debug">{{ form.request_headers }}</textarea><small>One per line. <code>Name: value</code> sets, <code>+Name: value</code> adds, <code>-Name</code> removes.</small></label>
       <label><span class="field-title">Response headers <span class="optional">(optional)</span></span><textarea name="response_headers" rows="3" placeholder="X-Frame-Options: DENY&#10;-Server">{{ form.response_headers }}</textarea><small>Same three shapes, on the way back out.</small></label>
-      <label>Backend TLS
-        <select name="backend_tls">
-          <option value=""{% if not form.backend_tls %} selected{% endif %}>Plain HTTP</option>
-          <option value="system"{% if form.backend_tls == 'system' %} selected{% endif %}>HTTPS, verify against the system CAs</option>
-          <option value="none"{% if form.backend_tls == 'none' %} selected{% endif %}>HTTPS, do not verify</option>
-        </select>
-      </label>
     </div>
   </section>
 
@@ -225,9 +229,17 @@
       and not this form's, so nothing is written into the object to say it.
     #}
     <div class="form-grid form-grid-ruled">
-      <label class="check"><input type="checkbox" name="health_tls"{% if form.health_tls %} checked{% endif %}> The check does its own TLS handshake<small>Rarely needed. A pool reached over TLS is already checked over TLS. Tick this when the pool is plain but the health endpoint speaks TLS, or for a tcp pool you want checked by handshake.</small></label>
       <label><span class="field-title">Expected status <span class="optional">(optional)</span></span><input name="health_expect_status" value="{{ form.health_expect_status }}" size="10" placeholder="any 2xx or 3xx"><small>One status the server must answer with, such as <code>204</code>.</small></label>
       <label><span class="field-title">Expected body <span class="optional">(optional)</span></span><input name="health_expect_body" value="{{ form.health_expect_body }}" placeholder="ok"><small>Text the answer must contain. Checked as well as the status, not instead of it.</small></label>
+    </div>
+    {#
+      A checkbox and a sentence, not a field with a box where its input should
+      be. It sat in the grid above and inherited a label meant for one, which
+      put the caption beside an empty column and the box above it.
+    #}
+    <div class="form-checks form-checks-noted">
+      <label class="check"><input type="checkbox" name="health_tls"{% if form.health_tls %} checked{% endif %}> The check does its own TLS handshake</label>
+      <p class="check-note">Rarely needed. A pool reached over TLS is already checked over TLS. Tick this when the pool is plain but its health endpoint speaks TLS, or for a tcp pool you want checked by handshake.</p>
     </div>
     {#
       A tcp check that sends nothing is a connect check, which is what the type

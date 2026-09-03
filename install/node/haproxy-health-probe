@@ -1,0 +1,282 @@
+#!/usr/bin/env python3
+#
+# The forced command for the health probe key.
+#
+# One question, asked from this node: would a health check reach these servers?
+# The answer is worth having from here and nowhere else - the node is what
+# connects to a pool, from the address the object leaves from, through whatever
+# stands between the two. A probe run on the management host proves a path
+# nobody's traffic takes.
+#
+# Runs unprivileged, as the account the key logs in as. Opening an outbound
+# connection needs no privilege, and binding the object's source address needs
+# none either: the address is local to this node, and `ip_nonlocal_bind` covers
+# the moment it is carried by the other one.
+#
+# Everything arrives as JSON on stdin and is refused unless it is exactly what
+# this expects. The key can do nothing else - `command=` in authorized_keys sees
+# to that - so this file is the whole surface, and it treats every field as
+# something a client chose.
+
+from __future__ import annotations
+
+import json
+import re
+import socket
+import ssl
+import sys
+import time
+
+SCHEMA_VERSION = 1
+
+# A request is small. The cap stops a client from making this read forever.
+MAX_REQUEST_BYTES = 64 * 1024
+
+# One object's pool, not a scan. A cluster's pools are small, and a probe that
+# accepted hundreds of targets would be a port scanner with an SSH key.
+MAX_TARGETS = 20
+
+# Bounded on both ends. Too short reports a healthy server as unreachable; too
+# long lets one request hold this connection open far past any usefulness.
+MIN_TIMEOUT_MS = 100
+MAX_TIMEOUT_MS = 5000
+DEFAULT_TIMEOUT_MS = 2000
+
+HOST = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,253}[A-Za-z0-9])?$")
+PATH = re.compile(r"^/[!-~]{0,1023}$")
+HEADER_VALUE = re.compile(r"^[!-~]([ -~]{0,253}[!-~])?$")
+
+
+class Refused(Exception):
+    """The request was not something this is willing to act on."""
+
+
+def refuse(message):
+    raise Refused(message)
+
+
+def text(payload, key, pattern, *, required=True, default=""):
+    value = payload.get(key, default)
+    if value is None or value == "":
+        if required:
+            refuse(f"{key} is required")
+        return ""
+    if not isinstance(value, str) or not pattern.match(value):
+        refuse(f"{key} is not usable")
+    return value
+
+
+def port_of(payload, key):
+    value = payload.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 65535:
+        refuse(f"{key} must be a port number")
+    return value
+
+
+def flag(payload, key):
+    value = payload.get(key, False)
+    if not isinstance(value, bool):
+        refuse(f"{key} must be true or false")
+    return value
+
+
+def read_request(stream):
+    raw = stream.read(MAX_REQUEST_BYTES + 1)
+    if len(raw) > MAX_REQUEST_BYTES:
+        refuse("the request is too large")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        refuse("the request is not JSON")
+    if not isinstance(payload, dict):
+        refuse("the request is not an object")
+    if payload.get("schema_version") != SCHEMA_VERSION:
+        refuse(f"schema_version must be {SCHEMA_VERSION}")
+
+    timeout = payload.get("timeout_ms", DEFAULT_TIMEOUT_MS)
+    if not isinstance(timeout, int) or isinstance(timeout, bool):
+        refuse("timeout_ms must be a number of milliseconds")
+    timeout = max(MIN_TIMEOUT_MS, min(MAX_TIMEOUT_MS, timeout))
+
+    #
+    # The address the object leaves from, when it names one. Refused rather
+    # than ignored if it is not an address this node can bind: a probe that
+    # quietly left from a different address would answer a question nobody
+    # asked, and the whole point of asking here is which path is taken.
+    #
+    source = payload.get("source") or ""
+    if source and not isinstance(source, str):
+        refuse("source must be an address")
+
+    targets = payload.get("targets")
+    if not isinstance(targets, list) or not targets:
+        refuse("targets must be a non-empty list")
+    if len(targets) > MAX_TARGETS:
+        refuse(f"at most {MAX_TARGETS} targets may be probed at once")
+
+    read = []
+    for entry in targets:
+        if not isinstance(entry, dict):
+            refuse("a target is not an object")
+        kind = entry.get("type")
+        if kind not in ("tcp", "http"):
+            refuse("a target's type must be tcp or http")
+        read.append(
+            {
+                "host": text(entry, "host", HOST),
+                "port": port_of(entry, "port"),
+                "type": kind,
+                "tls": flag(entry, "tls"),
+                "verify": flag(entry, "verify"),
+                "path": text(entry, "path", PATH, required=False, default="/") or "/",
+                "host_header": text(entry, "host_header", HOST, required=False),
+            }
+        )
+    return {"timeout_ms": timeout, "source": source, "targets": read}
+
+
+def connect(target, timeout, source):
+    """One connection, and the reason it failed if it did."""
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    if source:
+        #
+        # Port 0: the address is what is being chosen, never the port. Binding
+        # a port here would collide with itself on a second probe.
+        #
+        sock.bind((source, 0))
+    sock.connect((target["host"], target["port"]))
+    if not target["tls"]:
+        return sock
+
+    context = ssl.create_default_context()
+    if not target["verify"]:
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    server_name = target["host_header"] or target["host"]
+    return context.wrap_socket(sock, server_hostname=server_name)
+
+
+def http_status(stream, target, timeout):
+    """The status line of a GET, and nothing else that came back.
+
+    The body is not read and never reported. This runs on a proxy node with a
+    key somebody else holds, and a probe that returned what a backend said
+    would be a way to read pages through it.
+    """
+
+    host = target["host_header"] or target["host"]
+    request = (
+        f"GET {target['path']} HTTP/1.1\r\n"
+        f"Host: {host}\r\n"
+        "User-Agent: haproxy-health-probe\r\n"
+        "Connection: close\r\n"
+        "Accept: */*\r\n"
+        "\r\n"
+    )
+    stream.sendall(request.encode("ascii"))
+    stream.settimeout(timeout)
+
+    line = b""
+    while b"\r\n" not in line and len(line) < 256:
+        chunk = stream.recv(64)
+        if not chunk:
+            break
+        line += chunk
+    parts = line.split(b"\r\n", 1)[0].split(b" ")
+    if len(parts) < 2 or not parts[1].isdigit():
+        return None
+    return int(parts[1])
+
+
+def probe(target, timeout_ms, source):
+    timeout = timeout_ms / 1000
+    started = time.monotonic()
+    result = {
+        "host": target["host"],
+        "port": target["port"],
+        "ok": False,
+        "status": None,
+        "error": None,
+        "ms": 0,
+    }
+    stream = None
+    try:
+        stream = connect(target, timeout, source)
+        if target["type"] == "http":
+            status = http_status(stream, target, timeout)
+            result["status"] = status
+            #
+            # The same range HAProxy's own default expects. A 500 is a server
+            # that answered and is not usable, which is the distinction the
+            # check exists to make.
+            #
+            result["ok"] = status is not None and 200 <= status <= 399
+            if status is None:
+                result["error"] = "no HTTP status was returned"
+            elif not result["ok"]:
+                result["error"] = f"answered {status}"
+        else:
+            result["ok"] = True
+    except ssl.SSLError as error:
+        result["error"] = f"TLS failed: {error.reason or error}"
+    except socket.timeout:
+        result["error"] = f"no answer within {timeout_ms} ms"
+    except OSError as error:
+        result["error"] = error.strerror or str(error)
+    finally:
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                pass
+    result["ms"] = int((time.monotonic() - started) * 1000)
+    return result
+
+
+def main(argv=None, stdin=None, stdout=None):
+    argv = sys.argv[1:] if argv is None else argv
+    stdin = stdin or sys.stdin.buffer
+    stdout = stdout or sys.stdout
+
+    #
+    # No arguments. The key is forced to this command, and anything after it
+    # arrives in SSH_ORIGINAL_COMMAND rather than here - but a copy of this
+    # script run by hand with arguments is a different request from the one
+    # that was reviewed, so it is refused rather than ignored.
+    #
+    try:
+        if argv:
+            refuse("this command takes no arguments")
+        request = read_request(stdin)
+    except Refused as refusal:
+        json.dump(
+            {"schema_version": SCHEMA_VERSION, "ok": False, "error": str(refusal), "results": []},
+            stdout,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        stdout.write("\n")
+        return 64
+
+    results = [probe(target, request["timeout_ms"], request["source"]) for target in request["targets"]]
+    json.dump(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "ok": True,
+            "node": socket.gethostname(),
+            "source": request["source"],
+            "error": None,
+            "results": results,
+        },
+        stdout,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

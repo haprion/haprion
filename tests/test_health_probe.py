@@ -1,0 +1,230 @@
+"""The node-side probe, run as a node runs it: JSON in, JSON out, no arguments.
+
+The script is executed rather than imported, because how it is *called* is half
+of what it is. It is the forced command on a key somebody else holds, so the
+request is client-controlled data, and a request it should refuse must be
+refused by the file itself and not by whatever imports it.
+
+Every case here is a real connection to a real socket in this process. A probe
+that says a server answered is worth nothing unless the thing that says it
+actually opened the connection.
+"""
+
+from __future__ import annotations
+
+import json
+import socket
+import subprocess as sp
+import threading
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-health-probe"
+
+
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802 - the name is the library's
+        body = b"served"
+        status = {"/healthz": 200, "/moved": 302}.get(self.path, 404)
+        self.send_response(status)
+        self.send_header("Content-Length", str(len(body)))
+        try:
+            self.end_headers()
+            self.wfile.write(body)
+        except OSError:
+            #
+            # The probe reads the status line and hangs up, which is the point:
+            # it never reads a body. Writing into the closed socket is not a
+            # failure of anything being tested.
+            pass
+
+    def log_message(self, *_: object) -> None:
+        """Silence."""
+
+
+def ask(request: dict[str, object]) -> tuple[int, dict[str, object]]:
+    completed = sp.run(
+        [str(SCRIPT)],
+        input=json.dumps(request).encode(),
+        capture_output=True,
+        check=False,
+    )
+    return completed.returncode, json.loads(completed.stdout)
+
+
+def target(**fields: object) -> dict[str, object]:
+    entry: dict[str, object] = {"type": "http", "host": "127.0.0.1", "path": "/healthz"}
+    entry.update(fields)
+    return entry
+
+
+class WhatTheProbeAnswers(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+
+    def probe(self, **fields: object) -> dict[str, object]:
+        code, answer = ask({"schema_version": 1, "targets": [target(port=self.port, **fields)]})
+        self.assertEqual(code, 0)
+        return answer["results"][0]
+
+    def test_a_server_that_answers_is_usable(self) -> None:
+        result = self.probe()
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], 200)
+        self.assertIsNone(result["error"])
+
+    def test_a_redirect_counts_as_usable(self) -> None:
+        """The range HAProxy's own check accepts, so the two agree."""
+
+        self.assertTrue(self.probe(path="/moved")["ok"])
+
+    def test_a_server_that_answers_wrongly_is_not_usable(self) -> None:
+        """404 is the mistake this exists to catch: a check on the wrong path."""
+
+        result = self.probe(path="/nowhere")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], 404)
+        self.assertEqual(result["error"], "answered 404")
+
+    def test_a_tcp_probe_asks_only_whether_the_port_answers(self) -> None:
+        result = self.probe(type="tcp")
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["status"])
+
+    def test_a_port_nothing_listens_on_is_reported_as_refused(self) -> None:
+        code, answer = ask({"schema_version": 1, "targets": [target(type="tcp", port=free_port())]})
+        self.assertEqual(code, 0)
+        result = answer["results"][0]
+        self.assertFalse(result["ok"])
+        self.assertIn("refused", str(result["error"]).lower())
+
+    def test_plain_http_against_a_tls_expectation_fails_rather_than_hangs(self) -> None:
+        result = self.probe(tls=True, verify=False)
+        self.assertFalse(result["ok"])
+        self.assertIsNotNone(result["error"])
+
+    def test_the_body_never_comes_back(self) -> None:
+        """A key that returned pages would be a way to read through the node."""
+
+        self.assertNotIn("served", json.dumps(self.probe()))
+
+    def test_every_target_is_answered_in_order(self) -> None:
+        code, answer = ask(
+            {
+                "schema_version": 1,
+                "targets": [
+                    target(port=self.port),
+                    target(port=self.port, path="/nowhere"),
+                ],
+            }
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual([entry["ok"] for entry in answer["results"]], [True, False])
+
+
+class WhatTheProbeRefuses(unittest.TestCase):
+    """The request is data from a client, and this is the whole surface."""
+
+    def refusal(self, request: object) -> str:
+        completed = sp.run(
+            [str(SCRIPT)],
+            input=json.dumps(request).encode(),
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 64)
+        answer = json.loads(completed.stdout)
+        self.assertFalse(answer["ok"])
+        self.assertEqual(answer["results"], [])
+        return str(answer["error"])
+
+    def test_another_schema_version_is_refused_rather_than_guessed(self) -> None:
+        self.assertIn("schema_version", self.refusal({"schema_version": 2, "targets": []}))
+
+    def test_something_that_is_not_a_request(self) -> None:
+        self.assertIn("not an object", self.refusal(["targets"]))
+
+    def test_a_host_with_a_space_in_it(self) -> None:
+        self.assertIn(
+            "host",
+            self.refusal(
+                {"schema_version": 1, "targets": [{"type": "tcp", "host": "a b", "port": 80}]}
+            ),
+        )
+
+    def test_a_port_that_is_not_a_port(self) -> None:
+        for port in (0, 65536, "80", True):
+            with self.subTest(port=port):
+                self.assertIn(
+                    "port",
+                    self.refusal(
+                        {
+                            "schema_version": 1,
+                            "targets": [{"type": "tcp", "host": "127.0.0.1", "port": port}],
+                        }
+                    ),
+                )
+
+    def test_a_type_nobody_asked_for(self) -> None:
+        self.assertIn(
+            "tcp or http",
+            self.refusal(
+                {
+                    "schema_version": 1,
+                    "targets": [{"type": "smtp", "host": "127.0.0.1", "port": 25}],
+                }
+            ),
+        )
+
+    def test_more_targets_than_a_pool_has(self) -> None:
+        """A probe that took hundreds would be a port scanner with a key."""
+
+        many = [{"type": "tcp", "host": "127.0.0.1", "port": 80} for _ in range(21)]
+        self.assertIn("at most", self.refusal({"schema_version": 1, "targets": many}))
+
+    def test_a_path_that_carries_a_request_of_its_own(self) -> None:
+        self.assertIn(
+            "path",
+            self.refusal(
+                {
+                    "schema_version": 1,
+                    "targets": [
+                        {
+                            "type": "http",
+                            "host": "127.0.0.1",
+                            "port": 80,
+                            "path": "/x HTTP/1.1\r\nX-Injected: 1",
+                        }
+                    ],
+                }
+            ),
+        )
+
+    def test_arguments_are_refused_even_though_the_key_forbids_them(self) -> None:
+        completed = sp.run(
+            [str(SCRIPT), "--all"],
+            input=b"{}",
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 64)
+        self.assertIn("takes no arguments", json.loads(completed.stdout)["error"])
+
+
+if __name__ == "__main__":
+    unittest.main()

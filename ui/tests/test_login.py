@@ -114,6 +114,14 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haproxy_ui.db.cluster_backups", return_value=[]),
             mock.patch("haproxy_ui.db.cluster_networks", return_value=[]),
             mock.patch("haproxy_ui.db.cluster_objects", return_value=[]),
+            #
+            # The listing reads drafts now, so every page that renders it
+            # calls this. Defaulted to none rather than left unpatched: a
+            # page whose draft lookup raises is a page that does not render
+            # at all, which would hide whatever the case was about.
+            #
+            mock.patch("haproxy_ui.db.cluster_drafts", return_value=[]),
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
         ]
         for patch in self.patches:
             patch.start()

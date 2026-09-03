@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
+from uuid import uuid4
 
 from haproxy_ui import auth
 from haproxy_ui import probe as probe_module
@@ -385,24 +387,23 @@ class TheHealthCardOnThePage(EditorTestCase):
 
 
 class WhereASaveLands(EditorTestCase):
-    """Saving finishes a piece of work, so it leaves the form.
+    """Saving finishes a round of work, so it leaves the form.
 
-    Not to `/proxies`: that list is built from what the nodes are serving, so a
-    new object saved as a draft has no row there at all and somebody would land
-    on a page where their work is invisible. The object's own page is where a
-    draft is a thing you can see and act on.
+    To the listing, because that is where the work now shows: a draft is a row
+    there in its own right, so somebody lands on the page that says where their
+    object stands rather than on the form they just left.
 
     Validating is the opposite and deliberately stays: its whole answer - the
     refusal, or the configuration this would generate - is on the page, and
     navigating away would throw away what was just asked for.
     """
 
-    def test_a_save_goes_to_the_object_and_says_so(self) -> None:
+    def test_a_save_goes_to_the_listing_and_names_what_was_saved(self) -> None:
         client = self.editor()
         answer = self.submit(client, "/proxies/alpha/shop/edit", action="save")
 
         self.assertEqual(answer.status_code, 303)
-        self.assertEqual(answer.headers["location"], "/proxies/alpha/shop?saved=1")
+        self.assertEqual(answer.headers["location"], "/proxies?saved=shop")
 
     def test_a_discard_goes_to_the_object_and_says_so(self) -> None:
         self.draft = ProxyDraft(
@@ -429,3 +430,64 @@ class WhereASaveLands(EditorTestCase):
         answer = self.submit(client, "/proxies/alpha/shop/edit", action="check")
 
         self.assertEqual(answer.status_code, 200)
+
+
+class SaveAndPublish(EditorTestCase):
+    """One button, two acts, and the second one is a job.
+
+    They are one button because saving and then publishing separately was three
+    screens for one change. They stay two acts underneath, and the order matters:
+    a publish that is refused has to leave the work saved rather than lost.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.queued: list[dict[str, Any]] = []
+        patch = mock.patch("haproxy_ui.db.queue_job", side_effect=self._queue)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def _queue(self, _c: object, **values: Any) -> Any:
+        self.queued.append(values)
+        return SimpleNamespace(id=1, request_id=uuid4())
+
+    def publish(self) -> Any:
+        client = self.editor()
+        return self.submit(client, "/proxies/alpha/shop/edit", action="publish")
+
+    def test_it_saves_the_draft_and_queues_the_publish(self) -> None:
+        answer = self.publish()
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(answer.headers["location"], "/proxies?published=shop")
+        self.assertEqual(len(self.saved), 1)
+        self.assertEqual(len(self.queued), 1)
+        self.assertEqual(self.queued[0]["operation"], "objects_publish")
+        self.assertEqual(self.queued[0]["cluster"], "alpha")
+
+    def test_the_object_is_published_under_its_own_name(self) -> None:
+        self.publish()
+        payload = self.queued[0]["payload"]
+
+        self.assertEqual(list(payload["objects"]), ["shop"])
+        self.assertIn("name: shop", payload["objects"]["shop"])
+        self.assertTrue(payload["comment"])
+
+    def test_the_same_publish_asked_for_twice_carries_one_key(self) -> None:
+        """A double-click is the same request, not a second publish."""
+
+        first = self.publish()
+        keys = {self.queued[0]["idempotency_key"]}
+        self.publish()
+        keys.add(self.queued[1]["idempotency_key"])
+
+        self.assertEqual(first.status_code, 303)
+        self.assertEqual(len(keys), 1)
+
+    def test_an_object_the_model_refuses_is_never_published(self) -> None:
+        client = self.editor()
+        answer = self.submit(client, "/proxies/alpha/shop/edit", action="publish", servers="")
+
+        self.assertEqual(answer.status_code, 200)
+        self.assertEqual(self.queued, [])
+        self.assertEqual(self.saved, [])

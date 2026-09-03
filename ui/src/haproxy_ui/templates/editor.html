@@ -36,10 +36,25 @@
 
   {% with name_locked = existing %}{% include "_object-form.html" %}{% endwith %}
 
+  {#
+    One click for the common case. Saving and publishing separately was three
+    screens for one change - but they stay two acts underneath, so a publish
+    that is refused leaves the work saved rather than lost.
+
+    Deploy is deliberately not here. It makes the nodes pull the cluster's
+    release, which carries everything published since the last one, so a deploy
+    button on one object would roll out somebody else's unfinished work too.
+
+    Cancel is a link and not a submit: leaving without saving must not be one
+    keystroke away from saving, and a button beside three others that writes
+    nothing is the one people press by accident.
+  #}
   <div class="form-actions">
     <button type="submit" name="action" value="check" class="secondary-button">Validate the object</button>
-    <button type="submit" name="action" value="save" class="primary-button">Save as draft</button>
+    <button type="submit" name="action" value="publish" class="primary-button">Save and publish</button>
+    <button type="submit" name="action" value="save" class="secondary-button">Save as draft</button>
     {% if draft %}<button type="submit" name="action" value="discard" class="secondary-button">Discard the draft</button>{% endif %}
+    <a class="secondary-button" href="/proxies">Cancel</a>
   </div>
 </form>
 

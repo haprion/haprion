@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import json
 import unittest
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from haproxy_mgmt.cli import deploy, managed_network_publish
+from haproxy_mgmt.cli import deploy, managed_network_publish, managed_objects_publish
 
 from haproxy_ui import operations
 
@@ -171,3 +171,53 @@ class PayloadsAreRefusedRatherThanTrimmed(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PublishingObjects(unittest.TestCase):
+    """The operation behind "Save and publish".
+
+    The payload is built from a form, so every field is checked here rather
+    than trusted to the helper - a helper's refusal arrives as a failed job
+    instead of as a page saying what was wrong.
+    """
+
+    def prepare(self, **payload: object):
+        return operations.prepare(
+            operation="objects_publish",
+            cluster="alpha",
+            request_id=UUID("3f1c2b64-6f3f-4f3a-9c6e-1d2b3c4d5e6f"),
+            payload={
+                "objects": {"shop": "schema: 1"},
+                "expected_head": "abc123",
+                "comment": "Publish shop",
+                **payload,
+            },
+        )
+
+    def test_the_helper_is_named_by_the_engine_and_not_written_again(self) -> None:
+        prepared = self.prepare()
+
+        self.assertEqual(prepared.argv[-1], managed_objects_publish.HELPER)
+        self.assertIn("objects_publish", prepared.request)
+
+    def test_a_removal_is_a_null_document(self) -> None:
+        prepared = self.prepare(objects={"gone": None})
+
+        self.assertIn('"gone":null', prepared.request)
+
+    def test_a_name_the_model_would_refuse_never_reaches_the_helper(self) -> None:
+        with self.assertRaises(operations.BadPayload):
+            self.prepare(objects={"Not A Name": "schema: 1"})
+
+    def test_an_empty_set_of_objects_is_refused(self) -> None:
+        with self.assertRaises(operations.BadPayload):
+            self.prepare(objects={})
+
+    def test_the_override_must_be_a_real_boolean(self) -> None:
+        """A string "false" arriving as true is how an override turns itself on."""
+
+        with self.assertRaises(operations.BadPayload):
+            self.prepare(allow_certificate_mismatch="false")
+
+    def test_it_is_off_unless_asked_for(self) -> None:
+        self.assertIn('"allow_certificate_mismatch":false', self.prepare().request)

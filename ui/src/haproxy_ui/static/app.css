@@ -561,6 +561,34 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  */
 .proxy-waiting .proxy-hosts { display: inline; }
 .waiting-badge { margin-left: 18px; vertical-align: middle; }
+
+/*
+ * A publish is a job, so there is a stretch between the click and the row where
+ * the only honest thing the page can say is "still going". A ring that turns
+ * says it without a word, and without the page having to guess how long it will
+ * take.
+ *
+ * `currentColor` so it belongs to whichever badge carries it rather than
+ * needing a colour of its own, and stilled under reduced motion - somebody who
+ * has asked for less movement has asked for this too.
+ */
+.badge-spinner {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  margin-right: 0.45em;
+  vertical-align: -0.05em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: badge-spin 0.8s linear infinite;
+}
+
+@keyframes badge-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .badge-spinner { animation: none; opacity: 0.6; }
+}
 .publication-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; padding: 14px 20px 0; color: var(--muted); font-size: 12px; }
 .proxy-link:hover strong { text-decoration: underline; }
 

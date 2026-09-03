@@ -23,7 +23,7 @@ from haproxy_mgmt.generate import PORTS
 
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
-from haproxy_ui.db import ClusterObjects
+from haproxy_ui.db import ClusterObjects, Job
 from haproxy_ui.history import VersionView
 from haproxy_ui.proxies import ProxyView, Tone
 
@@ -314,3 +314,26 @@ def stored_only(
         for view in cluster_object_views(reading)
         if not view.hostnames or not set(view.hostnames) <= serving
     )
+
+
+def names_being_published(jobs: Iterable[Job]) -> frozenset[str]:
+    """Objects with a publish job that has not finished.
+
+    Read from the payload rather than from a column, because the job table has
+    no notion of what an operation is about - which is deliberate: the worker
+    runs a bounded request and never inspects it. This is the one place the
+    interface looks inside a payload, and it looks at nothing else.
+
+    `pending` and `running` only. A publish that finished is answered by the
+    objects cache instead, and one that failed must not leave a row spinning
+    forever as though it were still trying.
+    """
+
+    waiting: set[str] = set()
+    for job in jobs:
+        if job.operation != "objects_publish" or job.state not in {"pending", "running"}:
+            continue
+        named = job.payload.get("objects") if isinstance(job.payload, Mapping) else None
+        if isinstance(named, Mapping):
+            waiting.update(name for name in named if isinstance(name, str))
+    return frozenset(waiting)

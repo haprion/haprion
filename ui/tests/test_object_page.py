@@ -12,9 +12,10 @@ import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from unittest import mock
+from uuid import uuid4
 
 from haproxy_ui import demo
-from haproxy_ui.db import ClusterInventory, ProxyDraft
+from haproxy_ui.db import ClusterInventory, Job, ProxyDraft
 from haproxy_ui.snapshot import ProductionSnapshot
 from tests.test_login import LoginTestCase, configuration
 
@@ -316,3 +317,123 @@ class TheDraftOnTheObjectPage(DraftReading):
         body = self.page("/proxies/edge-demo/public-web?discarded=1").text  # type: ignore[attr-defined]
 
         self.assertIn("draft was discarded", body)
+
+
+class ADraftInTheListing(DraftReading):
+    """A draft is a row of its own, one step before "waiting for deploy".
+
+    Waiting means committed to the cluster repository and not yet deployed. A
+    draft has not reached the repository at all, so it is in neither the
+    inventory nor the objects cache - and the period when somebody needs to
+    find their work is exactly the period before it is anywhere else.
+    """
+
+    def listing(self, drafts: list[object]) -> str:
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        with mock.patch("haproxy_ui.db.cluster_drafts", return_value=drafts):
+            return client.get("/proxies").text
+
+    def drafted(self, name: str, *, deleted: bool = False) -> ProxyDraft:
+        return ProxyDraft(
+            cluster="edge-demo",
+            object_id=name,
+            yaml="",
+            base_version=1,
+            base_hash="abc",
+            revision=1,
+            updated_by="operator",
+            updated_at=CAPTURED,
+            deleted=deleted,
+        )
+
+    def test_a_draft_is_listed_and_says_it_is_one(self) -> None:
+        body = self.listing([self.drafted("half-done")])
+
+        self.assertIn("half-done", body)
+        self.assertIn(">Draft<", body)
+
+    def test_a_draft_that_removes_the_object_says_which_kind_it_is(self) -> None:
+        self.assertIn("Draft: removal", self.listing([self.drafted("going", deleted=True)]))
+
+    def test_the_badge_is_not_a_warning(self) -> None:
+        """Unfinished work is not a fault, and must not be coloured like one."""
+
+        body = self.listing([self.drafted("half-done")])
+
+        self.assertIn("status-badge-info waiting-badge", body)
+
+    def test_without_drafts_the_listing_says_nothing_about_them(self) -> None:
+        self.assertNotIn(">Draft<", self.listing([]))
+
+
+class ADraftOnItsWay(DraftReading):
+    """Between the click and the row, the page has to say the work is moving.
+
+    A publish is a job. There is a stretch where the object is neither a draft
+    somebody is still editing nor a published row, and "Draft" through all of
+    it reads as though the button did nothing.
+    """
+
+    def listing(self, jobs: list[object]) -> str:
+        drafts = [
+            ProxyDraft(
+                cluster="edge-demo",
+                object_id="half-done",
+                yaml="",
+                base_version=1,
+                base_hash="abc",
+                revision=1,
+                updated_by="operator",
+                updated_at=CAPTURED,
+                deleted=False,
+            )
+        ]
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        with (
+            mock.patch("haproxy_ui.db.cluster_drafts", return_value=drafts),
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs),
+        ):
+            return client.get("/proxies").text
+
+    def job(self, state: str, name: str = "half-done") -> Job:
+        return Job(
+            id=1,
+            request_id=uuid4(),
+            operation="objects_publish",
+            cluster="edge-demo",
+            payload={"objects": {name: "schema: 1"}},
+            state=state,
+            created_at=CAPTURED,
+            started_at=None,
+            finished_at=None,
+            exit_code=None,
+            outcome=None,
+            result=None,
+            stderr_excerpt=None,
+            idempotency_key=None,
+            attempts=0,
+        )
+
+    def test_a_queued_publish_turns_the_badge_into_waiting(self) -> None:
+        body = self.listing([self.job("pending")])
+
+        self.assertIn("Waiting for publish", body)
+        self.assertIn("badge-spinner", body)
+
+    def test_a_running_publish_says_the_same(self) -> None:
+        self.assertIn("Waiting for publish", self.listing([self.job("running")]))
+
+    def test_a_finished_publish_leaves_no_row_spinning(self) -> None:
+        """A publish that failed must not look as though it were still trying."""
+
+        body = self.listing([self.job("failed")])
+
+        self.assertNotIn("Waiting for publish", body)
+        self.assertIn(">Draft<", body)
+
+    def test_another_object_s_publish_does_not_claim_this_row(self) -> None:
+        body = self.listing([self.job("pending", name="something-else")])
+
+        self.assertNotIn("Waiting for publish", body)

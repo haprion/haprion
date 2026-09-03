@@ -20,7 +20,17 @@
       <div class="cluster-state">{% if management_writes and role == 'admin' %}<a class="secondary-button" href="/proxies/{{ cluster.cluster }}/new">New object</a>{% endif %}<span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
     {% set pending = (waiting.get(cluster.cluster, ()) if waiting else ()) if role == 'admin' else () %}
-    {% if cluster.proxies or pending %}
+    {% set unpublished = (drafts.get(cluster.cluster, ()) if drafts else ()) if role == 'admin' else () %}
+    {#
+      A draft is not stored anywhere yet, so its name is all this row can
+      honestly carry. The columns are left empty rather than filled from the
+      draft document: what those numbers would describe is a proposal, and a
+      table that reads the same for a proposal and for a running proxy is how
+      somebody deploys the wrong one.
+    #}
+    {% set drafted = unpublished | map(attribute='object_id') | list %}
+    {% set queued = (publishing.get(cluster.cluster, ()) if publishing else ()) %}
+    {% if cluster.proxies or pending or unpublished %}
     <div class="table-scroll"><table class="node-table proxy-table"><thead><tr><th>Proxy</th><th>Protocol</th><th>Hosts / ports</th><th>Backends</th><th>Ownership</th></tr></thead><tbody>
       {#
         Undeployed objects first, and never sorted in among the rest. They are
@@ -29,9 +39,12 @@
         Everything below them is alphabetical, and a row joins that order the
         moment it is deployed.
       #}
-      {% for object in pending %}
-      <tr class="proxy-waiting"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster.cluster }}/{{ object.name }}"><strong>{{ object.name }}</strong></a></td><td data-label="Protocol">{% if object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span>{% if object.readable %}<span class="status-badge status-badge-warning waiting-badge">Waiting for deploy</span>{% else %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% endif %}</td><td data-label="Backends"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
+      {% for draft in unpublished %}
+      <tr class="proxy-draft"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster.cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol"><span class="table-empty">—</span></td><td data-label="Hosts / ports">{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}</td><td data-label="Backends"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
       {% endfor %}
+      {% for object in pending %}{% if object.name not in drafted %}
+      <tr class="proxy-waiting"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster.cluster }}/{{ object.name }}"><strong>{{ object.name }}</strong></a></td><td data-label="Protocol">{% if object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span>{% if object.readable %}<span class="status-badge status-badge-warning waiting-badge">Waiting for deploy</span>{% else %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% endif %}</td><td data-label="Backends"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
+      {% endif %}{% endfor %}
       {% for proxy in cluster.proxies %}
       <tr><td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster.cluster }}/{{ proxy.name }}"><strong>{{ proxy.name }}</strong></a>{% else %}<strong>{{ proxy.name }}</strong>{% endif %}{% if not proxy.enabled %}<small class="warning-text">Disabled</small>{% endif %}</td><td data-label="Protocol"><span class="protocol-badge protocol-{{ proxy.protocol }}">{{ proxy.protocol | upper }}</span></td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ proxy.hostnames | join(', ') if proxy.hostnames else 'No hostname rule' }} · {{ proxy.ports | join(', ') if proxy.ports else '—' }}</span></td><td data-label="Backends">{{ proxy.backend_count }}</td><td data-label="Ownership"><span class="ownership-badge ownership-{{ 'managed' if proxy.managed else 'unmanaged' }}">{{ 'Managed' if proxy.managed else 'Unmanaged' }}</span></td></tr>
       {% endfor %}

@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
@@ -407,6 +407,32 @@ def build_router(config: Config) -> APIRouter:
             view.cluster: objects.stored_only(rows.get(view.cluster), view.proxies)
             for view in overview.clusters
         }
+        #
+        # And a step earlier than that: a draft has not reached the cluster
+        # repository at all, so it is in neither the inventory nor the objects
+        # cache. It is listed for the same reason the waiting objects are - the
+        # period when somebody needs to find their work is exactly the period
+        # before it is anywhere else - and separately, because "saved here" and
+        # "committed but not deployed" are different answers to "where is it".
+        #
+        with request.app.state.pool.connection() as connection:
+            drafts = {
+                view.cluster: tuple(db.cluster_drafts(connection, view.cluster))
+                for view in overview.clusters
+            }
+            #
+            # Which of those drafts are already on their way. Publishing is a
+            # job, so between the click and the row there is a stretch where
+            # the work is neither a draft anybody is still editing nor a
+            # published object - and a row that says "Draft" through all of it
+            # reads as though the button did nothing.
+            #
+            publishing = {
+                view.cluster: objects.names_being_published(
+                    db.recent_jobs(connection, cluster=view.cluster)
+                )
+                for view in overview.clusters
+            }
         return TEMPLATES.TemplateResponse(
             request,
             "proxies.html",
@@ -416,6 +442,8 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "proxies": overview,
                 "waiting": waiting,
+                "drafts": drafts,
+                "publishing": publishing,
                 "section": "proxies",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
@@ -1459,7 +1487,7 @@ def _editor_submit(
             connection.commit()
         return RedirectResponse(f"/proxies/{cluster}/{object_id}?discarded=1", status_code=303)
 
-    if form.action != "save":
+    if form.action not in ("save", "publish"):
         return PlainTextResponse("Unknown action", status_code=400)
 
     if state.commit is None:
@@ -1524,7 +1552,88 @@ def _editor_submit(
     # so without it a save that worked and a page that was merely opened look
     # exactly alike - which is the moment somebody presses save again.
     #
-    return RedirectResponse(f"/proxies/{cluster}/{object_id}?saved=1", status_code=303)
+    if form.action == "save":
+        return RedirectResponse(f"/proxies?saved={object_id}", status_code=303)
+
+    #
+    # Publishing is a job, and the draft is saved first on purpose. The two are
+    # one button because saving and then publishing separately is three screens
+    # for one change - but they stay two acts underneath, so a publish that is
+    # refused leaves the work saved rather than lost.
+    #
+    # The key is derived from what is being published rather than generated, so
+    # a double-click is the same request and not a second one. The revision is
+    # in it because the next edit of the same object is a different publish.
+    #
+    key = uuid5(PUBLISH_NAMESPACE, f"{cluster}/{object_id}/{saved.revision}")
+    payload = {
+        "objects": {object_id: None if saved.deleted else result.document},
+        "expected_head": state.commit,
+        "comment": f"Publish {object_id}",
+    }
+    try:
+        operations.prepare(
+            operation="objects_publish", cluster=cluster, request_id=uuid4(), payload=payload
+        )
+    except operations.BadPayload:
+        #
+        # The form built this payload, so a refusal here is the interface's
+        # mistake and not the person's. Said plainly rather than echoed: the
+        # detail can carry what was typed.
+        #
+        return _refusal_page(
+            request,
+            config,
+            "The draft was saved, but this interface could not build a publish for it.",
+            back=f"/proxies/{cluster}/{object_id}/edit",
+        )
+
+    with request.app.state.pool.connection() as connection:
+        try:
+            job = db.queue_job(
+                connection,
+                operation="objects_publish",
+                cluster=cluster,
+                payload=payload,
+                idempotency_key=key,
+            )
+        except db.ClusterBusy:
+            connection.rollback()
+            return _refusal_page(
+                request,
+                config,
+                "This cluster is already running a job. The draft is saved; publish it when "
+                "that job has finished.",
+                back=f"/proxies/{cluster}/{object_id}/edit",
+            )
+        except db.RequestConflict:
+            connection.rollback()
+            return _refusal_page(
+                request,
+                config,
+                "That publish was already asked for with different content.",
+                back=f"/proxies/{cluster}/{object_id}/edit",
+            )
+        db.record_audit_event(
+            connection,
+            actor=session.username,
+            action="queue_job",
+            cluster=cluster,
+            request_id=job.request_id,
+            detail={"operation": "objects_publish", "job": job.id, "object": object_id},
+        )
+        connection.commit()
+
+    return RedirectResponse(f"/proxies?published={object_id}", status_code=303)
+
+
+#
+# Fixed, and never regenerated. It turns a publish's identity - the cluster, the
+# object and the draft revision being published - into the idempotency key the
+# job table compares against, so a double-click or a refresh is the same request
+# rather than a second publish of the same work.
+#
+PUBLISH_NAMESPACE = UUID("6f1d5f8e-1a2b-4c3d-8e9f-0a1b2c3d4e5f")
 
 
 def _refusal_page(request: Request, config: Config, message: str, *, back: str) -> Response:

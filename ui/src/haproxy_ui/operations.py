@@ -20,7 +20,14 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from haproxy_mgmt.cli import cert_deploy, deploy, managed_network_publish, revert
+from haproxy_mgmt.cli import (
+    cert_deploy,
+    deploy,
+    managed_network_publish,
+    managed_objects_publish,
+    revert,
+)
+from haproxy_mgmt.proxy_model import NAME
 
 #
 # How long an operation may run before the worker stops it. Deliberately
@@ -192,6 +199,52 @@ def prepare(
                 cluster,
                 str(request_id),
                 network=network,
+                expected_head=expected_head,
+                comment=comment,
+                allow_certificate_mismatch=override,
+            ),
+        )
+
+    if operation == "objects_publish":
+        _only(payload, "objects", "expected_head", "comment", "allow_certificate_mismatch")
+        objects = payload.get("objects")
+        expected_head = payload.get("expected_head")
+        comment = payload.get("comment")
+        override = payload.get("allow_certificate_mismatch", False)
+        #
+        # A mapping of name to document, where `None` asks for a removal. Every
+        # key and every value is checked here rather than trusted to the helper:
+        # this payload was built from a form, and the helper's own refusal would
+        # arrive as a failed job instead of as a page saying what was wrong.
+        #
+        if not isinstance(objects, Mapping) or not objects:
+            raise BadPayload("objects must be a non-empty mapping")
+        for name, document in objects.items():
+            if not isinstance(name, str) or not NAME.match(name):
+                raise BadPayload(f"{name!r} is not a usable object name")
+            if document is not None and (not isinstance(document, str) or not document):
+                raise BadPayload(f"the document for {name} must be a non-empty string or null")
+        if not isinstance(expected_head, str) or not expected_head:
+            raise BadPayload("expected_head must be a commit id")
+        if not isinstance(comment, str) or not comment:
+            raise BadPayload("comment must be a non-empty string")
+        #
+        # Only a real boolean reaches the helper, for the reason the network
+        # publish gives: a string "false" arriving as true is how an override
+        # turns itself on without anybody deciding to.
+        #
+        if not isinstance(override, bool):
+            raise BadPayload("allow_certificate_mismatch must be true or false")
+        return Prepared(
+            argv=(
+                managed_objects_publish.SUDO,
+                *SUDO_FLAGS,
+                managed_objects_publish.HELPER,
+            ),
+            request=managed_objects_publish.build_request(
+                cluster,
+                str(request_id),
+                objects=objects,
                 expected_head=expected_head,
                 comment=comment,
                 allow_certificate_mismatch=override,

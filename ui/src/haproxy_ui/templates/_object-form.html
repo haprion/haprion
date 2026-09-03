@@ -159,7 +159,16 @@
   </section>
 
   <section class="cluster-card cluster-accent-{{ accent }}">
-    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>The health check</h3><p>How a server is decided to be usable</p></div></div></header>
+    <header class="cluster-header">
+      <div class="cluster-identity"><div class="section-title"><h3>The health check</h3><p>How a server is decided to be usable <span class="optional">(optional)</span></p></div></div>
+      {#
+        The button asks the nodes, and nothing here reaches one: it wakes the
+        poller, which already holds the identity and already asks both nodes.
+        Only on the editor - the preview page writes to no cluster and has no
+        nodes to ask.
+      #}
+      {% if pool_health is defined %}<button type="submit" name="action" value="recheck" class="secondary-button">Test health</button>{% endif %}
+    </header>
     <div class="form-grid">
       <label>Type
         <select name="health_type">
@@ -170,5 +179,37 @@
       <label><span class="field-title">Path <span class="optional">(optional)</span></span><input name="health_path" value="{{ form.health_path }}" placeholder="/healthz"></label>
       <label><span class="field-title">Host header <span class="optional">(optional)</span></span><input name="health_host" value="{{ form.health_host }}" placeholder="app.example.com"><small>Needed when the backend serves several names — without it the check gets a 404 and a healthy pool reads as down.</small></label>
     </div>
+    {#
+      HAProxy's own verdict, from the nodes, on the pool this object names. It
+      is an observation and not a test run from here: the checks have been
+      running on the nodes, against the servers those nodes were told about,
+      from the address they use. Anything probed from the manager would answer
+      a different question.
+    #}
+    {% if pool_health is defined %}
+    <div class="node-health">
+      <h4><span class="subsection-title">What the nodes report <span class="optional">{{ pool_health.backend }}</span></span></h4>
+      {% if not pool_health.nodes %}
+      <p class="node-health-note">No node has been read yet, so there is nothing to report.</p>
+      {% elif not pool_health.known %}
+      <p class="node-health-note">The nodes know nothing about this pool. An object is checked once it has been published and deployed.</p>
+      {% else %}
+      <table class="node-health-table">
+        <thead><tr><th>Node</th><th>Server</th><th>State</th><th>Last check</th></tr></thead>
+        <tbody>
+          {% for node in pool_health.nodes %}{% for member in node.members %}
+          <tr>
+            <td>{{ node.node }}</td>
+            <td>{{ member.server }}</td>
+            <td><span class="status-dot {{ 'status-healthy' if member.up else 'status-critical' }}"></span>{{ member.status or 'unknown' }}</td>
+            <td>{{ member.check_status or '—' }}{% if member.check_code %} {{ member.check_code }}{% endif %}{% if member.check_duration_ms is not none %} · {{ member.check_duration_ms }} ms{% endif %}</td>
+          </tr>
+          {% endfor %}{% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      <p class="node-health-note">{% if pool_health.observed_at %}Read {{ pool_health.observed_at.strftime('%H:%M:%S') }}. {% endif %}“Test health” asks the nodes again.</p>
+    </div>
+    {% endif %}
   </section>
 

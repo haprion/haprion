@@ -297,10 +297,32 @@ def _cluster_view(
     elif stale:
         label, tone, detail = "Stale data", "warning", "The latest reading is older than two polls"
     elif any(node.tone == "warning" for node in nodes):
-        affected = sum(node.tone == "warning" for node in nodes)
-        label, tone, detail = "Degraded", "warning", f"{affected} node(s) report a warning"
+        warned = [node for node in nodes if node.tone == "warning"]
+        #
+        # A node that is merely behind is named for what it is. "Degraded" says
+        # the cluster is serving worse than it should, which is a different
+        # claim and the one an operator acts on first - a release that has not
+        # been deployed yet is not a fault, and calling it one teaches people to
+        # ignore the badge.
+        #
+        if all(node.current is False for node in warned):
+            label, tone, detail = (
+                "Not on the latest version",
+                "warning",
+                f"{len(warned)} node(s) are not running the published release",
+            )
+        else:
+            label, tone, detail = (
+                "Degraded",
+                "warning",
+                f"{len(warned)} node(s) report a warning",
+            )
     elif release_state != "converged":
-        label, tone, detail = "Version drift", "warning", "Nodes are not on one target release"
+        label, tone, detail = (
+            "Not on the latest version",
+            "warning",
+            "Nodes are not on one target release",
+        )
     else:
         label, tone, detail = "Healthy", "healthy", "All nodes are serving on the target release"
 

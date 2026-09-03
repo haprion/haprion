@@ -40,6 +40,7 @@ from haproxy_ui import (
     dashboard,
     db,
     demo,
+    health,
     history,
     jobs,
     network,
@@ -1366,6 +1367,18 @@ def _editor_page(
         draft_revision = str(draft.revision) if draft is not None else ""
 
     fields = form.fields()
+    #
+    # What the nodes say about this object's pool right now. Read for the page
+    # rather than for the check: it is an observation, not a verdict on the
+    # document, and an object that has never been deployed simply has none.
+    #
+    _, status_rows, _ = read_source(request, config, STATUS_SOURCE)
+    pool = health.pool_health(
+        status_rows,
+        cluster=cluster,
+        obj=str(fields.get("name", "")).strip() or name,
+        pool=str(fields.get("backend", "")).strip() or "web",
+    )
     result = editor_module.check(
         fields,
         state.choices,
@@ -1408,6 +1421,7 @@ def _editor_page(
             "draft_revision": draft_revision,
             "unexpressible": unexpressible,
             "submitted": submitted,
+            "pool_health": pool,
             "notice": notice,
             "action": action,
             "unchanged": editor_module.unchanged(
@@ -1462,6 +1476,19 @@ def _editor_submit(
         return PlainTextResponse("Refused", status_code=403)
 
     if form.action == "check":
+        return _editor_page(
+            request, config, cluster, name, form, draft_revision=form.expected_revision
+        )
+
+    #
+    # Asking the nodes again. Nothing here reaches a node itself: the poller
+    # owns that path, holds the identity it needs and already asks both nodes,
+    # so the button wakes it and the page then renders what came back. A second
+    # way to reach a node would be a second thing to keep honest.
+    #
+    if form.action == "recheck":
+        with request.app.state.pool.connection() as connection:
+            db.wake_poller(connection)
         return _editor_page(
             request, config, cluster, name, form, draft_revision=form.expected_revision
         )

@@ -206,6 +206,80 @@ def runtime_info():
         }
 
 
+#
+# A pool's own row and one row per server, from the same socket `show info`
+# already uses. This is HAProxy's own verdict - the checks it has actually been
+# running against the servers it was told about - which is a different and more
+# truthful answer than anything that probes from somewhere else once.
+#
+# The CSV header names the columns rather than the positions being counted:
+# `show stat` has grown columns between versions, and a fixed index is a field
+# that quietly becomes another field after an upgrade.
+#
+MAX_STAT_ROWS = 500
+
+
+def runtime_servers():
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(2.0)
+        sock.connect(RUNTIME_SOCKET)
+        sock.sendall(b"show stat\n")
+
+        chunks = []
+        while True:
+            data = sock.recv(65536)
+            if not data:
+                break
+            chunks.append(data)
+
+        sock.close()
+        text = b"".join(chunks).decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines or not lines[0].startswith("#"):
+        return None
+
+    columns = [name.strip() for name in lines[0].lstrip("# ").split(",")]
+
+    def value(row, name):
+        try:
+            found = row[columns.index(name)].strip()
+        except (ValueError, IndexError):
+            return None
+        return found or None
+
+    servers = []
+    for line in lines[1:]:
+        row = line.split(",")
+        pool = value(row, "pxname")
+        member = value(row, "svname")
+        if pool is None or member is None or member == "FRONTEND":
+            continue
+        duration = value(row, "check_duration")
+        servers.append(
+            {
+                "backend": pool,
+                "server": member,
+                "status": value(row, "status"),
+                "check_status": value(row, "check_status"),
+                "check_code": value(row, "check_code"),
+                "check_duration_ms": int(duration) if duration and duration.isdigit() else None,
+                "last_change_sec": (
+                    int(value(row, "lastchg"))
+                    if (value(row, "lastchg") or "").isdigit()
+                    else None
+                ),
+            }
+        )
+        if len(servers) >= MAX_STAT_ROWS:
+            break
+
+    return servers
+
+
 def read_release():
     result = {
         "version": None,
@@ -370,6 +444,7 @@ except Exception:
     ip_nonlocal_bind = None
 
 stats_ok, runtime = runtime_info()
+servers = runtime_servers()
 release = read_release()
 validation = read_validation()
 certificates = read_certificates()
@@ -395,6 +470,11 @@ result = {
     "config_validation": validation,
     "stats_ok": stats_ok,
     "runtime": runtime,
+    #
+    # `null` rather than an empty list when the socket could not be read, so a
+    # node that could not be asked is never reported as a node with no servers.
+    #
+    "servers": servers,
     "certificates": certificates,
 }
 
@@ -410,5 +490,10 @@ else:
     print(f"VIP owner:         {vip_owner}")
     print(f"ip_nonlocal_bind:  {ip_nonlocal_bind}")
     print(f"Runtime stats:     {'OK' if stats_ok else 'FAILED'}")
+    if servers:
+        print("Servers:")
+        for entry in servers:
+            check = entry["check_status"] or "-"
+            print(f"  {entry['backend']}/{entry['server']}  {entry['status']}  ({check})")
 
 sys.exit(0)

@@ -85,8 +85,15 @@ class HealthDerivation(unittest.TestCase):
         self.assertEqual(unreachable.nodes[1].tone, "critical")
 
     def test_version_drift_is_visible_without_calling_the_cluster_unhealthy(self) -> None:
+        """Named for what it is, rather than as a fault.
+
+        A node that has not been deployed to yet is behind, not degraded: the
+        first says a deploy is outstanding and the second says the cluster is
+        serving worse than it should. They lead an operator to different places.
+        """
+
         cluster = self.dashboard(reading("done-node-behind.json")).clusters[0]
-        self.assertEqual(cluster.label, "Degraded")
+        self.assertEqual(cluster.label, "Not on the latest version")
         self.assertEqual(cluster.nodes[1].label, "Version drift")
         self.assertEqual(cluster.version, "v7")
 

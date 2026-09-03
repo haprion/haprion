@@ -41,6 +41,35 @@ class StatusError(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class ServerHealth:
+    """One pool member as the node's own HAProxy sees it.
+
+    This is the answer to "is my health check working", and it is the node's to
+    give: the checks have been running against the servers this node was told
+    about, from the address this node uses. Nothing that probes from somewhere
+    else can say the same thing.
+    """
+
+    backend: str
+    server: str
+    status: str | None
+    check_status: str | None
+    check_code: str | None
+    check_duration_ms: int | None
+    last_change_sec: int | None
+
+    @property
+    def up(self) -> bool:
+        """Whether HAProxy would send traffic here right now.
+
+        `UP` and `no check` both mean usable - the second is a server nobody
+        asked to be checked, which is not the same as a server that failed one.
+        """
+
+        return (self.status or "").upper().startswith(("UP", "NO CHECK"))
+
+
+@dataclass(frozen=True, slots=True)
 class NodeStatus:
     name: str
     mgmt_host: str
@@ -56,6 +85,12 @@ class NodeStatus:
     # reports nothing cannot be compared and must not be counted as verified.
     #
     certificates: tuple[tuple[str, str], ...] | None = None
+    #
+    # None when the node said nothing about its servers - an older status
+    # script, or a runtime socket that could not be read. An empty tuple means
+    # the node answered and has no members, which is a different fact.
+    #
+    servers: tuple[ServerHealth, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +165,44 @@ def _certificates(status: Mapping[str, Any]) -> tuple[tuple[str, str], ...] | No
     return tuple(sorted(pairs))
 
 
+def _servers(status: Mapping[str, Any]) -> tuple[ServerHealth, ...] | None:
+    """What the node's runtime reported, or None when it reported nothing.
+
+    Entries without a backend and a server name are dropped: a row that cannot
+    be attributed to a pool member cannot be shown beside one, and guessing
+    which member it belongs to is how a healthy server gets somebody else's
+    verdict.
+    """
+
+    entries = status.get("servers")
+    if not isinstance(entries, list):
+        return None
+
+    members = []
+    for entry in entries:
+        item = _mapping(entry)
+        backend = _text(item.get("backend"))
+        server = _text(item.get("server"))
+        if backend is None or server is None:
+            continue
+        members.append(
+            ServerHealth(
+                backend=backend,
+                server=server,
+                status=_text(item.get("status")),
+                check_status=_text(item.get("check_status")),
+                check_code=_text(item.get("check_code")),
+                check_duration_ms=_count(item.get("check_duration_ms")),
+                last_change_sec=_count(item.get("last_change_sec")),
+            )
+        )
+    return tuple(members)
+
+
+def _count(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 def _node(entry: Mapping[str, Any]) -> NodeStatus:
     status = _mapping(entry.get("status"))
     #
@@ -147,6 +220,7 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         owns_vip=owner if isinstance(owner, bool) else None,
         release_hash=_text(_mapping(status.get("release")).get("hash")),
         certificates=_certificates(status),
+        servers=_servers(status),
         error_code=_text(_mapping(entry.get("error")).get("code"))
         or (None if usable else "node_status_invalid"),
     )

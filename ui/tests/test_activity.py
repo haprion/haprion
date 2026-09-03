@@ -20,7 +20,7 @@ class ActivityTests(unittest.TestCase):
                 ("edge-demo", "Healthy"),
                 ("edge-demo", "edge-a"),
                 ("edge-demo", "edge-b"),
-                ("service-demo", "Degraded"),
+                ("service-demo", "Not on the latest version"),
                 ("service-demo", "service-a"),
                 ("service-demo", "service-b"),
             ],

@@ -203,6 +203,25 @@
         "certificates": {
           "type": "array",
           "items": { "$ref": "common.schema.json#/$defs/carried_certificate" }
+        },
+        "servers": {
+          "description": "One row per pool member as the runtime reports it, null when the socket could not be read, and absent from a node still running an older status script.",
+          "type": ["array", "null"],
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "required": ["backend", "server", "status"],
+            "properties": {
+              "backend": { "type": "string", "minLength": 1, "maxLength": 255 },
+              "server": { "type": "string", "minLength": 1, "maxLength": 255 },
+              "status": { "type": ["string", "null"], "maxLength": 32 },
+              "check_status": { "type": ["string", "null"], "maxLength": 32 },
+              "check_code": { "type": ["string", "null"], "maxLength": 8 },
+              "check_duration_ms": { "type": ["integer", "null"], "minimum": 0 },
+              "last_change_sec": { "type": ["integer", "null"], "minimum": 0 }
+            },
+            "additionalProperties": true
+          }
         }
       },
       "additionalProperties": true

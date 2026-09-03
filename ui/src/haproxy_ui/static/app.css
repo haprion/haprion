@@ -723,6 +723,22 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * divide the groups a person reads the card in, and at one pixel of `--line`
  * they were quiet enough to be missed.
  */
+/*
+ * What the nodes said, under the fields that decide what they are checking.
+ * Same rule as the maintenance group, because it is the same kind of break.
+ */
+.node-health { border-top: 2px solid var(--line-strong); margin: 18px 20px 0; padding-top: 4px; }
+.node-health h4 {
+  margin: 10px 0 0; color: var(--text-secondary); font-size: 0.95rem; font-weight: 660;
+}
+.node-health-note { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+.node-health-table { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 13px; }
+.node-health-table th {
+  padding: 0 12px 6px 0; border-bottom: 1px solid var(--line); color: var(--muted);
+  font-weight: 620; text-align: left;
+}
+.node-health-table td { padding: 7px 12px 7px 0; border-bottom: 1px solid var(--line); color: var(--text-secondary); }
+.node-health-table .status-dot { margin-right: 8px; }
 .form-subsection { border-top: 2px solid var(--line-strong); margin: 18px 20px 0; padding-top: 4px; }
 /*
  * Two columns, the same two the rows below use: the heading over the inputs,

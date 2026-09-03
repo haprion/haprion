@@ -646,6 +646,20 @@ def finish_job(
         return finished
 
 
+def wake_poller(connection: Connection[Any]) -> None:
+    """Ask the poller to read the clusters now instead of at its next interval.
+
+    A notification and nothing else. The poller owns every path to a node - the
+    identity, both nodes, the timeouts - and a caller that wanted a fresher
+    reading would otherwise need its own way to reach a machine. This one has
+    no payload and grants nothing: the poller does what it always does, only
+    sooner.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(f"notify {CLUSTER_CHANNEL}")
+
+
 def expired_leases(connection: Connection[Any]) -> list[AbandonedJob]:
     """Jobs whose holder stopped renewing, for the recovery path to adjudicate.
 

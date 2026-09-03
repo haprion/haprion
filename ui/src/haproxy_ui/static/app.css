@@ -7,6 +7,8 @@
   --font-ui: "Inter Var", Inter, -apple-system, BlinkMacSystemFont, "San Francisco", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --font-features: "cv03", "cv04", "cv11", "liga" 0;
   --font-size-ui: 14px;
+  /* The input column in the maintenance group; its heading row lines up with it. */
+  --field-column: 320px;
   --font-weight-regular: 400;
   --bg: #e9edf2;
   --panel: #ffffff;
@@ -695,15 +697,22 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * and a row that reflowed to one column at some widths and three at others
  * would keep taking them apart.
  */
-.form-grid-pair { grid-template-columns: repeat(2, minmax(260px, 1fr)); align-items: start; }
 /*
- * Kept close to the height of the single-line fields above. Two visible rows
- * is the least that still shows a list is a list and can be scrolled; taller
- * than that, the pair dominated the card over fields that matter more.
+ * `auto-fill`, not `auto-fit`, and the same track size as `.form-grid`. Two
+ * fields in an `auto-fit` grid keep the empty tracks collapsed and stretch to
+ * half the card each, which made this pair twice the width of every other
+ * field. `auto-fill` keeps the tracks, so a box here is exactly as wide as the
+ * boxes above it.
  */
-.form-grid-pair select, .form-grid-pair textarea { min-height: 0; height: 62px; }
+.form-grid-pair { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); align-items: start; }
+/* Five rows: the whole of a short list, without a scrollbar to find it in. */
+.form-grid-pair select, .form-grid-pair textarea { min-height: 0; height: 124px; }
+/* A rule instead of a heading: these belong with the card, one step apart. */
+.form-grid-ruled { border-top: 1px solid var(--line); margin: 18px 20px 0; padding: 14px 0 4px; }
 .form-grid .field { display: flex; flex-direction: column; gap: 6px; }
 .form-grid .field > label { color: var(--text-secondary); font-weight: 620; }
+/* Label and its "(optional)" on one line, above the control the label opens. */
+.form-grid .field-title { display: block; }
 /*
  * A group inside a card, with a rule above it. The heading is small and the
  * word beside it is quieter still: "optional" is a fact about the fields, not
@@ -714,15 +723,22 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   display: flex; align-items: baseline; gap: 8px; margin: 10px 0 0;
   color: var(--text-secondary); font-size: 0.95rem; font-weight: 660;
 }
-/* The switch on the heading's line, set well right of the words themselves. */
-.form-subsection h4 .check { margin-left: 56px; align-self: center; }
+/*
+ * The switch on the heading's line, indented so its words begin where the
+ * explanations below begin: the input column, plus that row's gap, less the
+ * box and gap this label carries in front of its own text.
+ */
+.form-subsection h4 .check {
+  align-self: center;
+  margin-left: calc(var(--field-column) + 10px - 21px);
+}
 /*
  * One input per row, all of one width, so every explanation beside them starts
  * at the same place.
  */
 .field-rows { display: grid; gap: 12px; padding: 14px 20px 0; }
-.field-rows .check-value input { width: 320px; }
-.form-subsection h4 span { color: var(--muted); font-size: 0.85rem; font-weight: var(--font-weight-regular); }
+.field-rows .check-value input { width: var(--field-column); }
+.form-subsection h4 .optional, .form-grid .optional { color: var(--muted); font-size: 0.85rem; font-weight: var(--font-weight-regular); }
 .form-subsection .form-checks { padding-left: 0; padding-right: 0; }
 /*
  * A field the shape above has no use for. Greyed rather than removed, so the
@@ -748,7 +764,12 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  */
 .form-checks { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; padding: 14px 20px 0; }
 .form-checks .check, .form-subsection h4 .check { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
-.form-subsection h4 .check { font-size: 1rem; font-weight: 620; }
+/*
+ * A field label, not a second heading. Left to inherit, it took the h4's
+ * 0.95rem - which is 15.2px against the 14px every other label carries here,
+ * and reads as a title for the two rows below rather than as an option.
+ */
+.form-subsection h4 .check { font-size: var(--font-size-ui); }
 .preview-form .warning-text { margin: 12px 20px 0; }
 .form-actions { display: flex; justify-content: flex-end; }
 .form-actions .secondary-button { padding: 9px 22px; }

@@ -68,33 +68,33 @@
         </select>
       </label>
     </div>
+    <div class="form-checks">
+      <label class="check"><input type="checkbox" name="redirect_http"{% if form.redirect_http %} checked{% endif %}> Redirect plain HTTP to HTTPS (301)</label>
+      <label class="check"><input type="checkbox" name="hsts"{% if form.hsts %} checked{% endif %}> Send HSTS</label>
+      <label class="check"><input type="checkbox" name="hsts_subdomains"{% if form.hsts_subdomains %} checked{% endif %}> …including subdomains</label>
+      <label class="check-value"><input name="hsts_max_age" value="{{ form.hsts_max_age }}" size="10"><span>HSTS lifetime, seconds</span></label>
+    </div>
     {#
-      Who may reach the site gets a row to itself, in two boxes of one size.
-      The two are one decision made in two ways - named groups the cluster
-      defines, and addresses typed here - and side by side with fields of a
-      different shape they read as two unrelated settings.
+      Who may reach the site sits below the switches, behind a rule of its own.
+      The two boxes are one decision made in two ways - named groups the cluster
+      defines, and addresses typed here - but they are a different kind of
+      answer from a checkbox, and the rule says so without a heading.
     #}
-    <div class="form-grid form-grid-pair">
+    <div class="form-grid form-grid-pair form-grid-ruled">
       {#
         The hint sits outside the label so its link is a link: inside one, a
         click on it is also a click on the field's own label.
       #}
       <div class="field">
-        <label>Reachable from — groups
-          <select name="allow_from" multiple size="2">
+        <label><span class="field-title">Reachable from — groups <span class="optional">(optional)</span></span>
+          <select name="allow_from" multiple size="5">
             <option value="" {% if not form.allow_from and not form.allow_ranges %}selected{% endif %}>Everywhere</option>
             {% for network in choices.networks %}<option value="{{ network }}"{% if network in form.allow_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
           </select>
         </label>
         <small>Defined on the <a href="/network">Network</a> page.</small>
       </div>
-      <label>Reachable from — addresses<textarea name="allow_ranges" rows="2" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address or range per line.</small></label>
-    </div>
-    <div class="form-checks">
-      <label class="check"><input type="checkbox" name="redirect_http"{% if form.redirect_http %} checked{% endif %}> Redirect plain HTTP to HTTPS (301)</label>
-      <label class="check"><input type="checkbox" name="hsts"{% if form.hsts %} checked{% endif %}> Send HSTS</label>
-      <label class="check"><input type="checkbox" name="hsts_subdomains"{% if form.hsts_subdomains %} checked{% endif %}> …including subdomains</label>
-      <label class="check-value"><input name="hsts_max_age" value="{{ form.hsts_max_age }}" size="10"><span>HSTS lifetime, seconds</span></label>
+      <label><span class="field-title">Reachable from — addresses <span class="optional">(optional)</span></span><textarea name="allow_ranges" rows="5" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address or range per line.</small></label>
     </div>
     {#
       Maintenance is a statement about the site's *state*, not about its shape,
@@ -108,7 +108,7 @@
         message fields, so it rides on the heading's line - well clear of it -
         and the two messages line up beneath as one column.
       #}
-      <h4>Maintenance options <span>optional</span>
+      <h4>Maintenance options <span class="optional">(optional)</span>
         <label class="check"><input type="checkbox" name="maintenance"{% if form.maintenance %} checked{% endif %}> Out of service for maintenance</label>
       </h4>
       <div class="field-rows">

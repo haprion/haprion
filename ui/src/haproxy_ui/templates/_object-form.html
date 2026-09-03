@@ -228,6 +228,35 @@
       from the address they use. Anything probed from the manager would answer
       a different question.
     #}
+    {#
+      What the nodes just tried, when somebody asked them to. This is the
+      object as it stands on screen - a check that has never been published can
+      be tried here, which is the whole reason the button exists.
+    #}
+    {% if probe %}
+    <div class="node-health">
+      <h4><span class="subsection-title">What the nodes just tried{% if probe.source %} <span class="optional">from {{ probe.source }}</span>{% endif %}</span></h4>
+      {% if not probe.ran %}
+      <p class="node-health-note">{{ probe.problem }}</p>
+      {% else %}
+      <table class="node-health-table">
+        <thead><tr><th>Node</th><th>Server</th><th>Result</th><th>Detail</th></tr></thead>
+        <tbody>
+          {% for node in probe.nodes %}{% if not node.reachable or node.error %}
+          <tr><td>{{ node.node }}</td><td colspan="3"><span class="status-dot status-unknown"></span>{{ node.error or 'The node could not be reached' }}</td></tr>
+          {% else %}{% for entry in node.results %}
+          <tr>
+            <td>{{ node.node }}</td>
+            <td>{{ entry.host }}:{{ entry.port }}</td>
+            <td><span class="status-dot {{ 'status-healthy' if entry.ok else 'status-critical' }}"></span>{{ 'Reached' if entry.ok else 'Failed' }}</td>
+            <td>{% if entry.status %}status {{ entry.status }}{% endif %}{% if entry.error %} {{ entry.error }}{% endif %}{% if entry.ms is not none %} · {{ entry.ms }} ms{% endif %}</td>
+          </tr>
+          {% endfor %}{% endif %}{% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+    {% endif %}
     {% if pool_health is defined %}
     <div class="node-health">
       <h4><span class="subsection-title">What the nodes report <span class="optional">{{ pool_health.backend }}</span></span></h4>

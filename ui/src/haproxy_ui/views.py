@@ -51,6 +51,7 @@ from haproxy_ui import (
 )
 from haproxy_ui import editor as editor_module
 from haproxy_ui import preview as preview_module
+from haproxy_ui import probe as probe_module
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.config import Config
 from haproxy_ui.db import AuthenticatedSession
@@ -1327,6 +1328,7 @@ def _editor_page(
     action: str = "check",
     draft_revision: str = "",
     notice: str = "",
+    probe_asked: bool = False,
 ) -> Response:
     """Draw the editor, whether it was reached by a link or by a submission.
 
@@ -1398,6 +1400,16 @@ def _editor_page(
         obj=str(fields.get("name", "")).strip() or name,
         pool=str(fields.get("backend", "")).strip() or "web",
     )
+    #
+    # Only when somebody pressed the button. A page that probed on every open
+    # would have every visit reach out to two nodes and to whatever they can
+    # connect to, which is a lot of traffic for a page somebody is reading.
+    #
+    report = (
+        probe_module.run(cluster, fields, editor_module.choices(state.choices))
+        if probe_asked
+        else None
+    )
     result = editor_module.check(
         fields,
         state.choices,
@@ -1443,6 +1455,7 @@ def _editor_page(
             "unexpressible": unexpressible,
             "submitted": submitted,
             "pool_health": pool,
+            "probe": report,
             "notice": notice,
             "action": action,
             "unchanged": editor_module.unchanged(
@@ -1502,16 +1515,22 @@ def _editor_submit(
         )
 
     #
-    # Asking the nodes again. Nothing here reaches a node itself: the poller
-    # owns that path, holds the identity it needs and already asks both nodes,
-    # so the button wakes it and the page then renders what came back. A second
-    # way to reach a node would be a second thing to keep honest.
+    # Asking the nodes to try the check the form describes, right now, against
+    # the object as it is written on screen - published or not. The poller is
+    # woken as well, because what it reports about a deployed pool is the other
+    # half of the same question and it costs one notification.
     #
     if form.action == "recheck":
         with request.app.state.pool.connection() as connection:
             db.wake_poller(connection)
         return _editor_page(
-            request, config, cluster, name, form, draft_revision=form.expected_revision
+            request,
+            config,
+            cluster,
+            name,
+            form,
+            draft_revision=form.expected_revision,
+            probe_asked=True,
         )
 
     state = _editor_state(request, config, cluster)

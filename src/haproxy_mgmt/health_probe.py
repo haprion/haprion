@@ -99,6 +99,12 @@ class NodeAnswer:
     reachable: bool
     error: str | None
     results: tuple[Reached, ...]
+    #
+    # Whether this node carries the source address the object leaves from, and
+    # could therefore answer at all. `None` is a node whose script predates the
+    # field: it said nothing, which is never read as "no".
+    #
+    source_held: bool | None = None
 
 
 def build_request(
@@ -197,7 +203,14 @@ def read_answer(node: str, completed: subprocess.CompletedProcess[str]) -> NodeA
                 ms=_count(entry.get("ms")),
             )
         )
-    return NodeAnswer(node=node, reachable=True, error=None, results=tuple(results))
+    held = payload.get("source_held")
+    return NodeAnswer(
+        node=node,
+        reachable=True,
+        error=None,
+        results=tuple(results),
+        source_held=held if isinstance(held, bool) else None,
+    )
 
 
 def probe(

@@ -244,6 +244,14 @@
         <tbody>
           {% for node in probe.nodes %}{% if not node.reachable or node.error %}
           <tr><td>{{ node.node }}</td><td colspan="3"><span class="status-dot status-unknown"></span>{{ node.error or 'The node could not be reached' }}</td></tr>
+          {#
+            A node that does not hold the source address probed nothing, and
+            that is not a finding about the pool. Binding a foreign address and
+            failing the route lookup is what it would have reported instead -
+            a red row saying the servers are unreachable, which they are not.
+          #}
+          {% elif node.source_held is false %}
+          <tr><td>{{ node.node }}</td><td colspan="3"><span class="status-dot status-unknown"></span>Does not hold {{ probe.source }}, so nothing was tried from here</td></tr>
           {% else %}{% for entry in node.results %}
           <tr>
             <td>{{ node.node }}</td>

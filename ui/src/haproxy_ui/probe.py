@@ -46,6 +46,13 @@ class NodeReport:
     reachable: bool
     error: str | None
     results: tuple[Reached, ...]
+    #
+    # False when this node does not carry the object's source address, and so
+    # probed nothing. Not a failure and not a node that went missing: the
+    # question simply belongs to the node that holds the address. `None` is a
+    # node whose script predates the field.
+    #
+    source_held: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +140,9 @@ def _read(payload: Any) -> tuple[str, tuple[NodeReport, ...]]:
                 node=str(entry.get("node", "")),
                 reachable=entry.get("reachable") is True,
                 error=str(entry.get("error")) if entry.get("error") else None,
+                source_held=(
+                    entry.get("source_held") if isinstance(entry.get("source_held"), bool) else None
+                ),
                 results=tuple(
                     Reached(
                         host=str(row.get("host", "")),

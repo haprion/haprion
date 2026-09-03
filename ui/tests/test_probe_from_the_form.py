@@ -180,3 +180,54 @@ class WhatThePageIsToldAfterwards(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhichNodeCouldAnswer(unittest.TestCase):
+    """A node that does not hold the source address probed nothing.
+
+    It has to arrive at the page as its own thing. Folded into "failed" it
+    becomes a red row about a healthy pool; dropped entirely it becomes a
+    cluster that appears to have one node.
+    """
+
+    def report(self, nodes: list[dict[str, object]]):
+        return run("alpha", form(), CHOICES, call=lambda *a, **k: answered(nodes))
+
+    def test_it_is_neither_a_failure_nor_a_node_that_went_missing(self) -> None:
+        report = self.report(
+            [
+                {
+                    "node": "node-a",
+                    "reachable": True,
+                    "error": None,
+                    "source_held": True,
+                    "results": [
+                        {
+                            "host": "198.51.100.10",
+                            "port": 8080,
+                            "ok": True,
+                            "status": 200,
+                            "error": None,
+                            "ms": 2,
+                        }
+                    ],
+                },
+                {
+                    "node": "node-b",
+                    "reachable": True,
+                    "error": None,
+                    "source_held": False,
+                    "results": [],
+                },
+            ]
+        )
+
+        self.assertTrue(report.ran)
+        self.assertEqual(len(report.nodes), 2)
+        self.assertTrue(report.nodes[1].reachable)
+        self.assertIsNone(report.nodes[1].error)
+        self.assertFalse(report.nodes[1].source_held)
+
+    def test_a_node_that_said_nothing_about_it_is_not_read_as_no(self) -> None:
+        report = self.report([{"node": "node-a", "reachable": True, "error": None, "results": []}])
+        self.assertIsNone(report.nodes[0].source_held)

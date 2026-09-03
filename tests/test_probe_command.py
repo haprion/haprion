@@ -31,8 +31,10 @@ from haproxy_mgmt.probe_socket import ask, build_request
 BASE = Path(__file__).resolve().parents[1]
 
 
-def answer(results: list[dict[str, object]]) -> subprocess.CompletedProcess[str]:
-    payload = {
+def answer(
+    results: list[dict[str, object]], *, source_held: bool | None = None
+) -> subprocess.CompletedProcess[str]:
+    payload: dict[str, object] = {
         "schema_version": 1,
         "ok": True,
         "node": "node",
@@ -40,6 +42,8 @@ def answer(results: list[dict[str, object]]) -> subprocess.CompletedProcess[str]
         "error": None,
         "results": results,
     }
+    if source_held is not None:
+        payload["source_held"] = source_held
     return subprocess.CompletedProcess(
         args=["ssh"], returncode=0, stdout=json.dumps(payload), stderr=""
     )
@@ -328,3 +332,84 @@ class HowTheInterfaceReachesIt(HelperFixture):
         self.assertEqual(envelope["cluster"], "alpha")
         self.assertEqual(envelope["result"]["source"], "192.0.2.25")
         self.assertEqual(len(envelope["result"]["nodes"]), len(self.nodes))
+
+
+class WhichNodeCouldAnswerAtAll(HelperFixture):
+    """A source address lives on one node, so only that node is asked to bind it.
+
+    The other one would bind it anyway - `ip_nonlocal_bind` allows that - and
+    fail the route lookup, producing a red row about a pool that is perfectly
+    healthy. The node says it does not hold the address instead, and that has to
+    travel all the way out rather than being flattened into a failure here.
+    """
+
+    def test_a_node_without_the_address_is_carried_through_as_such(self) -> None:
+        held = iter([False, True])
+
+        def ask(node, identity, body):
+            return answer(
+                [
+                    {
+                        "host": "198.51.100.10",
+                        "port": 8080,
+                        "ok": True,
+                        "status": None,
+                        "error": None,
+                        "ms": 2,
+                    }
+                ]
+                if (this := next(held))
+                else [],
+                source_held=this,
+            )
+
+        code, out, _ = self.run_helper(
+            {"targets": [self.target()], "source": "192.0.2.25"}, ask=ask
+        )
+        envelope = json.loads(out)
+
+        self.assertEqual(code, 0)
+        self.assertTrue(envelope["ok"])
+        self.assertEqual(envelope["outcome"], "done")
+        self.assertEqual(
+            [node["source_held"] for node in envelope["result"]["nodes"]], [False, True]
+        )
+
+    def test_an_address_no_node_carries_is_a_probe_that_did_not_run(self) -> None:
+        """Nothing was tried anywhere, which is not the same as a pool that failed."""
+
+        code, out, _ = self.run_helper(
+            {"targets": [self.target()], "source": "192.0.2.25"},
+            ask=lambda node, identity, body: answer([], source_held=False),
+        )
+        envelope = json.loads(out)
+
+        self.assertEqual(code, 68)
+        self.assertFalse(envelope["ok"])
+        self.assertEqual(envelope["error"]["code"], "probe_unavailable")
+        self.assertIn("192.0.2.25", envelope["error"]["message"])
+
+    def test_a_node_whose_script_predates_the_field_is_still_asked(self) -> None:
+        """`null` is a node that said nothing, never a node that said no."""
+
+        code, out, _ = self.run_helper(
+            {"targets": [self.target()], "source": "192.0.2.25"},
+            ask=lambda node, identity, body: answer(
+                [
+                    {
+                        "host": "198.51.100.10",
+                        "port": 8080,
+                        "ok": True,
+                        "status": None,
+                        "error": None,
+                        "ms": 2,
+                    }
+                ]
+            ),
+        )
+        envelope = json.loads(out)
+
+        self.assertTrue(envelope["ok"])
+        self.assertEqual(
+            [node["source_held"] for node in envelope["result"]["nodes"]], [None, None]
+        )

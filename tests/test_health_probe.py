@@ -137,6 +137,60 @@ class WhatTheProbeAnswers(unittest.TestCase):
         self.assertEqual([entry["ok"] for entry in answer["results"]], [True, False])
 
 
+class WhichNodeTheQuestionBelongsTo(unittest.TestCase):
+    """A source address is only answerable from the node that carries it.
+
+    In an active/passive pair the address lives on one node at a time. The other
+    one can still *bind* it - `ip_nonlocal_bind` sees to that - and then fails
+    the route lookup with ENETUNREACH, which reads as a pool that cannot be
+    reached. It is not: the pool is fine and the question was asked in the wrong
+    place. So the node checks first and says which it is.
+
+    Both cases here use real addresses of this machine: 127.0.0.1 is carried by
+    every host, and a TEST-NET-2 address is carried by none.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+
+    def ask_from(self, source: str) -> dict[str, object]:
+        code, answer = ask(
+            {
+                "schema_version": 1,
+                "source": source,
+                "targets": [target(port=self.port)],
+            }
+        )
+        self.assertEqual(code, 0)
+        return answer
+
+    def test_an_address_this_node_carries_is_probed_from(self) -> None:
+        answer = self.ask_from("127.0.0.1")
+        self.assertTrue(answer["source_held"])
+        self.assertTrue(answer["results"][0]["ok"])
+
+    def test_an_address_it_does_not_carry_is_said_rather_than_attempted(self) -> None:
+        answer = self.ask_from("198.51.100.77")
+        self.assertFalse(answer["source_held"])
+        self.assertEqual(answer["results"], [])
+        self.assertTrue(answer["ok"])
+        self.assertIsNone(answer["error"])
+
+    def test_no_source_is_every_node_s_question(self) -> None:
+        code, answer = ask({"schema_version": 1, "targets": [target(port=self.port)]})
+        self.assertEqual(code, 0)
+        self.assertTrue(answer["source_held"])
+        self.assertTrue(answer["results"][0]["ok"])
+
+
 class WhatTheProbeRefuses(unittest.TestCase):
     """The request is data from a client, and this is the whole surface."""
 

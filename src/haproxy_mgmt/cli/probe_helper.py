@@ -202,10 +202,24 @@ def main(
     # somebody checked a pool they already knew was broken.
     #
     reachable = [answer for answer in answers if answer.reachable]
-    outcome = "done" if reachable else "failed"
+    #
+    # An object with a source address can only be answered for from the node
+    # that holds it, and in an active/passive pair that is one node. Asking the
+    # other would bind a foreign address and fail the route lookup, which
+    # describes the binding and not the pool - so those nodes probe nothing and
+    # say so.
+    #
+    # All of them saying so is a different matter: the address is nowhere, and
+    # nothing was tried anywhere. That is the probe being unable to run rather
+    # than a pool that failed, and it is reported as such.
+    #
+    answered = [answer for answer in reachable if answer.source_held is not False]
+    nowhere = bool(source) and bool(reachable) and not answered
+    ran = bool(answered)
+    outcome = "done" if ran else "failed"
     document = {
         "schema_version": 1,
-        "ok": bool(reachable),
+        "ok": ran,
         "outcome": outcome,
         "operation": OPERATION,
         "cluster": request.cluster,
@@ -217,6 +231,7 @@ def main(
                     "node": answer.node,
                     "reachable": answer.reachable,
                     "error": answer.error,
+                    "source_held": answer.source_held,
                     "results": [
                         {
                             "host": entry.host,
@@ -238,11 +253,18 @@ def main(
             if answer.error and answer.reachable
         ],
         "error": None
-        if reachable
-        else {"code": "probe_unavailable", "message": "no node answered the probe"},
+        if ran
+        else {
+            "code": "probe_unavailable",
+            "message": (
+                f"no node carries the source address {source}, so nothing was tried"
+                if nowhere
+                else "no node answered the probe"
+            ),
+        },
     }
     write_document(writer, document)
-    return 0 if reachable else 68
+    return 0 if ran else 68
 
 
 if __name__ == "__main__":

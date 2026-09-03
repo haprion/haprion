@@ -9,9 +9,17 @@
 # nobody's traffic takes.
 #
 # Runs unprivileged, as the account the key logs in as. Opening an outbound
-# connection needs no privilege, and binding the object's source address needs
-# none either: the address is local to this node, and `ip_nonlocal_bind` covers
-# the moment it is carried by the other one.
+# connection needs no privilege, and neither does reading which addresses this
+# node currently carries.
+#
+# An object with a source address is only answerable from the node that holds
+# that address. In an active/passive pair the address lives on one node at a
+# time, and the other would bind it - `ip_nonlocal_bind` lets that succeed - and
+# then fail the route lookup with ENETUNREACH. That reads as a pool that cannot
+# be reached, which is the wrong thing to tell somebody: the pool is fine, this
+# node simply is not where the question can be asked. So the address is checked
+# first and the node says which it is, rather than producing a failure that has
+# to be interpreted.
 #
 # Everything arrives as JSON on stdin and is refused unless it is exactly what
 # this expects. The key can do nothing else - `command=` in authorized_keys sees
@@ -21,9 +29,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
 import ssl
+import subprocess
 import sys
 import time
 
@@ -133,6 +143,58 @@ def read_request(stream):
             }
         )
     return {"timeout_ms": timeout, "source": source, "targets": read}
+
+
+#
+# Fixed argv, and nothing from the request reaches it. `ip` is asked rather than
+# the address being bound as a test, because `ip_nonlocal_bind` makes binding a
+# foreign address succeed - the very thing that made this ambiguous.
+#
+IP_COMMANDS = ("/usr/sbin/ip", "/sbin/ip", "/usr/bin/ip", "/bin/ip")
+ADDRESS_ARGUMENTS = ("-4", "-o", "addr", "show")
+ADDRESS_LINE = re.compile(r"\binet\s+([0-9.]+)/")
+
+
+def local_addresses():
+    """Every IPv4 address this node carries right now, secondaries included.
+
+    Empty when `ip` cannot be run at all. An empty set would make every source
+    look foreign, so the caller treats "could not tell" as "do not refuse" - a
+    node that cannot answer this question must not turn into a node that
+    silently declines to probe.
+    """
+
+    binary = next((path for path in IP_COMMANDS if os.path.exists(path)), "")
+    if not binary:
+        return None
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argv, nothing from the request
+            [binary, *ADDRESS_ARGUMENTS],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return {match.group(1) for match in ADDRESS_LINE.finditer(completed.stdout)}
+
+
+def holds(source, addresses):
+    """Whether this node can answer for an object leaving from `source`.
+
+    No source is every node's question. A source this node carries is its
+    question too. Anything else belongs to whichever node holds the address.
+    """
+
+    if not source:
+        return True
+    if addresses is None:
+        return True
+    return source in addresses
 
 
 def connect(target, timeout, source):
@@ -260,13 +322,24 @@ def main(argv=None, stdin=None, stdout=None):
         stdout.write("\n")
         return 64
 
-    results = [probe(target, request["timeout_ms"], request["source"]) for target in request["targets"]]
+    #
+    # Asked before anything is attempted. A node that does not hold the source
+    # answers that it does not, and probes nothing: every result it could
+    # produce would describe the binding rather than the pool.
+    #
+    source_held = holds(request["source"], local_addresses())
+    results = (
+        [probe(target, request["timeout_ms"], request["source"]) for target in request["targets"]]
+        if source_held
+        else []
+    )
     json.dump(
         {
             "schema_version": SCHEMA_VERSION,
             "ok": True,
             "node": socket.gethostname(),
             "source": request["source"],
+            "source_held": source_held,
             "error": None,
             "results": results,
         },

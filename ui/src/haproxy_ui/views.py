@@ -565,11 +565,19 @@ def build_router(config: Config) -> APIRouter:
             captured=captured_at is not None,
         )
         #
-        # A name that is neither stored nor served is not a page. Rendering an
-        # empty detail for any string would make every typo look like a proxy
-        # somebody had deleted.
+        # A draft makes a name a page too. An object that has only ever been
+        # written here is stored nowhere and served nowhere, and without this it
+        # would be a 404 - which is what somebody would meet immediately after
+        # saving their first draft of it.
         #
-        if detail.stored is None and detail.published is None and detail.available:
+        with request.app.state.pool.connection() as connection:
+            draft = db.read_draft(connection, cluster, name)
+        #
+        # A name that is neither stored, nor served, nor drafted is not a page.
+        # Rendering an empty detail for any string would make every typo look
+        # like a proxy somebody had deleted.
+        #
+        if detail.stored is None and detail.published is None and detail.available and not draft:
             raise HTTPException(status_code=404)
         return TEMPLATES.TemplateResponse(
             request,
@@ -580,6 +588,14 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "section": "proxies",
                 "object": detail,
+                "draft": draft,
+                #
+                # What just happened, carried in the redirect. A 303 leaves
+                # nothing behind, so without it a save that worked and a page
+                # somebody merely opened look exactly alike.
+                #
+                "saved": request.query_params.get("saved") == "1",
+                "discarded": request.query_params.get("discarded") == "1",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
@@ -1583,7 +1599,7 @@ def _editor_submit(
                 detail={"object": object_id},
             )
             connection.commit()
-        return RedirectResponse(f"/proxies/{cluster}/{object_id}", status_code=303)
+        return RedirectResponse(f"/proxies/{cluster}/{object_id}?discarded=1", status_code=303)
 
     if form.action != "save":
         return PlainTextResponse("Unknown action", status_code=400)
@@ -1650,7 +1666,7 @@ def _editor_submit(
     # so without it a save that worked and a page that was merely opened look
     # exactly alike - which is the moment somebody presses save again.
     #
-    return RedirectResponse(f"/proxies/{cluster}/{object_id}/edit?saved=1", status_code=303)
+    return RedirectResponse(f"/proxies/{cluster}/{object_id}?saved=1", status_code=303)
 
 
 def _refusal_page(request: Request, config: Config, message: str, *, back: str) -> Response:

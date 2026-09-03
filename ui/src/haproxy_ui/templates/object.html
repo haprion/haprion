@@ -16,7 +16,32 @@
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
 </section>
 
+{#
+  What just happened, said once. A 303 leaves nothing behind, so a save that
+  worked and a page somebody merely opened would otherwise look identical -
+  which is the moment they press save again.
+#}
+{% if saved %}
+<p class="preview-notice"><strong>Saved as a draft.</strong> It reaches no configuration until it is published.</p>
+{% elif discarded %}
+<p class="preview-notice"><strong>The draft was discarded.</strong> The stored object is as it was.</p>
+{% endif %}
+
 <div class="cluster-list">
+{#
+  A draft is not the object; it is a change waiting to become one. It is drawn
+  above the stored object because that is the order it happened in - somebody
+  edited this, and what is stored has not caught up.
+#}
+{% if draft %}
+<article class="cluster-card cluster-accent-{{ object.accent }}">
+  <header class="cluster-header">
+    <div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div class="section-title"><h3>An unpublished draft</h3><p>Last changed by {{ draft.updated_by }}, revision {{ draft.revision }}</p></div></div>
+    <div class="cluster-state">{% if management_writes %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Open in the editor</a>{% endif %}{% if draft.updated_at %}<time datetime="{{ draft.updated_at.isoformat() }}" title="{{ draft.updated_at }}">{{ draft.updated_at.strftime('%H:%M:%S') }}</time>{% endif %}</div>
+  </header>
+  <p class="preview-notice">{% if draft.deleted %}This draft says the object should be <strong>removed</strong> when it is published.{% else %}The stored object below is unchanged until this draft is published.{% endif %}</p>
+</article>
+{% endif %}
 <article class="cluster-card cluster-accent-{{ object.accent }}">
   <header class="cluster-header">
     <div class="cluster-identity"><div><h3>Stored object</h3><p>{% if object.stored %}<code>managed/proxies/{{ object.name }}.yaml</code> at {{ object.short_commit }}{% else %}Read from the cluster repository{% endif %}</p></div></div>

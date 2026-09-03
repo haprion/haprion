@@ -382,3 +382,50 @@ class TheHealthCardOnThePage(EditorTestCase):
         )
         self.assertIn("node-a", body)
         self.assertIn("node-b", body)
+
+
+class WhereASaveLands(EditorTestCase):
+    """Saving finishes a piece of work, so it leaves the form.
+
+    Not to `/proxies`: that list is built from what the nodes are serving, so a
+    new object saved as a draft has no row there at all and somebody would land
+    on a page where their work is invisible. The object's own page is where a
+    draft is a thing you can see and act on.
+
+    Validating is the opposite and deliberately stays: its whole answer - the
+    refusal, or the configuration this would generate - is on the page, and
+    navigating away would throw away what was just asked for.
+    """
+
+    def test_a_save_goes_to_the_object_and_says_so(self) -> None:
+        client = self.editor()
+        answer = self.submit(client, "/proxies/alpha/shop/edit", action="save")
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(answer.headers["location"], "/proxies/alpha/shop?saved=1")
+
+    def test_a_discard_goes_to_the_object_and_says_so(self) -> None:
+        self.draft = ProxyDraft(
+            cluster="alpha",
+            object_id="shop",
+            yaml="",
+            base_version=1,
+            base_hash="abc",
+            revision=2,
+            updated_by="operator",
+            updated_at=OBSERVED,
+            deleted=False,
+        )
+        client = self.editor()
+        answer = self.submit(
+            client, "/proxies/alpha/shop/edit", action="discard", expected_revision="2"
+        )
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(answer.headers["location"], "/proxies/alpha/shop?discarded=1")
+
+    def test_validating_stays_on_the_form(self) -> None:
+        client = self.editor()
+        answer = self.submit(client, "/proxies/alpha/shop/edit", action="check")
+
+        self.assertEqual(answer.status_code, 200)

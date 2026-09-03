@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from unittest import mock
 
 from haproxy_ui import demo
-from haproxy_ui.db import ClusterInventory
+from haproxy_ui.db import ClusterInventory, ProxyDraft
 from haproxy_ui.snapshot import ProductionSnapshot
 from tests.test_login import LoginTestCase, configuration
 
@@ -58,7 +58,24 @@ SNAPSHOT = ProductionSnapshot(
 )
 
 
-class OpeningAnObject(LoginTestCase):
+class DraftReading(LoginTestCase):
+    """The page reads a draft now, so every case here has to answer that call.
+
+    Defaulted to "no draft" rather than left unpatched: a page whose draft
+    lookup fails is a page that does not render at all, which would hide
+    whatever the case was actually about.
+    """
+
+    draft: object = None
+
+    def setUp(self) -> None:
+        super().setUp()
+        patch = mock.patch("haproxy_ui.db.read_draft", side_effect=lambda *_a, **_k: self.draft)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+
+class OpeningAnObject(DraftReading):
     def demo_client(self) -> object:
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)
@@ -116,7 +133,7 @@ class OpeningAnObject(LoginTestCase):
         self.assertEqual(page.headers["location"], "/login")
 
 
-class InSnapshotMode(LoginTestCase):
+class InSnapshotMode(DraftReading):
     """Dev runs against a captured production snapshot, which carries no objects.
 
     The reason is in `OBJECTS_SOURCE`: a snapshot is a file copied into the
@@ -241,3 +258,61 @@ class TheFixtureDescribesARealCluster(LoginTestCase):
 
         self.assertNotIn("metrics", stored)
         self.assertNotIn("legacy-tcp", stored)
+
+
+class TheDraftOnTheObjectPage(DraftReading):
+    """A draft is why this page exists after a save, so it has to be on it.
+
+    It also has to make the page exist at all: an object written here and never
+    published is stored nowhere and served nowhere, and without the draft it
+    would be a 404 - met immediately after saving the first draft of it.
+    """
+
+    def drafted(self, **fields: object) -> ProxyDraft:
+        values: dict[str, object] = {
+            "cluster": "edge-demo",
+            "object_id": "public-web",
+            "yaml": "",
+            "base_version": 1,
+            "base_hash": "abc",
+            "revision": 3,
+            "updated_by": "operator",
+            "updated_at": CAPTURED,
+            "deleted": False,
+        }
+        values.update(fields)
+        return ProxyDraft(**values)  # type: ignore[arg-type]
+
+    def page(self, path: str = "/proxies/edge-demo/public-web") -> object:
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        return client.get(path)
+
+    def test_the_draft_is_named_with_who_changed_it(self) -> None:
+        self.draft = self.drafted()
+        body = self.page().text  # type: ignore[attr-defined]
+
+        self.assertIn("An unpublished draft", body)
+        self.assertIn("operator", body)
+        self.assertIn("revision 3", body)
+
+    def test_a_draft_that_removes_the_object_says_so(self) -> None:
+        self.draft = self.drafted(deleted=True)
+
+        self.assertIn("should be <strong>removed</strong>", self.page().text)  # type: ignore[attr-defined]
+
+    def test_without_one_the_page_says_nothing_about_drafts(self) -> None:
+        self.assertNotIn("An unpublished draft", self.page().text)  # type: ignore[attr-defined]
+
+    def test_the_save_is_confirmed_where_it_landed(self) -> None:
+        """A 303 leaves nothing behind, so the page has to carry the answer."""
+
+        self.draft = self.drafted()
+        body = self.page("/proxies/edge-demo/public-web?saved=1").text  # type: ignore[attr-defined]
+
+        self.assertIn("Saved as a draft", body)
+
+    def test_a_discard_is_confirmed_too(self) -> None:
+        body = self.page("/proxies/edge-demo/public-web?discarded=1").text  # type: ignore[attr-defined]
+
+        self.assertIn("draft was discarded", body)

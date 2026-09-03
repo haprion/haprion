@@ -249,6 +249,10 @@ status_identity:
   user: "svc-status"
   key: "/root/.ssh/id_ed25519_status"
 
+probe_identity:
+  user: "svc-status"
+  key: "/root/.ssh/id_ed25519_probe"
+
 backup_root: /srv/state-backups
 backup_timer: haproxy-state-backup.timer
 ```
@@ -288,6 +292,15 @@ without it instead of falling back to the deploy identity. It is deliberately no
 the deploy identity: reading status is the one thing the manager asks a node to do that cannot
 change it, so it is the identity that can be granted most widely, and keeping it separate is what
 preserves that difference. Without it, `haproxy-status` says exactly which field is missing.
+
+`probe_identity` is what the interface uses to ask a node to *try* a health check - open a
+connection to the servers an object names, from the address that object leaves from, and report
+whether they answered. It logs in as the same account status does and still carries its own key,
+because it is a different thing to grant: status reads what a node already knows, while this makes
+the node open a connection to an address the caller chose. The forced command behind it needs no
+sudo, returns a status and never a response body, and refuses anything that is not a bounded list
+of targets. Leave it out and the button in the editor says the probe is unavailable; nothing else
+changes.
 
 The file must be root-owned, a regular file (not a symlink), not group- or world-writable, and at
 most 1 MiB. The reader rejects unknown fields, so **install a release that understands a new field

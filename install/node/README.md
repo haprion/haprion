@@ -7,7 +7,8 @@
 | `haproxy-pull-deploy` | fetches the published release, validates it, installs it, reloads once |
 | `haproxy-cert-trigger` | unprivileged wrapper: validates certificate IDs, then escalates |
 | `haproxy-cert-pull` | fetches the requested certificates, validates them, installs, reloads |
-| `haproxy-node-status` | reports version, health, carried certificates and keepalived state |
+| `haproxy-node-status` | reports version, health, carried certificates, pool members and keepalived state |
+| `haproxy-health-probe` | tries a health check against named servers, from this node, and reports whether they answered |
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
 

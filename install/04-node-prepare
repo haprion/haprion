@@ -34,6 +34,7 @@ SCRIPTS=(
     haproxy-cert-pull
     haproxy-cert-trigger
     haproxy-node-status
+    haproxy-health-probe
     haproxy-keepalived-state
     haproxy-state-export
 )

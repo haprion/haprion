@@ -1,0 +1,28 @@
+# Lets the interface's web service ask a node to try a health check, and nothing
+# else.
+#
+# Why the web service and not the worker: the answer is wanted while somebody is
+# looking at the form they just typed, and a job queued behind whatever else the
+# cluster is doing is not an answer to that question. Only one pending job per
+# cluster exists at a time, so a probe would also collide with a deploy that is
+# waiting - for a read that changes nothing.
+#
+# What it grants, exactly: run one helper, with no arguments at all. The helper
+# accepts no argv and reads a bounded JSON request on stdin, which is what makes
+# an exact rule possible - PRIVILEGE.md forbids wildcards in argument matching.
+#
+# What that helper can do with root: read the probe identity's private key, and
+# nothing else. It writes nothing, takes no lock, and reaches a node through a
+# forced command that can only open outbound connections and report whether they
+# answered - never a response body. The targets it will send are validated
+# twice, here and again on the node.
+#
+# The probe identity is deliberately not the status identity. Status reads what
+# a node already knows; this one makes a node open a connection to an address
+# the caller names, which is a different thing to hand out.
+#
+# NOPASSWD because a service has no terminal to type a password at.
+#
+# Installed 0440 root:root, and accepted by visudo before it is put in place.
+
+WEB_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-probe-helper ""

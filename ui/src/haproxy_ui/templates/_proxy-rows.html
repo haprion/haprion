@@ -27,14 +27,14 @@
         <td data-label="Protocol">{% if object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
         <td data-label="Hosts / ports"><span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span>{% if not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Waiting for deploy</span>{% endif %}</td>
         {#
-          The nodes' own verdict on this object's servers, not a probe. An
-          unlit lamp is an object with no health check: HAProxy reports an
-          unchecked server as up, so a green one here would claim a
-          reachability nothing measured. Grey is a check nobody has reported
-          on yet - an object waiting for a deploy, or a node running an older
-          status script.
+          The nodes' own verdict on this object's servers, not a probe. Grey
+          is no answer, and it covers both ways of having none: an object with
+          no health check, and a check nobody has reported on yet. Neither is
+          green - HAProxy reports an unchecked server as up, and a green lamp
+          there would claim a reachability nothing measured. Which of the two
+          it is sits in the title, not in the column.
         #}
-        <td data-label="Health">{% set lamp = lamps.get(object.name) if lamps else none %}{% if lamp %}<span class="pool-health" title="{{ lamp.detail }}"><span class="status-dot status-{{ lamp.tone }}" aria-hidden="true"></span>{{ lamp.label }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        <td data-label="Health">{% set lamp = lamps.get(object.name) if lamps else none %}{% if lamp %}<span class="pool-health" title="{{ lamp.detail }}"><span class="status-dot status-{{ lamp.tone }}" aria-hidden="true"></span>{% if lamp.label %} {{ lamp.label }}{% endif %}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
         <td data-label="Backends">{% if object.backend_count is not none %}{{ object.backend_count }}{% else %}<span class="table-empty">—</span>{% endif %}</td>
         <td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td>
       </tr>

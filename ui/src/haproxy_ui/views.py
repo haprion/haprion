@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -384,6 +384,33 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
+    def _network_result(reading: Any) -> Mapping[str, Any]:
+        result = getattr(reading, "result", None)
+        return result if isinstance(result, Mapping) else {}
+
+    def _default_vip(reading: Any) -> str:
+        return str(_network_result(reading).get("default_vip", "") or "")
+
+    def _vip_sources(reading: Any) -> dict[str, str]:
+        """Each VIP's own source address, by name, as the poller cached it.
+
+        Read here rather than through the editor's state: the listing needs one
+        fact about the cluster and not a form's worth of choices, and building
+        the latter to get the former is how a page grows a second reason to
+        fail.
+        """
+
+        entries = _network_result(reading).get("vips")
+        return (
+            {
+                str(entry.get("name", "")): str(entry.get("source", "") or "")
+                for entry in entries
+                if isinstance(entry, Mapping) and entry.get("name")
+            }
+            if isinstance(entries, Sequence) and not isinstance(entries, (str, bytes))
+            else {}
+        )
+
     def _proxy_listing(request: Request, role: str) -> dict[str, Any]:
         """Everything the proxy table draws, for the page and for its refresh.
 
@@ -444,6 +471,14 @@ def build_router(config: Config) -> APIRouter:
         # dashboard draws.
         #
         _, health_rows, _ = read_source(request, config, STATUS_SOURCE)
+        #
+        # And the cluster's addresses, because they decide which node may
+        # answer. An object leaving from a source address is answerable only
+        # from the node that carries it; the other binds an address it does not
+        # have and reports the pool down.
+        #
+        _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
+        networks = {reading.cluster: reading for reading in network_rows}
         pool_lamps = {
             view.cluster: {
                 obj.name: health.object_health(
@@ -452,6 +487,11 @@ def build_router(config: Config) -> APIRouter:
                     obj=obj.name,
                     others=[other.name for other in listed[view.cluster]],
                     checked=health.has_health_check(obj.document),
+                    sourced=health.leaves_from_source(
+                        obj.document,
+                        default_vip=_default_vip(networks.get(view.cluster)),
+                        vip_sources=_vip_sources(networks.get(view.cluster)),
+                    ),
                 )
                 for obj in objects.cluster_object_views(rows.get(view.cluster))
             }
@@ -1460,6 +1500,12 @@ def _editor_page(
         # runs the same check against an address it does not have.
         #
         source=probe_module.source_address(fields, editor_module.choices(state.choices)),
+        #
+        # As written in the form, so the card can say `198.51.100.10:8080`
+        # instead of `s1`. The runtime name stays beside it: it is what appears
+        # in the logs somebody will read next.
+        #
+        addresses=str(fields.get("servers", "")).splitlines(),
     )
     #
     # Only when somebody pressed the button. A page that probed on every open

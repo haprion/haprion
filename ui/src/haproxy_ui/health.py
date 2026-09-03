@@ -12,7 +12,7 @@ it, and the page says so rather than implying the numbers are from now.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -58,6 +58,27 @@ class PoolHealth:
     backend: str
     nodes: tuple[NodeMembers, ...]
     observed_at: datetime | None
+    #
+    # The addresses the author wrote, in the order they wrote them. The runtime
+    # knows a pool member as `s1`, which is the generator's own name for the
+    # position - deliberately not the address, since that is a column of its
+    # own in `show stat`. On this card it is the wrong way round: the person
+    # reading wrote `198.51.100.10:8080` and has never seen `s1`.
+    #
+    addresses: tuple[str, ...] = ()
+
+    def address(self, server: str) -> str:
+        """The address behind a runtime server name, where one can be named.
+
+        Empty for anything that is not `s<n>` within the pool as it now stands.
+        A pool edited since the deploy can have more names than addresses, and
+        guessing there would put somebody else's address beside a member.
+        """
+
+        if not server.startswith("s") or not server[1:].isdigit():
+            return ""
+        index = int(server[1:]) - 1
+        return self.addresses[index] if 0 <= index < len(self.addresses) else ""
 
     @property
     def held_by(self) -> tuple[str, ...]:
@@ -90,6 +111,20 @@ def _members(status: Any) -> tuple[bool, list[dict[str, Any]]]:
     return True, [entry for entry in entries if isinstance(entry, dict)]
 
 
+#
+# `show stat` emits a pseudo-row per proxy summarising the whole backend, and
+# the node reports it alongside the real ones - it filters `FRONTEND` and keeps
+# this. It is not a member: counting it made one server on two nodes read as
+# four things to be up, and put a row called BACKEND in a list of servers.
+#
+PSEUDO_MEMBERS = {"BACKEND", "FRONTEND"}
+
+
+def _is_member(row: Mapping[str, Any]) -> bool:
+    name = row.get("server")
+    return isinstance(name, str) and bool(name) and name not in PSEUDO_MEMBERS
+
+
 def _text(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
@@ -99,7 +134,13 @@ def _count(value: Any) -> int | None:
 
 
 def pool_health(
-    rows: Iterable[Any], *, cluster: str, obj: str, pool: str, source: str = ""
+    rows: Iterable[Any],
+    *,
+    cluster: str,
+    obj: str,
+    pool: str,
+    source: str = "",
+    addresses: Iterable[str] = (),
 ) -> PoolHealth:
     """The nodes' verdict on one object's pool, from the poller's newest reading.
 
@@ -110,9 +151,10 @@ def pool_health(
     """
 
     name = backend_name(obj, pool)
+    written = tuple(address.strip() for address in addresses if address.strip())
     reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
     if reading is None:
-        return PoolHealth(backend=name, nodes=(), observed_at=None)
+        return PoolHealth(backend=name, nodes=(), observed_at=None, addresses=written)
 
     result = reading.result if isinstance(reading.result, dict) else {}
     entries = result.get("nodes")
@@ -132,7 +174,7 @@ def pool_health(
                 last_change_sec=_count(row.get("last_change_sec")),
             )
             for row in rows_for_node
-            if row.get("backend") == name and _text(row.get("server"))
+            if row.get("backend") == name and _is_member(row)
         )
         status = entry.get("status")
         vip = status.get("vip") if isinstance(status, dict) else None
@@ -162,6 +204,7 @@ def pool_health(
         backend=name,
         nodes=tuple(nodes),
         observed_at=getattr(reading, "observed_at", None),
+        addresses=written,
     )
 
 
@@ -177,6 +220,12 @@ class ObjectHealth:
     """
 
     tone: str
+    #
+    # Empty where there is nothing to count. A grey lamp says "no answer" on
+    # its own, and the two ways of having none - no check written, or nothing
+    # reported yet - are a sentence in the title rather than two words in a
+    # column of numbers.
+    #
     label: str
     detail: str
     up: int
@@ -237,6 +286,31 @@ def has_health_check(document: str) -> bool | None:
     )
 
 
+def leaves_from_source(document: str, *, default_vip: str, vip_sources: Mapping[str, str]) -> bool:
+    """Whether this object's traffic leaves from a source address.
+
+    It does when it names one, and it does when the VIP it is served on carries
+    one - which is the usual case here, since the address lives in keepalived
+    and follows the VIP. What an ADC calls the SNIP.
+
+    It decides which nodes may answer for the pool. Only the node holding the
+    VIP can bind the address; the other binds an address it does not have,
+    fails, and reports the pool down - HAProxy telling the truth about the
+    binding and a lie about the pool.
+    """
+
+    try:
+        data = read_document("object", document.encode())
+    except (ModelError, ValueError, UnicodeError):
+        return False
+    listen = data.get("listen")
+    listen = listen if isinstance(listen, dict) else {}
+    if listen.get("source"):
+        return True
+    vip = str(listen.get("vip") or "") or default_vip
+    return bool(vip_sources.get(vip))
+
+
 def object_health(
     rows: Iterable[Any],
     *,
@@ -244,17 +318,19 @@ def object_health(
     obj: str,
     others: Iterable[str] = (),
     checked: bool | None = True,
+    sourced: bool = False,
 ) -> ObjectHealth:
     """Every node's verdict on every pool behind one object, as one lamp.
 
-    Counted per node and not per server. A member that is up on one node and
-    down on the other is a real fault - the traffic that lands on the second
-    node does not reach it - and averaging the two into "up" would hide exactly
-    the case this column exists to show.
+    Counted in servers, because that is what somebody wrote down. Both nodes
+    run the same configuration and report the same pool, so counting readings
+    made one server behind a two-node cluster read as `2/2` - and a person who
+    had written one server and one check had no way to reach that number.
 
-    Nothing reported is `unknown` and never green. An object waiting for a
-    deploy, a node running an older status script, and a pool whose every
-    member is down are three different answers, and only the last one is red.
+    A server is up only where every node that reported it says so. The two
+    nodes are not averaged: traffic landing on the node that cannot reach it
+    does not reach it, and that is the case this lamp exists to show. The node
+    that disagrees is named, since which one it is decides what to look at.
     """
 
     #
@@ -265,15 +341,25 @@ def object_health(
     # not checked at all.
     #
     if checked is False:
-        return ObjectHealth("off", "No check", "This object defines no health check", 0, 0)
+        return ObjectHealth("unknown", "", "This object defines no health check", 0, 0)
 
     others = tuple(others)
     reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
     result = reading.result if reading is not None and isinstance(reading.result, dict) else {}
     entries = result.get("nodes")
 
-    up = 0
-    total = 0
+    #
+    # Keyed by pool and server, because two pools behind one object may name a
+    # server the same and they are not the same server.
+    #
+    healthy: dict[tuple[str, str], bool] = {}
+    #
+    # And whether any node at all could reach it. A server down on one node and
+    # up on the other is a partial fault, not a dead pool, and the two must not
+    # come out as the same colour.
+    #
+    reachable: dict[tuple[str, str], bool] = {}
+    complaining: set[str] = set()
     nodes = 0
     for entry in entries if isinstance(entries, Sequence) else ():
         if not isinstance(entry, dict):
@@ -284,31 +370,69 @@ def object_health(
             for member in members
             if isinstance(member.get("backend"), str)
             and _attributed(member["backend"], obj, others)
-            and _text(member.get("server"))
+            and _is_member(member)
         ]
         if not mine:
             continue
+        #
+        # The same rule the editor's card applies, and for the same reason: an
+        # object that leaves from a source address can only be answered for by
+        # the node that carries it. A node that says it does not is not a
+        # verdict on the pool. One that says nothing is kept - hiding a node on
+        # a fact nobody stated is worse than one row too many.
+        #
+        status = entry.get("status")
+        vip = status.get("vip") if isinstance(status, dict) else None
+        owner = vip.get("owner") if isinstance(vip, dict) else None
+        if sourced and owner is False:
+            continue
         nodes += 1
-        total += len(mine)
-        up += sum(1 for member in mine if str(member.get("status", "")).upper().startswith("UP"))
+        node = str(entry.get("name") or entry.get("node") or "")
+        for member in mine:
+            key = (str(member["backend"]), str(member["server"]))
+            reports_up = str(member.get("status", "")).upper().startswith("UP")
+            healthy[key] = healthy.get(key, True) and reports_up
+            reachable[key] = reachable.get(key, False) or reports_up
+            if not reports_up and node:
+                complaining.add(node)
 
+    total = len(healthy)
     if total == 0:
         return ObjectHealth(
             tone="unknown",
-            label="Not reported",
+            label="",
             detail="No node reported servers for this object",
             up=0,
             total=0,
         )
-    where = "on one node" if nodes == 1 else f"across {nodes} nodes"
+
+    up = sum(1 for ok in healthy.values() if ok)
+    unreachable = sum(1 for ok in reachable.values() if not ok)
+    servers = "server" if total == 1 else "servers"
+    seen = "one node" if nodes == 1 else f"{nodes} nodes"
     if up == total:
-        return ObjectHealth("healthy", f"{up}/{total} up", f"Every member is up {where}", up, total)
-    if up == 0:
-        return ObjectHealth("critical", f"0/{total} up", f"No member is up {where}", up, total)
+        return ObjectHealth(
+            "healthy", f"{up}/{total} up", f"Every server is up, as seen by {seen}", up, total
+        )
+    #
+    # Named, because a server up on one node and down on the other is a
+    # different problem from one that is down everywhere, and the name is where
+    # somebody would start looking.
+    #
+    reported = f" · reported down by {', '.join(sorted(complaining))}" if complaining else ""
+    #
+    # Red is reserved for a pool no node can reach. Anything else - one member
+    # of three, or one node of two - is amber: it is still serving, and calling
+    # that an outage teaches somebody to disbelieve the colour.
+    #
+    if unreachable == total:
+        return ObjectHealth(
+            "critical", f"0/{total} up", f"No {servers} reachable{reported}", up, total
+        )
     return ObjectHealth(
         "warning",
         f"{up}/{total} up",
-        f"{total - up} of {total} members are down {where}",
+        f"{total - up} of {total} {servers} not up everywhere{reported}",
         up,
         total,
     )

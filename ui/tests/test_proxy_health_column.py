@@ -113,23 +113,24 @@ class TheHealthColumn(LoginTestCase):
         self.assertIn("status-dot status-warning", page.text)
         self.assertIn("1/2 up", page.text)
 
-    def test_an_object_with_no_check_is_unlit_even_when_the_nodes_report_it_up(self) -> None:
+    def test_an_object_with_no_check_is_grey_even_when_the_nodes_report_it_up(self) -> None:
         page = self.page(UNCHECKED, status(("a", "UP")))
 
-        self.assertIn("status-dot status-off", page.text)
-        self.assertIn("No check", page.text)
+        self.assertIn("status-dot status-unknown", page.text)
+        self.assertNotIn("No check", page.text)
         #
         # Narrowed to the cell on purpose: the read-only badge in the page
         # heading carries a green dot of its own, and asserting on the class
         # alone would pass whatever the column did.
         #
-        self.assertNotIn('class="pool-health" title="Every member is up', page.text)
+        self.assertNotIn('status-dot status-healthy" aria-hidden', page.text)
+        self.assertIn("This object defines no health check", page.text)
 
     def test_a_checked_object_nobody_has_reported_on_is_grey(self) -> None:
         page = self.page(CHECKED, None)
 
         self.assertIn("status-dot status-unknown", page.text)
-        self.assertIn("Not reported", page.text)
+        self.assertIn("No node reported servers", page.text)
 
 
 if __name__ == "__main__":

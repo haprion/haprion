@@ -13,20 +13,52 @@ class Reading:
     result: dict[str, Any]
 
 
-def node(name: str, *members: tuple[str, str, str]) -> dict[str, Any]:
-    return {
-        "node": name,
-        "status": {
-            "servers": [
-                {"backend": backend, "server": server, "status": state}
-                for backend, server, state in members
-            ]
-        },
+def node(
+    name: str, *members: tuple[str, str, str], holds_vip: bool | None = None
+) -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "servers": [
+            {"backend": backend, "server": server, "status": state}
+            for backend, server, state in members
+        ]
     }
+    if holds_vip is not None:
+        status["vip"] = {"owner": holds_vip}
+    return {"node": name, "status": status}
 
 
 def reading(*nodes: dict[str, Any], cluster: str = "alpha") -> list[Reading]:
     return [Reading(cluster=cluster, result={"nodes": list(nodes)})]
+
+
+class TheCardNamesWhatTheAuthorWrote(unittest.TestCase):
+    """`s1` is the generator's name for a position, not something anybody typed.
+
+    It is right in the configuration and in the logs, and wrong on a card read
+    by the person who wrote the address it stands for.
+    """
+
+    def pool(self, *addresses: str) -> health.PoolHealth:
+        return health.PoolHealth(
+            backend="mgd-shop-web", nodes=(), observed_at=None, addresses=addresses
+        )
+
+    def test_a_runtime_name_resolves_to_the_address_in_that_position(self) -> None:
+        pool = self.pool("198.51.100.10:8080", "198.51.100.11:8080")
+
+        self.assertEqual(pool.address("s1"), "198.51.100.10:8080")
+        self.assertEqual(pool.address("s2"), "198.51.100.11:8080")
+
+    def test_a_name_beyond_the_pool_resolves_to_nothing(self) -> None:
+        #
+        # A pool edited since the deploy has more names than addresses, and a
+        # guess there would put one member's address beside another.
+        #
+        pool = self.pool("198.51.100.10:8080")
+
+        self.assertEqual(pool.address("s2"), "")
+        self.assertEqual(pool.address("BACKEND"), "")
+        self.assertEqual(pool.address("sx"), "")
 
 
 class TheLampInTheListing(unittest.TestCase):
@@ -53,6 +85,21 @@ class TheLampInTheListing(unittest.TestCase):
         rows = reading(node("n1", ("mgd-shop-web", "a", "DOWN")))
         self.assertEqual(health.object_health(rows, cluster="alpha", obj="shop").tone, "critical")
 
+    def test_the_pools_own_summary_row_is_not_a_server(self) -> None:
+        #
+        # `show stat` emits a BACKEND pseudo-row per proxy and the node reports
+        # it beside the real ones. Counted, it made one server behind a
+        # two-node cluster read as 4 - and put a row called BACKEND in a list
+        # of servers.
+        #
+        rows = reading(
+            node("n1", ("mgd-shop-web", "s1", "UP"), ("mgd-shop-web", "BACKEND", "UP")),
+            node("n2", ("mgd-shop-web", "s1", "UP"), ("mgd-shop-web", "BACKEND", "UP")),
+        )
+        lamp = health.object_health(rows, cluster="alpha", obj="shop")
+        self.assertEqual(lamp.label, "1/1 up")
+        self.assertEqual(lamp.tone, "healthy")
+
     def test_a_member_down_on_one_node_only_is_still_a_warning(self) -> None:
         #
         # The traffic that lands on the second node does not reach it. Averaging
@@ -64,12 +111,18 @@ class TheLampInTheListing(unittest.TestCase):
         )
         lamp = health.object_health(rows, cluster="alpha", obj="shop")
         self.assertEqual(lamp.tone, "warning")
-        self.assertIn("across 2 nodes", lamp.detail)
+        #
+        # One server, so the count stays 1 - and amber rather than red, because
+        # the pool is still serving from the node that can reach it. The node
+        # that cannot is named, since that is where somebody would start.
+        #
+        self.assertEqual(lamp.label, "0/1 up")
+        self.assertIn("reported down by n2", lamp.detail)
 
     def test_nothing_reported_is_grey_and_never_green(self) -> None:
         lamp = health.object_health(reading(node("n1")), cluster="alpha", obj="shop")
         self.assertEqual(lamp.tone, "unknown")
-        self.assertEqual(lamp.label, "Not reported")
+        self.assertEqual(lamp.label, "")
 
     def test_an_object_with_no_health_check_is_unlit(self) -> None:
         #
@@ -78,8 +131,8 @@ class TheLampInTheListing(unittest.TestCase):
         #
         rows = reading(node("n1", ("mgd-shop-web", "a", "UP")))
         lamp = health.object_health(rows, cluster="alpha", obj="shop", checked=False)
-        self.assertEqual(lamp.tone, "off")
-        self.assertEqual(lamp.label, "No check")
+        self.assertEqual(lamp.tone, "unknown")
+        self.assertEqual(lamp.label, "")
 
     def test_a_document_that_cannot_be_read_is_not_an_object_without_a_check(self) -> None:
         self.assertIsNone(health.has_health_check("not: [a document"))
@@ -118,3 +171,87 @@ class TheLampInTheListing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OnlyTheNodeThatCarriesTheAddressAnswers(unittest.TestCase):
+    """A pool that leaves from a source address has one node that can say.
+
+    Both nodes run the same configuration and both run the check. The one that
+    does not carry the address binds it anyway - the kernel allows it - fails
+    to route, and reports the pool down. That is HAProxy telling the truth
+    about the binding and a lie about the pool, and it turned one healthy
+    server into `0/1 up`.
+    """
+
+    def cluster(self) -> list[Reading]:
+        return reading(
+            node("node-a", ("mgd-shop-web", "s1", "UP"), holds_vip=True),
+            node("node-b", ("mgd-shop-web", "s1", "DOWN"), holds_vip=False),
+        )
+
+    def test_the_node_without_the_address_does_not_vote(self) -> None:
+        lamp = health.object_health(self.cluster(), cluster="alpha", obj="shop", sourced=True)
+
+        self.assertEqual(lamp.label, "1/1 up")
+        self.assertEqual(lamp.tone, "healthy")
+        self.assertIn("one node", lamp.detail)
+
+    def test_without_a_source_every_node_still_counts(self) -> None:
+        #
+        # No source means every node leaves from its own address and every node
+        # can genuinely answer, so a member down on one of them is a real
+        # fault - and hiding it would be the opposite mistake.
+        #
+        lamp = health.object_health(self.cluster(), cluster="alpha", obj="shop", sourced=False)
+
+        self.assertEqual(lamp.tone, "warning")
+        self.assertIn("reported down by node-b", lamp.detail)
+
+    def test_a_node_that_says_nothing_about_the_address_is_kept(self) -> None:
+        rows = reading(
+            node("node-a", ("mgd-shop-web", "s1", "UP"), holds_vip=True),
+            node("node-b", ("mgd-shop-web", "s1", "DOWN")),
+        )
+
+        self.assertEqual(
+            health.object_health(rows, cluster="alpha", obj="shop", sourced=True).tone, "warning"
+        )
+
+
+class WhetherAnObjectLeavesFromASource(unittest.TestCase):
+    def test_a_named_source_is_one(self) -> None:
+        document = "listen:\n  vip: main\n  source: office\n"
+
+        self.assertTrue(
+            health.leaves_from_source(document, default_vip="main", vip_sources={"main": ""})
+        )
+
+    def test_the_vip_carries_one_when_the_object_names_none(self) -> None:
+        document = "listen:\n  vip: main\n"
+
+        self.assertTrue(
+            health.leaves_from_source(
+                document, default_vip="other", vip_sources={"main": "192.0.2.25"}
+            )
+        )
+        self.assertFalse(
+            health.leaves_from_source(document, default_vip="other", vip_sources={"main": ""})
+        )
+
+    def test_an_object_naming_no_vip_takes_the_default(self) -> None:
+        document = "listen:\n  protocol: http\n"
+
+        self.assertTrue(
+            health.leaves_from_source(
+                document, default_vip="main", vip_sources={"main": "192.0.2.25"}
+            )
+        )
+
+    def test_a_document_that_cannot_be_read_claims_no_source(self) -> None:
+        #
+        # The safe direction: keeping every node is one row too many, while
+        # dropping one on a guess hides the half of the cluster that is fine.
+        #
+        self.assertFalse(
+            health.leaves_from_source("not: [a document", default_vip="main", vip_sources={})
+        )

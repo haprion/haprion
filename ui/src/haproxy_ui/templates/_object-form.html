@@ -278,7 +278,13 @@
           {% for node in pool_health.nodes %}{% for member in node.members %}
           <tr>
             <td>{{ node.node }}</td>
-            <td>{{ member.server }}</td>
+            {#
+              The server as it was written. `s1` is the generator's name for a
+              position in the pool and means nothing to the person who typed
+              the address it stands for; it is shown only where this version
+              cannot say which address a name belongs to.
+            #}
+            <td>{{ pool_health.address(member.server) or member.server }}</td>
             <td><span class="status-dot {{ 'status-healthy' if member.up else 'status-critical' }}"></span>{{ member.status or 'unknown' }}</td>
             <td>{{ member.check_status or '—' }}{% if member.check_code %} {{ member.check_code }}{% endif %}{% if member.check_duration_ms is not none %} · {{ member.check_duration_ms }} ms{% endif %}</td>
           </tr>

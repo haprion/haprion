@@ -271,10 +271,6 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .status-critical { background-color: var(--critical); box-shadow: 0 0 0 3px var(--critical-soft); }
 .status-info { background-color: var(--info); box-shadow: 0 0 0 3px var(--info-soft); }
 .status-unknown { background-color: var(--unknown); box-shadow: 0 0 0 3px var(--unknown-soft); }
-/* An unlit lamp: an object that defines no health check at all. Drawn as a
-   ring rather than a colour, because every colour in this set is a verdict and
-   "nothing is checking" is not one. */
-.status-off { background-color: transparent; border: 1px solid var(--line-strong); box-shadow: none; }
 .pool-health { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; color: var(--muted-strong); }
 
 .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 29px; }

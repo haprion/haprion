@@ -422,6 +422,16 @@ class ADraftOnItsWay(DraftReading):
         self.assertIn("Waiting for publish", body)
         self.assertIn("badge-spinner", body)
 
+    def test_the_page_carries_what_makes_it_come_back(self) -> None:
+        """A publish resolves in seconds, and the reader is looking right then.
+
+        The listing is rendered once and then sits still, so without this the
+        spinner turns until somebody leaves the page and returns - which is how
+        it was found.
+        """
+
+        self.assertIn("waiting.js", self.listing([self.job("pending")]))
+
     def test_a_running_publish_says_the_same(self) -> None:
         self.assertIn("Waiting for publish", self.listing([self.job("running")]))
 

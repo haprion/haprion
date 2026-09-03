@@ -20,7 +20,7 @@ from haproxy_mgmt.keepalived_fragment import NAME as KEEPALIVED_NAME
 from haproxy_mgmt.keepalived_fragment import render as keepalived_addresses
 from haproxy_mgmt.managed_network import load_document
 from haproxy_mgmt.managed_network import location as network_location
-from haproxy_mgmt.proxy_model import NAME, Proxy, load_proxy
+from haproxy_mgmt.proxy_model import NAME, NAME_RULE, Proxy, load_proxy, name_refusal
 from haproxy_mgmt.reservations import load_reservations
 
 MANAGED_PREFIX = "managed/"
@@ -73,7 +73,9 @@ def _apply_objects(result: dict[str, bytes], objects: Mapping[str, bytes | None]
 
     for name, document in sorted(objects.items()):
         if not NAME.match(name):
-            raise ConfigError(f"{name} is not a usable object name")
+            raise ConfigError(
+                f"{name} is not a usable object name - {name_refusal(name)}; use {NAME_RULE}"
+            )
         path = f"{PROXY_PREFIX}{name}.yaml"
         if document is None:
             if path not in result:

@@ -44,6 +44,53 @@ MAX_MODEL_BYTES = 256 * 1024
 # that means something to a path or to HAProxy.
 #
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
+#
+# The same rule as a sentence, so a refusal can say what would be accepted.
+# A message that only says a name is unusable leaves the person to guess which
+# character was the problem - and the two most common ones, a dot and an
+# uppercase letter, look entirely innocent.
+#
+NAME_RULE = "lowercase letters, digits and hyphens, starting with a letter, at most 40 characters"
+
+
+def name_refusal(name: str) -> str:
+    """Why this particular name was refused, in the person's own characters.
+
+    "not a usable object name" leaves somebody to work out which character was
+    the problem, and the two that catch people out - a dot and a capital - look
+    entirely innocent in a hostname they copied the name from. Named here so
+    every place that refuses a name says the same thing.
+    """
+
+    if not name:
+        return "it is empty"
+
+    offending = sorted({character for character in name if not ALLOWED.match(character)})
+    #
+    # Capitals are named as a class rather than listed. A name copied from a
+    # hostname can carry several, and "'F', 'P', 'T' are not allowed" reads as
+    # three separate problems instead of one rule about case.
+    #
+    written = [character for character in offending if not character.isupper()]
+    reasons = []
+    if written:
+        listed = ", ".join(f"'{character}'" for character in written)
+        reasons.append(
+            f"{listed} is not allowed" if len(written) == 1 else f"{listed} are not allowed"
+        )
+    if len(written) != len(offending):
+        reasons.append("capital letters are not allowed")
+    if reasons:
+        return " and ".join(reasons)
+
+    if not name[0].isalpha():
+        return "it must start with a letter"
+    if len(name) > 40:
+        return "it is longer than 40 characters"
+    return NAME_RULE
+
+
+ALLOWED = re.compile(r"[a-z0-9-]")
 
 #
 # A hostname as it appears in a Host header. Not a full RFC validation - that
@@ -1022,7 +1069,9 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     if _required_string(data, "name", name) != name:
         raise ModelError(f"{name}.name must match the file it is written in")
     if not NAME.match(name):
-        raise ModelError(f"{name} is not a usable object name")
+        raise ModelError(
+            f"{name} is not a usable object name - {name_refusal(name)}; use {NAME_RULE}"
+        )
 
     listen = _listen(data.get("listen"), f"{name}.listen")
 

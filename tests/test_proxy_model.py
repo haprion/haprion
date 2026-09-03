@@ -17,6 +17,7 @@ from haproxy_mgmt.proxy_model import (
     TCP_ONLY_KEYS,
     ModelError,
     load_proxy,
+    name_refusal,
 )
 
 MINIMAL = b"""
@@ -874,3 +875,33 @@ class ARawPortIsASmallerObject(unittest.TestCase):
             load_proxy("db", self.tcp((b"  port: 5432", b"  port: 5432\n  certificate: example")))
 
         self.assertIn("only meaningful for https", str(raised.exception))
+
+
+class WhyANameWasRefused(unittest.TestCase):
+    """The refusal names the character, not just the rule.
+
+    A name is usually copied from the hostname it serves, and the two things
+    that make one unusable - a dot and a capital - are invisible as mistakes
+    until somebody says which one it was.
+    """
+
+    def test_the_offending_character_is_quoted_back(self) -> None:
+        self.assertEqual(name_refusal("ftp2.example.com"), "'.' is not allowed")
+        self.assertEqual(name_refusal("ftp_2"), "'_' is not allowed")
+
+    def test_capitals_are_one_rule_rather_than_a_list_of_letters(self) -> None:
+        self.assertEqual(name_refusal("FTP2"), "capital letters are not allowed")
+        self.assertEqual(
+            name_refusal("ftp2.EX"), "'.' is not allowed and capital letters are not allowed"
+        )
+
+    def test_a_name_of_allowed_characters_is_refused_for_its_shape(self) -> None:
+        self.assertEqual(name_refusal("2ftp"), "it must start with a letter")
+        self.assertEqual(name_refusal("a" * 41), "it is longer than 40 characters")
+
+    def test_the_model_says_it_where_the_name_is_read(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            load_proxy(
+                "ftp2.example.com", MINIMAL.replace(b"name: shop", b"name: ftp2.example.com")
+            )
+        self.assertIn("'.' is not allowed", str(raised.exception))

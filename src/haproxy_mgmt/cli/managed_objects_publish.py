@@ -49,7 +49,7 @@ from haproxy_mgmt.helper_protocol import (
 )
 from haproxy_mgmt.managed_network import location as network_location
 from haproxy_mgmt.managed_publish import MANAGED_PREFIX, managed_files
-from haproxy_mgmt.proxy_model import MAX_MODEL_BYTES, NAME
+from haproxy_mgmt.proxy_model import MAX_MODEL_BYTES, NAME, NAME_RULE, name_refusal
 from haproxy_mgmt.release_install import (
     PUBLISH_GROUP,
     ChangeOwner,
@@ -188,7 +188,10 @@ def _objects(parameters: Mapping[str, JsonValue]) -> dict[str, bytes | None]:
     objects: dict[str, bytes | None] = {}
     for name, document in raw.items():
         if not NAME.fullmatch(name):
-            raise HelperProtocolError(f"{name} is not a usable object name", exit_code=65)
+            raise HelperProtocolError(
+                f"{name} is not a usable object name - {name_refusal(name)}; use {NAME_RULE}",
+                exit_code=65,
+            )
         if document is None:
             objects[name] = None
             continue

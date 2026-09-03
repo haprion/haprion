@@ -432,6 +432,47 @@ def unmanaged_only(published: Iterable[ProxyView]) -> tuple[ProxyView, ...]:
     return tuple(proxy for proxy in published if not proxy.managed)
 
 
+def removed_awaiting_deploy(
+    jobs: Iterable[Job], listed: Iterable[ListedObject], *, converged: bool
+) -> tuple[str, ...]:
+    """Objects a finished removal took out of the repository, still being served.
+
+    A removal is a publish: the object leaves the repository, and the nodes go
+    on serving the release they have until somebody deploys. So between the two
+    the interface had nothing to show - the object was gone from the objects
+    cache, and a managed frontend with no object behind it is listed nowhere -
+    and a site that was still answering had vanished from the page that lists
+    what is being served.
+
+    That is the one direction this must not fail in. A row too many says "this
+    is on its way out"; a row too few says a site is gone while it is up.
+
+    Named from the job rather than from the repository, because the repository
+    is precisely where it no longer is. It stops being shown when the cluster
+    reports itself converged, which is the moment the nodes stopped serving it.
+    """
+
+    if converged:
+        return ()
+    present = {listing.name for listing in listed}
+    removed = []
+    for job in jobs:
+        if job.operation != "objects_publish" or job.state != "done":
+            continue
+        payload = job.payload if isinstance(job.payload, Mapping) else {}
+        asked = payload.get("objects")
+        if not isinstance(asked, Mapping):
+            continue
+        for name, document in asked.items():
+            #
+            # `None` is what asks for a removal. A publish that carried a
+            # document put the object there rather than taking it away.
+            #
+            if document is None and isinstance(name, str) and name not in present:
+                removed.append(name)
+    return tuple(sorted(set(removed)))
+
+
 @dataclass(frozen=True, slots=True)
 class ProxyCounts:
     """The three numbers above the table, counted from the table's own rows.

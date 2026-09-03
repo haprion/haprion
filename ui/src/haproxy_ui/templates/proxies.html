@@ -33,7 +33,7 @@
     {% set foreign = (unmanaged.get(cluster.cluster, ()) if unmanaged else ()) %}
     {% if written or foreign or unpublished %}
     <div class="table-scroll"><table class="node-table proxy-table"><thead><tr><th>Proxy</th><th>Protocol</th><th>Hosts / ports</th><th>Health</th><th>Backends</th><th>Ownership</th></tr></thead><tbody data-cluster="{{ cluster.cluster }}">
-{{ rows.proxy_rows(cluster.cluster, role, unpublished, queued, written, foreign, health.get(cluster.cluster, {}) if health else {}) }}
+{{ rows.proxy_rows(cluster.cluster, role, unpublished, queued, written, foreign, health.get(cluster.cluster, {}) if health else {}, removed.get(cluster.cluster, ()) if removed else ()) }}
     </tbody></table></div>
     {% else %}
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>

@@ -524,6 +524,22 @@ def build_router(config: Config) -> APIRouter:
                 )
                 for view in overview.clusters
             }
+            #
+            # And what a finished removal took away that the nodes have not
+            # stopped serving. A removal is a publish, so between it and the
+            # deploy the object is gone from the repository while the site is
+            # still answering - and until this the listing showed neither,
+            # which is the one direction it must not fail in.
+            #
+            behind = jobs.awaiting_deployment(db.cluster_statuses(connection))
+            removed = {
+                view.cluster: objects.removed_awaiting_deploy(
+                    db.recent_jobs(connection, cluster=view.cluster),
+                    listed[view.cluster],
+                    converged=view.cluster not in behind,
+                )
+                for view in overview.clusters
+            }
         #
         # The three numbers above the table, counted from the table's own rows
         # rather than from published frontends. A frontend is not a proxy
@@ -544,6 +560,7 @@ def build_router(config: Config) -> APIRouter:
             #
             "drafts": drafts if role == "admin" else {},
             "publishing": publishing,
+            "removed": removed,
             "captured_at": captured_at,
         }
 
@@ -605,6 +622,7 @@ def build_router(config: Config) -> APIRouter:
                     listing["listed"].get(view.cluster, ()),
                     listing["unmanaged"].get(view.cluster, ()),
                     listing["health"].get(view.cluster, {}),
+                    listing["removed"].get(view.cluster, ()),
                 )
             )
             for view in listing["proxies"].clusters

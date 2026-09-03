@@ -5,8 +5,9 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
+from uuid import uuid4
 
-from haproxy_ui.db import ClusterInventory, ClusterObjects
+from haproxy_ui.db import ClusterInventory, ClusterObjects, ClusterStatus, Job
 from tests.test_login import LoginTestCase, configuration
 
 OBSERVED = datetime(2026, 9, 3, 9, 0, tzinfo=UTC)
@@ -150,3 +151,90 @@ class TheRowsCatchUpWithoutTheWholePageBeingDrawn(LoginTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ARemovalIsStillServedUntilItIsDeployed(LoginTestCase):
+    """A removal takes the object out of the repository, not off the nodes.
+
+    Between the two the object is gone from the objects cache while the site is
+    still answering, and the listing showed neither - so a page that lists what
+    is being served said a site was gone while it was up. A row too many says
+    "this is on its way out"; a row too few is the failure that matters.
+    """
+
+    def job(self, name: str, *, state: str = "done", document: object = None) -> Job:
+        return Job(
+            id=9,
+            request_id=uuid4(),
+            operation="objects_publish",
+            cluster="alpha",
+            payload={"objects": {name: document}},
+            state=state,
+            created_at=OBSERVED,
+            started_at=None,
+            finished_at=None,
+            exit_code=None,
+            outcome="done" if state == "done" else None,
+            result=None,
+            stderr_excerpt=None,
+            idempotency_key=uuid4(),
+            attempts=1,
+        )
+
+    def status(self, release_state: str) -> ClusterStatus:
+        return ClusterStatus(
+            cluster="alpha",
+            observed_at=OBSERVED,
+            outcome="done",
+            result={"summary": {"release_state": release_state}},
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+
+    def listing(self, jobs: list[Job], release_state: str) -> str:
+        client = self.client(replace(configuration(), clusters=("alpha",)))
+        self.sign_in(client)
+        with (
+            mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects_reading("shop")]),
+            mock.patch("haproxy_ui.db.cluster_inventories", return_value=[inventory("shop")]),
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[self.status(release_state)]),
+        ):
+            return client.get("/proxies").text
+
+    def test_a_removed_object_stays_listed_until_the_nodes_are_deployed(self) -> None:
+        body = self.listing([self.job("gone")], "behind")
+
+        self.assertIn("gone", body)
+        self.assertIn("Active · deploy to remove", body)
+        #
+        # Not the badge the rows above it carry: that one reads as something on
+        # its way in, and this is on its way out.
+        #
+        self.assertNotIn("Removed · waiting for deploy", body)
+
+    def test_it_is_gone_from_the_page_once_the_cluster_is_converged(self) -> None:
+        body = self.listing([self.job("gone")], "converged")
+
+        self.assertNotIn("Active · deploy to remove", body)
+
+    def test_a_publish_that_carried_a_document_put_it_there_rather_than_took_it_away(self) -> None:
+        body = self.listing([self.job("gone", document="schema: 1\n")], "behind")
+
+        self.assertNotIn("Active · deploy to remove", body)
+
+    def test_an_unfinished_removal_is_not_one_yet(self) -> None:
+        body = self.listing([self.job("gone", state="running")], "behind")
+
+        self.assertNotIn("Active · deploy to remove", body)
+
+    def test_an_object_that_came_back_is_not_reported_as_removed(self) -> None:
+        #
+        # Removed, then written again before the deploy. It is in the cache, so
+        # it is an ordinary row - naming it twice would be a page arguing with
+        # itself.
+        #
+        body = self.listing([self.job("shop")], "behind")
+
+        self.assertNotIn("Active · deploy to remove", body)

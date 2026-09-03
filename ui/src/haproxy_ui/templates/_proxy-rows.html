@@ -4,7 +4,7 @@
   its way. A second copy of this markup would drift from the first, and the
   drift would show as a row that changes shape when it updates.
 #}
-{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps) %}
+{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=()) %}
 {% set drafted = unpublished | map(attribute='object_id') | list %}
 {#
   Drafts first, then objects written but not deployed, then the rest. The
@@ -15,6 +15,19 @@
 #}
 {% for draft in unpublished %}
       <tr class="proxy-draft"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol"><span class="table-empty">—</span></td><td data-label="Hosts / ports">{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}</td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Backends"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
+{% endfor %}
+{#
+  Then what a finished removal took out of the repository and the nodes have
+  not stopped serving. The object is gone, so there is nothing to link to and
+  nothing to say about its pools - but the site is still answering, and a
+  listing that dropped the row would say it was gone while it was up.
+
+  Not "waiting for deploy", which is what the rows above it say: that reads as
+  something on its way in. This one is on its way out, and the deploy is what
+  finishes it.
+#}
+{% for name in removed %}
+      <tr class="proxy-waiting"><td data-label="Proxy"><strong>{{ name }}</strong></td><td data-label="Protocol"><span class="table-empty">—</span></td><td data-label="Hosts / ports"><span class="status-badge status-badge-warning waiting-badge">Active · deploy to remove</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Backends"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td></tr>
 {% endfor %}
 {#
   One row per object, under the name its author gave it. Not one per frontend:

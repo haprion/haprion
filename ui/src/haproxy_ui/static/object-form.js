@@ -68,11 +68,17 @@
   };
 
   //
-  // Where the reader was. Every button on this form posts and the answer is a
-  // new page, so the browser starts at the top - and the thing that changed is
-  // usually the part they were looking at when they pressed it. The position is
-  // remembered for this URL only, and consumed once, so a fresh visit or a
-  // second tab still opens at the top.
+  // Where the reader was, and only for Validate. That button posts and answers
+  // with the same page, so the thing that changed is the part they were looking
+  // at when they pressed it, and starting at the top would lose it.
+  //
+  // Every other button leaves the form. Remembering the position for those was
+  // a bug with a delay in it: the value was written on submit, never consumed
+  // because the answer was a different page, and then picked up by the next
+  // visit to the editor - which opened halfway down, at a position from an
+  // earlier session, for somebody who had come to read the form from the start.
+  //
+  // So a submit that leaves clears it rather than setting it.
   //
   const POSITION = "object-form-scroll";
 
@@ -80,9 +86,14 @@
     const form = document.querySelector("form.preview-form");
     if (!form) return;
 
-    form.addEventListener("submit", () => {
+    form.addEventListener("submit", (event) => {
+      const pressed = event.submitter && event.submitter.value;
       try {
-        sessionStorage.setItem(POSITION, String(window.scrollY));
+        if (pressed === "check") {
+          sessionStorage.setItem(POSITION, String(window.scrollY));
+        } else {
+          sessionStorage.removeItem(POSITION);
+        }
       } catch (error) {
         // A browser that refuses storage still gets a working form.
       }

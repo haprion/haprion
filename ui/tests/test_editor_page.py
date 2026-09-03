@@ -573,3 +573,28 @@ class WhichNodeReportsOnThePool(EditorTestCase):
         )
 
         self.assertEqual([node.node for node in card.nodes], ["node-a"])
+
+
+class WhereTheFormOpens(EditorTestCase):
+    """At the top, unless Validate put the reader somewhere.
+
+    The position is stored on submit and read on the next load of the same URL.
+    Save and publish leave the page, so their value was never consumed - and the
+    next visit to the editor picked it up and opened halfway down, at a position
+    from an earlier session, for somebody who had come to read from the start.
+    """
+
+    def script(self) -> str:
+        client = self.editor()
+        return client.get("/static/object-form.js").text
+
+    def test_only_validate_remembers_where_the_reader_was(self) -> None:
+        script = self.script()
+
+        self.assertIn('pressed === "check"', script)
+        self.assertIn("removeItem(POSITION)", script)
+
+    def test_the_position_is_still_consumed_once(self) -> None:
+        """A fresh visit or a second tab opens at the top either way."""
+
+        self.assertIn("removeItem(POSITION)", self.script())

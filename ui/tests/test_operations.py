@@ -9,7 +9,9 @@ own, not a second copy built here.
 from __future__ import annotations
 
 import json
+import re
 import unittest
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from haproxy_mgmt.cli import deploy, managed_network_publish, managed_objects_publish
@@ -221,3 +223,46 @@ class PublishingObjects(unittest.TestCase):
 
     def test_it_is_off_unless_asked_for(self) -> None:
         self.assertIn('"allow_certificate_mismatch":false', self.prepare().request)
+
+
+class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
+    """Every operation `prepare` knows has to be one the job table permits.
+
+    Nothing makes them agree by construction, and deliberately so: the check
+    constraint is the database's own opinion of what may be queued, and a job
+    row is what the worker will later run as root. Deriving it from an import
+    would let code widen it.
+
+    So a test holds them together, and this one exists because they came apart:
+    the editor's publish button reached a working helper, a granted sudoers rule
+    and a prepared payload, and then met a constraint nobody had widened - a 500
+    at the last step of a chain whose every other link had been built.
+    """
+
+    def operations_prepare_accepts(self) -> set[str]:
+        source = Path(operations.__file__).read_text(encoding="utf-8")
+        return set(re.findall(r'if operation == "([a-z_]+)"', source))
+
+    def constraint(self) -> str:
+        versions = Path(__file__).resolve().parents[1] / "migrations" / "versions"
+        speaking = [
+            path
+            for path in sorted(versions.glob("[0-9]*.py"))
+            if "job_operation_allowed" in path.read_text(encoding="utf-8")
+        ]
+        self.assertTrue(speaking, "no migration constrains the job operation")
+        #
+        # The last migration to speak, and its `upgrade` half only: the
+        # downgrade below it names the previous, narrower set.
+        #
+        text = speaking[-1].read_text(encoding="utf-8")
+        return text[: text.index("def downgrade")]
+
+    def test_every_operation_the_code_prepares_may_be_queued(self) -> None:
+        permitted = self.constraint()
+        accepted = self.operations_prepare_accepts()
+
+        self.assertTrue(accepted)
+        for operation in sorted(accepted):
+            with self.subTest(operation=operation):
+                self.assertIn(f"'{operation}'", permitted)

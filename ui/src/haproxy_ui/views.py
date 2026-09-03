@@ -385,6 +385,24 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
+    def _nodes_reported(rows: Iterable[Any], cluster: str) -> bool:
+        """Whether any node in this cluster answered with a server list at all.
+
+        A cluster nobody has read is not a cluster serving nothing, and the two
+        must not come out the same. Without this a poll that had never run made
+        every object look undeployed.
+        """
+
+        reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
+        result = getattr(reading, "result", None)
+        nodes = result.get("nodes") if isinstance(result, Mapping) else None
+        return any(
+            isinstance(entry, Mapping)
+            and isinstance(entry.get("status"), Mapping)
+            and isinstance(entry["status"].get("servers"), list)
+            for entry in (nodes if isinstance(nodes, Sequence) else ())
+        )
+
     def _network_result(reading: Any) -> Mapping[str, Any]:
         result = getattr(reading, "result", None)
         return result if isinstance(result, Mapping) else {}
@@ -451,10 +469,26 @@ def build_router(config: Config) -> APIRouter:
         # rather than the work, and an https object that redirects plain HTTP
         # appeared twice under two names its author never chose.
         #
-        listed = {
-            view.cluster: objects.listed_objects(rows.get(view.cluster), view.proxies)
-            for view in overview.clusters
-        }
+        #
+        # Read before the listing, because the listing asks it what the nodes
+        # are serving. The same reading the health lamp uses, and for the same
+        # reason: it is measured on the node rather than derived from a release
+        # the nodes may not have pulled yet.
+        #
+        _, health_rows, _ = read_source(request, config, STATUS_SOURCE)
+        listed = {}
+        for view in overview.clusters:
+            names = [obj.name for obj in objects.cluster_object_views(rows.get(view.cluster))]
+            reported = health.served_objects(health_rows, cluster=view.cluster, names=names)
+            listed[view.cluster] = objects.listed_objects(
+                rows.get(view.cluster),
+                view.proxies,
+                #
+                # `None` where no node said anything, so the hostname match
+                # answers instead. Silence is not "nothing is served".
+                #
+                served=reported if _nodes_reported(health_rows, view.cluster) else None,
+            )
         #
         # What is left of the published inventory once the managed frontends are
         # accounted for above: configuration this platform does not own, where
@@ -471,7 +505,6 @@ def build_router(config: Config) -> APIRouter:
         # nodes has already decided, read out of the same status reading the
         # dashboard draws.
         #
-        _, health_rows, _ = read_source(request, config, STATUS_SOURCE)
         #
         # And the cluster's addresses, because they decide which node may
         # answer. An object leaving from a source address is answerable only

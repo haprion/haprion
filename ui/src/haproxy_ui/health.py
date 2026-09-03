@@ -112,6 +112,18 @@ def _members(status: Any) -> tuple[bool, list[dict[str, Any]]]:
 
 
 #
+# What HAProxy reports for a server nobody is checking. Measured against 3.4.4
+# on this machine rather than assumed: the row is there, with this in the status
+# column instead of UP or DOWN.
+#
+# It is not a verdict, so it must not be counted as one. Counting it as "not up"
+# turned an object whose check exists in the document but not yet on the nodes -
+# a check added and not deployed - into a red lamp saying the pool was down.
+#
+UNCHECKED = "no check"
+
+
+#
 # `show stat` emits a pseudo-row per proxy summarising the whole backend, and
 # the node reports it alongside the real ones - it filters `FRONTEND` and keeps
 # this. It is not a member: counting it made one server on two nodes read as
@@ -311,6 +323,44 @@ def leaves_from_source(document: str, *, default_vip: str, vip_sources: Mapping[
     return bool(vip_sources.get(vip))
 
 
+def served_objects(rows: Iterable[Any], *, cluster: str, names: Iterable[str]) -> frozenset[str]:
+    """The objects some node reports a backend for: what is on the nodes now.
+
+    Measured where the traffic is, rather than derived from a release. The
+    published inventory is the *released* configuration, so an object counted
+    as served the moment it was published - while the nodes went on serving the
+    release they had, sometimes for days.
+
+    A server with no health check is reported too, with `no check` where a
+    verdict would be, so this answers for an object nobody is checking.
+
+    Empty when no node said anything at all. That is not "nothing is served" -
+    it is a cluster whose nodes have not been read, and the caller falls back to
+    what the release says rather than treating silence as an answer.
+    """
+
+    names = tuple(names)
+    reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
+    result = reading.result if reading is not None and isinstance(reading.result, dict) else {}
+    entries = result.get("nodes")
+
+    served: set[str] = set()
+    for entry in entries if isinstance(entries, Sequence) else ():
+        if not isinstance(entry, dict):
+            continue
+        said, members = _members(entry.get("status"))
+        if not said:
+            continue
+        for member in members:
+            backend = member.get("backend")
+            if not isinstance(backend, str) or not _is_member(member):
+                continue
+            for name in names:
+                if _attributed(backend, name, names):
+                    served.add(name)
+    return frozenset(served)
+
+
 def object_health(
     rows: Iterable[Any],
     *,
@@ -390,7 +440,14 @@ def object_health(
         node = str(entry.get("name") or entry.get("node") or "")
         for member in mine:
             key = (str(member["backend"]), str(member["server"]))
-            reports_up = str(member.get("status", "")).upper().startswith("UP")
+            reported = str(member.get("status", "") or "")
+            if reported.strip().lower() == UNCHECKED:
+                #
+                # Nothing is checking this server, so the node has no opinion
+                # about it. Skipped rather than counted either way.
+                #
+                continue
+            reports_up = reported.upper().startswith("UP")
             healthy[key] = healthy.get(key, True) and reports_up
             reachable[key] = reachable.get(key, False) or reports_up
             if not reports_up and node:

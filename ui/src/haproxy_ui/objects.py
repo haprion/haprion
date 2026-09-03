@@ -14,7 +14,7 @@ no longer say the same thing.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -379,16 +379,24 @@ class ListedObject:
 
 
 def listed_objects(
-    reading: ClusterObjects | None, published: Iterable[ProxyView] = ()
+    reading: ClusterObjects | None,
+    published: Iterable[ProxyView] = (),
+    served: Collection[str] | None = None,
 ) -> tuple[ListedObject, ...]:
     """This cluster's objects, each saying whether the nodes are serving it yet.
 
-    Matched on hostname, because an object and a frontend never share a name -
-    the frontend is named after the address it binds. An object whose hostnames
-    are all answered by a published frontend is being served; one whose are not
-    has been written and not yet deployed.
+    `served` is the nodes' own answer: the objects some node reports a backend
+    for. It is preferred over everything below because it is measured where the
+    traffic is. The published inventory is the *released* configuration, so
+    matching against it counted an object as served the moment it was published,
+    while the nodes went on serving the release they had - which is the whole
+    stretch the badge exists to describe.
 
-    An object that names no hostname cannot be matched this way and is reported
+    `None` means no node was read, and then the hostname match is the best
+    answer there is. Matched on hostname because an object and a frontend never
+    share a name: the frontend is named after the address it binds.
+
+    An object that names no hostname cannot be matched that way and is reported
     as not yet serving. That is the safe direction: claiming a deployment that
     has not happened is the answer somebody acts on.
     """
@@ -411,7 +419,11 @@ def listed_objects(
                     redirect_http=view.redirect_http,
                     readable=view.readable,
                     problem=view.problem,
-                    serving=bool(view.hostnames) and set(view.hostnames) <= serving,
+                    serving=(
+                        view.name in served
+                        if served is not None
+                        else bool(view.hostnames) and set(view.hostnames) <= serving
+                    ),
                 )
                 for view in cluster_object_views(reading)
             ),

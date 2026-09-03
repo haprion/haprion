@@ -255,3 +255,34 @@ class WhetherAnObjectLeavesFromASource(unittest.TestCase):
         self.assertFalse(
             health.leaves_from_source("not: [a document", default_vip="main", vip_sources={})
         )
+
+
+class AnUncheckedServerIsNotADownOne(unittest.TestCase):
+    """`no check` is what HAProxy reports where a verdict would be.
+
+    Measured against 3.4.4 on this machine, not assumed. Counting it as "not
+    up" turned a check that exists in the document but not yet on the nodes -
+    added and not deployed - into a red lamp saying the pool was down.
+    """
+
+    def test_it_is_skipped_rather_than_counted_either_way(self) -> None:
+        rows = reading(node("node-a", ("mgd-shop-web", "s1", "no check")))
+
+        lamp = health.object_health(rows, cluster="alpha", obj="shop")
+
+        self.assertEqual(lamp.tone, "unknown")
+        self.assertEqual(lamp.total, 0)
+
+    def test_a_checked_server_beside_it_still_counts(self) -> None:
+        rows = reading(
+            node(
+                "node-a",
+                ("mgd-shop-web", "s1", "UP"),
+                ("mgd-shop-web", "s2", "no check"),
+            )
+        )
+
+        lamp = health.object_health(rows, cluster="alpha", obj="shop")
+
+        self.assertEqual(lamp.label, "1/1 up")
+        self.assertEqual(lamp.tone, "healthy")

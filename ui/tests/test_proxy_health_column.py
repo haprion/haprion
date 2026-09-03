@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
-from haproxy_ui.db import ClusterObjects, ClusterStatus
+from haproxy_ui.db import ClusterInventory, ClusterObjects, ClusterStatus
 from tests.test_login import LoginTestCase, configuration
 
 OBSERVED = datetime(2026, 9, 3, 9, 0, tzinfo=UTC)
@@ -135,3 +135,108 @@ class TheHealthColumn(LoginTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhatCountsAsServed(LoginTestCase):
+    """Served is what the nodes report, not what the release contains.
+
+    The published inventory is the *released* configuration, so an object was
+    counted as served the moment it was published while the nodes went on
+    serving the release they had. That is the whole stretch the badge exists to
+    describe, and it was the one stretch the badge never appeared in.
+    """
+
+    def page(self, *, reported: tuple[str, ...] | None) -> Any:
+        client = self.client(replace(configuration(), clusters=("alpha",)))
+        self.sign_in(client)
+        #
+        # The release contains it either way: this is a published object that
+        # the nodes may or may not have pulled.
+        #
+        published = ClusterInventory(
+            cluster="alpha",
+            observed_at=OBSERVED,
+            outcome="done",
+            result={
+                "version": "v9",
+                "proxies": [
+                    {
+                        "name": "mgd-main-http",
+                        "protocol": "http",
+                        "managed": True,
+                        "enabled": True,
+                        "hostnames": ["shop.example.com"],
+                        "ports": [80],
+                        "backend_count": 1,
+                    }
+                ],
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        nodes: list[Any] = []
+        if reported is not None:
+            nodes = [
+                {
+                    "node": "node-a",
+                    "status": {
+                        "servers": [
+                            {"backend": f"mgd-{name}-web", "server": "s1", "status": "no check"}
+                            for name in reported
+                        ]
+                    },
+                }
+            ]
+        reading = ClusterStatus(
+            cluster="alpha",
+            observed_at=OBSERVED,
+            outcome="done",
+            result={"nodes": nodes},
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        with (
+            mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects(CHECKED)]),
+            mock.patch("haproxy_ui.db.cluster_inventories", return_value=[published]),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[reading]),
+        ):
+            return client.get("/proxies")
+
+    def test_published_but_not_on_the_nodes_is_inactive(self) -> None:
+        #
+        # The node answered, and said nothing about this object. That is an
+        # answer: it does not have it.
+        #
+        body = self.page(reported=("something-else",)).text
+
+        self.assertIn("Inactive · deploy to add", body)
+
+    def test_a_node_reporting_it_makes_it_active(self) -> None:
+        body = self.page(reported=("shop",)).text
+
+        self.assertNotIn("Inactive · deploy to add", body)
+
+    def test_a_server_nobody_checks_still_says_the_node_has_it(self) -> None:
+        #
+        # Verified against HAProxy 3.4.4 on this machine: an unchecked server is
+        # reported with `no check` where a verdict would be, so an object with
+        # no health check is still visibly on the node.
+        #
+        body = self.page(reported=("shop",)).text
+
+        self.assertNotIn("Inactive · deploy to add", body)
+        #
+        # And it is not counted as a member that is down.
+        #
+        self.assertNotIn("0/1 up", body)
+
+    def test_a_cluster_no_node_has_answered_falls_back_to_the_release(self) -> None:
+        #
+        # Silence is not "nothing is served". The hostname match is the best
+        # answer there is, and it says this object is in the release.
+        #
+        body = self.page(reported=None).text
+
+        self.assertNotIn("Inactive · deploy to add", body)

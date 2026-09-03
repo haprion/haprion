@@ -25,7 +25,7 @@ from pathlib import Path
 
 import yaml
 
-from haproxy_mgmt.cli import probe_helper
+from haproxy_mgmt.cli import probe, probe_helper
 from haproxy_mgmt.probe_socket import ask, build_request
 
 BASE = Path(__file__).resolve().parents[1]
@@ -413,3 +413,63 @@ class WhichNodeCouldAnswerAtAll(HelperFixture):
         self.assertEqual(
             [node["source_held"] for node in envelope["result"]["nodes"]], [None, None]
         )
+
+
+class WhatTheCommandPrints(unittest.TestCase):
+    """The human output, where a node with nothing to say once said nothing.
+
+    A bare node name with no rows under it reads as a node that answered about
+    an empty pool. It has to say which of the two it is - the same distinction
+    the interface makes, because the command line is the authoritative path and
+    the two must not describe one probe differently.
+    """
+
+    def envelope(self, nodes: list[dict[str, object]], source: str = "192.0.2.25") -> str:
+        written = io.StringIO()
+        probe._render({"cluster": "alpha", "result": {"source": source, "nodes": nodes}}, written)
+        return written.getvalue()
+
+    def test_a_node_that_does_not_hold_the_address_says_so(self) -> None:
+        printed = self.envelope(
+            [
+                {
+                    "node": "node-a",
+                    "reachable": True,
+                    "error": None,
+                    "source_held": False,
+                    "results": [],
+                },
+            ]
+        )
+        self.assertIn("NOT HERE", printed)
+        self.assertIn("192.0.2.25", printed)
+
+    def test_a_node_that_probed_lists_what_it_found(self) -> None:
+        printed = self.envelope(
+            [
+                {
+                    "node": "node-a",
+                    "reachable": True,
+                    "error": None,
+                    "source_held": True,
+                    "results": [
+                        {
+                            "host": "198.51.100.10",
+                            "port": 8080,
+                            "ok": True,
+                            "status": 200,
+                            "error": None,
+                            "ms": 2,
+                        }
+                    ],
+                },
+            ]
+        )
+        self.assertIn("OK", printed)
+        self.assertNotIn("NOT HERE", printed)
+
+    def test_a_node_that_said_nothing_about_the_field_is_not_labelled(self) -> None:
+        printed = self.envelope(
+            [{"node": "node-a", "reachable": True, "error": None, "results": []}]
+        )
+        self.assertNotIn("NOT HERE", printed)

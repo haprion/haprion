@@ -151,6 +151,14 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         if node.get("error"):
             writer.write(f"  REFUSED       {node['error']}\n\n")
             continue
+        #
+        # Said, not left blank. This node carries no results because it does not
+        # hold the address the object leaves from, and a bare node name with
+        # nothing under it reads as a node that answered about an empty pool.
+        #
+        if node.get("source_held") is False:
+            writer.write(f"  NOT HERE      does not hold {source or 'the source address'}\n\n")
+            continue
         for entry in node.get("results") or []:
             verdict = "OK    " if entry.get("ok") else "FAILED"
             detail = entry.get("error") or (

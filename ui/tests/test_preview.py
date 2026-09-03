@@ -1,15 +1,15 @@
-"""The configuration preview: a form in, an object and a configuration out.
+"""The form's whole path: fields in, an object and a configuration out.
 
-The page exists so that the shape of an object can be judged before any of it
-is published, which is how this project decides what belongs in the model at
-all. Nothing here writes: the value of the tests below is that the page's
-answer is the engine's answer, not a second opinion the interface formed on its
-own.
+There was a preview page once, and it is gone (B73) - the editor does the same
+thing against the cluster's real addresses. What the page left behind is the
+example cluster, and these tests, which are the reason to keep it: they run the
+form's entire path without standing up a cluster, and every one of them says
+that the answer is the engine's answer rather than a second opinion the
+interface formed on its own.
 """
 
 from __future__ import annotations
 
-import re
 import unittest
 
 from haproxy_ui.preview import (
@@ -20,7 +20,6 @@ from haproxy_ui.preview import (
     preview,
     suggested_cookie,
 )
-from tests.test_login import LoginTestCase
 
 
 def form(**overrides: object) -> dict[str, object]:
@@ -91,60 +90,21 @@ class TheFormBecomesTheObjectTheEngineReads(unittest.TestCase):
         self.assertIn("schema: 1", document)
 
 
-class ThePageIsReachableAndWritesNothing(LoginTestCase):
-    def test_the_form_is_rendered_for_a_signed_in_user(self) -> None:
-        client = self.client()
-        self.sign_in(client)
+class ThePageIsGone(unittest.TestCase):
+    """The preview page was removed once the editor did the same job better.
 
-        page = client.get("/proxies/preview")
+    Kept as one case rather than deleted outright: the route answered without
+    `management_writes`, which made it the one form a read-only installation
+    could show. Somebody will reasonably wonder where it went, and a test that
+    names the removal is a better answer than a 404.
+    """
 
-        self.assertEqual(page.status_code, 200)
-        self.assertIn('action="/proxies/preview"', page.text)
-        self.assertIn("Example cluster", page.text)
+    def test_the_route_no_longer_exists(self) -> None:
+        from haproxy_ui import views
 
-    def test_signing_in_is_required(self) -> None:
-        page = self.client().get("/proxies/preview", follow_redirects=False)
-
-        self.assertEqual(page.status_code, 303)
-        self.assertEqual(page.headers["location"], "/login")
-
-    def test_a_post_without_a_token_is_refused(self) -> None:
-        client = self.client()
-        self.sign_in(client)
-
-        refused = client.post("/proxies/preview", data={"name": "app"})
-
-        self.assertEqual(refused.status_code, 403)
-
-    def test_a_submitted_form_renders_the_configuration(self) -> None:
-        client = self.client()
-        self.sign_in(client)
-        page = client.get("/proxies/preview")
-        token = re.search(r'name="csrf_token" value="([0-9a-f]+)"', page.text)
-        if token is None:
-            self.fail("the form did not render a CSRF token")
-
-        submitted = client.post(
-            "/proxies/preview",
-            data={
-                "csrf_token": token.group(1),
-                "name": "app",
-                "hostnames": "app.example.com",
-                "protocol": "https",
-                "certificate": "wildcard-example-com",
-                "balance": "roundrobin",
-                "servers": "198.51.100.10:8080",
-                "health_type": "disabled",
-            },
+        self.assertFalse(
+            [name for name in dir(views) if "preview_page" in name or "preview_form" in name]
         )
-
-        self.assertEqual(submitted.status_code, 200)
-        self.assertIn("frontend mgd-internal-https", submitted.text)
-        self.assertIn("backend mgd-app-web", submitted.text)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TheFieldsAddedAfterTheFirstLook(unittest.TestCase):

@@ -33,16 +33,19 @@ from haproxy_mgmt.proxy_model import (
 )
 
 #
-# The cluster this page generates against.
+# A documented example cluster. No page renders against it any more.
 #
-# It is not this deployment's cluster, and the page says so. The application
-# identities deliberately cannot read the engine's configuration - that tree is
-# private, and the whole privilege split exists to keep the web process out of
-# it - so the real VIP names, certificate IDs and network names are not
-# available here yet. Until a privileged helper carries that shape out to the
-# poller the way it already carries certificates and inventory, this page
-# offers a documented example, so that the form and the output can be judged.
-# That is what a preview is for.
+# It existed because the application identities cannot read the engine's
+# configuration, so the preview page had no real VIP names, certificate IDs or
+# network names to offer. The editor solved that from the other end - it reads
+# the poller's cache and generates against the cluster's actual addresses - and
+# the preview page was removed once it did (B73).
+#
+# What is left is a test fixture, and it is kept because it is a good one: it
+# lets the form's whole path, filled-in fields to stored document to generated
+# configuration, be exercised without standing up a cluster. Named here rather
+# than in the tests because `choices` and `preview` below are its only callers
+# and they read as production code otherwise.
 #
 # Every value below is from the repository's fictional set.
 #

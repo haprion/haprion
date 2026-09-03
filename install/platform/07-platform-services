@@ -66,11 +66,15 @@ step "The worker's privileges"
 # first use. A rule that lives only in an operator's memory drifts from the
 # release that needs it.
 #
-# The account name is written into the example rather than substituted, because
-# the worker's identity is the decision this file records.
+# Rendered, exactly like the poller's rule above it. It was copied verbatim from
+# an example that named `haproxy-ui-worker` in every line, while being installed
+# as /etc/sudoers.d/${WORKER_USER} - so a platform whose worker is called
+# something else got a file visudo accepts and sudo ignores, and every write
+# failed pointing at the helper rather than at the rule.
 #
 sudoers_staging="$(mktemp)"
-cp examples/haproxy-ui-worker.sudoers.example "$sudoers_staging"
+sed "s|WORKER_USER|${WORKER_USER}|g" examples/haproxy-ui-worker.sudoers.example \
+    > "$sudoers_staging"
 if ! visudo -cqf "$sudoers_staging"; then
     rm -f "$sudoers_staging"
     die "the worker sudoers rule does not parse; nothing was installed"

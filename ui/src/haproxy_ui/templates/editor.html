@@ -31,6 +31,18 @@
 {% endif %}
 
 <form method="post" action="{% if existing %}/proxies/{{ cluster }}/{{ name }}/edit{% else %}/proxies/{{ cluster }}/new{% endif %}" class="preview-form">
+  {#
+    What Enter does, decided rather than inherited. A browser submits with the
+    first submit button in tree order, which was "Test health" inside the form -
+    so Enter in any field asked the nodes to run a live probe instead of
+    validating what had been typed.
+
+    Off-screen rather than hidden: a button that is not rendered is not the
+    default button either, and the whole point is to be the one. It repeats the
+    validate action, so pressing Enter and pressing "Validate the object" are
+    the same act.
+  #}
+  <button type="submit" name="action" value="check" class="default-submit" tabindex="-1" aria-hidden="true">Validate the object</button>
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="expected_revision" value="{{ draft_revision }}">
 
@@ -45,16 +57,21 @@
     release, which carries everything published since the last one, so a deploy
     button on one object would roll out somebody else's unfinished work too.
 
-    Cancel is a link and not a submit: leaving without saving must not be one
-    keystroke away from saving, and a button beside three others that writes
-    nothing is the one people press by accident.
+    Leaving is a link and not a submit: it must not be one keystroke away from
+    saving, and a button beside three others that writes nothing is the one
+    people press by accident.
+
+    It said "Cancel", which claims to undo something. Saving a draft leaves you
+    here, so by then there is nothing to undo and the word was wrong - and it
+    was never quite right, since leaving an unsaved form discards nothing that
+    was ever stored. The label names where it goes, which is true either way.
   #}
   <div class="form-actions">
     <button type="submit" name="action" value="check" class="secondary-button">Validate the object</button>
     <button type="submit" name="action" value="publish" class="primary-button">Save and publish</button>
     <button type="submit" name="action" value="save" class="secondary-button">Save as draft</button>
     {% if draft %}<button type="submit" name="action" value="discard" class="secondary-button">Discard the draft</button>{% endif %}
-    <a class="secondary-button" href="/proxies">Cancel</a>
+    <a class="secondary-button" href="/proxies">Back to proxies</a>
   </div>
 </form>
 

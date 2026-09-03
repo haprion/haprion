@@ -14,7 +14,13 @@ import unittest
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from haproxy_mgmt.cli import deploy, managed_network_publish, managed_objects_publish
+from haproxy_mgmt.cli import (
+    cert_deploy,
+    deploy,
+    managed_network_publish,
+    managed_objects_publish,
+    revert,
+)
 
 from haproxy_ui import operations, worker
 
@@ -248,6 +254,54 @@ class PublishingObjects(unittest.TestCase):
 
     def test_it_is_off_unless_asked_for(self) -> None:
         self.assertIn('"allow_certificate_mismatch":false', self.prepare().request)
+
+
+class TheWorkerMustBeAllowedToRunWhatItIsGiven(unittest.TestCase):
+    """Every helper the worker is prepared to run needs a rule naming it.
+
+    The rule is a file outside this repository, written from an example inside
+    it, and neither follows a release - so a helper added here reaches sudo's
+    refusal on its first use, as `haproxy-objects-publish-helper` did. The
+    example is what an installation renders, so it is the thing to hold in step.
+
+    It also has to be rendered rather than copied. It was installed as
+    /etc/sudoers.d/${WORKER_USER} while naming one fixed account in every line,
+    so a platform whose worker is called something else got a file visudo
+    accepts and sudo ignores.
+    """
+
+    def example(self) -> str:
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "install"
+            / "platform"
+            / "examples"
+            / "haproxy-ui-worker.sudoers.example"
+        )
+        return path.read_text(encoding="utf-8")
+
+    def rules(self) -> list[str]:
+        return [line for line in self.example().splitlines() if "ALL=(root)" in line]
+
+    def test_every_helper_the_worker_may_run_has_a_rule(self) -> None:
+        helpers = {
+            deploy.HELPER,
+            cert_deploy.HELPER,
+            revert.HELPER,
+            managed_network_publish.HELPER,
+            managed_objects_publish.HELPER,
+        }
+        granted = self.example()
+
+        for helper in sorted(helpers):
+            with self.subTest(helper=helper):
+                self.assertIn(f'{helper} ""', granted)
+
+    def test_no_rule_names_an_account_the_installation_did_not_choose(self) -> None:
+        self.assertTrue(self.rules(), "the example grants nothing")
+        for rule in self.rules():
+            with self.subTest(rule=rule):
+                self.assertTrue(rule.startswith("WORKER_USER "), rule)
 
 
 class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):

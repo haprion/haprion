@@ -1759,7 +1759,17 @@ def _editor_submit(
     # exactly alike - which is the moment somebody presses save again.
     #
     if form.action == "save":
-        return RedirectResponse(f"/proxies?saved={object_id}", status_code=303)
+        #
+        # Back to the editor, which is where the work is. It went to the listing
+        # with the object's name in the flag, while the only readers of the flag
+        # are this page and the object's own and both look for "1" - so a save
+        # that worked and a page that had merely been opened looked exactly
+        # alike, which is the moment somebody presses save again.
+        #
+        # The name rather than `name`, because saving a new object lands on the
+        # object it just created rather than back on the empty form.
+        #
+        return RedirectResponse(f"/proxies/{cluster}/{object_id}/edit?saved=1", status_code=303)
 
     #
     # Publishing is a job, and the draft is saved first on purpose. The two are

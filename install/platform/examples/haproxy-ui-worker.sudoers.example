@@ -37,8 +37,8 @@
 #
 # Installed 0440 root:root, and accepted by visudo before it is put in place.
 
-haproxy-ui-worker ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-helper ""
-haproxy-ui-worker ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-deploy-helper ""
-haproxy-ui-worker ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-revert-helper ""
-haproxy-ui-worker ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-publish-helper ""
-haproxy-ui-worker ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-publish-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-deploy-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-revert-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-publish-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-publish-helper ""

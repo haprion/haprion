@@ -389,21 +389,15 @@ class TheHealthCardOnThePage(EditorTestCase):
 class WhereASaveLands(EditorTestCase):
     """Saving finishes a round of work, so it leaves the form.
 
-    To the listing, because that is where the work now shows: a draft is a row
-    there in its own right, so somebody lands on the page that says where their
-    object stands rather than on the form they just left.
+    Back to the editor, because the work is not finished: saving a draft is
+    something people do part-way through, and it is the page that can say so -
+    the listing reads no such flag, so the receipt written for this was never
+    shown to anybody. See `SavingSaysSo`.
 
-    Validating is the opposite and deliberately stays: its whole answer - the
-    refusal, or the configuration this would generate - is on the page, and
-    navigating away would throw away what was just asked for.
+    Validating deliberately stays too: its whole answer - the refusal, or the
+    configuration this would generate - is on the page, and navigating away
+    would throw away what was just asked for.
     """
-
-    def test_a_save_goes_to_the_listing_and_names_what_was_saved(self) -> None:
-        client = self.editor()
-        answer = self.submit(client, "/proxies/alpha/shop/edit", action="save")
-
-        self.assertEqual(answer.status_code, 303)
-        self.assertEqual(answer.headers["location"], "/proxies?saved=shop")
 
     def test_a_discard_goes_to_the_object_and_says_so(self) -> None:
         self.draft = ProxyDraft(
@@ -623,3 +617,65 @@ class AnObjectTheFormCannotOpen(EditorTestCase):
 
         with self.assertRaises(preview.Unexpressible):
             preview.form_from_document(document)
+
+
+class WhatEnterDoes(EditorTestCase):
+    """A browser submits with the first submit button in tree order.
+
+    That was "Test health", which is inside the form because it asks about the
+    pool being edited - so Enter in any field ran a live probe against a node
+    instead of validating what had been typed. The form now names its own
+    default, so the answer does not depend on where a button happens to sit.
+    """
+
+    def form(self) -> str:
+        client = self.client(writing_configuration())
+        self.sign_in(client)
+        page = client.get("/proxies/alpha/shop/edit")
+        self.assertEqual(page.status_code, 200)
+        #
+        # The editor's form, not the sign-out form in the header above it.
+        #
+        return page.text[page.text.index('class="preview-form"') :]
+
+    def test_the_first_submit_in_the_form_validates(self) -> None:
+        body = self.form()
+        first = body.index('type="submit"')
+
+        self.assertIn('value="check"', body[first : first + 200])
+        self.assertLess(first, body.index('value="recheck"'))
+
+
+class SavingSaysSo(EditorTestCase):
+    """A save that worked must not look like a page that was merely opened.
+
+    The redirect carried the object's name to a listing that reads no such
+    flag, while the two pages that do read one look for "1" - so the notice was
+    written, had two readers, and was never shown to anybody.
+    """
+
+    def save(self, url: str, **fields: str) -> Any:
+        return self.submit(self.editor(), url, action="save", **fields)
+
+    def test_a_saved_draft_returns_to_the_editor_and_says_it_was_saved(self) -> None:
+        answer = self.save("/proxies/alpha/shop/edit")
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(answer.headers["location"], "/proxies/alpha/shop/edit?saved=1")
+
+    def test_the_editor_shows_the_notice_that_url_asks_for(self) -> None:
+        client = self.editor()
+
+        page = client.get("/proxies/alpha/shop/edit?saved=1")
+
+        self.assertIn("Saved as a draft", page.text)
+        self.assertNotIn("Saved as a draft", client.get("/proxies/alpha/shop/edit").text)
+
+    def test_a_new_object_lands_on_the_object_it_just_created(self) -> None:
+        #
+        # Not back on the empty form, which would read as though nothing had
+        # been saved.
+        #
+        answer = self.save("/proxies/alpha/new", name="console")
+
+        self.assertEqual(answer.headers["location"], "/proxies/alpha/console/edit?saved=1")

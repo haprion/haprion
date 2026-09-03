@@ -133,6 +133,14 @@
       <label><span class="field-title">Session cookie <span class="optional">(optional)</span></span><input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Case-sensitive, empty means no persistence.</small></label>
       <label><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>Connections one server takes at once; the rest queue for 5 s.</small></label>
       <label><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; must be longer than the {{ check_interval }} check interval.</small></label>
+    </div>
+    {#
+      A setting with three boxes needs the room to be one thing. Left among the
+      single fields it read as three of them, whatever the heading said - so it
+      gets a rule and a row of its own, the way the reachable pair and the
+      maintenance group do.
+    #}
+    <div class="form-grid form-grid-ruled form-grid-fixed">
       {#
         One setting in three boxes, not three settings. A path on its own has
         nowhere to send anything and a target on its own says nothing about
@@ -155,6 +163,13 @@
         </div>
         <small>Requests for that path are answered with a redirect to that URL instead of reaching the pool; the target replaces the whole address, not just the host. 301 and 302 let a browser turn a POST into a GET; 307 and 308 do not.</small>
       </div>
+    </div>
+    {#
+      What is done to the traffic on the way through, and how the pool is
+      reached. Neither is about choosing a server, which is what everything
+      above this rule decides.
+    #}
+    <div class="form-grid form-grid-ruled form-grid-fixed">
       <label><span class="field-title">Request headers <span class="optional">(optional)</span></span><textarea name="request_headers" rows="3" placeholder="X-Tenant: acme&#10;+X-Trace: 1&#10;-X-Debug">{{ form.request_headers }}</textarea><small>One per line. <code>Name: value</code> sets, <code>+Name: value</code> adds, <code>-Name</code> removes.</small></label>
       <label><span class="field-title">Response headers <span class="optional">(optional)</span></span><textarea name="response_headers" rows="3" placeholder="X-Frame-Options: DENY&#10;-Server">{{ form.response_headers }}</textarea><small>Same three shapes, on the way back out.</small></label>
       <label>Backend TLS

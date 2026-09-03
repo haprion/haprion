@@ -720,6 +720,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * setting, and three headings would read as three settings, which is exactly
  * the misreading this shape exists to end.
  */
+/* Tracks kept at the size the card's other rows use, empty ones included. */
+.form-grid-fixed { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 .form-grid .field-wide { grid-column: span 3; }
 .field-row { display: flex; align-items: flex-end; gap: 12px; }
 .field-row .sub-field { display: flex; flex: 1 1 0; flex-direction: column; gap: 4px; min-width: 0; }

@@ -8,6 +8,8 @@ from unittest import mock
 from uuid import uuid4
 
 from haproxy_ui.db import ClusterInventory, ClusterObjects, ClusterStatus, Job
+from haproxy_ui.objects import ListedObject
+from haproxy_ui.views import TEMPLATES
 from tests.test_login import LoginTestCase, configuration
 
 OBSERVED = datetime(2026, 9, 3, 9, 0, tzinfo=UTC)
@@ -356,3 +358,49 @@ class TheTwoDeployBadgesAreAPair(LoginTestCase):
 
         self.assertNotIn("Inactive · deploy to add", body)
         self.assertIn("protocol-badge", body)
+
+
+class AServingObjectSaysWhenTheNodesAreBehind(unittest.TestCase):
+    """The third way to say that publishing does not deploy.
+
+    The other two are for an object on its way in or out. This one is for a
+    site that is up and serving a configuration the nodes were never given -
+    which said nothing at all until now, because it is neither being added nor
+    removed.
+    """
+
+    SERVING = ListedObject(
+        name="shop",
+        protocol="https",
+        hostnames=("shop.example.com",),
+        ports=(443,),
+        backend_count=1,
+        redirect_http=False,
+        readable=True,
+        problem=None,
+        serving=True,
+    )
+
+    def rendered(self, reconfigured: tuple[str, ...] = ()) -> str:
+        macro = TEMPLATES.env.get_template("_proxy-rows.html").module.proxy_rows
+        return str(macro("alpha", "admin", (), (), (self.SERVING,), (), {}, (), {}, reconfigured))
+
+    def test_the_badge_takes_the_cell_like_the_other_two(self) -> None:
+        """Beside the hostnames it was a second thing in a column sized for one."""
+
+        body = self.rendered(("shop",))
+
+        self.assertIn("Reconfigured · deploy to activate", body)
+        self.assertNotIn("shop.example.com", body)
+
+    def test_an_object_nobody_republished_is_left_alone(self) -> None:
+        """The mistake worth a test: the fact is per object, not per cluster.
+
+        Worn cluster-wide it appeared on every row, so untouched sites looked
+        like work somebody had forgotten.
+        """
+
+        self.assertNotIn("Reconfigured", self.rendered(("something-else",)))
+
+    def test_nothing_awaiting_a_deploy_says_nothing(self) -> None:
+        self.assertNotIn("Reconfigured", self.rendered())

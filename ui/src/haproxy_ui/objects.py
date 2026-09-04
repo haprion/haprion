@@ -357,6 +357,44 @@ def names_being_published(jobs: Iterable[Job]) -> frozenset[str]:
     return frozenset(waiting)
 
 
+def published_awaiting_deploy(jobs: Iterable[Job]) -> frozenset[str]:
+    """Objects published since the last deploy finished.
+
+    The fact a row can honestly carry. That the nodes are behind is true of the
+    cluster, and wearing it on every row said three objects had been changed
+    when one had - which is worse than saying nothing, because the two that
+    were untouched looked like work somebody had forgotten.
+
+    Read from the jobs rather than by comparing documents: a publish job names
+    exactly the objects it carried, and a deploy job is what makes them
+    current. So the answer is the names published after the newest finished
+    deploy, and it empties itself the moment one runs.
+
+    Bounded by whatever window the caller read. A publish older than that is
+    not reported, which is the safe direction: this understates rather than
+    invents.
+    """
+
+    waiting: set[str] = set()
+    for job in jobs:
+        if job.operation == "deploy" and job.state == "done":
+            #
+            # Newest first, so the first finished deploy ends the search: every
+            # publish older than it has already reached the nodes.
+            #
+            break
+        if job.operation != "objects_publish" or job.state != "done":
+            continue
+        named = job.payload.get("objects") if isinstance(job.payload, Mapping) else None
+        if isinstance(named, Mapping):
+            waiting.update(
+                name
+                for name, document in named.items()
+                if isinstance(name, str) and document is not None
+            )
+    return frozenset(waiting)
+
+
 def publish_failures(jobs: Iterable[Job]) -> dict[str, str]:
     """Objects whose most recent publish ended badly, and what it blamed.
 

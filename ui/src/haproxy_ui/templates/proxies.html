@@ -28,13 +28,6 @@
       <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
       <div class="cluster-state">{% if management_writes and role == 'admin' %}<a class="secondary-button" href="/proxies/{{ cluster.cluster }}/new">New object</a>{% endif %}<span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
-    {#
-      Publishing does not deploy. The rows below say so for an object being
-      added or removed - "deploy to add", "deploy to remove" - but a changed
-      object is neither, and said nothing at all while the nodes went on
-      serving the previous version.
-    #}
-    {% if behind and cluster.cluster in behind %}<p class="preview-notice"><strong>The nodes are not running the published configuration.</strong> Publishing does not deploy; run a deploy from the dashboard to bring them into step.</p>{% endif %}
     {% set unpublished = (drafts.get(cluster.cluster, ()) if drafts else ()) if role == 'admin' else () %}
     {% set queued = (publishing.get(cluster.cluster, ()) if publishing else ()) %}
     {#
@@ -47,7 +40,7 @@
     {% set foreign = (unmanaged.get(cluster.cluster, ()) if unmanaged else ()) %}
     {% if written or foreign or unpublished %}
     <div class="table-scroll"><table class="node-table proxy-table"><thead><tr><th>Proxy</th><th>Protocol</th><th>Hosts / ports</th><th>Health</th><th>Backends</th><th>Ownership</th></tr></thead><tbody data-cluster="{{ cluster.cluster }}">
-{{ rows.proxy_rows(cluster.cluster, role, unpublished, queued, written, foreign, health.get(cluster.cluster, {}) if health else {}, removed.get(cluster.cluster, ()) if removed else (), failed.get(cluster.cluster, {}) if failed else {}) }}
+{{ rows.proxy_rows(cluster.cluster, role, unpublished, queued, written, foreign, health.get(cluster.cluster, {}) if health else {}, removed.get(cluster.cluster, ()) if removed else (), failed.get(cluster.cluster, {}) if failed else {}, (reconfigured.get(cluster.cluster, ()) if reconfigured else ()) if behind and cluster.cluster in behind else ()) }}
     </tbody></table></div>
     {% else %}
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>

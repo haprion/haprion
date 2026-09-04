@@ -4,7 +4,7 @@
   its way. A second copy of this markup would drift from the first, and the
   drift would show as a row that changes shape when it updates.
 #}
-{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}) %}
+{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=()) %}
 {% set drafted = unpublished | map(attribute='object_id') | list %}
 {#
   Drafts first, then objects written but not deployed, then the rest. The
@@ -37,7 +37,18 @@
       <tr class="proxy-waiting"><td data-label="Proxy"><strong>{{ name }}</strong></td><td data-label="Protocol"><span class="table-empty">—</span></td><td data-label="Hosts / ports"><span class="status-badge status-badge-warning waiting-badge">Active · deploy to remove</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Backends"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td></tr>
 {% endfor %}
 {#
-  The two badges are a pair, and the first word of each is what is true now:
+  Three badges now, and the third took a wrong turn first: it sat beside the
+  hostnames, which is exactly what the note above the cell says not to do. It
+  takes the cell like the other two. What the object serves is on its own page,
+  and a row that has something to say says that.
+
+  And it is per object, which took a second wrong turn to get right. Worn as a
+  cluster-wide fact it appeared on every row, so three sites claimed to have
+  been reconfigured when one had - and the two that were untouched looked like
+  work somebody had forgotten. The jobs know which objects a publish carried,
+  so the row asks them.
+
+  The two other badges are a pair, and the first word of each is what is true now:
   an object the nodes do not serve is inactive and a deploy adds it, one whose
   removal is published is active and a deploy takes it away. Saying "waiting
   for deploy" on both would have described the same wait for opposite ends.
@@ -73,7 +84,7 @@
           same: a row with something to say says that, and the hostnames are on
           the object's own page.
         #}
-        <td data-label="Hosts / ports">{% if not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Inactive · deploy to add</span>{% else %}<span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span>{% endif %}</td>
+        <td data-label="Hosts / ports">{% if not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Inactive · deploy to add</span>{% elif object.name in reconfigured %}<span class="status-badge status-badge-warning waiting-badge">Reconfigured · deploy to activate</span>{% else %}<span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span>{% endif %}</td>
         {#
           The nodes' own verdict on this object's servers, not a probe. Grey
           is no answer, and it covers both ways of having none: an object with

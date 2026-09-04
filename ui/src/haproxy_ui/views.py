@@ -597,6 +597,15 @@ def build_router(config: Config) -> APIRouter:
             }
             failed = {cluster: objects.publish_failures(rows) for cluster, rows in recent.items()}
             #
+            # Per object, not per cluster. What the nodes are behind on is a
+            # release, but which objects that release changed is in the jobs -
+            # and a row that wore the cluster's fact claimed every site had
+            # been reconfigured when one had.
+            #
+            reconfigured = {
+                cluster: objects.published_awaiting_deploy(rows) for cluster, rows in recent.items()
+            }
+            #
             # And what a finished removal took away that the nodes have not
             # stopped serving. A removal is a publish, so between it and the
             # deploy the object is gone from the repository while the site is
@@ -632,6 +641,7 @@ def build_router(config: Config) -> APIRouter:
             "drafts": drafts if role == "admin" else {},
             "publishing": publishing,
             "behind": behind,
+            "reconfigured": reconfigured,
             "failed": failed,
             "removed": removed,
             "captured_at": captured_at,
@@ -729,6 +739,9 @@ def build_router(config: Config) -> APIRouter:
                     listing["health"].get(view.cluster, {}),
                     listing["removed"].get(view.cluster, ()),
                     listing["failed"].get(view.cluster, {}),
+                    listing["reconfigured"].get(view.cluster, frozenset())
+                    if view.cluster in listing["behind"]
+                    else frozenset(),
                 )
             )
             for view in listing["proxies"].clusters

@@ -1325,6 +1325,27 @@ through exact sudoers rules:
 <poller> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-helper ""
 ```
 
+##### How often it reads, and what wakes it
+
+`poller.interval_seconds` in `ui.toml`, 20 by default, bounded to 10-3600. It is
+a sleep *after* a pass rather than a fixed period, so the real cadence is the
+interval plus however long a pass takes - measured at 2-3 seconds for two
+clusters on the reference machine, where one pass is fourteen helper
+invocations and two of them reach the nodes.
+
+**A finished job wakes it as well as the clock.** Publishing or deploying
+through the interface queues a job, and the poller reads the clusters again as
+soon as that job ends - so those changes appear without waiting. What waits is a
+change made *outside* the interface: `haproxy-publish` or `haproxy-deploy` run
+on the command line queues no job, nothing is notified, and until the next tick
+the pages show the reading taken before the change. An object deployed from the
+command line therefore keeps its `Inactive - deploy to add` badge for up to one
+interval, which is the interface being careful rather than wrong.
+
+The configuration file is written by `01-platform-prepare` **only when it is
+absent**, so an edit here survives every later release. Changing the value takes
+effect when the poller is restarted; it reads its configuration once, at start.
+
 **A rule under `/etc/sudoers.d/` does not travel with a release.** Adding a helper here means
 installing its line separately, `visudo`-checked; a release that carries a helper nobody may run
 fails at the first call with sudo's refusal in the diagnostics rather than at install time.

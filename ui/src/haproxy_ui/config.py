@@ -315,7 +315,18 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
         clusters=tuple(clusters),
         poller=Poller(
             interval_seconds=_bounded_int(
-                poller, "interval_seconds", "poller", low=10, high=3600, default=60
+                #
+                # The same value the shipped example carries. Two numbers for
+                # one setting is how an installation that deleted the line ends
+                # up behaving unlike the one beside it, for a reason nobody can
+                # see in either file.
+                #
+                poller,
+                "interval_seconds",
+                "poller",
+                low=10,
+                high=3600,
+                default=20,
             )
         ),
     )

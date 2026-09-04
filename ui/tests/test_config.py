@@ -14,6 +14,10 @@ from pathlib import Path
 
 from haproxy_ui.config import ConfigError, load
 
+EXAMPLE = (
+    Path(__file__).resolve().parents[2] / "install" / "platform" / "examples" / "ui.toml.example"
+)
+
 #
 # management_writes comes first, and that is not a style choice: a bare key
 # written after a table belongs to that table in TOML, so the same three lines
@@ -148,3 +152,32 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheExampleAndTheDefaultsAgree(unittest.TestCase):
+    """The shipped example is what a new installation gets; the defaults are
+    what one that deleted a line gets. Two numbers for one setting is how two
+    installations end up behaving differently for a reason neither file shows.
+
+    Only the values that have a default are compared. A key the example leaves
+    for the installation to fill in - the clusters, the database name - has no
+    default to disagree with.
+    """
+
+    def test_the_poller_interval_is_the_same_number_in_both(self) -> None:
+        written = [
+            line
+            for line in EXAMPLE.read_text(encoding="utf-8").splitlines()
+            if line.startswith("interval_seconds")
+        ]
+
+        self.assertEqual(len(written), 1)
+        example = int(written[0].split("=")[1])
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ui.toml"
+            path.write_text(VALID, encoding="utf-8")
+            path.chmod(0o600)
+            config = load(path, require_secure=False)
+
+        self.assertEqual(config.poller.interval_seconds, example)

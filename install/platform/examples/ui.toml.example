@@ -39,7 +39,18 @@ clusters = []
 # How stale a status reading is allowed to get. Nothing renders a reading
 # without saying how old it is, so this is a statement about that number rather
 # than a tuning knob.
-interval_seconds = 60
+#
+# The poller is also woken by a finished job, so a change made through the
+# interface is read back at once and never waits for this. What waits for it is
+# a change made outside the interface - a publish or a deploy run from the
+# command line - and the whole interval is then how long a page can disagree
+# with the nodes.
+#
+# One pass over two clusters measured 2-3 seconds on the reference machine, so
+# 20 leaves the poller idle most of the time while keeping that disagreement
+# short. Raise it where a cluster is large or its nodes are far away; the floor
+# of 10 is close enough to a pass that a slow one would run into the next.
+interval_seconds = 20
 
 [database]
 # Connections use the local socket and peer authentication. There is no user and

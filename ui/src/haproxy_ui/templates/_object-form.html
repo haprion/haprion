@@ -94,7 +94,7 @@
           <option value="intermediate"{% if form.listen_tls_policy == 'intermediate' %} selected{% endif %}>TLS 1.2 and 1.3</option>
           <option value="modern"{% if form.listen_tls_policy == 'modern' %} selected{% endif %}>TLS 1.3 only</option>
         </select>
-        <small>Two sites on this address behind the same certificate must agree; on another address it may differ.</small>
+        <small>Two sites on this address behind the same certificate must agree.</small>
       </label>
     </div>
     <div class="form-checks">
@@ -181,7 +181,7 @@
           <option value="modern"{% if form.backend_tls_policy == 'modern' %} selected{% endif %}>TLS 1.3 only</option>
           <option value="legacy"{% if form.backend_tls_policy == 'legacy' %} selected{% endif %}>TLS 1.1 and up — for old equipment</option>
         </select>
-        <small>Only what this pool is reached over. Listeners are never offered TLS 1.1; <code>legacy</code> also lowers OpenSSL's security level for this pool alone, which is what an appliance from before TLS 1.2 needs.</small>
+        <small>What this pool uses to reach the backend.</small>
       </label>
       <label><span class="field-title">Session cookie <span class="optional">(optional)</span></span><input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Case-sensitive, empty means no persistence.</small></label>
       <label><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>Connections one server takes at once; the rest queue for 5 s.</small></label>
@@ -219,7 +219,7 @@
             </select>
           </label>
         </div>
-        <small>Requests for that path are answered with a redirect to that URL instead of reaching the pool; the target replaces the whole address, not just the host.<br>A prefix match covers the path and everything under it, which is what a path that has moved wants. Choose exact to redirect one address only - a site root that sends visitors on to the page the application really starts at needs that, or the redirect would swallow the address it points at.<br>301 and 302 let a browser turn a POST into a GET; 307 and 308 do not.</small>
+        <small>Answered with a redirect instead of reaching the pool; the URL replaces the whole address. Exact matches one path, prefix also everything under it. 301 and 302 may turn a POST into a GET; 307 and 308 do not.</small>
       </div>
     </div>
     {#

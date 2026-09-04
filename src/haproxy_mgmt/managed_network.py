@@ -62,7 +62,17 @@ def dump_document(network: Network) -> bytes:
 
     document: dict[str, object] = {
         "vips": {
-            name: {"address": vip.address, **({"source": vip.source} if vip.source else {})}
+            name: {
+                "address": vip.address,
+                **({"source": vip.source} if vip.source else {}),
+                #
+                # Only when the VIP named one. A key written for every row would
+                # turn "core/ decides" into a policy, and a bind line overrides
+                # `core/` in both directions - so the cluster nobody had looked
+                # at would be the one that changed.
+                #
+                **({"tls": vip.tls_policy} if vip.tls_policy else {}),
+            }
             for name, vip in sorted(network.vips.items())
         },
         "default_vip": network.default_vip,

@@ -100,6 +100,7 @@ class TheRowsBecomeTheDocument(unittest.TestCase):
             "vip_names": ("public", ""),
             "vip_addresses": ("192.0.2.20", ""),
             "vip_sources": ("192.0.2.25", ""),
+            "vip_tls": ("", ""),
             "default_vip_row": "0",
             "source_names": ("egress", ""),
             "source_addresses": ("192.0.2.35", ""),
@@ -391,3 +392,40 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         page = client.get("/network")
 
         self.assertIn('href="/network" aria-current="page"', page.text)
+
+
+class WhatAVipSaysAboutTls(TheRowsBecomeTheDocument):
+    """The column exists because a bind line belongs to an address.
+
+    Several sites answer on one VIP through SNI and share its bind line, so the
+    policy is the VIP's and not the site's. What a site may override is a
+    separate question with a separate mechanism.
+    """
+
+    def test_a_policy_a_row_named_reaches_the_document(self) -> None:
+        document = json.loads(document_from_form(self.form(vip_tls=("modern", ""))))
+
+        self.assertEqual(document["vips"]["public"]["tls"], "modern")
+
+    def test_a_row_that_named_none_writes_no_key_at_all(self) -> None:
+        """Not an empty string.
+
+        The engine refuses a policy it does not know, so `""` would be a
+        refusal rather than "core/ decides" - and "core/ decides" is what every
+        VIP written before this column existed means. A cluster nobody has
+        opened this page for must publish unchanged.
+        """
+
+        document = json.loads(document_from_form(self.form()))
+
+        self.assertNotIn("tls", document["vips"]["public"])
+
+    def test_the_source_and_the_policy_are_independent(self) -> None:
+        """Two cells on one row, and neither is the other's condition."""
+
+        document = json.loads(
+            document_from_form(self.form(vip_sources=("", ""), vip_tls=("intermediate", "")))
+        )
+
+        self.assertEqual(document["vips"]["public"]["tls"], "intermediate")
+        self.assertNotIn("source", document["vips"]["public"])

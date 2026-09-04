@@ -956,11 +956,18 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * widths: they have different columns and are not read as one form.
  */
 .editor-table.network-table th, .editor-table.network-table td { width: auto; }
-.editor-table .col-name { width: 22%; }
-.editor-table .col-address { width: 24%; }
-.editor-table .col-source { width: 26%; }
-.editor-table .col-default { width: 14%; }
-.editor-table .col-remove { width: 14%; }
+.editor-table .col-name { width: 19%; }
+.editor-table .col-address { width: 21%; }
+.editor-table .col-source { width: 22%; }
+/*
+ * Wide enough for "core/ decides" on one line. The options are short for that
+ * reason - the column heading already asks the question, so each one only has
+ * to be the answer.
+ */
+.editor-table .col-tls { width: 16%; }
+.editor-table .col-default { width: 11%; }
+.editor-table .col-remove { width: 11%; }
+.editor-table select { width: 100%; }
 .editor-note { padding-top: 6px; grid-template-columns: minmax(260px, 520px); }
 .network-editor .warning-text { margin: 12px 20px 0; font-size: 12px; }
 /*

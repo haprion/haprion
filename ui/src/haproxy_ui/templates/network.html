@@ -89,14 +89,22 @@
           address lands under the VIP's default source, which is the same kind
           of value.
         #}
-        <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-default"><col class="col-remove"></colgroup>
-        <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th class="editor-choice">Default</th><th class="editor-choice">Remove</th></tr></thead>
+        <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-default"><col class="col-remove"></colgroup>
+        {#
+          "Oldest TLS" rather than "TLS policy": the column is about how far
+          back a listener will go, and that is the decision somebody is making
+          when they change it. It belongs on the VIP because a bind line
+          belongs to an address - several sites answer on one of these through
+          SNI, and they share the line.
+        #}
+        <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th>Oldest TLS</th><th class="editor-choice">Default</th><th class="editor-choice">Remove</th></tr></thead>
         <tbody>
           {% for vip in cluster.vips %}
           <tr>
             <td><input name="vip_name" value="{{ vip.name }}" maxlength="40" aria-label="VIP name"></td>
             <td><input name="vip_address" value="{{ vip.address }}" maxlength="64" aria-label="Address for VIP {{ vip.name }}"></td>
             <td><input name="vip_source" value="{{ vip.source or '' }}" maxlength="64" placeholder="whatever routing picks" aria-label="Default source for VIP {{ vip.name }}"></td>
+            <td><select name="vip_tls" aria-label="TLS policy for VIP {{ vip.name }}"><option value=""{% if not vip.tls_policy %} selected{% endif %}>core/ decides</option><option value="intermediate"{% if vip.tls_policy == 'intermediate' %} selected{% endif %}>TLS 1.2</option><option value="modern"{% if vip.tls_policy == 'modern' %} selected{% endif %}>TLS 1.3</option></select></td>
             <td class="editor-choice"><input type="radio" name="default_vip_row" value="{{ loop.index0 }}"{% if vip.is_default %} checked{% endif %} aria-label="Make VIP {{ vip.name }} the default"></td>
             {#
               Removal is a tick and not a button of its own. This form is one
@@ -129,6 +137,7 @@
               <td><input name="vip_name" value="" maxlength="40" placeholder="new VIP name" aria-label="New VIP name"></td>
               <td><input name="vip_address" value="" maxlength="64" placeholder="IP address" aria-label="New VIP address"></td>
               <td><input name="vip_source" value="" maxlength="64" placeholder="source IP, optional" aria-label="New VIP default source"></td>
+              <td><select name="vip_tls" aria-label="TLS policy for the new VIP"><option value="" selected>core/ decides</option><option value="intermediate">TLS 1.2</option><option value="modern">TLS 1.3</option></select></td>
               <td class="editor-choice"><input type="radio" name="default_vip_row" value="{{ cluster.vips | length + loop.index0 }}" aria-label="Make the new VIP the default"></td>
               <td class="editor-choice editor-remove"></td>
             </tr>

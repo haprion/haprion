@@ -44,3 +44,29 @@ class NetworkDocumentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ATlsPolicySurvivesTheRoundTrip(unittest.TestCase):
+    """Parsed and written back, because the publish path does both.
+
+    The interface sends a document, the helper parses it and writes the
+    canonical form, and it is that form which is committed. A serializer that
+    dropped the field would lose the choice between the button and the bind
+    line - silently, and with the page still showing what was asked for.
+    """
+
+    def canonical(self, document: str) -> str:
+        network = load_document(document.encode(), ownership_vip="public", location="network.yaml")
+        return dump_document(network).decode()
+
+    def test_a_named_policy_is_written_back(self) -> None:
+        written = self.canonical(
+            "vips:\n  public:\n    address: 192.0.2.20\n    tls: modern\ndefault_vip: public\n"
+        )
+
+        self.assertIn("tls: modern", written)
+
+    def test_a_vip_that_named_none_gains_no_key(self) -> None:
+        written = self.canonical("vips:\n  public:\n    address: 192.0.2.20\ndefault_vip: public\n")
+
+        self.assertNotIn("tls", written)

@@ -36,6 +36,14 @@ class VipView:
     address: str
     source: str | None
     is_default: bool
+    tls_policy: str
+    """Which TLS versions and ciphers listeners on this address accept.
+
+    Empty means the cluster's `core/` decides, which is what every VIP written
+    before this column existed says. Named here rather than defaulted, because
+    a bind line overrides `core/` in both directions: a default written on
+    somebody's behalf could loosen a cluster nobody had looked at.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +131,7 @@ def _vips(result: Mapping[str, Any], default_vip: str) -> tuple[VipView, ...]:
             address=_text(row.get("address")),
             source=row.get("source") if isinstance(row.get("source"), str) else None,
             is_default=row.get("name") == default_vip,
+            tls_policy=_text(row.get("tls")),
         )
         for row in _rows(result, "vips")
     )
@@ -311,6 +320,13 @@ class NetworkForm:
     vip_names: tuple[str, ...]
     vip_addresses: tuple[str, ...]
     vip_sources: tuple[str, ...]
+    #
+    # Which TLS policy each VIP row named, empty where it named none. Required
+    # rather than defaulted: a caller that forgets it would publish a network
+    # with every listener's policy silently cleared, and the type checker
+    # naming the caller is cheaper than finding that out from a bind line.
+    #
+    vip_tls: tuple[str, ...]
     default_vip_row: str
     source_names: tuple[str, ...]
     source_addresses: tuple[str, ...]
@@ -394,6 +410,22 @@ def _members(raw: str) -> list[str]:
     return [member.strip() for member in raw.replace(",", "\n").splitlines() if member.strip()]
 
 
+def _vip_entry(form: NetworkForm, row: int, address: str) -> dict[str, str]:
+    """One VIP as the helper reads it: the address, and only what was chosen.
+
+    An empty cell writes no key at all rather than a key with an empty value.
+    The engine refuses a policy it does not know, so "" would be a refusal, and
+    a cluster whose `core/` decides is the case that should need no words.
+    """
+
+    entry = {"address": address}
+    if source := _cell(form.vip_sources, row):
+        entry["source"] = source
+    if policy := _cell(form.vip_tls, row):
+        entry["tls"] = policy
+    return entry
+
+
 def document_from_form(form: NetworkForm) -> str:
     """Render one submission as the document the helper parses.
 
@@ -434,14 +466,7 @@ def document_from_form(form: NetworkForm) -> str:
         raise FormProblem("Choose which VIP is the default.")
 
     document: dict[str, object] = {
-        "vips": {
-            name: (
-                {"address": address, "source": source}
-                if (source := _cell(form.vip_sources, row))
-                else {"address": address}
-            )
-            for row, name, address in vips
-        },
+        "vips": {name: _vip_entry(form, row, address) for row, name, address in vips},
         "default_vip": default_vip,
     }
 

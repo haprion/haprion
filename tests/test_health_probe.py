@@ -13,8 +13,11 @@ actually opened the connection.
 from __future__ import annotations
 
 import json
+import shutil
 import socket
+import ssl
 import subprocess as sp
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -75,7 +78,10 @@ class WhatTheProbeAnswers(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
+        # `shutdown` stops the loop; the listening socket stays open until
+        # `server_close`. One leaked socket per class per run, otherwise.
         cls.server.shutdown()
+        cls.server.server_close()
 
     def probe(self, **fields: object) -> dict[str, object]:
         code, answer = ask({"schema_version": 1, "targets": [target(port=self.port, **fields)]})
@@ -159,7 +165,10 @@ class WhichNodeTheQuestionBelongsTo(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
+        # `shutdown` stops the loop; the listening socket stays open until
+        # `server_close`. One leaked socket per class per run, otherwise.
         cls.server.shutdown()
+        cls.server.server_close()
 
     def ask_from(self, source: str) -> dict[str, object]:
         code, answer = ask(
@@ -282,3 +291,119 @@ class WhatTheProbeRefuses(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def self_signed(directory: Path) -> tuple[Path, Path]:
+    """A certificate for 127.0.0.1. Nothing verifies it; the probe is told not to."""
+
+    openssl = shutil.which("openssl")
+    assert openssl is not None
+    certificate = directory / "cert.pem"
+    key = directory / "key.pem"
+    sp.run(
+        [
+            openssl,
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-keyout",
+            str(key),
+            "-out",
+            str(certificate),
+            "-nodes",
+            "-subj",
+            "/CN=127.0.0.1",
+            "-days",
+            "1",
+        ],
+        capture_output=True,
+        check=True,
+    )
+    return certificate, key
+
+
+def tls_server(certificate: Path, key: Path, ceiling: ssl.TLSVersion) -> ThreadingHTTPServer:
+    """A backend that will speak nothing above `ceiling`.
+
+    `SECLEVEL=0` because OpenSSL's own policy would otherwise refuse to offer
+    the old versions at all, and the point here is a backend that offers them
+    and a probe that declines - not a backend that could not be built.
+    """
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1
+    context.maximum_version = ceiling
+    context.set_ciphers("DEFAULT@SECLEVEL=0")
+    context.load_cert_chain(certfile=str(certificate), keyfile=str(key))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@unittest.skipUnless(shutil.which("openssl"), "openssl is not installed here")
+class HowOldATlsBackendMayBe(unittest.TestCase):
+    """The floor is the probe's own, not whatever OpenSSL on the node was built with.
+
+    `ssl.create_default_context()` leaves the lowest acceptable version to the
+    build, so the same pool could answer differently on two nodes and the result
+    would describe the node rather than the backend. The probe says TLS 1.2, and
+    these two cases are the same request against two backends that differ only
+    in how old they are willing to be.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.certificate, cls.key = self_signed(Path(cls.directory.name))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.directory.cleanup()
+
+    def probe_against(self, ceiling: ssl.TLSVersion) -> dict[str, object]:
+        server = tls_server(self.certificate, self.key, ceiling)
+        try:
+            code, answer = ask(
+                {
+                    "schema_version": 1,
+                    "targets": [
+                        target(
+                            port=server.server_address[1],
+                            tls=True,
+                            verify=False,
+                            path="/healthz",
+                        )
+                    ],
+                }
+            )
+            self.assertEqual(code, 0)
+            return answer["results"][0]
+        finally:
+            #
+            # Both, and in this order. `shutdown` stops the loop and leaves the
+            # listening socket open; a test class that starts one server per
+            # case would then leak one per case. B81 was the same mistake with
+            # a heavier process on the other end.
+            #
+            server.shutdown()
+            server.server_close()
+
+    def test_a_backend_that_speaks_tls_1_2_is_reached(self) -> None:
+        result = self.probe_against(ssl.TLSVersion.TLSv1_2)
+
+        self.assertTrue(result["ok"], result["error"])
+        self.assertEqual(result["status"], 200)
+
+    def test_a_backend_that_will_go_no_higher_than_tls_1_1_is_refused(self) -> None:
+        """And refused as a TLS failure, which is what it is.
+
+        The error names the handshake rather than the pool, so somebody reading
+        the health card is told the backend is too old - not that it is down.
+        """
+
+        result = self.probe_against(ssl.TLSVersion.TLSv1_1)
+
+        self.assertFalse(result["ok"])
+        self.assertIn("TLS failed", str(result["error"]))

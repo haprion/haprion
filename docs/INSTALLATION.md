@@ -201,6 +201,34 @@ tcp_ports:
   - 8443
 ```
 
+`core/haproxy.cfg` is the handwritten `global` and `defaults` for the cluster — the file every
+generated fragment is assembled behind. It must declare the TLS defaults every listener falls back
+to when it names no policy of its own:
+
+```haproxy
+global
+    # ... your own log, chroot, socket and user lines ...
+
+    ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305
+    ssl-default-bind-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
+    ssl-default-bind-options ssl-min-ver TLSv1.2 no-tls-tickets
+```
+
+**A publish is refused while these disagree with the manager's own lists**, and the refusal prints
+the exact line to write. The reason is that both halves are true at once: a generated bind line that
+names a TLS policy carries the manager's list, and every listener naming no policy inherits this
+one. While the two differ, what protects a given listener depends on which line HAProxy read last —
+and each file looks entirely correct read on its own. That is how one such pair came to be a cipher
+apart without anything reporting it.
+
+The list is Mozilla's intermediate recommendation, guideline v5.7; the
+manager holds it in `haproxy_mgmt/tls_policy.py` with the date it was last checked. Nothing fetches
+it at run time. If you deliberately change it, change it there first and in every cluster's `core/`
+after — the refusal will tell you which clusters are still behind.
+
+A **revert** is never refused for this. Going back to a release that was good before must not depend
+on a file being current.
+
 Nothing derives this file — `manual/` is read, never interpreted, and a promise a person writes is
 the only thing available. It exists because both collisions are silent: two frontends binding one
 port both bind it under `SO_REUSEPORT` and the kernel splits new connections between them at random,

@@ -13,6 +13,7 @@ from __future__ import annotations
 import unittest
 from datetime import date, timedelta
 from hashlib import sha256
+from pathlib import Path
 
 from haproxy_mgmt import tls_policy
 
@@ -102,3 +103,104 @@ class SomebodyLooksAtThemNowAndThen(unittest.TestCase):
         """A typo in the year would otherwise silence the check for a century."""
 
         self.assertLessEqual(tls_policy.REVIEWED, date.today())
+
+
+class WhatCoreIsHeldTo(unittest.TestCase):
+    """The comparison itself: what it accepts, and what it says when it does not."""
+
+    def problem(self, core: str) -> str | None:
+        return tls_policy.core_defaults_problem(
+            core.encode(), cluster="alpha", config_path="/configs/haproxy/alpha"
+        )
+
+    def correct(self) -> str:
+        return "global\n  daemon\n" + tls_policy.core_defaults_lines("  ")
+
+    def test_a_cluster_that_agrees_is_not_stopped(self) -> None:
+        self.assertIsNone(self.problem(self.correct()))
+
+    def test_a_cluster_that_sets_nothing_is_stopped(self) -> None:
+        """The state `external` was in: no cipher policy on the internet-facing side."""
+
+        message = self.problem("global\n  daemon\n")
+
+        self.assertIsNotNone(message)
+        assert message is not None
+        self.assertIn("does not set ssl-default-bind-ciphers at all", message)
+
+    def test_a_missing_cipher_is_named(self) -> None:
+        """The state `internal` was in: one short, and correct-looking either way."""
+
+        short = self.correct().replace(":DHE-RSA-CHACHA20-POLY1305", "", 1)
+        message = self.problem(short)
+
+        assert message is not None
+        self.assertIn("missing DHE-RSA-CHACHA20-POLY1305", message)
+
+    def test_a_different_order_is_stopped_and_said_to_be_about_order(self) -> None:
+        """Same ciphers, reversed preference. Nothing is missing, and it still matters."""
+
+        reversed_list = ":".join(reversed(tls_policy.TLS_1_2_CIPHERS.split(":")))
+        message = self.problem(self.correct().replace(tls_policy.TLS_1_2_CIPHERS, reversed_list))
+
+        assert message is not None
+        self.assertIn("in a different order", message)
+
+    def test_the_message_says_how_to_fix_it(self) -> None:
+        """Somebody meets this during a publish and it has to be enough on its own."""
+
+        message = self.problem("global\n  daemon\n")
+
+        assert message is not None
+        self.assertIn("sudoedit /configs/haproxy/alpha/core/haproxy.cfg", message)
+        self.assertIn(tls_policy.TLS_1_2_CIPHERS, message)
+        self.assertIn(tls_policy.MOZILLA_GUIDELINE_URL, message)
+        self.assertIn("A revert is never stopped by this", message)
+
+    def test_the_lines_it_offers_are_the_lines_it_accepts(self) -> None:
+        """The guide, the fixtures and the refusal all render from one function."""
+
+        self.assertIsNone(self.problem("global\n" + tls_policy.core_defaults_lines()))
+
+
+class WhichPathsAskTheQuestion(unittest.TestCase):
+    """A publish is checked; a revert is not, and that is the whole point.
+
+    Every path that builds a node artifact reads a tree that contains
+    `core/haproxy.cfg`, so the check could have gone in one place and covered
+    them all. It must not: `revert_helper` builds one too, and a revert is what
+    somebody runs while something is on fire. Going back to a release that was
+    good before cannot depend on a file being current.
+
+    Held here because the difference is a decision, not something the code
+    shows: a fourth publish path added later would be silently unchecked.
+    """
+
+    CHECKED = ("publish_helper", "managed_objects_publish", "managed_network_publish")
+    DELIBERATELY_NOT = ("revert_helper",)
+
+    def source(self, module: str) -> str:
+        here = Path(__file__).resolve().parents[1]
+        return (here / "src" / "haproxy_mgmt" / "cli" / f"{module}.py").read_text(encoding="utf-8")
+
+    def test_every_publish_path_checks(self) -> None:
+        for module in self.CHECKED:
+            with self.subTest(module=module):
+                self.assertIn("core_defaults_problem", self.source(module))
+
+    def test_a_revert_is_never_checked(self) -> None:
+        for module in self.DELIBERATELY_NOT:
+            with self.subTest(module=module):
+                self.assertNotIn("core_defaults_problem", self.source(module))
+
+    def test_the_list_names_every_path_that_builds_an_artifact(self) -> None:
+        """So a new one has to be classified rather than forgotten."""
+
+        here = Path(__file__).resolve().parents[1] / "src" / "haproxy_mgmt" / "cli"
+        builders = sorted(
+            path.stem
+            for path in here.glob("*.py")
+            if "build_node_artifact" in path.read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(builders, sorted((*self.CHECKED, *self.DELIBERATELY_NOT)))

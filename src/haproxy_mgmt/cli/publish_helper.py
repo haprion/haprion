@@ -36,6 +36,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Protocol, TextIO
 
+from haproxy_mgmt import tls_policy
 from haproxy_mgmt.candidate_validation import (
     DEFAULT_RUN_ROOT,
     MAX_CANDIDATE_BYTES,
@@ -463,7 +464,8 @@ def _publish(
     #
     # 3. The artifact, derived here from the candidate tree - not received.
     #
-    artifact = build_node_artifact(read_tree_files(repo, snapshot.tree))
+    published_files = read_tree_files(repo, snapshot.tree)
+    artifact = build_node_artifact(published_files)
     candidate = candidate_from_files(artifact)
 
     #
@@ -513,6 +515,21 @@ def _publish(
         commit=commit,
         timestamp=clock().strftime(TIMESTAMP_FORMAT),
     )
+    #
+    # After the sandbox, deliberately. A `core/haproxy.cfg` can be both stale and
+    # syntactically broken, and the broken half is the one that stops HAProxy
+    # from starting - reporting the cipher list first would hide it behind the
+    # smaller problem. Checked on the bytes about to be published, so a refusal
+    # describes what would have gone out.
+    #
+    stale = tls_policy.core_defaults_problem(
+        published_files["core/haproxy.cfg"],
+        cluster=request.cluster,
+        config_path=str(cluster.config_path),
+    )
+    if stale is not None:
+        return refuse("tls_defaults_stale", stale, BLOCKED_EXIT)
+
     installed = install_release(
         cluster.publish_path,
         node_path=cluster.node_path,

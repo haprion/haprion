@@ -20,6 +20,7 @@ from pathlib import Path
 
 import yaml
 
+from haproxy_mgmt import tls_policy
 from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli.publish_helper import main
 from haproxy_mgmt.cluster_lock import hold
@@ -29,7 +30,16 @@ from tests.contract_schema import assert_contract
 BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "22222222-2222-4222-8222-222222222222"
 
-HAPROXY_CFG = b"global\n  daemon\ndefaults\n  mode http\n"
+#
+# A cluster that is set up correctly, which now includes the TLS defaults
+# `core/` is expected to carry: a publish refuses when they disagree with
+# `tls_policy`, and a fixture without them would be testing a cluster nobody
+# would be allowed to publish. Rendered rather than pasted, so the fixture
+# cannot drift from the check the way core/ drifted from the generator.
+#
+HAPROXY_CFG = (
+    "global\n  daemon\n" + tls_policy.core_defaults_lines("  ") + "defaults\n  mode http\n"
+).encode()
 RESERVATIONS = b"{}\n"
 GENERATED = b"frontend managed\n  bind 192.0.2.20:80\n"
 CORE_CFG = b"frontend core\n  bind 192.0.2.20:81\n"

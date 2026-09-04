@@ -624,8 +624,17 @@ for the full contract and the negative tests that prove it.
 
 The scripts are in [`install/node/`](../install/node/) and are installed by
 [`04-node-prepare`](../install/04-node-prepare), which also creates the accounts, the release
-layout and the sudo rules. This section explains what they do and why; run the script rather than
-following it by hand.
+layout and the sudo rules.
+
+**It is also how a node script is updated later.** The step compares each file against what is
+already installed and leaves an identical one alone, so re-running it after pulling a new revision
+replaces exactly the scripts that changed and touches nothing else. Two things are worth knowing
+before doing that on a pair carrying traffic: it runs against one node at a time, so read the
+result on the first before starting the second, and a script is proved by running the command that
+uses it and reading the output — an installation that reports success has proved that a file was
+written, not that it works.
+
+This section explains what they do and why; run the script rather than following it by hand.
 
 
 ### 2.1 HAProxy and keepalived baseline

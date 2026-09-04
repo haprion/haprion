@@ -27,11 +27,13 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import quote
 from uuid import UUID, uuid4, uuid5
 
 from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from haproxy_mgmt import proxy_model
 from haproxy_mgmt.proxy_model import DEFAULT_FALL, DEFAULT_INTERVAL, DEFAULT_RISE
 
 from haproxy_ui import (
@@ -55,7 +57,7 @@ from haproxy_ui import editor as editor_module
 from haproxy_ui import preview as preview_module
 from haproxy_ui import probe as probe_module
 from haproxy_ui.cluster_identity import accent_index
-from haproxy_ui.config import Config
+from haproxy_ui.config import CLUSTER_ID, Config
 from haproxy_ui.db import AuthenticatedSession
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -1764,6 +1766,31 @@ def _form_defaults(fields: dict[str, Any]) -> dict[str, Any]:
     return values
 
 
+#
+# Every address these pages send a browser to is built here, from segments that
+# have been checked against the rules that define them: the engine's own object
+# name rule, and the cluster id the configuration is read with.
+#
+# What keeps such a redirect on this site is the leading "/proxies" - a
+# reference that begins with a single slash takes its host from the page it was
+# served from, and no number of ".." segments can put an authority back. The
+# checking is what makes that argument unnecessary rather than merely true: the
+# only thing that can reach a `Location` header from here is forty characters of
+# lowercase letters, digits, hyphens and underscores. A caller that gets this
+# far with anything else has a bug, so it is a 404 and not a page - the readable
+# refusal belongs where the name was typed, and is done there.
+#
+def _proxy_path(cluster: str, *segments: str) -> str:
+    """The URL of a page under `/proxies`, from segments that may be used as one."""
+
+    if not CLUSTER_ID.fullmatch(cluster):
+        raise HTTPException(status_code=404)
+    for segment in segments:
+        if not proxy_model.NAME.fullmatch(segment):
+            raise HTTPException(status_code=404)
+    return "/proxies/" + "/".join((cluster, *segments))
+
+
 def _editor_submit(
     request: Request,
     config: Config,
@@ -1823,6 +1850,21 @@ def _editor_submit(
             request, config, "An object needs a name before it can be saved.", back="/proxies"
         )
     #
+    # Checked where the person typed it, and not only where it is used. The rule
+    # is the engine's own, so a name refused here is one the publish would refuse
+    # anyway - the difference is a page that says which character was the problem
+    # rather than a job that fails an hour later. Everything after this point,
+    # the draft's key and every link back to it, may treat the name as a name.
+    #
+    if not proxy_model.NAME.fullmatch(object_id):
+        return _refusal_page(
+            request,
+            config,
+            f"{object_id} is not a usable object name - {proxy_model.name_refusal(object_id)}; "
+            f"use {proxy_model.NAME_RULE}.",
+            back="/proxies",
+        )
+    #
     # A rename is a new object and a removal, not an edit. Refused here rather
     # than accepted and half-applied: the URL names what is being edited, and a
     # form that could change it would write one object while the page claimed
@@ -1833,7 +1875,7 @@ def _editor_submit(
             request,
             config,
             "An object cannot be renamed here. Create the new name and remove the old one.",
-            back=f"/proxies/{cluster}/{name}/edit",
+            back=_proxy_path(cluster, name, "edit"),
         )
 
     revision = int(form.expected_revision) if form.expected_revision.isdigit() else None
@@ -1844,7 +1886,7 @@ def _editor_submit(
                 request,
                 config,
                 "There is no draft to discard.",
-                back=f"/proxies/{cluster}/{name}/edit",
+                back=_proxy_path(cluster, name, "edit"),
             )
         with request.app.state.pool.connection() as connection:
             try:
@@ -1854,7 +1896,7 @@ def _editor_submit(
             except db.DraftConflict as conflict:
                 connection.rollback()
                 return _refusal_page(
-                    request, config, str(conflict), back=f"/proxies/{cluster}/{object_id}/edit"
+                    request, config, str(conflict), back=_proxy_path(cluster, object_id, "edit")
                 )
             db.record_audit_event(
                 connection,
@@ -1865,7 +1907,7 @@ def _editor_submit(
                 detail={"object": object_id},
             )
             connection.commit()
-        return RedirectResponse(f"/proxies/{cluster}/{object_id}?discarded=1", status_code=303)
+        return RedirectResponse(_proxy_path(cluster, object_id) + "?discarded=1", status_code=303)
 
     if form.action not in ("save", "publish"):
         return PlainTextResponse("Unknown action", status_code=400)
@@ -1875,14 +1917,14 @@ def _editor_submit(
             request,
             config,
             "The stored objects have not been read yet, so there is no base to edit against.",
-            back=f"/proxies/{cluster}/{object_id}/edit",
+            back=_proxy_path(cluster, object_id, "edit"),
         )
     if not name and any(view.name == object_id for view in state.stored):
         return _refusal_page(
             request,
             config,
             "An object of that name already exists in this cluster.",
-            back=f"/proxies/{cluster}/new",
+            back=_proxy_path(cluster, "new"),
         )
 
     #
@@ -1911,7 +1953,7 @@ def _editor_submit(
         except db.DraftConflict as conflict:
             connection.rollback()
             return _refusal_page(
-                request, config, str(conflict), back=f"/proxies/{cluster}/{object_id}/edit"
+                request, config, str(conflict), back=_proxy_path(cluster, object_id, "edit")
             )
         db.record_audit_event(
             connection,
@@ -1943,7 +1985,9 @@ def _editor_submit(
         # The name rather than `name`, because saving a new object lands on the
         # object it just created rather than back on the empty form.
         #
-        return RedirectResponse(f"/proxies/{cluster}/{object_id}/edit?saved=1", status_code=303)
+        return RedirectResponse(
+            _proxy_path(cluster, object_id, "edit") + "?saved=1", status_code=303
+        )
 
     #
     # Publishing is a job, and the draft is saved first on purpose. The two are
@@ -1987,7 +2031,7 @@ def _editor_submit(
             request,
             config,
             "The draft was saved, but this interface could not build a publish for it.",
-            back=f"/proxies/{cluster}/{object_id}/edit",
+            back=_proxy_path(cluster, object_id, "edit"),
         )
 
     with request.app.state.pool.connection() as connection:
@@ -2006,7 +2050,7 @@ def _editor_submit(
                 config,
                 "This cluster is already running a job. The draft is saved; publish it when "
                 "that job has finished.",
-                back=f"/proxies/{cluster}/{object_id}/edit",
+                back=_proxy_path(cluster, object_id, "edit"),
             )
         except db.RequestConflict:
             connection.rollback()
@@ -2014,7 +2058,7 @@ def _editor_submit(
                 request,
                 config,
                 "That publish was already asked for with different content.",
-                back=f"/proxies/{cluster}/{object_id}/edit",
+                back=_proxy_path(cluster, object_id, "edit"),
             )
         db.record_audit_event(
             connection,
@@ -2026,7 +2070,7 @@ def _editor_submit(
         )
         connection.commit()
 
-    return RedirectResponse(f"/proxies?published={object_id}", status_code=303)
+    return RedirectResponse("/proxies?published=" + quote(object_id), status_code=303)
 
 
 def _removal_submit(
@@ -2095,7 +2139,7 @@ def _removal_submit(
             )
         except db.DraftConflict as conflict:
             connection.rollback()
-            return _refusal_page(request, config, str(conflict), back=f"/proxies/{cluster}/{name}")
+            return _refusal_page(request, config, str(conflict), back=_proxy_path(cluster, name))
         connection.commit()
 
     payload = {
@@ -2114,7 +2158,7 @@ def _removal_submit(
             request,
             config,
             "This interface could not build a removal for that object.",
-            back=f"/proxies/{cluster}/{name}",
+            back=_proxy_path(cluster, name),
         )
 
     with request.app.state.pool.connection() as connection:
@@ -2133,7 +2177,7 @@ def _removal_submit(
                 config,
                 "This cluster is already running a job. The removal is saved as a draft; "
                 "publish it when that job has finished.",
-                back=f"/proxies/{cluster}/{name}",
+                back=_proxy_path(cluster, name),
             )
         except db.RequestConflict:
             connection.rollback()
@@ -2141,7 +2185,7 @@ def _removal_submit(
                 request,
                 config,
                 "That removal was already asked for with different content.",
-                back=f"/proxies/{cluster}/{name}",
+                back=_proxy_path(cluster, name),
             )
         db.record_audit_event(
             connection,
@@ -2153,7 +2197,7 @@ def _removal_submit(
         )
         connection.commit()
 
-    return RedirectResponse(f"/proxies?published={name}", status_code=303)
+    return RedirectResponse("/proxies?published=" + quote(name), status_code=303)
 
 
 #

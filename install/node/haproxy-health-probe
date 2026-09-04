@@ -115,9 +115,17 @@ def read_request(stream):
     # quietly left from a different address would answer a question nobody
     # asked, and the whole point of asking here is which path is taken.
     #
-    source = payload.get("source") or ""
-    if source and not isinstance(source, str):
+    # Absent is `None`, and never the empty string. The two say the same thing
+    # to every reader below - no source was named - but only one of them is a
+    # value `bind` would take, and an empty address binds every interface.
+    # Keeping it out of the field means no path through this file can carry one
+    # to the socket.
+    #
+    source = payload.get("source")
+    if source is not None and not isinstance(source, str):
         refuse("source must be an address")
+    if not source:
+        source = None
     #
     # Checked as an address here, and not only where it is used. `holds` keeps
     # anything unbindable away from `bind` by comparing it with the node's own
@@ -227,6 +235,15 @@ def connect(target, timeout, source):
         return sock
 
     context = ssl.create_default_context()
+    #
+    # Said rather than inherited. `create_default_context` leaves the floor to
+    # whatever OpenSSL on the node happens to be built with, so the same probe
+    # against the same pool could negotiate differently on two nodes and the
+    # answer would describe the node rather than the backend. TLS 1.2 is the
+    # floor everything still in service speaks; a backend that needs lower is a
+    # finding, not a probe to loosen.
+    #
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     if not target["verify"]:
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
@@ -352,7 +369,11 @@ def main(argv=None, stdin=None, stdout=None):
             "schema_version": SCHEMA_VERSION,
             "ok": True,
             "node": socket.gethostname(),
-            "source": request["source"],
+            #
+            # The empty string, not `null`: the answer's shape has not changed
+            # with the value the request now carries internally.
+            #
+            "source": request["source"] or "",
             "source_held": source_held,
             "error": None,
             "results": results,

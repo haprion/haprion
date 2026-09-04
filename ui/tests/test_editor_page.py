@@ -246,6 +246,23 @@ class SavingADraft(EditorTestCase):
         self.assertEqual(answer.status_code, 400)
         self.assertEqual(self.saved, [])
 
+    def test_a_name_the_engine_could_not_use_is_refused_here(self) -> None:
+        """Refused where it was typed, rather than by a job an hour later.
+
+        It is also what lets every link these pages build treat the name as a
+        name: the value reaching a `Location` header has passed the engine's own
+        rule, so it cannot carry a slash, a dot or anything else that would make
+        the address mean something other than this object.
+        """
+
+        client = self.editor()
+
+        answer = self.submit(client, "/proxies/alpha/new", action="save", name="Shop.One")
+
+        self.assertEqual(answer.status_code, 400)
+        self.assertEqual(self.saved, [])
+        self.assertIn("capital letters are not allowed", answer.text)
+
     def test_a_new_object_may_not_take_a_name_that_exists(self) -> None:
         client = self.editor()
 

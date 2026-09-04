@@ -53,6 +53,14 @@ from haproxy_mgmt.reservations import NOTHING_RESERVED, Reservations
 from haproxy_mgmt.route_match import order_routes
 
 #
+# Not defined here. The lists, and where they came from, live in `tls_policy` -
+# a cluster's own `core/haproxy.cfg` carries the same Mozilla recommendation,
+# and the two had already drifted apart by one cipher before there was one
+# place to point at.
+#
+from haproxy_mgmt.tls_policy import TLS_POLICIES
+
+#
 # Marks everything this module writes. A generated section can then never
 # collide with a handwritten one in `core/` or `manual/`, and anybody reading
 # `show stat` on a node can tell at a glance which half of the configuration a
@@ -101,33 +109,6 @@ NODE_CERTIFICATE_DIR = "/etc/haproxy/certs"
 # stays for everything that cannot.
 #
 ALPN = "h2,http/1.1"
-
-#
-# What each TLS policy a VIP may name means on a bind line. The names are
-# `config.TLS_POLICY_NAMES`; the syntax is here, because this is the module
-# that writes HAProxy.
-#
-# The cipher sets are Mozilla's, and they are written as one string per policy
-# rather than assembled from parts: a cipher list is an ordered preference, and
-# code that builds one out of pieces makes the order an accident.
-#
-# Both were put through `haproxy -c` on this machine on 3.4.4, and `modern` was
-# run: a client held to TLS 1.2 got no handshake at all, and a TLS 1.3 client
-# was served.
-#
-TLS_1_2_CIPHERS = (
-    "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
-    "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:"
-    "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:"
-    "DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305"
-)
-TLS_1_3_CIPHERSUITES = "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
-TLS_POLICIES = {
-    "intermediate": (
-        f" ssl-min-ver TLSv1.2 ciphers {TLS_1_2_CIPHERS} ciphersuites {TLS_1_3_CIPHERSUITES}"
-    ),
-    "modern": f" ssl-min-ver TLSv1.3 ciphersuites {TLS_1_3_CIPHERSUITES}",
-}
 
 #
 # The V1 defaults from the plan, written into every generated section. `tunnel`

@@ -33,7 +33,7 @@ backends:
       tls: true
       interval: 30s
     servers:
-      - host: 198.51.100.11
+      - host: probe-a.example.net
         port: 8443
   tcp-content:
     balance: roundrobin
@@ -77,5 +77,5 @@ backends:
     tls:
       verify: system
     servers:
-      - host: 198.51.100.15
+      - host: content-a.example.net
         port: 8443

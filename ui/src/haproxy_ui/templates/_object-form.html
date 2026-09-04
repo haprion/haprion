@@ -167,6 +167,11 @@
         apart from, so naming the store said nothing anybody could act on. What
         the choice is actually between is whether the pool's certificate has to
         be trusted, and that is what the options now say.
+
+        The help text is about the one thing the choice demands of the rest of
+        the form: verification needs a name to send, so a pool named by address
+        cannot be verified. Said here rather than only in the refusal, because
+        by the time the refusal arrives the servers have already been typed.
       #}
       <label>Backend TLS
         <select name="backend_tls">
@@ -174,6 +179,7 @@
           <option value="system"{% if form.backend_tls == 'system' %} selected{% endif %}>HTTPS, verify the certificate</option>
           <option value="none"{% if form.backend_tls == 'none' %} selected{% endif %}>HTTPS, do not verify</option>
         </select>
+        <small>Verified pools need DNS names, not addresses: the name is sent to the pool and checked against its certificate.</small>
       </label>
       {#
         A different question from the one above it. That one is whether the

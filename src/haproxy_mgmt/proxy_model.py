@@ -422,6 +422,24 @@ def duration_ms(value: str) -> int:
 @dataclass(frozen=True, slots=True)
 class BackendTls:
     verify: str
+    """Whether the pool's certificate has to be trusted.
+
+    **Verifying requires that every server is named, not addressed.** The name
+    is sent to the pool as SNI and is what the certificate is checked against,
+    and there is no honest way to derive one from an address. A pool named by
+    address is therefore refused rather than verified against something nobody
+    chose.
+
+    That is not a preference about how to write configuration. Measured on
+    HAProxy 3.4.4 on 2026-09-04: `ssl verify required ca-file @system-ca`
+    without `sni` fails the handshake on every request - the site answers 503 -
+    against a pool whose certificate `openssl s_client` accepts with
+    `Verify return code: 0`. The health check meanwhile stays green, because a
+    check does not verify what traffic verifies. A site that is down while
+    every reading says it is up is the failure this project exists to prevent,
+    so the name is required at the point the object is written.
+    """
+
     policy: str = DEFAULT_BACKEND_POLICY
     """Which TLS versions and ciphers this pool may be reached over.
 
@@ -740,6 +758,16 @@ def _optional_prefix(value: Mapping[str, Any], key: str, location: str) -> str |
     return raw.rstrip("/") or None
 
 
+def _is_address(host: str) -> bool:
+    """Whether this names a machine by address rather than by name."""
+
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    return True
+
+
 def _server(value: Any, location: str) -> Server:
     data = _mapping(value, location)
     _only_keys(data, {"host", "port", "backup"}, location)
@@ -927,6 +955,30 @@ def _backend(name: str, value: Any, location: str) -> Backend:
                 else DEFAULT_BACKEND_POLICY
             ),
         )
+
+    if backend_tls is not None and backend_tls.verify != "none":
+        #
+        # Verification needs a name to send, and it needs it twice over.
+        # Measured on 3.4.4: `ssl verify required` against a server named only
+        # by address fails the handshake before any answer arrives - the pool
+        # 503s on every request - while the health check stays green, because a
+        # check does not verify what traffic verifies. That combination is the
+        # worst one this project knows: a site that is down while every reading
+        # says it is up.
+        #
+        # So the name is required rather than defaulted. There is no honest
+        # default: an address cannot be turned into the name a certificate was
+        # issued for, and guessing one would verify against something nobody
+        # chose.
+        #
+        addressed = sorted({member.host for member in members if _is_address(member.host)})
+        if addressed:
+            raise ModelError(
+                f"{location}.tls.verify is {backend_tls.verify}, so every server must be named "
+                f"by hostname rather than by address - verification sends the name to the pool "
+                f"and checks the certificate against it. Named by address: "
+                f"{', '.join(addressed)}"
+            )
 
     health = _health(data.get("health", {"type": "disabled"}), f"{location}.health")
     if health.type == "http" and health.tls and backend_tls is None:

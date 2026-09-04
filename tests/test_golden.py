@@ -37,7 +37,7 @@ from haproxy_mgmt.golden import (
     produced,
     produced_lists,
 )
-from haproxy_mgmt.proxy_model import Proxy, load_proxy
+from haproxy_mgmt.proxy_model import ModelError, Proxy, load_proxy
 from haproxy_mgmt.reservations import Reservations
 
 #
@@ -281,6 +281,28 @@ class ThingsAWholeLayerRefuses(unittest.TestCase):
 
 
 MINIMAL = (Path(__file__).parent / "golden" / "minimal" / "shop.yaml").read_bytes()
+
+VERIFIED = b"""\
+schema: 1
+name: shop
+hostnames: [shop.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: pool
+backends:
+  pool:
+    balance: roundrobin
+    tls:
+      verify: system
+    health:
+      type: http
+      path: /
+    servers:
+      - host: pool-a.example.net
+        port: 8443
+"""
 
 
 if __name__ == "__main__":
@@ -733,6 +755,52 @@ class WhatTheHandwrittenHalfHasAlreadyClaimed(unittest.TestCase):
         ).configuration
 
         self.assertIn("1000-frontends.cfg", files)
+
+
+class AVerifiedPoolSendsItsName(unittest.TestCase):
+    """Measured on 3.4.4, 2026-09-04, after a site 503'd with a green health card.
+
+    `ssl verify required ca-file @system-ca` without `sni` failed the handshake
+    on every request - `SC--`, nothing established, three retries inside a
+    millisecond - against a pool whose certificate `openssl s_client` accepts
+    with `Verify return code: 0`. Adding `sni` fixed it and `verifyhost` alone
+    did not, isolated across five configurations.
+
+    The check carries it too. `sni` and `check-sni` are separate settings, so
+    without both the check speaks a different handshake than the traffic it is
+    supposed to report on - which is how the pool stayed green while every
+    request failed.
+    """
+
+    def rendered(self, document: bytes) -> str:
+        files = generate(
+            [load_proxy("shop", document)],
+            vips=dict(DEFAULT_VIPS),
+            default_vip="main",
+        ).configuration
+        return files["1001-shop.cfg"]
+
+    def test_a_verified_pool_sends_the_server_name(self) -> None:
+        text = self.rendered(VERIFIED)
+
+        self.assertIn("sni str(pool-a.example.net)", text)
+        self.assertIn("check-sni str(pool-a.example.net)", text)
+
+    def test_an_unverified_pool_sends_nothing(self) -> None:
+        """Nothing to check the name against, so there is no name to send."""
+
+        text = self.rendered(VERIFIED.replace(b"verify: system", b"verify: none"))
+
+        self.assertNotIn("sni ", text)
+
+    def test_a_verified_pool_named_by_address_is_refused(self) -> None:
+        """There is no honest default: an address is not the name on a certificate."""
+
+        with self.assertRaises(ModelError) as raised:
+            load_proxy("shop", VERIFIED.replace(b"pool-a.example.net", b"192.0.2.10"))
+
+        self.assertIn("192.0.2.10", str(raised.exception))
+        self.assertIn("hostname", str(raised.exception))
 
 
 class AReservationNamesAnAddress(unittest.TestCase):

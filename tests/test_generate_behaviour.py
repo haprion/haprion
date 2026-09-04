@@ -1052,7 +1052,13 @@ backends:
     health:
       type: disabled
     servers:
-      - host: 127.0.0.1
+      #
+      # A name rather than the address, because `verify` requires one: the
+      # generator sends it as SNI, and the model refuses a verified pool that
+      # has only an address to send. `localhost` is the same machine either
+      # way, so what these cases measure is unchanged.
+      #
+      - host: localhost
         port: {web}
 """
 

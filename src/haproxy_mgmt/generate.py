@@ -1405,8 +1405,8 @@ def _backend(
         lines.append(
             f"    server {name} {server.host}:{server.port}"
             f" guid {server_guid(proxy.name, backend.name, server)}"
-            f"{_server_tls(backend)}{_server_address(server, resolvers)}"
-            f"{_server_check(backend)}{cookie}{backup}{limit}{ramp}"
+            f"{_server_tls(backend, server)}{_server_address(server, resolvers)}"
+            f"{_server_check(backend, server)}{cookie}{backup}{limit}{ramp}"
         )
     return lines
 
@@ -1482,7 +1482,7 @@ def _health_lines(health: Health) -> list[str]:
     return lines
 
 
-def _server_check(backend: Backend) -> str:
+def _server_check(backend: Backend, server: Server) -> str:
     """The check on the server line, and whether it is encrypted.
 
     A pool reached over TLS is checked over TLS - but HAProxy only inherits
@@ -1504,10 +1504,25 @@ def _server_check(backend: Backend) -> str:
         return ""
     port = f" port {health.port}" if health.port is not None else ""
     encrypted = " check-ssl" if backend.tls is not None and health.port is not None else ""
-    return f" check{port}{encrypted} inter {health.interval} rise {health.rise} fall {health.fall}"
+    #
+    # The check sends the same name traffic does. `sni` and `check-sni` are
+    # separate settings, so without this the check would negotiate a different
+    # handshake than the requests it is supposed to speak for - and a check
+    # that does not exercise the path traffic takes is worse than no check,
+    # because it reports on something nobody is asking about.
+    #
+    named = (
+        f" check-sni str({server.host})"
+        if backend.tls is not None and backend.tls.verify != "none"
+        else ""
+    )
+    return (
+        f" check{port}{encrypted}{named}"
+        f" inter {health.interval} rise {health.rise} fall {health.fall}"
+    )
 
 
-def _server_tls(backend: Backend) -> str:
+def _server_tls(backend: Backend, server: Server) -> str:
     """How this pool is reached, when it is reached over TLS.
 
     `@system-ca` is HAProxy's own name for the trust store the operating system
@@ -1515,6 +1530,17 @@ def _server_tls(backend: Backend) -> str:
     out of the generator - and `verify required` without a CA is refused by
     HAProxy outright, measured on 3.4.4, so there is no silent third option
     where verification quietly does nothing.
+
+    **`sni` is not optional here.** Measured on 3.4.4 on 2026-09-04, against a
+    pool whose certificate a browser and `openssl s_client` both accept:
+    `ssl verify required ca-file @system-ca` without `sni` fails the handshake
+    on every request - `SC--`, no connection established, three retries in a
+    millisecond - and the site answers 503 while its health check stays green.
+    Adding `sni` fixed it; `verifyhost` alone did not. Five configurations were
+    compared to isolate that, and the TLS policy turned out to be innocent.
+
+    The name comes from the server's own host, which the model has already
+    required to be a name rather than an address for exactly this reason.
     """
 
     if backend.tls is None:
@@ -1528,4 +1554,4 @@ def _server_tls(backend: Backend) -> str:
     policy = BACKEND_POLICIES[backend.tls.policy]
     if backend.tls.verify == "none":
         return f" ssl verify none{policy}"
-    return f" ssl verify required ca-file @system-ca{policy}"
+    return f" ssl verify required ca-file @system-ca sni str({server.host}){policy}"

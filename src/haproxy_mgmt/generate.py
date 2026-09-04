@@ -58,7 +58,7 @@ from haproxy_mgmt.route_match import order_routes
 # and the two had already drifted apart by one cipher before there was one
 # place to point at.
 #
-from haproxy_mgmt.tls_policy import TLS_POLICIES
+from haproxy_mgmt.tls_policy import BACKEND_POLICIES, TLS_POLICIES
 
 #
 # Marks everything this module writes. A generated section can then never
@@ -1405,6 +1405,13 @@ def _server_tls(backend: Backend) -> str:
 
     if backend.tls is None:
         return ""
+    #
+    # Two answers on one line, and they are separate questions. `verify` is
+    # whether the certificate has to be trusted; the policy is how old the
+    # handshake may be. Written in that order because that is how the object
+    # reads.
+    #
+    policy = BACKEND_POLICIES[backend.tls.policy]
     if backend.tls.verify == "none":
-        return " ssl verify none"
-    return " ssl verify required ca-file @system-ca"
+        return f" ssl verify none{policy}"
+    return f" ssl verify required ca-file @system-ca{policy}"

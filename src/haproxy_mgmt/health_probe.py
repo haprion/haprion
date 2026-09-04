@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from haproxy_mgmt.config import DeployIdentity, Node
+from haproxy_mgmt.tls_policy import DEFAULT_MIN_VERSION
 
 SCHEMA_VERSION = 1
 
@@ -66,6 +67,14 @@ class Target:
     verify: bool = False
     path: str = "/"
     host_header: str = ""
+    min_version: str = DEFAULT_MIN_VERSION
+    """The oldest handshake this check may use, as HAProxy would name it.
+
+    The object's policy, not the probe's own. HAProxy will reach the pool under
+    what the object says, so a probe holding a different floor would answer a
+    question nobody asked - and the answer people act on is "the pool is down"
+    when it is only unreachable from here.
+    """
 
     def request(self) -> dict[str, Any]:
         return {
@@ -76,6 +85,7 @@ class Target:
             "verify": self.verify,
             "path": self.path,
             "host_header": self.host_header,
+            "min_version": self.min_version,
         }
 
 

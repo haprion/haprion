@@ -21,6 +21,11 @@ from typing import Any
 from uuid import uuid4
 
 from haproxy_mgmt.probe_socket import ProbeUnavailable, ask, build_request
+from haproxy_mgmt.tls_policy import (
+    BACKEND_MIN_VERSION,
+    DEFAULT_BACKEND_POLICY,
+    DEFAULT_MIN_VERSION,
+)
 
 #
 # The same bound the helper and the node hold. Named here so a pool with more
@@ -100,6 +105,14 @@ def targets_from(form: Mapping[str, Any]) -> list[dict[str, Any]]:
     kind = "http" if text("health_type") == "http" else "tcp"
     tls = bool(text("backend_tls"))
     check_port = text("health_port")
+    #
+    # The floor the object asks for, as it stands on the screen. Taken from the
+    # form rather than from what is published, for the reason the whole card
+    # exists: the question is whether the check *would* work, and an unsaved
+    # `legacy` is exactly the change somebody is trying to test.
+    #
+    policy = text("backend_tls_policy") or DEFAULT_BACKEND_POLICY
+    min_version = BACKEND_MIN_VERSION.get(policy, DEFAULT_MIN_VERSION)
 
     targets: list[dict[str, Any]] = []
     for line in text("servers").splitlines():
@@ -118,6 +131,7 @@ def targets_from(form: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "verify": text("backend_tls") == "system",
                 "path": text("health_path") or "/",
                 "host_header": text("health_host"),
+                "min_version": min_version,
             }
         )
     return targets[:MAX_TARGETS]

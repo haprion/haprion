@@ -26,6 +26,27 @@
   };
 
   //
+  // How old a handshake to the pool may be is only a question when there is a
+  // handshake. Greyed out for the reason the port and the balancing key are:
+  // the field stays where it is and says the choice above decided it.
+  //
+  // The engine agrees, so the browser is again a convenience and not the
+  // control - `build_document` writes no `tls` block at all for a plain HTTP
+  // pool, and a policy re-enabled by hand has nothing to attach to.
+  //
+  const wireBackendTlsPolicy = () => {
+    const tls = document.querySelector("select[name='backend_tls']");
+    const policy = document.querySelector("select[name='backend_tls_policy']");
+    if (!tls || !policy) return;
+
+    const apply = () => {
+      policy.disabled = !tls.value;
+    };
+    tls.addEventListener("change", apply);
+    apply();
+  };
+
+  //
   // The balancing key has nothing to name unless the algorithm hashes
   // something: `hdr` takes a header, `url_param` a query parameter, and the
   // engine refuses a key beside any other algorithm rather than ignoring it.
@@ -168,6 +189,7 @@
   window.addEventListener("DOMContentLoaded", () => {
     wire();
     wireBalanceKey();
+    wireBackendTlsPolicy();
     wireRedirectStatus();
     keepPosition();
     wireOwnSource();

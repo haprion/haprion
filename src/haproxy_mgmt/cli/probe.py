@@ -23,15 +23,18 @@ from typing import Any, TextIO
 from haproxy_mgmt.cli.caller import usage
 from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.probe_socket import build_request
+from haproxy_mgmt.tls_policy import BACKEND_MIN_VERSION, DEFAULT_MIN_VERSION
 
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-probe-helper"
 SUDO = "/usr/bin/sudo"
 OPERATION = "probe"
+ALLOWED_MIN_VERSIONS = frozenset(BACKEND_MIN_VERSION.values())
 
 USAGE = (
     "Usage:\n"
     "  haproxy-probe -c <cluster> -t <host:port>[,<host:port>...] "
-    "[--http <path>] [--host <name>] [--tls [--verify]] [--source <address>] [--json]\n"
+    "[--http <path>] [--host <name>] [--tls [--verify] [--min-version <version>]] "
+    "[--source <address>] [--json]\n"
     "\n"
     "Examples:\n"
     "  haproxy-probe -c alpha -t 198.51.100.10:8080\n"
@@ -66,7 +69,7 @@ def run_probe_helper(
 
 
 def _targets(
-    written: str, *, path: str, host: str, tls: bool, verify: bool
+    written: str, *, path: str, host: str, tls: bool, verify: bool, min_version: str
 ) -> list[dict[str, Any]]:
     targets = []
     for entry in written.split(","):
@@ -83,6 +86,7 @@ def _targets(
                 "type": "http" if path else "tcp",
                 "tls": tls,
                 "verify": verify,
+                "min_version": min_version,
                 "path": path or "/",
                 "host_header": host,
             }
@@ -100,6 +104,7 @@ def _parse(argv: list[str]) -> dict[str, Any]:
         "host": "",
         "tls": False,
         "verify": False,
+        "min_version": DEFAULT_MIN_VERSION,
         "source": "",
         "json": False,
     }
@@ -126,6 +131,18 @@ def _parse(argv: list[str]) -> dict[str, Any]:
             index += 1
         elif argument == "--verify":
             options["verify"] = True
+        #
+        # The same floor an object may name, so the command a person runs and
+        # the button in the form ask the nodes the same question. A pool the
+        # interface reports as reachable and the command reports as down would
+        # be the two implementations disagreeing about the pool.
+        #
+        elif argument == "--min-version" and index + 1 < len(argv):
+            asked = argv[index + 1]
+            if asked not in ALLOWED_MIN_VERSIONS:
+                usage(USAGE)
+            options["min_version"] = asked
+            index += 1
             index += 1
         elif argument == "--json":
             options["json"] = True
@@ -185,6 +202,7 @@ def main(argv: list[str] | None = None, *, writer: TextIO | None = None) -> int:
             host=options["host"],
             tls=options["tls"],
             verify=options["verify"],
+            min_version=options["min_version"],
         ),
         source=options["source"],
     )

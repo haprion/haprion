@@ -1060,6 +1060,29 @@ backends:
 """
 
 
+BACKEND_TLS_POLICY = """
+schema: 1
+name: secure
+hostnames: [secure.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    tls:
+      verify: none
+      policy: {policy}
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
+
 def self_signed(directory: Path, name: str, *, expired: bool) -> tuple[Path, Path]:
     """A certificate no trust store knows, optionally already out of date.
 
@@ -1677,3 +1700,86 @@ class EveryClassThatStartsHaproxySaysSoFirst(unittest.TestCase):
         )
 
         self.assertTrue(self._starts_haproxy(unguarded.body[0]))
+
+
+@unittest.skipUnless(
+    shutil.which("haproxy") and shutil.which("openssl"),
+    "haproxy or openssl is not installed here",
+)
+class HowOldAPoolMayBe(unittest.TestCase):
+    """The `legacy` policy, proved against a backend that really is that old.
+
+    It exists for one case: an appliance whose web interface speaks nothing
+    above TLS 1.1 - a print server, a lights-out card, something with a decade
+    on it. There is no such thing to point at in a test environment, so the
+    stand-in is OpenSSL told to be one.
+
+    Both halves of the policy are load-bearing and neither is enough alone.
+    `ssl-min-ver TLSv1.1` says what HAProxy may negotiate; `@SECLEVEL=0` says
+    what OpenSSL will let it. The nodes run at security level 2, which refuses
+    everything below TLS 1.2 whatever the version keyword asked for, so a
+    policy with only the first would be a setting that reads correctly and
+    changes nothing.
+
+    The other direction matters as much: `intermediate` is what a pool gets
+    when its object names no policy, and this proves that default is a real
+    floor rather than a line in a file.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.root = Path(cls.directory.name)
+        cls.running: list[subprocess.Popen[bytes]] = []
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        for process in cls.running:
+            process.terminate()
+            process.wait(timeout=5)
+        cls.directory.cleanup()
+
+    def reach(self, *, policy: str) -> int:
+        """One request through a proxy, to a pool that speaks only TLS 1.1."""
+
+        certificate, key = self_signed(self.root, f"old-{policy}", expired=False)
+        backend = free_port()
+        self.running.append(spawned.old_tls_server(certificate, key, "-tls1_1", backend))
+
+        port = free_port()
+        root = self.root / policy
+        root.mkdir()
+        (root / "0000-core.cfg").write_text(CORE)
+        document = BACKEND_TLS_POLICY.format(policy=policy, web=backend)
+        layer = generate(
+            [load_proxy("secure", document.encode())],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            ports={"http": port},
+        )
+        for filename, content in layer.items():
+            (root / filename).write_text(content)
+
+        arguments: list[str] = []
+        for path in sorted(root.iterdir()):
+            arguments += ["-f", str(path)]
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        self.running.append(start_haproxy(binary, arguments, port))
+
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", "secure.example.com")
+            connection.endheaders()
+            return int(connection.getresponse().status)
+        finally:
+            connection.close()
+
+    def test_legacy_reaches_a_backend_that_speaks_only_tls_1_1(self) -> None:
+        self.assertEqual(self.reach(policy="legacy"), 200)
+
+    def test_intermediate_does_not(self) -> None:
+        """503: the pool is refused, which is the floor doing its work."""
+
+        self.assertEqual(self.reach(policy="intermediate"), 503)

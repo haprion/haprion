@@ -277,6 +277,13 @@ class ObjectForm(BaseModel):
     health_send: Annotated[str, StringConstraints(max_length=255)] = ""
     health_expect: Annotated[str, StringConstraints(max_length=255)] = ""
     backend_tls: Annotated[str, StringConstraints(max_length=16)] = ""
+    backend_tls_policy: Annotated[str, StringConstraints(max_length=16)] = ""
+    """How old a handshake to this pool may be. Empty means the default.
+
+    Empty rather than the name itself, so a form that has never been touched
+    and an object that never named one write the same document. What "the
+    default" is belongs in one place, and that place is `tls_policy`.
+    """
     max_connections: Annotated[str, StringConstraints(max_length=8)] = ""
     slow_start: Annotated[str, StringConstraints(max_length=8)] = ""
     allow_from: list[Annotated[str, StringConstraints(max_length=64)]] = Field(default_factory=list)

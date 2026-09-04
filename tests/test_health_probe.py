@@ -324,53 +324,6 @@ def self_signed(directory: Path) -> tuple[Path, Path]:
     return certificate, key
 
 
-def tls_server(certificate: Path, key: Path, version: str, port: int) -> sp.Popen[bytes]:
-    """A backend that speaks `version` and nothing else, run by OpenSSL itself.
-
-    Not a Python server. A `ssl.SSLContext` configured to offer TLS 1.1 is code
-    in this repository that permits a deprecated protocol, and the security gate
-    is right to say so - it cannot tell a fixture that must be old from a client
-    that should not be. Handing the job to `openssl s_server` puts the old
-    protocol in a tool rather than in our source, and makes the stand-in a real
-    OpenSSL server, which is closer to the appliance this is about anyway.
-
-    `SECLEVEL=0` because OpenSSL's own policy otherwise refuses to offer the old
-    versions at all: the point is a backend that offers one and a probe that
-    declines it, not a backend that could not be built. `-www` answers any GET
-    with a status line, which is all the probe reads.
-    """
-
-    openssl = shutil.which("openssl")
-    assert openssl is not None
-    process = sp.Popen(
-        [
-            openssl,
-            "s_server",
-            "-accept",
-            str(port),
-            "-cert",
-            str(certificate),
-            "-key",
-            str(key),
-            version,
-            "-cipher",
-            "DEFAULT@SECLEVEL=0",
-            "-www",
-            "-quiet",
-        ],
-        stdout=sp.DEVNULL,
-        stderr=sp.DEVNULL,
-        preexec_fn=spawned.die_with_the_test_run,
-    )
-    try:
-        spawned.wait_for(port)
-    except BaseException:
-        process.terminate()
-        process.wait(timeout=5)
-        raise
-    return process
-
-
 @unittest.skipUnless(shutil.which("openssl"), "openssl is not installed here")
 class HowOldATlsBackendMayBe(unittest.TestCase):
     """The floor is the probe's own, not whatever OpenSSL on the node was built with.
@@ -393,7 +346,7 @@ class HowOldATlsBackendMayBe(unittest.TestCase):
 
     def probe_against(self, version: str) -> dict[str, object]:
         port = free_port()
-        server = tls_server(self.certificate, self.key, version, port)
+        server = spawned.old_tls_server(self.certificate, self.key, version, port)
         try:
             code, answer = ask(
                 {
@@ -424,3 +377,70 @@ class HowOldATlsBackendMayBe(unittest.TestCase):
 
         self.assertFalse(result["ok"])
         self.assertIn("TLS failed", str(result["error"]))
+
+
+@unittest.skipUnless(shutil.which("openssl"), "openssl is not installed here")
+class AFloorTheObjectChose(unittest.TestCase):
+    """The probe reaches what HAProxy would reach, and refuses what it would refuse.
+
+    A pool whose object says `legacy` is reached by HAProxy over TLS 1.1. If the
+    probe kept its own floor of TLS 1.2 it would answer that the pool is down
+    while the pool is serving - and a health card is read during an incident, so
+    a confident wrong answer is the expensive kind.
+
+    The default is unchanged and stays TLS 1.2: a request from a manager too old
+    to send the field means exactly what it used to mean.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.certificate, cls.key = self_signed(Path(cls.directory.name))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.directory.cleanup()
+
+    def probe(self, **fields: object) -> dict[str, object]:
+        port = free_port()
+        server = spawned.old_tls_server(self.certificate, self.key, "-tls1_1", port)
+        try:
+            code, answer = ask(
+                {
+                    "schema_version": 1,
+                    "targets": [target(port=port, tls=True, verify=False, path="/", **fields)],
+                }
+            )
+            self.assertEqual(code, 0)
+            return answer["results"][0]
+        finally:
+            server.terminate()
+            server.wait(timeout=5)
+
+    def test_a_target_that_asks_for_tls_1_1_reaches_a_tls_1_1_backend(self) -> None:
+        result = self.probe(min_version="TLSv1.1")
+
+        self.assertTrue(result["ok"], result["error"])
+        self.assertEqual(result["status"], 200)
+
+    def test_the_same_backend_is_refused_when_nothing_asks(self) -> None:
+        """The default is a floor, not an absence of one."""
+
+        result = self.probe()
+
+        self.assertFalse(result["ok"])
+        self.assertIn("TLS failed", str(result["error"]))
+
+    def test_a_floor_that_is_not_one_of_the_names_is_refused(self) -> None:
+        """And refused as a request, not attempted and reported as a failure."""
+
+        code, answer = ask(
+            {
+                "schema_version": 1,
+                "targets": [target(port=free_port(), tls=True, min_version="SSLv3")],
+            }
+        )
+
+        self.assertEqual(code, 64)
+        self.assertFalse(answer["ok"])
+        self.assertIn("min_version", str(answer["error"]))

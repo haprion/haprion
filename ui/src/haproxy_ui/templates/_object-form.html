@@ -144,6 +144,23 @@
           <option value="none"{% if form.backend_tls == 'none' %} selected{% endif %}>HTTPS, do not verify</option>
         </select>
       </label>
+      {#
+        A different question from the one above it. That one is whether the
+        pool's certificate has to be trusted; this is how old the handshake may
+        be, and a device can need a lax answer to one and not the other.
+
+        Off when the pool is plain HTTP, because there is no handshake to hold
+        to anything - the same `disabled` the TCP port and the balancing key
+        use, so the form has one way of saying "not for this shape".
+      #}
+      <label class="tls-only" data-backend-tls="1">Oldest handshake to the pool
+        <select name="backend_tls_policy"{% if not form.backend_tls %} disabled{% endif %}>
+          <option value=""{% if not form.backend_tls_policy %} selected{% endif %}>TLS 1.2 and 1.3 — the default</option>
+          <option value="modern"{% if form.backend_tls_policy == 'modern' %} selected{% endif %}>TLS 1.3 only</option>
+          <option value="legacy"{% if form.backend_tls_policy == 'legacy' %} selected{% endif %}>TLS 1.1 and up — for old equipment</option>
+        </select>
+        <small>Only what this pool is reached over. Listeners are never offered TLS 1.1; <code>legacy</code> also lowers OpenSSL's security level for this pool alone, which is what an appliance from before TLS 1.2 needs.</small>
+      </label>
       <label><span class="field-title">Session cookie <span class="optional">(optional)</span></span><input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Case-sensitive, empty means no persistence.</small></label>
       <label><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>Connections one server takes at once; the rest queue for 5 s.</small></label>
       <label><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; must be longer than the <span class="slow-start-interval" data-default="{{ check_interval }}">{{ form.health_interval or check_interval }}</span> check interval.</small></label>

@@ -46,6 +46,7 @@ from haproxy_mgmt.helper_protocol import (
     write_failure,
 )
 from haproxy_mgmt.proxy_model import HOSTNAME
+from haproxy_mgmt.tls_policy import BACKEND_MIN_VERSION, DEFAULT_MIN_VERSION
 
 OPERATION = "probe"
 PARAMETERS = frozenset({"targets", "source", "timeout_ms"})
@@ -94,6 +95,17 @@ def _targets(parameters: object) -> tuple[list[Target], str, int]:
             raise HelperProtocolError(
                 "a target's host header is not a name", exit_code=EXIT_BAD_INPUT
             )
+        #
+        # Refused here as well as on the node. The node's own refusal would
+        # arrive as a probe that answered nothing, from four nodes at once, and
+        # the field it is about would not be in the message.
+        #
+        min_version = entry.get("min_version", DEFAULT_MIN_VERSION) or DEFAULT_MIN_VERSION
+        if min_version not in BACKEND_MIN_VERSION.values():
+            raise HelperProtocolError(
+                "a target's min_version is not a TLS version this may ask for",
+                exit_code=EXIT_BAD_INPUT,
+            )
         targets.append(
             Target(
                 host=host,
@@ -103,6 +115,7 @@ def _targets(parameters: object) -> tuple[list[Target], str, int]:
                 verify=entry.get("verify") is True,
                 path=path,
                 host_header=header,
+                min_version=min_version,
             )
         )
 

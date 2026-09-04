@@ -15,9 +15,12 @@ kind of spawned process cannot quietly grow a second, weaker copy of it.
 from __future__ import annotations
 
 import ctypes
+import shutil
 import signal
 import socket
+import subprocess as sp
 import time
+from pathlib import Path
 
 #
 # What the kernel is asked to do to a spawned child when this process goes.
@@ -52,3 +55,50 @@ def wait_for(port: int, timeout: float = 5.0) -> None:
         except OSError:
             time.sleep(0.05)
     raise AssertionError(f"nothing came up on port {port} within {timeout}s")
+
+
+def old_tls_server(certificate: Path, key: Path, version: str, port: int) -> sp.Popen[bytes]:
+    """A backend that speaks `version` and nothing else, run by OpenSSL itself.
+
+    Not a Python server. A `ssl.SSLContext` configured to offer TLS 1.1 is code
+    in this repository that permits a deprecated protocol, and the security gate
+    is right to say so - it cannot tell a fixture that must be old from a client
+    that should not be. Handing the job to `openssl s_server` puts the old
+    protocol in a tool rather than in our source, and makes the stand-in a real
+    OpenSSL server, which is closer to the appliance this is about anyway.
+
+    `SECLEVEL=0` because OpenSSL's own policy otherwise refuses to offer the old
+    versions at all: the point is a backend that offers one and a probe that
+    declines it, not a backend that could not be built. `-www` answers any GET
+    with a status line, which is all the probe reads.
+    """
+
+    openssl = shutil.which("openssl")
+    assert openssl is not None
+    process = sp.Popen(
+        [
+            openssl,
+            "s_server",
+            "-accept",
+            str(port),
+            "-cert",
+            str(certificate),
+            "-key",
+            str(key),
+            version,
+            "-cipher",
+            "DEFAULT@SECLEVEL=0",
+            "-www",
+            "-quiet",
+        ],
+        stdout=sp.DEVNULL,
+        stderr=sp.DEVNULL,
+        preexec_fn=die_with_the_test_run,
+    )
+    try:
+        wait_for(port)
+    except BaseException:
+        process.terminate()
+        process.wait(timeout=5)
+        raise
+    return process

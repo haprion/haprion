@@ -140,6 +140,21 @@ def read_request(stream):
         except ValueError:
             refuse("source must be an IP address")
 
+    def min_version_of(entry):
+        """Which floor this target asks for, refusing anything not on the list.
+
+        Absent is the default rather than an error: a manager older than this
+        field sends none, and a probe that refused the whole request over it
+        would take a working path away to gain nothing.
+        """
+
+        asked = entry.get("min_version")
+        if asked is None:
+            return DEFAULT_MIN_VERSION
+        if asked not in MIN_VERSIONS:
+            refuse(f"a target's min_version must be one of: {', '.join(MIN_VERSIONS)}")
+        return asked
+
     targets = payload.get("targets")
     if not isinstance(targets, list) or not targets:
         refuse("targets must be a non-empty list")
@@ -162,6 +177,7 @@ def read_request(stream):
                 "verify": flag(entry, "verify"),
                 "path": text(entry, "path", PATH, required=False, default="/") or "/",
                 "host_header": text(entry, "host_header", HOST, required=False),
+                "min_version": min_version_of(entry),
             }
         )
     return {"timeout_ms": timeout, "source": source, "targets": read}
@@ -205,6 +221,23 @@ def local_addresses():
     return {match.group(1) for match in ADDRESS_LINE.finditer(completed.stdout)}
 
 
+#
+# What a target may ask to be reached over. The names are the ones the object
+# model uses, so a policy and a probe cannot come to mean different things by
+# the same word; `tls_policy.BACKEND_MIN_VERSION` is the other half.
+#
+# TLS 1.0 is deliberately absent. The lowest an object may choose is 1.1, and a
+# probe that could go lower than the configuration would answer a question
+# nobody can act on.
+#
+MIN_VERSIONS = {
+    "TLSv1.1": ssl.TLSVersion.TLSv1_1,
+    "TLSv1.2": ssl.TLSVersion.TLSv1_2,
+    "TLSv1.3": ssl.TLSVersion.TLSv1_3,
+}
+DEFAULT_MIN_VERSION = "TLSv1.2"
+
+
 def holds(source, addresses):
     """Whether this node can answer for an object leaving from `source`.
 
@@ -239,11 +272,23 @@ def connect(target, timeout, source):
     # Said rather than inherited. `create_default_context` leaves the floor to
     # whatever OpenSSL on the node happens to be built with, so the same probe
     # against the same pool could negotiate differently on two nodes and the
-    # answer would describe the node rather than the backend. TLS 1.2 is the
-    # floor everything still in service speaks; a backend that needs lower is a
-    # finding, not a probe to loosen.
+    # answer would describe the node rather than the backend.
     #
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    # The floor is the object's, not this script's. HAProxy will reach the pool
+    # under the policy the object names, and a probe holding a floor of its own
+    # would refuse a backend HAProxy accepts - reporting a healthy pool as
+    # broken, which is worse than not asking. TLS 1.2 when nothing says
+    # otherwise, which is what a manager too old to send the field means.
+    #
+    context.minimum_version = MIN_VERSIONS[target["min_version"]]
+    if context.minimum_version < ssl.TLSVersion.TLSv1_2:
+        #
+        # OpenSSL's security level is the second gate and refuses the old
+        # versions whatever the minimum says. HAProxy's own `server` line pays
+        # the same price for the same reach, so the probe pays it too - and only
+        # for the target that asked, never for the rest of the request.
+        #
+        context.set_ciphers("DEFAULT@SECLEVEL=0")
     if not target["verify"]:
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE

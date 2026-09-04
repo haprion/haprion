@@ -31,6 +31,7 @@ from haproxy_mgmt.proxy_model import (
     load_proxy,
     read_document,
 )
+from haproxy_mgmt.tls_policy import DEFAULT_BACKEND_POLICY
 
 #
 # A documented example cluster. No page renders against it any more.
@@ -138,6 +139,7 @@ DEFAULTS = {
     "health_rise": "",
     "health_fall": "",
     "backend_tls": "",
+    "backend_tls_policy": "",
     "max_connections": "",
     "slow_start": "",
     "allow_from": (),
@@ -361,7 +363,17 @@ def build_document(form: dict[str, object]) -> str:
     if text("cookie"):
         backend["cookie"] = text("cookie")
     if text("backend_tls"):
-        backend["tls"] = {"verify": text("backend_tls")}
+        pool_tls: dict[str, str] = {"verify": text("backend_tls")}
+        #
+        # Written only when it is not the default, so turning the field on and
+        # off again leaves the document it started from. A published object that
+        # never named a policy would otherwise gain a line the moment somebody
+        # opened its page.
+        #
+        policy = text("backend_tls_policy")
+        if policy and policy != DEFAULT_BACKEND_POLICY:
+            pool_tls["policy"] = policy
+        backend["tls"] = pool_tls
     if text("max_connections"):
         limit = text("max_connections")
         if not limit.isdigit():
@@ -767,6 +779,7 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "health_rise": str(health.get("rise", "") or ""),
         "health_fall": str(health.get("fall", "") or ""),
         "backend_tls": str(_sub(backend, "tls").get("verify", "") or ""),
+        "backend_tls_policy": str(_sub(backend, "tls").get("policy", "") or ""),
         "max_connections": str(backend.get("max_connections", "") or ""),
         "slow_start": str(backend.get("slow_start", "") or ""),
         "allow_from": tuple(groups),

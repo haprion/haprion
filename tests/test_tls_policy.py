@@ -10,6 +10,7 @@ So one test pins what is there and the other pins when it was last looked at.
 
 from __future__ import annotations
 
+import re
 import unittest
 from datetime import date, timedelta
 from hashlib import sha256
@@ -204,3 +205,72 @@ class WhichPathsAskTheQuestion(unittest.TestCase):
         )
 
         self.assertEqual(builders, sorted((*self.CHECKED, *self.DELIBERATELY_NOT)))
+
+
+class TheProbeIsHeldToTheSameFloorAsHaproxy(unittest.TestCase):
+    """Every policy a pool may name is a floor the probe can ask for.
+
+    This is the coupling B83 exists to keep. HAProxy reaches a pool under the
+    policy the object names; the probe asks whether that reach would work. A
+    probe holding a floor of its own refuses a backend HAProxy accepts and
+    reports a healthy pool as down - and somebody acts on that during an
+    incident, which is the worst possible time to be told a wrong thing
+    confidently.
+
+    Held as a matching of two mappings rather than as a comment, because the
+    failure it prevents is silent: both sides go on working, they just answer
+    differently.
+    """
+
+    def test_every_backend_policy_has_a_floor_the_probe_can_name(self) -> None:
+        self.assertEqual(
+            sorted(tls_policy.BACKEND_POLICIES), sorted(tls_policy.BACKEND_MIN_VERSION)
+        )
+
+    def test_the_floor_the_probe_asks_for_is_the_one_haproxy_is_told(self) -> None:
+        for name, line in tls_policy.BACKEND_POLICIES.items():
+            with self.subTest(policy=name):
+                self.assertIn(
+                    f"ssl-min-ver {tls_policy.BACKEND_MIN_VERSION[name]}",
+                    line,
+                    "the server line and the probe disagree about how old this may be",
+                )
+
+    def test_the_node_script_accepts_exactly_those_floors(self) -> None:
+        """The third copy, and the one that is not Python this suite imports.
+
+        The node script is executed, not imported - it runs under whatever
+        Python the node has, with no dependency on this package. So the list it
+        carries is read out of its source, which is the only way to notice a
+        policy added here and not there.
+        """
+
+        script = (
+            Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-health-probe"
+        ).read_text(encoding="utf-8")
+        named = set(re.findall(r'"(TLSv1\.[123])":\s*ssl\.TLSVersion', script))
+
+        self.assertEqual(named, set(tls_policy.BACKEND_MIN_VERSION.values()))
+
+    def test_the_lowest_policy_also_lowers_the_security_level(self) -> None:
+        """Measured, not assumed: without it the list reaches nothing.
+
+        OpenSSL's security level is a second gate, independent of `ssl-min-ver`.
+        On HAProxy 3.4.4 against a TLS 1.1 backend the cipher list alone
+        answered 503 and the list with this answered 200, so a `legacy` policy
+        missing it would be a setting that reads correctly and changes nothing.
+        """
+
+        self.assertIn(tls_policy.SECURITY_LEVEL_OFF, tls_policy.BACKEND_POLICIES["legacy"])
+        for name in ("modern", "intermediate"):
+            with self.subTest(policy=name):
+                self.assertNotIn(tls_policy.SECURITY_LEVEL_OFF, tls_policy.BACKEND_POLICIES[name])
+
+    def test_no_listener_policy_reaches_below_tls_1_2(self) -> None:
+        """`legacy` is a backend answer only, and this is where that is enforced."""
+
+        self.assertNotIn("legacy", tls_policy.TLS_POLICIES)
+        for name, line in tls_policy.TLS_POLICIES.items():
+            with self.subTest(policy=name):
+                self.assertNotIn("TLSv1.1", line)
+                self.assertNotIn(tls_policy.SECURITY_LEVEL_OFF, line)

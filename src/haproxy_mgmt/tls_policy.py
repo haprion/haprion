@@ -71,6 +71,42 @@ TLS_1_2_CIPHERS = (
 TLS_1_3_CIPHERSUITES = "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
 
 #
+# Mozilla "old": what reaches an appliance that was current a decade ago. Every
+# suite the intermediate list has, and then the CBC and SHA-1 ones that are the
+# only thing TLS 1.1 can speak - AES-GCM requires TLS 1.2, so an old device can
+# be reached with CBC and HMAC-SHA1 or not at all.
+#
+# It exists for the *backend* side only. The listener faces clients nobody can
+# name, and lowering what everyone is offered for the sake of a visitor who may
+# not exist is the wrong trade; a backend is a named device on a network the
+# operator owns, and the reason to allow this is that device. See B82.
+#
+TLS_OLD_CIPHERS = (
+    "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
+    "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:"
+    "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:"
+    "DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305:"
+    "ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:"
+    "ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES128-SHA:"
+    "ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:"
+    "ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:"
+    "DHE-RSA-AES128-SHA256:DHE-RSA-AES256-SHA256:"
+    "AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:AES256-SHA256:"
+    "AES128-SHA:AES256-SHA:DES-CBC3-SHA"
+)
+
+#
+# OpenSSL's own security level, and the second gate. It is not a cipher: level 2
+# is the default on the nodes and refuses everything below TLS 1.2 whatever
+# `ssl-min-ver` says, so the list above reaches nothing without this beside it.
+#
+# Measured on HAProxy 3.4.4 against a TLS 1.1 backend: the list alone answered
+# 503, the list with this answered 200. It rides on the one `server` line that
+# asked for it and reaches no listener and no other pool.
+#
+SECURITY_LEVEL_OFF = "@SECLEVEL=0"
+
+#
 # What each policy a VIP may name means on a bind line. The names are
 # `config.TLS_POLICY_NAMES`.
 #
@@ -190,3 +226,46 @@ def core_defaults_lines(indent: str = "    ") -> str:
         f"{indent}ssl-default-bind-ciphersuites {TLS_1_3_CIPHERSUITES}\n"
         f"{indent}ssl-default-bind-options ssl-min-ver TLSv1.2 no-tls-tickets\n"
     )
+
+
+#
+# The same three names on a `server` line. A pool is reached, not offered, so
+# the keywords differ from the bind line's - and `legacy` exists only here.
+#
+# `intermediate` is what a pool gets when its object names nothing. That is a
+# change from having no floor at all, and a deliberate one: without it the
+# lowest version a pool may negotiate is whatever OpenSSL on the node was built
+# with, which is the same implicit answer the health probe used to give. Nothing
+# reachable is lost by saying it out loud - a TLS 1.1 backend was already
+# answered with 503 under those defaults, measured on 3.4.4.
+#
+BACKEND_POLICIES = {
+    "modern": f" ssl-min-ver TLSv1.3 ciphersuites {TLS_1_3_CIPHERSUITES}",
+    "intermediate": (
+        f" ssl-min-ver TLSv1.2 ciphers {TLS_1_2_CIPHERS} ciphersuites {TLS_1_3_CIPHERSUITES}"
+    ),
+    "legacy": f" ssl-min-ver TLSv1.1 ciphers {TLS_OLD_CIPHERS}:{SECURITY_LEVEL_OFF}",
+}
+
+#
+# What a pool is held to when its object says nothing.
+#
+DEFAULT_BACKEND_POLICY = "intermediate"
+
+#
+# The floor each name promises, as the node-side probe understands it. The probe
+# asks the same question HAProxy will ask, so it has to be held to the same
+# answer: a probe with a floor of its own would refuse a backend HAProxy accepts
+# and report a healthy pool as broken.
+#
+BACKEND_MIN_VERSION = {
+    "modern": "TLSv1.3",
+    "intermediate": "TLSv1.2",
+    "legacy": "TLSv1.1",
+}
+
+#
+# What a check uses when its object names no policy - the same answer
+# `DEFAULT_BACKEND_POLICY` gives, said in the vocabulary the node speaks.
+#
+DEFAULT_MIN_VERSION = BACKEND_MIN_VERSION[DEFAULT_BACKEND_POLICY]

@@ -751,6 +751,7 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 | `haproxy-node-status` | reports version, health, carried certificates and keepalived state |
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
+| `haproxy-health-probe` | opens one connection per named target and reports the status line |
 
 Two of these deserve attention:
 
@@ -759,6 +760,16 @@ as SSH command arguments, and no wildcard rule can safely constrain them. So val
 twice: unprivileged in the wrapper, and again in the root helper. The wrapper escalates with
 `sudo -n` and an exact `NOPASSWD` rule, so a policy mismatch fails immediately instead of falling
 back to an interactive password prompt.
+
+**`haproxy-health-probe` is held to the same TLS floor as the configuration.** A pool whose object
+names a `legacy` policy is reached by HAProxy over TLS 1.1, so a probe that kept a floor of its own
+would refuse a backend HAProxy accepts and report a healthy pool as down. Each target therefore
+carries a `min_version` — `TLSv1.1`, `TLSv1.2` or `TLSv1.3` — and the script refuses anything else.
+
+A target that names none means `TLSv1.2`, which is what a manager older than the field sends. The
+degradation runs the other way too and is worth knowing: a **node** older than the field ignores it
+and probes at TLS 1.2 regardless, so a `legacy` pool reads as unreachable until that node's script
+is updated. The configuration is unaffected — only the answer the card gives.
 
 **`haproxy-pull-deploy` is generic except for its publication path.** Everything else — validation,
 release creation, the atomic symlink swap, the rollback on failure — is identical on every node.

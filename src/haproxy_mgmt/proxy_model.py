@@ -31,6 +31,7 @@ from typing import Any
 import yaml
 
 from haproxy_mgmt.config import ConfigError, _mapping, _only_keys, _required_string
+from haproxy_mgmt.tls_policy import DEFAULT_BACKEND_POLICY
 
 #
 # Bounded for the same reason every other document this system reads is: a file
@@ -298,6 +299,12 @@ PROBE = re.compile(r"^[A-Za-z0-9._:/+=@-]{1,64}$")
 MATCH_MODES = ("exact", "prefix")
 VERIFY_MODES = ("system", "none")
 
+#
+# How old a handshake to a pool may be. `tls_policy` holds what each one means;
+# the order here is the order they are offered in, strongest first.
+#
+BACKEND_POLICY_NAMES = ("modern", "intermediate", "legacy")
+
 
 #
 # Every key a proxy document may carry, split by the shape it belongs to. This
@@ -409,6 +416,18 @@ def duration_ms(value: str) -> int:
 @dataclass(frozen=True, slots=True)
 class BackendTls:
     verify: str
+    policy: str = DEFAULT_BACKEND_POLICY
+    """Which TLS versions and ciphers this pool may be reached over.
+
+    Separate from `verify`, because they answer different questions: `verify`
+    is whether the pool's certificate has to be trusted, this is how old the
+    handshake may be. A device can need a lax answer to one and not the other.
+
+    `intermediate` unless the object says otherwise, which is a floor where
+    there was none - a pool used to negotiate down to whatever OpenSSL on the
+    node happened to allow. `legacy` reaches TLS 1.1 and exists only here, on
+    the side where the far end is a device somebody can name.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -875,9 +894,19 @@ def _backend(name: str, value: Any, location: str) -> Backend:
     backend_tls = None
     if tls is not None:
         tls_data = _mapping(tls, f"{location}.tls")
-        _only_keys(tls_data, {"verify"}, f"{location}.tls")
+        _only_keys(tls_data, {"verify", "policy"}, f"{location}.tls")
         backend_tls = BackendTls(
-            verify=_string(tls_data, "verify", f"{location}.tls", VERIFY_MODES)
+            verify=_string(tls_data, "verify", f"{location}.tls", VERIFY_MODES),
+            #
+            # Absent is the default rather than an error, so every object
+            # written before this field existed still loads and still means what
+            # it meant.
+            #
+            policy=(
+                _string(tls_data, "policy", f"{location}.tls", BACKEND_POLICY_NAMES)
+                if "policy" in tls_data
+                else DEFAULT_BACKEND_POLICY
+            ),
         )
 
     health = _health(data.get("health", {"type": "disabled"}), f"{location}.health")

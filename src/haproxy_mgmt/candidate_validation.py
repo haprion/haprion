@@ -161,7 +161,16 @@ def materialize_candidate(
         target = root / relative
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         content = original
-        if relative == "haproxy.cfg" or relative.startswith("conf.d/"):
+        #
+        # The certificate lists are rewritten too, and that is not a detail. A
+        # `crt-list` names its certificates by absolute path inside the file,
+        # so a bind line pointing at a list validated fine while every line in
+        # the list still pointed at `/etc/haproxy/certs` - which this sandbox
+        # deliberately does not have. Measured 2026-09-04: the first object to
+        # choose its own TLS level produced a list, and the publish was refused
+        # with `unable to stat SSL certificate`.
+        #
+        if relative == "haproxy.cfg" or relative.startswith(("conf.d/", f"{CRT_LIST_TARGET}/")):
             content = content.replace(b"/etc/haproxy/maps/", b"/candidate/maps/")
             content = content.replace(b"/etc/haproxy/certs/", b"/candidate/certs/")
         descriptor = os.open(
@@ -260,6 +269,20 @@ def sandbox_command(candidate_root: Path, request_id: str) -> list[str]:
         "BindReadOnlyPaths=/etc/group",
         "BindReadOnlyPaths=-/etc/nsswitch.conf",
         "BindReadOnlyPaths=/etc/haproxy/errors",
+        #
+        # The system trust store, for the same reason the errorfiles are here:
+        # a configuration names it, so parsing fails without it. A backend that
+        # verifies its pool writes `ca-file @system-ca`, which OpenSSL resolves
+        # through OPENSSLDIR - and on this host that is a symlink into
+        # /etc/ssl/certs, which an empty /etc does not contain. Measured
+        # 2026-09-04: `unable to load @system-ca`, on every server line.
+        #
+        # Optional, like the other host-shaped paths: a machine that keeps its
+        # trust store elsewhere validates a configuration that does not name
+        # one, and a missing bind must not stop that.
+        #
+        "BindReadOnlyPaths=-/etc/ssl/certs",
+        "BindReadOnlyPaths=-/etc/ssl/openssl.cnf",
         f"BindReadOnlyPaths={candidate_root}:/candidate",
     )
     command = [

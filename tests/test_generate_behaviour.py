@@ -20,11 +20,9 @@ cannot answer the question, and a green result there would mean nothing.
 from __future__ import annotations
 
 import base64
-import ctypes
 import hashlib
 import os
 import shutil
-import signal
 import socket
 import ssl
 import subprocess
@@ -40,6 +38,8 @@ from haproxy_mgmt.config import AbuseProtection, Vip
 from haproxy_mgmt.generate import NODE_CERTIFICATE_DIR, generate
 from haproxy_mgmt.proxy_model import load_proxy
 from haproxy_mgmt.route_match import order_routes, rewrite, select
+from tests import spawned
+from tests.spawned import wait_for
 
 HOSTNAME = "shop.example.com"
 
@@ -246,34 +246,6 @@ def echo_server(pool: str, port: int) -> ThreadingHTTPServer:
     return server
 
 
-#
-# What the kernel is asked to do to a spawned HAProxy when this process goes.
-# `prctl(PR_SET_PDEATHSIG)`, which is Linux's own answer to exactly this: the
-# child is signalled the moment its parent dies, whatever killed the parent.
-#
-_PR_SET_PDEATHSIG = 1
-
-
-def _die_with_the_test_run() -> None:
-    """Ask the kernel to kill this child when the test process goes.
-
-    These tests start a real HAProxy, which is the whole point of them - a
-    generated configuration is only proved by the program that reads it. The
-    cost is a process that outlives its test if teardown never runs, and
-    teardown never runs when the run is interrupted, times out, or is killed.
-
-    That happened here: they accumulated until 177 of them held 4.6 GB between
-    them and the machine went to the OOM killer. This is the second half of the
-    fix - `-db` above is the first - and it covers the case teardown cannot: a
-    run that is interrupted, times out, or is killed never reaches one.
-
-    Set in the child between fork and exec, so it holds for a parent that is
-    given no chance to do anything.
-    """
-
-    ctypes.CDLL("libc.so.6", use_errno=True).prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
-
-
 def start_haproxy(binary: str, arguments: list[str], port: int) -> subprocess.Popen[bytes]:
     """One HAProxy, bound to this run's lifetime and proved to be listening.
 
@@ -296,7 +268,11 @@ def start_haproxy(binary: str, arguments: list[str], port: int) -> subprocess.Po
     process = subprocess.Popen(
         [binary, "-db", *arguments],
         stderr=subprocess.DEVNULL,
-        preexec_fn=_die_with_the_test_run,
+        #
+        # The other half of the B81 fix, and the half teardown cannot provide:
+        # a run that is interrupted, times out, or is killed never reaches one.
+        #
+        preexec_fn=spawned.die_with_the_test_run,
     )
     try:
         wait_for(port)
@@ -305,17 +281,6 @@ def start_haproxy(binary: str, arguments: list[str], port: int) -> subprocess.Po
         process.wait(timeout=5)
         raise
     return process
-
-
-def wait_for(port: int, timeout: float = 5.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                return
-        except OSError:
-            time.sleep(0.02)
-    raise AssertionError(f"nothing accepted connections on {port}")
 
 
 @unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")

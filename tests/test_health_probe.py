@@ -15,13 +15,14 @@ from __future__ import annotations
 import json
 import shutil
 import socket
-import ssl
 import subprocess as sp
 import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+from tests import spawned
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install" / "node" / "haproxy-health-probe"
 
@@ -323,23 +324,51 @@ def self_signed(directory: Path) -> tuple[Path, Path]:
     return certificate, key
 
 
-def tls_server(certificate: Path, key: Path, ceiling: ssl.TLSVersion) -> ThreadingHTTPServer:
-    """A backend that will speak nothing above `ceiling`.
+def tls_server(certificate: Path, key: Path, version: str, port: int) -> sp.Popen[bytes]:
+    """A backend that speaks `version` and nothing else, run by OpenSSL itself.
 
-    `SECLEVEL=0` because OpenSSL's own policy would otherwise refuse to offer
-    the old versions at all, and the point here is a backend that offers them
-    and a probe that declines - not a backend that could not be built.
+    Not a Python server. A `ssl.SSLContext` configured to offer TLS 1.1 is code
+    in this repository that permits a deprecated protocol, and the security gate
+    is right to say so - it cannot tell a fixture that must be old from a client
+    that should not be. Handing the job to `openssl s_server` puts the old
+    protocol in a tool rather than in our source, and makes the stand-in a real
+    OpenSSL server, which is closer to the appliance this is about anyway.
+
+    `SECLEVEL=0` because OpenSSL's own policy otherwise refuses to offer the old
+    versions at all: the point is a backend that offers one and a probe that
+    declines it, not a backend that could not be built. `-www` answers any GET
+    with a status line, which is all the probe reads.
     """
 
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.minimum_version = ssl.TLSVersion.TLSv1
-    context.maximum_version = ceiling
-    context.set_ciphers("DEFAULT@SECLEVEL=0")
-    context.load_cert_chain(certfile=str(certificate), keyfile=str(key))
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    server.socket = context.wrap_socket(server.socket, server_side=True)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server
+    openssl = shutil.which("openssl")
+    assert openssl is not None
+    process = sp.Popen(
+        [
+            openssl,
+            "s_server",
+            "-accept",
+            str(port),
+            "-cert",
+            str(certificate),
+            "-key",
+            str(key),
+            version,
+            "-cipher",
+            "DEFAULT@SECLEVEL=0",
+            "-www",
+            "-quiet",
+        ],
+        stdout=sp.DEVNULL,
+        stderr=sp.DEVNULL,
+        preexec_fn=spawned.die_with_the_test_run,
+    )
+    try:
+        spawned.wait_for(port)
+    except BaseException:
+        process.terminate()
+        process.wait(timeout=5)
+        raise
+    return process
 
 
 @unittest.skipUnless(shutil.which("openssl"), "openssl is not installed here")
@@ -362,36 +391,24 @@ class HowOldATlsBackendMayBe(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls.directory.cleanup()
 
-    def probe_against(self, ceiling: ssl.TLSVersion) -> dict[str, object]:
-        server = tls_server(self.certificate, self.key, ceiling)
+    def probe_against(self, version: str) -> dict[str, object]:
+        port = free_port()
+        server = tls_server(self.certificate, self.key, version, port)
         try:
             code, answer = ask(
                 {
                     "schema_version": 1,
-                    "targets": [
-                        target(
-                            port=server.server_address[1],
-                            tls=True,
-                            verify=False,
-                            path="/healthz",
-                        )
-                    ],
+                    "targets": [target(port=port, tls=True, verify=False, path="/")],
                 }
             )
             self.assertEqual(code, 0)
             return answer["results"][0]
         finally:
-            #
-            # Both, and in this order. `shutdown` stops the loop and leaves the
-            # listening socket open; a test class that starts one server per
-            # case would then leak one per case. B81 was the same mistake with
-            # a heavier process on the other end.
-            #
-            server.shutdown()
-            server.server_close()
+            server.terminate()
+            server.wait(timeout=5)
 
     def test_a_backend_that_speaks_tls_1_2_is_reached(self) -> None:
-        result = self.probe_against(ssl.TLSVersion.TLSv1_2)
+        result = self.probe_against("-tls1_2")
 
         self.assertTrue(result["ok"], result["error"])
         self.assertEqual(result["status"], 200)
@@ -403,7 +420,7 @@ class HowOldATlsBackendMayBe(unittest.TestCase):
         the health card is told the backend is too old - not that it is down.
         """
 
-        result = self.probe_against(ssl.TLSVersion.TLSv1_1)
+        result = self.probe_against("-tls1_1")
 
         self.assertFalse(result["ok"])
         self.assertIn("TLS failed", str(result["error"]))

@@ -19,6 +19,7 @@ cannot answer the question, and a green result there would mean nothing.
 
 from __future__ import annotations
 
+import ast
 import base64
 import hashlib
 import os
@@ -702,6 +703,7 @@ def header_server(port: int) -> ThreadingHTTPServer:
     return server
 
 
+@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
 class WhatTheBackendLearnsAboutTheVisitor(unittest.TestCase):
     """Behind a proxy an application knows nothing it is not told.
 
@@ -801,6 +803,7 @@ class WhatTheBackendLearnsAboutTheVisitor(unittest.TestCase):
         self.assertEqual(headers["x-forwarded-host"], "gone.example.com")
 
 
+@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
 class TheBrakeOnTrafficThatIsNotAVisitor(unittest.TestCase):
     """Proved by flooding a real HAProxy, not by reading the rule.
 
@@ -869,6 +872,7 @@ class TheBrakeOnTrafficThatIsNotAVisitor(unittest.TestCase):
         self.assertEqual(answers[-1], 429)
 
 
+@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
 class HeaderEditsReachTheTraffic(unittest.TestCase):
     """Read off a running proxy, because the file cannot prove interpretation.
 
@@ -968,6 +972,7 @@ backends:
 """
 
 
+@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
 class ARawPortIsForwardedAsItArrives(unittest.TestCase):
     """A tcp object proved by speaking through it, not by reading the file.
 
@@ -1618,3 +1623,57 @@ class AnUnderscoreInAName(unittest.TestCase):
 
         self.assertIn("monitor-server-admin_web", written)
         self.assertIn("admin_web", written)
+
+
+class EveryClassThatStartsHaproxySaysSoFirst(unittest.TestCase):
+    """The guard is a list, and a list nobody holds falls behind the file.
+
+    Four classes here spawned a real HAProxy without the `skipUnless` every
+    other one carries. They passed on a machine that has HAProxy and errored in
+    CI, which has none - `setUpClass` asserted on the missing binary rather than
+    skipping, so a runner without the program reported four broken tests instead
+    of four it could not run.
+
+    Read from the syntax rather than from the classes themselves, because the
+    decorator leaves nothing to inspect where HAProxy *is* installed: it sets
+    the skip flag only when its condition is false, so on this machine a guarded
+    class and an unguarded one look identical at runtime.
+    """
+
+    @staticmethod
+    def _starts_haproxy(node: ast.ClassDef) -> bool:
+        """Whether this class calls `start_haproxy` anywhere inside it.
+
+        The call and not the text. A first version looked for the name in the
+        class's source, and the class doing the looking contains that name -
+        so it found itself and nothing else could ever be added without the
+        same trap.
+        """
+
+        return any(
+            isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Name)
+            and inner.func.id == "start_haproxy"
+            for inner in ast.walk(node)
+        )
+
+    def test_a_class_that_spawns_one_is_skipped_where_there_is_none(self) -> None:
+        module = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        unguarded = sorted(
+            node.name
+            for node in module.body
+            if isinstance(node, ast.ClassDef)
+            and self._starts_haproxy(node)
+            and not any("skipUnless" in ast.dump(decorator) for decorator in node.decorator_list)
+        )
+
+        self.assertEqual(unguarded, [], "these start HAProxy with nothing saying they may not")
+
+    def test_the_check_would_notice_one(self) -> None:
+        """A check that cannot fail is not a check."""
+
+        unguarded = ast.parse(
+            "class Bare:\n    def setUp(self):\n        start_haproxy(1, [], 2)\n"
+        )
+
+        self.assertTrue(self._starts_haproxy(unguarded.body[0]))

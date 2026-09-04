@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 import unittest
 from contextlib import nullcontext
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -356,3 +357,54 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
         for operation in sorted(set(re.findall(r'if operation == "([a-z_]+)"', source))):
             with self.subTest(operation=operation):
                 self.assertIn(operation, jobs.RUNNING_LABELS)
+
+
+class WhatAFailureIsAllowedToSay(unittest.TestCase):
+    """The most important refusal in the system carries the compiler's answer."""
+
+    def failed(self, *, result: object, stderr: str | None) -> db.Job:
+        return replace(
+            queued_job(),
+            state="failed",
+            result=result,  # type: ignore[arg-type]
+            stderr_excerpt=stderr,
+        )
+
+    def test_the_envelope_diagnostics_win_over_the_stderr_line(self) -> None:
+        """`candidate_invalid` puts the whole `haproxy -c` output in the envelope.
+
+        The stderr line is `ERROR: [code] message` and says nothing about which
+        line HAProxy would not accept - which is the only thing the person
+        reading it needs.
+        """
+
+        job = self.failed(
+            result={
+                "error": {
+                    "code": "candidate_invalid",
+                    "details": {"diagnostics": "conf.d/1001-shop.cfg:4 unknown keyword"},
+                }
+            },
+            stderr="ERROR: [candidate_invalid] these objects did not produce a valid candidate.",
+        )
+
+        self.assertEqual(jobs.diagnostics_of(job), "conf.d/1001-shop.cfg:4 unknown keyword")
+
+    def test_the_stderr_excerpt_is_the_fallback(self) -> None:
+        """A helper that died has no envelope, and its stderr is the whole account."""
+
+        job = self.failed(result=None, stderr="Traceback ...")
+
+        self.assertEqual(jobs.diagnostics_of(job), "Traceback ...")
+
+    def test_an_envelope_without_diagnostics_falls_back_rather_than_going_blank(self) -> None:
+        job = self.failed(result={"error": {"code": "busy"}}, stderr="ERROR: [busy] try again")
+
+        self.assertEqual(jobs.diagnostics_of(job), "ERROR: [busy] try again")
+
+    def test_a_blank_diagnostics_string_is_not_an_answer(self) -> None:
+        job = self.failed(
+            result={"error": {"details": {"diagnostics": "   "}}}, stderr="ERROR: [x] y"
+        )
+
+        self.assertEqual(jobs.diagnostics_of(job), "ERROR: [x] y")

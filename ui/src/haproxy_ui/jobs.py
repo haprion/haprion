@@ -176,6 +176,38 @@ def error_code(job: Job) -> str | None:
     return code if isinstance(code, str) and code else None
 
 
+def diagnostics_of(job: Job) -> str | None:
+    """What the operation said about why, at its most useful.
+
+    A refusal carries its evidence in the envelope: `candidate_invalid` puts
+    the whole `haproxy -c` output under `error.details.diagnostics`, which
+    names the file and the line HAProxy would not accept. Until this read it,
+    the page showed `stderr_excerpt` instead - and for a clean refusal that is
+    the one line the helper prints, `ERROR: [code] message`. So the most
+    important failure in the system, "this configuration does not compile",
+    arrived without the compiler's answer, and somebody was left to guess which
+    line was wrong.
+
+    The excerpt stays as the fallback. A failure that is not a refusal - a
+    helper that died, a timeout - has no envelope to read, and its stderr is
+    then the only account there is.
+
+    Read defensively for the same reason `error_code` is: the document was
+    written by a privileged helper and stored as it arrived.
+    """
+
+    envelope = job.result
+    if isinstance(envelope, dict):
+        error = envelope.get("error")
+        if isinstance(error, dict):
+            details = error.get("details")
+            if isinstance(details, dict):
+                text = details.get("diagnostics")
+                if isinstance(text, str) and text.strip():
+                    return text
+    return job.stderr_excerpt or None
+
+
 def _view(
     job: Job,
     now: datetime,
@@ -208,7 +240,7 @@ def _view(
         # progress output, and putting a diagnostics panel under every green
         # row would bury the ones that mean something.
         #
-        diagnostics=(job.stderr_excerpt or None) if diagnostics and ended_badly else None,
+        diagnostics=diagnostics_of(job) if diagnostics and ended_badly else None,
     )
 
 

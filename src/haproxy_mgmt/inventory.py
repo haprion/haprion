@@ -215,9 +215,19 @@ def _reservations(files: Mapping[str, bytes]) -> Reservations:
 
 
 def _reservations_document(reservations: Reservations) -> dict[str, object]:
+    #
+    # Two lists, where the file has one. `tcp_ports` keeps exactly the meaning
+    # it had before an entry could carry an address - a port claimed on every
+    # one of them - so a reader written against the v1 contract still gets a
+    # true answer, and `tcp_listeners` is added beside it rather than changing
+    # what an existing field holds.
+    #
     return {
         "hostnames": sorted(reservations.hostnames),
         "tcp_ports": sorted(reservations.tcp_ports),
+        "tcp_listeners": [
+            f"{address}:{port}" for address, port in sorted(reservations.tcp_listeners)
+        ],
     }
 
 

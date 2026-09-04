@@ -60,3 +60,71 @@ class WhatMayBeReserved(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class APortIsClaimedOnAnAddressOrOnAllOfThem(unittest.TestCase):
+    """The distinction the file exists for once a cluster has several VIPs."""
+
+    def test_a_bare_number_claims_the_port_everywhere(self) -> None:
+        reservations = load_reservations(b"tcp_ports: [8404]\n")
+
+        self.assertEqual(reservations.tcp_ports, frozenset({8404}))
+        self.assertEqual(reservations.tcp_listeners, frozenset())
+        self.assertTrue(reservations.claims("192.0.2.10", 8404))
+        self.assertTrue(reservations.claims("198.51.100.10", 8404))
+
+    def test_a_bind_line_without_an_address_reads_the_same_way(self) -> None:
+        """`bind :8404` really does take the port on every address the host has."""
+
+        self.assertEqual(
+            load_reservations(b"tcp_ports: [':8404']\n"),
+            load_reservations(b"tcp_ports: [8404]\n"),
+        )
+
+    def test_an_address_claims_the_port_only_there(self) -> None:
+        reservations = load_reservations(b"tcp_ports: ['192.0.2.10:443']\n")
+
+        self.assertEqual(reservations.tcp_listeners, frozenset({("192.0.2.10", 443)}))
+        self.assertEqual(reservations.tcp_ports, frozenset())
+        self.assertTrue(reservations.claims("192.0.2.10", 443))
+        self.assertFalse(reservations.claims("198.51.100.10", 443))
+
+    def test_both_forms_live_in_one_list(self) -> None:
+        reservations = load_reservations(b"tcp_ports: [8404, '192.0.2.10:443']\n")
+
+        self.assertTrue(reservations.claims("198.51.100.10", 8404))
+        self.assertTrue(reservations.claims("192.0.2.10", 443))
+        self.assertFalse(reservations.claims("198.51.100.10", 443))
+
+    def test_an_ipv6_address_is_bracketed_as_a_bind_line_requires(self) -> None:
+        reservations = load_reservations(b"tcp_ports: ['[2001:db8::1]:443']\n")
+
+        self.assertEqual(reservations.tcp_listeners, frozenset({("2001:db8::1", 443)}))
+
+    def test_an_unbracketed_ipv6_address_is_refused_rather_than_guessed_at(self) -> None:
+        """Without brackets the last colon is not distinguishable from the address."""
+
+        with self.assertRaises(ReservationError) as raised:
+            load_reservations(b"tcp_ports: ['2001:db8::1:443']\n")
+
+        self.assertIn("[address]:port", str(raised.exception))
+
+    def test_something_that_is_not_an_address_is_refused(self) -> None:
+        with self.assertRaises(ReservationError) as raised:
+            load_reservations(b"tcp_ports: ['node-a:443']\n")
+
+        self.assertIn("must be an IP address", str(raised.exception))
+
+    def test_a_yaml_boolean_does_not_become_port_one(self) -> None:
+        """`- yes` is a bool in YAML, and a bool is an int in Python."""
+
+        with self.assertRaises(ReservationError) as raised:
+            load_reservations(b"tcp_ports: [yes]\n")
+
+        self.assertIn("not a port", str(raised.exception))
+
+    def test_a_port_out_of_range_is_refused_in_the_address_form_too(self) -> None:
+        with self.assertRaises(ReservationError) as raised:
+            load_reservations(b"tcp_ports: ['192.0.2.10:70000']\n")
+
+        self.assertIn("not a port number", str(raised.exception))

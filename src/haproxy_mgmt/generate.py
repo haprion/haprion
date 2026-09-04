@@ -241,7 +241,6 @@ def generate(
         raise GeneratorError(
             f"this version generates http, https and tcp objects; cannot generate: {names}"
         )
-    _refuse_reserved(ordered, reservations, ports)
     _refuse_unknown_certificates(ordered, certificates)
     if certificate_sans is not None and not allow_certificate_mismatch:
         _refuse_uncovered_hostnames(ordered, certificate_sans)
@@ -250,6 +249,11 @@ def generate(
 
     known_sources = dict(sources or {})
     placed = [(_vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
+    #
+    # After placement, not before: a reservation names an address, so the gate
+    # cannot ask its question until every object knows which VIP it sits on.
+    #
+    _refuse_reserved(placed, reservations, ports)
     _refuse_shared_listeners(placed, ports)
 
     listings: dict[str, str] = {}
@@ -313,7 +317,7 @@ def _vip_of(proxy: Proxy, vips: Mapping[str, Vip], default_vip: str) -> Vip:
 
 
 def _refuse_reserved(
-    proxies: Sequence[Proxy], reservations: Reservations, ports: Mapping[str, int]
+    placed: Sequence[tuple[Vip, Proxy]], reservations: Reservations, ports: Mapping[str, int]
 ) -> None:
     """What the handwritten half of the configuration has already claimed.
 
@@ -323,9 +327,16 @@ def _refuse_reserved(
     frontends on one port both bind it under SO_REUSEPORT and then split the
     traffic at random - so the publish says it worked and the node answers
     correctly for roughly half the connections.
+
+    Ports are asked per address. A cluster with several VIPs is the whole point
+    of the file - something handwritten beside the generated objects - and a
+    port claimed cluster-wide would block every managed object on every other
+    address as well, which makes the reservation unusable exactly where it is
+    needed. An entry written without an address still claims every one of them,
+    because a `bind` line without an address does.
     """
 
-    for proxy in proxies:
+    for _vip, proxy in placed:
         taken = sorted(set(proxy.hostnames) & reservations.hostnames)
         if taken:
             raise GeneratorError(
@@ -333,28 +344,32 @@ def _refuse_reserved(
                 f"{', '.join(taken)}"
             )
 
-    if not reservations.tcp_ports:
+    if not reservations.tcp_ports and not reservations.tcp_listeners:
         return
     #
-    # Only the ports objects actually cause to be bound. Reserving a port
-    # nothing generated listens on is a person writing down what the
-    # handwritten side uses, which is the file's whole purpose.
+    # Only the listeners objects actually cause to be bound. Reserving an
+    # address and port nothing generated listens on is a person writing down
+    # what the handwritten side uses, which is the file's whole purpose.
     #
-    for proxy in proxies:
-        if proxy.listen.port is not None and proxy.listen.port in reservations.tcp_ports:
+    for vip, proxy in placed:
+        port = proxy.listen.port
+        if port is not None and reservations.claims(vip.address, port):
             raise GeneratorError(
-                f"{proxy.name} listens on port {proxy.listen.port}, which "
+                f"{proxy.name} listens on {vip.name} port {port}, which "
                 f"manual/reservations.yaml reserves for handwritten configuration"
             )
 
     wanted = {
-        protocol for protocol in ports for proxy in proxies if _serves_shared(proxy, protocol)
+        (vip.name, vip.address, protocol)
+        for protocol in ports
+        for vip, proxy in placed
+        if _serves_shared(proxy, protocol)
     }
-    for protocol in sorted(wanted):
+    for name, address, protocol in sorted(wanted):
         port = ports.get(protocol)
-        if port is not None and port in reservations.tcp_ports:
+        if port is not None and reservations.claims(address, port):
             raise GeneratorError(
-                f"this cluster serves {protocol} on port {port}, which "
+                f"this cluster serves {protocol} on {name} port {port}, which "
                 f"manual/reservations.yaml reserves for handwritten configuration"
             )
 

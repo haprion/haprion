@@ -735,6 +735,55 @@ class WhatTheHandwrittenHalfHasAlreadyClaimed(unittest.TestCase):
         self.assertIn("1000-frontends.cfg", files)
 
 
+class AReservationNamesAnAddress(unittest.TestCase):
+    """B86: a port claimed cluster-wide is unusable once there are two VIPs.
+
+    The arrangement this file exists for is something complex written by hand
+    beside the generated objects, and that needs more than one address. A
+    reservation that could not say which one would block every managed object
+    everywhere, so making one would cost more than the collision it prevents.
+    """
+
+    #
+    # Two addresses, because one cannot show the difference between "here" and
+    # "everywhere" - which is the whole question.
+    #
+    TWO_VIPS = {
+        "main": Vip(name="main", address="192.0.2.20"),
+        "other": Vip(name="other", address="198.51.100.20"),
+    }
+
+    def publish(self, reservations: Reservations) -> dict[str, str]:
+        return generate(
+            [load_proxy("shop", MINIMAL)],
+            vips=dict(self.TWO_VIPS),
+            default_vip="main",
+            reservations=reservations,
+        ).configuration
+
+    def test_a_port_reserved_on_another_address_does_not_stop_the_publish(self) -> None:
+        """The failure that made the mechanism unusable before it was addressed."""
+
+        files = self.publish(Reservations(tcp_listeners=frozenset({("198.51.100.20", 80)})))
+
+        self.assertIn("1000-frontends.cfg", files)
+
+    def test_a_port_reserved_on_the_objects_own_address_stops_it(self) -> None:
+        with self.assertRaises(GeneratorError) as raised:
+            self.publish(Reservations(tcp_listeners=frozenset({("192.0.2.20", 80)})))
+
+        self.assertIn("main port 80", str(raised.exception))
+        self.assertIn("manual/reservations.yaml", str(raised.exception))
+
+    def test_a_port_reserved_without_an_address_still_stops_it(self) -> None:
+        """A `bind` line without an address takes the port on every one of them."""
+
+        with self.assertRaises(GeneratorError) as raised:
+            self.publish(Reservations(tcp_ports=frozenset({80})))
+
+        self.assertIn("port 80", str(raised.exception))
+
+
 class OneAddressAndPortIsBoundOnce(unittest.TestCase):
     """`haproxy -c` says yes, and then both listeners quietly share the port."""
 

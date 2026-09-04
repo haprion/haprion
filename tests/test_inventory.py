@@ -70,7 +70,9 @@ class InventoryTests(unittest.TestCase):
                 },
             ],
         )
-        self.assertEqual(result["reservations"], {"hostnames": [], "tcp_ports": []})
+        self.assertEqual(
+            result["reservations"], {"hostnames": [], "tcp_ports": [], "tcp_listeners": []}
+        )
 
     def test_it_reports_what_the_reservations_file_actually_says(self) -> None:
         """The publishing path reads this file to refuse objects; so must this one.
@@ -92,7 +94,7 @@ class InventoryTests(unittest.TestCase):
 
         self.assertEqual(
             result["reservations"],
-            {"hostnames": ["legacy.example.com"], "tcp_ports": [8443]},
+            {"hostnames": ["legacy.example.com"], "tcp_ports": [8443], "tcp_listeners": []},
         )
 
     def test_a_reservations_file_that_cannot_be_read_fails_the_inventory(self) -> None:
@@ -112,7 +114,9 @@ class InventoryTests(unittest.TestCase):
 
         result = inventory_result({}, None, generated_at=TIME)
 
-        self.assertEqual(result["reservations"], {"hostnames": [], "tcp_ports": []})
+        self.assertEqual(
+            result["reservations"], {"hostnames": [], "tcp_ports": [], "tcp_listeners": []}
+        )
 
     def test_it_never_derives_inventory_from_an_unpublished_tree(self) -> None:
         result = inventory_result(

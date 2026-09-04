@@ -16,6 +16,20 @@ first answers, and which one that is depends on filenames.
 The file is a promise a person makes, not a fact the system derives. Deriving
 it would mean parsing handwritten HAProxy configuration, which is the thing
 this project has decided not to do - `manual/` is read, never interpreted.
+
+A port is claimed either on one address or on all of them, and the file says
+which in the same notation HAProxy's own `bind` line uses: `443` and `:443`
+reserve the port on every address the cluster has, `192.0.2.10:443` reserves
+it on that one. The distinction is not decoration. A cluster with several VIPs
+is exactly the arrangement this file exists for - something complex written by
+hand *beside* the generated objects - and a reservation that could only be
+made cluster-wide would block every managed object on every other address too,
+which is a promise nobody can afford to make.
+
+The bare form is the wider one on purpose. `bind :8404` binds every address the
+host carries, including whichever VIP a node happens to hold, so a handwritten
+line without an address really has taken the port everywhere. Reading a bare
+number as cluster-wide is therefore what that line means, not a convenience.
 """
 
 from __future__ import annotations
@@ -25,7 +39,7 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt.config import ConfigError, _mapping, _only_keys
+from haproxy_mgmt.config import ConfigError, _address, _mapping, _only_keys
 from haproxy_mgmt.proxy_model import HOSTNAME
 
 #
@@ -47,7 +61,17 @@ class Reservations:
     """
 
     hostnames: frozenset[str] = frozenset()
+
     tcp_ports: frozenset[int] = frozenset()
+    """Ports claimed on every address, from an entry written without one."""
+
+    tcp_listeners: frozenset[tuple[str, int]] = frozenset()
+    """Ports claimed on one address, as `(address, port)`."""
+
+    def claims(self, address: str, port: int) -> bool:
+        """Whether the handwritten layer has this address and port."""
+
+        return port in self.tcp_ports or (address, port) in self.tcp_listeners
 
 
 #
@@ -87,10 +111,92 @@ def _load(document: bytes, location: str) -> Reservations:
 
     data = _mapping(loaded, location)
     _only_keys(data, {"hostnames", "tcp_ports"}, location)
+    ports, listeners = _claims(data.get("tcp_ports"), f"{location}.tcp_ports")
     return Reservations(
         hostnames=frozenset(_hostnames(data.get("hostnames"), f"{location}.hostnames")),
-        tcp_ports=frozenset(_ports(data.get("tcp_ports"), f"{location}.tcp_ports")),
+        tcp_ports=frozenset(ports),
+        tcp_listeners=frozenset(listeners),
     )
+
+
+def _claims(value: Any, location: str) -> tuple[list[int], list[tuple[str, int]]]:
+    """Split the list into what is claimed everywhere and what on one address.
+
+    One key rather than two, because a person writing the file is answering a
+    single question - which listeners are already taken - and splitting that
+    across two lists would let the two disagree about the same port.
+    """
+
+    if value is None:
+        return [], []
+    if not isinstance(value, list):
+        raise ReservationError(f"{location} must be a list of ports or address:port entries")
+
+    ports: list[int] = []
+    listeners: list[tuple[str, int]] = []
+    for entry in value:
+        if isinstance(entry, bool):
+            #
+            # Before the int check: bool is an int in Python, and `yes` in YAML
+            # is a bool, so `- yes` would otherwise reserve port 1.
+            #
+            raise ReservationError(f"{location} contains something that is not a port")
+        if isinstance(entry, int):
+            ports.append(_port(entry, location))
+            continue
+        if not isinstance(entry, str):
+            raise ReservationError(f"{location} contains something that is not a port")
+        address, port = _split(entry.strip(), location)
+        if address is None:
+            ports.append(port)
+        else:
+            listeners.append((address, port))
+    return ports, listeners
+
+
+def _split(entry: str, location: str) -> tuple[str | None, int]:
+    """`443`, `:443` and `192.0.2.10:443`, in HAProxy's own bind notation.
+
+    An IPv6 address has to be bracketed, exactly as a bind line requires. The
+    brackets are what makes `::1:443` readable at all - without them the last
+    colon is not distinguishable from part of the address, and guessing which
+    it is would silently reserve the wrong thing.
+    """
+
+    if entry.startswith("["):
+        closing = entry.find("]")
+        if closing == -1 or not entry[closing + 1 :].startswith(":"):
+            raise ReservationError(
+                f"{location} contains {entry!r}, which is not an [address]:port entry"
+            )
+        return _address(entry[1:closing], location), _text_port(entry[closing + 2 :], location)
+
+    head, separator, tail = entry.rpartition(":")
+    if not separator:
+        return None, _text_port(entry, location)
+    if not head:
+        #
+        # `:443` is a bind line without an address, which takes the port on
+        # every address the host has. The same reading as a bare number.
+        #
+        return None, _text_port(tail, location)
+    if ":" in head:
+        raise ReservationError(
+            f"{location} contains {entry!r}; an IPv6 address must be written as [address]:port"
+        )
+    return _address(head, location), _text_port(tail, location)
+
+
+def _text_port(value: str, location: str) -> int:
+    if not value.isdigit():
+        raise ReservationError(f"{location} contains {value!r}, which is not a port number")
+    return _port(int(value), location)
+
+
+def _port(value: int, location: str) -> int:
+    if not 1 <= value <= 65535:
+        raise ReservationError(f"{location} contains {value}, which is not a port number")
+    return value
 
 
 def _hostnames(value: Any, location: str) -> list[str]:
@@ -109,16 +215,3 @@ def _hostnames(value: Any, location: str) -> list[str]:
             raise ReservationError(f"{location} contains something that is not a hostname")
         names.append(entry.lower())
     return names
-
-
-def _ports(value: Any, location: str) -> list[int]:
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        raise ReservationError(f"{location} must be a list of port numbers")
-    ports = []
-    for entry in value:
-        if not isinstance(entry, int) or isinstance(entry, bool) or not 1 <= entry <= 65535:
-            raise ReservationError(f"{location} contains something that is not a port number")
-        ports.append(entry)
-    return ports

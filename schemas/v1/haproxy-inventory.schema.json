@@ -68,6 +68,11 @@
           "items": { "type": "string", "minLength": 1, "maxLength": 253 },
           "uniqueItems": true
         },
+        "tcp_listeners": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 3, "maxLength": 60 },
+          "uniqueItems": true
+        },
         "tcp_ports": {
           "type": "array",
           "items": { "type": "integer", "minimum": 1, "maximum": 65535 },

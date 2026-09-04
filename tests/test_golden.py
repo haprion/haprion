@@ -828,6 +828,40 @@ class OneCertificateIsHeldToOneSetOfTerms(unittest.TestCase):
         self.assertIn("one", message)
         self.assertIn("two", message)
 
+    def test_the_same_certificate_may_differ_between_two_vips(self) -> None:
+        """The unit is the certificate on one listener, not everywhere.
+
+        Each listener writes a certificate list of its own, so a certificate
+        that serves sites on two addresses has a line in each file and can be
+        held to different terms in each. Only the two sites sharing one line -
+        one certificate on one listener - have to agree.
+
+        Worth a test of its own because the refusal above reads as though it
+        were about the certificate globally, and somebody reading only that one
+        would reasonably give two VIPs two certificates they do not need.
+        """
+
+        vips = {
+            "main": Vip(name="main", address="192.0.2.20"),
+            "other": Vip(name="other", address="192.0.2.21"),
+        }
+        files = generate(
+            [
+                self.document("one", "  tls: modern\n"),
+                self.document("two", "  vip: other\n"),
+            ],
+            vips=vips,
+            default_vip="main",
+            certificates=("shared",),
+            certificate_sans={"shared": ("one.example.com", "two.example.com")},
+        )
+
+        listings = files.certificate_lists
+        self.assertEqual(len(listings), 2)
+        held = sorted(body.strip() for body in listings.values())
+        self.assertTrue(held[0].endswith("shared.pem"))
+        self.assertIn("shared.pem [", held[1])
+
     def test_two_sites_asking_the_same_are_fine(self) -> None:
         """The refusal is about disagreement, not about sharing."""
 

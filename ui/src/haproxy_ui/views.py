@@ -668,6 +668,7 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 **listing,
                 "section": "proxies",
+                "discarded": request.query_params.get("discarded", ""),
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
@@ -1867,20 +1868,46 @@ def _editor_submit(
             back="/proxies",
         )
     #
-    # A rename is a new object and a removal, not an edit. Refused here rather
-    # than accepted and half-applied: the URL names what is being edited, and a
-    # form that could change it would write one object while the page claimed
-    # to be looking at another.
+    # Renaming a *published* object is a new object and a removal, not an edit:
+    # the address and the deployed document are the same identity, and a form
+    # that could change it would write one object while the page claimed to be
+    # looking at another. Refused here rather than accepted and half-applied.
     #
-    if name and typed and typed != name:
+    # A draft that has never been published is not that. Nothing outside this
+    # table carries its name yet, so the name is still being chosen - and that
+    # is exactly the object somebody is most likely to want to rename. It is
+    # handled below, where the draft is written.
+    #
+    renaming = bool(name) and bool(typed) and typed != name
+    published = any(view.name == name for view in state.stored)
+    if renaming and published:
         return _refusal_page(
             request,
             config,
             "An object cannot be renamed here. Create the new name and remove the old one.",
             back=_proxy_path(cluster, name, "edit"),
         )
+    if renaming and not proxy_model.NAME.fullmatch(typed):
+        return _refusal_page(
+            request,
+            config,
+            f"{typed} is not a usable object name - {proxy_model.name_refusal(typed)}; "
+            f"use {proxy_model.NAME_RULE}.",
+            back=_proxy_path(cluster, name, "edit"),
+        )
 
     revision = int(form.expected_revision) if form.expected_revision.isdigit() else None
+    #
+    # A new object has no draft to be a revision of, so the field is ignored
+    # here rather than trusted. It is a hidden input, and a browser restores
+    # hidden inputs when somebody navigates back into a form - so a revision
+    # from the object saved a moment ago survived into the new-object form and
+    # turned the next save into an update of a row that had never existed. The
+    # answer was "the draft changed since it was read", about a draft nobody
+    # had ever made, and the work was refused with nowhere obvious to go.
+    #
+    if not name:
+        revision = None
 
     if form.action == "discard":
         if revision is None:
@@ -1898,7 +1925,11 @@ def _editor_submit(
             except db.DraftConflict as conflict:
                 connection.rollback()
                 return _refusal_page(
-                    request, config, str(conflict), back=_proxy_path(cluster, object_id, "edit")
+                    request,
+                    config,
+                    str(conflict),
+                    back=_proxy_path(cluster, object_id, "edit"),
+                    stale=True,
                 )
             db.record_audit_event(
                 connection,
@@ -1909,7 +1940,23 @@ def _editor_submit(
                 detail={"object": object_id},
             )
             connection.commit()
-        return RedirectResponse(_proxy_path(cluster, object_id) + "?discarded=1", status_code=303)
+        #
+        # The object's own page, but only while it still is one. A name that is
+        # neither stored, served nor drafted is a 404 by design - and after
+        # discarding the only draft of an object that was never published, that
+        # is exactly what the name has become. Sending somebody to it made the
+        # last step of a perfectly ordinary act answer "Not Found".
+        #
+        # The listing instead, which is where the object no longer is. The name
+        # travels in the query so the page can say which one, and it has passed
+        # the engine's name rule above, so it is a name and not a fragment of
+        # something else.
+        #
+        if any(view.name == object_id for view in state.stored):
+            return RedirectResponse(
+                _proxy_path(cluster, object_id) + "?discarded=1", status_code=303
+            )
+        return RedirectResponse(f"/proxies?discarded={object_id}", status_code=303)
 
     if form.action not in ("save", "publish"):
         return PlainTextResponse("Unknown action", status_code=400)
@@ -1930,6 +1977,42 @@ def _editor_submit(
         )
 
     #
+    # The rename of an unpublished draft, resolved here where the write is.
+    # From this point the new name is the object: it is what gets saved, what
+    # the redirect lands on, and what a publish would carry.
+    #
+    # The old row is deleted after the new one is written, and both happen in
+    # the transaction below - a rename that left the draft under both names
+    # would put two objects in the listing where the person made one.
+    #
+    # The new name has to be free of both a stored object and another draft.
+    # A draft is not visible on the listing the way a published object is, so
+    # without the second check a rename could silently land on somebody else's
+    # unfinished work and take its revision with it.
+    #
+    renamed_from = ""
+    rename_revision = 0
+    if renaming:
+        with request.app.state.pool.connection() as connection:
+            taken = _settled_draft(connection, cluster, typed, {view.name for view in state.stored})
+        if any(view.name == typed for view in state.stored) or taken is not None:
+            return _refusal_page(
+                request,
+                config,
+                f"{typed} is already taken in this cluster, as an object or as a draft.",
+                back=_proxy_path(cluster, name, "edit"),
+            )
+        #
+        # The move is only for a draft that exists. Without a revision there is
+        # no row under the old name - nothing was ever saved there - so the new
+        # name is simply where this work is saved, and nothing is left behind
+        # because nothing was there.
+        #
+        object_id = typed
+        if revision is not None:
+            renamed_from, rename_revision = name, revision
+
+    #
     # A draft must be an object. Whether it fits beside its neighbours is a
     # publish question, and refusing to save until every clash is resolved
     # would stop somebody from working towards resolving them.
@@ -1942,20 +2025,44 @@ def _editor_submit(
 
     with request.app.state.pool.connection() as connection:
         try:
-            saved = db.save_draft(
-                connection,
-                cluster=cluster,
-                object_id=object_id,
-                yaml=result.document,
-                base_version=state.base_version,
-                base_hash=state.commit,
-                updated_by=session.username,
-                expected_revision=revision,
-            )
+            if renamed_from:
+                #
+                # One statement, not a write and then a delete. `save_draft`
+                # commits a transaction of its own, so a two-step rename left
+                # the new row standing when the second step was refused - two
+                # drafts where somebody had made one. The key moves or it does
+                # not.
+                #
+                saved = db.rename_draft(
+                    connection,
+                    cluster=cluster,
+                    object_id=renamed_from,
+                    new_object_id=object_id,
+                    yaml=result.document,
+                    base_version=state.base_version,
+                    base_hash=state.commit,
+                    updated_by=session.username,
+                    expected_revision=rename_revision,
+                )
+            else:
+                saved = db.save_draft(
+                    connection,
+                    cluster=cluster,
+                    object_id=object_id,
+                    yaml=result.document,
+                    base_version=state.base_version,
+                    base_hash=state.commit,
+                    updated_by=session.username,
+                    expected_revision=revision,
+                )
         except db.DraftConflict as conflict:
             connection.rollback()
             return _refusal_page(
-                request, config, str(conflict), back=_proxy_path(cluster, object_id, "edit")
+                request,
+                config,
+                str(conflict),
+                back=_proxy_path(cluster, object_id, "edit"),
+                stale=True,
             )
         db.record_audit_event(
             connection,
@@ -1963,7 +2070,11 @@ def _editor_submit(
             action="save_draft",
             cluster=cluster,
             request_id=uuid4(),
-            detail={"object": object_id, "revision": saved.revision},
+            detail=(
+                {"object": object_id, "revision": saved.revision, "renamed_from": renamed_from}
+                if renamed_from
+                else {"object": object_id, "revision": saved.revision}
+            ),
         )
         connection.commit()
     #
@@ -2141,7 +2252,9 @@ def _removal_submit(
             )
         except db.DraftConflict as conflict:
             connection.rollback()
-            return _refusal_page(request, config, str(conflict), back=_proxy_path(cluster, name))
+            return _refusal_page(
+                request, config, str(conflict), back=_proxy_path(cluster, name), stale=True
+            )
         connection.commit()
 
     payload = {
@@ -2404,13 +2517,23 @@ def _return_path(name: str) -> str:
     return RETURN_PATHS.get(name, "/jobs")
 
 
-def _refusal_page(request: Request, config: Config, message: str, *, back: str) -> Response:
+def _refusal_page(
+    request: Request, config: Config, message: str, *, back: str, stale: bool = False
+) -> Response:
     """A refusal a person met mid-form, drawn inside the interface's own chrome.
 
     Module level so the editor can reach it as well as the closure that queues
     operations. The message is the caller's sentence and never an echo of what
     was typed - the same rule the network form's refusals follow, and for the
     same reason.
+
+    `stale` is for the one refusal where going back is the wrong move. Most
+    refusals are about what was typed, and the browser's back button returns to
+    the form with it still in place. A draft conflict is not about what was
+    typed at all: the form is holding a revision that has since moved, and
+    going back submits that same revision again for the same refusal. The page
+    said "go back" to everybody, which made the one case it could not help the
+    one it advised most confidently.
     """
 
     session = current_session(request)
@@ -2426,6 +2549,7 @@ def _refusal_page(request: Request, config: Config, message: str, *, back: str) 
             "management_writes": config.management_writes,
             "csrf_token": auth.csrf_token(token),
             "message": message,
+            "stale": stale,
             "back": back,
             "back_label": back.lstrip("/") or "the dashboard",
             "section": back.lstrip("/").split("/")[0],

@@ -89,6 +89,7 @@ class EditorTestCase(LoginTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.saved: list[dict[str, Any]] = []
+        self.renamed: list[dict[str, Any]] = []
         self.discarded: list[tuple[str, str, int]] = []
         self.draft: ProxyDraft | None = None
         self.conflict = False
@@ -97,6 +98,7 @@ class EditorTestCase(LoginTestCase):
             ("cluster_networks", lambda _c: [NETWORK]),
             ("read_draft", self._read_draft),
             ("save_draft", self._save_draft),
+            ("rename_draft", self._rename_draft),
             ("discard_draft", self._discard_draft),
         ):
             patch = mock.patch(f"haproxy_ui.db.{target}", side_effect=side_effect)
@@ -104,8 +106,16 @@ class EditorTestCase(LoginTestCase):
             self.addCleanup(patch.stop)
 
     def _read_draft(self, _c: object, cluster: str, object_id: str) -> ProxyDraft | None:
-        del cluster, object_id
-        return self.draft
+        #
+        # Keyed by the object asked for, as the table is. It used to answer
+        # with the one draft whatever was asked, which was harmless until
+        # something looked up a *different* name to see whether it was free -
+        # a fixture that answers yes to every question cannot measure that.
+        #
+        del cluster
+        if self.draft is not None and self.draft.object_id == object_id:
+            return self.draft
+        return None
 
     def _save_draft(self, _c: object, **values: Any) -> ProxyDraft:
         if self.conflict:
@@ -118,6 +128,22 @@ class EditorTestCase(LoginTestCase):
             base_version=values["base_version"],
             base_hash=values["base_hash"],
             revision=(values["expected_revision"] or 0) + 1,
+            updated_by=values["updated_by"],
+            updated_at=OBSERVED,
+            deleted=False,
+        )
+
+    def _rename_draft(self, _c: object, **values: Any) -> ProxyDraft:
+        if self.conflict:
+            raise DraftConflict("the draft for shop changed since it was read")
+        self.renamed.append(values)
+        return ProxyDraft(
+            cluster=values["cluster"],
+            object_id=values["new_object_id"],
+            yaml=values["yaml"],
+            base_version=values["base_version"],
+            base_hash=values["base_hash"],
+            revision=values["expected_revision"] + 1,
             updated_by=values["updated_by"],
             updated_at=OBSERVED,
             deleted=False,
@@ -238,13 +264,163 @@ class SavingADraft(EditorTestCase):
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(self.saved[0]["object_id"], "other")
 
-    def test_a_rename_is_refused(self) -> None:
+    def test_the_new_object_form_ignores_a_revision_it_was_handed(self) -> None:
+        """A new object has no draft to be a revision of.
+
+        `expected_revision` is a hidden input, and a browser restores hidden
+        inputs when somebody navigates back into a form - so the revision of
+        the object saved a moment ago reached the new-object form, and the save
+        became an update of a row that had never existed. It answered "the
+        draft changed since it was read", about a draft nobody had made.
+        """
+
+        client = self.editor()
+
+        answer = self.submit(
+            client, "/proxies/alpha/new", action="save", name="console", expected_revision="1"
+        )
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertIsNone(self.saved[0]["expected_revision"])
+
+    def test_the_match_choice_is_dimmed_rather_than_disabled(self) -> None:
+        """A disabled select is not submitted, and this one's default decides.
+
+        Left disabled, a form where somebody filled in a redirect but the
+        script had not run would post no match mode at all and fall back to
+        `prefix` - the one answer that makes a redirect on the site root
+        collide with the pool. The cue must not change what gets saved.
+        """
+
+        page = self.editor().get("/proxies/alpha/new").text
+
+        self.assertNotIn("disabled", page.split('name="redirect_match"')[1].split(">")[0])
+
+    def test_a_drafted_object_posts_to_its_own_address(self) -> None:
+        """The form action was chosen by the stored document, not the address.
+
+        An object that has only ever been drafted has no stored document, so
+        every submission from its editor went to the new-object route - where
+        the name comes out of the form and each save looks like a first one. A
+        rename made a second draft beside the first instead of moving it, and a
+        discard asked a route that knew of no draft to throw one away.
+        """
+
+        page = self.editor().get("/proxies/alpha/nodraftyet/edit").text
+
+        self.assertIn('action="/proxies/alpha/nodraftyet/edit"', page)
+
+    def test_renaming_a_published_object_is_refused(self) -> None:
+        """Its name is its address and what the nodes are serving."""
+
         client = self.editor()
 
         answer = self.submit(client, "/proxies/alpha/shop/edit", action="save", name="bazaar")
 
         self.assertEqual(answer.status_code, 400)
         self.assertEqual(self.saved, [])
+
+    def test_an_unpublished_draft_may_be_renamed(self) -> None:
+        """A draft where one field cannot be changed is not a draft.
+
+        Nothing outside `proxy_draft` knows this name yet - it is not an
+        address anybody has, not a document on a node, not a line in a
+        published release - so the name is still being chosen like every other
+        answer on the form.
+
+        The write is one transaction: the new row first, then the old one, and
+        the old revision is enforced on the delete because that is the row the
+        person was actually reading.
+        """
+
+        self.draft = ProxyDraft(
+            cluster="alpha",
+            object_id="console",
+            yaml=SHOP.replace("shop", "console"),
+            base_version=12,
+            base_hash=COMMIT,
+            revision=3,
+            updated_by="operator",
+            updated_at=OBSERVED,
+            deleted=False,
+        )
+        client = self.editor()
+
+        answer = self.submit(
+            client,
+            "/proxies/alpha/console/edit",
+            action="save",
+            name="terminal",
+            expected_revision="3",
+        )
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(answer.headers["location"], "/proxies/alpha/terminal/edit?saved=1")
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.discarded, [])
+        self.assertEqual(self.renamed[0]["object_id"], "console")
+        self.assertEqual(self.renamed[0]["new_object_id"], "terminal")
+        self.assertEqual(self.renamed[0]["expected_revision"], 3)
+
+    def test_a_draft_may_not_be_renamed_onto_a_published_object(self) -> None:
+        self.draft = ProxyDraft(
+            cluster="alpha",
+            object_id="console",
+            yaml=SHOP.replace("shop", "console"),
+            base_version=12,
+            base_hash=COMMIT,
+            revision=3,
+            updated_by="operator",
+            updated_at=OBSERVED,
+            deleted=False,
+        )
+        client = self.editor()
+
+        answer = self.submit(
+            client,
+            "/proxies/alpha/console/edit",
+            action="save",
+            name="shop",
+            expected_revision="3",
+        )
+
+        self.assertEqual(answer.status_code, 400)
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.renamed, [])
+        self.assertEqual(self.discarded, [])
+
+    def test_a_draft_may_not_be_renamed_onto_another_draft(self) -> None:
+        """A draft is not on the listing, so nothing else would show the clash.
+
+        Without this the rename would land on somebody else's unfinished work
+        and take its revision with it.
+        """
+
+        self.draft = ProxyDraft(
+            cluster="alpha",
+            object_id="terminal",
+            yaml=SHOP.replace("shop", "terminal"),
+            base_version=12,
+            base_hash=COMMIT,
+            revision=1,
+            updated_by="someone-else",
+            updated_at=OBSERVED,
+            deleted=False,
+        )
+        client = self.editor()
+
+        answer = self.submit(
+            client,
+            "/proxies/alpha/console/edit",
+            action="save",
+            name="terminal",
+            expected_revision="3",
+        )
+
+        self.assertEqual(answer.status_code, 400)
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.renamed, [])
+        self.assertEqual(self.discarded, [])
 
     def test_a_name_the_engine_could_not_use_is_refused_here(self) -> None:
         """Refused where it was typed, rather than by a job an hour later.
@@ -415,6 +591,36 @@ class WhereASaveLands(EditorTestCase):
     configuration this would generate - is on the page, and navigating away
     would throw away what was just asked for.
     """
+
+    def test_discarding_the_only_draft_of_a_new_object_goes_to_the_listing(self) -> None:
+        """Its page stops existing the moment the draft does.
+
+        A name that is neither stored, served nor drafted is a 404 by design.
+        After discarding the only draft of an object that was never published,
+        that is what the name has become - so the object's page answered "Not
+        Found" as the last step of an ordinary act.
+        """
+
+        self.draft = ProxyDraft(
+            cluster="alpha",
+            object_id="console",
+            yaml="",
+            base_version=1,
+            base_hash="abc",
+            revision=2,
+            updated_by="operator",
+            updated_at=OBSERVED,
+            deleted=False,
+        )
+        client = self.editor()
+
+        answer = self.submit(
+            client, "/proxies/alpha/console/edit", action="discard", expected_revision="2"
+        )
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(answer.headers["location"], "/proxies?discarded=console")
+        self.assertEqual(self.discarded, [("alpha", "console", 2)])
 
     def test_a_discard_goes_to_the_object_and_says_so(self) -> None:
         self.draft = ProxyDraft(

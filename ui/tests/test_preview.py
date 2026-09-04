@@ -402,12 +402,17 @@ class ARouteMayRedirect(unittest.TestCase):
             generated,
         )
 
-    def test_a_prefix_redirect_on_the_root_is_refused_in_the_engine_s_words(self) -> None:
+    def test_a_prefix_redirect_on_the_root_is_refused_in_the_form_s_words(self) -> None:
         """The same form without the exact match, which is the same route twice.
 
         Refused rather than quietly turned into an exact match: the person may
         have meant the whole site to redirect, and that is an object with
         nowhere to send anything - which is worth saying out loud.
+
+        Said by the form, not by the engine. "routes matches the same path
+        twice" is true and describes a document the person never saw; it does
+        not name the field that fixes it, and this is the shape people reach
+        for often enough that meeting it with a puzzle is the wrong answer.
         """
 
         result = preview(
@@ -419,7 +424,7 @@ class ARouteMayRedirect(unittest.TestCase):
         )
 
         self.assertIsNotNone(result.problem)
-        self.assertIn("same path twice", str(result.problem))
+        self.assertIn("set the redirect's match to exact", str(result.problem))
 
     def test_a_prefix_redirect_is_written_as_it_always_was(self) -> None:
         """The default carries no `match` key, so older objects round-trip.

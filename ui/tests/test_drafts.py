@@ -70,6 +70,56 @@ class FakeConnection:
         return nullcontext()
 
 
+class RenamingADraft(unittest.TestCase):
+    """A rename is one statement, and the reason is not tidiness.
+
+    Written as a save under the new name followed by a delete of the old one it
+    is two writes, and `save_draft` commits a transaction of its own - so a
+    conflict on the delete left the new row standing and the person had two
+    drafts where they had made one. Measured on the development platform, not
+    reasoned about: the second draft was there in the listing.
+    """
+
+    def rename(self, connection: FakeConnection) -> Any:
+        return db.rename_draft(
+            connection,  # type: ignore[arg-type]
+            cluster="alpha",
+            object_id="shop",
+            new_object_id="bazaar",
+            yaml="schema: 1\nname: bazaar\n",
+            base_version=7,
+            base_hash="a" * 40,
+            updated_by="admin",
+            expected_revision=3,
+        )
+
+    def test_the_key_moves_in_the_statement_that_writes_the_document(self) -> None:
+        connection = FakeConnection(DRAFT)
+
+        self.rename(connection)
+
+        self.assertEqual(len(connection.last.statements), 1)
+        statement = connection.last.statements[0]
+        self.assertIn("update proxy_draft", statement)
+        self.assertIn("set object_id = %(new_object_id)s", statement)
+
+    def test_it_carries_the_revision_it_read(self) -> None:
+        """The same predicate an ordinary save carries, for the same reason."""
+
+        connection = FakeConnection(DRAFT)
+
+        self.rename(connection)
+
+        self.assertIn("and revision = %(revision)s", connection.last.statements[0])
+        self.assertEqual(connection.last.parameters["revision"], 3)
+
+    def test_a_row_that_moved_underneath_is_a_conflict(self) -> None:
+        connection = FakeConnection(None)
+
+        with self.assertRaises(db.DraftConflict):
+            self.rename(connection)
+
+
 class SavingADraft(unittest.TestCase):
     def save(self, connection: FakeConnection, expected_revision: int | None) -> Any:
         return db.save_draft(

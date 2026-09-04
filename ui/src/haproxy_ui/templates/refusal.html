@@ -17,7 +17,7 @@
 
 <div class="refusal-card">
   <p class="refusal-message"><span class="status-orb status-warning" aria-hidden="true"></span>{{ message }}</p>
-  <p class="refusal-hint">Go back in the browser to return to the form — what you typed is still in it.</p>
+  <p class="refusal-hint">{% if stale %}Do not go back — the form is holding a version that has since moved, and sending it again gives this same answer. Open it fresh, then make the change there.{% else %}Going back in the browser may return you to the form. Whether what you typed is still in it is the browser's decision, not ours — this page does not hold it.{% endif %}</p>
   <div class="editor-actions"><a class="secondary-button" href="{{ back }}">Open {{ back_label }} fresh</a></div>
 </div>
 {% endblock %}

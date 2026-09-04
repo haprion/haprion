@@ -8,6 +8,13 @@
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
 </section>
 
+{#
+  Said here rather than on the object's page, because after discarding the only
+  draft of an object that was never published there is no object page left to
+  say it on.
+#}
+{% if discarded %}<p class="preview-notice"><strong>The draft for {{ discarded }} was discarded.</strong> Nothing was published under that name.</p>{% endif %}
+
 <section class="metric-grid proxy-summary" aria-label="Proxy summary">
   <article class="metric-card"><span class="metric-icon metric-icon-cluster" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><div><strong data-count="published">{{ counts.published }}</strong><span>Proxies</span><small>Published</small></div></article>
   <article class="metric-card"><span class="metric-icon metric-icon-node" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"></path></svg></span><div><strong data-count="managed">{{ counts.managed }}</strong><span>Managed</span><small>Platform owned</small></div></article>

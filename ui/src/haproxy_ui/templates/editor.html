@@ -1,9 +1,14 @@
 {% extends "layout.html" %}
-{% block title %}{% if existing %}{{ name }}{% else %}New object{% endif %} — HAProxy Manager{% endblock %}
+{% block title %}{% if name %}{{ name }}{% else %}New object{% endif %} — HAProxy Manager{% endblock %}
 {% block content %}
 <section class="page-heading">
   <div>
-    <h1>{% if existing %}Editing {{ name }}{% else %}A new object on {{ cluster }}{% endif %}</h1>
+    {#
+      `name` again, not `existing`: an object that has only ever been drafted
+      is still the object being edited, and the page called it "A new object"
+      while it sat on that object's own address.
+    #}
+    <h1>{% if name %}Editing {{ name }}{% else %}A new object on {{ cluster }}{% endif %}</h1>
     <p>Changes are kept as a draft on this cluster. Nothing reaches the configuration until it is published, and publishing does not deploy.</p>
   </div>
   <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-info"></span>{{ cluster }}</span></div>
@@ -30,7 +35,16 @@
 </section>
 {% endif %}
 
-<form method="post" action="{% if existing %}/proxies/{{ cluster }}/{{ name }}/edit{% else %}/proxies/{{ cluster }}/new{% endif %}" class="preview-form">
+{#
+  Posted to the address that is being edited, which is `name` - not `existing`.
+  `existing` is about the stored document, and a draft for an object nobody has
+  published yet has none: every submission from its editor went to the
+  new-object route instead. There `name` is empty, so the route read the name
+  out of the form and treated each save as a first one. A rename made a second
+  draft beside the first rather than moving it, and a discard asked to throw
+  away a draft the route had no way to know about.
+#}
+<form method="post" action="{% if name %}/proxies/{{ cluster }}/{{ name }}/edit{% else %}/proxies/{{ cluster }}/new{% endif %}" class="preview-form">
   {#
     What Enter does, decided rather than inherited. A browser submits with the
     first submit button in tree order, which was "Test health" inside the form -
@@ -46,6 +60,14 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="expected_revision" value="{{ draft_revision }}">
 
+  {#
+    Locked by the stored document, because that is what a rename would break:
+    a published object's name is its address and the identity the nodes are
+    serving. A draft that has never been published carries no such promise -
+    nothing outside its own table knows the name yet - so it is renamed like
+    any other field, which is what makes it a draft rather than a form with
+    one answer already fixed.
+  #}
   {% with name_locked = existing %}{% include "_object-form.html" %}{% endwith %}
 
   {#
@@ -61,17 +83,22 @@
     saving, and a button beside three others that writes nothing is the one
     people press by accident.
 
+    The row ends with the act it is for. The publish is the rightmost thing,
+    where the row is read to, and the leave link moved to the far left for the
+    same reason it is a link: the two must not be neighbours, or a hand aimed
+    at leaving lands on the one button that puts a change on the nodes.
+
     It said "Cancel", which claims to undo something. Saving a draft leaves you
     here, so by then there is nothing to undo and the word was wrong - and it
     was never quite right, since leaving an unsaved form discards nothing that
     was ever stored. The label names where it goes, which is true either way.
   #}
   <div class="form-actions">
+    <a class="secondary-button" href="/proxies">Back to proxies</a>
     <button type="submit" name="action" value="check" class="secondary-button">Validate the object</button>
-    <button type="submit" name="action" value="publish" class="primary-button">Save and publish</button>
     <button type="submit" name="action" value="save" class="secondary-button">Save as draft</button>
     {% if draft %}<button type="submit" name="action" value="discard" class="secondary-button">Discard the draft</button>{% endif %}
-    <a class="secondary-button" href="/proxies">Back to proxies</a>
+    <button type="submit" name="action" value="publish" class="primary-button">Save and publish</button>
   </div>
 </form>
 

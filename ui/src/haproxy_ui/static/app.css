@@ -840,6 +840,14 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  */
 .form-grid input:disabled, .form-grid select:disabled { opacity: 0.45; cursor: not-allowed; }
 .form-grid label:has(input:disabled), .form-grid label:has(select:disabled) { opacity: 0.7; }
+/*
+ * The same look as a disabled control, for a control that must stay enabled.
+ * A disabled select is not submitted, so a field whose default decides the
+ * shape of the object cannot use `disabled` to say "not yet" - it would be
+ * saying it to the server as well.
+ */
+.form-grid select.field-idle { opacity: 0.45; }
+.form-grid label:has(select.field-idle) { opacity: 0.7; }
 .check-value { display: flex; align-items: center; gap: 10px; color: var(--text-secondary); font-weight: 620; }
 .section-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .section-title p { margin: 0; }

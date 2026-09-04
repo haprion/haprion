@@ -92,21 +92,29 @@
   // rather than `change`, so the choices stop being greyed out as the location
   // is typed rather than when the field is finally left.
   //
-  // Every select inside a `.redirect-only` label is greyed out together. That
-  // is one rule rather than one per field, so a choice added to the redirect
-  // later is covered by having been put in the right place.
+  // The two choices wait for different things, because they are about
+  // different fields. The match mode says how the path is read, so a path is
+  // all it needs - waiting for the target as well would grey out the choice
+  // while somebody is still deciding what the path is. The status code is the
+  // answer sent to the target, and has nothing to mean until there is one.
   //
   const wireRedirectStatus = () => {
     const path = document.querySelector("input[name='redirect_path']");
     const location = document.querySelector("input[name='redirect_location']");
-    const choices = document.querySelectorAll(".redirect-only select");
-    if (!path || !location || !choices.length) return;
+    const match = document.querySelector("select[name='redirect_match']");
+    const status = document.querySelector("select[name='redirect_status']");
+    if (!path || !location || !match || !status) return;
 
     const apply = () => {
-      const written = !(path.value.trim() && location.value.trim());
-      choices.forEach((choice) => {
-        choice.disabled = written;
-      });
+      const written = path.value.trim();
+      //
+      // Dimmed, not disabled. A disabled select is not submitted at all, so
+      // the form would fall back to its default - and for the match mode that
+      // default is precisely the answer that makes this shape collide. A cue
+      // that quietly changes what gets saved is worse than no cue.
+      //
+      match.classList.toggle("field-idle", !written);
+      status.disabled = !(written && location.value.trim());
     };
     path.addEventListener("input", apply);
     location.addEventListener("input", apply);

@@ -502,6 +502,19 @@ def _routes(
         raise ValueError("a redirect needs both a path and a location")
     if not status.isdigit():
         raise ValueError("the redirect status must be a number")
+    #
+    # Named here, in the form's own words, rather than left to the engine. The
+    # engine's answer - "routes matches the same path twice" - is true and
+    # unhelpful: it describes a document the person never saw, and does not
+    # name the field that fixes it. This is the shape somebody reaches for when
+    # a site's root sends visitors on to the page the application starts at,
+    # which is common enough that meeting it with a puzzle is the wrong answer.
+    #
+    if path == routes[0]["path"] and match != "exact":
+        raise ValueError(
+            "the redirect and the pool are both on this path; set the redirect's match to "
+            "exact so it answers that one address and the pool keeps the rest"
+        )
     redirect: dict[str, object] = {"path": path}
     if match == "exact":
         redirect["match"] = match

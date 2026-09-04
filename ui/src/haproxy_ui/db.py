@@ -1411,6 +1411,68 @@ def save_draft(
         return row
 
 
+def rename_draft(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    object_id: str,
+    new_object_id: str,
+    yaml: str,
+    base_version: int | None,
+    base_hash: str,
+    updated_by: str,
+    expected_revision: int,
+) -> ProxyDraft:
+    """Move one draft to another name, as a change of its key.
+
+    A rename is not a new draft and a removal of the old one. Written that way
+    it is two writes, and `save_draft` commits its own transaction - so a
+    conflict on the second left the first standing and the person had two
+    drafts where they had made one, which is precisely how this was found.
+
+    One statement instead. `(cluster, object_id)` is the primary key, so the
+    move either happens or does not, and a name already taken fails on the key
+    rather than on a check that raced. The row keeps its `id`: it is the same
+    piece of work, and the publish that eventually carries it should be able to
+    say so.
+    """
+
+    values = {
+        "cluster": cluster,
+        "object_id": object_id,
+        "new_object_id": new_object_id,
+        "yaml": yaml,
+        "base_version": base_version,
+        "base_hash": base_hash,
+        "updated_by": updated_by,
+        "revision": expected_revision,
+    }
+    with connection.transaction(), connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
+        try:
+            cursor.execute(
+                "update proxy_draft "
+                "   set object_id = %(new_object_id)s, yaml = %(yaml)s, "
+                "       base_version = %(base_version)s, base_hash = %(base_hash)s, "
+                "       updated_by = %(updated_by)s "
+                " where cluster = %(cluster)s and object_id = %(object_id)s "
+                "   and revision = %(revision)s "
+                "returning id, cluster, object_id, yaml, base_version, base_hash, revision, "
+                "          updated_by, updated_at, deleted",
+                values,
+            )
+        except psycopg.errors.UniqueViolation as clash:
+            raise DraftConflict(
+                f"{new_object_id} already has a draft in this cluster; "
+                f"the rename would replace somebody's work"
+            ) from clash
+        row = cursor.fetchone()
+        if row is None:
+            raise DraftConflict(
+                f"the draft for {object_id} changed since it was read; reload it and try again"
+            )
+        return row
+
+
 def discard_draft(
     connection: Connection[Any], *, cluster: str, object_id: str, expected_revision: int
 ) -> None:

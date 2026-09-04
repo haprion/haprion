@@ -273,7 +273,9 @@ class TheTwoDeployBadgesAreAPair(LoginTestCase):
     the direction - and the direction is the whole of what a reader needs.
     """
 
-    def test_the_two_rows_say_opposite_things(self) -> None:
+    def listing(self, *, served: str = "mgd-gone-web") -> str:
+        """One row of each kind in one page, with `served` naming what the node has."""
+
         client = self.client(replace(configuration(), clusters=("alpha",)))
         self.sign_in(client)
         removal = Job(
@@ -306,7 +308,7 @@ class TheTwoDeployBadgesAreAPair(LoginTestCase):
                     {
                         "node": "node-a",
                         "status": {
-                            "servers": [{"backend": "mgd-gone-web", "server": "s1", "status": "UP"}]
+                            "servers": [{"backend": served, "server": "s1", "status": "UP"}]
                         },
                     }
                 ]
@@ -324,8 +326,33 @@ class TheTwoDeployBadgesAreAPair(LoginTestCase):
             mock.patch("haproxy_ui.db.recent_jobs", return_value=[removal]),
             mock.patch("haproxy_ui.db.cluster_statuses", return_value=[behind]),
         ):
-            body = client.get("/proxies").text
+            return client.get("/proxies").text
+
+    def test_the_two_rows_say_opposite_things(self) -> None:
+        body = self.listing()
 
         self.assertIn("Inactive · deploy to add", body)
         self.assertIn("Active · deploy to remove", body)
         self.assertNotIn("Waiting for deploy", body)
+
+    def test_neither_end_of_the_wait_claims_a_protocol(self) -> None:
+        """The column says what the nodes serve, not what a document intends.
+
+        Nothing can name the protocol of an object being removed - the
+        repository no longer has it - so a row waiting to be added that showed
+        one made the two ends of the same wait look like two different kinds of
+        thing. The pending object's protocol is on its own page.
+        """
+
+        body = self.listing()
+
+        self.assertIn("Inactive · deploy to add", body)
+        self.assertNotIn("protocol-badge", body)
+
+    def test_an_object_the_nodes_serve_does_say_which_protocol(self) -> None:
+        """The column is not merely blanked; it fills in when there is an answer."""
+
+        body = self.listing(served="mgd-shop-web")
+
+        self.assertNotIn("Inactive · deploy to add", body)
+        self.assertIn("protocol-badge", body)

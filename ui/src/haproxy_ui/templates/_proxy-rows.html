@@ -46,7 +46,19 @@
 {% for object in written if object.name not in drafted %}
       <tr{% if not object.serving %} class="proxy-waiting"{% endif %}>
         <td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ object.name }}"><strong>{{ object.name }}</strong></a>{% else %}<strong>{{ object.name }}</strong>{% endif %}</td>
-        <td data-label="Protocol">{% if object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        {#
+          What the nodes are serving this as, and not what the document intends.
+          An object waiting to be added has a protocol in its document, but the
+          column beside it is empty on the row of an object waiting to be
+          removed - nothing can say what that one was, since the repository no
+          longer has it - and one row claiming a protocol while its opposite
+          could not was the two ends of the same wait looking like two
+          different kinds of thing.
+
+          The protocol of a pending object is on its own page, where the rest
+          of what it will become is.
+        #}
+        <td data-label="Protocol">{% if object.protocol and object.serving %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
         {#
           The badge takes the cell rather than sitting beside the hostnames.
           Beside them it was a second thing in a column sized for one, and on a

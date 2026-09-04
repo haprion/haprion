@@ -86,20 +86,27 @@
   };
 
   //
-  // And the redirect's status code, which means nothing until there is a
-  // redirect. Both fields have to carry something before one is written, so
-  // both are watched - and `input` rather than `change`, so the code stops
-  // being greyed out as the location is typed rather than when the field is
-  // finally left.
+  // And the redirect's own choices - its match mode and its status code -
+  // which mean nothing until there is a redirect. Both text fields have to
+  // carry something before one is written, so both are watched - and `input`
+  // rather than `change`, so the choices stop being greyed out as the location
+  // is typed rather than when the field is finally left.
+  //
+  // Every select inside a `.redirect-only` label is greyed out together. That
+  // is one rule rather than one per field, so a choice added to the redirect
+  // later is covered by having been put in the right place.
   //
   const wireRedirectStatus = () => {
     const path = document.querySelector("input[name='redirect_path']");
     const location = document.querySelector("input[name='redirect_location']");
-    const status = document.querySelector(".redirect-only select[name='redirect_status']");
-    if (!path || !location || !status) return;
+    const choices = document.querySelectorAll(".redirect-only select");
+    if (!path || !location || !choices.length) return;
 
     const apply = () => {
-      status.disabled = !(path.value.trim() && location.value.trim());
+      const written = !(path.value.trim() && location.value.trim());
+      choices.forEach((choice) => {
+        choice.disabled = written;
+      });
     };
     path.addEventListener("input", apply);
     location.addEventListener("input", apply);

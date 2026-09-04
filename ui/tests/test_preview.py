@@ -375,6 +375,69 @@ class ARouteMayRedirect(unittest.TestCase):
 
         self.assertIsNotNone(result.problem)
 
+    def test_a_site_root_may_redirect_while_the_rest_of_the_site_proxies(self) -> None:
+        """The shape the redirect field was not first written for.
+
+        An application whose front page is somewhere other than `/` - the entry
+        point is `/web/admin/login`, and `/` answers with a redirect to it -
+        while every other address still reaches the pool. It only works as an
+        exact match: as a prefix, the redirect on `/` would cover the address
+        it points at and the browser would follow it forever.
+        """
+
+        result = preview(
+            form(
+                redirect_path="/",
+                redirect_match="exact",
+                redirect_location="https://app.example.com/web/admin/login",
+                redirect_status="301",
+            ),
+            PREVIEW_CLUSTER,
+        )
+
+        self.assertIsNone(result.problem)
+        generated = result.files["1001-app.cfg"]
+        self.assertIn(
+            "http-request redirect location 'https://app.example.com/web/admin/login' code 301",
+            generated,
+        )
+
+    def test_a_prefix_redirect_on_the_root_is_refused_in_the_engine_s_words(self) -> None:
+        """The same form without the exact match, which is the same route twice.
+
+        Refused rather than quietly turned into an exact match: the person may
+        have meant the whole site to redirect, and that is an object with
+        nowhere to send anything - which is worth saying out loud.
+        """
+
+        result = preview(
+            form(
+                redirect_path="/",
+                redirect_location="https://app.example.com/web/admin/login",
+            ),
+            PREVIEW_CLUSTER,
+        )
+
+        self.assertIsNotNone(result.problem)
+        self.assertIn("same path twice", str(result.problem))
+
+    def test_a_prefix_redirect_is_written_as_it_always_was(self) -> None:
+        """The default carries no `match` key, so older objects round-trip.
+
+        A stored object written before the field existed has no `match` on its
+        redirect route, and one written now with the default must be the same
+        document - otherwise every such object would show a difference it did
+        not ask for the first time somebody opened it.
+        """
+
+        result = preview(
+            form(redirect_path="/old", redirect_location="https://example.net/new"),
+            PREVIEW_CLUSTER,
+        )
+
+        self.assertIsNone(result.problem)
+        self.assertNotIn("match:", result.document)
+
     def test_no_redirect_leaves_the_object_with_one_route(self) -> None:
         result = preview(form(), PREVIEW_CLUSTER)
 

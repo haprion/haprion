@@ -301,6 +301,7 @@ class ObjectForm(BaseModel):
     request_headers: Annotated[str, StringConstraints(max_length=2048)] = ""
     response_headers: Annotated[str, StringConstraints(max_length=2048)] = ""
     redirect_path: Annotated[str, StringConstraints(max_length=1024)] = ""
+    redirect_match: Annotated[str, StringConstraints(max_length=8)] = "prefix"
     redirect_location: Annotated[str, StringConstraints(max_length=1024)] = ""
     redirect_status: Annotated[str, StringConstraints(max_length=3)] = "301"
 

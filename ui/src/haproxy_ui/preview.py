@@ -151,6 +151,7 @@ DEFAULTS = {
     "request_headers": "",
     "response_headers": "",
     "redirect_path": "",
+    "redirect_match": "prefix",
     "redirect_location": "",
     "redirect_status": "301",
 }
@@ -417,13 +418,21 @@ def build_document(form: dict[str, object]) -> str:
             document["hostnames"] = written
         if text("redirect_path") or text("redirect_location"):
             document["routes"] = _routes(
-                text("redirect_path"), text("redirect_location"), text("redirect_status"), pool
+                text("redirect_path"),
+                text("redirect_match"),
+                text("redirect_location"),
+                text("redirect_status"),
+                pool,
             )
     else:
         document["hostnames"] = written
         document["listen"] = listen
         document["routes"] = _routes(
-            text("redirect_path"), text("redirect_location"), text("redirect_status"), pool
+            text("redirect_path"),
+            text("redirect_match"),
+            text("redirect_location"),
+            text("redirect_status"),
+            pool,
         )
     document["backends"] = {pool: backend}
     selected = form.get("allow_from", ())
@@ -461,13 +470,29 @@ def build_document(form: dict[str, object]) -> str:
     return dump_document(document)
 
 
-def _routes(path: str, location: str, status: str, pool: str) -> list[dict[str, object]]:
+def _routes(
+    path: str, match: str, location: str, status: str, pool: str
+) -> list[dict[str, object]]:
     """The object's routes: the pool, plus one redirect where the form asks.
 
     The preview builds one pool and one route, which is what the page is for -
     seeing what a shape produces. A redirect is the second route rather than a
     replacement for the first, because a redirect that took the whole object
     would be a site with nowhere to send anything.
+
+    The redirect carries its own match mode, and that is not a detail. The
+    field was first written for a path that had moved - `/old` sends you to
+    `/new`, and the pool keeps everything else - where a prefix match is the
+    obvious reading. The other shape is at least as common: the site root
+    answers with a redirect to the entry point the application actually uses,
+    and the rest of the site proxies as normal. That one needs `exact`, because
+    a prefix redirect on `/` would swallow the very address it points at, and
+    because two prefix routes on `/` are the same route twice - which the
+    engine refuses, in its own words, rather than guessing which was meant.
+
+    The pool's own route stays a prefix on `/`: it is the catch-all the object
+    is built around, and a redirect sorts ahead of it by `order_routes` when it
+    is exact.
     """
 
     routes: list[dict[str, object]] = [{"path": "/", "backend": pool}]
@@ -477,7 +502,11 @@ def _routes(path: str, location: str, status: str, pool: str) -> list[dict[str, 
         raise ValueError("a redirect needs both a path and a location")
     if not status.isdigit():
         raise ValueError("the redirect status must be a number")
-    routes.append({"path": path, "redirect": {"location": location, "status": int(status)}})
+    redirect: dict[str, object] = {"path": path}
+    if match == "exact":
+        redirect["match"] = match
+    redirect["redirect"] = {"location": location, "status": int(status)}
+    routes.append(redirect)
     return routes
 
 
@@ -804,6 +833,9 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "request_headers": _header_lines(headers.get("request")),
         "response_headers": _header_lines(headers.get("response")),
         "redirect_path": str(routes[1].get("path", "") or "") if redirect else "",
+        "redirect_match": (
+            str(routes[1].get("match", "prefix") or "prefix") if redirect else "prefix"
+        ),
         "redirect_location": str(redirect.get("location", "") or ""),
         "redirect_status": str(redirect.get("status", "") or ""),
     }

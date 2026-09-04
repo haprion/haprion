@@ -201,6 +201,11 @@
         <span class="field-title">Redirect <span class="optional">(optional)</span></span>
         <div class="field-row">
           <label class="sub-field"><span>Path</span><input name="redirect_path" value="{{ form.redirect_path }}" placeholder="/old"></label>
+          <label class="sub-field redirect-only"><span>Match</span>
+            <select name="redirect_match"{% if not (form.redirect_path and form.redirect_location) %} disabled{% endif %}>
+              {% for mode in ['prefix', 'exact'] %}<option value="{{ mode }}"{% if form.redirect_match == mode %} selected{% endif %}>{{ mode }}</option>{% endfor %}
+            </select>
+          </label>
           <label class="sub-field"><span>To</span><input name="redirect_location" value="{{ form.redirect_location }}" placeholder="https://example.net/new"></label>
           <label class="sub-field redirect-only"><span>Status</span>
             <select name="redirect_status"{% if not (form.redirect_path and form.redirect_location) %} disabled{% endif %}>
@@ -208,7 +213,7 @@
             </select>
           </label>
         </div>
-        <small>Requests for that path are answered with a redirect to that URL instead of reaching the pool; the target replaces the whole address, not just the host.<br>301 and 302 let a browser turn a POST into a GET; 307 and 308 do not.</small>
+        <small>Requests for that path are answered with a redirect to that URL instead of reaching the pool; the target replaces the whole address, not just the host.<br>A prefix match covers the path and everything under it, which is what a path that has moved wants. Choose exact to redirect one address only - a site root that sends visitors on to the page the application really starts at needs that, or the redirect would swallow the address it points at.<br>301 and 302 let a browser turn a POST into a GET; 307 and 308 do not.</small>
       </div>
     </div>
     {#

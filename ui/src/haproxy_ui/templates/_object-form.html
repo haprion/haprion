@@ -161,10 +161,17 @@
         </select>
       </label>
       <label class="keyed-only" data-balances="hdr url_param">Balancing key<input name="balance_key" value="{{ form.balance_key }}" placeholder="X-Tenant"{% if form.balance not in ["hdr", "url_param"] %} disabled{% endif %}><small>Only for <code>hdr</code> and <code>url_param</code>: the header or query parameter whose value decides the server. Same value, same server.</small></label>
+      {#
+        "the system CAs" was HAProxy's own word for it - `@system-ca` - and it
+        asked the reader to translate. There is no private-CA option to tell it
+        apart from, so naming the store said nothing anybody could act on. What
+        the choice is actually between is whether the pool's certificate has to
+        be trusted, and that is what the options now say.
+      #}
       <label>Backend TLS
         <select name="backend_tls">
           <option value=""{% if not form.backend_tls %} selected{% endif %}>Plain HTTP</option>
-          <option value="system"{% if form.backend_tls == 'system' %} selected{% endif %}>HTTPS, verify against the system CAs</option>
+          <option value="system"{% if form.backend_tls == 'system' %} selected{% endif %}>HTTPS, verify the certificate</option>
           <option value="none"{% if form.backend_tls == 'none' %} selected{% endif %}>HTTPS, do not verify</option>
         </select>
       </label>
@@ -221,7 +228,7 @@
             </select>
           </label>
         </div>
-        <small>Answered with a redirect instead of reaching the pool; the URL replaces the whole address. Exact matches one path, prefix also everything under it. 301 and 302 may turn a POST into a GET; 307 and 308 do not.</small>
+        <small>Answered with a redirect instead of reaching the pool; the URL replaces the whole address. Exact matches one path, prefix also everything under it.</small><small>301 and 302 may turn a POST into a GET; 307 and 308 do not.</small>
       </div>
     </div>
     {#

@@ -82,6 +82,20 @@
   //
   const POSITION = "object-form-scroll";
 
+  //
+  // The buttons that answer on this same page. Validate re-renders the form
+  // with its verdict; Test health re-renders it with what the nodes just tried.
+  // In both cases the reader is looking at something a long way down and the
+  // answer arrives where they are looking, so the position is worth keeping.
+  // Save, publish and discard leave the page, and a value they stored would be
+  // consumed by an unrelated later visit instead.
+  //
+  // Test health was added to the form without being added here, which is how
+  // pressing it threw the reader back to the top of a form they were reading
+  // the bottom of. The list is held by a test rather than by memory.
+  //
+  const STAYS_ON_THIS_PAGE = ["check", "recheck"];
+
   const keepPosition = () => {
     const form = document.querySelector("form.preview-form");
     if (!form) return;
@@ -89,7 +103,7 @@
     form.addEventListener("submit", (event) => {
       const pressed = event.submitter && event.submitter.value;
       try {
-        if (pressed === "check") {
+        if (STAYS_ON_THIS_PAGE.includes(pressed)) {
           sessionStorage.setItem(POSITION, String(window.scrollY));
         } else {
           sessionStorage.removeItem(POSITION);

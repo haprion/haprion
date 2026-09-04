@@ -587,7 +587,7 @@ class WhichNodeReportsOnThePool(EditorTestCase):
 
 
 class WhereTheFormOpens(EditorTestCase):
-    """At the top, unless Validate put the reader somewhere.
+    """At the top, unless a button that answers here put the reader somewhere.
 
     The position is stored on submit and read on the next load of the same URL.
     Save and publish leave the page, so their value was never consumed - and the
@@ -599,10 +599,20 @@ class WhereTheFormOpens(EditorTestCase):
         client = self.editor()
         return client.get("/static/object-form.js").text
 
-    def test_only_validate_remembers_where_the_reader_was(self) -> None:
+    def test_every_button_that_answers_on_this_page_keeps_the_position(self) -> None:
+        """The list is the point of this test.
+
+        Test health was added to the form and not to the list, so pressing it
+        threw the reader back to the top of a form they were reading the bottom
+        of - and the answer they had asked for rendered off-screen. A button
+        added here later fails this test rather than being noticed by somebody
+        scrolling.
+        """
+
         script = self.script()
 
-        self.assertIn('pressed === "check"', script)
+        self.assertIn('const STAYS_ON_THIS_PAGE = ["check", "recheck"]', script)
+        self.assertIn("STAYS_ON_THIS_PAGE.includes(pressed)", script)
         self.assertIn("removeItem(POSITION)", script)
 
     def test_the_position_is_still_consumed_once(self) -> None:

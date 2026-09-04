@@ -25,6 +25,7 @@ from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterObjects, Job
 from haproxy_ui.history import VersionView
+from haproxy_ui.jobs import ATTENTION, error_code
 from haproxy_ui.proxies import ProxyView, Tone
 
 
@@ -354,6 +355,44 @@ def names_being_published(jobs: Iterable[Job]) -> frozenset[str]:
         if isinstance(named, Mapping):
             waiting.update(name for name in named if isinstance(name, str))
     return frozenset(waiting)
+
+
+def publish_failures(jobs: Iterable[Job]) -> dict[str, str]:
+    """Objects whose most recent publish ended badly, and what it blamed.
+
+    Read alongside `names_being_published`, and the two are the same question
+    asked about different states: that one says a publish is still trying, this
+    one says the last attempt stopped and nothing changed. Until this existed,
+    a refused publish was silent everywhere a person actually looks - the row
+    stopped spinning, the draft stayed, and the reason was on the jobs page
+    behind a click nobody had a reason to make. What that looked like from the
+    outside was "save and publish turned my object into a draft".
+
+    Only the newest verdict per name counts. Jobs arrive newest first, so the
+    first one naming an object decides: a failure that the next attempt fixed
+    is history, and showing it would send somebody after a problem that is
+    already gone.
+
+    The code rather than the diagnostics. A row has space for a few words, and
+    the full text is on the jobs page - which is where somebody goes once they
+    know there is something to go for.
+    """
+
+    failures: dict[str, str] = {}
+    settled: set[str] = set()
+    for job in jobs:
+        if job.operation != "objects_publish" or job.state in {"pending", "running"}:
+            continue
+        named = job.payload.get("objects") if isinstance(job.payload, Mapping) else None
+        if not isinstance(named, Mapping):
+            continue
+        for name in named:
+            if not isinstance(name, str) or name in settled:
+                continue
+            settled.add(name)
+            if job.state in ATTENTION:
+                failures[name] = error_code(job) or job.state
+    return failures
 
 
 @dataclass(frozen=True, slots=True)

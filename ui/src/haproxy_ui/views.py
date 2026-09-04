@@ -575,12 +575,21 @@ def build_router(config: Config) -> APIRouter:
             # published object - and a row that says "Draft" through all of it
             # reads as though the button did nothing.
             #
-            publishing = {
-                view.cluster: objects.names_being_published(
-                    db.recent_jobs(connection, cluster=view.cluster)
-                )
+            #
+            # One read per cluster, two questions. `publishing` is what is
+            # still trying; `failed` is what stopped and changed nothing - and
+            # until the second existed a refused publish said nothing anywhere
+            # a person looks, which read as the object turning back into a
+            # draft by itself.
+            #
+            recent = {
+                view.cluster: db.recent_jobs(connection, cluster=view.cluster)
                 for view in overview.clusters
             }
+            publishing = {
+                cluster: objects.names_being_published(rows) for cluster, rows in recent.items()
+            }
+            failed = {cluster: objects.publish_failures(rows) for cluster, rows in recent.items()}
             #
             # And what a finished removal took away that the nodes have not
             # stopped serving. A removal is a publish, so between it and the
@@ -616,6 +625,7 @@ def build_router(config: Config) -> APIRouter:
             #
             "drafts": drafts if role == "admin" else {},
             "publishing": publishing,
+            "failed": failed,
             "removed": removed,
             "captured_at": captured_at,
         }
@@ -711,6 +721,7 @@ def build_router(config: Config) -> APIRouter:
                     listing["unmanaged"].get(view.cluster, ()),
                     listing["health"].get(view.cluster, {}),
                     listing["removed"].get(view.cluster, ()),
+                    listing["failed"].get(view.cluster, {}),
                 )
             )
             for view in listing["proxies"].clusters

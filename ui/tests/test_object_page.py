@@ -454,13 +454,47 @@ class ADraftOnItsWay(DraftReading):
     def test_a_running_publish_says_the_same(self) -> None:
         self.assertIn("Waiting for publish", self.listing([self.job("running")]))
 
-    def test_a_finished_publish_leaves_no_row_spinning(self) -> None:
-        """A publish that failed must not look as though it were still trying."""
+    def test_a_refused_publish_says_so_instead_of_spinning_or_going_quiet(self) -> None:
+        """Neither still trying nor an ordinary draft. It stopped, and nothing changed.
+
+        Saying only "Draft" was how a refused publish read as the interface
+        turning the object back into one by itself - the reason existed, on the
+        jobs page, behind a click nobody had a reason to make.
+        """
 
         body = self.listing([self.job("failed")])
 
         self.assertNotIn("Waiting for publish", body)
-        self.assertIn(">Draft<", body)
+        self.assertIn("Publish refused", body)
+
+    def test_the_reason_the_helper_gave_is_what_the_row_names(self) -> None:
+        """The code from the envelope, not the word "failed".
+
+        `objects_invalid` sends somebody to the document; a bare "failed" sends
+        them nowhere. The jobs page reads the same field, so the two cannot
+        come to disagree about why one publish stopped.
+        """
+
+        job = replace(
+            self.job("failed"),
+            result={"error": {"code": "objects_invalid", "message": "unknown field"}},
+        )
+
+        self.assertIn("objects_invalid", self.listing([job]))
+
+    def test_a_later_publish_that_worked_clears_the_reason(self) -> None:
+        """Jobs arrive newest first, and only the newest verdict counts.
+
+        A failure the next attempt fixed is history. Left on the row it would
+        send somebody after a problem that is already gone.
+        """
+
+        newer = replace(self.job("done"), id=2)
+        older = replace(self.job("failed"), id=1)
+
+        body = self.listing([newer, older])
+
+        self.assertNotIn("Publish refused", body)
 
     def test_another_object_s_publish_does_not_claim_this_row(self) -> None:
         body = self.listing([self.job("pending", name="something-else")])
@@ -595,11 +629,11 @@ class ADraftThatWasPublished(DraftReading):
         self.assertEqual(discarded, [])
         self.assertIn(">Draft<", body)
 
-    def test_a_publish_that_failed_keeps_the_work(self) -> None:
+    def test_a_publish_that_failed_keeps_the_work_and_names_the_reason(self) -> None:
         body, discarded = self.listing(self.drafted(), [self.job("failed")])
 
         self.assertEqual(discarded, [])
-        self.assertIn(">Draft<", body)
+        self.assertIn("Publish refused", body)
 
 
 class OneObjectIsOneRow(DraftReading):

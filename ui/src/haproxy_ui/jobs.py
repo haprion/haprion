@@ -154,8 +154,12 @@ def _owes_deployment(job: Job) -> tuple[bool, str | None]:
 ATTENTION = frozenset({"partial", "blocked", "failed", "unknown"})
 
 
-def _error_code(job: Job) -> str | None:
+def error_code(job: Job) -> str | None:
     """The stable code this job's result blamed, or nothing.
+
+    Public because the proxies listing asks the same question about a publish
+    that ended badly. Two readings of one envelope would be two chances to
+    disagree about why something failed.
 
     Read defensively for the same reason `_owes_deployment` is: the document
     was written by a privileged helper and stored as it arrived, so this asks
@@ -198,7 +202,7 @@ def _view(
         exit_meaning=_exit_meaning(job.exit_code),
         follow_up=follow_up,
         next_command=next_command,
-        error_code=_error_code(job) if ended_badly else None,
+        error_code=error_code(job) if ended_badly else None,
         #
         # Only for a job that ended badly. A successful operation's stderr is
         # progress output, and putting a diagnostics panel under every green

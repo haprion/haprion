@@ -154,6 +154,29 @@ class EndToEndTests(CallerFixture):
             self.assertIn("No changes to publish", output)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
+    def test_handwritten_fragments_with_an_empty_promise_are_pointed_out(self) -> None:
+        """B86: two frontends on one address bind it and split the traffic at random."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit("core/haproxy.cfg", HAPROXY_CFG + b"  option httplog\n")
+            code, output = self.run_caller(policy_path, "-c", "alpha", "A change")
+
+            self.assertEqual(code, 0)
+            self.assertIn("reserves nothing", output)
+            self.assertIn("core/conf.d/0010-core.cfg", output)
+
+    def test_it_goes_quiet_once_the_promise_says_anything(self) -> None:
+        """Whether a promise is complete needs reading the fragments; this does not."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit("manual/reservations.yaml", b"tcp_ports: [8443]\n")
+            code, output = self.run_caller(policy_path, "-c", "alpha", "A reservation")
+
+            self.assertEqual(code, 0)
+            self.assertNotIn("reserves nothing", output)
+
     def test_an_invalid_configuration_reaches_the_operator(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))

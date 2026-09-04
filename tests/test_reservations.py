@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.reservations import ReservationError, Reservations, load_reservations
+from haproxy_mgmt.reservations import (
+    ReservationError,
+    Reservations,
+    load_reservations,
+    unpromised_fragments,
+)
 
 
 class TheFileBothClustersActuallyCarry(unittest.TestCase):
@@ -128,3 +133,44 @@ class APortIsClaimedOnAnAddressOrOnAllOfThem(unittest.TestCase):
             load_reservations(b"tcp_ports: ['192.0.2.10:70000']\n")
 
         self.assertIn("not a port number", str(raised.exception))
+
+
+class HandwrittenFragmentsNobodyWroteDown(unittest.TestCase):
+    """B86: an empty promise is as easy to leave behind as the collision is to make."""
+
+    FILES = {
+        "core/haproxy.cfg": b"global\n",
+        "core/conf.d/0010-stats.cfg": b"listen stats\n",
+        "manual/conf.d/0050-legacy.cfg": b"frontend legacy\n",
+        "manual/reservations.yaml": b"{}\n",
+    }
+
+    def test_fragments_are_named_when_nothing_at_all_is_reserved(self) -> None:
+        self.assertEqual(
+            unpromised_fragments(self.FILES, load_reservations(b"{}\n")),
+            ("core/conf.d/0010-stats.cfg", "manual/conf.d/0050-legacy.cfg"),
+        )
+
+    def test_both_handwritten_bands_are_watched_not_only_manual(self) -> None:
+        """The collision that made this necessary came from a file in `core/`."""
+
+        found = unpromised_fragments(self.FILES, Reservations())
+
+        self.assertIn("core/conf.d/0010-stats.cfg", found)
+
+    def test_it_goes_quiet_once_anything_is_reserved(self) -> None:
+        """Whether a promise is complete cannot be known without reading them."""
+
+        self.assertEqual(
+            unpromised_fragments(self.FILES, load_reservations(b"tcp_ports: [80]\n")), ()
+        )
+        self.assertEqual(
+            unpromised_fragments(self.FILES, load_reservations(b"hostnames: [a.example.com]\n")), ()
+        )
+
+    def test_a_cluster_with_no_fragments_says_nothing(self) -> None:
+        """`core/haproxy.cfg` exists everywhere; counting it would fire every time."""
+
+        self.assertEqual(
+            unpromised_fragments({"core/haproxy.cfg": b"global\n"}, Reservations()), ()
+        )

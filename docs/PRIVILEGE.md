@@ -165,6 +165,9 @@ at all, which is a broken system reading as a secured one.
 - No rule grants a shell, interpreter, editor, arbitrary executable, wildcard path, environment
   preservation, or unrestricted command arguments.
 - Human `sudoedit` policy is separate from app sudoers and limited to declared config files.
+- A declared path whose file has been removed is revoked in the same change. `sudoedit`
+  creates what it does not find, so the rule would otherwise remain a way to add a
+  root-owned file to a loaded configuration directory.
 - DR/rebuild and certificate issuance/distribution remain separate operator policies.
 
 ## Mandatory negative tests in Phase 1

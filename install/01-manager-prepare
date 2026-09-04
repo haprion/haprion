@@ -147,6 +147,62 @@ for cluster in $(each_cluster); do
                     echo "default_vip: main"
                 } > "${seed}/managed/network.yaml"
             fi
+            #
+            # The two handwritten files, seeded so they exist to be edited.
+            # An operator's sudoedit policy names files by exact path, and a
+            # rule for a path that does not exist is a rule that creates one -
+            # so the policy in step 2 can only name files this step wrote.
+            #
+            # The TLS defaults are deliberately NOT written here. The cipher
+            # lists have one source in this project, and a copy in an install
+            # script would be a second one that nothing keeps in step. The
+            # publish path refuses a cluster whose `global` section disagrees
+            # with that source, and its refusal prints the exact lines and the
+            # command to add them - so this is a pointer, not an omission.
+            #
+            cat > "${seed}/core/haproxy.cfg" <<'CORE'
+#
+# The handwritten `global` and `defaults` for this cluster. Generated
+# configuration is assembled behind this file and never edits it.
+#
+# BEFORE THE FIRST PUBLISH: add the ssl-default-bind-* lines from
+# docs/INSTALLATION.md, section 1.3. A publish is refused until they
+# are here and agree with the lists the generator uses, and the refusal
+# prints them in full.
+#
+global
+    # Your own log, chroot, stats socket, user and group lines go here.
+
+    # Required. A generated bind line names its certificate list by a path
+    # relative to the file it is written in, and a node validates a release
+    # at one path before installing it at another.
+    default-path config
+
+defaults
+    log     global
+    mode    http
+    option  httplog
+    timeout connect 5s
+    timeout client  50s
+    timeout server  50s
+CORE
+
+            cat > "${seed}/manual/reservations.yaml" <<'RESERVATIONS'
+# What the handwritten half of this cluster already uses, so the generator
+# can refuse an object that would collide with it. Read, never interpreted -
+# this file is a promise a person makes, not something derived.
+#
+# Empty is correct while nothing handwritten defines a listener.
+#
+# hostnames:
+#   - legacy.example.com
+#
+# tcp_ports:
+#   - 8443                 # every address on this cluster
+#   - 192.0.2.10:8443      # only that address
+{}
+RESERVATIONS
+
             git -C "$seed" init --initial-branch=main >/dev/null
             git -C "$seed" add -A
             git -C "$seed" -c user.name=install -c user.email=install@localhost \

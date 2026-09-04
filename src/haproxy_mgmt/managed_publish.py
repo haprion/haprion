@@ -21,14 +21,13 @@ from haproxy_mgmt.keepalived_fragment import render as keepalived_addresses
 from haproxy_mgmt.managed_network import load_document
 from haproxy_mgmt.managed_network import location as network_location
 from haproxy_mgmt.proxy_model import NAME, NAME_RULE, Proxy, load_proxy, name_refusal
-from haproxy_mgmt.reservations import load_reservations
+from haproxy_mgmt.reservations import RESERVATIONS_PATH, load_reservations
 
 MANAGED_PREFIX = "managed/"
 #
 # The promise a person writes about what the handwritten half already uses.
 # Read from the committed base like everything else the generator consults.
 #
-RESERVATIONS_PATH = "manual/reservations.yaml"
 PROXY_PREFIX = "managed/proxies/"
 GENERATED_PREFIX = "managed/generated/"
 #

@@ -29,7 +29,7 @@ import sys
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from haproxy_mgmt.cli.caller import CallerError, usage
 from haproxy_mgmt.cli.caller import config_path as _config_path
@@ -134,6 +134,35 @@ def _report_managed(repo: Path, writer: TextIO) -> None:
         )
 
 
+def _say_what_nobody_promised(writer: TextIO, result: dict[str, Any]) -> None:
+    """Handwritten fragments exist and the reservations file is empty.
+
+    Said, not refused. Nothing here has read the fragments - `manual/` is read
+    and never interpreted - so this cannot know whether they collide with
+    anything, and refusing on a suspicion would block a cluster whose
+    handwritten half is perfectly correct.
+
+    It is worth saying because the failure it points at is one HAProxy does not
+    report. Two frontends on one address both bind it under SO_REUSEPORT and
+    the kernel splits new connections between them, so the publish succeeds and
+    the node answers correctly for roughly half the traffic. The reservations
+    file is what prevents it, and an empty one is exactly as easy to leave
+    behind as the collision is to make.
+    """
+
+    fragments = result.get("unpromised_fragments")
+    if not isinstance(fragments, list) or not fragments:
+        return
+    listed = "\n".join(f"    {path}" for path in fragments)
+    writer.write(
+        "Note: this cluster carries handwritten configuration, and\n"
+        "manual/reservations.yaml reserves nothing.\n\n"
+        f"{listed}\n\n"
+        "If any of those bind an address or a hostname, write it down there.\n"
+        "Nothing reads them, so a collision would be found by its traffic.\n\n"
+    )
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -204,9 +233,11 @@ def main(
 
     result = document.get("result") or {}
     if not result.get("changed"):
+        _say_what_nobody_promised(writer, result)
         writer.write(f"No changes to publish for cluster '{cluster_id}'.\n")
         return 0
 
+    _say_what_nobody_promised(writer, result)
     writer.write(
         "HAProxy configuration OK.\n\n"
         f"Cluster '{cluster_id}' is published.\n\n"

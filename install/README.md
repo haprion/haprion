@@ -59,6 +59,11 @@ Renders `clusters.yaml` and `runtime-policy.yaml` from your answers, and creates
 the validation-only certificate. Rendering them rather than hand-editing is the
 point: what the code reads and what you reviewed cannot drift apart.
 
+It also installs the operator editing policy — the `sudoedit` rules that let the
+accounts in `CONFIG_EDITORS` edit `core/haproxy.cfg` and `manual/reservations.yaml`
+without a root shell, checked by `visudo` before anything is written. Leave
+`CONFIG_EDITORS` empty and the step says it skipped it.
+
 ## Step 3 — keys, and the lines for the nodes
 
 ```bash

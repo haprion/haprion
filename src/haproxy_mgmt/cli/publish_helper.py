@@ -31,7 +31,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Protocol, TextIO
@@ -85,6 +85,11 @@ from haproxy_mgmt.repo_snapshot import (
     read_tree_files,
     refresh_worktree_index,
     resolve_head,
+)
+from haproxy_mgmt.reservations import (
+    RESERVATIONS_PATH,
+    load_reservations,
+    unpromised_fragments,
 )
 from haproxy_mgmt.version_history import count_versions, with_request_trailer
 
@@ -199,6 +204,27 @@ class Refuse(Protocol):
     ) -> int: ...
 
 
+def _unpromised(files: Mapping[str, bytes]) -> tuple[str, ...]:
+    """Handwritten fragments nobody has written a reservation about.
+
+    Reads the promise from the same tree the publish is built from, so the
+    answer describes the version being published rather than whatever happens
+    to be in the work tree.
+    """
+
+    try:
+        reservations = load_reservations(files.get(RESERVATIONS_PATH, b"{}"))
+    except ConfigError:
+        #
+        # A file that cannot be read is reported by the path that generates
+        # from it, with the reason. Saying nothing here leaves that refusal to
+        # be the one the operator sees, instead of a second, vaguer line about
+        # the same file.
+        #
+        return ()
+    return unpromised_fragments(files, reservations)
+
+
 def _result(
     *,
     changed: bool,
@@ -212,6 +238,7 @@ def _result(
     candidate_sha256: str | None = None,
     release: str | None = None,
     already_current: bool = False,
+    unpromised: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The frozen `publish` result.
 
@@ -247,6 +274,14 @@ def _result(
         "candidate_sha256": candidate_sha256,
         "release": release,
         "already_current": already_current,
+        #
+        # An observation, not a refusal. The handwritten layer is read and
+        # never interpreted, so nothing here knows whether these fragments
+        # actually collide - only that nobody has written down what they
+        # use. Refusing on that would block a cluster whose fragments are
+        # perfectly fine; saying it is what a person needs to hear.
+        #
+        "unpromised_fragments": list(unpromised),
     }
 
 
@@ -425,10 +460,11 @@ def _publish(
         # `install_release` is idempotent, so when nothing was missing it
         # verifies the stamp and returns.
         #
+        current_files = read_tree_files(repo, snapshot.tree)
         installed = install_release(
             cluster.publish_path,
             node_path=cluster.node_path,
-            artifact=build_node_artifact(read_tree_files(repo, snapshot.tree)),
+            artifact=build_node_artifact(current_files),
             metadata=ReleaseMetadata(
                 cluster=request.cluster,
                 version=count_versions(repo, head),
@@ -456,6 +492,7 @@ def _publish(
                     cluster=request.cluster,
                     release=str(installed.release),
                     already_current=installed.already_current,
+                    unpromised=_unpromised(current_files),
                 ),
             ),
         )
@@ -558,6 +595,7 @@ def _publish(
                 candidate_sha256=candidate.sha256,
                 release=str(installed.release),
                 already_current=installed.already_current,
+                unpromised=_unpromised(published_files),
             ),
         ),
     )

@@ -203,8 +203,22 @@ resolving somewhere else. Generated configuration writes absolute paths througho
 hostnames:
   - legacy.example.com
 tcp_ports:
-  - 8443
+  - 8443                 # every address this cluster has
+  - 192.0.2.10:8443      # only that one
 ```
+
+A bare port and a port written `:8443` mean the same thing: claimed on every
+address. That is what a `bind` line without an address does, so a handwritten
+listener written that way really has taken the port everywhere. Give the address
+when the claim belongs to one VIP — otherwise a cluster with several of them
+cannot reserve anything without blocking every managed object on all the others.
+An IPv6 address is bracketed, `[2001:db8::1]:8443`, exactly as a bind line
+requires.
+
+The file is seeded empty by step 1 and named in the operator editing policy by
+step 2. Empty is correct while nothing handwritten defines a listener; a publish
+says so when the cluster carries handwritten fragments and this file still
+reserves nothing.
 
 `core/haproxy.cfg` is the handwritten `global` and `defaults` for the cluster — the file every
 generated fragment is assembled behind. It must declare the TLS defaults every listener falls back
@@ -593,6 +607,15 @@ Two separate policies, which must not be merged:
 - **Operator rules.** A `sudoedit` policy listing the configuration files an administrator may
   edit, by exact path. `sudoedit` is what makes editing possible without making the repositories
   group-writable.
+
+  **Remove the rule in the same change that removes the file.** `sudoedit` creates a file it does
+  not find, so a rule naming a path that no longer exists is not merely stale - it is a standing
+  way to place a new root-owned file at that path, in a directory the configuration is loaded from,
+  outside the set anyone reviewed. Rewrite the whole alias rather than deleting the line: the last
+  entry carries no trailing comma, so removing a line can move that position and leave the file
+  syntactically broken. Validate with `visudo -cqf` before installing, and keep the backup outside
+  `/etc/sudoers.d/` - a superseded policy file inside the directory the privilege system reads is
+  protected only by the convention that names containing a dot are skipped.
 
 Every sudoers file is root-owned and read-only (`0440` or stricter). See [`PRIVILEGE.md`](PRIVILEGE.md)
 for the full contract and the negative tests that prove it.

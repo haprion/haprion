@@ -34,6 +34,7 @@ number as cluster-wide is therefore what that line means, not a convenience.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,6 +42,13 @@ import yaml
 
 from haproxy_mgmt.config import ConfigError, _address, _mapping, _only_keys
 from haproxy_mgmt.proxy_model import HOSTNAME
+
+#
+# Where the promise lives, named once. Two modules read this file, and a
+# path spelled out in each of them is the kind of duplication that stays
+# correct until one of them moves.
+#
+RESERVATIONS_PATH = "manual/reservations.yaml"
 
 #
 # Bounded like every other document that reaches a parser here.
@@ -215,3 +223,38 @@ def _hostnames(value: Any, location: str) -> list[str]:
             raise ReservationError(f"{location} contains something that is not a hostname")
         names.append(entry.lower())
     return names
+
+
+#
+# Where a handwritten listener can be defined. Both bands, not only `manual/`:
+# the collision that made this necessary came from `core/conf.d/0010-stats.cfg`,
+# and a rule that watched one of the two handwritten layers would have missed
+# the incident it was written for.
+#
+# `haproxy.cfg` and `maps/` are deliberately outside it. `core/haproxy.cfg`
+# exists in every cluster, so counting it would make the observation fire on
+# every publish - and an observation that always fires is one nobody reads.
+#
+FRAGMENT_DIRECTORIES = ("core/conf.d/", "manual/conf.d/")
+
+
+def unpromised_fragments(files: Mapping[str, bytes], reservations: Reservations) -> tuple[str, ...]:
+    """Handwritten fragments present while the promise reserves nothing.
+
+    Not a parser, and it must not become one: `manual/` is read and never
+    interpreted, so this asks only which files exist and whether anybody wrote
+    anything down about them. Two frontends on one address bind it under
+    SO_REUSEPORT and split the traffic at random, and the reservation file is
+    the only thing standing between that and a publish that reports success -
+    but the file is a promise a person makes, and an empty promise is exactly
+    as easy to leave behind as the collision is to make.
+
+    Silent once anything at all is reserved. Whether the promise is *complete*
+    is a question only reading the fragments could answer, and reading them is
+    the thing this project has decided not to do; what can be said honestly is
+    that nobody has said anything yet.
+    """
+
+    if reservations.hostnames or reservations.tcp_ports or reservations.tcp_listeners:
+        return ()
+    return tuple(sorted(path for path in files if path.startswith(FRAGMENT_DIRECTORIES)))

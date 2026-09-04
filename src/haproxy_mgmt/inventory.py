@@ -22,7 +22,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from haproxy_mgmt.deploy_plan import ReleaseTarget
-from haproxy_mgmt.reservations import ReservationError, Reservations, load_reservations
+from haproxy_mgmt.reservations import (
+    RESERVATIONS_PATH,
+    ReservationError,
+    Reservations,
+    load_reservations,
+)
 
 _SECTION = re.compile(r"^(?:frontend|listen)\s+(?P<name>\S+)(?:\s|$)")
 _OTHER_SECTION = re.compile(
@@ -188,9 +193,6 @@ def _proxy_document(proxy: _Proxy) -> dict[str, object]:
         "bind_ports": sorted(proxy.bind_ports),
         "backend_count": len(proxy.backends),
     }
-
-
-RESERVATIONS_PATH = "manual/reservations.yaml"
 
 
 def _reservations(files: Mapping[str, bytes]) -> Reservations:

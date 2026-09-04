@@ -155,6 +155,81 @@ else
     log "  created  ${cert}"
 fi
 
+step "Operator editing policy"
+
+#
+# `sudoedit` and nothing else. The configuration repositories are root-owned
+# and group-readable, so an operator can read them without a rule; editing is
+# what needs one, and making the trees group-writable instead would hand every
+# member of the group a way to change what the nodes load.
+#
+# Named by exact path, never by wildcard: a rule ending in a directory would
+# cover files nobody has reviewed, including ones added later. The price is
+# that a new handwritten fragment needs a line here before it can be edited,
+# which is deliberate - the list is the review.
+#
+# Only the two files step 1 seeds. `sudoedit` CREATES a file it does not find,
+# so a rule may only name a path that exists: naming one that does not is a
+# standing way to add a root-owned file to a directory HAProxy loads.
+#
+if [[ -z "${CONFIG_EDITORS:-}" ]]; then
+    log "  skipped  CONFIG_EDITORS is empty - no operator may edit core/ or manual/"
+    log "           Set it in the answers file and run this step again."
+else
+    editors="$(printf '%s' "$CONFIG_EDITORS" | tr -s ' ' ',')"
+    entries=()
+    for cluster in $CLUSTERS; do
+        for relative in core/haproxy.cfg manual/reservations.yaml; do
+            path="${CONFIG_ROOT}/${cluster}/${relative}"
+            [[ -f "$path" ]] || die "expected ${path}; run ./01-manager-prepare first"
+            entries+=("    sudoedit ${path}")
+        done
+    done
+    last=$(( ${#entries[@]} - 1 ))
+
+    sudoers_staging="$(mktemp)"
+    {
+        echo "# Installed by install/02-manager-config. Do not edit by hand."
+        echo "#"
+        echo "# Editing the handwritten configuration without a root shell."
+        echo "#"
+        echo "# Every path is named in full. Adding a handwritten fragment means"
+        echo "# adding a line here first; REMOVING one means removing its line in"
+        echo "# the same change, because sudoedit creates a file it does not find."
+        echo "#"
+        echo "User_Alias HAPROXY_EDITORS = ${editors}"
+        echo
+        #
+        # Every continued line needs its own trailing backslash, and the last
+        # entry must not have one - which is also why a rule is removed by
+        # rewriting the whole alias rather than by deleting its line.
+        #
+        echo "Cmnd_Alias HAPROXY_EDIT = \\"
+        for i in "${!entries[@]}"; do
+            if (( i < last )); then
+                printf '%s, \\\n' "${entries[$i]}"
+            else
+                printf '%s\n' "${entries[$i]}"
+            fi
+        done
+        echo
+        echo "HAPROXY_EDITORS ALL = (root) HAPROXY_EDIT"
+    } > "$sudoers_staging"
+
+    #
+    # Checked before it is installed, never after. A sudoers file that does not
+    # parse can lock every rule on the host out, this one included.
+    #
+    if ! visudo -cqf "$sudoers_staging"; then
+        rm -f "$sudoers_staging"
+        die "the rendered editing policy does not parse; nothing was installed"
+    fi
+    install -o root -g root -m 440 "$sudoers_staging" /etc/sudoers.d/haproxy-config-edit
+    rm -f "$sudoers_staging"
+    log "  installed /etc/sudoers.d/haproxy-config-edit  (visudo accepted it)"
+    log "            editors: ${editors}"
+fi
+
 echo
 log "step 2 done"
 echo

@@ -6,9 +6,11 @@
   one of them and another way in the other would be the interface disagreeing
   with itself about what a site is.
 
-  `name_locked` is the single difference: an existing object's identity is the
-  URL being edited, and a form that could change it would write one object
-  while the page said it was looking at another.
+  There is no difference left between the two. The name is editable in both:
+  a published object is renamed by the publish carrying the new document and
+  the old name's removal together, so the form has nothing to warn about and
+  says nothing. A field's help text describes the field, not the workflow
+  behind it.
 #}
 
 {#
@@ -22,7 +24,7 @@
   <section class="cluster-card cluster-accent-{{ accent }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>The site</h3><p>What visitors ask for</p></div></div></header>
     <div class="form-grid">
-      <label>Name<input name="name" value="{{ form.name }}" maxlength="40" pattern="[a-z][a-z0-9_-]*" title="Lowercase letters, digits, hyphens and underscores, starting with a letter" required{% if name_locked %} readonly{% endif %}><small>{% if name_locked %}A published object cannot be renamed here. Create the new name and remove the old one.{% else %}This object's identity, unique per cluster. Lowercase letters, digits, hyphens and underscores — no dots, and it starts with a letter.{% endif %}</small></label>
+      <label>Name<input name="name" value="{{ form.name }}" maxlength="40" pattern="[a-z][a-z0-9_-]*" title="Lowercase letters, digits, hyphens and underscores, starting with a letter" required><small>This object's identity, unique per cluster. Lowercase letters, digits, hyphens and underscores — no dots, and it starts with a letter.</small></label>
       <label>Hostnames<input name="hostnames" value="{{ form.hostnames }}" placeholder="app.example.com, www.example.com"><small>Separate several names with commas.</small></label>
       <label>Protocol
         <select name="protocol">

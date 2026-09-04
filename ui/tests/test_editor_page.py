@@ -185,10 +185,12 @@ class ReachingTheEditor(EditorTestCase):
         self.assertIn('value="shop"', page.text)
         self.assertIn("192.0.2.10:8080", page.text)
 
-    def test_the_name_cannot_be_changed_on_an_existing_object(self) -> None:
+    def test_a_published_name_is_editable(self) -> None:
+        """A rename is a publish that adds one name and removes the other."""
+
         page = self.editor().get("/proxies/alpha/shop/edit")
 
-        self.assertIn("readonly", page.text)
+        self.assertNotIn("readonly", page.text)
 
     def test_a_new_object_opens_on_a_blank_name(self) -> None:
         page = self.editor().get("/proxies/alpha/new")
@@ -310,15 +312,21 @@ class SavingADraft(EditorTestCase):
 
         self.assertIn('action="/proxies/alpha/nodraftyet/edit"', page)
 
-    def test_renaming_a_published_object_is_refused(self) -> None:
-        """Its name is its address and what the nodes are serving."""
+    def test_a_published_object_may_be_renamed(self) -> None:
+        """The draft moves to the new name; removing the old one is the publish's job.
+
+        Nothing was ever drafted under the old name here, so there is no row to
+        move - the work is saved under the new name, and the stored object
+        stays until a publish removes it.
+        """
 
         client = self.editor()
 
         answer = self.submit(client, "/proxies/alpha/shop/edit", action="save", name="bazaar")
 
-        self.assertEqual(answer.status_code, 400)
-        self.assertEqual(self.saved, [])
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(answer.headers["location"], "/proxies/alpha/bazaar/edit?saved=1")
+        self.assertEqual(self.saved[0]["object_id"], "bazaar")
 
     def test_an_unpublished_draft_may_be_renamed(self) -> None:
         """A draft where one field cannot be changed is not a draft.
@@ -361,6 +369,41 @@ class SavingADraft(EditorTestCase):
         self.assertEqual(self.renamed[0]["object_id"], "console")
         self.assertEqual(self.renamed[0]["new_object_id"], "terminal")
         self.assertEqual(self.renamed[0]["expected_revision"], 3)
+
+    def test_renaming_a_published_object_that_already_has_a_draft_moves_the_row(self) -> None:
+        """Two things at once: the draft key moves, and the old object is still there.
+
+        The row move and the removal answer different questions - one is where
+        the unfinished work lives, the other is what the cluster serves - and
+        confusing them would either strand the draft under the old name or
+        remove an object nobody had replaced yet.
+        """
+
+        self.draft = ProxyDraft(
+            cluster="alpha",
+            object_id="shop",
+            yaml=SHOP,
+            base_version=12,
+            base_hash=COMMIT,
+            revision=4,
+            updated_by="operator",
+            updated_at=OBSERVED,
+            deleted=False,
+        )
+        client = self.editor()
+
+        answer = self.submit(
+            client,
+            "/proxies/alpha/shop/edit",
+            action="save",
+            name="bazaar",
+            expected_revision="4",
+        )
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(self.renamed[0]["object_id"], "shop")
+        self.assertEqual(self.renamed[0]["new_object_id"], "bazaar")
+        self.assertEqual(self.renamed[0]["expected_revision"], 4)
 
     def test_a_draft_may_not_be_renamed_onto_a_published_object(self) -> None:
         self.draft = ProxyDraft(
@@ -689,6 +732,24 @@ class SaveAndPublish(EditorTestCase):
         self.assertEqual(list(payload["objects"]), ["shop"])
         self.assertIn("name: shop", payload["objects"]["shop"])
         self.assertTrue(payload["comment"])
+
+    def test_a_rename_publishes_the_new_name_and_the_removal_together(self) -> None:
+        """Sent apart, the first half is a cluster with two objects on one hostname.
+
+        `_refuse_shared_hostnames` would refuse that, and removing the old one
+        first would take the site down until the new one was published. One
+        publish means `haproxy -c` validates the state afterwards and never the
+        moment in between.
+        """
+
+        client = self.editor()
+        self.submit(client, "/proxies/alpha/shop/edit", action="publish", name="bazaar")
+        payload = self.queued[0]["payload"]
+
+        self.assertEqual(sorted(payload["objects"]), ["bazaar", "shop"])
+        self.assertIsNone(payload["objects"]["shop"])
+        self.assertIn("name: bazaar", payload["objects"]["bazaar"])
+        self.assertEqual(payload["comment"], "Rename shop to bazaar")
 
     def test_the_same_publish_asked_for_twice_carries_one_key(self) -> None:
         """A double-click is the same request, not a second publish."""

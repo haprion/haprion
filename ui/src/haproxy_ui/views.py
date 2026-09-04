@@ -1868,25 +1868,26 @@ def _editor_submit(
             back="/proxies",
         )
     #
-    # Renaming a *published* object is a new object and a removal, not an edit:
-    # the address and the deployed document are the same identity, and a form
-    # that could change it would write one object while the page claimed to be
-    # looking at another. Refused here rather than accepted and half-applied.
+    # Renaming a *published* object really is a new object and a removal. The
+    # name is not a label on the document: the generated file is named after it
+    # and `guid` derives every section name in it, so no rename leaves the
+    # HAProxy configuration untouched. What can be arranged is that the two
+    # halves are one act - the publish below carries the new document and the
+    # old name's removal in a single set, so the candidate `haproxy -c`
+    # validates is the state afterwards and never the moment in between.
     #
-    # A draft that has never been published is not that. Nothing outside this
-    # table carries its name yet, so the name is still being chosen - and that
-    # is exactly the object somebody is most likely to want to rename. It is
-    # handled below, where the draft is written.
+    # This used to be refused, and the refusal sent people down a path that
+    # does not work: publishing the new name first is refused for claiming a
+    # hostname the old object still holds, and removing the old one first takes
+    # the site down until the new one is published.
+    #
+    # A draft that has never been published needs no removal - nothing outside
+    # the draft table carries its name yet - so it is only the key that moves,
+    # handled below where the draft is written.
     #
     renaming = bool(name) and bool(typed) and typed != name
     published = any(view.name == name for view in state.stored)
-    if renaming and published:
-        return _refusal_page(
-            request,
-            config,
-            "An object cannot be renamed here. Create the new name and remove the old one.",
-            back=_proxy_path(cluster, name, "edit"),
-        )
+    replaces_published = name if renaming and published else ""
     if renaming and not proxy_model.NAME.fullmatch(typed):
         return _refusal_page(
             request,
@@ -2112,10 +2113,23 @@ def _editor_submit(
     # a double-click is the same request and not a second one. The revision is
     # in it because the next edit of the same object is a different publish.
     #
+    objects: dict[str, str | None] = {object_id: None if saved.deleted else result.document}
+    if replaces_published and not saved.deleted:
+        #
+        # Both halves of the rename, in one publish. The order in the mapping
+        # does not matter - the helper applies the whole set and then generates
+        # from the result - but the pairing does: sent apart, the first of the
+        # two is a cluster with either two objects on one hostname or none.
+        #
+        objects[replaces_published] = None
     payload = {
-        "objects": {object_id: None if saved.deleted else result.document},
+        "objects": objects,
         "expected_head": state.commit,
-        "comment": f"Publish {object_id}",
+        "comment": (
+            f"Rename {replaces_published} to {object_id}"
+            if replaces_published and not saved.deleted
+            else f"Publish {object_id}"
+        ),
         #
         # Which draft, and which revision of it. Carried by the job and never
         # forwarded to the helper - `operations.prepare` builds the helper's

@@ -130,6 +130,19 @@ TLS_POLICIES = {
 #
 _CORE_KEYWORDS = ("ssl-default-bind-ciphers", "ssl-default-bind-ciphersuites")
 
+#
+# The other thing a cluster's `core/` has to say. A generated bind line reaches
+# its certificate list by a path relative to the file it is written in, and
+# without this HAProxy resolves that against whatever directory it was started
+# from - which on a node is not the directory the release is in.
+#
+# Checked here rather than left to fail on the node, because it fails *late*:
+# the manager's own sandbox validation runs from a directory where the relative
+# path happens to work, so a cluster missing the line would publish cleanly and
+# refuse to start where it matters.
+#
+DEFAULT_PATH_LINE = "default-path config"
+
 
 def _stated(core_cfg: str, keyword: str) -> str | None:
     """What `core/` sets this keyword to, or None if it does not set it."""
@@ -160,6 +173,28 @@ def core_defaults_problem(core_cfg: bytes, *, cluster: str, config_path: str) ->
     """
 
     text = core_cfg.decode("utf-8", errors="replace")
+    if not re.search(rf"^[ \t]*{DEFAULT_PATH_LINE}[ \t]*$", text, re.MULTILINE):
+        return (
+            f"{cluster}: core/haproxy.cfg does not set `{DEFAULT_PATH_LINE}`.\n"
+            f"\n"
+            f"  Fix it, then publish again:\n"
+            f"    sudoedit {config_path}/core/haproxy.cfg\n"
+            f"    add this line to the `global` section:\n"
+            f"      {DEFAULT_PATH_LINE}\n"
+            f"\n"
+            f"  Why this stops a publish: a generated bind line names its certificate list\n"
+            f"  by a path relative to the file it is written in, and without this HAProxy\n"
+            f"  resolves that against whatever directory it was started from. The manager's\n"
+            f"  own validation would pass and the node would refuse to start, which is the\n"
+            f"  worst place to find out.\n"
+            f"\n"
+            f"  It changes how every relative path in the configuration resolves. Generated\n"
+            f"  configuration writes absolute paths throughout, so read your `manual/` and\n"
+            f"  `core/conf.d` files for a relative `crt`, `map` or `errorfile` before adding\n"
+            f"  it - there were none in either cluster here when this was written.\n"
+            f"\n"
+            f"  A revert is never stopped by this."
+        )
     expected = {
         "ssl-default-bind-ciphers": TLS_1_2_CIPHERS,
         "ssl-default-bind-ciphersuites": TLS_1_3_CIPHERSUITES,

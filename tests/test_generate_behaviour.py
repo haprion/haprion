@@ -36,7 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from haproxy_mgmt.config import AbuseProtection, Vip
-from haproxy_mgmt.generate import NODE_CERTIFICATE_DIR, generate
+from haproxy_mgmt.generate import NODE_CERTIFICATE_DIR, GeneratedLayer, generate
 from haproxy_mgmt.proxy_model import load_proxy
 from haproxy_mgmt.route_match import order_routes, rewrite, select
 from tests import spawned
@@ -215,12 +215,46 @@ CORE = """
 global
     daemon
     maxconn 100
+    default-path config
 defaults
     mode http
     timeout connect 2s
     timeout client 5s
     timeout server 5s
 """
+
+
+def write_release(root: Path, layer: GeneratedLayer, certificates: Path | None = None) -> list[str]:
+    """Lay a generated layer out the way a release is, and return HAProxy's arguments.
+
+    `conf.d` and `crt-lists` as siblings under one root, because that is the
+    shape the node fetches and the shape a bind line's relative path is written
+    against. Writing them flat and passing each file with `-f` would pass the
+    certificate list to HAProxy as configuration, which is exactly the mistake
+    the separate directory exists to make impossible.
+
+    `default-path config` is in the core file for the same reason it has to be
+    in a real cluster's: without it a relative path resolves against whatever
+    directory the process happened to start in, and the node validates a copy
+    of the release before installing it - two different directories, one line.
+    """
+
+    def local(content: str) -> str:
+        return (
+            content
+            if certificates is None
+            else content.replace(NODE_CERTIFICATE_DIR, str(certificates))
+        )
+
+    (root / "conf.d").mkdir(exist_ok=True)
+    (root / "haproxy.cfg").write_text(CORE)
+    for name, content in layer.configuration.items():
+        (root / "conf.d" / name).write_text(local(content))
+    if layer.certificate_lists:
+        (root / "crt-lists").mkdir(exist_ok=True)
+        for name, content in layer.certificate_lists.items():
+            (root / "crt-lists" / name).write_text(local(content))
+    return ["-f", str(root / "haproxy.cfg"), "-f", str(root / "conf.d")]
 
 
 def free_port() -> int:
@@ -304,7 +338,6 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
 
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
-        (root / "0000-core.cfg").write_text(CORE)
         restricted = load_proxy("locked", RESTRICTED.format(web=ports["web"]).encode())
         closed = load_proxy("closed", MAINTENANCE.format(web=ports["web"]).encode())
         #
@@ -325,12 +358,7 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
             networks={"office": ("198.51.100.0/24",)},
             ports={"http": cls.port},
         )
-        for name, content in layer.items():
-            (root / name).write_text(content)
-
-        arguments: list[str] = []
-        for path in sorted(root.iterdir()):
-            arguments += ["-f", str(path)]
+        arguments = write_release(root, layer)
         binary = shutil.which("haproxy")
         assert binary is not None
         cls.haproxy = start_haproxy(binary, arguments, cls.port)
@@ -607,7 +635,6 @@ class TlsIsServedTheWayTheObjectAsksFor(unittest.TestCase):
             hostname=HOSTNAME, certificate=CERTIFICATE, web=backend
         ).encode()
 
-        (root / "0000-core.cfg").write_text(CORE)
         layer = generate(
             [load_proxy("app", document)],
             vips={"main": Vip(name="main", address="127.0.0.1")},
@@ -615,13 +642,7 @@ class TlsIsServedTheWayTheObjectAsksFor(unittest.TestCase):
             certificates=(CERTIFICATE,),
             ports={"http": cls.http_port, "https": cls.https_port},
         )
-        for name, content in layer.items():
-            (root / name).write_text(content.replace(NODE_CERTIFICATE_DIR, str(certificates)))
-
-        arguments: list[str] = []
-        for path in sorted(root.iterdir()):
-            if path.is_file():
-                arguments += ["-f", str(path)]
+        arguments = write_release(root, layer, certificates)
         binary = shutil.which("haproxy")
         assert binary is not None
         cls.haproxy = start_haproxy(binary, arguments, cls.https_port)
@@ -721,7 +742,6 @@ class WhatTheBackendLearnsAboutTheVisitor(unittest.TestCase):
         cls.port = free_port()
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
-        (root / "0000-core.cfg").write_text(CORE)
         document = (
             GONE.format(web=backend)
             .encode()
@@ -741,12 +761,7 @@ class WhatTheBackendLearnsAboutTheVisitor(unittest.TestCase):
             trusted_proxies=("198.51.100.0/24",),
             ports={"http": cls.port},
         )
-        for name, content in layer.items():
-            (root / name).write_text(content)
-
-        arguments: list[str] = []
-        for path in sorted(root.iterdir()):
-            arguments += ["-f", str(path)]
+        arguments = write_release(root, layer)
         binary = shutil.which("haproxy")
         assert binary is not None
         cls.haproxy = start_haproxy(binary, arguments, cls.port)
@@ -820,7 +835,6 @@ class TheBrakeOnTrafficThatIsNotAVisitor(unittest.TestCase):
         cls.port = free_port()
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
-        (root / "0000-core.cfg").write_text(CORE)
         document = (
             GONE.format(web=backend)
             .encode()
@@ -833,12 +847,7 @@ class TheBrakeOnTrafficThatIsNotAVisitor(unittest.TestCase):
             abuse_protection=AbuseProtection(window="10s", max_requests=5),
             ports={"http": cls.port},
         )
-        for name, content in layer.items():
-            (root / name).write_text(content)
-
-        arguments: list[str] = []
-        for path in sorted(root.iterdir()):
-            arguments += ["-f", str(path)]
+        arguments = write_release(root, layer)
         binary = shutil.which("haproxy")
         assert binary is not None
         cls.haproxy = start_haproxy(binary, arguments, cls.port)
@@ -891,19 +900,13 @@ class HeaderEditsReachTheTraffic(unittest.TestCase):
         cls.port = free_port()
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
-        (root / "0000-core.cfg").write_text(CORE)
         layer = generate(
             [load_proxy("edited", EDITED.format(web=backend).encode())],
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
             ports={"http": cls.port},
         )
-        for name, content in layer.items():
-            (root / name).write_text(content)
-
-        arguments: list[str] = []
-        for path in sorted(root.iterdir()):
-            arguments += ["-f", str(path)]
+        arguments = write_release(root, layer)
         binary = shutil.which("haproxy")
         assert binary is not None
         cls.haproxy = start_haproxy(binary, arguments, cls.port)
@@ -990,18 +993,12 @@ class ARawPortIsForwardedAsItArrives(unittest.TestCase):
         cls.port = free_port()
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
-        (root / "0000-core.cfg").write_text(CORE)
         layer = generate(
             [load_proxy("db", TCP_OBJECT.format(port=cls.port, web=backend).encode())],
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
         )
-        for name, content in layer.items():
-            (root / name).write_text(content)
-
-        arguments: list[str] = []
-        for path in sorted(root.iterdir()):
-            arguments += ["-f", str(path)]
+        arguments = write_release(root, layer)
         binary = shutil.which("haproxy")
         assert binary is not None
         cls.haproxy = start_haproxy(binary, arguments, cls.port)
@@ -1032,7 +1029,7 @@ class ARawPortIsForwardedAsItArrives(unittest.TestCase):
         """`option forwardfor` is HTTP-only, and writing it would be ignored anyway."""
 
         directory = Path(self.directory.name)
-        written = (directory / "1001-db.cfg").read_text()
+        written = (directory / "conf.d" / "1001-db.cfg").read_text()
 
         self.assertIn("mode tcp", written)
         self.assertNotIn("forwardfor", written)
@@ -1083,7 +1080,9 @@ backends:
 """
 
 
-def self_signed(directory: Path, name: str, *, expired: bool) -> tuple[Path, Path]:
+def self_signed(
+    directory: Path, name: str, *, expired: bool, common_name: str = "127.0.0.1"
+) -> tuple[Path, Path]:
     """A certificate no trust store knows, optionally already out of date.
 
     Two separate reasons a peer should be rejected, and `verify none` ignores
@@ -1114,7 +1113,11 @@ def self_signed(directory: Path, name: str, *, expired: bool) -> tuple[Path, Pat
             str(certificate),
             "-nodes",
             "-subj",
-            "/CN=127.0.0.1",
+            f"/CN={common_name}",
+            "-addext",
+            f"subjectAltName=DNS:{common_name}"
+            if not common_name[0].isdigit()
+            else f"subjectAltName=IP:{common_name}",
             *validity,
         ],
         capture_output=True,
@@ -1192,19 +1195,13 @@ class ReachingAPoolOverTls(unittest.TestCase):
         port = free_port()
         root = self.root / name
         root.mkdir()
-        (root / "0000-core.cfg").write_text(CORE)
         layer = generate(
             [load_proxy("secure", BACKEND_TLS.format(verify=verify, web=backend).encode())],
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
             ports={"http": port},
         )
-        for filename, content in layer.items():
-            (root / filename).write_text(content)
-
-        arguments: list[str] = []
-        for path in sorted(root.iterdir()):
-            arguments += ["-f", str(path)]
+        arguments = write_release(root, layer)
         binary = shutil.which("haproxy")
         assert binary is not None
         self.running.append(start_haproxy(binary, arguments, port))
@@ -1310,7 +1307,6 @@ class CheckingATlsPoolOnAnotherPort(unittest.TestCase):
         port = free_port()
         root = self.root / "checked"
         root.mkdir()
-        (root / "0000-core.cfg").write_text(CORE)
         layer = generate(
             [
                 load_proxy(
@@ -1322,12 +1318,7 @@ class CheckingATlsPoolOnAnotherPort(unittest.TestCase):
             default_vip="main",
             ports={"http": port},
         )
-        for filename, content in layer.items():
-            (root / filename).write_text(content)
-
-        arguments: list[str] = []
-        for path in sorted(root.iterdir()):
-            arguments += ["-f", str(path)]
+        arguments = write_release(root, layer)
         binary = shutil.which("haproxy")
         assert binary is not None
         self.running.append(start_haproxy(binary, arguments, port))
@@ -1492,14 +1483,13 @@ class AnUpgradedConnectionLivesOnTheTunnelTimeout(unittest.TestCase):
         cls.port = free_port()
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
-        (root / "0000-core.cfg").write_text(CORE)
         layer = generate(
             [load_proxy("live", UPGRADE.format(web=cls.backend).encode())],
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
             ports={"http": cls.port},
         )
-        for name, content in layer.items():
+        for name, content in layer.configuration.items():
             shortened = content.replace("timeout server 50s", "timeout server 1s")
             assert "timeout tunnel 1h" in content or "1001-" not in name
             (root / name).write_text(shortened)
@@ -1613,13 +1603,7 @@ class AnUnderscoreInAName(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "0000-core.cfg").write_text(CORE)
-            for name, content in layer.items():
-                (root / name).write_text(content)
-
-            arguments: list[str] = []
-            for path in sorted(root.iterdir()):
-                arguments += ["-f", str(path)]
+            arguments = write_release(root, layer)
             binary = shutil.which("haproxy")
             assert binary is not None
             completed = subprocess.run(  # noqa: S603 - fixed binary, generated files
@@ -1642,7 +1626,7 @@ class AnUnderscoreInAName(unittest.TestCase):
             networks={},
             ports={"http": free_port()},
         )
-        written = "\n".join(layer.values())
+        written = "\n".join(layer.configuration.values())
 
         self.assertIn("monitor-server-admin_web", written)
         self.assertIn("admin_web", written)
@@ -1749,7 +1733,6 @@ class HowOldAPoolMayBe(unittest.TestCase):
         port = free_port()
         root = self.root / policy
         root.mkdir()
-        (root / "0000-core.cfg").write_text(CORE)
         document = BACKEND_TLS_POLICY.format(policy=policy, web=backend)
         layer = generate(
             [load_proxy("secure", document.encode())],
@@ -1757,12 +1740,7 @@ class HowOldAPoolMayBe(unittest.TestCase):
             default_vip="main",
             ports={"http": port},
         )
-        for filename, content in layer.items():
-            (root / filename).write_text(content)
-
-        arguments: list[str] = []
-        for path in sorted(root.iterdir()):
-            arguments += ["-f", str(path)]
+        arguments = write_release(root, layer)
         binary = shutil.which("haproxy")
         assert binary is not None
         self.running.append(start_haproxy(binary, arguments, port))
@@ -1783,3 +1761,133 @@ class HowOldAPoolMayBe(unittest.TestCase):
         """503: the pool is refused, which is the floor doing its work."""
 
         self.assertEqual(self.reach(policy="intermediate"), 503)
+
+
+LISTENER_POLICY = """
+schema: 1
+name: {name}
+hostnames: [{host}]
+listen:
+  protocol: https
+  certificate: {certificate}
+{policy}routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
+
+@unittest.skipUnless(
+    shutil.which("haproxy") and shutil.which("openssl"),
+    "haproxy or openssl is not installed here",
+)
+class OneListenerTwoSetsOfTerms(unittest.TestCase):
+    """A site may hold its own certificate to terms the VIP did not set.
+
+    Several sites answer on one address through SNI and share its bind line, so
+    the bind line's policy is the VIP's. HAProxy will still hold one
+    certificate on that listener to different terms than the next, chosen by
+    the name the client asked for - which is what lets a site with a
+    requirement of its own keep sharing an address instead of needing one.
+
+    Proved through a real handshake, because the reading that matters is
+    whether a client held to TLS 1.2 is served or refused, and a configuration
+    file cannot say that.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.root = Path(cls.directory.name)
+        cls.running: list[subprocess.Popen[bytes]] = []
+        cls.port = free_port()
+        backend = free_port()
+        cls.backend = echo_server("web", backend)
+
+        certificates = cls.root / "certs"
+        certificates.mkdir()
+        documents = []
+        for name, host, policy in (
+            ("strict", "strict.example.com", "  tls: modern\n"),
+            ("ordinary", "ordinary.example.com", ""),
+        ):
+            #
+            # Named for the site it serves, and not for the address. HAProxy
+            # picks the crt-list entry by the name the client asked for; a
+            # certificate that matches no SNI sends the connection to the first
+            # entry instead, which is how a per-site policy can look like it
+            # does nothing at all. Measured the hard way.
+            #
+            certificate, key = self_signed(cls.root, name, expired=False, common_name=host)
+            (certificates / f"{name}.pem").write_bytes(certificate.read_bytes() + key.read_bytes())
+            documents.append(
+                load_proxy(
+                    name,
+                    LISTENER_POLICY.format(
+                        name=name, host=host, certificate=name, policy=policy, web=backend
+                    ).encode(),
+                )
+            )
+
+        layer = generate(
+            documents,
+            vips={"main": Vip(name="main", address="127.0.0.1", tls_policy="intermediate")},
+            default_vip="main",
+            certificates=("strict", "ordinary"),
+            ports={"https": cls.port, "http": free_port()},
+        )
+        arguments = write_release(cls.root, layer, certificates)
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        cls.running.append(start_haproxy(binary, arguments, cls.port))
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        for process in cls.running:
+            process.terminate()
+            process.wait(timeout=5)
+        cls.backend.shutdown()
+        cls.backend.server_close()
+        cls.directory.cleanup()
+
+    def handshake(self, host: str, ceiling: ssl.TLSVersion) -> bool:
+        """Whether a client that will go no higher than `ceiling` is served."""
+
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.maximum_version = ceiling
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        try:
+            with (
+                socket.create_connection(("127.0.0.1", self.port), timeout=5) as raw,
+                context.wrap_socket(raw, server_hostname=host),
+            ):
+                return True
+        except (ssl.SSLError, OSError):
+            return False
+
+    def test_the_vip_decides_for_a_site_that_asks_for_nothing(self) -> None:
+        """`intermediate` on the bind line, so a TLS 1.2 client is served."""
+
+        self.assertTrue(self.handshake("ordinary.example.com", ssl.TLSVersion.TLSv1_2))
+
+    def test_a_site_that_asked_for_more_gets_it(self) -> None:
+        """Same listener, same port, same connection attempt - and refused.
+
+        This is the whole of B82b in one assertion: the terms follow the name
+        the client asked for, not the address it connected to.
+        """
+
+        self.assertFalse(self.handshake("strict.example.com", ssl.TLSVersion.TLSv1_2))
+
+    def test_and_is_still_served_to_a_client_that_can_do_what_it_asked(self) -> None:
+        """Otherwise the test above would pass on a listener that served nobody."""
+
+        self.assertTrue(self.handshake("strict.example.com", ssl.TLSVersion.TLSv1_3))

@@ -188,6 +188,11 @@ group is a separate action against an already existing account.
 /etc/haproxy-manager/runtime-policy.yaml          the outer path boundary
 ```
 
+**Read your handwritten layers before adding `default-path config`.** It changes how every relative
+path in the configuration resolves, and a `crt`, `map` or `errorfile` written relatively would start
+resolving somewhere else. Generated configuration writes absolute paths throughout, so only
+`manual/` and `core/conf.d` need looking at.
+
 `manual/reservations.yaml` is what the handwritten half of the configuration declares about itself:
 
 ```yaml
@@ -208,6 +213,12 @@ to when it names no policy of its own:
 ```haproxy
 global
     # ... your own log, chroot, socket and user lines ...
+
+    # Relative paths in the configuration resolve against the directory of the
+    # file they are written in. A generated bind line reaches its certificate
+    # list that way, and the node validates a copy of a release at one path
+    # before installing it at another - one line, both places, nothing rewritten.
+    default-path config
 
     ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305
     ssl-default-bind-ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256

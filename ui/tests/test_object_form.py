@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import unittest
 
+import yaml
+
 from haproxy_ui.preview import (
     DEFAULTS,
     Unexpressible,
@@ -227,3 +229,30 @@ class WhatTheFormMayOffer(unittest.TestCase):
         """So the placeholder shows what several names look like."""
 
         self.assertEqual(DEFAULTS["hostnames"], "")
+
+
+class ASiteMayNameItsOwnTlsPolicy(unittest.TestCase):
+    """The field exists because a bind line belongs to an address, not a site.
+
+    Several sites answer on one VIP through SNI and share its bind line, so the
+    VIP's policy is the default for all of them. HAProxy will still hold one
+    certificate on that listener to different terms than the next, which is
+    what this writes.
+    """
+
+    def document(self, **fields: str) -> dict[str, object]:
+        form = dict(DEFAULTS)
+        form.update({"protocol": "https", "certificate": "shop", **fields})
+        return yaml.safe_load(build_document(form))
+
+    def test_a_named_policy_reaches_the_listener(self) -> None:
+        self.assertEqual(self.document(listen_tls_policy="modern")["listen"]["tls"], "modern")
+
+    def test_a_site_that_names_none_writes_no_key(self) -> None:
+        """Not an empty string: the VIP deciding is the case that needs no words.
+
+        A key written for every object would move every site off its VIP's
+        policy the moment somebody opened its page and pressed save.
+        """
+
+        self.assertNotIn("tls", self.document()["listen"])

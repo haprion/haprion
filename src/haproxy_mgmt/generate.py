@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import ipaddress
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 
 from haproxy_mgmt.config import AbuseProtection, ConfigError, UnknownHost, Vip
 from haproxy_mgmt.guid import (
@@ -49,8 +50,6 @@ from haproxy_mgmt.proxy_model import (
     Server,
     is_range,
 )
-from haproxy_mgmt.reservations import NOTHING_RESERVED, Reservations
-from haproxy_mgmt.route_match import order_routes
 
 #
 # Not defined here. The lists, and where they came from, live in `tls_policy` -
@@ -58,6 +57,9 @@ from haproxy_mgmt.route_match import order_routes
 # and the two had already drifted apart by one cipher before there was one
 # place to point at.
 #
+from haproxy_mgmt.release_layout import CRT_LIST_TARGET
+from haproxy_mgmt.reservations import NOTHING_RESERVED, Reservations
+from haproxy_mgmt.route_match import order_routes
 from haproxy_mgmt.tls_policy import BACKEND_POLICIES, TLS_POLICIES
 
 #
@@ -111,6 +113,12 @@ NODE_CERTIFICATE_DIR = "/etc/haproxy/certs"
 ALPN = "h2,http/1.1"
 
 #
+# What a certificate list is called. Not `.cfg`, and not in `conf.d`: the node
+# loads that directory with `-f`, which reads every file in it.
+#
+CRT_LIST_SUFFIX = ".list"
+
+#
 # The V1 defaults from the plan, written into every generated section. `tunnel`
 # is what makes a WebSocket upgrade survive without a separate switch in the
 # interface: an upgraded connection stops being a series of requests, and the
@@ -155,6 +163,17 @@ HEADER = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class GeneratedLayer:
+    """What one generation produced, split by where it has to be written."""
+
+    configuration: dict[str, str]
+    """`managed/generated/`, and `conf.d/` on the node. HAProxy loads these."""
+
+    certificate_lists: dict[str, str]
+    """`managed/crt-lists/`, and `crt-lists/` on the node. Bind lines name these."""
+
+
 class GeneratorError(ConfigError):
     """A set of objects cannot be turned into configuration.
 
@@ -188,14 +207,19 @@ def generate(
     ports: Mapping[str, int] = PORTS,
     certificate_sans: Mapping[str, Sequence[str]] | None = None,
     allow_certificate_mismatch: bool = False,
-) -> dict[str, str]:
-    """Every file the generated layer consists of, keyed by filename.
+) -> GeneratedLayer:
+    """Every file the generated layer consists of.
 
     The whole layer at once rather than one object at a time, because the
     frontend is shared: what one object routes cannot be decided without
-    knowing what the others route. The caller writes the returned mapping and
-    deletes anything else it finds in `managed/generated/`, so an object that
-    was removed takes its configuration with it.
+    knowing what the others route. The caller writes the returned mappings and
+    deletes anything else it finds in their directories, so an object that was
+    removed takes its configuration with it.
+
+    Two mappings and not one, because they land in different places and the
+    difference matters: `configuration` is what the node loads with `-f`, and
+    `-f` on a directory reads every file in it. A certificate list among them
+    would be parsed as configuration and fail the deploy.
     """
 
     ordered = sorted(proxies, key=lambda proxy: proxy.name)
@@ -228,16 +252,23 @@ def generate(
     placed = [(_vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
     _refuse_shared_listeners(placed, ports)
 
+    listings: dict[str, str] = {}
     files = {
         FRONTEND_FILE: _frontend_file(
-            placed, ports, known_networks, unknown_host, tuple(trusted_proxies), abuse_protection
+            placed,
+            ports,
+            known_networks,
+            unknown_host,
+            tuple(trusted_proxies),
+            abuse_protection,
+            listings,
         )
     }
     for vip, proxy in placed:
         files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(
             proxy, _source_of(proxy, vip, known_sources), resolvers
         )
-    return files
+    return GeneratedLayer(configuration=files, certificate_lists=listings)
 
 
 def _source_of(proxy: Proxy, vip: Vip, sources: Mapping[str, str]) -> str | None:
@@ -552,6 +583,7 @@ def _frontend_file(
     unknown_host: UnknownHost | None,
     trusted_proxies: Sequence[str],
     abuse_protection: AbuseProtection | None,
+    listings: dict[str, str],
 ) -> str:
     """Where every request is decided: one frontend per address and protocol.
 
@@ -594,7 +626,8 @@ def _frontend_file(
             f"frontend {_frontend_name(vip, protocol)}",
             f"    guid {frontend_guid(identity)}",
             f"    bind {vip.address}:{ports[protocol]}"
-            f"{_tls(members, protocol)} guid-prefix {listener_guid_prefix(identity)}",
+            f"{_tls(members, protocol, _listing_name(identity, listings, members, protocol))}"
+            f" guid-prefix {listener_guid_prefix(identity)}",
             "    mode http",
             "    option httplog",
             f"    timeout client {TIMEOUT_CLIENT}",
@@ -779,24 +812,90 @@ def _abuse_rules(protection: AbuseProtection | None, trusted: bool) -> list[str]
     return lines
 
 
-def _tls(members: Sequence[tuple[Vip, Proxy, str]], protocol: str) -> str:
-    """The TLS half of a bind line: every certificate this listener may serve.
+def _listing_name(
+    identity: str,
+    listings: dict[str, str],
+    members: Sequence[tuple[Vip, Proxy, str]],
+    protocol: str,
+) -> str:
+    """Name this listener's certificate list, and produce it in the same breath.
 
-    One listener, many certificates, chosen per connection by SNI. They are
-    listed in a fixed order so the file is stable, and the first one is what a
-    client that sends no SNI - or an unknown one - is given.
+    Named after the frontend it belongs to, so a file and the line that reads
+    it can be matched without following an index.
+
+    Nothing at all for a listener that serves no TLS. A plain http frontend has
+    no `crt-list` on its bind line, and a file nothing names would still be
+    published, deployed and read by whoever went looking for what uses it.
     """
 
     if protocol != "https":
         return ""
-    wanted = sorted(
-        {
-            proxy.listen.certificate
-            for _, proxy, role in members
-            if role == "serve" and proxy.listen.certificate is not None
-        }
-    )
-    crt = "".join(f" crt {NODE_CERTIFICATE_DIR}/{name}.pem" for name in wanted)
+    name = f"{identity}{CRT_LIST_SUFFIX}"
+    listings[name] = _crt_list(members)
+    return name
+
+
+def _crt_list(members: Sequence[tuple[Vip, Proxy, str]]) -> str:
+    """Every certificate this listener may serve, and any terms of its own.
+
+    One listener, many certificates, chosen per connection by SNI - and HAProxy
+    will hold one of them to different terms than the next, which is what lets
+    a site with a requirement of its own keep sharing an address. The options
+    ride on the certificate's line; the bind line's policy applies to every
+    line that names none.
+
+    Order is fixed so the file is stable, and the first line is what a client
+    sending no SNI, or an unknown one, is given.
+
+    **The unit is the certificate, not the object.** Two objects served by one
+    certificate cannot be held to two sets of terms - there is one line for it
+    and HAProxy chooses it by name - so two that ask for different ones are
+    refused here. Silently applying the first would be a site protected by
+    terms it did not ask for, decided by alphabetical order.
+    """
+
+    terms: dict[str, str | None] = {}
+    asked_by: dict[str, str] = {}
+    for _, proxy, role in members:
+        certificate = proxy.listen.certificate
+        if role != "serve" or certificate is None:
+            continue
+        policy = proxy.listen.tls_policy
+        if certificate in terms and terms[certificate] != policy:
+            first, second = sorted((asked_by[certificate], proxy.name))
+            raise GeneratorError(
+                f"{first} and {second} are served by the same certificate "
+                f"'{certificate}' and ask for different TLS policies. One "
+                f"certificate is held to one set of terms; give them separate "
+                f"certificates, or the same policy."
+            )
+        terms[certificate] = policy
+        asked_by.setdefault(certificate, proxy.name)
+
+    lines = []
+    for name in sorted(terms):
+        policy = terms[name]
+        options = "" if policy is None else f" [{TLS_POLICIES[policy].strip()}]"
+        lines.append(f"{NODE_CERTIFICATE_DIR}/{name}.pem{options}")
+    return "".join(f"{line}\n" for line in lines)
+
+
+def _tls(members: Sequence[tuple[Vip, Proxy, str]], protocol: str, listing: str) -> str:
+    """The TLS half of a bind line: where this listener's certificates are listed.
+
+    A list in a file of its own rather than a run of `crt` arguments, because a
+    `crt` argument carries no terms - and a site that needs its own is the
+    whole point of B82b. The path is relative to this file's directory, which
+    `default-path config` in `core/haproxy.cfg` is what makes work: the node
+    validates a copy of the release at a different path before installing it,
+    and an absolute path would have to be rewritten to be checked at all.
+
+    The bind line keeps the VIP's policy. It applies to every certificate whose
+    own line names none, which is the normal case.
+    """
+
+    if protocol != "https":
+        return ""
     #
     # Absent, the listener takes whatever `core/` sets. Written only where the
     # cluster named a policy, because a bind line overrides `core/` in both
@@ -804,7 +903,7 @@ def _tls(members: Sequence[tuple[Vip, Proxy, str]], protocol: str) -> str:
     #
     vip = members[0][0]
     policy = "" if vip.tls_policy is None else TLS_POLICIES[vip.tls_policy]
-    return f" ssl{crt} alpn {ALPN}{policy}"
+    return f" ssl crt-list ../{CRT_LIST_TARGET}/{listing} alpn {ALPN}{policy}"
 
 
 def _allow_rules(proxy: Proxy, networks: Mapping[str, Sequence[str]], host: str) -> list[str]:

@@ -30,7 +30,13 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt.config import ConfigError, _mapping, _only_keys, _required_string
+from haproxy_mgmt.config import (
+    TLS_POLICY_NAMES,
+    ConfigError,
+    _mapping,
+    _only_keys,
+    _required_string,
+)
 from haproxy_mgmt.tls_policy import DEFAULT_BACKEND_POLICY
 
 #
@@ -650,6 +656,19 @@ class Listen:
 
     source: str | None = None
     certificate: str | None = None
+    tls_policy: str | None = None
+    """Which TLS versions this object's listener accepts, overriding its VIP's.
+
+    None means the VIP decides, which is the normal case. Named here because
+    HAProxy can hold one certificate on a listener to different terms than the
+    next, chosen by SNI - so a site with a requirement of its own does not have
+    to be given a VIP of its own.
+
+    The unit is the certificate, not the object: a certificate serving two
+    objects can only be held to one set of terms, and two objects sharing one
+    that ask for different ones are refused rather than silently given the
+    first. See `_crt_list` in the generator.
+    """
     redirect_http: bool = False
     hsts: Hsts | None = None
 
@@ -1419,7 +1438,7 @@ def _listen(value: Any, location: str) -> Listen:
     data = _mapping(value, location)
     _only_keys(
         data,
-        {"protocol", "vip", "port", "source", "certificate", "redirect_http", "hsts"},
+        {"protocol", "vip", "port", "source", "certificate", "redirect_http", "hsts", "tls"},
         location,
     )
     protocol = _string(data, "protocol", location, PROTOCOLS)
@@ -1441,6 +1460,18 @@ def _listen(value: Any, location: str) -> Listen:
             raise ModelError(f"{location}.certificate is required for https")
     elif certificate is not None:
         raise ModelError(f"{location}.certificate is only meaningful for https")
+
+    #
+    # The listener's own terms, when the VIP's are not what this site needs.
+    # Refused on anything but https for the reason the certificate is: there is
+    # no handshake on the other protocols to hold to anything.
+    #
+    listen_tls = data.get("tls")
+    if listen_tls is not None:
+        if protocol != "https":
+            raise ModelError(f"{location}.tls is only meaningful for https")
+        if not isinstance(listen_tls, str) or listen_tls not in TLS_POLICY_NAMES:
+            raise ModelError(f"{location}.tls must be one of: {', '.join(TLS_POLICY_NAMES)}")
 
     #
     # Redirecting to https from a listener that has no https is a promise the
@@ -1470,6 +1501,7 @@ def _listen(value: Any, location: str) -> Listen:
         port=port,
         source=source,
         certificate=certificate,
+        tls_policy=listen_tls,
         redirect_http=redirect,
         hsts=hsts,
     )

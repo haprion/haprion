@@ -177,7 +177,7 @@ class TheHostnamesTheGeneratorActuallyWrites(unittest.TestCase):
             networks={},
             ports={"http": 80},
         )
-        return "\n".join(layer.values())
+        return "\n".join(layer.configuration.values())
 
     def test_the_generated_host_match_is_read(self) -> None:
         found: set[str] = set()

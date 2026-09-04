@@ -140,6 +140,7 @@ DEFAULTS = {
     "health_fall": "",
     "backend_tls": "",
     "backend_tls_policy": "",
+    "listen_tls_policy": "",
     "max_connections": "",
     "slow_start": "",
     "allow_from": (),
@@ -288,6 +289,13 @@ def build_document(form: dict[str, object]) -> str:
     if protocol == "https":
         if text("certificate"):
             listen["certificate"] = text("certificate")
+        #
+        # Only when the site asked for terms of its own. An empty field means
+        # the VIP decides, and a key written for every object would move every
+        # site off its VIP's policy the moment somebody opened its page.
+        #
+        if text("listen_tls_policy"):
+            listen["tls"] = text("listen_tls_policy")
         if flag("redirect_http"):
             listen["redirect_http"] = True
         if flag("hsts"):
@@ -532,6 +540,11 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
         return Preview(document=document, problem=str(exc), about_the_object=True)
 
     try:
+        #
+        # The configuration half. The preview shows what a person would read in
+        # `conf.d`; the certificate lists are named by a bind line and proved by
+        # HAProxy, and printing one here would be a file with no context.
+        #
         files = generate(
             [proxy],
             vips=cluster.vips,
@@ -544,7 +557,7 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
             trusted_proxies=cluster.trusted_proxy_cidrs,
             abuse_protection=cluster.abuse_protection,
             certificate_sans=PREVIEW_CERTIFICATE_SANS,
-        )
+        ).configuration
     except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))
 
@@ -745,6 +758,7 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "vip": str(listen.get("vip", "") or ""),
         "source": str(listen.get("source", "") or ""),
         "certificate": str(listen.get("certificate", "") or ""),
+        "listen_tls_policy": str(listen.get("tls", "") or ""),
         "redirect_http": listen.get("redirect_http") is True,
         "hsts": bool(hsts),
         #

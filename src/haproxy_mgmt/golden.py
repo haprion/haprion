@@ -128,4 +128,17 @@ def arguments(case: Path) -> dict[str, object]:
 
 
 def produced(case: Path) -> dict[str, str]:
-    return generate(objects(case), **arguments(case))  # type: ignore[arg-type]
+    """The configuration half of a case, which is what the golden files are."""
+
+    return generate(objects(case), **arguments(case)).configuration  # type: ignore[arg-type]
+
+
+def produced_lists(case: Path) -> dict[str, str]:
+    """The certificate lists a case's bind lines name.
+
+    Not golden files. What matters about them is whether HAProxy finds and
+    accepts them, and only HAProxy can answer that - so they are written beside
+    the configuration when a case is validated, in the layout a release has.
+    """
+
+    return generate(objects(case), **arguments(case)).certificate_lists  # type: ignore[arg-type]

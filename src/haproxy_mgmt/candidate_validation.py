@@ -11,7 +11,12 @@ from pathlib import Path, PurePosixPath
 
 from haproxy_mgmt.config import ConfigError
 from haproxy_mgmt.helper_protocol import HelperProtocolError, JsonValue
-from haproxy_mgmt.release_layout import KEEPALIVED_ALLOWED_SUFFIX, KEEPALIVED_TARGET
+from haproxy_mgmt.release_layout import (
+    CRT_LIST_ALLOWED_SUFFIX,
+    CRT_LIST_TARGET,
+    KEEPALIVED_ALLOWED_SUFFIX,
+    KEEPALIVED_TARGET,
+)
 
 MAX_CANDIDATE_BYTES = 4 * 1024 * 1024
 MAX_CANDIDATE_FILES = 512
@@ -65,6 +70,19 @@ def _allowed_path(raw: str) -> str:
         len(path.parts) == 2
         and path.parts[0] == KEEPALIVED_TARGET
         and path.suffix == KEEPALIVED_ALLOWED_SUFFIX
+    ):
+        return raw
+    #
+    # The certificate lists, widened by the same one shape for the same reason:
+    # one directory, one level deep, `.list` only. Unlike the keepalived file
+    # this one *is* part of the validation - a bind line names it, and HAProxy
+    # refuses to start on a list it cannot read - so a candidate that omits it
+    # fails in the sandbox rather than on the node.
+    #
+    if (
+        len(path.parts) == 2
+        and path.parts[0] == CRT_LIST_TARGET
+        and path.suffix == CRT_LIST_ALLOWED_SUFFIX
     ):
         return raw
     raise HelperProtocolError("candidate contains a path outside its allowlist", exit_code=65)

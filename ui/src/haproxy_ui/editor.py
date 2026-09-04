@@ -277,6 +277,13 @@ class ObjectForm(BaseModel):
     health_send: Annotated[str, StringConstraints(max_length=255)] = ""
     health_expect: Annotated[str, StringConstraints(max_length=255)] = ""
     backend_tls: Annotated[str, StringConstraints(max_length=16)] = ""
+    listen_tls_policy: Annotated[str, StringConstraints(max_length=16)] = ""
+    """Terms this site's own certificate is held to, overriding its VIP's.
+
+    Empty means the VIP decides, which is the normal case and what every object
+    written before this field existed says.
+    """
+
     backend_tls_policy: Annotated[str, StringConstraints(max_length=16)] = ""
     """How old a handshake to this pool may be. Empty means the default.
 

@@ -74,6 +74,22 @@
           {% for certificate in choices.certificates %}<option value="{{ certificate }}"{% if form.certificate == certificate %} selected{% endif %}>{{ certificate }}</option>{% endfor %}
         </select>
       </label>
+      {#
+        Directly after the certificate, because the certificate is the unit:
+        HAProxy holds one to one set of terms, chosen by the name the client
+        asked for. Two sites sharing one certificate share its terms, and asking
+        for different ones is refused at publish rather than resolved.
+
+        Off for anything but https, like the TCP port and the balancing key.
+      #}
+      <label class="https-only">Oldest TLS for this site
+        <select name="listen_tls_policy"{% if form.protocol != 'https' %} disabled{% endif %}>
+          <option value=""{% if not form.listen_tls_policy %} selected{% endif %}>Whatever the VIP accepts</option>
+          <option value="intermediate"{% if form.listen_tls_policy == 'intermediate' %} selected{% endif %}>TLS 1.2 and 1.3</option>
+          <option value="modern"{% if form.listen_tls_policy == 'modern' %} selected{% endif %}>TLS 1.3 only</option>
+        </select>
+        <small>Only this site, even where others answer on the same address. Sites sharing one certificate must agree.</small>
+      </label>
     </div>
     <div class="form-checks">
       <label class="check"><input type="checkbox" name="redirect_http"{% if form.redirect_http %} checked{% endif %}> Redirect plain HTTP to HTTPS (301)</label>

@@ -35,6 +35,7 @@ from haproxy_mgmt.golden import (
     expected,
     objects,
     produced,
+    produced_lists,
 )
 from haproxy_mgmt.proxy_model import Proxy, load_proxy
 from haproxy_mgmt.reservations import Reservations
@@ -48,6 +49,7 @@ from haproxy_mgmt.reservations import Reservations
 CORE = """
 global
     daemon
+    default-path config
 resolvers cluster-dns
     nameserver ns1 192.0.2.53:53
     resolve_retries 3
@@ -102,8 +104,8 @@ class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
                 loaded = objects(case)
                 cluster = arguments(case)
                 self.assertEqual(
-                    generate(list(reversed(loaded)), **cluster),  # type: ignore[arg-type]
-                    generate(loaded, **cluster),  # type: ignore[arg-type]
+                    generate(list(reversed(loaded)), **cluster).configuration,  # type: ignore[arg-type]
+                    generate(loaded, **cluster).configuration,  # type: ignore[arg-type]
                 )
 
 
@@ -123,23 +125,36 @@ class HaproxyAcceptsWhatWeGenerate(unittest.TestCase):
         for case in cases():
             with self.subTest(case.name), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                (root / "0000-core.cfg").write_text(CORE)
+                #
+                # The layout a release has: `conf.d` is what the node loads with
+                # `-f`, and the certificate lists sit beside it because `-f` on a
+                # directory reads every file in it. The bind lines reach them by
+                # a path relative to `conf.d`, which `default-path config` in the
+                # core file is what makes resolve.
+                #
+                (root / "conf.d").mkdir()
+                (root / "haproxy.cfg").write_text(CORE)
                 certificates = _certificate_directory(root)
-                for name, content in produced(case).items():
+
+                def local(content: str, certificates: Path = certificates) -> str:
                     #
                     # The same substitution `candidate_validation` makes when it
                     # validates a candidate in a sandbox that has no /etc: the
                     # node's certificate directory becomes one that exists here.
                     # HAProxy refuses to start on a certificate it cannot stat,
-                    # so without this an https case could not be validated at
-                    # all.
+                    # so without this an https case could not be validated at all.
                     #
-                    content = content.replace(NODE_CERTIFICATE_DIR, str(certificates))
-                    (root / name).write_text(content)
+                    return content.replace(NODE_CERTIFICATE_DIR, str(certificates))
 
-                arguments: list[str] = []
-                for path in sorted(root.iterdir()):
-                    arguments += ["-f", str(path)]
+                for name, content in produced(case).items():
+                    (root / "conf.d" / name).write_text(local(content))
+                listings = produced_lists(case)
+                if listings:
+                    (root / "crt-lists").mkdir()
+                    for name, content in listings.items():
+                        (root / "crt-lists" / name).write_text(local(content))
+
+                arguments = ["-f", str(root / "haproxy.cfg"), "-f", str(root / "conf.d")]
                 binary = shutil.which("haproxy")
                 assert binary is not None
                 result = subprocess.run(
@@ -153,7 +168,12 @@ class HaproxyAcceptsWhatWeGenerate(unittest.TestCase):
 
 
 def _generate(proxies: list[Proxy], **cluster: Any) -> dict[str, str]:
-    """The generator on a cluster with one plain address, which most are."""
+    """The generator on a cluster with one plain address, which most are.
+
+    The configuration half only. The certificate lists are covered where they
+    have to be - against a real HAProxy, which is the only thing that can say
+    whether a bind line finds the file it names.
+    """
 
     return generate(
         proxies,
@@ -161,7 +181,7 @@ def _generate(proxies: list[Proxy], **cluster: Any) -> dict[str, str]:
         default_vip="main",
         certificates=CERTIFICATES,
         **cluster,
-    )
+    ).configuration
 
 
 def _certificate_directory(root: Path) -> Path:
@@ -563,7 +583,7 @@ class TheListenerAcceptsWhatTheClusterSaysItAccepts(unittest.TestCase):
             vips={"main": vip},
             default_vip="main",
             certificates=CERTIFICATES,
-        )["1000-frontends.cfg"]
+        ).configuration["1000-frontends.cfg"]
 
     def test_every_name_the_configuration_accepts_can_be_written(self) -> None:
         """Otherwise a cluster is refused on the node after a publish said it worked."""
@@ -604,7 +624,7 @@ class WhoTheBrakeHoldsResponsible(unittest.TestCase):
             default_vip="main",
             trusted_proxies=trusted,
             abuse_protection=AbuseProtection(window="10s", max_requests=100),
-        )["1000-frontends.cfg"]
+        ).configuration["1000-frontends.cfg"]
 
     def test_without_a_trusted_proxy_the_connecting_address_is_counted(self) -> None:
         frontends = self.frontends(())
@@ -638,7 +658,7 @@ class WhatTheBackendIsToldAboutTheVisitor(unittest.TestCase):
             vips=dict(DEFAULT_VIPS),
             default_vip="main",
             trusted_proxies=trusted,
-        )["1000-frontends.cfg"]
+        ).configuration["1000-frontends.cfg"]
 
     def test_the_headers_are_deleted_before_they_are_written(self) -> None:
         """A visitor may send any of them, so what arrives cannot be trusted."""
@@ -710,7 +730,7 @@ class WhatTheHandwrittenHalfHasAlreadyClaimed(unittest.TestCase):
             vips=dict(DEFAULT_VIPS),
             default_vip="main",
             reservations=Reservations(tcp_ports=frozenset({8443})),
-        )
+        ).configuration
 
         self.assertIn("1000-frontends.cfg", files)
 
@@ -768,3 +788,58 @@ backends:
 
         self.assertIn("frontend mgd-main-tcp-5432", frontends)
         self.assertIn("frontend mgd-main-tcp-6379", frontends)
+
+
+class OneCertificateIsHeldToOneSetOfTerms(unittest.TestCase):
+    """The limitation of doing this per certificate, said out loud.
+
+    HAProxy chooses a crt-list entry by the name the client asked for, and the
+    options ride on that entry. Two sites served by one certificate - a
+    wildcard, most often - therefore share whatever terms it names. Applying
+    the first alphabetically would leave a site protected by a policy nobody
+    chose for it, and nothing on its page would say so.
+    """
+
+    def document(self, name: str, policy: str) -> Proxy:
+        return load_proxy(
+            name,
+            (
+                f"schema: 1\nname: {name}\nhostnames: [{name}.example.com]\n"
+                f"listen:\n  protocol: https\n  certificate: shared\n{policy}"
+                "routes:\n  - path: /\n    backend: web\n"
+                "backends:\n  web:\n    balance: roundrobin\n"
+                "    health:\n      type: disabled\n"
+                "    servers:\n      - host: 198.51.100.10\n        port: 8080\n"
+            ).encode(),
+        )
+
+    def test_two_sites_asking_differently_are_refused(self) -> None:
+        with self.assertRaises(GeneratorError) as caught:
+            generate(
+                [self.document("one", "  tls: modern\n"), self.document("two", "")],
+                vips=dict(DEFAULT_VIPS),
+                default_vip="main",
+                certificates=("shared",),
+                certificate_sans={"shared": ("one.example.com", "two.example.com")},
+            )
+
+        message = str(caught.exception)
+        self.assertIn("same certificate", message)
+        self.assertIn("one", message)
+        self.assertIn("two", message)
+
+    def test_two_sites_asking_the_same_are_fine(self) -> None:
+        """The refusal is about disagreement, not about sharing."""
+
+        files = generate(
+            [
+                self.document("one", "  tls: modern\n"),
+                self.document("two", "  tls: modern\n"),
+            ],
+            vips=dict(DEFAULT_VIPS),
+            default_vip="main",
+            certificates=("shared",),
+            certificate_sans={"shared": ("one.example.com", "two.example.com")},
+        ).configuration
+
+        self.assertIn("1000-frontends.cfg", files)

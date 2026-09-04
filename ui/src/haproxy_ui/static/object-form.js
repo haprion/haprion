@@ -34,6 +34,24 @@
   // control - `build_document` writes no `tls` block at all for a plain HTTP
   // pool, and a policy re-enabled by hand has nothing to attach to.
   //
+  //
+  // The site's own terms are a question only where there is a handshake to
+  // hold to them. Same `disabled` as the TCP port and the balancing key, and
+  // the engine agrees: it refuses `tls` on anything but https rather than
+  // ignoring it, so the browser is a convenience and not the control.
+  //
+  const wireListenTlsPolicy = () => {
+    const protocol = document.querySelector("select[name='protocol']");
+    const policy = document.querySelector("select[name='listen_tls_policy']");
+    if (!protocol || !policy) return;
+
+    const apply = () => {
+      policy.disabled = protocol.value !== "https";
+    };
+    protocol.addEventListener("change", apply);
+    apply();
+  };
+
   const wireBackendTlsPolicy = () => {
     const tls = document.querySelector("select[name='backend_tls']");
     const policy = document.querySelector("select[name='backend_tls_policy']");
@@ -190,6 +208,7 @@
     wire();
     wireBalanceKey();
     wireBackendTlsPolicy();
+    wireListenTlsPolicy();
     wireRedirectStatus();
     keepPosition();
     wireOwnSource();

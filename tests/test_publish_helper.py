@@ -38,7 +38,10 @@ REQUEST_ID = "22222222-2222-4222-8222-222222222222"
 # cannot drift from the check the way core/ drifted from the generator.
 #
 HAPROXY_CFG = (
-    "global\n  daemon\n" + tls_policy.core_defaults_lines("  ") + "defaults\n  mode http\n"
+    "global\n  daemon\n"
+    f"  {tls_policy.DEFAULT_PATH_LINE}\n"
+    + tls_policy.core_defaults_lines("  ")
+    + "defaults\n  mode http\n"
 ).encode()
 RESERVATIONS = b"{}\n"
 GENERATED = b"frontend managed\n  bind 192.0.2.20:80\n"

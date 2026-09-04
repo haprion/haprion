@@ -81,6 +81,22 @@ KEEPALIVED_TARGET = "keepalived"
 KEEPALIVED_ALLOWED_SUFFIX = ".conf"
 
 #
+# The certificate lists a TLS listener binds, for the same reason keepalived has
+# a layer of its own: `conf.d` is what the engine loads with `-f`, and `-f` on a
+# directory reads every file in it. A certificate list parsed as configuration
+# is a failed deploy, so it must live where nothing globs for it.
+#
+# One writer, generated whole on every publish. A cluster with no https listener
+# carries no such directory, and the release then has none - which is what a
+# node that has never seen one expects. Nothing on the node side changes: the
+# release is fetched with `rsync -a --delete`, so a new directory arrives on its
+# own, and the bind line reaches it by a path relative to `conf.d`.
+#
+CRT_LIST_LAYER = "managed/crt-lists"
+CRT_LIST_TARGET = "crt-lists"
+CRT_LIST_ALLOWED_SUFFIX = ".list"
+
+#
 # The three layers flatten into one `conf.d`, and HAProxy reads that directory
 # in ALPHABETICAL order - measured on 2026-08-27, where `100-a.cfg` sorted
 # before `20-b.cfg`. Fixed width with leading zeroes is the only thing that
@@ -227,6 +243,14 @@ def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:
             raise LayoutError(f"file not allowed in {KEEPALIVED_LAYER}: {relative}")
         artifact[f"{KEEPALIVED_TARGET}/{relative}"] = content
         origin[f"{KEEPALIVED_TARGET}/{relative}"] = GENERATED_LAYER
+
+    for relative, content in _children(files, CRT_LIST_LAYER):
+        if relative.rsplit("/", 1)[-1] == PLACEHOLDER:
+            continue
+        if "/" in relative or not relative.endswith(CRT_LIST_ALLOWED_SUFFIX):
+            raise LayoutError(f"file not allowed in {CRT_LIST_LAYER}: {relative}")
+        artifact[f"{CRT_LIST_TARGET}/{relative}"] = content
+        origin[f"{CRT_LIST_TARGET}/{relative}"] = GENERATED_LAYER
 
     for prefix, layer in MAP_LAYERS:
         for relative, content in _children(files, prefix):

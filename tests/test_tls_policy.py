@@ -115,7 +115,10 @@ class WhatCoreIsHeldTo(unittest.TestCase):
         )
 
     def correct(self) -> str:
-        return "global\n  daemon\n" + tls_policy.core_defaults_lines("  ")
+        return (
+            f"global\n  daemon\n  {tls_policy.DEFAULT_PATH_LINE}\n"
+            + tls_policy.core_defaults_lines("  ")
+        )
 
     def test_a_cluster_that_agrees_is_not_stopped(self) -> None:
         self.assertIsNone(self.problem(self.correct()))
@@ -123,11 +126,25 @@ class WhatCoreIsHeldTo(unittest.TestCase):
     def test_a_cluster_that_sets_nothing_is_stopped(self) -> None:
         """The state `external` was in: no cipher policy on the internet-facing side."""
 
-        message = self.problem("global\n  daemon\n")
+        message = self.problem(f"global\n  daemon\n  {tls_policy.DEFAULT_PATH_LINE}\n")
 
         self.assertIsNotNone(message)
         assert message is not None
         self.assertIn("does not set ssl-default-bind-ciphers at all", message)
+
+    def test_a_cluster_without_the_path_rule_is_stopped_first(self) -> None:
+        """Said before the ciphers, because it fails later and harder.
+
+        A missing cipher is a listener with the wrong terms; a missing
+        `default-path` is a node that refuses to start, after a publish and a
+        validation that both passed.
+        """
+
+        message = self.problem("global\n  daemon\n" + tls_policy.core_defaults_lines("  "))
+
+        assert message is not None
+        self.assertIn(tls_policy.DEFAULT_PATH_LINE, message)
+        self.assertIn("refuse to start", message)
 
     def test_a_missing_cipher_is_named(self) -> None:
         """The state `internal` was in: one short, and correct-looking either way."""
@@ -150,7 +167,7 @@ class WhatCoreIsHeldTo(unittest.TestCase):
     def test_the_message_says_how_to_fix_it(self) -> None:
         """Somebody meets this during a publish and it has to be enough on its own."""
 
-        message = self.problem("global\n  daemon\n")
+        message = self.problem(f"global\n  daemon\n  {tls_policy.DEFAULT_PATH_LINE}\n")
 
         assert message is not None
         self.assertIn("sudoedit /configs/haproxy/alpha/core/haproxy.cfg", message)
@@ -161,7 +178,11 @@ class WhatCoreIsHeldTo(unittest.TestCase):
     def test_the_lines_it_offers_are_the_lines_it_accepts(self) -> None:
         """The guide, the fixtures and the refusal all render from one function."""
 
-        self.assertIsNone(self.problem("global\n" + tls_policy.core_defaults_lines()))
+        self.assertIsNone(
+            self.problem(
+                f"global\n    {tls_policy.DEFAULT_PATH_LINE}\n" + tls_policy.core_defaults_lines()
+            )
+        )
 
 
 class WhichPathsAskTheQuestion(unittest.TestCase):

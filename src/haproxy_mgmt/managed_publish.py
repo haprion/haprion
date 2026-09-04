@@ -38,6 +38,7 @@ GENERATED_PREFIX = "managed/generated/"
 # force the rule that keeps that directory to `.cfg` files to be relaxed.
 #
 KEEPALIVED_PREFIX = "managed/keepalived/"
+CRT_LIST_PREFIX = "managed/crt-lists/"
 PLACEHOLDER = ".gitkeep"
 
 
@@ -150,7 +151,19 @@ def managed_files(
     result.update(
         {
             f"{GENERATED_PREFIX}{name}": content.encode("utf-8")
-            for name, content in generated.items()
+            for name, content in generated.configuration.items()
+        }
+    )
+    #
+    # A third generated layer, and separate for the same reason keepalived's is:
+    # `managed/generated/` becomes the node's `conf.d`, and everything there is
+    # loaded as configuration. A certificate list read that way is a failed
+    # deploy, so it must live where nothing globs for it.
+    #
+    result.update(
+        {
+            f"{CRT_LIST_PREFIX}{name}": content.encode("utf-8")
+            for name, content in generated.certificate_lists.items()
         }
     )
     #

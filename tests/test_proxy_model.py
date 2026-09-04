@@ -72,9 +72,22 @@ class TheSmallestUsableObject(unittest.TestCase):
         """
 
         with self.assertRaises(ModelError) as caught:
-            load_proxy("shop", with_lines(("  protocol: http", "  protocol: http\n  tls: yes")))
+            load_proxy("shop", with_lines(("  protocol: http", "  protocol: http\n  sni: yes")))
 
         self.assertIn("unknown field", str(caught.exception))
+
+    def test_a_tls_policy_on_a_listener_without_tls_is_refused(self) -> None:
+        """`tls` was this test's example of an unknown field until it became one.
+
+        It is refused still, and for a better reason: there is no handshake on
+        a plain http listener to hold to anything, so a policy there is a
+        setting somebody would believe was doing something.
+        """
+
+        with self.assertRaises(ModelError) as caught:
+            load_proxy("shop", with_lines(("  protocol: http", "  protocol: http\n  tls: modern")))
+
+        self.assertIn("only meaningful for https", str(caught.exception))
 
     def test_the_document_must_agree_with_the_file_it_is_in(self) -> None:
         """Two sources for one identity is how a rename generates the old name."""

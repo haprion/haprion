@@ -1505,21 +1505,19 @@ def _server_check(backend: Backend, server: Server) -> str:
     port = f" port {health.port}" if health.port is not None else ""
     encrypted = " check-ssl" if backend.tls is not None and health.port is not None else ""
     #
-    # The check sends the same name traffic does. `sni` and `check-sni` are
-    # separate settings, so without this the check would negotiate a different
-    # handshake than the requests it is supposed to speak for - and a check
-    # that does not exercise the path traffic takes is worse than no check,
-    # because it reports on something nobody is asking about.
+    # No `check-sni`, and that is measured rather than assumed. Making the
+    # check send the name too looks obviously right - a check that speaks a
+    # different handshake than the traffic reports on something nobody asked
+    # about - but on 3.4.4 it makes the check fail with `L6RSP` against a pool
+    # the same configuration serves perfectly. Measured 2026-09-04, both ways,
+    # against the same pool: `sni` alone answers 200 and `sni` with `check-sni`
+    # answers 503 because every server is marked down.
     #
-    named = (
-        f" check-sni str({server.host})"
-        if backend.tls is not None and backend.tls.verify != "none"
-        else ""
-    )
-    return (
-        f" check{port}{encrypted}{named}"
-        f" inter {health.interval} rise {health.rise} fall {health.fall}"
-    )
+    # So the argument for adding it stands and the behaviour does not. Left out
+    # until somebody can say why it fails, rather than carried because the
+    # reasoning was appealing.
+    #
+    return f" check{port}{encrypted} inter {health.interval} rise {health.rise} fall {health.fall}"
 
 
 def _server_tls(backend: Backend, server: Server) -> str:

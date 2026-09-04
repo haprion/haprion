@@ -478,6 +478,12 @@ def build_router(config: Config) -> APIRouter:
         # the nodes may not have pulled yet.
         #
         _, health_rows, _ = read_source(request, config, STATUS_SOURCE)
+        #
+        # Read from the same rows as the lamps. Publishing does not deploy, and
+        # the listing was the one page that never said so for an object that
+        # was changed rather than added or removed.
+        #
+        behind = health.clusters_behind(health_rows)
         listed = {}
         served: dict[str, frozenset[str]] = {}
         with request.app.state.pool.connection() as connection:
@@ -625,6 +631,7 @@ def build_router(config: Config) -> APIRouter:
             #
             "drafts": drafts if role == "admin" else {},
             "publishing": publishing,
+            "behind": behind,
             "failed": failed,
             "removed": removed,
             "captured_at": captured_at,

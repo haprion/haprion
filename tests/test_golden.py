@@ -766,10 +766,9 @@ class AVerifiedPoolSendsItsName(unittest.TestCase):
     with `Verify return code: 0`. Adding `sni` fixed it and `verifyhost` alone
     did not, isolated across five configurations.
 
-    The check carries it too. `sni` and `check-sni` are separate settings, so
-    without both the check speaks a different handshake than the traffic it is
-    supposed to report on - which is how the pool stayed green while every
-    request failed.
+    The check deliberately does not carry it. `check-sni` looks like the
+    matching half and makes every server fail with `L6RSP` instead, measured
+    the same day against the same pool.
     """
 
     def rendered(self, document: bytes) -> str:
@@ -784,7 +783,16 @@ class AVerifiedPoolSendsItsName(unittest.TestCase):
         text = self.rendered(VERIFIED)
 
         self.assertIn("sni str(pool-a.example.net)", text)
-        self.assertIn("check-sni str(pool-a.example.net)", text)
+
+    def test_the_check_does_not_send_it(self) -> None:
+        """Measured both ways: `check-sni` marks every server down with `L6RSP`.
+
+        The argument for adding it is good - a check that speaks a different
+        handshake than the traffic reports on something nobody asked about -
+        and the behaviour on 3.4.4 contradicts it. The measurement wins.
+        """
+
+        self.assertNotIn("check-sni", self.rendered(VERIFIED))
 
     def test_an_unverified_pool_sends_nothing(self) -> None:
         """Nothing to check the name against, so there is no name to send."""

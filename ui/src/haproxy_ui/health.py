@@ -323,6 +323,39 @@ def leaves_from_source(document: str, *, default_vip: str, vip_sources: Mapping[
     return bool(vip_sources.get(vip))
 
 
+def clusters_behind(rows: Iterable[Any]) -> frozenset[str]:
+    """Clusters whose nodes are not yet running the published configuration.
+
+    The same fact the dashboard names "Not on the latest version", asked here
+    because this is the page somebody is on when it matters. Publishing does
+    not deploy - deliberately, and stated everywhere except the listing itself,
+    where an object could be edited, published and left showing nothing at all
+    about the nodes still serving the previous version. An object being added
+    or removed already says "deploy to add" or "deploy to remove"; a *changed*
+    object said nothing, because it is neither.
+
+    Read from the nodes rather than from the release. A node that has not been
+    read says nothing, and silence is not a claim that it is up to date - so
+    only an explicit `false` counts.
+    """
+
+    behind: set[str] = set()
+    for row in rows:
+        result = row.result if hasattr(row, "result") else None
+        if not isinstance(result, Mapping):
+            continue
+        nodes = result.get("nodes")
+        if not isinstance(nodes, list):
+            continue
+        for node in nodes:
+            if not isinstance(node, Mapping):
+                continue
+            if node.get("reachable") is True and node.get("current") is False:
+                behind.add(getattr(row, "cluster", ""))
+    behind.discard("")
+    return frozenset(behind)
+
+
 def served_objects(rows: Iterable[Any], *, cluster: str, names: Iterable[str]) -> frozenset[str]:
     """The objects some node reports a backend for: what is on the nodes now.
 

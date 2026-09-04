@@ -154,7 +154,7 @@
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>The pool</h3><p>Where the traffic goes</p></div></div></header>
     <div class="form-grid">
       <label>Pool name<input name="backend" value="{{ form.backend }}" placeholder="web"><small>What you call the backend.</small></label>
-      <label>Servers<textarea name="servers" rows="3" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small>One <code>address</code> or <code>hostname:port</code> per line. Add <code>backup</code> after one to make it a standby, taking traffic only when every other member is down.</small></label>
+      <label>Servers<textarea name="servers" rows="3" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small>One <code>address</code> or <code>hostname:port</code> per line. Add <code>backup</code> after one to make it a standby.</small></label>
       <label>Balancing
         <select name="balance">
           {% for algorithm in choices.balances %}<option value="{{ algorithm }}"{% if form.balance == algorithm %} selected{% endif %}>{{ algorithm }}</option>{% endfor %}
@@ -179,7 +179,7 @@
           <option value="system"{% if form.backend_tls == 'system' %} selected{% endif %}>HTTPS, verify the certificate</option>
           <option value="none"{% if form.backend_tls == 'none' %} selected{% endif %}>HTTPS, do not verify</option>
         </select>
-        <small>Verified pools need DNS names, not addresses: the name is sent to the pool and checked against its certificate.</small>
+        <small>Verified pools need DNS names, not addresses, in the Servers section.</small>
       </label>
       {#
         A different question from the one above it. That one is whether the

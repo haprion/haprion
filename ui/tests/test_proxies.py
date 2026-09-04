@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
+from haproxy_ui import health
 from haproxy_ui.db import ClusterInventory
 from haproxy_ui.proxies import build_proxy_overview
 
@@ -77,3 +79,38 @@ class ProxyOverviewTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheListingSaysWhenTheNodesAreBehind(unittest.TestCase):
+    """Publishing does not deploy, and the listing was the page that never said so.
+
+    A row already says "deploy to add" or "deploy to remove" for an object on
+    its way in or out. A *changed* object is neither, so an edit could be
+    published and leave the page showing nothing while the nodes went on
+    serving the previous version.
+    """
+
+    def rows(self, *nodes: object) -> list[object]:
+        return [SimpleNamespace(cluster="alpha", result={"nodes": list(nodes)})]
+
+    def test_a_node_that_is_not_current_puts_its_cluster_behind(self) -> None:
+        behind = health.clusters_behind(self.rows({"reachable": True, "current": False}))
+
+        self.assertEqual(behind, frozenset({"alpha"}))
+
+    def test_a_current_node_does_not(self) -> None:
+        behind = health.clusters_behind(self.rows({"reachable": True, "current": True}))
+
+        self.assertEqual(behind, frozenset())
+
+    def test_a_node_nobody_could_read_is_not_a_claim_that_it_is_up_to_date(self) -> None:
+        """Silence is not agreement, so only an explicit false counts."""
+
+        behind = health.clusters_behind(self.rows({"reachable": False, "current": False}))
+
+        self.assertEqual(behind, frozenset())
+
+    def test_a_reading_without_nodes_says_nothing(self) -> None:
+        self.assertEqual(
+            health.clusters_behind([SimpleNamespace(cluster="alpha", result={})]), frozenset()
+        )

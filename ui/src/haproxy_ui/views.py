@@ -34,7 +34,13 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from haproxy_mgmt import proxy_model
-from haproxy_mgmt.proxy_model import DEFAULT_FALL, DEFAULT_INTERVAL, DEFAULT_RISE
+from haproxy_mgmt.proxy_model import (
+    DEFAULT_FALL,
+    DEFAULT_INTERVAL,
+    DEFAULT_RISE,
+    ModelError,
+    load_proxy,
+)
 
 from haproxy_ui import (
     activity,
@@ -47,6 +53,7 @@ from haproxy_ui import (
     health,
     history,
     jobs,
+    metrics,
     network,
     objects,
     operations,
@@ -997,6 +1004,42 @@ def build_router(config: Config) -> APIRouter:
         #
         if detail.stored is None and detail.published is None and detail.available and not draft:
             raise HTTPException(status_code=404)
+        #
+        # What has actually gone through this object's pools lately. Read from
+        # the samples the poller stores rather than from the nodes, so opening
+        # the page reaches nothing: it is history, and history is the one thing
+        # a node cannot be asked for.
+        #
+        # The pools come from the engine's own reader. A second parser here
+        # would be a second opinion about what the file says, and the one that
+        # decides which backend the runtime named has to be the same one.
+        #
+        traffic: list[metrics.PoolTraffic] = []
+        chosen = metrics.window(request.query_params.get("traffic"))
+        if detail.stored is not None:
+            try:
+                proxy = load_proxy(name, detail.stored.document.encode())
+            except ModelError:
+                proxy = None
+            if proxy is not None:
+                since = datetime.now(UTC) - chosen.span
+                with request.app.state.pool.connection() as connection:
+                    for pool_name in proxy.backends:
+                        backend = health.backend_name(name, pool_name)
+                        traffic.append(
+                            metrics.pool_traffic(
+                                pool_name,
+                                backend,
+                                db.read_pool_samples(
+                                    connection,
+                                    cluster=cluster,
+                                    backend=backend,
+                                    since=since,
+                                    width=chosen.bucket,
+                                ),
+                                tick_format=chosen.tick,
+                            )
+                        )
         return TEMPLATES.TemplateResponse(
             request,
             "object.html",
@@ -1014,6 +1057,27 @@ def build_router(config: Config) -> APIRouter:
                 #
                 "saved": request.query_params.get("saved") == "1",
                 "discarded": request.query_params.get("discarded") == "1",
+                "traffic": traffic,
+                "traffic_window": chosen.label,
+                "traffic_bucket": chosen.bucket_label,
+                "traffic_windows": metrics.WINDOWS,
+                "traffic_chosen": chosen.key,
+                #
+                # Whether the window asks for more history than the raw samples
+                # are kept for. The card says so rather than drawing a month
+                # that is really a week, which would read as a month with very
+                # little traffic in it.
+                #
+                "traffic_truncated": chosen.span > metrics.RAW_RETENTION,
+                "traffic_retention_days": metrics.RAW_RETENTION.days,
+                #
+                # More than one pool is the only case where naming them helps.
+                # With one, the name is the object's own backend written twice
+                # in a row and answers nothing the page has not said.
+                #
+                "traffic_named": len(traffic) > 1,
+                "spark_width": metrics.SPARK_WIDTH,
+                "spark_height": metrics.SPARK_HEIGHT,
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,

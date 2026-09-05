@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -1603,3 +1603,80 @@ def _counter_values(counters: Mapping[str, int]) -> dict[str, int | None]:
     """
 
     return {name: counters.get(name) for name in metrics.METRIC_COUNTERS}
+
+
+def read_pool_samples(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    backend: str,
+    since: datetime,
+    width: timedelta,
+    member: str = "BACKEND",
+) -> list[metrics.Sample]:
+    """One pool's readings since a moment, one per bucket, oldest first.
+
+    `BACKEND` by default, which is HAProxy's own aggregate row for the pool -
+    the sum across its servers, counted by the thing doing the balancing rather
+    than added up here. A caller that wants one server names it.
+
+    **One row per bucket rather than every row.** A month at one sample every
+    twenty seconds is over a hundred thousand rows for one pool, and a card an
+    inch high cannot use them; the bucket width is what the caller has decided
+    the window deserves. The last reading in each bucket is the one kept,
+    because the counters are cumulative - a difference between two bucket-ends
+    is exactly the traffic between them, which the middle of a bucket cannot
+    improve on.
+
+    **`floor_uptime_sec` is why this is not just sampling.** Dropping rows would
+    hide a restart that happened and was climbed past between two kept
+    readings, and the interval would then be reported as a quiet stretch. The
+    lowest uptime anywhere inside the bucket travels with the reading so the
+    caller can still see that the counters began again.
+    """
+
+    columns = sql.SQL(", ").join(sql.Identifier(name) for name in metrics.METRIC_COUNTERS)
+    #
+    # Bucketed from a fixed origin rather than from `since`, so the boundaries
+    # are the same on every load and a page reopened a minute later does not
+    # redraw every point half a step to the left.
+    #
+    statement = sql.SQL(
+        "select distinct on (bucket) bucket, observed_at, member, uptime_sec, "
+        "       floor_uptime_sec, {columns} "
+        "  from ( "
+        "       select date_bin(%(width)s, observed_at, timestamptz '2000-01-01') as bucket, "
+        "              observed_at, member, uptime_sec, {columns}, "
+        "              min(uptime_sec) over ( "
+        "                  partition by date_bin(%(width)s, observed_at, timestamptz '2000-01-01') "
+        "              ) as floor_uptime_sec "
+        "         from metric_pool_member "
+        "        where cluster = %(cluster)s and backend = %(backend)s "
+        "          and member = %(member)s and observed_at >= %(since)s "
+        "       ) as bucketed "
+        " order by bucket, observed_at desc"
+    ).format(columns=columns)
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            statement,
+            {
+                "cluster": cluster,
+                "backend": backend,
+                "member": member,
+                "since": since,
+                "width": width,
+            },
+        )
+        rows = cursor.fetchall()
+
+    return [
+        metrics.Sample(
+            observed_at=row[1],
+            member=row[2],
+            uptime_sec=row[3],
+            floor_uptime_sec=row[4],
+            counters=dict(zip(metrics.METRIC_COUNTERS, row[5:], strict=True)),
+        )
+        for row in rows
+    ]

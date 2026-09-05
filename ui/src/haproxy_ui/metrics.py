@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 
 #
@@ -182,3 +183,361 @@ def samples(result: Mapping[str, Any]) -> tuple[list[ListenerSample], list[Membe
             )
 
     return listeners, members
+
+
+@dataclass(frozen=True, slots=True)
+class Sample:
+    """One reading, as the reader gets it back.
+
+    Over a long window the reader hands back one sample per bucket rather than
+    every row, and then `floor_uptime_sec` matters: it is the lowest uptime
+    seen anywhere inside that bucket. Without it a restart that happened
+    between two kept samples would be invisible, because the process can climb
+    back past the previous reading before the next one is taken - and the
+    interval would be reported as a quiet stretch of the busiest hour.
+    """
+
+    observed_at: datetime
+    member: str
+    uptime_sec: int | None
+    counters: Mapping[str, int | None]
+    floor_uptime_sec: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Interval:
+    """What happened between two samples, or that it cannot be said.
+
+    A counter is `None` where the difference cannot be trusted, which is not
+    the same as zero. Zero means the two readings agreed and nothing happened
+    in between; `None` means the second reading cannot be subtracted from the
+    first at all - and drawing that as a flat line would be inventing calm.
+    """
+
+    started_at: datetime
+    ended_at: datetime
+    counters: Mapping[str, int | None]
+    restarted: bool
+
+    @property
+    def seconds(self) -> float:
+        return (self.ended_at - self.started_at).total_seconds()
+
+
+def intervals(samples: Sequence[Sample]) -> list[Interval]:
+    """Cumulative readings turned into what happened between them.
+
+    HAProxy's counters climb from the moment the process started and go back to
+    zero when it restarts, so a difference is the only thing with meaning - and
+    a difference across a restart has none.
+
+    **A restart is read from the uptime, not from the counters.** A counter that
+    fell could be a restart or could be a reading of a different process
+    entirely; `uptime_sec` falling says which, and it is why the poller stores
+    it beside every row. Where the uptime cannot be compared - an older node
+    reported none - a counter that fell is still refused rather than guessed,
+    because the alternative is reporting a busy minute as a quiet one.
+
+    Events between the last reading and the restart are lost either way. The
+    process that counted them is gone, and the new one starts from zero, so the
+    interval that spans a restart reports `None` rather than the new process's
+    total: that total is real, but it is not what happened in this interval.
+    """
+
+    ordered = sorted(samples, key=lambda sample: sample.observed_at)
+    found: list[Interval] = []
+
+    for earlier, later in zip(ordered, ordered[1:], strict=False):
+        #
+        # The floor inside the later bucket, where there is one, because a
+        # restart can happen and be climbed past between two kept samples.
+        # Falling back to the sample's own uptime is what makes this the same
+        # comparison on raw rows, where every reading is its own bucket.
+        #
+        floor = later.floor_uptime_sec if later.floor_uptime_sec is not None else later.uptime_sec
+        restarted = (
+            earlier.uptime_sec is not None and floor is not None and floor < earlier.uptime_sec
+        )
+        counters: dict[str, int | None] = {}
+        for name in METRIC_COUNTERS:
+            before = earlier.counters.get(name)
+            after = later.counters.get(name)
+            if restarted or before is None or after is None or after < before:
+                counters[name] = None
+            else:
+                counters[name] = after - before
+        found.append(
+            Interval(
+                started_at=earlier.observed_at,
+                ended_at=later.observed_at,
+                counters=counters,
+                restarted=restarted,
+            )
+        )
+    return found
+
+
+def totalled(found: Sequence[Interval], name: str) -> int | None:
+    """One counter summed over a run of intervals, or None if a gap makes it a lie.
+
+    Deliberately not "sum what is known and ignore the rest". A total over a
+    window that quietly skipped a restart reads as the traffic for that window
+    and is not, and somebody comparing two windows would be comparing one that
+    counted everything against one that did not. Either the window is whole or
+    it has no total.
+    """
+
+    running = 0
+    for interval in found:
+        value = interval.counters.get(name)
+        if value is None:
+            return None
+        running += value
+    return running
+
+
+def spark_paths(
+    values: Sequence[int | None], *, width: float, height: float
+) -> tuple[list[str], int]:
+    """A sparkline as one SVG path per unbroken run, and the peak it is scaled to.
+
+    **A gap is drawn as a gap.** An interval whose difference could not be taken
+    - a restart, a counter the node did not report - ends the current path and
+    the next known value starts a new one. Joining across it would draw a
+    straight line through the one place the data does not know what happened,
+    which reads as the calmest part of the window.
+
+    Scaled to its own peak rather than to a fixed ceiling, because the question
+    a sparkline answers is "what shape", not "how much" - the number beside it
+    answers that. A window with no traffic has no peak to scale to and is drawn
+    flat on the baseline, which is the truth: nothing happened.
+    """
+
+    known = [value for value in values if value is not None]
+    peak = max(known) if known else 0
+    if len(values) < 2:
+        return [], peak
+
+    step = width / (len(values) - 1)
+    runs: list[list[str]] = []
+    current: list[str] = []
+
+    for index, value in enumerate(values):
+        if value is None:
+            if len(current) > 1:
+                runs.append(current)
+            current = []
+            continue
+        x = index * step
+        y = height if peak == 0 else height - (value / peak) * height
+        current.append(f"{'M' if not current else 'L'}{x:.1f} {y:.1f}")
+    if len(current) > 1:
+        runs.append(current)
+
+    return [" ".join(run) for run in runs], peak
+
+
+#
+# What the object page shows, and why these and not the other fourteen. Each
+# answers a question somebody actually arrives with: did anything reach this
+# pool, did it answer, did it refuse, could it be reached at all, and did it
+# have to try twice. The rest are kept in the table for the day a question
+# needs them - a card that shows everything answers nothing.
+#
+CARD_COUNTERS: tuple[tuple[str, str], ...] = (
+    ("req_tot", "Requests"),
+    ("hrsp_2xx", "2xx"),
+    ("hrsp_4xx", "4xx"),
+    ("hrsp_5xx", "5xx"),
+    ("econ", "Connection errors"),
+    ("wretr", "Retries"),
+)
+
+#
+# The drawing's own coordinate space, not its size on screen. The stylesheet
+# gives it the width the card has to spare and the stroke is told not to scale,
+# so a wide card gets a wide line rather than a thick one. Generous, because a
+# month at six-hourly buckets is 120 points and they have to be far enough
+# apart that a reader can put a finger on one and say roughly when it was.
+#
+SPARK_WIDTH = 1000.0
+SPARK_HEIGHT = 64.0
+
+#
+# How many labels go under the line. Enough to locate a bump - "about
+# two-thirds along" is not an answer somebody can act on, and a date is - and
+# few enough that they do not collide on a narrow card.
+#
+SPARK_TICKS = 5
+
+
+@dataclass(frozen=True, slots=True)
+class PoolTraffic:
+    """One pool's window, ready to draw."""
+
+    pool: str
+    backend: str
+    intervals: int
+    started_at: datetime | None
+    ended_at: datetime | None
+    #
+    # (label, value) in `CARD_COUNTERS` order, value None where the window
+    # cannot be totalled. The template prints an em dash for those and says why
+    # in the title, rather than a zero nobody measured.
+    #
+    totals: tuple[tuple[str, int | None], ...]
+    paths: tuple[str, ...]
+    #
+    # (percentage across, label) so the template can place each one without
+    # knowing the drawing's coordinate space. Written as a percentage because
+    # the line is stretched to whatever width the card has, and a label
+    # positioned in the SVG's own units would drift away from the point it
+    # names as soon as it was.
+    #
+    ticks: tuple[tuple[float, str], ...]
+    peak: int
+    restarted: bool
+
+    @property
+    def quiet(self) -> bool:
+        """Whether the whole window is a measured nothing.
+
+        The figures and the line stay either way - they are the reading, and
+        an interface that removes them to avoid repeating itself has removed
+        the answer to keep the phrasing tidy. What this earns is one sentence
+        under them saying the stillness was measured, and the dropping of the
+        peak label, which beside a flat line and a row of zeros is the third
+        copy of one fact.
+
+        A window with a single unknown interval is not quiet - it is a window
+        with a hole, which is a different sentence.
+        """
+
+        return self.measured and all(value == 0 for _, value in self.totals)
+
+    @property
+    def measured(self) -> bool:
+        """Whether there is a window at all, as opposed to one that is empty.
+
+        A pool with no samples has not been observed; a pool with samples and
+        no traffic has. The page says different things about them, and the
+        difference is the one this whole table exists to keep.
+        """
+
+        return self.intervals > 0
+
+
+def spark_ticks(
+    found: Sequence[Interval], *, fmt: str, count: int = SPARK_TICKS
+) -> list[tuple[float, str]]:
+    """Where the line sits in time, as evenly spaced labels along it.
+
+    Without these the shape is unlocatable: a reader can see that something
+    happened but not whether it was ten days ago or twenty, which is the
+    question a month-long window is opened to answer.
+
+    Taken from the intervals themselves rather than computed from the window's
+    span, so the labels name moments that were actually measured. A window with
+    less history than it asks for then says so by where its labels start,
+    instead of drawing a month whose first three weeks are an assumption.
+    """
+
+    if len(found) < 2:
+        return []
+    places = min(count, len(found))
+    step = (len(found) - 1) / (places - 1) if places > 1 else 0
+    ticks: list[tuple[float, str]] = []
+    for index in range(places):
+        at = found[round(index * step)]
+        ticks.append((index / (places - 1) * 100 if places > 1 else 0.0, at.ended_at.strftime(fmt)))
+    return ticks
+
+
+def pool_traffic(
+    pool: str, backend: str, samples: Sequence[Sample], *, tick_format: str = "%H:%M"
+) -> PoolTraffic:
+    found = intervals(samples)
+    paths, peak = spark_paths(
+        [interval.counters.get("req_tot") for interval in found],
+        width=SPARK_WIDTH,
+        height=SPARK_HEIGHT,
+    )
+    return PoolTraffic(
+        pool=pool,
+        backend=backend,
+        intervals=len(found),
+        started_at=found[0].started_at if found else None,
+        ended_at=found[-1].ended_at if found else None,
+        totals=tuple((label, totalled(found, name)) for name, label in CARD_COUNTERS),
+        paths=tuple(paths),
+        ticks=tuple(spark_ticks(found, fmt=tick_format)),
+        peak=peak,
+        restarted=any(interval.restarted for interval in found),
+    )
+
+
+#
+# The windows the object page offers, and the bucket each one is drawn at.
+# Chosen so every window lands between roughly sixty and a hundred and eighty
+# points: fewer and the shape is a guess, more and they are narrower than the
+# line is thick. The 10-minute and 1-hour widths are deliberately the phase's
+# own rollup resolutions - the same arithmetic will read a rollup table when
+# one exists, and the raw rows are what answers until then.
+#
+@dataclass(frozen=True, slots=True)
+class Window:
+    key: str
+    label: str
+    span: timedelta
+    bucket: timedelta
+    #
+    # How a tick under the line is written. An hour needs the minute and no
+    # date; a month needs the date and no minute - and a label carrying both
+    # is one nobody reads twice.
+    #
+    tick: str
+    #
+    # What one point on the line covers, in words, so the peak can say "per
+    # 10 minutes" instead of leaving a reader to work out what a sample is.
+    #
+    bucket_label: str
+
+
+WINDOWS: tuple[Window, ...] = (
+    Window("1h", "the last hour", timedelta(hours=1), timedelta(minutes=1), "%H:%M", "minute"),
+    Window(
+        "24h", "the last 24 hours", timedelta(hours=24), timedelta(minutes=10), "%H:%M", "10 min"
+    ),
+    Window("7d", "the last 7 days", timedelta(days=7), timedelta(hours=1), "%a %d", "hour"),
+    Window("30d", "the last 30 days", timedelta(days=30), timedelta(hours=6), "%d %b", "6 hours"),
+)
+
+#
+# 24 hours, because the question the card is opened with is usually "is this
+# normal", and an hour is too short to have a normal. The shorter window is
+# still there for the middle of an incident, where the last hour is the only
+# part that matters.
+#
+DEFAULT_WINDOW = "24h"
+
+#
+# How long the raw samples are kept, which is the honest limit on how far back
+# any of this can see until the rollups exist. A window longer than this is
+# offered - it is the right window to ask for - but it answers with the days it
+# has, and the page says so rather than drawing a month that is a week.
+#
+RAW_RETENTION = timedelta(days=7)
+
+
+def window(asked: str | None) -> Window:
+    """One of the offered windows, by key, falling back to the default.
+
+    An unknown key is the default rather than a refusal: it arrives in a query
+    string somebody may have typed or a link that outlived a change, and a page
+    that answers 400 for it has turned a stale bookmark into an error.
+    """
+
+    for entry in WINDOWS:
+        if entry.key == asked:
+            return entry
+    return next(entry for entry in WINDOWS if entry.key == DEFAULT_WINDOW)

@@ -535,6 +535,10 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .archive-details > summary:hover { color: var(--text-strong); }
 .archive-details > summary:hover::before { border-color: var(--text-strong); }
 .archive-details[open] > summary { color: var(--text-strong); }
+/* The stored document's fold sits inside a card that has already drawn a
+   divider above it, so this one does not draw a second. */
+.config-details > summary { border-top: 0; padding-top: 4px; }
+.config-details[open] > summary { padding-bottom: 4px; }
 
 /* A one-line page lede sits beside the heading so the metric row keeps its height. */
 .heading-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-width: 0; }
@@ -1067,3 +1071,48 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * a control that changes size when it changes meaning reads as two controls.
  */
 .editor-actions .deploy-button { font-weight: 700; }
+
+/*
+ * The object page's traffic card. One series, so the line carries no identity
+ * of its own and wears the informational hue rather than a status colour -
+ * a red line would say "bad" about a number that is only a number. The
+ * failure counts beside it are text, and they are labelled: colour is never
+ * the only thing saying what a figure is.
+ *
+ * The card supplies no padding of its own - the header has its own and the
+ * tables pad their first and last cells - so a block placed here has to.
+ */
+.traffic-pool { padding: 16px 20px; border-top: 1px solid var(--line); }
+.traffic-pool:first-of-type { border-top: 0; }
+.traffic-head { margin-bottom: 10px; }
+.traffic-backend { color: var(--muted); font-size: 12px; }
+/* The shape first and the figures after it, with the line taking every pixel
+   the figures do not need. A month is 120 points, and they have to be far
+   enough apart that a reader can put a finger on one and read the date under
+   it - which is the whole reason the drawing is stretched rather than sized. */
+.traffic-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 28px; }
+.traffic-spark { position: relative; flex: 1 1 380px; min-width: 260px; }
+.traffic-spark svg { display: block; width: 100%; height: 64px; }
+/* Absolutely placed so each label sits under the point it names, and the ends
+   pulled back inside the drawing so neither hangs off the card. */
+.traffic-axis { position: relative; height: 14px; margin-top: 4px; }
+.traffic-axis span { position: absolute; transform: translateX(-50%); color: var(--muted); font-size: 11px; white-space: nowrap; }
+.traffic-axis span:first-child { transform: none; }
+.traffic-axis span:last-child { transform: translateX(-100%); }
+.traffic-peak { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.traffic-figures { display: grid; grid-template-columns: repeat(3, minmax(64px, auto)); gap: 14px 22px; margin: 0; flex: 0 0 auto; }
+.traffic-figures div { display: flex; flex-direction: column; gap: 2px; }
+.traffic-figures dt { color: var(--muted); font-size: 12px; }
+.traffic-figures dd { margin: 0; font-variant-numeric: tabular-nums; font-size: 18px; color: var(--text-strong); }
+.traffic-unknown { color: var(--muted); cursor: help; }
+.traffic-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+.traffic-footnote { padding: 0 20px 16px; margin-top: 0; }
+/* The range switch, as one segmented control rather than four loose links:
+   they are alternatives to each other, and a shared border is what says so.
+   Recessive - it is a control on a card, not the subject of the page - and
+   the selected one is the only one carrying a filled surface. */
+.traffic-ranges { display: inline-flex; overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); }
+.traffic-ranges a { padding: 5px 11px; border-left: 1px solid var(--line-strong); background: var(--panel); color: var(--muted-strong); font-size: 12px; font-variant-numeric: tabular-nums; line-height: 1.2; text-decoration: none; }
+.traffic-ranges a:first-child { border-left: 0; }
+.traffic-ranges a:hover { background: var(--hover-surface); color: var(--text-strong); }
+.traffic-ranges a.is-current { background: var(--hover-surface); color: var(--text-strong); font-weight: 660; }

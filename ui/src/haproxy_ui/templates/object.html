@@ -69,13 +69,92 @@
   {% if object.publication %}
   <p class="publication-line"><span class="status-badge status-badge-{{ object.publication.tone }}">{{ object.publication.label }}</span><span>{{ object.publication.detail }}</span></p>
   {% endif %}
-  <pre class="config-block"><code>{{ object.stored.document }}</code></pre>
-  <p class="table-note">{{ object.stored.line_count }} lines · the source, not the generated configuration.</p>
+  {#
+    Folded away by default, and the publication line above it deliberately not:
+    what state the object is in is the answer somebody opens the page for,
+    while the document is what they open when they have a reason. Left
+    expanded it pushed everything below it - the traffic among it - past the
+    fold on a page nobody had asked to read a file on.
+
+    The same disclosure the backups page uses, so a fold behaves the same way
+    wherever the interface has one.
+  #}
+  <details class="archive-details config-details">
+    <summary>{{ object.stored.line_count }} lines of YAML · the source, not the generated configuration</summary>
+    <pre class="config-block"><code>{{ object.stored.document }}</code></pre>
+  </details>
   {% else %}
   <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div>{% if snapshot_omits %}<strong>Not carried in a snapshot</strong><span>A production snapshot leaves out stored objects on purpose - the document names every backend address behind a site, which no other source in the file exposes.</span>{% else %}<strong>Nothing stored</strong><span>{{ object.detail }}</span>{% endif %}</div></div>
   {% endif %}
 </article>
 
+{#
+  Traffic before the frontend card, because it is about this object and the
+  frontend is about the address it shares. The order is what the reader is
+  looking for first.
+#}
+{% if traffic %}
+<article class="cluster-card cluster-accent-{{ object.accent }}">
+  <header class="cluster-header">
+    <div class="cluster-identity"><div><h3>Traffic</h3><p>What went through this object's pool, counted by HAProxy on the node holding the address</p></div></div>
+    {#
+      The ranges as links rather than a control that needs script: the page is
+      rendered per request anyway, and a link is what survives being opened in
+      a second tab beside the first.
+    #}
+    <div class="cluster-state"><nav class="traffic-ranges" aria-label="Time range">{% for entry in traffic_windows %}<a href="?traffic={{ entry.key }}"{% if entry.key == traffic_chosen %} class="is-current" aria-current="true"{% endif %} title="{{ entry.label }}">{{ entry.key }}</a>{% endfor %}</nav></div>
+  </header>
+  {% for pool in traffic %}
+  <div class="traffic-pool">
+    {% if traffic_named %}<div class="traffic-head"><strong>{{ pool.pool }}</strong> <code class="traffic-backend">{{ pool.backend }}</code></div>{% endif %}
+    {% if pool.measured %}
+    <div class="traffic-body">
+      {#
+        The shape first and the figures after it, in reading order: the line
+        says whether anything is worth asking about, and the numbers answer it.
+        One series, so no legend - the card's heading names it.
+      #}
+      <div class="traffic-spark">
+        {#
+          Stretched to the card's width, so the stroke is told not to scale
+          with it - otherwise a wide card draws a thick line rather than a
+          long one.
+        #}
+        <svg viewBox="0 0 {{ spark_width }} {{ spark_height }}" preserveAspectRatio="none" role="img" aria-label="Requests per bucket over {{ traffic_window }}, peaking at {{ pool.peak }}">
+          {% for path in pool.paths %}<path d="{{ path }}" fill="none" stroke="var(--info)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>{% endfor %}
+        </svg>
+        {#
+          The labels are what make the shape locatable. Placed as percentages
+          because the drawing is stretched, and the first and last are pulled
+          inside their ends so neither hangs off the card.
+        #}
+        {% if pool.ticks %}
+        <div class="traffic-axis" aria-hidden="true">{% for at, label in pool.ticks %}<span style="left: {{ at }}%">{{ label }}</span>{% endfor %}</div>
+        {% endif %}
+        {% if pool.peak %}<span class="traffic-peak">peak {{ pool.peak }} per {{ traffic_bucket }}</span>{% endif %}
+      </div>
+      <dl class="traffic-figures">
+        {% for label, value in pool.totals %}
+        <div><dt>{{ label }}</dt><dd>{% if value is none %}<span class="traffic-unknown" title="A restart falls inside this window, or a counter was not reported, so the window cannot be totalled without inventing the part that is missing.">—</span>{% else %}{{ value }}{% endif %}</dd></div>
+        {% endfor %}
+      </dl>
+    </div>
+    {% if pool.quiet %}
+    <p class="traffic-note">Nothing reached this pool in {{ traffic_window }}. That is a reading rather than a gap: the samples are there and every counter stood still.</p>
+    {% endif %}
+    {% if pool.restarted %}
+    <p class="traffic-note">HAProxy restarted inside this window, so the counters began again. The intervals across the restart are left out rather than guessed.</p>
+    {% endif %}
+    {% else %}
+    <p class="traffic-note">No samples yet. The poller stores one reading per cluster every time it runs, so this fills in from the next pass — and an object that has never been deployed has nothing to store.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% if traffic_truncated %}
+  <p class="traffic-note traffic-footnote">Raw samples are kept for {{ traffic_retention_days }} days, so this window shows the days there are rather than the days it asks for. Reaching further back is what the rollup tables are for, and they are not built yet.</p>
+  {% endif %}
+</article>
+{% endif %}
 <article class="cluster-card cluster-accent-{{ object.accent }}">
   <header class="cluster-header">
     <div class="cluster-identity"><div><h3>Frontend</h3><p>{% if object.vip %}Served on the {% if object.vip_is_default %}default {% endif %}VIP <code>{{ object.vip }}</code>{% if object.vip_address %} · {{ object.vip_address }}{% endif %}, through a frontend shared by every object on that address{% else %}The published frontend that carries this address, shared by every object on it{% endif %}</p></div></div>

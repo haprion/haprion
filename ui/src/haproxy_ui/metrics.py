@@ -523,10 +523,14 @@ WINDOWS: tuple[Window, ...] = (
 DEFAULT_WINDOW = "24h"
 
 #
-# How long the raw samples are kept, which is the honest limit on how far back
-# any of this can see until the rollups exist. A window longer than this is
-# offered - it is the right window to ask for - but it answers with the days it
-# has, and the page says so rather than drawing a month that is a week.
+# How long the raw samples are kept, and therefore where the reader stops
+# asking the raw table and starts asking the hourly rollup. The same number
+# lives in the retention command, which is what makes it true; here it decides
+# which table a window is answered from.
+#
+# It is a fixed age rather than "whatever the rollup happens to hold", so the
+# two halves of a long window cannot overlap and an hour cannot be counted
+# twice. The rollup is computed with six days of slack for exactly that reason.
 #
 RAW_RETENTION = timedelta(days=7)
 

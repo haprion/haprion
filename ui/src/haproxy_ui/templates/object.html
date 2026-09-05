@@ -151,7 +151,7 @@
   </div>
   {% endfor %}
   {% if traffic_truncated %}
-  <p class="traffic-note traffic-footnote">Raw samples are kept for {{ traffic_retention_days }} days, so this window shows the days there are rather than the days it asks for. Reaching further back is what the rollup tables are for, and they are not built yet.</p>
+  <p class="traffic-note traffic-footnote">Beyond {{ traffic_retention_days }} days this reads the hourly rollup rather than the samples, so the line is drawn at one point per hour however far back it goes.</p>
   {% endif %}
 </article>
 {% endif %}

@@ -64,6 +64,34 @@ METRIC_KEEP_DAYS=7
 #
 METRIC_AHEAD_DAYS=60
 
+#
+# The hourly rollup, and how long it is kept. A year, which is what the phase
+# decided, in monthly partitions.
+#
+METRIC_ROLLUP_TABLE=metric_pool_hour
+METRIC_ROLLUP_KEEP_DAYS=365
+
+#
+# How far behind the present the rollup stops. An hour still being filled would
+# be rolled up half-finished and then never revisited, so the boundary sits a
+# day back: everything older than this is complete and will not change again.
+#
+# A day rather than an hour, and the slack is the point. The raw samples live
+# for a week, so six days pass between an hour becoming eligible and the rows
+# it was computed from being dropped. A missed weekly run - or five of them -
+# costs nothing.
+#
+METRIC_ROLLUP_LAG_DAYS=1
+
+#
+# HAProxy's own counter column names, in the order the rest of the project
+# lists them. A fourth copy of this list - the node reads it, the reader keeps
+# it, the migration stores it, and this rolls it up - and it cannot be shared:
+# this is a shell script and those are Python. `test_metric_samples` compares
+# all four rather than trusting them to stay in step.
+#
+METRIC_COUNTERS="scur, stot, bin, bout, req_tot, qcur, ereq, econ, eresp, dreq, dresp, wretr, wredis, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx"
+
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
 
@@ -128,6 +156,86 @@ metrics_report() {
         expired="$(psql_as -c "select count(*) from ($(metric_partitions_expired "${table}")) as expired")"
         log "  ${table}: ${covered} partition(s), ${expired} older than ${METRIC_KEEP_DAYS} day(s)"
     done
+}
+
+#
+# The rollup, computed from the raw rows rather than accumulated as they
+# arrive. Derived data that can be rebuilt from its source is data that can be
+# repaired; a running total maintained by the writer cannot be checked against
+# anything, and a single bad hour would stay bad.
+#
+# A rollup row is deliberately the same shape as a bucketed raw reading - the
+# last cumulative value in the hour and the lowest uptime inside it - so the
+# reader that takes differences and spots restarts is the same one either way.
+#
+# `on conflict do nothing`, so a run that overlaps an earlier one adds only the
+# hours that are missing. Recomputing an hour that already exists would be
+# rewriting history from rows that may since have been dropped.
+#
+rollup() {
+    local written
+
+    step "Rollup"
+    psql_as -c "select metric_month_partition('${METRIC_ROLLUP_TABLE}', month::date)
+                  from generate_series(
+                      date_trunc('month', current_date - ${METRIC_ROLLUP_KEEP_DAYS}),
+                      date_trunc('month', current_date + interval '1 month'),
+                      interval '1 month'
+                  ) as month" >/dev/null
+
+    if [[ "$dry_run" -eq 1 ]]; then
+        log "  ${METRIC_ROLLUP_TABLE}: dry run, nothing computed"
+    else
+        written="$(psql_as <<SQL
+with hours as (
+    select distinct on (cluster, node, backend, member, bucket)
+           cluster, node, backend, member,
+           date_trunc('hour', observed_at) as bucket,
+           observed_at, uptime_sec, status, check_status, check_code,
+           min(uptime_sec) over (
+               partition by cluster, node, backend, member, date_trunc('hour', observed_at)
+           ) as floor_uptime_sec,
+           ${METRIC_COUNTERS}
+      from metric_pool_member
+     where observed_at < date_trunc('hour', now()) - make_interval(days => ${METRIC_ROLLUP_LAG_DAYS})
+     order by cluster, node, backend, member, bucket, observed_at desc
+), added as (
+    insert into ${METRIC_ROLLUP_TABLE}
+        (cluster, node, backend, member, bucket_at, observed_at, uptime_sec,
+         floor_uptime_sec, status, check_status, check_code, ${METRIC_COUNTERS})
+    select cluster, node, backend, member, bucket, observed_at, uptime_sec,
+           floor_uptime_sec, status, check_status, check_code, ${METRIC_COUNTERS}
+      from hours
+    on conflict do nothing
+    returning 1
+) select count(*) from added;
+SQL
+        )"
+        log "  ${METRIC_ROLLUP_TABLE}: added ${written} hour(s)"
+    fi
+
+    mapfile -t dropped < <(psql_as -c "
+        select child.relname
+          from pg_inherits
+          join pg_class parent on parent.oid = pg_inherits.inhparent
+          join pg_class child  on child.oid  = pg_inherits.inhrelid
+         where parent.relname = '${METRIC_ROLLUP_TABLE}'
+           and child.relname ~ '^${METRIC_ROLLUP_TABLE}_[0-9]{6}\$'
+           and to_date(right(child.relname, 6), 'YYYYMM')
+               < date_trunc('month', current_date - ${METRIC_ROLLUP_KEEP_DAYS})
+         order by child.relname")
+    if [[ ${#dropped[@]} -eq 0 || -z "${dropped[0]}" ]]; then
+        log "  ${METRIC_ROLLUP_TABLE}: nothing older than ${METRIC_ROLLUP_KEEP_DAYS} day(s)"
+        return 0
+    fi
+    if [[ "$dry_run" -eq 1 ]]; then
+        log "  ${METRIC_ROLLUP_TABLE}: dry run, would drop ${#dropped[@]} partition(s)"
+        return 0
+    fi
+    for partition in "${dropped[@]}"; do
+        psql_as -c "drop table if exists \"${partition}\""
+    done
+    log "  ${METRIC_ROLLUP_TABLE}: dropped ${#dropped[@]} partition(s)"
 }
 
 metrics() {
@@ -257,6 +365,16 @@ main() {
             # partition for tomorrow is worse than one with neither done.
             #
             metrics
+            if metrics_present; then
+                #
+                # After the partitions and before the pruning, because the
+                # rollup reads rows the pruning is about to remove. Reversed,
+                # a run that pruned first would roll up an hour whose samples
+                # had just been dropped - and produce a gap that looks like a
+                # restart.
+                #
+                rollup
+            fi
             if [[ "$dry_run" -eq 1 ]]; then
                 log "  dry run: nothing was deleted"
             elif [[ "$removable" -eq 0 ]]; then

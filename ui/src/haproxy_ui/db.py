@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -1605,6 +1605,57 @@ def _counter_values(counters: Mapping[str, int]) -> dict[str, int | None]:
     return {name: counters.get(name) for name in metrics.METRIC_COUNTERS}
 
 
+def _bucketed_raw(width: timedelta) -> sql.Composed:
+    """The raw table, reduced to one reading per bucket.
+
+    The last reading in each bucket is the one kept, because the counters are
+    cumulative: a difference between two bucket-ends is exactly the traffic
+    between them, and the middle of a bucket cannot improve on it.
+
+    `floor_uptime_sec` is why this is not merely sampling. Dropping rows would
+    hide a restart that happened and was climbed past between two kept
+    readings, and that interval would then be reported as a quiet stretch - so
+    the lowest uptime anywhere inside the bucket travels with the reading.
+    """
+
+    columns = sql.SQL(", ").join(sql.Identifier(name) for name in metrics.METRIC_COUNTERS)
+    return sql.SQL(
+        "select distinct on (bucket) bucket as at, observed_at, uptime_sec, "
+        "       floor_uptime_sec, {columns} "
+        "  from ( "
+        "       select date_bin(%(width)s, observed_at, timestamptz '2000-01-01') as bucket, "
+        "              observed_at, uptime_sec, {columns}, "
+        "              min(uptime_sec) over ( "
+        "                  partition by date_bin(%(width)s, observed_at, timestamptz '2000-01-01') "
+        "              ) as floor_uptime_sec "
+        "         from metric_pool_member "
+        "        where cluster = %(cluster)s and backend = %(backend)s "
+        "          and member = %(member)s and observed_at >= %(since)s "
+        "          and observed_at >= %(raw_from)s "
+        "       ) as bucketed "
+        " order by bucket, observed_at desc"
+    ).format(columns=columns)
+
+
+def _rolled_up() -> sql.Composed:
+    """The hourly rollup, in the same shape the bucketed raw query returns.
+
+    Same columns and same meaning, so nothing downstream knows which table
+    answered. That is the whole reason a rollup row stores the hour's last
+    cumulative value rather than the hour's delta: a second shape would need a
+    second reader with its own idea of what a restart is.
+    """
+
+    columns = sql.SQL(", ").join(sql.Identifier(name) for name in metrics.METRIC_COUNTERS)
+    return sql.SQL(
+        "select bucket_at as at, observed_at, uptime_sec, floor_uptime_sec, {columns} "
+        "  from metric_pool_hour "
+        " where cluster = %(cluster)s and backend = %(backend)s "
+        "   and member = %(member)s and bucket_at >= %(since)s "
+        "   and bucket_at < %(raw_from)s"
+    ).format(columns=columns)
+
+
 def read_pool_samples(
     connection: Connection[Any],
     *,
@@ -1620,63 +1671,49 @@ def read_pool_samples(
     the sum across its servers, counted by the thing doing the balancing rather
     than added up here. A caller that wants one server names it.
 
-    **One row per bucket rather than every row.** A month at one sample every
-    twenty seconds is over a hundred thousand rows for one pool, and a card an
-    inch high cannot use them; the bucket width is what the caller has decided
-    the window deserves. The last reading in each bucket is the one kept,
-    because the counters are cumulative - a difference between two bucket-ends
-    is exactly the traffic between them, which the middle of a bucket cannot
-    improve on.
+    **Two sources, one shape.** The raw samples are kept for a week; anything
+    older is answered from the hourly rollup. The boundary is a fixed age
+    rather than "whatever the rollup has", so the two halves cannot overlap and
+    an hour cannot be counted twice - and the rollup is computed with six days
+    of slack precisely so the older half is always there.
 
-    **`floor_uptime_sec` is why this is not just sampling.** Dropping rows would
-    hide a restart that happened and was climbed past between two kept
-    readings, and the interval would then be reported as a quiet stretch. The
-    lowest uptime anywhere inside the bucket travels with the reading so the
-    caller can still see that the counters began again.
+    A window inside the retention never reads the rollup at all, so the common
+    case costs one query and the long one costs two.
     """
 
-    columns = sql.SQL(", ").join(sql.Identifier(name) for name in metrics.METRIC_COUNTERS)
-    #
-    # Bucketed from a fixed origin rather than from `since`, so the boundaries
-    # are the same on every load and a page reopened a minute later does not
-    # redraw every point half a step to the left.
-    #
-    statement = sql.SQL(
-        "select distinct on (bucket) bucket, observed_at, member, uptime_sec, "
-        "       floor_uptime_sec, {columns} "
-        "  from ( "
-        "       select date_bin(%(width)s, observed_at, timestamptz '2000-01-01') as bucket, "
-        "              observed_at, member, uptime_sec, {columns}, "
-        "              min(uptime_sec) over ( "
-        "                  partition by date_bin(%(width)s, observed_at, timestamptz '2000-01-01') "
-        "              ) as floor_uptime_sec "
-        "         from metric_pool_member "
-        "        where cluster = %(cluster)s and backend = %(backend)s "
-        "          and member = %(member)s and observed_at >= %(since)s "
-        "       ) as bucketed "
-        " order by bucket, observed_at desc"
-    ).format(columns=columns)
+    raw_from = datetime.now(UTC) - metrics.RAW_RETENTION
+    arguments = {
+        "cluster": cluster,
+        "backend": backend,
+        "member": member,
+        "since": since,
+        "width": width,
+        "raw_from": raw_from,
+    }
 
+    rows: list[Any] = []
     with connection.cursor() as cursor:
-        cursor.execute(
-            statement,
-            {
-                "cluster": cluster,
-                "backend": backend,
-                "member": member,
-                "since": since,
-                "width": width,
-            },
-        )
-        rows = cursor.fetchall()
+        if since < raw_from:
+            cursor.execute(_rolled_up(), arguments)
+            rows.extend(cursor.fetchall())
+        cursor.execute(_bucketed_raw(width), arguments)
+        rows.extend(cursor.fetchall())
 
-    return [
+    found = [
         metrics.Sample(
             observed_at=row[1],
-            member=row[2],
-            uptime_sec=row[3],
-            floor_uptime_sec=row[4],
-            counters=dict(zip(metrics.METRIC_COUNTERS, row[5:], strict=True)),
+            member=member,
+            uptime_sec=row[2],
+            floor_uptime_sec=row[3],
+            counters=dict(zip(metrics.METRIC_COUNTERS, row[4:], strict=True)),
         )
         for row in rows
     ]
+    #
+    # Sorted here rather than trusted from the two queries. They are ordered
+    # individually and the rollup's half is older, so a concatenation happens to
+    # be right - and a `happens to be` in the one place a difference is taken
+    # is how a negative interval appears months later.
+    #
+    found.sort(key=lambda sample: sample.observed_at)
+    return found

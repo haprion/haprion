@@ -23,6 +23,7 @@ MIGRATION = ROOT / "ui" / "migrations" / "versions" / "0018_metric_samples.py"
 SAMPLE_INSTANT = ROOT / "ui" / "migrations" / "versions" / "0019_sample_instant.py"
 RETENTION = ROOT / "install" / "platform" / "bin" / "haproxy-ui-retention"
 NODE_SCRIPT = ROOT / "install" / "node" / "haproxy-node-status"
+ROLLUP = ROOT / "ui" / "migrations" / "versions" / "0020_metric_pool_hour.py"
 
 
 def _tuple_named(source: str, name: str) -> tuple[str, ...]:
@@ -53,6 +54,15 @@ class TheThreeCounterLists(unittest.TestCase):
 
     def test_the_migration_stores_exactly_what_the_reader_keeps(self) -> None:
         self.assertEqual(_tuple_named(MIGRATION.read_text(), "COUNTERS"), METRIC_COUNTERS)
+
+    def test_the_rollup_stores_exactly_what_the_reader_keeps(self) -> None:
+        self.assertEqual(_tuple_named(ROLLUP.read_text(), "COUNTERS"), METRIC_COUNTERS)
+
+    def test_the_retention_command_rolls_up_exactly_those(self) -> None:
+        """The fourth copy, and a shell script cannot import the other three."""
+
+        listed = RETENTION.read_text().split('METRIC_COUNTERS="', 1)[1].split('"', 1)[0]
+        self.assertEqual(tuple(name.strip() for name in listed.split(",")), METRIC_COUNTERS)
 
 
 class TheMetricTables(unittest.TestCase):
@@ -133,6 +143,52 @@ class TheMetricTables(unittest.TestCase):
         self.assertIn("raise exception 'not a metric table: %', table_name;", self.sql)
 
 
+class WhatTheRollupPromises(unittest.TestCase):
+    """A rollup row is a bucketed reading, not an hour's delta.
+
+    Same shape as what the raw query returns, so one difference-and-restart
+    implementation serves both and the only thing a longer window changes is
+    which table answers.
+    """
+
+    def setUp(self) -> None:
+        self.sql = ROLLUP.read_text()
+        self.script = RETENTION.read_text()
+
+    def test_the_row_carries_a_cumulative_reading_and_the_hour_s_floor(self) -> None:
+        self.assertIn("floor_uptime_sec  bigint", self.sql)
+        self.assertIn("uptime_sec        bigint", self.sql)
+
+    def test_the_hour_is_an_hour(self) -> None:
+        self.assertIn("check (bucket_at = date_trunc('hour', bucket_at))", self.sql)
+
+    def test_no_application_role_may_write_it(self) -> None:
+        """Derived data, written by the one privileged hand. See B93."""
+
+        self.assertNotIn("grant insert", self.sql)
+        self.assertNotIn("grant update", self.sql)
+        self.assertNotIn("grant delete", self.sql)
+
+    def test_an_hour_that_exists_is_never_recomputed(self) -> None:
+        """It would be rebuilt from rows that may since have been dropped."""
+
+        self.assertIn("on conflict do nothing", self.script)
+
+    def test_the_rollup_runs_before_the_pruning(self) -> None:
+        """It reads rows the pruning removes; reversed, it would make a gap."""
+
+        prune = self.script.split("        prune)\n", 1)[1]
+        self.assertLess(prune.index("rollup"), prune.index("where_removable"))
+
+    def test_the_lag_leaves_room_for_missed_runs(self) -> None:
+        """An hour becomes eligible days before its samples are dropped."""
+
+        lag = int(self.script.split("METRIC_ROLLUP_LAG_DAYS=", 1)[1].split("\n", 1)[0])
+        keep = int(self.script.split("METRIC_KEEP_DAYS=", 1)[1].split("\n", 1)[0])
+        self.assertGreaterEqual(lag, 1)
+        self.assertGreater(keep - lag, 3)
+
+
 class WhatTheRetentionCommandKeeps(unittest.TestCase):
     def setUp(self) -> None:
         self.script = RETENTION.read_text()
@@ -154,13 +210,18 @@ class WhatTheRetentionCommandKeeps(unittest.TestCase):
     def test_report_changes_nothing(self) -> None:
         """The command somebody runs to find out whether `prune` is safe."""
 
-        body = self.script.split("metrics_report() {", 1)[1].split("\nmetrics() {", 1)[0]
+        #
+        # Bounded by the function's own closing brace rather than by whatever
+        # is defined after it: the next function moved once already, and the
+        # test then read its body as this one's.
+        #
+        body = self.script.split("metrics_report() {", 1)[1].split("\n}\n", 1)[0]
         for writing in ("metric_partition(", "drop table", "delete from"):
             with self.subTest(writing=writing):
                 self.assertNotIn(writing, body)
 
     def test_a_dry_run_neither_creates_nor_drops(self) -> None:
-        body = self.script.split("\nmetrics() {", 1)[1].split("\nmain()", 1)[0]
+        body = self.script.split("\nmetrics() {", 1)[1].split("\n}\n", 1)[0]
         for guard in ('if [[ "$dry_run" -eq 1 ]]; then',):
             self.assertEqual(body.count(guard), 2)
 

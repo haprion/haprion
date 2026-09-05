@@ -9,8 +9,10 @@ refusal to render a page for a name that does not exist.
 from __future__ import annotations
 
 import re
+import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest import mock
 from uuid import UUID, uuid4
 
@@ -675,3 +677,26 @@ class OneObjectIsOneRow(DraftReading):
 
     def test_the_object_is_named_as_its_author_named_it(self) -> None:
         self.assertIn("public-web", self.listing())
+
+
+class WhichPoolsTheTrafficCardAsksAbout(unittest.TestCase):
+    """Both sources, because each answers for a kind the other cannot.
+
+    A managed object is served under the shared VIP frontend's name, so the
+    inventory never knows it by its own - `published` is None for every one of
+    them. An unmanaged proxy has no stored document, so the generator's naming
+    rule has nothing to work from. Keying the card off either alone loses half
+    the pages, and losing the managed half is how the card disappeared from
+    production after it had been working there.
+    """
+
+    def test_the_view_reads_both_and_neither_hides_the_other(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "src" / "haproxy_ui" / "views.py"
+        ).read_text()
+        block = source.split("# Which pools this page can ask about", 1)[1].split("if served:", 1)[
+            0
+        ]
+        self.assertIn("detail.published.backends", block)
+        self.assertIn("health.backend_name(name, pool)", block)
+        self.assertIn("not in served", block)

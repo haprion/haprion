@@ -34,7 +34,13 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from haproxy_mgmt import proxy_model
-from haproxy_mgmt.proxy_model import DEFAULT_FALL, DEFAULT_INTERVAL, DEFAULT_RISE
+from haproxy_mgmt.proxy_model import (
+    DEFAULT_FALL,
+    DEFAULT_INTERVAL,
+    DEFAULT_RISE,
+    ModelError,
+    load_proxy,
+)
 
 from haproxy_ui import (
     activity,
@@ -1004,19 +1010,34 @@ def build_router(config: Config) -> APIRouter:
         # the page reaches nothing: it is history, and history is the one thing
         # a node cannot be asked for.
         #
-        # The pools as the runtime names them, taken from the inventory rather
-        # than from the stored document - and that is the whole difference. A
-        # proxy nobody wrote here has no document, so reading the names out of
-        # one meant every unmanaged proxy had no traffic at all, on the page
-        # whose subject is traffic.
+        # Which pools this page can ask about, from both places a name can come
+        # from - and it needs both.
         #
-        # Nothing is derived from the object's name here. That derivation lives
-        # in `health`, which asks a node about a pool it knows by that rule;
-        # this asks a table about a name the runtime already reported.
+        # The inventory knows proxies by the name the runtime serves them under,
+        # which for a managed object is the shared VIP frontend and never the
+        # object. So `published` is None for every managed object, and keying
+        # the card off it alone removed the card from exactly the pages it was
+        # built for. It stays because it is the only name an *unmanaged* proxy
+        # has: nobody wrote a document for it here.
+        #
+        # The stored document answers for the other half, through the same
+        # naming rule the generator uses. Read with the engine's own reader, so
+        # nothing here holds a second opinion about what the file says.
         #
         traffic: list[metrics.PoolTraffic] = []
         chosen = metrics.window(request.query_params.get("traffic"))
-        served = detail.published.backends if detail.published else ()
+        served: list[str] = list(detail.published.backends if detail.published else ())
+        if detail.stored is not None:
+            try:
+                proxy = load_proxy(name, detail.stored.document.encode())
+            except ModelError:
+                proxy = None
+            if proxy is not None:
+                served.extend(
+                    health.backend_name(name, pool)
+                    for pool in proxy.backends
+                    if health.backend_name(name, pool) not in served
+                )
         if served:
             since = datetime.now(UTC) - chosen.span
             with request.app.state.pool.connection() as connection:

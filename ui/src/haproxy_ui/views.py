@@ -34,13 +34,7 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from haproxy_mgmt import proxy_model
-from haproxy_mgmt.proxy_model import (
-    DEFAULT_FALL,
-    DEFAULT_INTERVAL,
-    DEFAULT_RISE,
-    ModelError,
-    load_proxy,
-)
+from haproxy_mgmt.proxy_model import DEFAULT_FALL, DEFAULT_INTERVAL, DEFAULT_RISE
 
 from haproxy_ui import (
     activity,
@@ -1010,36 +1004,36 @@ def build_router(config: Config) -> APIRouter:
         # the page reaches nothing: it is history, and history is the one thing
         # a node cannot be asked for.
         #
-        # The pools come from the engine's own reader. A second parser here
-        # would be a second opinion about what the file says, and the one that
-        # decides which backend the runtime named has to be the same one.
+        # The pools as the runtime names them, taken from the inventory rather
+        # than from the stored document - and that is the whole difference. A
+        # proxy nobody wrote here has no document, so reading the names out of
+        # one meant every unmanaged proxy had no traffic at all, on the page
+        # whose subject is traffic.
+        #
+        # Nothing is derived from the object's name here. That derivation lives
+        # in `health`, which asks a node about a pool it knows by that rule;
+        # this asks a table about a name the runtime already reported.
         #
         traffic: list[metrics.PoolTraffic] = []
         chosen = metrics.window(request.query_params.get("traffic"))
-        if detail.stored is not None:
-            try:
-                proxy = load_proxy(name, detail.stored.document.encode())
-            except ModelError:
-                proxy = None
-            if proxy is not None:
-                since = datetime.now(UTC) - chosen.span
-                with request.app.state.pool.connection() as connection:
-                    for pool_name in proxy.backends:
-                        backend = health.backend_name(name, pool_name)
-                        traffic.append(
-                            metrics.pool_traffic(
-                                pool_name,
-                                backend,
-                                db.read_pool_samples(
-                                    connection,
-                                    cluster=cluster,
-                                    backend=backend,
-                                    since=since,
-                                    width=chosen.bucket,
-                                ),
-                                tick_format=chosen.tick,
-                            )
-                        )
+        served = detail.published.backends if detail.published else ()
+        if served:
+            since = datetime.now(UTC) - chosen.span
+            with request.app.state.pool.connection() as connection:
+                traffic = [
+                    metrics.pool_traffic(
+                        backend,
+                        db.read_pool_samples(
+                            connection,
+                            cluster=cluster,
+                            backend=backend,
+                            since=since,
+                            width=chosen.bucket,
+                        ),
+                        tick_format=chosen.tick,
+                    )
+                    for backend in served
+                ]
         return TEMPLATES.TemplateResponse(
             request,
             "object.html",

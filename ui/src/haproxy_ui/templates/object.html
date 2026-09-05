@@ -106,7 +106,7 @@
   </header>
   {% for pool in traffic %}
   <div class="traffic-pool">
-    {% if traffic_named %}<div class="traffic-head"><strong>{{ pool.pool }}</strong> <code class="traffic-backend">{{ pool.backend }}</code></div>{% endif %}
+    {% if traffic_named %}<div class="traffic-head"><code class="traffic-backend">{{ pool.backend }}</code></div>{% endif %}
     {% if pool.measured %}
     <div class="traffic-body">
       {#

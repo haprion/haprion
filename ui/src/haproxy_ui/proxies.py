@@ -28,6 +28,12 @@ class ProxyView:
     hostnames: tuple[str, ...]
     ports: tuple[int, ...]
     backend_count: int
+    #
+    # The pool names the runtime knows, empty where the manager reporting this
+    # is older than the field. Empty is "not told", not "has none" - the count
+    # beside it is what says how many there are.
+    #
+    backends: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,10 +81,10 @@ def _ports(value: Any) -> tuple[int, ...]:
     return tuple(port for port in value if isinstance(port, int) and not isinstance(port, bool))
 
 
-def _hostnames(value: Any) -> tuple[str, ...]:
+def _strings(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()
-    return tuple(hostname for hostname in value if isinstance(hostname, str) and hostname)
+    return tuple(entry for entry in value if isinstance(entry, str) and entry)
 
 
 def _proxy_view(value: Any) -> ProxyView | None:
@@ -92,7 +98,7 @@ def _proxy_view(value: Any) -> ProxyView | None:
         protocol=protocol,
         managed=proxy.get("managed") is True,
         enabled=proxy.get("enabled") is True,
-        hostnames=_hostnames(proxy.get("hostnames")),
+        hostnames=_strings(proxy.get("hostnames")),
         ports=_ports(proxy.get("bind_ports")),
         backend_count=(
             proxy["backend_count"]
@@ -100,6 +106,7 @@ def _proxy_view(value: Any) -> ProxyView | None:
             and not isinstance(proxy.get("backend_count"), bool)
             else 0
         ),
+        backends=_strings(proxy.get("backends")),
     )
 
 

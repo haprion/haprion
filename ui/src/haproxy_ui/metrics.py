@@ -373,9 +373,12 @@ SPARK_TICKS = 5
 
 @dataclass(frozen=True, slots=True)
 class PoolTraffic:
-    """One pool's window, ready to draw."""
+    """One pool's window, ready to draw.
 
-    pool: str
+    Named by the runtime's own name for the pool, which is the only name that
+    exists for a proxy nobody wrote here.
+    """
+
     backend: str
     intervals: int
     started_at: datetime | None
@@ -454,7 +457,7 @@ def spark_ticks(
 
 
 def pool_traffic(
-    pool: str, backend: str, samples: Sequence[Sample], *, tick_format: str = "%H:%M"
+    backend: str, samples: Sequence[Sample], *, tick_format: str = "%H:%M"
 ) -> PoolTraffic:
     found = intervals(samples)
     paths, peak = spark_paths(
@@ -463,7 +466,6 @@ def pool_traffic(
         height=SPARK_HEIGHT,
     )
     return PoolTraffic(
-        pool=pool,
         backend=backend,
         intervals=len(found),
         started_at=found[0].started_at if found else None,

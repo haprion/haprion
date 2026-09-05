@@ -192,6 +192,15 @@ def _proxy_document(proxy: _Proxy) -> dict[str, object]:
         "hostnames": sorted(proxy.hostnames),
         "bind_ports": sorted(proxy.bind_ports),
         "backend_count": len(proxy.backends),
+        #
+        # The names as well as the count, because a count cannot be looked up.
+        # A reader that wants what a pool actually did - its counters on the
+        # runtime socket, its rows in a metric table - needs the name HAProxy
+        # knows it by, and until now that name existed only inside the stored
+        # object. A proxy nobody wrote here has no stored object at all, so
+        # everything derived from one silently skipped it.
+        #
+        "backends": sorted(proxy.backends),
     }
 
 

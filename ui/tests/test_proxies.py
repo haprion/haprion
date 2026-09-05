@@ -4,7 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from haproxy_ui import health
+from haproxy_ui import health, proxies
 from haproxy_ui.db import ClusterInventory
 from haproxy_ui.proxies import build_proxy_overview
 
@@ -75,6 +75,42 @@ class ProxyOverviewTests(unittest.TestCase):
     def test_configured_cluster_without_a_reading_stays_visible(self) -> None:
         overview = build_proxy_overview(("alpha",), (), now=NOW, stale_after=timedelta(minutes=2))
         self.assertEqual(overview.clusters[0].label, "No inventory yet")
+
+
+class WhatThePoolsAreCalled(unittest.TestCase):
+    """The runtime's own names, which is the only name some proxies have.
+
+    Read from the inventory rather than from a stored object, because a proxy
+    nobody wrote here has no stored object - and anything that needed one
+    silently skipped every unmanaged proxy.
+    """
+
+    def view(self, **extra: object):
+        return proxies._proxy_view(
+            {
+                "name": "public",
+                "protocol": "http",
+                "managed": False,
+                "enabled": True,
+                "hostnames": [],
+                "bind_ports": [80],
+                "backend_count": 2,
+                **extra,
+            }
+        )
+
+    def test_the_names_are_carried_as_reported(self) -> None:
+        self.assertEqual(self.view(backends=["a_pool", "b_pool"]).backends, ("a_pool", "b_pool"))
+
+    def test_a_manager_too_old_to_report_them_is_not_a_proxy_without_pools(self) -> None:
+        """Empty is "not told"; the count beside it says how many there are."""
+
+        older = self.view()
+        self.assertEqual(older.backends, ())
+        self.assertEqual(older.backend_count, 2)
+
+    def test_anything_that_is_not_a_name_is_left_out(self) -> None:
+        self.assertEqual(self.view(backends=["a_pool", "", 7, None]).backends, ("a_pool",))
 
 
 if __name__ == "__main__":

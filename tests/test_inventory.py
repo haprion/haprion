@@ -45,6 +45,7 @@ class InventoryTests(unittest.TestCase):
                     "hostnames": ["app.example.test", "www.example.test"],
                     "bind_ports": [80],
                     "backend_count": 1,
+                    "backends": ["app_pool"],
                 },
                 {
                     "id": "proxy:generated-api",
@@ -56,6 +57,7 @@ class InventoryTests(unittest.TestCase):
                     "hostnames": [],
                     "bind_ports": [443],
                     "backend_count": 1,
+                    "backends": ["api_pool"],
                 },
                 {
                     "id": "proxy:legacy",
@@ -67,6 +69,7 @@ class InventoryTests(unittest.TestCase):
                     "hostnames": [],
                     "bind_ports": [8443],
                     "backend_count": 2,
+                    "backends": ["legacy_pool", "other_pool"],
                 },
             ],
         )

@@ -154,7 +154,7 @@ class DrawingTheShape(unittest.TestCase):
 
 class WhetherTheWindowSaysAnything(unittest.TestCase):
     def traffic(self, *samples: metrics.Sample) -> metrics.PoolTraffic:
-        return metrics.pool_traffic("web", "mgd-site-web", list(samples))
+        return metrics.pool_traffic("mgd-site-web", list(samples))
 
     def test_no_samples_is_not_observed_rather_than_quiet(self) -> None:
         """An object never deployed has no reading, which is not "no traffic"."""

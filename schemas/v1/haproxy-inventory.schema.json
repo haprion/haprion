@@ -55,7 +55,13 @@
           "items": { "type": "integer", "minimum": 1, "maximum": 65535 },
           "uniqueItems": true
         },
-        "backend_count": { "type": "integer", "minimum": 0 }
+        "backend_count": { "type": "integer", "minimum": 0 },
+        "backends": {
+          "description": "The names the runtime knows this proxy's pools by, which is what a counter or a log line can be looked up under. Absent from a manager too old to report them, which is why it is not required.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 255 },
+          "uniqueItems": true
+        }
       },
       "additionalProperties": true
     },

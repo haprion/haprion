@@ -951,6 +951,16 @@ def build_router(config: Config) -> APIRouter:
         vip = (
             next((item for item in described.vips if item.is_default), None) if described else None
         )
+        #
+        # Whether *this* object is one the pending deploy carries. The release
+        # state is the cluster's, and wearing it here told somebody opening an
+        # untouched site that it was waiting for a deploy - the same mistake
+        # the listing rows made before they were given this per-object answer.
+        #
+        with request.app.state.pool.connection() as connection:
+            reconfigured = name in objects.published_awaiting_deploy(
+                db.recent_jobs(connection, cluster=cluster)
+            )
         detail = objects.build_object_detail(
             cluster,
             name,
@@ -959,6 +969,7 @@ def build_router(config: Config) -> APIRouter:
             versions,
             release_state=serving.release_state if serving else "",
             node_version=node_version,
+            reconfigured=reconfigured,
             vip=vip.name if vip else None,
             vip_address=vip.address if vip else None,
             vip_is_default=vip is not None,

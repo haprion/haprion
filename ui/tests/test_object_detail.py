@@ -303,6 +303,25 @@ class WhetherTheChangeReachedTheNodes(unittest.TestCase):
         self.assertEqual(state.label, "Waiting for deploy")
         self.assertIn("v25", state.detail)
 
+    def test_an_object_the_pending_deploy_does_not_carry_is_serving(self) -> None:
+        """The cluster owes a deploy; this object does not.
+
+        A release carries only the objects its publish named. Every other
+        object is byte for byte what the nodes already serve, so opening one
+        during somebody else's pending deploy must not claim it is waiting.
+        """
+
+        state = publication(
+            f"{29:040d}",
+            [self.version(29, published=True)],
+            release_state="Deploy Pending",
+            node_version="v25",
+            reconfigured=False,
+        )
+
+        self.assertEqual(state.label, "Serving")
+        self.assertIn("v25", state.detail)
+
     def test_a_commit_that_is_versioned_but_not_released_is_awaiting_publish(self) -> None:
         state = publication(
             f"{30:040d}",

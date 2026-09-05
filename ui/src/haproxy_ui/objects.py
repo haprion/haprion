@@ -178,6 +178,7 @@ def publication(
     *,
     release_state: str = "",
     node_version: str = "",
+    reconfigured: bool = True,
 ) -> Publication:
     """Whether the commit this object was read at has been released and deployed.
 
@@ -222,7 +223,24 @@ def publication(
     # produces - so every object read as waiting, including ones the nodes were
     # already serving.
     #
+    #
+    # And a deploy the nodes owe is not a deploy this object is waiting for.
+    # The release is the cluster's, but a release carries only the objects the
+    # publish named: every other object is byte for byte what the nodes are
+    # already serving. `reconfigured` is that per-object fact, read from the
+    # jobs the same way the listing reads it, and without it opening any
+    # untouched object during somebody else's pending deploy said the site was
+    # waiting on a change nobody had made to it.
+    #
     if release_state and release_state.lower() != "converged":
+        if not reconfigured:
+            return Publication(
+                "Serving",
+                f"The nodes are on {node_version or 'an earlier release'}, "
+                "which serves this object as written",
+                "healthy",
+                match.version,
+            )
         return Publication(
             "Waiting for deploy",
             f"{match.version} is the release, and the nodes are on {node_version or 'an older one'}",
@@ -243,6 +261,7 @@ def build_object_detail(
     *,
     release_state: str = "",
     node_version: str = "",
+    reconfigured: bool = True,
     vip: str | None = None,
     vip_address: str | None = None,
     vip_is_default: bool = False,
@@ -288,7 +307,13 @@ def build_object_detail(
         name=name,
         stored=stored,
         publication=(
-            publication(commit, versions, release_state=release_state, node_version=node_version)
+            publication(
+                commit,
+                versions,
+                release_state=release_state,
+                node_version=node_version,
+                reconfigured=reconfigured,
+            )
             if stored is not None
             else None
         ),

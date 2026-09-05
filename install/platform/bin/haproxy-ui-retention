@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# haproxy-ui-retention - keep the job table bounded.
+# haproxy-ui-retention - keep the database bounded.
 #
 #     haproxy-ui-retention prune  [-e <environment>] [--days <n>] [--dry-run]
 #     haproxy-ui-retention report [-e <environment>] [--days <n>]
@@ -39,12 +39,119 @@ KEEP_DAYS=7
 #
 KEEP_MINIMUM=20
 
+#
+# The metric tables, and why partition maintenance lives in this command rather
+# than in the poller. No application role holds `create` on the schema - the
+# whole grant is `usage` - so the account that writes the samples cannot make
+# the partition it writes them into. This command is already the one privileged,
+# scheduled hand on this database, so it is where the horizon is kept. See B93.
+#
+METRIC_TABLES=(metric_listener metric_pool_member)
+
+#
+# Raw samples are kept for a week, which is what the phase decided, and one
+# partition holds one day.
+#
+METRIC_KEEP_DAYS=7
+
+#
+# How far ahead partitions are created. Long, and that is the point: there is no
+# default partition, so a day with no partition is an insert that fails rather
+# than a row that lands somewhere misleading. At two months of headroom a
+# missed run - or eight of them - costs nothing, while a horizon of days would
+# make this weekly timer a single point of failure between the poller and a
+# sample with nowhere to go.
+#
+METRIC_AHEAD_DAYS=60
+
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
 
 usage() {
     sed -n '3,7p' "$0" | sed 's/^# \?//'
     exit 64
+}
+
+#
+# Partition names are derived from the day they hold, so the day can be read
+# back out of the name. That is what lets an expired partition be found without
+# parsing `pg_get_expr` output: the catalogue is still asked which partitions
+# exist, and only the date comes from the name.
+#
+metric_partitions_expired() {
+    local table="$1"
+    cat <<SQL
+    select child.relname
+      from pg_inherits
+      join pg_class parent on parent.oid = pg_inherits.inhparent
+      join pg_class child  on child.oid  = pg_inherits.inhrelid
+     where parent.relname = '${table}'
+       and child.relname ~ '^${table}_[0-9]{8}\$'
+       and to_date(right(child.relname, 8), 'YYYYMMDD')
+           < current_date - ${METRIC_KEEP_DAYS}
+     order by child.relname
+SQL
+}
+
+#
+# What `report` says about the metric tables: what exists, never what should.
+# The command's whole promise is that it changes nothing, and a report that
+# quietly created tomorrow's partition would break it in the one place somebody
+# runs it to find out whether it is safe to run `prune`.
+#
+metrics_report() {
+    local table covered expired
+
+    for table in "${METRIC_TABLES[@]}"; do
+        covered="$(psql_as -c "select count(*) from pg_inherits
+                                 join pg_class parent on parent.oid = inhparent
+                                where parent.relname = '${table}'")"
+        expired="$(psql_as -c "select count(*) from ($(metric_partitions_expired "${table}")) as expired")"
+        log "  ${table}: ${covered} partition(s), ${expired} older than ${METRIC_KEEP_DAYS} day(s)"
+    done
+}
+
+metrics() {
+    local table created dropped partition
+
+    for table in "${METRIC_TABLES[@]}"; do
+        #
+        # One statement over a series rather than one call per day. The
+        # function is `create table if not exists`, so a run that overlaps an
+        # earlier one adds only what is missing - and the normal weekly answer
+        # is that it added seven, which is not worth 61 round trips to find out.
+        #
+        if [[ "$dry_run" -eq 1 ]]; then
+            log "  ${table}: dry run, would cover to $(date -d "+${METRIC_AHEAD_DAYS} days" +%F)"
+        else
+            created="$(psql_as -c "select count(*) from generate_series(
+                                       current_date,
+                                       current_date + ${METRIC_AHEAD_DAYS},
+                                       interval '1 day'
+                                   ) as day, metric_partition('${table}', day::date)")"
+            log "  ${table}: ${created} day(s) covered, to $(date -d "+${METRIC_AHEAD_DAYS} days" +%F)"
+        fi
+
+        mapfile -t dropped < <(psql_as -c "$(metric_partitions_expired "${table}")")
+        if [[ ${#dropped[@]} -eq 0 || -z "${dropped[0]}" ]]; then
+            log "  ${table}: nothing older than ${METRIC_KEEP_DAYS} day(s)"
+            continue
+        fi
+        if [[ "$dry_run" -eq 1 ]]; then
+            log "  ${table}: dry run, would drop ${#dropped[@]} partition(s)"
+            continue
+        fi
+        for partition in "${dropped[@]}"; do
+            #
+            # Detached and dropped in one statement rather than deleted from.
+            # Dropping the partition is what makes a week of raw samples cost
+            # nothing to remove; a `delete` would rewrite the same rows into
+            # dead tuples and leave the table to be vacuumed.
+            #
+            psql_as -c "drop table if exists \"${partition}\""
+        done
+        log "  ${table}: dropped ${#dropped[@]} partition(s)"
+    done
 }
 
 [[ $EUID -eq 0 ]] || die "run this with sudo"
@@ -116,8 +223,16 @@ main() {
 
     case "$command" in
         report)
+            metrics_report
             ;;
         prune)
+            #
+            # The partitions first, and the jobs after. If a run is going to
+            # fail it should fail before the horizon has been extended rather
+            # than after - a database with a week of jobs pruned and no
+            # partition for tomorrow is worse than one with neither done.
+            #
+            metrics
             if [[ "$dry_run" -eq 1 ]]; then
                 log "  dry run: nothing was deleted"
             elif [[ "$removable" -eq 0 ]]; then

@@ -26,7 +26,7 @@ import json
 import logging
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -85,10 +85,30 @@ class Source:
     # helper is doing something it should not.
     #
     partial_ok: bool = False
+    #
+    # A second write from the same reading, where one exists. The cache answers
+    # what is true now and is replaced; a sample answers what was true then and
+    # is appended. Asking the nodes twice to get both would double the load on
+    # every node to produce two readings of the same moment that could disagree.
+    #
+    # It is a separate field rather than something `record` does, because the
+    # two writes must not share a transaction: a sample that cannot be written
+    # is a gap in a graph, and a cache row that is not written is a dashboard
+    # that says the cluster is stale. The second must not be caused by the
+    # first. See the phase gate: missing stats data does not affect
+    # reachability.
+    #
+    sample: Callable[..., int] | None = None
 
 
 SOURCES: tuple[Source, ...] = (
-    Source("status", run_status_helper, db.record_cluster_status, partial_ok=True),
+    Source(
+        "status",
+        run_status_helper,
+        db.record_cluster_status,
+        partial_ok=True,
+        sample=db.record_metric_samples,
+    ),
     Source("inventory", run_inventory_helper, db.record_cluster_inventory),
     Source("list", run_list_helper, db.record_cluster_history),
     Source("list_backups", run_list_backups_helper, db.record_cluster_backups, partial_ok=True),
@@ -174,6 +194,30 @@ def poll_cluster(
     }
 
 
+def _sample(pool: Any, source: Source, *, cluster: str, result: Mapping[str, Any]) -> None:
+    """Write this reading's samples, and never let that failure reach the poll.
+
+    A partial reading is sampled too: the nodes that answered are exactly the
+    measurement worth keeping on a day when one did not.
+
+    Every failure is swallowed to a log line, and the reason is the phase gate -
+    missing stats data must not affect reachability. The likeliest failure is a
+    day with no partition, which is a maintenance problem to go and fix and not
+    a reason for the dashboard to stop saying which nodes are up.
+    """
+
+    if source.sample is None or not result:
+        return
+    try:
+        with pool.connection() as connection:
+            written = source.sample(connection, cluster=cluster, result=result)
+            connection.commit()
+    except Exception as exc:  # noqa: BLE001 - a sample is never worth a failed pass
+        logger.warning("cluster %s samples not written: %s", cluster, exc)
+        return
+    logger.debug("cluster %s: %d sample row(s)", cluster, written)
+
+
 def poll_once(pool: Any, config: Config, sources: tuple[Source, ...] = SOURCES) -> int:
     """One pass over every configured cluster. Returns how many answered well.
 
@@ -204,6 +248,7 @@ def poll_once(pool: Any, config: Config, sources: tuple[Source, ...] = SOURCES) 
                     poll_error=reading.get("poll_error"),
                 )
                 connection.commit()
+            _sample(pool, source, cluster=cluster, result=reading["result"])
             if reading["outcome"] == "done":
                 if source.operation == "status":
                     healthy += 1

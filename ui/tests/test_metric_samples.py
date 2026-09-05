@@ -12,12 +12,46 @@ looks harmless.
 
 from __future__ import annotations
 
+import ast
 import unittest
 from pathlib import Path
+
+from haproxy_ui.metrics import METRIC_COUNTERS
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = ROOT / "ui" / "migrations" / "versions" / "0018_metric_samples.py"
 RETENTION = ROOT / "install" / "platform" / "bin" / "haproxy-ui-retention"
+NODE_SCRIPT = ROOT / "install" / "node" / "haproxy-node-status"
+
+
+def _tuple_named(source: str, name: str) -> tuple[str, ...]:
+    """The value of one module-level tuple, read without importing the file.
+
+    Neither of the other two can be imported: the node script is installed
+    rather than packaged, and a migration must not import application code.
+    """
+
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == name for target in node.targets
+        ):
+            return tuple(ast.literal_eval(node.value))
+    raise AssertionError(f"{name} is no longer a module-level tuple")
+
+
+class TheThreeCounterLists(unittest.TestCase):
+    """One list of column names, in three places that cannot share it.
+
+    The node reads them, the reader keeps them and the migration stores them.
+    A name added to one and not the others is a counter measured and dropped,
+    or a column that never gets a value - neither of which fails anywhere else.
+    """
+
+    def test_the_node_reads_exactly_what_the_reader_keeps(self) -> None:
+        self.assertEqual(_tuple_named(NODE_SCRIPT.read_text(), "COUNTER_COLUMNS"), METRIC_COUNTERS)
+
+    def test_the_migration_stores_exactly_what_the_reader_keeps(self) -> None:
+        self.assertEqual(_tuple_named(MIGRATION.read_text(), "COUNTERS"), METRIC_COUNTERS)
 
 
 class TheMetricTables(unittest.TestCase):

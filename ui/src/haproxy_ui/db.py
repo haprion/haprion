@@ -32,6 +32,7 @@ from psycopg.rows import class_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from haproxy_ui import metrics
 from haproxy_ui.config import Database
 
 
@@ -1494,3 +1495,103 @@ def discard_draft(
             raise DraftConflict(
                 f"the draft for {object_id} changed since it was read; reload it and try again"
             )
+
+
+def record_metric_samples(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    result: Mapping[str, Any],
+) -> int:
+    """Append one poll's samples. Returns how many rows were written.
+
+    Append, never replace, which is what separates these tables from every
+    cache above: a cache answers what is true now and a sample answers what was
+    true then, and rewriting the second would destroy the only thing it is for.
+
+    `observed_at` appears in neither statement. The database sets it from
+    `statement_timestamp()`, so every row of one poll carries the same instant
+    and none of them can be written to look fresher than the read that produced
+    it - the same reason the caches leave it out, for a different consequence.
+
+    Nothing here is idempotent and nothing needs to be. Two polls a second
+    apart are two measurements, not one measurement written twice; the primary
+    key includes the timestamp precisely so both survive.
+    """
+
+    listeners, members = metrics.samples(result)
+    if not listeners and not members:
+        return 0
+
+    with connection.cursor() as cursor:
+        if listeners:
+            cursor.executemany(
+                _sample_insert("metric_listener", ("node", "frontend", "owns_vip")),
+                [
+                    {
+                        "cluster": cluster,
+                        "node": sample.node,
+                        "frontend": sample.frontend,
+                        "owns_vip": sample.owns_vip,
+                        "uptime_sec": sample.uptime_sec,
+                        "status": sample.status,
+                        **_counter_values(sample.counters),
+                    }
+                    for sample in listeners
+                ],
+            )
+        if members:
+            cursor.executemany(
+                _sample_insert(
+                    "metric_pool_member",
+                    ("node", "backend", "member", "check_status", "check_code"),
+                ),
+                [
+                    {
+                        "cluster": cluster,
+                        "node": sample.node,
+                        "backend": sample.backend,
+                        "member": sample.member,
+                        "check_status": sample.check_status,
+                        "check_code": sample.check_code,
+                        "uptime_sec": sample.uptime_sec,
+                        "status": sample.status,
+                        **_counter_values(sample.counters),
+                    }
+                    for sample in members
+                ],
+            )
+
+    return len(listeners) + len(members)
+
+
+def _sample_insert(table: str, identifying: tuple[str, ...]) -> sql.Composed:
+    """The insert for one sample table, composed rather than formatted.
+
+    Every name here is a literal from this module - the table, the identifying
+    columns and `metrics.METRIC_COUNTERS` - so there is nothing a caller could
+    put in one. It is composed through `psycopg.sql` anyway, because the way to
+    know that stays true is for the code to be unable to express the other
+    thing rather than for a reader to check that it does not.
+
+    Columns are named one at a time, including where that is every column. The
+    grants are written column by column for the same reason: a statement that
+    named the table alone would silently widen the next time one is added.
+    """
+
+    columns = ("cluster", *identifying, "uptime_sec", "status", *metrics.METRIC_COUNTERS)
+    return sql.SQL("insert into {table} ({columns}) values ({values})").format(
+        table=sql.Identifier(table),
+        columns=sql.SQL(", ").join(sql.Identifier(name) for name in columns),
+        values=sql.SQL(", ").join(sql.Placeholder(name) for name in columns),
+    )
+
+
+def _counter_values(counters: Mapping[str, int]) -> dict[str, int | None]:
+    """Every counter column, with the ones this row did not report as None.
+
+    `executemany` needs every placeholder present in every row, and the missing
+    ones must arrive as null rather than be left out or defaulted to zero.
+    """
+
+    return {name: counters.get(name) for name in metrics.METRIC_COUNTERS}

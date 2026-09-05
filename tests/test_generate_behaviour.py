@@ -1970,6 +1970,14 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
         """Whether a client that will go no higher than `ceiling` is served."""
 
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        #
+        # Both ends of the range said rather than inherited, for the reason the
+        # probe gives about its own floor: left unsaid, it is whatever OpenSSL
+        # on this machine was built with, and the test would then be asserting
+        # something about the machine as much as about the listener. 1.2 is the
+        # project's floor everywhere, so it is the floor a client here uses.
+        #
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.maximum_version = ceiling
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
@@ -1986,6 +1994,7 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
         """Which version a client that would go as high as possible ended on."""
 
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
         try:

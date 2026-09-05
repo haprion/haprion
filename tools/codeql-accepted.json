@@ -20,6 +20,20 @@
       "message": "Overly permissive mask in open sets file to group readable.",
       "decided": "2026-08-28",
       "reason": "Same release tree, same group: the staged files are created with the mode they will keep, so the open and the later chmod agree rather than leaving a window at a different mode."
+    },
+    {
+      "rule": "py/insecure-protocol",
+      "path": "install/node/haproxy-health-probe",
+      "message": "Insecure SSL/TLS protocol version TLSv1_1 allowed by [call to ssl.create_default_context](1).\nInsecure SSL/TLS protocol version TLSv1 allowed by [call to ssl.create_default_context](1).",
+      "decided": "2026-09-05",
+      "reason": "TLS 1.0 is not reachable and the alert overstates by naming it: MIN_VERSIONS is an allowlist of exactly TLSv1.1, TLSv1.2 and TLSv1.3, a target naming anything else is refused before a context exists, and minimum_version is always set explicitly rather than inherited from OpenSSL. What remains is that `legacy` floors at TLS 1.1, which is the feature B83 built for one named appliance on a network the operator owns - applied per target that asked for it and never to the rest of the request. The probe must not hold a floor of its own: HAProxy reaches the pool under the policy the object names, and a probe that refused what HAProxy accepts would report a healthy pool as broken."
+    },
+    {
+      "rule": "py/url-redirection",
+      "path": "ui/src/haproxy_ui/views.py",
+      "message": "Untrusted URL redirection depends on a [user-provided value](1).\nUntrusted URL redirection depends on a [user-provided value](1).",
+      "decided": "2026-09-05",
+      "reason": "The value cannot leave the origin, and both halves of that are checkable. It has passed proxy_model.NAME.fullmatch - ^[a-z][a-z0-9_-]{0,39}$ - earlier in the same handler, so it contains no slash, colon, dot or newline; and it is appended to the fixed prefix '/proxies?discarded=', so it cannot begin the target and cannot become '//host'. CodeQL does not carry the allowlist check that far. Re-check both when either changes: a looser NAME, or a redirect where the value is not preceded by a literal path."
     }
   ]
 }

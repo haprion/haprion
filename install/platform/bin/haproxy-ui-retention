@@ -175,7 +175,7 @@ metrics_report() {
 rollup() {
     local written
 
-    step "Rollup"
+    log "  ${METRIC_ROLLUP_TABLE}: hourly rollup"
     psql_as -c "select metric_month_partition('${METRIC_ROLLUP_TABLE}', month::date)
                   from generate_series(
                       date_trunc('month', current_date - ${METRIC_ROLLUP_KEEP_DAYS}),

@@ -13,6 +13,7 @@ looks harmless.
 from __future__ import annotations
 
 import ast
+import re
 import unittest
 from pathlib import Path
 
@@ -179,6 +180,20 @@ class WhatTheRollupPromises(unittest.TestCase):
 
         prune = self.script.split("        prune)\n", 1)[1]
         self.assertLess(prune.index("rollup"), prune.index("where_removable"))
+
+    def test_it_calls_only_helpers_it_defines(self) -> None:
+        """The command is standalone; it does not source the installer's lib.
+
+        `step` is defined in `install/lib.sh`, which every numbered platform
+        step sources and this command does not - so calling it aborted the run
+        under `set -e`, after the partitions and before the pruning. Caught by
+        a dry run rather than by a gate, which is why there is now a gate.
+        """
+
+        defined = {"log", "die", "usage", "psql_as", "counts", "main"}
+        called = set(re.findall(r"^\s{4}([a-z_][a-z_0-9]*)\b", self.script, re.MULTILINE))
+        undefined = called - defined - set(re.findall(r"^([a-z_]+)\(\)", self.script, re.MULTILINE))
+        self.assertEqual(undefined & {"step", "fail", "need_root", "require_vars"}, set())
 
     def test_the_lag_leaves_room_for_missed_runs(self) -> None:
         """An hour becomes eligible days before its samples are dropped."""

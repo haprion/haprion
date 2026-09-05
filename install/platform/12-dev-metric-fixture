@@ -1,0 +1,150 @@
+#!/bin/bash
+#
+# Development-only synthetic metric samples, for looking at a long window.
+#
+#     sudo ./12-dev-metric-fixture <development-answers> <cluster> <object> <pool>
+#
+# Thirty days of plausible traffic written straight into the sample tables, so
+# the object page's 7d and 30d views can be looked at before thirty days have
+# passed. There is no other way to see them: the poller writes one reading at a
+# time and a month takes a month.
+#
+# It refuses any environment that is not development, and that refusal is the
+# whole reason this is a separate command rather than a flag on something else.
+# Synthetic traffic presented as measured is worse than no traffic at all - a
+# reader has no way to tell them apart afterwards, and every number on the page
+# says it was counted by HAProxy.
+#
+# Not a service, not a timer, and not installed anywhere. Run it, look at the
+# page, and remove the rows again with --clear when the looking is done.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+
+clear_only=0
+if [[ "${1:-}" == "--clear" ]]; then
+    clear_only=1
+    shift
+fi
+
+answers="${1:-}"
+cluster="${2:-}"
+object="${3:-}"
+pool="${4:-}"
+[[ -n "$answers" && -n "$cluster" && -n "$object" && -n "$pool" ]] || \
+    die "usage: $(basename "$0") [--clear] <development-answers> <cluster> <object> <pool>"
+
+load_answers "$answers"
+require_vars DB_NAME DB_MIGRATION_ROLE
+
+#
+# Two independent refusals rather than one. `ENVIRONMENT` is what the answers
+# file says about itself and could be wrong in a copied file; the database name
+# is what the rows would actually land in. Production has to fail both tests to
+# be written to, and it fails each of them on its own.
+#
+environment="${ENVIRONMENT:-prod}"
+[[ "$environment" != "prod" ]] || die "this writes synthetic traffic and refuses production"
+[[ "$DB_NAME" == *dev* ]] || die "the database is not a development one: ${DB_NAME}"
+
+#
+# The runtime name, built the way the generator builds it. A fixture under any
+# other name would be invisible to the page it exists to fill.
+#
+backend="mgd-${object}-${pool}"
+
+psql_as() { psql -U "$DB_MIGRATION_ROLE" -d "$DB_NAME" -qtAX -v ON_ERROR_STOP=1 "$@"; }
+
+if [[ "$clear_only" -eq 1 ]]; then
+    removed="$(psql_as -c "with gone as (
+                               delete from metric_pool_member
+                                where cluster = '${cluster}' and backend = '${backend}'
+                               returning 1
+                           ) select count(*) from gone")"
+    log "  removed  ${removed} synthetic row(s) for ${backend}"
+    exit 0
+fi
+
+step "Partitions"
+#
+# A month into the past, which the retention command never creates: it keeps a
+# horizon ahead of today and drops what is behind. Backfilling needs the days
+# the rows belong in to exist first.
+#
+psql_as -c "select metric_partition('metric_pool_member', day::date)
+              from generate_series(current_date - 31, current_date, interval '1 day') as day" \
+        >/dev/null
+log "  created  32 day(s) of partitions, back to $(date -d '31 days ago' +%F)"
+
+step "Samples"
+#
+# The shape, and why each part of it is there. A flat line would show that the
+# view draws something; it would not show whether the view is readable, which
+# is the only question a fixture can answer.
+#
+#   * a daily curve, busy through the working day and quiet at night, so the
+#     7d and 30d views have something whose period a reader can recognise
+#   * weekends at a third, so a month has visible structure rather than 30
+#     identical humps
+#   * noise, because a clean sine is the one shape real traffic never has
+#   * one restart, 9 days back, so the gap in the line and the refusal to
+#     total the window can be seen rather than trusted
+#
+# Counters are cumulative in the table, so they are summed here with a window
+# function. Writing the per-interval value instead would be writing something
+# the node never reports, and the reader would then be tested against data no
+# node could produce.
+#
+psql_as <<SQL
+insert into metric_pool_member
+    (cluster, node, backend, member, observed_at, uptime_sec, status,
+     check_status, check_code, req_tot, stot, hrsp_2xx, hrsp_4xx, hrsp_5xx,
+     econ, wretr, scur, bin, bout)
+select
+    '${cluster}', '${cluster}-node01', '${backend}', 'BACKEND', at,
+    extract(epoch from (at - restarted))::bigint,
+    'UP', 'L7OK', '200',
+    sum(requests) over w,
+    sum(requests) over w,
+    sum(requests - failed - refused) over w,
+    sum(refused) over w,
+    sum(failed) over w,
+    sum(case when random() < 0.004 then 1 else 0 end) over w,
+    sum(case when random() < 0.01 then 1 else 0 end) over w,
+    least(requests, 12),
+    sum(requests) over w * 780,
+    sum(requests) over w * 14200
+from (
+    select
+        at,
+        --
+        -- The restart the fixture exists to show. Everything before it belongs
+        -- to a process that is gone, so the uptime is measured from whichever
+        -- of the two starts this sample falls after.
+        --
+        case when at < now() - interval '9 days'
+             then now() - interval '30 days'
+             else now() - interval '9 days'
+        end as restarted,
+        greatest(0, round(
+            (case when extract(isodow from at) in (6, 7) then 0.3 else 1 end)
+            * (0.12 + 0.88 * greatest(0, sin(pi() * (extract(hour from at) - 6) / 15.0)))
+            * 26 * (0.55 + random() * 0.9)
+        ))::bigint as requests,
+        (case when random() < 0.02 then 1 else 0 end)::bigint as refused,
+        (case when random() < 0.006 then 1 else 0 end)::bigint as failed
+    from generate_series(
+        now() - interval '30 days', now(), interval '20 seconds'
+    ) as at
+) as shaped
+window w as (partition by restarted order by at);
+SQL
+
+written="$(psql_as -c "select count(*) from metric_pool_member
+                        where cluster = '${cluster}' and backend = '${backend}'")"
+log "  wrote    ${written} synthetic sample(s) for ${backend}"
+log "  remove   them with: $(basename "$0") --clear ${answers} ${cluster} ${object} ${pool}"

@@ -451,8 +451,19 @@ def network_rows(now: datetime | None = None) -> tuple[ClusterNetwork, ...]:
                 "default_vip": "public",
                 "default_vip_object_count": 3,
                 "vips": [
+                    #
+                    # One VIP with a policy and one without, because the page
+                    # has to be legible in both states: a description written
+                    # before the column existed names none, and the editor has
+                    # to show that as missing rather than as an answer.
+                    #
                     {"name": "partner", "address": "192.0.2.21", "source": "192.0.2.26"},
-                    {"name": "public", "address": "192.0.2.20", "source": "192.0.2.25"},
+                    {
+                        "name": "public",
+                        "address": "192.0.2.20",
+                        "source": "192.0.2.25",
+                        "tls": "intermediate",
+                    },
                 ],
                 "sources": [{"name": "outbound", "address": "192.0.2.35"}],
                 "groups": [

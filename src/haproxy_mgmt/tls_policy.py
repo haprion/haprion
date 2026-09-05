@@ -109,15 +109,26 @@ SECURITY_LEVEL_OFF = "@SECLEVEL=0"
 #
 # What each policy a VIP may name means on a bind line. The names are
 # `config.TLS_POLICY_NAMES`.
+# All three were put through `haproxy -c` on 3.4.4, and all three were run
+# against a real client: `modern` gave a TLS 1.2 client no handshake at all,
+# and `tls12only` answered a TLS 1.3 client with `alert protocol version` (70)
+# while still refusing TLS 1.1 at the floor.
 #
-# Both were put through `haproxy -c` on 3.4.4, and `modern` was run: a client
-# held to TLS 1.2 got no handshake at all, and a TLS 1.3 client was served.
+# `tls12only` is the one policy here that closes the top rather than the
+# bottom, which is why it is the one that names `ssl-max-ver`. It exists for a
+# client that breaks on TLS 1.3 and for nothing else: choosing it turns off the
+# only version whose handshake has no known weakness, so the interface says so
+# beside the field rather than leaving the name to carry the warning.
+#
+# No `ciphersuites` on it. Those name TLS 1.3 suites, and a listener that
+# cannot reach 1.3 has nothing to do with them.
 #
 TLS_POLICIES = {
     "intermediate": (
         f" ssl-min-ver TLSv1.2 ciphers {TLS_1_2_CIPHERS} ciphersuites {TLS_1_3_CIPHERSUITES}"
     ),
     "modern": f" ssl-min-ver TLSv1.3 ciphersuites {TLS_1_3_CIPHERSUITES}",
+    "tls12only": f" ssl-min-ver TLSv1.2 ssl-max-ver TLSv1.2 ciphers {TLS_1_2_CIPHERS}",
 }
 
 

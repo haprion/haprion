@@ -216,6 +216,22 @@ class TheOverviewOrdering(LoginTestCase):
         self.assertIn("Inactive · deploy to add", cell)
         self.assertNotIn("shop.demo.example", cell)
 
+    def test_the_listing_does_not_count_backends_at_all(self) -> None:
+        """It counted pools, which the form writes exactly one of.
+
+        So the column was a column of ones, under a heading that reads as the
+        servers behind a site - and the health cell beside it already says how
+        many of those there are and how many are up.
+        """
+
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+
+        text = client.get("/proxies").text
+
+        self.assertNotIn("<th>Backends</th>", text)
+        self.assertNotIn('data-label="Backends"', text)
+
     def test_a_row_with_nothing_to_report_shows_its_hosts(self) -> None:
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)

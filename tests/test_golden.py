@@ -623,6 +623,20 @@ class TheListenerAcceptsWhatTheClusterSaysItAccepts(unittest.TestCase):
         self.assertIn("ssl-min-ver TLSv1.2", frontends)
         self.assertIn("ECDHE-ECDSA-AES128-GCM-SHA256", frontends)
 
+    def test_tls12only_closes_the_top_as_well_as_the_floor(self) -> None:
+        """Measured on 3.4.4: a TLS 1.3 client is answered with alert 70.
+
+        The only policy that names a ceiling. Without `ssl-max-ver` the name
+        would be a claim the configuration does not make - a 1.3 client would
+        be served 1.3 by a listener whose field said 1.2 only.
+        """
+
+        frontends = self.frontends("tls12only")
+
+        self.assertIn("ssl-min-ver TLSv1.2 ssl-max-ver TLSv1.2", frontends)
+        self.assertIn("ECDHE-ECDSA-AES128-GCM-SHA256", frontends)
+        self.assertNotIn("ciphersuites", frontends)
+
     def test_a_vip_that_says_nothing_writes_nothing(self) -> None:
         """`core/` keeps deciding, which is what every cluster does today.
 

@@ -93,10 +93,10 @@
       <label class="https-only">Specific TLS for this site only
         <select name="listen_tls_policy"{% if form.protocol != 'https' %} disabled{% endif %}>
           <option value=""{% if not form.listen_tls_policy %} selected{% endif %}>Use VIP settings</option>
+          <option value="tls12only"{% if form.listen_tls_policy == 'tls12only' %} selected{% endif %}>TLS 1.2 only</option>
           <option value="intermediate"{% if form.listen_tls_policy == 'intermediate' %} selected{% endif %}>TLS 1.2 and 1.3</option>
           <option value="modern"{% if form.listen_tls_policy == 'modern' %} selected{% endif %}>TLS 1.3 only</option>
         </select>
-        <small>Two sites on this address behind the same certificate must agree.</small>
       </label>
     </div>
     <div class="form-checks">

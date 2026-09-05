@@ -82,13 +82,22 @@ def _render(document: Mapping[str, Any], writer: TextIO) -> None:
     default_vip = str(result.get("default_vip", ""))
     writer.write(f"Cluster: {document.get('cluster')}\n\n")
 
-    writer.write(f"{'VIP':<20}{'ADDRESS':<20}{'SOURCE':<20}DEFAULT\n")
-    writer.write(f"{'-' * 18:<20}{'-' * 18:<20}{'-' * 18:<20}{'-' * 7}\n")
+    #
+    # The TLS column is here for the same reason it is on the page: the policy
+    # is part of what a VIP is, and a command line that could not show it left
+    # the interface as the only way to read a value both of them can write.
+    # A helper too old to report it says `-`, the same as a VIP that names none.
+    #
+    writer.write(f"{'VIP':<20}{'ADDRESS':<20}{'SOURCE':<20}{'TLS':<16}DEFAULT\n")
+    writer.write(f"{'-' * 18:<20}{'-' * 18:<20}{'-' * 18:<20}{'-' * 14:<16}{'-' * 7}\n")
     for vip in _rows(result, "vips"):
         name = str(vip.get("name", ""))
         source = str(vip.get("source") or "-")
+        policy = str(vip.get("tls") or "-")
         marker = "yes" if name == default_vip else ""
-        writer.write(f"{name:<20}{str(vip.get('address', '')):<20}{source:<20}{marker}\n")
+        writer.write(
+            f"{name:<20}{str(vip.get('address', '')):<20}{source:<20}{policy:<16}{marker}\n"
+        )
 
     sources = _rows(result, "sources")
     writer.write(f"\n{'SOURCE ADDRESS':<20}ADDRESS\n")

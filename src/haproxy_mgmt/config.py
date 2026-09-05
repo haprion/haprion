@@ -31,8 +31,11 @@ DEFAULT_VIP = "main"
 #                 What a public site serves unless it knows every client.
 #   modern        TLS 1.3 only. Everything current speaks it; nothing older
 #                 gets a handshake at all.
+#   tls12only     TLS 1.2 alone. Not a Mozilla profile and deliberately not
+#                 named as though it were: it is a ceiling for one broken
+#                 client, and it turns 1.3 off to get there.
 #
-TLS_POLICY_NAMES = ("intermediate", "modern")
+TLS_POLICY_NAMES = ("intermediate", "modern", "tls12only")
 
 #
 # How long the abuse counters look back. Seconds or minutes: the window is a

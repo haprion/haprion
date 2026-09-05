@@ -232,7 +232,12 @@ def publication(
     # untouched object during somebody else's pending deploy said the site was
     # waiting on a change nobody had made to it.
     #
-    if release_state and release_state.lower() != "converged":
+    #
+    # "Unknown" is what the dashboard says about a cluster it could not read,
+    # and it is not the same claim as "behind". Treating it as one had a card
+    # report a deploy as owed on the strength of a status nobody had.
+    #
+    if release_state and release_state.lower() not in {"converged", "unknown"}:
         if not reconfigured:
             return Publication(
                 "Serving",

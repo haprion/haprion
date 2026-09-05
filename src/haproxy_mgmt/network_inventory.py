@@ -43,8 +43,25 @@ def network_result(cluster: Cluster) -> dict[str, Any]:
         "ownership_vip": cluster.vip,
         "default_vip": network.default_vip,
         "default_vip_object_count": default_vip_object_count,
+        #
+        # `tls` is reported even though nothing but the interface reads it, and
+        # it is reported as `None` rather than left out when a VIP names no
+        # policy. Leaving it out entirely was the bug: the description could be
+        # written with a policy and read back without one, so the page that
+        # wrote it could never show what it had written, and the field looked
+        # like it had not been saved.
+        #
+        # Optional in the schema, not required. The command line and the
+        # interface are released separately, so a page from a newer release has
+        # to survive an older helper that still says nothing about TLS.
+        #
         "vips": [
-            {"name": vip.name, "address": vip.address, "source": vip.source}
+            {
+                "name": vip.name,
+                "address": vip.address,
+                "source": vip.source,
+                "tls": vip.tls_policy,
+            }
             for vip in sorted(network.vips.values(), key=lambda entry: entry.name)
         ],
         "sources": [

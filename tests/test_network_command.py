@@ -97,10 +97,39 @@ class TheResultSaysWhereItCameFrom(unittest.TestCase):
         self.assertRegex(str(result["head"]), r"^[0-9a-f]{40}$")
         self.assertEqual(result["default_vip"], "dmz")
         self.assertEqual(
-            result["vips"], [{"name": "dmz", "address": "198.51.100.20", "source": "198.51.100.25"}]
+            result["vips"],
+            [
+                {
+                    "name": "dmz",
+                    "address": "198.51.100.20",
+                    "source": "198.51.100.25",
+                    "tls": None,
+                }
+            ],
         )
         self.assertEqual(result["sources"], [{"name": "outbound", "address": "192.0.2.35"}])
         self.assertEqual(result["groups"], [{"name": "office", "members": ["198.51.100.0/24"]}])
+
+    def test_a_policy_that_was_written_is_reported_back(self) -> None:
+        """The write path and the read path over one value.
+
+        This was missing, and the shape of the failure is worth keeping: the
+        description could be published with a policy and read back without one,
+        so the page that wrote it showed the field as empty afterwards and it
+        looked exactly like a save that had not happened.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            repository(root)
+            (root / "managed").mkdir()
+            (root / "managed" / "network.yaml").write_text(
+                yaml.safe_dump({"vips": {"dmz": {"address": "198.51.100.20", "tls": "tls12only"}}}),
+                encoding="utf-8",
+            )
+            result = network_result(FakeCluster(root))  # type: ignore[arg-type]
+
+        self.assertEqual(result["vips"][0]["tls"], "tls12only")
 
     def test_a_derived_description_says_so_and_still_answers(self) -> None:
         #
@@ -115,7 +144,7 @@ class TheResultSaysWhereItCameFrom(unittest.TestCase):
 
         self.assertEqual(result["origin"], "cluster_file")
         self.assertEqual(
-            result["vips"], [{"name": "main", "address": "192.0.2.20", "source": None}]
+            result["vips"], [{"name": "main", "address": "192.0.2.20", "source": None, "tls": None}]
         )
 
     def test_the_ownership_address_is_reported_beside_the_tables_not_inside_them(self) -> None:

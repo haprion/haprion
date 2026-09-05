@@ -1925,6 +1925,7 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
         for name, host, policy in (
             ("strict", "strict.example.com", "  tls: modern\n"),
             ("ordinary", "ordinary.example.com", ""),
+            ("capped", "capped.example.com", "  tls: tls12only\n"),
         ):
             #
             # Named for the site it serves, and not for the address. HAProxy
@@ -1948,7 +1949,7 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
             documents,
             vips={"main": Vip(name="main", address="127.0.0.1", tls_policy="intermediate")},
             default_vip="main",
-            certificates=("strict", "ordinary"),
+            certificates=("strict", "ordinary", "capped"),
             ports={"https": cls.port, "http": free_port()},
         )
         arguments = write_release(cls.root, layer, certificates)
@@ -1981,6 +1982,21 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
         except (ssl.SSLError, OSError):
             return False
 
+    def negotiated(self, host: str) -> str | None:
+        """Which version a client that would go as high as possible ended on."""
+
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        try:
+            with (
+                socket.create_connection(("127.0.0.1", self.port), timeout=5) as raw,
+                context.wrap_socket(raw, server_hostname=host) as secure,
+            ):
+                return secure.version()
+        except (ssl.SSLError, OSError):
+            return None
+
     def test_the_vip_decides_for_a_site_that_asks_for_nothing(self) -> None:
         """`intermediate` on the bind line, so a TLS 1.2 client is served."""
 
@@ -1999,3 +2015,20 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
         """Otherwise the test above would pass on a listener that served nobody."""
 
         self.assertTrue(self.handshake("strict.example.com", ssl.TLSVersion.TLSv1_3))
+
+    def test_a_capped_site_holds_a_modern_client_down_to_tls_1_2(self) -> None:
+        """The only policy with a ceiling, and the only one this can prove.
+
+        Every other name here is a floor, so a client that can do more is
+        served more and the difference is invisible. `tls12only` exists for a
+        client that breaks on TLS 1.3, and what it promises is that a listener
+        which *could* speak 1.3 does not - which is a question only a real
+        handshake answers.
+        """
+
+        self.assertEqual(self.negotiated("capped.example.com"), "TLSv1.2")
+
+    def test_the_sites_beside_it_still_reach_tls_1_3(self) -> None:
+        """The ceiling follows the name asked for, not the address."""
+
+        self.assertEqual(self.negotiated("ordinary.example.com"), "TLSv1.3")

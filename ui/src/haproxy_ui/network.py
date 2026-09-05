@@ -23,9 +23,16 @@ from typing import Any, Literal
 
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
-from haproxy_ui.db import ClusterNetwork
+from haproxy_ui.db import ClusterNetwork, Job
+from haproxy_ui.jobs import Failure
 
 type Tone = Literal["healthy", "warning", "critical", "unknown"]
+#
+# One tone more than a cluster card has. A job in flight is not a verdict about
+# the cluster - it is the interface saying it is still listening - and the
+# badge that carries it is the same blue one the dashboard already uses.
+#
+type BadgeTone = Literal["healthy", "warning", "critical", "unknown", "info"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,7 +43,7 @@ class VipView:
     address: str
     source: str | None
     is_default: bool
-    tls_policy: str
+    tls_policy: str | None
     """Which TLS versions and ciphers listeners on this address accept.
 
     Empty means the cluster's `core/` decides, which is what every VIP written
@@ -113,6 +120,97 @@ class NetworkClusterView:
     groups: tuple[GroupView, ...]
 
 
+def awaiting_deploy(jobs: Iterable[Job]) -> frozenset[str]:
+    """Clusters whose network description was published since the last deploy.
+
+    The same question the proxy listing asks about an object, asked about the
+    one description a cluster has: `objects.published_awaiting_deploy` reads
+    the names a publish carried, and a network publish carries no names - the
+    description is one document per cluster, so the answer is the cluster.
+
+    Read from the jobs for the same reason: a publish job is what happened, and
+    a deploy job is what makes it current. Newest first, so the first finished
+    deploy for a cluster ends the search for that cluster.
+
+    Bounded by whatever window the caller read, which understates rather than
+    invents - the safe direction for a page that would otherwise claim a
+    deploy is owed when none is.
+    """
+
+    waiting: set[str] = set()
+    deployed: set[str] = set()
+    for job in jobs:
+        if job.state != "done" or job.cluster in deployed:
+            continue
+        if job.operation == "deploy":
+            deployed.add(job.cluster)
+        elif job.operation == "network_publish":
+            waiting.add(job.cluster)
+    return frozenset(waiting)
+
+
+@dataclass(frozen=True, slots=True)
+class Deployment:
+    """Where this cluster's configuration has got to, as one badge.
+
+    A state and not an event. The first version of this said "Deployed
+    successfully" for five seconds and then removed itself, which answers "did
+    the thing I pressed work" and nothing else: a page nobody pressed anything
+    on had no answer at all, and a person who looked away missed the only one
+    there was.
+
+    Read from the machine wherever the machine knows - so it corrects itself
+    when somebody deploys from the command line, and it needs no memory of what
+    this page did. The exception is a failure, which the machine cannot show:
+    a refused job leaves the configuration exactly as it was.
+    """
+
+    label: str
+    tone: BadgeTone
+    running: bool
+    code: str | None
+
+
+def deployment(
+    *,
+    running: str | None = None,
+    failure: Failure | None = None,
+    awaiting: bool = False,
+    release_state: str = "",
+    version: str = "",
+) -> Deployment:
+    """The four questions in the order they matter.
+
+    Something running now beats what the last one did; a failure beats a state
+    that looks well because nothing happened; a publish this cluster owes a
+    deploy beats the general "not on one release", which is also true of a node
+    that is merely unreachable and is not something a deploy fixes.
+    """
+
+    if running:
+        return Deployment(running, "info", True, None)
+    if failure is not None:
+        return Deployment(failure.label, "critical", False, failure.code)
+    if awaiting:
+        return Deployment("Published · deploy to activate", "warning", False, None)
+    #
+    # "Unknown" is the dashboard's word for a cluster it could not read, and it
+    # is not a claim that the nodes are behind. Reading it as one had a cluster
+    # whose status was merely stale telling somebody to deploy - which is the
+    # one thing this badge must not invent, since a deploy is what it offers a
+    # button for.
+    #
+    if not release_state or release_state.lower() == "unknown":
+        return Deployment("Deployment state unknown", "unknown", False, None)
+    if release_state.lower() != "converged":
+        #
+        # Not "deploy to activate": nothing here was published, and a node that
+        # cannot be reached reads as behind for a reason no button mends.
+        #
+        return Deployment("Nodes are not on the release", "warning", False, None)
+    return Deployment(f"{version} deployed" if version else "Deployed", "healthy", False, None)
+
+
 def _text(value: Any, fallback: str = "—") -> str:
     return value if isinstance(value, str) and value else fallback
 
@@ -131,7 +229,14 @@ def _vips(result: Mapping[str, Any], default_vip: str) -> tuple[VipView, ...]:
             address=_text(row.get("address")),
             source=row.get("source") if isinstance(row.get("source"), str) else None,
             is_default=row.get("name") == default_vip,
-            tls_policy=_text(row.get("tls")),
+            #
+            # Missing means the VIP names no policy - and an older helper that
+            # cannot report one at all says the same thing. Not `_text`, whose
+            # fallback is an em dash: a dash matches no option in the editor's
+            # list, so the browser fell back to selecting the first one and the
+            # page showed a policy nobody had chosen.
+            #
+            tls_policy=row.get("tls") if isinstance(row.get("tls"), str) else None,
         )
         for row in _rows(result, "vips")
     )

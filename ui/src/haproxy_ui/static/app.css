@@ -408,6 +408,10 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .proxy-table th:nth-child(1), .proxy-table td:nth-child(1) { width: 260px; }
 .proxy-table th:nth-child(2), .proxy-table td:nth-child(2) { width: 130px; }
 .proxy-table th:nth-child(4), .proxy-table td:nth-child(4) { width: 130px; }
+/* Five columns since the backend count left. It counted pools rather than
+   servers - the form writes one pool per object, so it was a column of ones -
+   and the health cell beside it already says how many servers there are and
+   how many are up. The width it held goes to hosts / ports. */
 .proxy-table th:nth-child(5), .proxy-table td:nth-child(5) { width: 150px; }
 .proxy-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .proxy-table th { padding-top: 7px; padding-bottom: 7px; }
@@ -966,16 +970,28 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .editor-table.network-table th, .editor-table.network-table td { width: auto; }
 .editor-table .col-name { width: 19%; }
 .editor-table .col-address { width: 21%; }
-.editor-table .col-source { width: 22%; }
+.editor-table .col-source { width: 20%; }
 /*
- * Wide enough for "core/ decides" on one line. The options are short for that
- * reason - the column heading already asks the question, so each one only has
- * to be the answer.
+ * Wide enough for "TLS 1.2 and 1.3" on one line, arrow included. The options
+ * name both ends of the range rather than only the floor, so they are longer
+ * than the "TLS 1.2" they replaced - and a wrapped option in a select is read
+ * as two options.
  */
-.editor-table .col-tls { width: 16%; }
+.editor-table .col-tls { width: 18%; }
 .editor-table .col-default { width: 11%; }
 .editor-table .col-remove { width: 11%; }
-.editor-table select { width: 100%; }
+/*
+ * The same control as the ones in the object editor, and it has to look like
+ * them: this select was left with the browser's own chrome while the inputs
+ * beside it in the same row carried the form's border and panel background,
+ * which read as a foreign widget dropped into the table. Not the monospace of
+ * the text cells - those hold addresses, and this holds a sentence.
+ */
+.editor-table select {
+  width: 100%; padding: 7px 10px; border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm); background: var(--panel); color: var(--text);
+  font: inherit; font-weight: var(--font-weight-regular);
+}
 .editor-note { padding-top: 6px; grid-template-columns: minmax(260px, 520px); }
 .network-editor .warning-text { margin: 12px 20px 0; font-size: 12px; }
 /*
@@ -1043,3 +1059,11 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .editor-submit { align-items: center; justify-content: space-between; gap: 16px; padding: 4px 20px 20px; }
 .editor-submit .table-note { margin: 0; padding: 0; }
 .editor-actions .secondary-button { padding: 9px 22px; }
+/*
+ * The same button in the same place, saying what is actually due. Only the
+ * weight changes: deploying is the word that touches traffic, and it is the
+ * one step on this card that a reader should not walk past. The padding is
+ * inherited from the rule above so the button does not resize as it swaps -
+ * a control that changes size when it changes meaning reads as two controls.
+ */
+.editor-actions .deploy-button { font-weight: 700; }

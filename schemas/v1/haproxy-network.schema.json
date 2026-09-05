@@ -38,6 +38,12 @@
             { "$ref": "#/$defs/address" },
             { "type": "null" }
           ]
+        },
+        "tls": {
+          "oneOf": [
+            { "enum": ["intermediate", "modern", "tls12only"] },
+            { "type": "null" }
+          ]
         }
       },
       "additionalProperties": false

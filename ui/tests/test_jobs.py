@@ -359,6 +359,75 @@ class WhatEachClusterIsBusyWith(unittest.TestCase):
                 self.assertIn(operation, jobs.RUNNING_LABELS)
 
 
+class WhatTheLastJobLeftBehind(unittest.TestCase):
+    """The one fact about a cluster that no reading of the cluster can find.
+
+    A refused job changes nothing: the configuration is as it was, the nodes
+    are content, and a page built from status alone reports a healthy cluster
+    precisely because the work never happened.
+    """
+
+    def job(self, cluster: str, operation: str, state: str, code: str | None = None) -> Job:
+        return Job(
+            id=1,
+            request_id=uuid4(),
+            operation=operation,
+            cluster=cluster,
+            payload={},
+            state=state,
+            created_at=datetime(2026, 9, 3, tzinfo=UTC),
+            started_at=None,
+            finished_at=datetime(2026, 9, 3, tzinfo=UTC),
+            exit_code=1,
+            outcome=state,
+            result={"error": {"code": code}} if code else None,
+            stderr_excerpt=None,
+            idempotency_key=None,
+            attempts=1,
+        )
+
+    def test_a_failed_job_is_reported_with_the_code_it_blamed(self) -> None:
+        verdicts = jobs.last_failure([self.job("alpha", "deploy", "failed", "deploy_refused")])
+
+        self.assertEqual(verdicts["alpha"].label, "Deploy failed")
+        self.assertEqual(verdicts["alpha"].code, "deploy_refused")
+
+    def test_a_newer_job_that_worked_ends_the_verdict(self) -> None:
+        """Newest first, so a failure the next attempt fixed is history."""
+
+        verdicts = jobs.last_failure(
+            [
+                self.job("alpha", "deploy", "done"),
+                self.job("alpha", "deploy", "failed", "deploy_refused"),
+            ]
+        )
+
+        self.assertEqual(verdicts, {})
+
+    def test_a_job_still_running_decides_nothing(self) -> None:
+        """The spinner is that state, and it is read from `in_flight`."""
+
+        verdicts = jobs.last_failure(
+            [
+                self.job("alpha", "deploy", "running"),
+                self.job("alpha", "deploy", "failed", "deploy_refused"),
+            ]
+        )
+
+        self.assertEqual(verdicts["alpha"].code, "deploy_refused")
+
+    def test_another_cluster_s_failure_stays_with_that_cluster(self) -> None:
+        verdicts = jobs.last_failure(
+            [
+                self.job("beta", "network_publish", "blocked", "network_invalid"),
+                self.job("alpha", "deploy", "done"),
+            ]
+        )
+
+        self.assertEqual(set(verdicts), {"beta"})
+        self.assertEqual(verdicts["beta"].label, "Publish failed")
+
+
 class WhatAFailureIsAllowedToSay(unittest.TestCase):
     """The most important refusal in the system carries the compiler's answer."""
 

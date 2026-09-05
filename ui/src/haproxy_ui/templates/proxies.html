@@ -39,7 +39,7 @@
     {% set written = listed.get(cluster.cluster, ()) if listed else () %}
     {% set foreign = (unmanaged.get(cluster.cluster, ()) if unmanaged else ()) %}
     {% if written or foreign or unpublished %}
-    <div class="table-scroll"><table class="node-table proxy-table"><thead><tr><th>Proxy</th><th>Protocol</th><th>Hosts / ports</th><th>Health</th><th>Backends</th><th>Ownership</th></tr></thead><tbody data-cluster="{{ cluster.cluster }}">
+    <div class="table-scroll"><table class="node-table proxy-table"><thead><tr><th>Proxy</th><th>Protocol</th><th>Hosts / ports</th><th>Health</th><th>Ownership</th></tr></thead><tbody data-cluster="{{ cluster.cluster }}">
 {{ rows.proxy_rows(cluster.cluster, role, unpublished, queued, written, foreign, health.get(cluster.cluster, {}) if health else {}, removed.get(cluster.cluster, ()) if removed else (), failed.get(cluster.cluster, {}) if failed else {}, (reconfigured.get(cluster.cluster, ()) if reconfigured else ()) if behind and cluster.cluster in behind else ()) }}
     </tbody></table></div>
     {% else %}

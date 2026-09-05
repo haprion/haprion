@@ -371,6 +371,58 @@ RUNNING_LABELS = {
 }
 
 
+#
+# What to call an operation that did not work. Past tense and short, beside the
+# cluster it happened to. Named here with the running labels, so the badge that
+# says a job is running and the badge that says it failed cannot come to use
+# different words for the same operation.
+#
+FAILURE_LABELS = {
+    "deploy": "Deploy failed",
+    "cert_deploy": "Certificate deploy failed",
+    "revert": "Revert failed",
+    "network_publish": "Publish failed",
+    "objects_publish": "Publish failed",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class Failure:
+    """A cluster's newest job, when it ended badly."""
+
+    label: str
+    code: str | None
+
+
+def last_failure(jobs: Iterable[Job]) -> dict[str, Failure]:
+    """Clusters whose newest finished job failed, and what it blamed.
+
+    The one thing a page describing the *machine* cannot read from the machine.
+    A refused job changes nothing - the configuration is as it was, the nodes
+    are content, and everything looks well precisely because nothing happened.
+    So the failure is read from the jobs and it stays until a newer job for
+    that cluster replaces it, which is what makes it correct itself.
+
+    Newest first, one verdict per cluster: an older failure that the next
+    attempt fixed is history, and showing it would send somebody after a
+    problem that is already gone.
+    """
+
+    verdicts: dict[str, Failure] = {}
+    for job in jobs:
+        if job.cluster in verdicts or job.state in {"pending", "running"}:
+            continue
+        verdicts[job.cluster] = (
+            Failure(
+                label=FAILURE_LABELS.get(job.operation, job.operation),
+                code=error_code(job),
+            )
+            if job.state in ATTENTION
+            else Failure("", None)
+        )
+    return {cluster: verdict for cluster, verdict in verdicts.items() if verdict.label}
+
+
 def in_flight(jobs: Iterable[Job]) -> dict[str, str]:
     """What each cluster is busy with, by cluster.
 

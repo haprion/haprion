@@ -14,12 +14,17 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
+from uuid import uuid4
 
 from haproxy_ui import demo
+from haproxy_ui.db import Job
+from haproxy_ui.jobs import Failure
 from haproxy_ui.network import (
     FormProblem,
     NetworkForm,
+    awaiting_deploy,
     build_network_overview,
+    deployment,
     document_from_form,
     row_numbers,
 )
@@ -63,6 +68,31 @@ class TheReadingBecomesTheCard(unittest.TestCase):
         self.assertEqual(missing.vips, ())
         self.assertFalse(missing.editable)
 
+    def test_the_policy_a_description_names_reaches_the_view(self) -> None:
+        """It did not, and the page could not show what it had published.
+
+        The helper reported a VIP as name, address and source and nothing
+        else, so a policy written by this page came back missing on the next
+        read - which looked exactly like a save that had not worked.
+        """
+
+        edge = next(view for view in overview() if view.cluster == "edge-demo")
+        policies = {vip.name: vip.tls_policy for vip in edge.vips}
+
+        self.assertEqual(policies["public"], "intermediate")
+
+    def test_a_vip_that_names_no_policy_carries_none_rather_than_a_dash(self) -> None:
+        """A dash matches no option, so the editor's select fell to its first.
+
+        Which is how a VIP nobody had given a policy came to show one. The
+        empty state has to be empty all the way to the template.
+        """
+
+        edge = next(view for view in overview() if view.cluster == "edge-demo")
+        policies = {vip.name: vip.tls_policy for vip in edge.vips}
+
+        self.assertIsNone(policies["partner"])
+
     def test_a_vip_s_own_source_address_is_listed_as_a_source_address(self) -> None:
         #
         # It was not, and the page then told a cluster that pairs a source with
@@ -90,6 +120,132 @@ class TheReadingBecomesTheCard(unittest.TestCase):
 
         self.assertEqual([source.name for source in edge.named_sources], ["outbound"])
         self.assertEqual([source.address for source in edge.named_sources], ["192.0.2.35"])
+
+
+class PublishedIsNotDeployed(unittest.TestCase):
+    """The state the page could not say, which is why it sent people away.
+
+    Publishing writes a release; a deploy is what makes the nodes pull it. The
+    network page stated neither, so the interface moved somebody to the jobs
+    page after every publish - and the button they needed was there by accident
+    of being a follow-up row rather than by design.
+    """
+
+    def job(self, operation: str, cluster: str, state: str = "done") -> Job:
+        return Job(
+            id=1,
+            request_id=uuid4(),
+            operation=operation,
+            cluster=cluster,
+            payload={},
+            state=state,
+            created_at=NOW,
+            started_at=NOW,
+            finished_at=NOW,
+            exit_code=0,
+            outcome="done",
+            result=None,
+            stderr_excerpt=None,
+            idempotency_key=uuid4(),
+            attempts=1,
+        )
+
+    def test_a_publish_with_no_deploy_after_it_is_waiting(self) -> None:
+        waiting = awaiting_deploy([self.job("network_publish", "alpha")])
+
+        self.assertEqual(waiting, frozenset({"alpha"}))
+
+    def test_a_deploy_after_the_publish_ends_the_wait(self) -> None:
+        """Jobs arrive newest first, so the deploy is the first row here."""
+
+        waiting = awaiting_deploy(
+            [self.job("deploy", "alpha"), self.job("network_publish", "alpha")]
+        )
+
+        self.assertEqual(waiting, frozenset())
+
+    def test_a_deploy_for_another_cluster_ends_nothing(self) -> None:
+        """A deploy is per cluster, and so is what it settles."""
+
+        waiting = awaiting_deploy(
+            [self.job("deploy", "beta"), self.job("network_publish", "alpha")]
+        )
+
+        self.assertEqual(waiting, frozenset({"alpha"}))
+
+    def test_a_publish_that_has_not_finished_is_not_waiting_for_a_deploy(self) -> None:
+        """It is waiting for itself, and the running badge says so instead."""
+
+        waiting = awaiting_deploy([self.job("network_publish", "alpha", state="running")])
+
+        self.assertEqual(waiting, frozenset())
+
+
+class WhereTheConfigurationHasGotTo(unittest.TestCase):
+    """One badge, in the order the four answers matter.
+
+    A state rather than an announcement. The version before this said
+    "Deployed successfully" for five seconds and then removed itself, which
+    answered a question only the person who had just pressed the button was
+    asking - and missed it for anyone who looked away.
+    """
+
+    def test_a_running_job_is_what_the_badge_says(self) -> None:
+        state = deployment(running="Deploying", release_state="Converged", version="v53")
+
+        self.assertEqual(state.label, "Deploying")
+        self.assertTrue(state.running)
+
+    def test_a_failure_beats_a_cluster_that_looks_well(self) -> None:
+        """Which it does, because a refused job changed nothing.
+
+        The configuration is as it was and the nodes are content. This is the
+        one state the machine cannot report, so it comes from the jobs.
+        """
+
+        state = deployment(
+            failure=Failure("Deploy failed", "deploy_refused"),
+            release_state="Converged",
+            version="v53",
+        )
+
+        self.assertEqual(state.tone, "critical")
+        self.assertEqual(state.code, "deploy_refused")
+
+    def test_a_publish_this_cluster_owes_a_deploy_says_so(self) -> None:
+        state = deployment(awaiting=True, release_state="Converged", version="v53")
+
+        self.assertEqual(state.label, "Published · deploy to activate")
+
+    def test_nodes_off_the_release_are_not_described_as_a_publish(self) -> None:
+        """A node nobody can reach reads as behind, and no button mends that."""
+
+        state = deployment(release_state="Deploy Pending", version="v53")
+
+        self.assertEqual(state.label, "Nodes are not on the release")
+        self.assertEqual(state.tone, "warning")
+
+    def test_a_converged_cluster_names_the_version_it_is_on(self) -> None:
+        state = deployment(release_state="Converged", version="v53")
+
+        self.assertEqual(state.label, "v53 deployed")
+        self.assertEqual(state.tone, "healthy")
+
+    def test_an_unread_status_claims_nothing(self) -> None:
+        state = deployment()
+
+        self.assertEqual(state.tone, "unknown")
+
+    def test_a_status_that_could_not_be_read_is_not_a_deploy_that_is_owed(self) -> None:
+        """ "Unknown" is the dashboard's word for a cluster it could not read.
+
+        Reading it as "not converged" had a cluster whose status was merely
+        stale telling somebody to deploy - and offering the button for it.
+        """
+
+        state = deployment(release_state="Unknown", version="—")
+
+        self.assertEqual(state.tone, "unknown")
 
 
 class TheRowsBecomeTheDocument(unittest.TestCase):
@@ -314,6 +470,52 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         self.assertIn("3 managed objects follow it", page.text)
         self.assertIn("keepalived", page.text)
 
+    def owed_page(self) -> Any:
+        """The same page, with the editable cluster owed a deploy.
+
+        The fixture's behind cluster is the one that cannot be edited, so its
+        deploy button lands in a footer rather than in a form's action row.
+        Here the two are put on the same cluster, which is the case the swap
+        exists for.
+        """
+
+        behind = next(row for row in demo.status_rows(NOW) if row.cluster == "service-demo")
+        statuses = tuple(
+            replace(row, result=behind.result) if row.cluster == "edge-demo" else row
+            for row in demo.status_rows(NOW)
+        )
+        with (
+            mock.patch("haproxy_ui.db.cluster_networks", return_value=demo.network_rows(NOW)),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=statuses),
+        ):
+            client = self.client(
+                replace(configuration(), management_writes=True, clusters=demo.CLUSTERS)
+            )
+            self.sign_in(client)
+            return client.get("/network")
+
+    def test_the_button_says_the_step_that_is_actually_due(self) -> None:
+        """One button, not two. A description that is published and not
+
+        deployed has a deploy owed before another edit is worth writing, so the
+        row carries that instead of a publish button beside a deploy button
+        that is wrong most of the time.
+        """
+
+        card = self.owed_page().text.split("service-demo", 1)[0]
+
+        self.assertIn('form="deploy-', card)
+        self.assertIn("Deploy before writing another change", card)
+        self.assertNotIn("Validate and publish network", card)
+
+    def test_a_cluster_with_nothing_owed_keeps_its_publish_button(self) -> None:
+        """And the swap is only ever one of the two, never both at once."""
+
+        card = self.editable_page().text.split("service-demo", 1)[0]
+
+        self.assertIn("Validate and publish network", card)
+        self.assertNotIn('form="deploy-', card)
+
     def test_the_editor_is_the_tables_as_fields_rather_than_a_document_to_write(self) -> None:
         #
         # The first version of this form was one textarea holding the whole
@@ -323,9 +525,30 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         page = self.editable_page()
 
         self.assertIn('name="vip_address" value="192.0.2.20"', page.text)
+        #
+        # And it comes back here afterwards. Publishing used to land on the
+        # jobs page, which was the only page that knew what had happened.
+        #
+        self.assertIn('name="return_to" value="network"', page.text)
+        self.assertIn('<option value="intermediate" selected>TLS 1.2 and 1.3</option>', page.text)
+        self.assertIn('<option value="" selected disabled>Not set</option>', page.text)
         self.assertIn('name="source_name" value="outbound"', page.text)
         self.assertIn('name="default_vip_row"', page.text)
         self.assertNotIn('name="network"', page.text)
+
+    def test_the_page_can_stop_a_spinner_it_starts(self) -> None:
+        """The watcher, and the two attributes it reads.
+
+        Drawing a running job is only half of it: this page was rendered once
+        and never asked again, so the badge turned until somebody left the tab
+        and came back. `data-busy` is what it watches, and `data-observed` is
+        what tells it the poller has caught up with the job.
+        """
+
+        page = self.editable_page()
+
+        self.assertIn("waiting.js", page.text)
+        self.assertIn("data-observed=", page.text)
 
     def test_the_editable_cluster_shows_each_address_once(self) -> None:
         #
@@ -339,6 +562,20 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         # ownership address, and the note naming it is a third mention by
         # design.
         self.assertEqual(page.text.count("192.0.2.21"), 1)
+
+    def test_the_spare_rows_line_up_with_the_rows_above_them(self) -> None:
+        """Six cells need six columns.
+
+        The spare rows carry a TLS cell like the rows above, but their
+        colgroup named five columns - so the select landed in the width meant
+        for a radio button and showed its option cut off mid-word.
+        """
+
+        page = self.editable_page()
+        spare = page.text.split("Add a virtual address", 1)[1].split("</table>", 1)[0]
+
+        self.assertEqual(spare.count("<col "), 6)
+        self.assertIn('<col class="col-tls">', spare)
 
     def test_the_blank_rows_are_folded_away_but_still_in_the_form(self) -> None:
         #
@@ -407,13 +644,21 @@ class WhatAVipSaysAboutTls(TheRowsBecomeTheDocument):
 
         self.assertEqual(document["vips"]["public"]["tls"], "modern")
 
+    def test_the_ceiling_policy_reaches_the_document_too(self) -> None:
+        """`tls12only` is a name the engine knows; the form only carries it."""
+
+        document = json.loads(document_from_form(self.form(vip_tls=("tls12only", ""))))
+
+        self.assertEqual(document["vips"]["public"]["tls"], "tls12only")
+
     def test_a_row_that_named_none_writes_no_key_at_all(self) -> None:
         """Not an empty string.
 
         The engine refuses a policy it does not know, so `""` would be a
-        refusal rather than "core/ decides" - and "core/ decides" is what every
-        VIP written before this column existed means. A cluster nobody has
-        opened this page for must publish unchanged.
+        refusal rather than inheritance - and inheritance is what every VIP
+        written before this column existed has. The page shows that state as
+        "Not set" and offers no way back to it, but a cluster nobody has opened
+        this page for must still publish unchanged.
         """
 
         document = json.loads(document_from_form(self.form()))

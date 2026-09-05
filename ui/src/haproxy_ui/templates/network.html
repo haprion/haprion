@@ -1,6 +1,14 @@
 {% extends "layout.html" %}
 {% block title %}Network — HAProxy Manager{% endblock %}
 {% block content %}
+{#
+  The same watcher the dashboard and the listing use. Without it the spinner
+  this page draws while a job runs had nothing to end it: the page was rendered
+  once, the job finished somewhere else, and the badge kept turning until
+  somebody left the tab and came back. A page that can show a job running has
+  to be a page that can show it stopping.
+#}
+<script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
   <div class="heading-title"><h1>Network</h1><p class="page-lede">Where traffic arrives, where it leaves from, and who may reach it.</p></div>
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
@@ -8,10 +16,26 @@
 
 <div class="cluster-list">
 {% for cluster in clusters %}
-  <article class="cluster-card cluster-accent-{{ cluster.accent }}">
+  {#
+    `data-observed` is what tells the watcher that the *reading* caught up, not
+    only the job. A job finishing and the poller seeing what it did are two
+    moments, and redrawing on the first shows the buttons back beside numbers
+    that still describe the release before the deploy.
+  #}
+  <article class="cluster-card cluster-accent-{{ cluster.accent }}" data-observed="{{ cluster.observed_iso or '' }}">
     <header class="cluster-header">
       <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
-      <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_iso %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
+      {#
+        One badge, and it is a state rather than an announcement. It says what
+        the cluster's configuration has got to - running, refused, published
+        and owed a deploy, or on the release - and three of the four come from
+        the machine, so it corrects itself when somebody deploys elsewhere.
+
+        The failure is the exception and carries its code to the page that has
+        the rest of the story, because a refused job leaves nothing behind for
+        a status reading to find.
+      #}
+      <div class="cluster-state">{% set state = deployment.get(cluster.cluster) if deployment else none %}{% if state %}{% if state.code %}<a class="status-badge status-badge-critical" href="/jobs" title="Open the jobs page">{{ state.label }} · {{ state.code }} · view jobs for details</a>{% elif state.tone == 'critical' %}<a class="status-badge status-badge-critical" href="/jobs" title="Open the jobs page">{{ state.label }} · view jobs for details</a>{% else %}<span class="status-badge status-badge-{{ state.tone }}"{% if state.running %} data-busy="{{ cluster.cluster }}"{% endif %}>{% if state.running %}<span class="badge-spinner" aria-hidden="true"></span>{% endif %}{{ state.label }}</span>{% endif %}{% endif %}<span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_iso %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
 
     {% if not cluster.vips %}
@@ -23,13 +47,18 @@
 
     <h4 class="network-subhead">Virtual addresses</h4>
     <div class="table-scroll"><table class="node-table network-table">
-      <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th>Default</th></tr></thead>
+      <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th>TLS version</th><th>Default</th></tr></thead>
       <tbody>
         {% for vip in cluster.vips %}
         <tr>
           <td><code>{{ vip.name }}</code></td>
           <td>{{ vip.address }}</td>
           <td>{% if vip.source %}{{ vip.source }}{% else %}<span class="table-empty">whatever routing picks</span>{% endif %}</td>
+          {#
+            The same words the editor offers, so a reader and an editor are
+            looking at one value and not at two descriptions of it.
+          #}
+          <td>{{ {'intermediate': 'TLS 1.2 and 1.3', 'modern': 'TLS 1.3 only', 'tls12only': 'TLS 1.2 only'}.get(vip.tls_policy) or '' }}{% if not vip.tls_policy %}<span class="table-empty">not set</span>{% endif %}</td>
           <td>{% if vip.is_default %}<span class="status-badge status-badge-info">default</span>{% endif %}</td>
         </tr>
         {% endfor %}
@@ -75,6 +104,13 @@
     <form method="post" action="/operations" class="network-editor">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="operation" value="network_publish">
+      {#
+        Back here, not to the jobs page. Publishing used to move somebody to
+        the page that could show what happened, because this one could not; it
+        says it now, so it keeps them - the same rule the object editor
+        follows.
+      #}
+      <input type="hidden" name="return_to" value="network">
       <input type="hidden" name="cluster" value="{{ cluster.cluster }}">
       <input type="hidden" name="expected_head" value="{{ cluster.head }}">
       <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
@@ -91,20 +127,36 @@
         #}
         <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-default"><col class="col-remove"></colgroup>
         {#
-          "Oldest TLS" rather than "TLS policy": the column is about how far
-          back a listener will go, and that is the decision somebody is making
-          when they change it. It belongs on the VIP because a bind line
-          belongs to an address - several sites answer on one of these through
-          SNI, and they share the line.
+          "TLS version" rather than "Oldest TLS": the column was named after
+          the floor, which is what the setting *is* and not what somebody is
+          looking for when they scan a table. The options carry the precision
+          the heading used to.
+
+          Each option names both ends. The old list said "TLS 1.2", which reads
+          as though 1.3 were off - it is not, and the option that really does
+          turn 1.3 off now exists beside it and has to be told apart from it.
+
+          It belongs on the VIP because a bind line belongs to an address -
+          several sites answer on one of these through SNI, and they share the
+          line.
         #}
-        <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th>Oldest TLS</th><th class="editor-choice">Default</th><th class="editor-choice">Remove</th></tr></thead>
+        <thead><tr><th>Name</th><th>IP address</th><th>Default source</th><th>TLS version</th><th class="editor-choice">Default</th><th class="editor-choice">Remove</th></tr></thead>
         <tbody>
           {% for vip in cluster.vips %}
           <tr>
             <td><input name="vip_name" value="{{ vip.name }}" maxlength="40" aria-label="VIP name"></td>
             <td><input name="vip_address" value="{{ vip.address }}" maxlength="64" aria-label="Address for VIP {{ vip.name }}"></td>
             <td><input name="vip_source" value="{{ vip.source or '' }}" maxlength="64" placeholder="whatever routing picks" aria-label="Default source for VIP {{ vip.name }}"></td>
-            <td><select name="vip_tls" aria-label="TLS policy for VIP {{ vip.name }}"><option value=""{% if not vip.tls_policy %} selected{% endif %}>core/ decides</option><option value="intermediate"{% if vip.tls_policy == 'intermediate' %} selected{% endif %}>TLS 1.2</option><option value="modern"{% if vip.tls_policy == 'modern' %} selected{% endif %}>TLS 1.3</option></select></td>
+            {#
+              "Not set" is drawn only for a VIP that has none, and cannot be
+              chosen back. The cluster's `core/haproxy.cfg` decides for such a
+              VIP, and the old wording said exactly that - "core/ decides" -
+              which names a file nobody looking at this page can open. A value
+              you cannot see is a value you cannot approve, so the empty state
+              is now shown as missing rather than as an answer, and every
+              answer this list offers is one that says which versions.
+            #}
+            <td><select name="vip_tls" aria-label="TLS version for VIP {{ vip.name }}">{% if not vip.tls_policy %}<option value="" selected disabled>Not set</option>{% endif %}<option value="tls12only"{% if vip.tls_policy == 'tls12only' %} selected{% endif %}>TLS 1.2 only</option><option value="intermediate"{% if vip.tls_policy == 'intermediate' %} selected{% endif %}>TLS 1.2 and 1.3</option><option value="modern"{% if vip.tls_policy == 'modern' %} selected{% endif %}>TLS 1.3 only</option></select></td>
             <td class="editor-choice"><input type="radio" name="default_vip_row" value="{{ loop.index0 }}"{% if vip.is_default %} checked{% endif %} aria-label="Make VIP {{ vip.name }} the default"></td>
             {#
               Removal is a tick and not a button of its own. This form is one
@@ -130,14 +182,18 @@
       <details class="editor-add">
         <summary>Add a virtual address</summary>
         <div class="table-scroll"><table class="node-table network-table editor-table">
-          <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-default"><col class="col-remove"></colgroup>
+          {# Six cells here, like the table above: the spare rows carry a TLS
+             cell too, and a colgroup that named five columns gave it the
+             narrow one meant for a radio button - so the option it was
+             showing was cut off mid-word. #}
+          <colgroup><col class="col-name"><col class="col-address"><col class="col-source"><col class="col-tls"><col class="col-default"><col class="col-remove"></colgroup>
           <tbody>
             {% for spare in range(2) %}
             <tr>
               <td><input name="vip_name" value="" maxlength="40" placeholder="new VIP name" aria-label="New VIP name"></td>
               <td><input name="vip_address" value="" maxlength="64" placeholder="IP address" aria-label="New VIP address"></td>
               <td><input name="vip_source" value="" maxlength="64" placeholder="source IP, optional" aria-label="New VIP default source"></td>
-              <td><select name="vip_tls" aria-label="TLS policy for the new VIP"><option value="" selected>core/ decides</option><option value="intermediate">TLS 1.2</option><option value="modern">TLS 1.3</option></select></td>
+              <td><select name="vip_tls" aria-label="TLS version for the new VIP"><option value="" selected disabled>Not set</option><option value="tls12only">TLS 1.2 only</option><option value="intermediate">TLS 1.2 and 1.3</option><option value="modern">TLS 1.3 only</option></select></td>
               <td class="editor-choice"><input type="radio" name="default_vip_row" value="{{ cluster.vips | length + loop.index0 }}" aria-label="Make the new VIP the default"></td>
               <td class="editor-choice editor-remove"></td>
             </tr>
@@ -260,12 +316,56 @@
         tick does, and the click that does it - and stacked they cost a row of
         height at the bottom of an already tall card.
       #}
+      {#
+        One button, and it says what to do next. Publishing and deploying never
+        both apply: a description that has not been published cannot be
+        deployed, and one that is published and not deployed has a deploy owed
+        before anything else is worth writing. So the row carries the step that
+        is actually due rather than one button and a second beside it that is
+        wrong most of the time.
+
+        Deploying reaches a form declared below this one, because forms cannot
+        nest, and it is the bolder of the two words - it is the one that
+        touches traffic.
+
+        The note swaps with it. A form whose submit button has become something
+        else has to say why, or it reads as an editor that stopped working.
+      #}
+      {% set deploying = management_writes and role == 'admin' and state and state.tone == 'warning' %}
       <div class="editor-actions editor-submit">
+        {% if deploying %}
+        <p class="table-note">{% if cluster.cluster in awaiting_deploy %}These addresses are published and the nodes are not serving them yet.{% else %}The nodes are not on the current release.{% endif %} Deploy before writing another change.</p>
+        <button class="secondary-button deploy-button" type="submit" form="deploy-{{ loop.index0 }}">Deploy {{ cluster.cluster }}</button>
+        {% else %}
         <p class="table-note">A ticked <strong>Remove</strong> takes that row out of the document this publish writes.</p>
         <button class="secondary-button" type="submit">Validate and publish network</button>
+        {% endif %}
       </div>
     </form>
+    {% if management_writes and role == 'admin' and state and state.tone == 'warning' %}
+    <form method="post" action="/operations" id="deploy-{{ loop.index0 }}" hidden>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="operation" value="deploy">
+      <input type="hidden" name="cluster" value="{{ cluster.cluster }}">
+      <input type="hidden" name="return_to" value="network">
+      <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+    </form>
     {% endif %}
+    {% endif %}
+    {% endif %}
+    {#
+      A cluster whose description still lives in the engine's configuration has
+      no form, so it has no action row for the button to join. It can still owe
+      a deploy, so the button gets a footer of its own there - the same shape
+      the dashboard uses - rather than nowhere at all.
+    #}
+    {% if not editing and management_writes and role == 'admin' and state and state.tone == 'warning' %}
+    <footer class="cluster-actions" aria-label="{{ cluster.cluster }} operations">
+      <div><strong>Operations</strong></div>
+      <div class="action-buttons">
+        <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="return_to" value="network"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Deploy {{ cluster.cluster }}</button></form>
+      </div>
+    </footer>
     {% endif %}
   </article>
 {% else %}

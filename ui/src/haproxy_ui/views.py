@@ -2644,6 +2644,43 @@ def _network_page(request: Request, config: Config) -> Response:
         stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
         captured=captured_at is not None,
     )
+    #
+    # Published is not deployed, and this page had no way to say so: publishing
+    # here moved somebody to the jobs page, which was the only place that knew.
+    # The two facts it needs to keep them are the same two the dashboard uses -
+    # what is still owed, and what is running - so the state is stated where the
+    # change was made rather than on a page they were sent to.
+    #
+    with request.app.state.pool.connection() as connection:
+        recent = db.recent_jobs(connection)
+    #
+    # Where the configuration has got to, as one badge per cluster. Three of
+    # the four states come from the machine - which is what lets the page
+    # correct itself when somebody deploys from the command line, and why it
+    # needs no memory of what was pressed here.
+    #
+    _, status_rows, _ = read_source(request, config, STATUS_SOURCE)
+    board = dashboard.build_dashboard(
+        clusters,
+        status_rows,
+        now=captured_at,
+        stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+        captured=captured_at is not None,
+    )
+    serving = {view.cluster: view for view in board.clusters}
+    awaiting = network.awaiting_deploy(recent)
+    busy = jobs.in_flight(recent)
+    failures = jobs.last_failure(recent)
+    state = {
+        view.cluster: network.deployment(
+            running=busy.get(view.cluster),
+            failure=failures.get(view.cluster),
+            awaiting=view.cluster in awaiting,
+            release_state=serving[view.cluster].release_state if view.cluster in serving else "",
+            version=serving[view.cluster].version if view.cluster in serving else "",
+        )
+        for view in overview
+    }
     return TEMPLATES.TemplateResponse(
         request,
         "network.html",
@@ -2653,6 +2690,8 @@ def _network_page(request: Request, config: Config) -> Response:
             "csrf_token": auth.csrf_token(token),
             "section": "network",
             "clusters": overview,
+            "awaiting_deploy": awaiting,
+            "deployment": state,
             "management_writes": config.management_writes,
             "demo_fixture": config.demo_fixture,
             "production_snapshot": config.production_snapshot,

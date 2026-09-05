@@ -21,7 +21,7 @@
         what it looked like was that publishing had quietly turned the object
         back into a draft. The reason is named here; the full text is one click
         away, where it has room.
-      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}</td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Backends"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
+      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}</td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
 {% endfor %}
 {#
   Then what a finished removal took out of the repository and the nodes have
@@ -34,7 +34,7 @@
   finishes it.
 #}
 {% for name in removed %}
-      <tr class="proxy-waiting"><td data-label="Proxy"><strong>{{ name }}</strong></td><td data-label="Protocol"><span class="table-empty">—</span></td><td data-label="Hosts / ports"><span class="status-badge status-badge-warning waiting-badge">Active · deploy to remove</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Backends"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td></tr>
+      <tr class="proxy-waiting"><td data-label="Proxy"><strong>{{ name }}</strong></td><td data-label="Protocol"><span class="table-empty">—</span></td><td data-label="Hosts / ports"><span class="status-badge status-badge-warning waiting-badge">Active · deploy to remove</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td></tr>
 {% endfor %}
 {#
   Three badges now, and the third took a wrong turn first: it sat beside the
@@ -94,7 +94,6 @@
           it is sits in the title, not in the column.
         #}
         <td data-label="Health">{% set lamp = lamps.get(object.name) if lamps else none %}{% if lamp %}<span class="pool-health" title="{{ lamp.detail }}"><span class="status-dot status-{{ lamp.tone }}" aria-hidden="true"></span>{% if lamp.label %} {{ lamp.label }}{% endif %}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
-        <td data-label="Backends">{% if object.backend_count is not none %}{{ object.backend_count }}{% else %}<span class="table-empty">—</span>{% endif %}</td>
         <td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td>
       </tr>
 {% endfor %}
@@ -103,6 +102,6 @@
   is to show, so it is shown as itself.
 #}
 {% for proxy in foreign %}
-      <tr><td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ proxy.name }}"><strong>{{ proxy.name }}</strong></a>{% else %}<strong>{{ proxy.name }}</strong>{% endif %}{% if not proxy.enabled %}<small class="warning-text">Disabled</small>{% endif %}</td><td data-label="Protocol"><span class="protocol-badge protocol-{{ proxy.protocol }}">{{ proxy.protocol | upper }}</span></td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ proxy.hostnames | join(', ') if proxy.hostnames else 'No hostname rule' }} · {{ proxy.ports | join(', ') if proxy.ports else '—' }}</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Backends">{{ proxy.backend_count }}</td><td data-label="Ownership"><span class="ownership-badge ownership-unmanaged">Unmanaged</span></td></tr>
+      <tr><td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ proxy.name }}"><strong>{{ proxy.name }}</strong></a>{% else %}<strong>{{ proxy.name }}</strong>{% endif %}{% if not proxy.enabled %}<small class="warning-text">Disabled</small>{% endif %}</td><td data-label="Protocol"><span class="protocol-badge protocol-{{ proxy.protocol }}">{{ proxy.protocol | upper }}</span></td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ proxy.hostnames | join(', ') if proxy.hostnames else 'No hostname rule' }} · {{ proxy.ports | join(', ') if proxy.ports else '—' }}</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-unmanaged">Unmanaged</span></td></tr>
 {% endfor %}
 {% endmacro %}

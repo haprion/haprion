@@ -57,6 +57,13 @@ class ServerHealth:
     check_code: str | None
     check_duration_ms: int | None
     last_change_sec: int | None
+    #
+    # HAProxy's own counter columns for this row, by their own names, and only
+    # where the node reported a number. A name that is absent is a counter this
+    # row does not have or a node that did not report it - which is not the
+    # same fact as a counter standing at zero, and `.get` keeps them apart.
+    #
+    counters: Mapping[str, int] = field(default_factory=dict)
 
     @property
     def up(self) -> bool:
@@ -67,6 +74,22 @@ class ServerHealth:
         """
 
         return (self.status or "").upper().startswith(("UP", "NO CHECK"))
+
+
+@dataclass(frozen=True, slots=True)
+class FrontendTraffic:
+    """One listener as the node's own HAProxy counts it.
+
+    A frontend runs no health check, so there is no verdict here - only what
+    arrived. It is reported because a backend with three green servers and a
+    listener that never received the request are indistinguishable from the
+    server rows alone, which is exactly how one site answered 503 with every
+    server UP. See B89.
+    """
+
+    frontend: str
+    status: str | None
+    counters: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +114,11 @@ class NodeStatus:
     # the node answered and has no members, which is a different fact.
     #
     servers: tuple[ServerHealth, ...] | None = None
+    #
+    # None on a node still running a status script from before the listeners
+    # were reported, told apart from a node that answered and has none.
+    #
+    frontends: tuple[FrontendTraffic, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,9 +222,52 @@ def _servers(status: Mapping[str, Any]) -> tuple[ServerHealth, ...] | None:
                 check_code=_text(item.get("check_code")),
                 check_duration_ms=_count(item.get("check_duration_ms")),
                 last_change_sec=_count(item.get("last_change_sec")),
+                counters=_counters(item.get("counters")),
             )
         )
     return tuple(members)
+
+
+def _counters(value: object) -> Mapping[str, int]:
+    """The counter names this row reported a number for.
+
+    Anything that is not a number is left out rather than carried as zero. A
+    frontend has no `econ` and a server no `req_tot`, so the missing ones are
+    the normal case - and a caller that reads a zero it was never told is a
+    caller that will report a listener as having received nothing.
+    """
+
+    if not isinstance(value, Mapping):
+        return {}
+    counted = ((str(name), _count(cell)) for name, cell in value.items())
+    return {name: number for name, number in counted if number is not None}
+
+
+def _frontends(status: Mapping[str, Any]) -> tuple[FrontendTraffic, ...] | None:
+    """What the node's listeners counted, or None when it said nothing.
+
+    Rows without a name are dropped for the same reason a pool member's is: a
+    count that cannot be attributed to a listener cannot be shown beside one.
+    """
+
+    entries = status.get("frontends")
+    if not isinstance(entries, list):
+        return None
+
+    listeners = []
+    for entry in entries:
+        item = _mapping(entry)
+        name = _text(item.get("frontend"))
+        if name is None:
+            continue
+        listeners.append(
+            FrontendTraffic(
+                frontend=name,
+                status=_text(item.get("status")),
+                counters=_counters(item.get("counters")),
+            )
+        )
+    return tuple(listeners)
 
 
 def _count(value: object) -> int | None:
@@ -221,6 +292,7 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         release_hash=_text(_mapping(status.get("release")).get("hash")),
         certificates=_certificates(status),
         servers=_servers(status),
+        frontends=_frontends(status),
         error_code=_text(_mapping(entry.get("error")).get("code"))
         or (None if usable else "node_status_invalid"),
     )

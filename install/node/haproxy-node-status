@@ -207,10 +207,11 @@ def runtime_info():
 
 
 #
-# A pool's own row and one row per server, from the same socket `show info`
-# already uses. This is HAProxy's own verdict - the checks it has actually been
-# running against the servers it was told about - which is a different and more
-# truthful answer than anything that probes from somewhere else once.
+# A pool's own row and one row per server, plus one row per frontend, from the
+# same socket `show info` already uses. This is HAProxy's own verdict - the
+# checks it has actually been running against the servers it was told about -
+# which is a different and more truthful answer than anything that probes from
+# somewhere else once.
 #
 # The CSV header names the columns rather than the positions being counted:
 # `show stat` has grown columns between versions, and a fixed index is a field
@@ -218,8 +219,108 @@ def runtime_info():
 #
 MAX_STAT_ROWS = 500
 
+#
+# Why the frontends are reported at all, when they carry no health check: a
+# backend with three green servers and a frontend that never received the
+# request look identical from the server rows alone. That was measured, not
+# imagined - a site answered 503 with all three servers UP, and the only thing
+# that said which listener had answered was a counter per frontend. See B89.
+#
+# Why the counters keep HAProxy's own column names. A renamed counter is a
+# counter nobody can look up: `stot` and `hrsp_5xx` are searchable in
+# `configuration.txt`, `sessions_total` and `responses_5xx` are searchable
+# nowhere. The two fields below that *are* renamed carry a unit that HAProxy's
+# name does not state, which is a different thing from a translation.
+#
+# One list for both kinds of row rather than two. `show stat` leaves a column
+# empty where it does not apply - a frontend has no `econ`, a server no
+# `req_tot` - and `value` already answers None for an empty cell. Two hand-kept
+# lists would be two things to keep in step for no gain.
+#
+COUNTER_COLUMNS = (
+    "scur",
+    "stot",
+    "bin",
+    "bout",
+    "req_tot",
+    "qcur",
+    "ereq",
+    "econ",
+    "eresp",
+    "dreq",
+    "dresp",
+    "wretr",
+    "wredis",
+    "hrsp_2xx",
+    "hrsp_3xx",
+    "hrsp_4xx",
+    "hrsp_5xx",
+)
 
-def runtime_servers():
+
+def parse_stat(text):
+    """`show stat` output as frontends and pool members, or None if unreadable.
+
+    Kept apart from the socket so it can be run against captured output. The
+    reading and the parsing failing for the same reason - a node that answered
+    nothing and a node that answered something unparseable - are both None
+    here, because neither is a node with no listeners.
+    """
+
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines or not lines[0].startswith("#"):
+        return None
+
+    columns = [name.strip() for name in lines[0].lstrip("# ").split(",")]
+
+    def value(row, name):
+        try:
+            found = row[columns.index(name)].strip()
+        except (ValueError, IndexError):
+            return None
+        return found or None
+
+    def number(row, name):
+        found = value(row, name)
+        return int(found) if found is not None and found.isdigit() else None
+
+    def counters(row):
+        return {name: number(row, name) for name in COUNTER_COLUMNS}
+
+    frontends = []
+    servers = []
+    for line in lines[1 : MAX_STAT_ROWS + 1]:
+        row = line.split(",")
+        pool = value(row, "pxname")
+        member = value(row, "svname")
+        if pool is None or member is None:
+            continue
+        if member == "FRONTEND":
+            frontends.append(
+                {
+                    "frontend": pool,
+                    "status": value(row, "status"),
+                    "counters": counters(row),
+                }
+            )
+            continue
+        servers.append(
+            {
+                "backend": pool,
+                "server": member,
+                "status": value(row, "status"),
+                "check_status": value(row, "check_status"),
+                "check_code": value(row, "check_code"),
+                "check_duration_ms": number(row, "check_duration"),
+                "last_change_sec": number(row, "lastchg"),
+                "counters": counters(row),
+            }
+        )
+
+    return {"frontends": frontends, "servers": servers}
+
+
+def runtime_stat():
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(2.0)
@@ -238,46 +339,7 @@ def runtime_servers():
     except Exception:
         return None
 
-    lines = [line for line in text.splitlines() if line.strip()]
-    if not lines or not lines[0].startswith("#"):
-        return None
-
-    columns = [name.strip() for name in lines[0].lstrip("# ").split(",")]
-
-    def value(row, name):
-        try:
-            found = row[columns.index(name)].strip()
-        except (ValueError, IndexError):
-            return None
-        return found or None
-
-    servers = []
-    for line in lines[1:]:
-        row = line.split(",")
-        pool = value(row, "pxname")
-        member = value(row, "svname")
-        if pool is None or member is None or member == "FRONTEND":
-            continue
-        duration = value(row, "check_duration")
-        servers.append(
-            {
-                "backend": pool,
-                "server": member,
-                "status": value(row, "status"),
-                "check_status": value(row, "check_status"),
-                "check_code": value(row, "check_code"),
-                "check_duration_ms": int(duration) if duration and duration.isdigit() else None,
-                "last_change_sec": (
-                    int(value(row, "lastchg"))
-                    if (value(row, "lastchg") or "").isdigit()
-                    else None
-                ),
-            }
-        )
-        if len(servers) >= MAX_STAT_ROWS:
-            break
-
-    return servers
+    return parse_stat(text)
 
 
 def read_release():
@@ -444,7 +506,9 @@ except Exception:
     ip_nonlocal_bind = None
 
 stats_ok, runtime = runtime_info()
-servers = runtime_servers()
+stat = runtime_stat()
+frontends = None if stat is None else stat["frontends"]
+servers = None if stat is None else stat["servers"]
 release = read_release()
 validation = read_validation()
 certificates = read_certificates()
@@ -473,7 +537,9 @@ result = {
     #
     # `null` rather than an empty list when the socket could not be read, so a
     # node that could not be asked is never reported as a node with no servers.
+    # The same holds for the listeners.
     #
+    "frontends": frontends,
     "servers": servers,
     "certificates": certificates,
 }
@@ -490,6 +556,22 @@ else:
     print(f"VIP owner:         {vip_owner}")
     print(f"ip_nonlocal_bind:  {ip_nonlocal_bind}")
     print(f"Runtime stats:     {'OK' if stats_ok else 'FAILED'}")
+    #
+    # Requests and 5xx per listener, because that is the pair that says whether
+    # a request reached this node at all - the question the removed stats page
+    # used to answer for a person standing here. See B90.
+    #
+    if frontends:
+        print("Frontends:")
+        for entry in frontends:
+            counters = entry["counters"]
+            requests = counters["req_tot"]
+            failed = counters["hrsp_5xx"]
+            print(
+                f"  {entry['frontend']}  {entry['status']}"
+                f"  req={'-' if requests is None else requests}"
+                f"  5xx={'-' if failed is None else failed}"
+            )
     if servers:
         print("Servers:")
         for entry in servers:

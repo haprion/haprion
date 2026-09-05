@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_mgmt.cluster_status import ServerHealth, parse_status
+from haproxy_mgmt.cluster_status import FrontendTraffic, ServerHealth, parse_status
 
 
 def envelope(status: object) -> dict[str, object]:
@@ -127,6 +127,73 @@ class WhatTheNodeSaidAboutItsServers(unittest.TestCase):
         member = (self.servers(servers=rows) or ())[0]
         self.assertIsNone(member.check_duration_ms)
         self.assertIsNone(member.last_change_sec)
+
+    def test_a_member_carries_its_counters_too(self) -> None:
+        """The same columns, on the row that says whether the pool was used."""
+
+        rows = [
+            {
+                "backend": "mgd-site-web",
+                "server": "s1",
+                "status": "UP",
+                "counters": {"stot": 7, "econ": 0, "req_tot": None},
+            }
+        ]
+        self.assertEqual(((self.servers(servers=rows) or ())[0]).counters, {"stot": 7, "econ": 0})
+
+
+class WhatTheNodeSaidAboutItsListeners(unittest.TestCase):
+    """A frontend has no verdict, only what arrived.
+
+    It is read at all because a pool with three green servers and a listener
+    that never received the request cannot be told apart from the server rows -
+    which is exactly how a site answered 503 with everything UP.
+    """
+
+    def frontends(self, **extra: object):
+        return parse_status(envelope(node_status(**extra))).nodes[0].frontends
+
+    def test_a_node_that_said_nothing_is_not_a_node_without_listeners(self) -> None:
+        self.assertIsNone(self.frontends())
+        self.assertIsNone(self.frontends(frontends=None))
+
+    def test_a_node_with_no_listeners_answers_an_empty_tuple(self) -> None:
+        self.assertEqual(self.frontends(frontends=[]), ())
+
+    def test_a_row_without_a_name_is_dropped(self) -> None:
+        rows = [{"status": "OPEN"}, {"frontend": "mgd-vip-int-https", "status": "OPEN"}]
+        self.assertEqual(
+            self.frontends(frontends=rows),
+            (FrontendTraffic(frontend="mgd-vip-int-https", status="OPEN"),),
+        )
+
+    def test_the_counters_arrive_under_haproxys_own_names(self) -> None:
+        rows = [{"frontend": "f", "status": "OPEN", "counters": {"req_tot": 41, "hrsp_5xx": 2}}]
+        listener = (self.frontends(frontends=rows) or ())[0]
+        self.assertEqual(listener.counters, {"req_tot": 41, "hrsp_5xx": 2})
+
+    def test_a_counter_that_is_not_a_number_is_left_out_rather_than_zeroed(self) -> None:
+        """The distinction the counters exist for.
+
+        A listener that received nothing reports `0`; a column that does not
+        apply, or a node that did not report it, is absent. Carried as zero,
+        the second would read as the first - and a zero nobody measured is the
+        answer that sends somebody looking at the wrong listener.
+        """
+
+        rows = [
+            {
+                "frontend": "f",
+                "counters": {"req_tot": 0, "econ": None, "hrsp_5xx": "2", "scur": True},
+            }
+        ]
+        counters = ((self.frontends(frontends=rows) or ())[0]).counters
+        self.assertEqual(counters, {"req_tot": 0})
+        self.assertIsNone(counters.get("econ"))
+
+    def test_counters_that_are_not_a_mapping_are_no_counters_at_all(self) -> None:
+        rows = [{"frontend": "f", "counters": ["req_tot", 41]}]
+        self.assertEqual(((self.frontends(frontends=rows) or ())[0]).counters, {})
 
 
 class WhetherAMemberIsTakingTraffic(unittest.TestCase):

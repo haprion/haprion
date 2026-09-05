@@ -311,7 +311,18 @@ for name in DB_NAME DB_ROLE; do
     [[ -n "${!name:-}" ]] || die "${name} is not set in ${config}"
 done
 
-psql_as() { psql -U "$DB_ROLE" -d "$DB_NAME" -qtAX -v ON_ERROR_STOP=1 "$@"; }
+#
+# `client_min_messages=warning` silences one NOTICE per partition that already
+# exists - about seventy-five of them on a normal weekly run, since `create
+# table if not exists` is how the horizon is kept idempotent. A command whose
+# successful output is seventy-five lines of noise is one whose output stops
+# being read, and the run that finally has something to say says it in the
+# middle of them. Warnings and errors are untouched.
+#
+psql_as() {
+    PGOPTIONS='-c client_min_messages=warning' \
+        psql -U "$DB_ROLE" -d "$DB_NAME" -qtAX -v ON_ERROR_STOP=1 "$@"
+}
 
 #
 # One predicate, written once and used by both the count and the delete, so

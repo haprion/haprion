@@ -195,6 +195,16 @@ class WhatTheRollupPromises(unittest.TestCase):
         undefined = called - defined - set(re.findall(r"^([a-z_]+)\(\)", self.script, re.MULTILINE))
         self.assertEqual(undefined & {"step", "fail", "need_root", "require_vars"}, set())
 
+    def test_a_successful_run_is_quiet(self) -> None:
+        """Keeping the horizon idempotent costs one NOTICE per existing partition.
+
+        About seventy-five a week. An output that is mostly noise is one that
+        stops being read, and the run that finally has something to say says it
+        in the middle of it.
+        """
+
+        self.assertIn("client_min_messages=warning", self.script)
+
     def test_the_lag_leaves_room_for_missed_runs(self) -> None:
         """An hour becomes eligible days before its samples are dropped."""
 

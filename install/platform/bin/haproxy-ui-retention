@@ -99,8 +99,27 @@ SQL
 # quietly created tomorrow's partition would break it in the one place somebody
 # runs it to find out whether it is safe to run `prune`.
 #
+#
+# Whether this environment has the metric tables at all.
+#
+# One script serves every environment, and environments sit at different
+# migrations on purpose - a change is proved on dev before prod is touched. So
+# an environment without the metric tables is a normal state and not a fault,
+# and it must not take the job pruning down with it: without this, `prune` on an
+# unmigrated database fails on the missing function and returns before removing
+# a single job row.
+#
+metrics_present() {
+    [[ "$(psql_as -c "select to_regclass('public.metric_listener') is not null")" == "t" ]]
+}
+
 metrics_report() {
     local table covered expired
+
+    if ! metrics_present; then
+        log "  metrics: no metric tables in ${DB_NAME} (migration 0018 not applied)"
+        return 0
+    fi
 
     for table in "${METRIC_TABLES[@]}"; do
         covered="$(psql_as -c "select count(*) from pg_inherits
@@ -113,6 +132,11 @@ metrics_report() {
 
 metrics() {
     local table created dropped partition
+
+    if ! metrics_present; then
+        log "  metrics: no metric tables in ${DB_NAME} (migration 0018 not applied)"
+        return 0
+    fi
 
     for table in "${METRIC_TABLES[@]}"; do
         #

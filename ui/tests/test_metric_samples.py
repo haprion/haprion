@@ -110,6 +110,21 @@ class WhatTheRetentionCommandKeeps(unittest.TestCase):
         for guard in ('if [[ "$dry_run" -eq 1 ]]; then',):
             self.assertEqual(body.count(guard), 2)
 
+    def test_an_unmigrated_environment_still_gets_its_jobs_pruned(self) -> None:
+        """One script, several environments, and they sit at different migrations.
+
+        Without the guard, `prune` against a database without the metric tables
+        fails on the missing function and returns before removing a single job
+        row - so the environment that is furthest behind is also the one whose
+        retention silently stops.
+        """
+
+        self.assertIn("to_regclass('public.metric_listener') is not null", self.script)
+        for function in ("metrics_report() {", "metrics() {"):
+            body = self.script.split(function, 1)[1].split("\n}", 1)[0]
+            with self.subTest(function=function):
+                self.assertLess(body.index("metrics_present"), body.index("for table"))
+
     def test_an_expired_partition_is_dropped_rather_than_emptied(self) -> None:
         """A delete would rewrite a week of rows as dead tuples."""
 

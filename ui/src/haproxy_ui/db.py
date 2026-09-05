@@ -1510,9 +1510,17 @@ def record_metric_samples(
     true then, and rewriting the second would destroy the only thing it is for.
 
     `observed_at` appears in neither statement. The database sets it from
-    `statement_timestamp()`, so every row of one poll carries the same instant
-    and none of them can be written to look fresher than the read that produced
-    it - the same reason the caches leave it out, for a different consequence.
+    `transaction_timestamp()`, so every row of one poll carries the same
+    instant and none of them can be written to look fresher than the read that
+    produced it - the same reason the caches leave it out, for a different
+    consequence.
+
+    It is the *transaction's* timestamp and not the statement's, and that was a
+    correction rather than a design: `executemany` sends one statement per row,
+    so the first release to write samples spread one poll across microseconds.
+    Migration 0019 has the measurement. This function's single commit is what
+    makes the guarantee hold, so a caller that splits the write into two
+    transactions breaks it.
 
     Nothing here is idempotent and nothing needs to be. Two polls a second
     apart are two measurements, not one measurement written twice; the primary

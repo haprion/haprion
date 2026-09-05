@@ -20,6 +20,7 @@ from haproxy_ui.metrics import METRIC_COUNTERS
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = ROOT / "ui" / "migrations" / "versions" / "0018_metric_samples.py"
+SAMPLE_INSTANT = ROOT / "ui" / "migrations" / "versions" / "0019_sample_instant.py"
 RETENTION = ROOT / "install" / "platform" / "bin" / "haproxy-ui-retention"
 NODE_SCRIPT = ROOT / "install" / "node" / "haproxy-node-status"
 
@@ -105,6 +106,25 @@ class TheMetricTables(unittest.TestCase):
             if "partition of" in line:
                 self.assertIn("for values from", line)
                 self.assertNotIn(" default", line)
+
+    def test_one_poll_is_one_instant(self) -> None:
+        """`executemany` sends a statement per row, so the statement clock ticks.
+
+        Measured on the first release that wrote samples: two rows of one poll
+        landed 55 microseconds apart. Nothing was wrong with the data - but the
+        rows of one poll are one reading, and an aggregation that groups them
+        by time should not need a tolerance to put them back together.
+        """
+
+        later = SAMPLE_INSTANT.read_text()
+        self.assertEqual(later.count("set default transaction_timestamp()"), 1)
+        for table in ("metric_listener", "metric_pool_member"):
+            self.assertIn(table, later)
+
+    def test_the_caches_keep_the_statement_clock(self) -> None:
+        """There the question is when the row was written, not what it read."""
+
+        self.assertNotIn("cluster_status", SAMPLE_INSTANT.read_text())
 
     def test_the_partition_function_refuses_a_table_it_does_not_know(self) -> None:
         self.assertIn(

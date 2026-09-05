@@ -25,7 +25,6 @@ from haproxy_mgmt.config import AbuseProtection, Cluster, Node, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, generate
 from haproxy_mgmt.proxy_model import (
     BALANCE,
-    HEALTH_TYPES,
     ModelError,
     dump_document,
     load_proxy,
@@ -130,7 +129,6 @@ DEFAULTS = {
     "health_path": "/",
     "health_host": "",
     "health_port": "",
-    "health_tls": "",
     "health_expect_status": "",
     "health_expect_body": "",
     "health_send": "",
@@ -155,6 +153,81 @@ DEFAULTS = {
     "redirect_location": "",
     "redirect_status": "301",
 }
+
+
+#
+# What the check's Type box offers, and the whole of it. `Type` and a separate
+# TLS box were two questions about one thing - the pool above says `Plain HTTP`
+# or `HTTPS` in one box, and the check has no business needing two.
+#
+# The document keeps the two fields it always had: HAProxy has a check *type*
+# and a check *protocol*, and they are not the same axis. Joining them is the
+# form's job, and these two functions are where it happens.
+#
+CHECK_TYPES = (
+    ("disabled", "disabled"),
+    ("http", "http"),
+    ("https", "https"),
+    ("tcp", "tcp"),
+    ("tcp-tls", "tcp, TLS handshake"),
+)
+
+
+def check_kind(chosen: str) -> str:
+    """The document's `health.type` for what the box says."""
+
+    if chosen in ("https", "http"):
+        return "http"
+    if chosen in ("tcp-tls", "tcp"):
+        return "tcp"
+    return "disabled"
+
+
+def check_tls(chosen: str, backend_tls: str) -> bool | None:
+    """The document's `health.tls`, written only where it differs from the pool.
+
+    `None` means the document says nothing, which is HAProxy following the pool
+    - and it is deliberately what a plain check on a plain pool and a TLS check
+    on a TLS pool both produce. An object that already says nothing keeps
+    saying nothing when it is loaded and saved, so the generated file does not
+    gain a line for a change nobody made.
+
+    `tcp, TLS handshake` is the exception and always written. `option
+    ssl-hello-chk` is a check the pool's own TLS does not imply - inheritance
+    opens a TLS connection, this asks whether the handshake itself succeeds -
+    so it is a request, not a consequence.
+    """
+
+    pool_is_tls = bool(backend_tls)
+    if chosen == "tcp-tls":
+        return True
+    if chosen in ("https",):
+        return None if pool_is_tls else True
+    if chosen in ("http", "tcp"):
+        return False if pool_is_tls else None
+    return None
+
+
+def check_type_of(health: Mapping[str, Any], backend_tls: str) -> str:
+    """What the box says for a document that has already been written.
+
+    The value shown is what the check will actually do, which is why the pool
+    is read here too: a document that says nothing about a check's protocol on
+    a pool reached over TLS describes a TLS check, and a box reading `http`
+    would be the form telling somebody something untrue.
+    """
+
+    kind = str(health.get("type", "") or "")
+    if kind not in ("http", "tcp"):
+        return kind
+    written = health.get("tls")
+    if kind == "tcp":
+        return "tcp-tls" if written is True else "tcp"
+    if written is True:
+        return "https"
+    if written is False:
+        return "http"
+    return "https" if backend_tls else "http"
 
 
 def suggested_cookie(name: str) -> str:
@@ -214,22 +287,6 @@ class Preview:
         if not self.problem_field:
             return self.problem
         return self.problem[len(self.problem_field) :].lstrip()
-
-
-def _check_protocol(written: object) -> str:
-    """The check's own protocol as the form spells it, from what the document says.
-
-    Three values and not two. Absent is "follow the pool"; `false` is a written
-    answer that has to survive a load-and-save, because dropping it would turn
-    a plaintext check on a TLS pool back into a TLS one the next time somebody
-    pressed Save on an unrelated field.
-    """
-
-    if written is True:
-        return "https"
-    if written is False:
-        return "plain"
-    return ""
 
 
 def _servers(raw: str) -> list[dict[str, object]]:
@@ -324,13 +381,20 @@ def build_document(form: dict[str, object]) -> str:
                 "include_subdomains": flag("hsts_subdomains"),
             }
 
-    health: dict[str, object] = {"type": text("health_type")}
-    if text("health_type") != "disabled" and text("health_port"):
+    #
+    # One box on the form, two fields in the document. `check_kind` and
+    # `check_tls` are the whole of the translation; everything below reads the
+    # document's own type so a `https` check is an http check with a protocol,
+    # which is what HAProxy calls it too.
+    #
+    kind = check_kind(text("health_type"))
+    health: dict[str, object] = {"type": kind}
+    if kind != "disabled" and text("health_port"):
         port = text("health_port")
         if not port.isdigit():
             raise ValueError("the health check port must be a number")
         health["port"] = int(port)
-    if text("health_type") != "disabled":
+    if kind != "disabled":
         #
         # Left out when nobody wrote them, so the engine's own values stay the
         # engine's. A form that wrote 2s/2/3 into every object would freeze
@@ -350,19 +414,11 @@ def build_document(form: dict[str, object]) -> str:
             if not asked.isdigit():
                 raise ValueError(f"the health check {key} must be a number of checks")
             health[key] = int(asked)
-    #
-    # Whether the check itself speaks TLS. Independent of the listener and of
-    # `backend.tls`: a pool served over plain HTTP can still be checked on a
-    # TLS port, and a pool reached over TLS can have a plaintext management
-    # port. The model keeps all three apart, and the absent value is the one
-    # that means "follow the pool" - so nothing is written for it.
-    #
-    if text("health_type") != "disabled":
-        if text("health_tls") == "https":
-            health["tls"] = True
-        elif text("health_tls") == "plain":
-            health["tls"] = False
-    if text("health_type") == "http":
+    if kind != "disabled":
+        speaks = check_tls(text("health_type"), text("backend_tls"))
+        if speaks is not None:
+            health["tls"] = speaks
+    if kind == "http":
         health["path"] = text("health_path") or "/"
         if text("health_host"):
             health["host"] = text("health_host")
@@ -373,7 +429,7 @@ def build_document(form: dict[str, object]) -> str:
             health["expect_status"] = int(status)
         if text("health_expect_body"):
             health["expect_body"] = text("health_expect_body")
-    if text("health_type") == "tcp":
+    if kind == "tcp":
         #
         # A tcp check that sends nothing is a connect check, which is what the
         # type means on its own. These two turn it into a conversation.
@@ -673,7 +729,7 @@ def choices(cluster: Cluster) -> dict[str, object]:
         "sources": named_addresses(cluster.sources),
         "networks": sorted(cluster.networks),
         "balances": BALANCE,
-        "health_types": HEALTH_TYPES,
+        "health_types": CHECK_TYPES,
     }
 
 
@@ -775,7 +831,7 @@ def form_from_document(document: str, *, networks: Collection[str] = ()) -> dict
         rebuilt = read_document("object", build_document(form).encode())
     except (ModelError, ValueError) as exc:
         raise Unexpressible(str(exc)) from exc
-    difference = _first_difference(data, rebuilt)
+    difference = _first_difference(_without_a_redundant_check_protocol(data), rebuilt)
     if difference:
         raise Unexpressible(difference)
     return form
@@ -837,16 +893,15 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "cookie": str(backend.get("cookie", "") or ""),
         "backend": pool,
         "servers": _server_lines(backend.get("servers"), pool),
-        "health_type": str(health.get("type", "") or ""),
+        #
+        # The pool is read with it: a document that says nothing about the
+        # check's protocol on a pool reached over TLS describes a TLS check,
+        # and the box has to say so rather than read `http`.
+        #
+        "health_type": check_type_of(health, str(backend.get("tls", {}).get("verify", "") or "")),
         "health_path": str(health.get("path", "") or ""),
         "health_host": str(health.get("host", "") or ""),
         "health_port": str(health.get("port", "") or ""),
-        #
-        # Absent stays absent. `False` is a written answer here, not a missing
-        # one, and reading it back as "follow the pool" would quietly drop a
-        # plaintext check on the next save.
-        #
-        "health_tls": _check_protocol(health.get("tls")),
         "health_expect_status": str(health.get("expect_status", "") or ""),
         "health_expect_body": str(health.get("expect_body", "") or ""),
         "health_send": str(health.get("send", "") or ""),
@@ -878,6 +933,45 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "redirect_location": str(redirect.get("location", "") or ""),
         "redirect_status": str(redirect.get("status", "") or ""),
     }
+
+
+def _without_a_redundant_check_protocol(data: Any) -> Any:
+    """The stored object with a check protocol that only repeats the pool removed.
+
+    The document has three states for `health.tls` and the form's Type box has
+    two answers per kind, which cannot round-trip on its own: `tls: true` on a
+    pool already reached over TLS and no `tls` at all are the same check, said
+    twice.
+
+    They are the same *configuration* too, which is why this is a normalisation
+    and not a loss. Measured on 3.4.4, 2026-09-05: a server line carrying `ssl`
+    and a backend carrying `http-check connect ssl` answers `L7OK 200`, and so
+    does the same backend without the line - the pool's own TLS is what the
+    check inherits either way. So the redundant word is dropped on the next
+    save, and the object means exactly what it meant.
+
+    Only the redundant direction. `tls: false` on a TLS pool is `no-check-ssl`
+    and says something the pool does not, and `tls: true` on a plain pool is
+    the check speaking TLS where the pool does not - both are kept.
+    """
+
+    if not isinstance(data, Mapping):
+        return data
+    backends = data.get("backends")
+    if not isinstance(backends, Mapping):
+        return data
+    cleaned = dict(data)
+    pools = {}
+    for name, backend in backends.items():
+        health = _sub(backend, "health")
+        pool_is_tls = bool(_sub(backend, "tls"))
+        if pool_is_tls and health.get("tls") is True and health.get("type") == "http":
+            trimmed = {key: value for key, value in health.items() if key != "tls"}
+            pools[name] = {**backend, "health": trimmed}
+        else:
+            pools[name] = backend
+    cleaned["backends"] = pools
+    return cleaned
 
 
 def _first_difference(stored: Any, rebuilt: Any, path: str = "") -> str:

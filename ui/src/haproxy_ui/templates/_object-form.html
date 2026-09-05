@@ -264,9 +264,18 @@
       {% if pool_health is defined %}<button type="submit" name="action" value="recheck" class="secondary-button">Test health check</button>{% endif %}
     </header>
     <div class="form-grid">
+      {#
+        One box for what the check is. `https` is an http check that speaks
+        TLS, which is how the pool above says the same thing - and a second box
+        beside it asked one question twice.
+
+        No help text. The words are the pool's own and mean what they say
+        there; a sentence under them would be the form explaining its own
+        vocabulary to itself.
+      #}
       <label>Type
         <select name="health_type">
-          {% for kind in choices.health_types %}<option value="{{ kind }}"{% if form.health_type == kind %} selected{% endif %}>{{ kind }}</option>{% endfor %}
+          {% for value, label in choices.health_types %}<option value="{{ value }}"{% if form.health_type == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
       </label>
       <label><span class="field-title">Port <span class="optional">(optional)</span></span><input name="health_port" value="{{ form.health_port }}" placeholder="the server's own"><small>Empty means the server's traffic port.</small></label>
@@ -290,28 +299,6 @@
     <div class="form-grid form-grid-ruled">
       <label><span class="field-title">Expected status <span class="optional">(optional)</span></span><input name="health_expect_status" value="{{ form.health_expect_status }}" size="10" placeholder="any 2xx or 3xx"><small>One status the server must answer with, such as <code>204</code>.</small></label>
       <label><span class="field-title">Expected body <span class="optional">(optional)</span></span><input name="health_expect_body" value="{{ form.health_expect_body }}" placeholder="ok"><small>Text the answer must contain. Checked as well as the status, not instead of it.</small></label>
-    </div>
-    {#
-      Three answers, in the pool's own words. A checkbox could only say "the
-      check does its own TLS", which left two of the four combinations of pool
-      and check impossible to write: a TLS pool with a plaintext management
-      port had no way to say so, and the box was the only way to say the other.
-
-      Measured on 3.4.4, 2026-09-05, which is why it is three and not two: a
-      TLS pool with a check port runs its check in *plaintext* unless told
-      otherwise, and sending TLS to a plaintext port is `L6RSP` and a server
-      marked down. Neither is guessable from the form, so the form says it.
-    #}
-    <div class="form-grid form-grid-ruled">
-      <label>The check's own protocol
-        <select name="health_tls">
-          <option value=""{% if not form.health_tls %} selected{% endif %}>Follow the pool</option>
-          <option value="https"{% if form.health_tls == 'https' %} selected{% endif %}>HTTPS</option>
-          <option value="plain"{% if form.health_tls == 'plain' %} selected{% endif %}>Plain HTTP</option>
-        </select>
-        <small>Follow the pool is almost always right. Choose one of the others when the health endpoint speaks something the pool does not — usually together with a check port.</small>
-      </label>
-      <p class="check-note">A check does not verify the certificate. Verification checks a name, and HAProxy sends none on a check, so <code>HTTPS</code> here means the handshake happens and the certificate is not judged.</p>
     </div>
     {#
       A tcp check that sends nothing is a connect check, which is what the type
@@ -350,8 +337,15 @@
       {% if not probe.ran %}
       <p class="node-health-note">{{ probe.problem }}</p>
       {% else %}
+      {#
+        The same columns and the same words as the table below it. The two
+        describe one check - one just ran it, the other has been running it -
+        and saying `Reached · status 200` above `UP · L7OK 200` made them read
+        as two different measurements of two different things.
+      #}
       <table class="node-health-table">
-        <thead><tr><th>Node</th><th>Server</th><th>Result</th><th>Detail</th></tr></thead>
+        <colgroup><col style="width: 22%"><col style="width: 34%"><col style="width: 14%"><col style="width: 30%"></colgroup>
+        <thead><tr><th>Node</th><th>Server</th><th>State</th><th>Last check</th></tr></thead>
         <tbody>
           {#
             Only the nodes that could answer. A node that does not carry the
@@ -366,8 +360,8 @@
           <tr>
             <td>{{ node.node }}</td>
             <td>{{ entry.host }}:{{ entry.port }}</td>
-            <td><span class="status-dot {{ 'status-healthy' if entry.ok else 'status-critical' }}"></span>{{ 'Reached' if entry.ok else 'Failed' }}</td>
-            <td>{% if entry.status %}status {{ entry.status }}{% endif %}{% if entry.error %} {{ entry.error }}{% endif %}{% if entry.ms is not none %} · {{ entry.ms }} ms{% endif %}</td>
+            <td><span class="status-dot {{ 'status-healthy' if entry.ok else 'status-critical' }}"></span>{{ 'UP' if entry.ok else 'DOWN' }}</td>
+            <td>{{ entry.phrase }}{% if entry.ms is not none %} · {{ entry.ms }} ms{% endif %}</td>
           </tr>
           {% endfor %}{% endif %}{% endfor %}
         </tbody>
@@ -391,6 +385,7 @@
       <p class="node-health-note">The nodes know nothing about this pool. It is checked once it has been deployed.</p>
       {% else %}
       <table class="node-health-table">
+        <colgroup><col style="width: 22%"><col style="width: 34%"><col style="width: 14%"><col style="width: 30%"></colgroup>
         <thead><tr><th>Node</th><th>Server</th><th>State</th><th>Last check</th></tr></thead>
         <tbody>
           {% for node in pool_health.nodes %}{% for member in node.members %}
@@ -404,7 +399,12 @@
             #}
             <td>{{ pool_health.address(member.server) or member.server }}</td>
             <td><span class="status-dot {{ 'status-healthy' if member.up else 'status-critical' }}"></span>{{ member.status or 'unknown' }}</td>
-            <td>{{ member.check_status or '—' }}{% if member.check_code %} {{ member.check_code }}{% endif %}{% if member.check_duration_ms is not none %} · {{ member.check_duration_ms }} ms{% endif %}</td>
+            {#
+              HAProxy's own code kept as the cell's title. The sentence is for
+              reading; the code is what somebody searches the internet for when
+              the sentence is not enough.
+            #}
+            <td{% if member.check_status %} title="{{ member.check_status }}{% if member.check_code %} {{ member.check_code }}{% endif %}"{% endif %}>{{ check_phrase(member.check_status, member.check_code) or '—' }}{% if member.check_duration_ms is not none %} · {{ member.check_duration_ms }} ms{% endif %}</td>
           </tr>
           {% endfor %}{% endfor %}
         </tbody>

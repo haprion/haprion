@@ -42,6 +42,8 @@ from haproxy_mgmt.tls_policy import (
     DEFAULT_MIN_VERSION,
 )
 
+from haproxy_ui.preview import check_kind, check_tls
+
 #
 # The same bound the helper and the node hold. Named here so a pool with more
 # servers than this is refused with a sentence instead of by whichever of the
@@ -58,6 +60,21 @@ class Reached:
     status: int | None
     error: str | None
     ms: int | None
+
+    @property
+    def phrase(self) -> str:
+        """What happened, in the words the nodes' own card uses.
+
+        The two tables sit one above the other and describe the same check, so
+        they say it the same way. `answered 200` there is `L7OK 200`
+        translated; here it is what this run actually got.
+        """
+
+        if self.status is not None:
+            return f"answered {self.status}"
+        if self.error:
+            return self.error
+        return "connected"
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,24 +130,22 @@ class ProbeReport:
 
 
 def check_is_encrypted(form: Mapping[str, Any]) -> bool:
-    """Whether this object's check speaks TLS, by the generator's own rule.
+    """Whether this object's check speaks TLS, read from the box that says so.
 
-    The same three answers `_check_encryption` writes into the configuration,
-    read from the same two fields. `HTTPS` and `Plain HTTP` are the check's own
-    word and override the pool either way; saying nothing follows the pool,
-    which is what HAProxy does when the configuration says nothing.
+    The Type box carries both halves - `https` is an http check over TLS - so
+    this is the same reading `build_document` makes before the generator ever
+    sees it. `tcp` and `http` on a pool reached over TLS are the plaintext
+    answers, which is what `no-check-ssl` says in the configuration.
 
-    One implementation of this rule would be better than two. It is written
-    twice because the engine works on a loaded document and the button works on
-    a form that has not been saved - and a probe that judged a saved object
-    would not answer the question the button exists for.
+    Rebuilt from the form rather than from the saved object, because that is
+    the question the button exists for: what this check will do once it is
+    saved.
     """
 
-    choice = str(form.get("health_tls", "") or "").strip()
-    if choice == "https":
-        return True
-    if choice == "plain":
-        return False
+    chosen = str(form.get("health_type", "") or "").strip()
+    written = check_tls(chosen, str(form.get("backend_tls", "") or "").strip())
+    if written is not None:
+        return written
     return bool(str(form.get("backend_tls", "") or "").strip())
 
 
@@ -156,7 +171,7 @@ def targets_from(form: Mapping[str, Any]) -> list[dict[str, Any]]:
     def text(key: str) -> str:
         return str(form.get(key, "") or "").strip()
 
-    kind = "http" if text("health_type") == "http" else "tcp"
+    kind = check_kind(text("health_type"))
     tls = check_is_encrypted(form)
     check_port = text("health_port")
     #
@@ -224,20 +239,21 @@ def caveats_for(form: Mapping[str, Any]) -> tuple[str, ...]:
         return str(form.get(key, "") or "").strip()
 
     notes: list[str] = []
-    if text("health_type") == "tcp" and text("health_send"):
+    if check_kind(text("health_type")) == "tcp" and text("health_send"):
         notes.append(
             "The send and expect exchange is not run here. This opens the connection "
             "and stops there, so a server that answers the wrong thing still reads as reached."
         )
-    if text("health_type") == "http" and text("health_expect_body"):
+    if check_kind(text("health_type")) == "http" and text("health_expect_body"):
         notes.append(
             "The expected body is not checked here. The node reads the status line and "
             "no more of the answer, so a page with the wrong contents still reads as reached."
         )
     if check_is_encrypted(form):
         notes.append(
-            "This sends the server name in the handshake and HAProxy's own check does not. "
-            "A pool that needs it can pass here and still be marked down on the nodes."
+            "This sends the server name in the TLS handshake as SNI, and HAProxy's own check "
+            "does not. The Host header is a different name and is sent by both. A pool that "
+            "needs SNI can pass here and still be marked down on the nodes."
         )
     return tuple(notes)
 
@@ -343,7 +359,7 @@ def run(
     # a connection HAProxy will never make, and read as a healthy pool that is
     # in fact unchecked.
     #
-    if str(form.get("health_type", "") or "").strip() in ("", "disabled"):
+    if check_kind(str(form.get("health_type", "") or "").strip()) == "disabled":
         return ProbeReport(
             ran=False,
             source="",
@@ -388,6 +404,6 @@ def run(
         return ProbeReport(ran=False, source="", nodes=(), problem=str(error["message"]))
 
     source, nodes = _read(payload)
-    if str(form.get("health_type", "") or "").strip() == "http":
+    if check_kind(str(form.get("health_type", "") or "").strip()) == "http":
         nodes = _judged(nodes, accepted_status(form))
     return ProbeReport(ran=True, source=source, nodes=nodes, caveats=caveats_for(form))

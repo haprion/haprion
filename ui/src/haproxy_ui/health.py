@@ -21,6 +21,50 @@ from haproxy_mgmt.cluster_status import ServerHealth
 from haproxy_mgmt.generate import PREFIX
 from haproxy_mgmt.proxy_model import ModelError, read_document
 
+#
+# HAProxy's own check codes, as sentences. The codes are the machine's language
+# on a page built for people, and reading `L6RSP` cost an evening once - but a
+# code somebody can search the internet for is worth keeping, so it stays as the
+# cell's title rather than being replaced.
+#
+# The meanings are HAProxy 3.4.4's own, from `configuration.txt` on this
+# machine under `tcp-check expect`. `INI` and `SOCKERR` are not in that list -
+# they come from the stats output - and are written from what they were
+# measured to mean here.
+#
+CHECK_PHRASES = {
+    "L7OK": "answered",
+    "L7OKC": "answered, held out of the pool",
+    "L7STS": "answered",
+    "L7RSP": "the answer was not valid",
+    "L7TOUT": "no answer in time",
+    "L6OK": "the handshake succeeded",
+    "L6RSP": "TLS: the answer was not valid",
+    "L6TOUT": "the handshake timed out",
+    "L4OK": "the port answered",
+    "L4CON": "could not connect",
+    "L4TOUT": "no answer in time",
+    "SOCKERR": "the connection failed",
+    "INI": "not checked yet",
+    "UNK": "not known",
+}
+
+
+def check_phrase(status: str, code: str = "") -> str:
+    """One code as a sentence, with whatever number came with it.
+
+    An unknown code is returned as it stands. A translation table that guessed
+    would be worse than the code: somebody can look a code up, and cannot look
+    up a sentence this file invented.
+    """
+
+    if not status:
+        return ""
+    phrase = CHECK_PHRASES.get(status)
+    if phrase is None:
+        return f"{status} {code}".strip()
+    return f"{phrase} {code}".strip() if code else phrase
+
 
 def backend_name(obj: str, pool: str) -> str:
     """What this object's pool is called in the generated configuration.

@@ -69,24 +69,32 @@ class WhatTheNodesAreAskedToTry(unittest.TestCase):
             [entry["port"] for entry in targets_from(form(health_port="9443"))], [9443, 9443]
         )
 
-    def test_the_check_follows_the_pool_onto_tls(self) -> None:
-        system = targets_from(form(backend_tls="system"))[0]
+    def test_a_tls_check_is_verified_the_way_the_pool_is(self) -> None:
+        """The box says the check speaks TLS; the pool says whose certificate is trusted."""
+
+        system = targets_from(form(health_type="https", backend_tls="system"))[0]
         self.assertTrue(system["tls"])
         self.assertTrue(system["verify"])
 
-        unverified = targets_from(form(backend_tls="none"))[0]
+        unverified = targets_from(form(health_type="https", backend_tls="none"))[0]
         self.assertTrue(unverified["tls"])
         self.assertFalse(unverified["verify"])
 
-    def test_the_checks_own_protocol_overrides_the_pools(self) -> None:
-        """The three answers the generator writes, read the same way here."""
-
-        self.assertTrue(targets_from(form(health_tls="https"))[0]["tls"])
-        self.assertFalse(targets_from(form(backend_tls="system", health_tls="plain"))[0]["tls"])
-
-    def test_saying_nothing_follows_the_pool(self) -> None:
-        self.assertTrue(targets_from(form(backend_tls="system"))[0]["tls"])
         self.assertFalse(targets_from(form())[0]["tls"])
+
+    def test_the_type_box_carries_the_protocol_too(self) -> None:
+        """`https` is an http check over TLS, which is what the box says."""
+
+        secure = targets_from(form(health_type="https"))[0]
+        self.assertEqual((secure["type"], secure["tls"]), ("http", True))
+
+        plain = targets_from(form(health_type="http", backend_tls="system"))[0]
+        self.assertEqual((plain["type"], plain["tls"]), ("http", False))
+
+    def test_a_tcp_handshake_check_is_a_tcp_target(self) -> None:
+        handshake = targets_from(form(health_type="tcp-tls"))[0]
+
+        self.assertEqual((handshake["type"], handshake["tls"]), ("tcp", True))
 
     def test_a_line_that_is_not_a_server_is_skipped_rather_than_sent(self) -> None:
         targets = targets_from(form(servers="198.51.100.10:8080\nnot-a-server\n\n"))
@@ -196,7 +204,7 @@ class WhatThisRunCannotReproduce(unittest.TestCase):
 
     def test_the_probe_sends_a_server_name_where_the_check_sends_none(self) -> None:
         self.assertTrue(
-            any("server name" in note for note in caveats_for(form(backend_tls="none")))
+            any("server name" in note for note in caveats_for(form(health_type="https")))
         )
         self.assertEqual(caveats_for(form()), ())
 

@@ -27,12 +27,18 @@ from typing import Annotated
 
 from haproxy_mgmt.config import AbuseProtection, Cluster, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, generate
-from haproxy_mgmt.proxy_model import BALANCE, HEALTH_TYPES, ModelError, load_proxy
+from haproxy_mgmt.proxy_model import BALANCE, ModelError, load_proxy
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from haproxy_ui.certificates import CertificateClusterView
 from haproxy_ui.network import NetworkClusterView
-from haproxy_ui.preview import Preview, build_document, named_addresses, vip_sources
+from haproxy_ui.preview import (
+    CHECK_TYPES,
+    Preview,
+    build_document,
+    named_addresses,
+    vip_sources,
+)
 
 #
 # The policy the validation runs under, and it is not this cluster's. Every
@@ -118,7 +124,7 @@ def choices(cluster: EditorCluster) -> dict[str, object]:
         "sources": named_addresses(cluster.sources),
         "networks": sorted(cluster.networks),
         "balances": BALANCE,
-        "health_types": HEALTH_TYPES,
+        "health_types": CHECK_TYPES,
     }
 
 
@@ -271,14 +277,6 @@ class ObjectForm(BaseModel):
     # was refused outright - honestly, but with nothing to do about it except
     # edit the file by hand.
     #
-    #
-    # Three answers, not a checkbox. "" follows the pool, which is what most
-    # objects want and what HAProxy does on its own; the other two say the
-    # check speaks TLS whatever the pool does, or does not whatever the pool
-    # does. The words are the pool's own - a person reading the form should not
-    # have to translate between "HTTPS" up there and "TLS" down here.
-    #
-    health_tls: Annotated[str, StringConstraints(max_length=8)] = ""
     health_expect_status: Annotated[str, StringConstraints(max_length=3)] = ""
     health_expect_body: Annotated[str, StringConstraints(max_length=255)] = ""
     health_send: Annotated[str, StringConstraints(max_length=255)] = ""

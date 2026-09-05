@@ -286,3 +286,25 @@ class AnUncheckedServerIsNotADownOne(unittest.TestCase):
 
         self.assertEqual(lamp.label, "1/1 up")
         self.assertEqual(lamp.tone, "healthy")
+
+
+class HaproxysCodesAsSentences(unittest.TestCase):
+    """The machine's language on a page built for people.
+
+    `L6RSP` cost an evening once. The sentence is what the cell shows and the
+    code stays as its title, so somebody can still search for it.
+    """
+
+    def test_a_passing_check_says_what_the_server_answered(self) -> None:
+        self.assertEqual(health.check_phrase("L7OK", "200"), "answered 200")
+
+    def test_a_layer_six_refusal_names_the_layer_a_person_can_act_on(self) -> None:
+        self.assertEqual(health.check_phrase("L6RSP"), "TLS: the answer was not valid")
+
+    def test_a_code_nobody_has_translated_is_shown_as_it_stands(self) -> None:
+        """Worse than a code is a sentence this file invented for one."""
+
+        self.assertEqual(health.check_phrase("L5WAT", "7"), "L5WAT 7")
+
+    def test_nothing_stays_nothing(self) -> None:
+        self.assertEqual(health.check_phrase(""), "")

@@ -105,6 +105,12 @@ def asset_token(directory: Path = STATIC_DIRECTORY) -> str:
 #
 TEMPLATES.env.globals["asset_token"] = asset_token()
 TEMPLATES.env.globals["new_request_key"] = lambda: str(uuid4())
+#
+# HAProxy's check codes as sentences. A global rather than a field on the row:
+# the rows come from the engine's own dataclass, which the CLI shares, and how
+# a web page words something is not the engine's business.
+#
+TEMPLATES.env.globals["check_phrase"] = health.check_phrase
 
 #
 # The theme is rendered into the document by the server, from a cookie the

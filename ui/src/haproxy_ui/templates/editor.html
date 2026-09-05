@@ -47,7 +47,7 @@
 <form method="post" action="{% if name %}/proxies/{{ cluster }}/{{ name }}/edit{% else %}/proxies/{{ cluster }}/new{% endif %}" class="preview-form">
   {#
     What Enter does, decided rather than inherited. A browser submits with the
-    first submit button in tree order, which was "Test health" inside the form -
+    first submit button in tree order, which was "Test health check" inside the form -
     so Enter in any field asked the nodes to run a live probe instead of
     validating what had been typed.
 

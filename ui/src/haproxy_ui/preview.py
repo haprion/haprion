@@ -130,7 +130,7 @@ DEFAULTS = {
     "health_path": "/",
     "health_host": "",
     "health_port": "",
-    "health_tls": False,
+    "health_tls": "",
     "health_expect_status": "",
     "health_expect_body": "",
     "health_send": "",
@@ -214,6 +214,22 @@ class Preview:
         if not self.problem_field:
             return self.problem
         return self.problem[len(self.problem_field) :].lstrip()
+
+
+def _check_protocol(written: object) -> str:
+    """The check's own protocol as the form spells it, from what the document says.
+
+    Three values and not two. Absent is "follow the pool"; `false` is a written
+    answer that has to survive a load-and-save, because dropping it would turn
+    a plaintext check on a TLS pool back into a TLS one the next time somebody
+    pressed Save on an unrelated field.
+    """
+
+    if written is True:
+        return "https"
+    if written is False:
+        return "plain"
+    return ""
 
 
 def _servers(raw: str) -> list[dict[str, object]]:
@@ -337,10 +353,15 @@ def build_document(form: dict[str, object]) -> str:
     #
     # Whether the check itself speaks TLS. Independent of the listener and of
     # `backend.tls`: a pool served over plain HTTP can still be checked on a
-    # TLS port, and the model keeps them apart for that reason.
+    # TLS port, and a pool reached over TLS can have a plaintext management
+    # port. The model keeps all three apart, and the absent value is the one
+    # that means "follow the pool" - so nothing is written for it.
     #
-    if text("health_type") != "disabled" and flag("health_tls"):
-        health["tls"] = True
+    if text("health_type") != "disabled":
+        if text("health_tls") == "https":
+            health["tls"] = True
+        elif text("health_tls") == "plain":
+            health["tls"] = False
     if text("health_type") == "http":
         health["path"] = text("health_path") or "/"
         if text("health_host"):
@@ -820,7 +841,12 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "health_path": str(health.get("path", "") or ""),
         "health_host": str(health.get("host", "") or ""),
         "health_port": str(health.get("port", "") or ""),
-        "health_tls": health.get("tls") is True,
+        #
+        # Absent stays absent. `False` is a written answer here, not a missing
+        # one, and reading it back as "follow the pool" would quietly drop a
+        # plaintext check on the next save.
+        #
+        "health_tls": _check_protocol(health.get("tls")),
         "health_expect_status": str(health.get("expect_status", "") or ""),
         "health_expect_body": str(health.get("expect_body", "") or ""),
         "health_send": str(health.get("send", "") or ""),

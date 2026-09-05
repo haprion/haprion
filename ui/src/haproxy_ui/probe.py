@@ -1,10 +1,24 @@
-"""Turning the object form into a probe, and the answer into something to read.
+"""Running the object's health check by hand, before the object is saved.
+
+This is not a second opinion about the pool. It is the check on the screen,
+triggered once from the node that would run it, so somebody configuring a check
+can see the answer before pressing Save rather than after a publish. Every
+divergence from what HAProxy would do is therefore a defect, not a feature -
+what the form says the check is, is what gets asked.
 
 The form is the question. What a health check would do is spelled out across
 half a dozen fields - the servers, the check's type and path, its own port, the
-host header, whether the pool is reached over TLS, and which address the object
-leaves from - and every one of them changes what the node should try. Building
-the request anywhere else would mean reading those fields twice.
+host header, whether the check speaks TLS, what answer counts as good, and which
+address the object leaves from - and every one of them changes what the node
+should try. Building the request anywhere else would mean reading those fields
+twice.
+
+Three things a check does that this cannot reproduce from here, and each is
+said on the page rather than passed over: a tcp check's send/expect exchange,
+an expected body (the node never reads a body, deliberately - a key on a proxy
+node that returned one would be a way to read pages through it), and SNI, which
+HAProxy's own check does not send and this does. Silence about any of them
+would be the probe answering a question it was not asked.
 
 Nothing here reaches a node, and nothing here is privileged. It builds a
 request, writes it to the socket the probe service answers on, and reads what
@@ -16,11 +30,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 from uuid import uuid4
 
 from haproxy_mgmt.probe_socket import ProbeUnavailable, ask, build_request
+from haproxy_mgmt.proxy_model import DEFAULT_EXPECT_STATUS, STATUS_RANGE
 from haproxy_mgmt.tls_policy import (
     BACKEND_MIN_VERSION,
     DEFAULT_BACKEND_POLICY,
@@ -68,6 +83,13 @@ class ProbeReport:
     source: str
     nodes: tuple[NodeReport, ...]
     problem: str | None = None
+    #
+    # Where this run is narrower than the check it stands in for. Carried with
+    # the result rather than written into the page, because which ones apply
+    # depends on the object: a green row under an unsaid caveat is the failure
+    # this whole card exists to prevent.
+    #
+    caveats: tuple[str, ...] = ()
 
     @property
     def failing(self) -> int:
@@ -90,20 +112,52 @@ class ProbeReport:
         return tuple(node.node for node in self.nodes if node.source_held is True)
 
 
+def check_is_encrypted(form: Mapping[str, Any]) -> bool:
+    """Whether this object's check speaks TLS, by the generator's own rule.
+
+    The same three answers `_check_encryption` writes into the configuration,
+    read from the same two fields. `HTTPS` and `Plain HTTP` are the check's own
+    word and override the pool either way; saying nothing follows the pool,
+    which is what HAProxy does when the configuration says nothing.
+
+    One implementation of this rule would be better than two. It is written
+    twice because the engine works on a loaded document and the button works on
+    a form that has not been saved - and a probe that judged a saved object
+    would not answer the question the button exists for.
+    """
+
+    choice = str(form.get("health_tls", "") or "").strip()
+    if choice == "https":
+        return True
+    if choice == "plain":
+        return False
+    return bool(str(form.get("backend_tls", "") or "").strip())
+
+
 def targets_from(form: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """What a check against this object's pool would be, per server.
+    """What this object's check is, per server, as HAProxy would run it.
 
     The check's own port replaces each server's traffic port where one is set,
-    which is what HAProxy does. TLS follows the pool: a check to a server that
-    is reached over TLS is a TLS check, and `verify: none` here means the same
-    thing it means in the object - the certificate is not judged.
+    which is what HAProxy does.
+
+    Whether the check is encrypted is read from both places the generator reads
+    it, because either one alone is a wrong answer. A pool reached over TLS is
+    checked over TLS - inherited when the check goes to the traffic port, and
+    written as `check-ssl` when a check port breaks that inheritance. On top of
+    that the check has a TLS box of its own, for a plain pool whose health
+    endpoint speaks TLS; that one writes `http-check connect ssl`. Reading only
+    the pool's box, as this did, meant ticking the check's own box changed the
+    configuration and changed nothing here.
+
+    `verify: none` means the same thing it means in the object - the
+    certificate is not judged.
     """
 
     def text(key: str) -> str:
         return str(form.get(key, "") or "").strip()
 
     kind = "http" if text("health_type") == "http" else "tcp"
-    tls = bool(text("backend_tls"))
+    tls = check_is_encrypted(form)
     check_port = text("health_port")
     #
     # The floor the object asks for, as it stands on the screen. Taken from the
@@ -135,6 +189,57 @@ def targets_from(form: Mapping[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return targets[:MAX_TARGETS]
+
+
+def accepted_status(form: Mapping[str, Any]) -> tuple[int, int]:
+    """Which answers this check calls good, as the object states it.
+
+    The node cannot be asked to decide this. It holds one range for every
+    request it has ever been sent, and the object's is a field on the form -
+    so the status comes back from the node and the verdict is reached here,
+    against the same value `http-check expect status` is written from.
+
+    An unwritten range is HAProxy's own, which is why the model's default is
+    the one used rather than a number repeated here. Anything unparseable falls
+    back to it too: the form is validated elsewhere and this is a report, not
+    the place to refuse a document.
+    """
+
+    asked = str(form.get("health_expect_status", "") or "").strip() or DEFAULT_EXPECT_STATUS
+    if not STATUS_RANGE.match(asked):
+        asked = DEFAULT_EXPECT_STATUS
+    low, _, high = asked.partition("-")
+    return int(low), int(high or low)
+
+
+def caveats_for(form: Mapping[str, Any]) -> tuple[str, ...]:
+    """What this run does not reproduce about the check on the screen.
+
+    Said rather than silently passed. Each of these is a way for the probe to
+    answer "Reached" where HAProxy would mark the server down, and a reader who
+    is shown a green row and no sentence has been told something untrue.
+    """
+
+    def text(key: str) -> str:
+        return str(form.get(key, "") or "").strip()
+
+    notes: list[str] = []
+    if text("health_type") == "tcp" and text("health_send"):
+        notes.append(
+            "The send and expect exchange is not run here. This opens the connection "
+            "and stops there, so a server that answers the wrong thing still reads as reached."
+        )
+    if text("health_type") == "http" and text("health_expect_body"):
+        notes.append(
+            "The expected body is not checked here. The node reads the status line and "
+            "no more of the answer, so a page with the wrong contents still reads as reached."
+        )
+    if check_is_encrypted(form):
+        notes.append(
+            "This sends the server name in the handshake and HAProxy's own check does not. "
+            "A pool that needs it can pass here and still be marked down on the nodes."
+        )
+    return tuple(notes)
 
 
 def source_address(form: Mapping[str, Any], choices: Mapping[str, Any]) -> str:
@@ -190,6 +295,33 @@ def _read(payload: Any) -> tuple[str, tuple[NodeReport, ...]]:
     return str(result.get("source", "") or ""), tuple(nodes)
 
 
+def _judged(nodes: tuple[NodeReport, ...], expected: tuple[int, int]) -> tuple[NodeReport, ...]:
+    """The node's answers, judged by the object's range instead of the node's.
+
+    The node marks anything from 200 to 399 as reached, which is HAProxy's
+    default and right until an object says otherwise. An object expecting 204
+    was then told a 200 was fine here and watched the same server go down on
+    the nodes - the one outcome this card is meant to catch before a publish.
+
+    Only rows that carry a status are touched. A handshake that failed or a
+    connection that timed out has no status to judge, and its own sentence is
+    the answer.
+    """
+
+    low, high = expected
+    wanted = str(low) if low == high else f"{low}-{high}"
+
+    def row(entry: Reached) -> Reached:
+        if entry.status is None:
+            return entry
+        ok = low <= entry.status <= high
+        return replace(entry, ok=ok, error=None if ok else f"answered {entry.status}, not {wanted}")
+
+    return tuple(
+        replace(node, results=tuple(row(entry) for entry in node.results)) for node in nodes
+    )
+
+
 def run(
     cluster: str,
     form: Mapping[str, Any],
@@ -204,6 +336,20 @@ def run(
     run" rather than as a pool that failed. The two look the same to a reader
     who is only shown a red mark, so each says which it was.
     """
+
+    #
+    # Nothing to trigger. The button runs the object's check early, and an
+    # object without one has no check to run - probing anyway would answer for
+    # a connection HAProxy will never make, and read as a healthy pool that is
+    # in fact unchecked.
+    #
+    if str(form.get("health_type", "") or "").strip() in ("", "disabled"):
+        return ProbeReport(
+            ran=False,
+            source="",
+            nodes=(),
+            problem="This object has no health check. Choose a type above, then test it.",
+        )
 
     targets = targets_from(form)
     if not targets:
@@ -242,4 +388,6 @@ def run(
         return ProbeReport(ran=False, source="", nodes=(), problem=str(error["message"]))
 
     source, nodes = _read(payload)
-    return ProbeReport(ran=True, source=source, nodes=nodes)
+    if str(form.get("health_type", "") or "").strip() == "http":
+        nodes = _judged(nodes, accepted_status(form))
+    return ProbeReport(ran=True, source=source, nodes=nodes, caveats=caveats_for(form))

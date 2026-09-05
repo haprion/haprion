@@ -578,10 +578,24 @@ class EverythingTheModelAllowsInOneRouteAndOnePool(unittest.TestCase):
         return yaml.safe_load(build_document(form))
 
     def test_a_check_may_speak_tls(self) -> None:
-        document = self.document(health_type="http", health_tls=True, health_port="9443")
+        document = self.document(health_type="http", health_tls="https", health_port="9443")
 
         self.assertEqual(document["backends"]["web"]["health"]["tls"], True)
         self.assertEqual(document["backends"]["web"]["health"]["port"], 9443)
+
+    def test_a_check_may_be_plaintext_on_a_pool_that_is_not(self) -> None:
+        """The combination that could not be written before. `no-check-ssl`."""
+
+        document = self.document(health_type="http", health_tls="plain", health_port="9443")
+
+        self.assertEqual(document["backends"]["web"]["health"]["tls"], False)
+
+    def test_following_the_pool_writes_nothing_at_all(self) -> None:
+        """Absent and false say different things to the generator, so one must stay absent."""
+
+        document = self.document(health_type="http", health_port="9443")
+
+        self.assertNotIn("tls", document["backends"]["web"]["health"])
 
     def test_an_http_check_may_name_what_a_good_answer_is(self) -> None:
         document = self.document(
@@ -610,7 +624,7 @@ class EverythingTheModelAllowsInOneRouteAndOnePool(unittest.TestCase):
         self.assertNotIn("send", http["backends"]["web"]["health"])
 
     def test_a_disabled_check_writes_none_of_them(self) -> None:
-        document = self.document(health_type="disabled", health_tls=True, health_send="PING")
+        document = self.document(health_type="disabled", health_tls="https", health_send="PING")
 
         self.assertEqual(document["backends"]["web"]["health"], {"type": "disabled"})
 

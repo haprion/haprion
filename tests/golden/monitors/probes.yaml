@@ -16,6 +16,10 @@ routes:
     backend: http-content
   - path: /https
     backend: https-content
+  - path: /https-on-a-plain-pool
+    backend: https-check
+  - path: /plain-on-a-tls-pool
+    backend: plain-check
 backends:
   plain-tcp:
     balance: roundrobin
@@ -78,4 +82,26 @@ backends:
       verify: system
     servers:
       - host: content-a.example.net
+        port: 8443
+  https-check:
+    balance: roundrobin
+    health:
+      type: http
+      tls: true
+      path: /healthz
+      port: 9443
+    servers:
+      - host: 198.51.100.15
+        port: 8080
+  plain-check:
+    balance: roundrobin
+    health:
+      type: http
+      tls: false
+      path: /healthz
+      port: 8080
+    tls:
+      verify: none
+    servers:
+      - host: 198.51.100.16
         port: 8443

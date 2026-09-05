@@ -357,13 +357,32 @@ class TheMonitorVariants(unittest.TestCase):
 
         self.assertIn("without spaces", str(raised.exception))
 
-    def test_a_tls_check_forces_the_backend_to_state_its_verification(self) -> None:
-        """HAProxy refuses the alternative, and the safe default is not ours to pick."""
+    def test_a_tls_check_on_a_plain_pool_is_allowed_and_says_so(self) -> None:
+        """A health endpoint on its own TLS port. The generator writes `verify none`.
 
+        Refused until 2026-09-05, because what was generated for it - a TLS
+        check against a server line with no TLS words at all - is refused by
+        HAProxy. `verify none` alone answers that without making the pool TLS,
+        measured `L7OK 200`, so the object may say it.
+        """
+
+        health = self.health("      type: http\n      tls: true\n      path: /healthz")
+
+        self.assertIs(health.tls, True)
+
+    def test_saying_nothing_about_tls_is_not_saying_no(self) -> None:
+        """The distinction `no-check-ssl` exists for: no opinion, against plaintext."""
+
+        self.assertIsNone(self.health("      type: http\n      path: /healthz").tls)
+        self.assertIs(
+            self.health("      type: http\n      tls: false\n      path: /healthz").tls, False
+        )
+
+    def test_tls_must_still_be_a_boolean(self) -> None:
         with self.assertRaises(ModelError) as raised:
-            self.health("      type: http\n      tls: true\n      path: /healthz")
+            self.health("      type: http\n      tls: maybe\n      path: /healthz")
 
-        self.assertIn("verified", str(raised.exception))
+        self.assertIn("true or false", str(raised.exception))
 
 
 class WhoMayReachAnObject(unittest.TestCase):

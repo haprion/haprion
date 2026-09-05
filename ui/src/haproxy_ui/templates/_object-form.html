@@ -261,7 +261,7 @@
         Only on the editor - the preview page writes to no cluster and has no
         nodes to ask.
       #}
-      {% if pool_health is defined %}<button type="submit" name="action" value="recheck" class="secondary-button">Test health</button>{% endif %}
+      {% if pool_health is defined %}<button type="submit" name="action" value="recheck" class="secondary-button">Test health check</button>{% endif %}
     </header>
     <div class="form-grid">
       <label>Type
@@ -292,13 +292,26 @@
       <label><span class="field-title">Expected body <span class="optional">(optional)</span></span><input name="health_expect_body" value="{{ form.health_expect_body }}" placeholder="ok"><small>Text the answer must contain. Checked as well as the status, not instead of it.</small></label>
     </div>
     {#
-      A checkbox and a sentence, not a field with a box where its input should
-      be. It sat in the grid above and inherited a label meant for one, which
-      put the caption beside an empty column and the box above it.
+      Three answers, in the pool's own words. A checkbox could only say "the
+      check does its own TLS", which left two of the four combinations of pool
+      and check impossible to write: a TLS pool with a plaintext management
+      port had no way to say so, and the box was the only way to say the other.
+
+      Measured on 3.4.4, 2026-09-05, which is why it is three and not two: a
+      TLS pool with a check port runs its check in *plaintext* unless told
+      otherwise, and sending TLS to a plaintext port is `L6RSP` and a server
+      marked down. Neither is guessable from the form, so the form says it.
     #}
-    <div class="form-checks form-checks-noted">
-      <label class="check"><input type="checkbox" name="health_tls"{% if form.health_tls %} checked{% endif %}> The check does its own TLS handshake</label>
-      <p class="check-note">Rarely needed. A pool reached over TLS is already checked over TLS. Tick this when the pool is plain but its health endpoint speaks TLS, or for a tcp pool you want checked by handshake.</p>
+    <div class="form-grid form-grid-ruled">
+      <label>The check's own protocol
+        <select name="health_tls">
+          <option value=""{% if not form.health_tls %} selected{% endif %}>Follow the pool</option>
+          <option value="https"{% if form.health_tls == 'https' %} selected{% endif %}>HTTPS</option>
+          <option value="plain"{% if form.health_tls == 'plain' %} selected{% endif %}>Plain HTTP</option>
+        </select>
+        <small>Follow the pool is almost always right. Choose one of the others when the health endpoint speaks something the pool does not — usually together with a check port.</small>
+      </label>
+      <p class="check-note">A check does not verify the certificate. Verification checks a name, and HAProxy sends none on a check, so <code>HTTPS</code> here means the handshake happens and the certificate is not judged.</p>
     </div>
     {#
       A tcp check that sends nothing is a connect check, which is what the type
@@ -359,6 +372,13 @@
           {% endfor %}{% endif %}{% endfor %}
         </tbody>
       </table>
+      {#
+        Where this run is narrower than the check it stands in for. Under the
+        table rather than above it: it qualifies the rows that were just read,
+        and a reader who has seen three green rows and no sentence has been
+        told the check passed when only part of it was tried.
+      #}
+      {% for caveat in probe.caveats %}<p class="node-health-note">{{ caveat }}</p>{% endfor %}
       {% endif %}
     </div>
     {% endif %}

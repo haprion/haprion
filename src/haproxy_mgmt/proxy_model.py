@@ -392,7 +392,14 @@ class Health:
     """
 
     type: str
-    tls: bool = False
+    #
+    # Three answers, not two. `None` follows the pool - a TLS pool is checked
+    # over TLS, a plain one in plain - which is HAProxy's own behaviour and
+    # what an object that says nothing has always meant. `True` is a check that
+    # speaks TLS whatever the pool does; `False` is one that does not, which a
+    # TLS pool with a plaintext management port needs and could not say before.
+    #
+    tls: bool | None = None
     port: int | None = None
     path: str | None = None
     host: str | None = None
@@ -808,7 +815,14 @@ def _health(value: Any, location: str) -> Health:
     if not isinstance(interval, str) or not DURATION.match(interval):
         raise ModelError(f"{location}.interval must be a duration such as 5s or 500ms")
 
-    tls = _boolean(data, "tls", location, default=False)
+    #
+    # Absent is not false. Written out, `false` is somebody asking for a
+    # plaintext check on a pool that is reached over TLS - a different request
+    # from having no opinion, and the one HAProxy needs `no-check-ssl` for.
+    #
+    tls = data.get("tls")
+    if tls is not None and not isinstance(tls, bool):
+        raise ModelError(f"{location}.tls must be true or false")
     #
     # A separate port for the check, because a health endpoint is not always on
     # the port that serves traffic - plenty of systems answer on their own
@@ -981,18 +995,26 @@ def _backend(name: str, value: Any, location: str) -> Backend:
             )
 
     health = _health(data.get("health", {"type": "disabled"}), f"{location}.health")
-    if health.type == "http" and health.tls and backend_tls is None:
-        #
-        # Measured on HAProxy 3.4.4: a check that connects with TLS to a server
-        # that has no TLS settings is refused outright - "verify is enabled by
-        # default but no CA file specified". Rather than pick a verification
-        # policy on somebody's behalf, and quietly pick the insecure one at
-        # that, the object has to say which it wants.
-        #
-        raise ModelError(
-            f"{location}.health checks over tls, so {location}.tls must say whether the "
-            f"certificate is verified"
-        )
+    #
+    # A check over TLS on a pool that is not itself reached over TLS used to be
+    # refused here. HAProxy 3.4.4 does refuse the configuration that was written
+    # for it - "verify is enabled by default but no CA file specified" - and the
+    # refusal was there rather than pick a verification policy on somebody's
+    # behalf, quietly picking the insecure one at that.
+    #
+    # Measured again 2026-09-05, and the missing piece was one word: `verify
+    # none` alone on the server line, without `ssl`, leaves the pool plain and
+    # lets the check speak TLS. `L7OK 200` against a local TLS server. So the
+    # generator writes it, and the choice is no longer silent - it is a word in
+    # the diff somebody reads before publishing, and the form says in a sentence
+    # that this check does not judge the certificate.
+    #
+    # It cannot judge it either way. Verification needs a name to check the
+    # certificate against, HAProxy's own check sends no SNI, and `check-sni`
+    # was measured to fail outright against a pool the same configuration
+    # serves. An object that asked for a verified check would be asking for
+    # something that does not work.
+    #
 
     cookie = data.get("cookie")
     if cookie is not None and (not isinstance(cookie, str) or not COOKIE.match(cookie)):

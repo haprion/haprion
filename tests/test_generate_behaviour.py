@@ -1132,6 +1132,31 @@ def self_signed(
     return certificate, key
 
 
+def plain_server(port: int) -> ThreadingHTTPServer:
+    """The same answers over no TLS at all.
+
+    A management port that speaks plain HTTP on a machine whose traffic port
+    speaks TLS - which is an ordinary thing for an appliance to do, and the
+    reason `no-check-ssl` has to be expressible.
+    """
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - the name is the library's
+            body = b"reached"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_: object) -> None:
+            """Silence."""
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
 def tls_server(port: int, certificate: Path, key: Path) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - the name is the library's
@@ -1266,6 +1291,31 @@ backends:
 """
 
 
+PLAINTEXT_CHECK_ON_A_TLS_POOL = """
+schema: 1
+name: secure
+hostnames: [secure.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    tls:
+      verify: none
+    health:
+      type: http
+      tls: false
+      path: /
+      port: {health}
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
+
 @unittest.skipUnless(
     shutil.which("haproxy") and shutil.which("openssl"),
     "haproxy or openssl is not installed here",
@@ -1334,6 +1384,58 @@ class CheckingATlsPoolOnAnotherPort(unittest.TestCase):
         # first request after the proxy accepts connections is too early to say
         # anything either way.
         #
+        deadline = time.monotonic() + 15
+        status = 0
+        while time.monotonic() < deadline:
+            connection = HTTPConnection("127.0.0.1", port, timeout=5)
+            try:
+                connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
+                connection.putheader("Host", "secure.example.com")
+                connection.endheaders()
+                status = int(connection.getresponse().status)
+            finally:
+                connection.close()
+            if status == 200:
+                break
+            time.sleep(0.5)
+        self.assertEqual(status, 200)
+
+    def test_a_plaintext_check_port_on_a_tls_pool_brings_the_servers_up(self) -> None:
+        """The combination that could not be written before `no-check-ssl`.
+
+        An appliance whose traffic port speaks TLS and whose management port
+        does not. Without the opt-out the check is sent as TLS to a plaintext
+        port, which is `L6RSP` and a server marked down - so a 200 here says
+        the word did what it says.
+        """
+
+        certificate, key = self_signed(self.root, "opted-out", expired=False)
+        web = free_port()
+        health = free_port()
+        self.servers.append(tls_server(web, certificate, key))
+        wait_for(web)
+        self.servers.append(plain_server(health))
+        wait_for(health)
+
+        port = free_port()
+        root = self.root / "opted-out"
+        root.mkdir()
+        layer = generate(
+            [
+                load_proxy(
+                    "secure",
+                    PLAINTEXT_CHECK_ON_A_TLS_POOL.format(web=web, health=health).encode(),
+                )
+            ],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            ports={"http": port},
+        )
+        arguments = write_release(root, layer)
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        self.running.append(start_haproxy(binary, arguments, port))
+
         deadline = time.monotonic() + 15
         status = 0
         while time.monotonic() < deadline:

@@ -1456,8 +1456,8 @@ def _health_lines(health: Health) -> list[str]:
             # answers" and "the service behind it still has a working
             # certificate".
             #
-            return ["    option ssl-hello-chk"] if health.tls else []
-        connect = "    tcp-check connect ssl" if health.tls else "    tcp-check connect"
+            return ["    option ssl-hello-chk"] if health.tls is True else []
+        connect = "    tcp-check connect ssl" if health.tls is True else "    tcp-check connect"
         return [
             "    option tcp-check",
             connect,
@@ -1466,7 +1466,7 @@ def _health_lines(health: Health) -> list[str]:
         ]
 
     lines = ["    option httpchk"]
-    if health.tls:
+    if health.tls is True:
         lines.append("    http-check connect ssl")
     send = f"    http-check send meth GET uri {health.path}"
     if health.host is not None:
@@ -1482,28 +1482,71 @@ def _health_lines(health: Health) -> list[str]:
     return lines
 
 
+def _connects_with_ssl(health: Health) -> bool:
+    """Whether the check opens its own TLS connection, rather than just greeting.
+
+    `option ssl-hello-chk` is a handshake and nothing else - no certificate is
+    judged, and HAProxy asks for no verification policy, which the golden cases
+    prove by validating without one. `http-check connect ssl` and `tcp-check
+    connect ssl` are real connections, and those are the ones that need the
+    server line to say what happens to the certificate.
+    """
+
+    if health.tls is not True:
+        return False
+    return health.type == "http" or health.send is not None
+
+
+def _check_encryption(backend: Backend, health: Health) -> str:
+    """Whether the check speaks TLS, in HAProxy's words rather than the form's.
+
+    Three answers, and every one of them was measured on 3.4.4 on this machine
+    on 2026-09-05, against a local TLS server and a local plaintext one, with
+    `show stat` as the verdict rather than `haproxy -c`:
+
+    * **Following the pool** writes nothing. A TLS pool checked on its traffic
+      port inherits the handshake - `L7OK 200` - and a plain pool is checked in
+      plain.
+    * **A check port breaks that inheritance.** A TLS pool with `check port`
+      and nothing said ran the check *in plaintext* and answered `L7OK 200`
+      from a plaintext port, which is why `check-ssl` is written there. Sent to
+      a port that does not speak TLS it is `L6RSP` and the server goes down -
+      the same code that reached the health card and cost an evening.
+    * **`no-check-ssl` is the way to say plaintext on a TLS pool**, and it
+      works: `L7OK 200` against the plaintext port while traffic stays on TLS.
+      Without it the combination could not be expressed at all.
+
+    The fourth line, `verify none` for a TLS check on a plain pool, is on the
+    server line rather than here - it is a property of the connection, not of
+    the check - and lives in `_server_tls` with the rest of them.
+    """
+
+    if health.tls is False:
+        #
+        # Only where there is something to opt out of. On a plain pool the
+        # check is already plaintext, and the word would say a decision was
+        # made where none was needed.
+        #
+        return " no-check-ssl" if backend.tls is not None else ""
+    if backend.tls is not None and health.port is not None:
+        return " check-ssl"
+    return ""
+
+
 def _server_check(backend: Backend, server: Server) -> str:
-    """The check on the server line, and whether it is encrypted.
+    """The check on the server line, with whether it is encrypted beside it.
 
-    A pool reached over TLS is checked over TLS - but HAProxy only inherits
-    that when the check goes to the traffic port. Its own documentation for
-    3.4.4 on this machine, under `ssl`: "health checks are automatically sent
-    in SSL too unless there is a 'port' or an 'addr' directive indicating the
-    check should be sent to a different location."
-
-    So a check port on a TLS pool silently turned the probe into plaintext
-    against a port that speaks TLS. Nothing answers it, every server is marked
-    down, and the configuration reads as if it should work. `check-ssl` is
-    written for exactly that case, and only that case: without a check port the
-    inheritance already does it, and writing it anyway would say that this is
-    where the decision is made.
+    HAProxy's own documentation for 3.4.4 on this machine, under `ssl`: "health
+    checks are automatically sent in SSL too unless there is a 'port' or an
+    'addr' directive indicating the check should be sent to a different
+    location." Which of the three answers that leaves is `_check_encryption`.
     """
 
     health = backend.health
     if health.type == "disabled":
         return ""
     port = f" port {health.port}" if health.port is not None else ""
-    encrypted = " check-ssl" if backend.tls is not None and health.port is not None else ""
+    encrypted = _check_encryption(backend, health)
     #
     # No `check-sni`, and that is measured rather than assumed. Making the
     # check send the name too looks obviously right - a check that speaks a
@@ -1542,7 +1585,20 @@ def _server_tls(backend: Backend, server: Server) -> str:
     """
 
     if backend.tls is None:
-        return ""
+        #
+        # A plain pool whose check speaks TLS anyway - a health endpoint on its
+        # own TLS port, which happens. HAProxy defaults server-side SSL to
+        # verifying, and refuses a configuration that verifies with no CA:
+        # "verify is enabled by default but no CA file specified". `verify
+        # none` alone, without `ssl`, answers that without making the pool
+        # itself TLS - measured `L7OK 200` on 3.4.4, 2026-09-05.
+        #
+        # Not verified, and it cannot be. A certificate is checked against a
+        # name, HAProxy's check sends no SNI, and `check-sni` fails outright
+        # (see `_server_check`). The form says this in a sentence rather than
+        # leaving it to be discovered here.
+        #
+        return " verify none" if _connects_with_ssl(backend.health) else ""
     #
     # Two answers on one line, and they are separate questions. `verify` is
     # whether the certificate has to be trusted; the policy is how old the

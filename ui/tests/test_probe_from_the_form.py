@@ -16,7 +16,7 @@ import unittest
 
 from haproxy_mgmt.probe_socket import ProbeUnavailable
 
-from haproxy_ui.probe import MAX_TARGETS, run, source_address, targets_from
+from haproxy_ui.probe import MAX_TARGETS, caveats_for, run, source_address, targets_from
 
 
 def form(**fields: object) -> dict[str, object]:
@@ -69,11 +69,6 @@ class WhatTheNodesAreAskedToTry(unittest.TestCase):
             [entry["port"] for entry in targets_from(form(health_port="9443"))], [9443, 9443]
         )
 
-    def test_a_disabled_check_is_still_worth_trying_as_a_connection(self) -> None:
-        """ "Can the node reach this server at all" is the useful answer left."""
-
-        self.assertEqual(targets_from(form(health_type="disabled"))[0]["type"], "tcp")
-
     def test_the_check_follows_the_pool_onto_tls(self) -> None:
         system = targets_from(form(backend_tls="system"))[0]
         self.assertTrue(system["tls"])
@@ -83,6 +78,16 @@ class WhatTheNodesAreAskedToTry(unittest.TestCase):
         self.assertTrue(unverified["tls"])
         self.assertFalse(unverified["verify"])
 
+    def test_the_checks_own_protocol_overrides_the_pools(self) -> None:
+        """The three answers the generator writes, read the same way here."""
+
+        self.assertTrue(targets_from(form(health_tls="https"))[0]["tls"])
+        self.assertFalse(targets_from(form(backend_tls="system", health_tls="plain"))[0]["tls"])
+
+    def test_saying_nothing_follows_the_pool(self) -> None:
+        self.assertTrue(targets_from(form(backend_tls="system"))[0]["tls"])
+        self.assertFalse(targets_from(form())[0]["tls"])
+
     def test_a_line_that_is_not_a_server_is_skipped_rather_than_sent(self) -> None:
         targets = targets_from(form(servers="198.51.100.10:8080\nnot-a-server\n\n"))
         self.assertEqual(len(targets), 1)
@@ -90,6 +95,110 @@ class WhatTheNodesAreAskedToTry(unittest.TestCase):
     def test_a_pool_larger_than_the_bound_is_cut_rather_than_refused_by_the_node(self) -> None:
         many = "\n".join(f"198.51.100.10:{port}" for port in range(9000, 9000 + MAX_TARGETS + 5))
         self.assertEqual(len(targets_from(form(servers=many))), MAX_TARGETS)
+
+
+class WhetherTheVerdictIsTheChecksOwn(unittest.TestCase):
+    """The button runs the object's check early, so it must judge as the check judges."""
+
+    def report(self, status: int, **fields: object):
+        answer = answered(
+            [
+                {
+                    "node": "node-a",
+                    "reachable": True,
+                    "error": None,
+                    "results": [
+                        {
+                            "host": "198.51.100.10",
+                            "port": 8080,
+                            #
+                            # As the node sends it: anything from 200 to 399,
+                            # which is HAProxy's default and not this object's.
+                            #
+                            "ok": 200 <= status <= 399,
+                            "status": status,
+                            "error": None,
+                            "ms": 3,
+                        }
+                    ],
+                }
+            ]
+        )
+        return run("alpha", form(**fields), CHOICES, call=lambda *a, **k: answer)
+
+    def test_an_answer_outside_the_objects_range_fails_here_as_it_would_there(self) -> None:
+        report = self.report(200, health_expect_status="204")
+        self.assertEqual(report.failing, 1)
+        self.assertEqual(report.nodes[0].results[0].error, "answered 200, not 204")
+
+    def test_an_answer_inside_it_passes_even_where_the_node_called_it_bad(self) -> None:
+        report = self.report(404, health_expect_status="404")
+        self.assertEqual(report.failing, 0)
+        self.assertIsNone(report.nodes[0].results[0].error)
+
+    def test_a_range_is_read_as_a_range(self) -> None:
+        self.assertEqual(self.report(204, health_expect_status="200-299").failing, 0)
+        self.assertEqual(self.report(301, health_expect_status="200-299").failing, 1)
+
+    def test_an_unwritten_range_is_haproxys_own(self) -> None:
+        self.assertEqual(self.report(302).failing, 0)
+        self.assertEqual(self.report(404).failing, 1)
+
+    def test_a_row_with_no_status_keeps_the_reason_it_failed(self) -> None:
+        """A handshake that never happened has nothing to judge."""
+
+        answer = answered(
+            [
+                {
+                    "node": "node-a",
+                    "reachable": True,
+                    "error": None,
+                    "results": [
+                        {
+                            "host": "198.51.100.10",
+                            "port": 8080,
+                            "ok": False,
+                            "status": None,
+                            "error": "TLS failed: WRONG_VERSION_NUMBER",
+                            "ms": 2,
+                        }
+                    ],
+                }
+            ]
+        )
+        report = run(
+            "alpha", form(health_expect_status="204"), CHOICES, call=lambda *a, **k: answer
+        )
+        self.assertEqual(report.nodes[0].results[0].error, "TLS failed: WRONG_VERSION_NUMBER")
+
+    def test_an_object_without_a_check_has_nothing_to_trigger(self) -> None:
+        report = run(
+            "alpha",
+            form(health_type="disabled"),
+            CHOICES,
+            call=lambda *a, **k: self.fail("no node should have been asked"),
+        )
+        self.assertFalse(report.ran)
+        self.assertIn("no health check", str(report.problem))
+
+
+class WhatThisRunCannotReproduce(unittest.TestCase):
+    """Said on the page. A green row under an unsaid caveat is the failure to avoid."""
+
+    def test_a_tcp_exchange_is_not_run(self) -> None:
+        notes = caveats_for(form(health_type="tcp", health_send="PING"))
+        self.assertTrue(any("send and expect" in note for note in notes))
+        self.assertEqual(caveats_for(form(health_type="tcp")), ())
+
+    def test_an_expected_body_is_not_read(self) -> None:
+        notes = caveats_for(form(health_expect_body="ok"))
+        self.assertTrue(any("expected body" in note for note in notes))
+
+    def test_the_probe_sends_a_server_name_where_the_check_sends_none(self) -> None:
+        self.assertTrue(
+            any("server name" in note for note in caveats_for(form(backend_tls="none")))
+        )
+        self.assertEqual(caveats_for(form()), ())
 
 
 class WhichAddressTheProbeLeavesFrom(unittest.TestCase):

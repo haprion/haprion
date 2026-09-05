@@ -271,7 +271,14 @@ class ObjectForm(BaseModel):
     # was refused outright - honestly, but with nothing to do about it except
     # edit the file by hand.
     #
-    health_tls: bool = False
+    #
+    # Three answers, not a checkbox. "" follows the pool, which is what most
+    # objects want and what HAProxy does on its own; the other two say the
+    # check speaks TLS whatever the pool does, or does not whatever the pool
+    # does. The words are the pool's own - a person reading the form should not
+    # have to translate between "HTTPS" up there and "TLS" down here.
+    #
+    health_tls: Annotated[str, StringConstraints(max_length=8)] = ""
     health_expect_status: Annotated[str, StringConstraints(max_length=3)] = ""
     health_expect_body: Annotated[str, StringConstraints(max_length=255)] = ""
     health_send: Annotated[str, StringConstraints(max_length=255)] = ""

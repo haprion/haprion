@@ -869,7 +869,7 @@ class WhereTheFormOpens(EditorTestCase):
     def test_every_button_that_answers_on_this_page_keeps_the_position(self) -> None:
         """The list is the point of this test.
 
-        Test health was added to the form and not to the list, so pressing it
+        Test health check was added to the form and not to the list, so pressing it
         threw the reader back to the top of a form they were reading the bottom
         of - and the answer they had asked for rendered off-screen. A button
         added here later fails this test rather than being noticed by somebody
@@ -916,7 +916,7 @@ class AnObjectTheFormCannotOpen(EditorTestCase):
 class WhatEnterDoes(EditorTestCase):
     """A browser submits with the first submit button in tree order.
 
-    That was "Test health", which is inside the form because it asks about the
+    That was "Test health check", which is inside the form because it asks about the
     pool being edited - so Enter in any field ran a live probe against a node
     instead of validating what had been typed. The form now names its own
     default, so the answer does not depend on where a button happens to sit.

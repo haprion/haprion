@@ -25,6 +25,7 @@ from haproxy_mgmt.config import AbuseProtection, Cluster, Node, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, generate
 from haproxy_mgmt.proxy_model import (
     BALANCE,
+    STATUS_RANGE,
     ModelError,
     dump_document,
     load_proxy,
@@ -424,9 +425,28 @@ def build_document(form: dict[str, object]) -> str:
             health["host"] = text("health_host")
         if text("health_expect_status"):
             status = text("health_expect_status")
-            if not status.isdigit():
-                raise ValueError("the expected status must be a number")
-            health["expect_status"] = int(status)
+            #
+            # A status or a range, held to the model's own rule rather than to
+            # a second one written here. The form used to accept a single
+            # number only, while the document format and `http-check expect
+            # status` both take a range - so `200-299` could be written into an
+            # object, read back into this form, and refused on the way out. The
+            # probe read it as a range the form could not produce, which is how
+            # the difference was found.
+            #
+            if not STATUS_RANGE.match(status):
+                raise ValueError(
+                    "the expected status must be a status or a range, such as 200 or 200-299"
+                )
+            #
+            # Written as text, because the model reads it as text: a status is
+            # matched against a pattern that also has to accept `200-299`, and
+            # a YAML integer is not a string. Until this it was written as a
+            # number, so any value typed here produced a document the engine
+            # refused - the field could not be used at all, and the refusal
+            # named a rule the form gave no way to satisfy.
+            #
+            health["expect_status"] = status
         if text("health_expect_body"):
             health["expect_body"] = text("health_expect_body")
     if kind == "tcp":

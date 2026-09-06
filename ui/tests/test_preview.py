@@ -617,12 +617,32 @@ class EverythingTheModelAllowsInOneRouteAndOnePool(unittest.TestCase):
         self.assertEqual((health["type"], health["tls"]), ("tcp", True))
 
     def test_an_http_check_may_name_what_a_good_answer_is(self) -> None:
+        """Text, not a number, because the model reads it as text.
+
+        Written as a YAML integer until 2026-09-06, which the engine refuses:
+        the value is matched against a pattern that must also accept `200-299`.
+        Any status typed into the form therefore produced a document that could
+        not be published, and the refusal named a rule the form gave no way to
+        satisfy. A range is now accepted here too, for the same reason.
+        """
+
         document = self.document(
             health_type="http", health_expect_status="204", health_expect_body="ok"
         )
         health = document["backends"]["web"]["health"]
 
-        self.assertEqual((health["expect_status"], health["expect_body"]), (204, "ok"))
+        self.assertEqual((health["expect_status"], health["expect_body"]), ("204", "ok"))
+
+    def test_a_range_is_as_good_an_answer_as_a_status(self) -> None:
+        document = self.document(health_type="http", health_expect_status="200-299")
+
+        self.assertEqual(document["backends"]["web"]["health"]["expect_status"], "200-299")
+
+    def test_something_that_is_neither_is_refused_with_both_shapes_named(self) -> None:
+        with self.assertRaises(ValueError) as refused:
+            self.document(health_type="http", health_expect_status="twohundred")
+
+        self.assertIn("200-299", str(refused.exception))
 
     def test_a_tcp_check_may_hold_a_conversation(self) -> None:
         document = self.document(health_type="tcp", health_send="PING", health_expect="PONG")

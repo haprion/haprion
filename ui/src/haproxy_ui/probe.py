@@ -29,20 +29,21 @@ this service could not sudo if it tried, which is deliberate.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 from uuid import uuid4
 
+from haproxy_mgmt.check_policy import EffectiveCheck, effective_checks
 from haproxy_mgmt.probe_socket import ProbeUnavailable, ask, build_request
-from haproxy_mgmt.proxy_model import DEFAULT_EXPECT_STATUS, STATUS_RANGE
-from haproxy_mgmt.tls_policy import (
-    BACKEND_MIN_VERSION,
-    DEFAULT_BACKEND_POLICY,
-    DEFAULT_MIN_VERSION,
+from haproxy_mgmt.proxy_model import (
+    DEFAULT_EXPECT_STATUS,
+    STATUS_RANGE,
+    ModelError,
+    load_proxy,
 )
 
-from haproxy_ui.preview import check_kind, check_tls
+from haproxy_ui.preview import build_document
 
 #
 # The same bound the helper and the node hold. Named here so a pool with more
@@ -146,84 +147,37 @@ class ProbeReport:
         return tuple(node.node for node in self.nodes if node.source_held is True)
 
 
-def check_is_encrypted(form: Mapping[str, Any]) -> bool:
-    """Whether this object's check speaks TLS, read from the box that says so.
+def targets_from(checks: Sequence[EffectiveCheck]) -> list[dict[str, Any]]:
+    """The request, from the object's effective checks.
 
-    The Type box carries both halves - `https` is an http check over TLS - so
-    this is the same reading `build_document` makes before the generator ever
-    sees it. `tcp` and `http` on a pool reached over TLS are the plaintext
-    answers, which is what `no-check-ssl` says in the configuration.
+    Nothing is decided here any more. What the check does - its port, whether
+    it speaks TLS, what the pool's certificate is held to - is decided once in
+    `check_policy` and read by the generator from the same call, so the run and
+    the configuration cannot disagree about what was asked for. This turns that
+    answer into the field names the node's script expects, and does no more.
 
-    Rebuilt from the form rather than from the saved object, because that is
-    the question the button exists for: what this check will do once it is
-    saved.
+    Reading it from the form's fields instead is what this used to do, and it
+    is how the two drifted: B92 found four fields read wrongly here, so ticking
+    the check's own TLS box changed the configuration and changed nothing about
+    what was probed.
     """
 
-    chosen = str(form.get("health_type", "") or "").strip()
-    written = check_tls(chosen, str(form.get("backend_tls", "") or "").strip())
-    if written is not None:
-        return written
-    return bool(str(form.get("backend_tls", "") or "").strip())
+    return [
+        {
+            "host": check.host,
+            "port": check.port,
+            "type": check.type,
+            "tls": check.encrypted,
+            "verify": check.verify,
+            "path": check.path or "/",
+            "host_header": check.host_header or "",
+            "min_version": check.min_version,
+        }
+        for check in checks[:MAX_TARGETS]
+    ]
 
 
-def targets_from(form: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """What this object's check is, per server, as HAProxy would run it.
-
-    The check's own port replaces each server's traffic port where one is set,
-    which is what HAProxy does.
-
-    Whether the check is encrypted is read from both places the generator reads
-    it, because either one alone is a wrong answer. A pool reached over TLS is
-    checked over TLS - inherited when the check goes to the traffic port, and
-    written as `check-ssl` when a check port breaks that inheritance. On top of
-    that the check has a TLS box of its own, for a plain pool whose health
-    endpoint speaks TLS; that one writes `http-check connect ssl`. Reading only
-    the pool's box, as this did, meant ticking the check's own box changed the
-    configuration and changed nothing here.
-
-    `verify: none` means the same thing it means in the object - the
-    certificate is not judged.
-    """
-
-    def text(key: str) -> str:
-        return str(form.get(key, "") or "").strip()
-
-    kind = check_kind(text("health_type"))
-    tls = check_is_encrypted(form)
-    check_port = text("health_port")
-    #
-    # The floor the object asks for, as it stands on the screen. Taken from the
-    # form rather than from what is published, for the reason the whole card
-    # exists: the question is whether the check *would* work, and an unsaved
-    # `legacy` is exactly the change somebody is trying to test.
-    #
-    policy = text("backend_tls_policy") or DEFAULT_BACKEND_POLICY
-    min_version = BACKEND_MIN_VERSION.get(policy, DEFAULT_MIN_VERSION)
-
-    targets: list[dict[str, Any]] = []
-    for line in text("servers").splitlines():
-        entry = line.strip()
-        if not entry:
-            continue
-        host, separator, port = entry.rpartition(":")
-        if not separator or not port.isdigit():
-            continue
-        targets.append(
-            {
-                "host": host,
-                "port": int(check_port) if check_port.isdigit() else int(port),
-                "type": kind,
-                "tls": tls,
-                "verify": text("backend_tls") == "system",
-                "path": text("health_path") or "/",
-                "host_header": text("health_host"),
-                "min_version": min_version,
-            }
-        )
-    return targets[:MAX_TARGETS]
-
-
-def accepted_status(form: Mapping[str, Any]) -> tuple[int, int]:
+def accepted_status(checks: Sequence[EffectiveCheck]) -> tuple[int, int]:
     """Which answers this check calls good, as the object states it.
 
     The node cannot be asked to decide this. It holds one range for every
@@ -237,36 +191,42 @@ def accepted_status(form: Mapping[str, Any]) -> tuple[int, int]:
     the place to refuse a document.
     """
 
-    asked = str(form.get("health_expect_status", "") or "").strip() or DEFAULT_EXPECT_STATUS
+    asked = next(
+        (check.expect_status for check in checks if check.expect_status), DEFAULT_EXPECT_STATUS
+    )
     if not STATUS_RANGE.match(asked):
         asked = DEFAULT_EXPECT_STATUS
     low, _, high = asked.partition("-")
     return int(low), int(high or low)
 
 
-def caveats_for(form: Mapping[str, Any]) -> tuple[str, ...]:
-    """What this run does not reproduce about the check on the screen.
+def caveats_for(checks: Sequence[EffectiveCheck]) -> tuple[str, ...]:
+    """What this run does not reproduce about the check it stands in for.
 
     Said rather than silently passed. Each of these is a way for the probe to
     answer "Reached" where HAProxy would mark the server down, and a reader who
-    is shown a green row and no sentence has been told something untrue.
+    is shown a green row and no sentence has been told something untrue. The
+    row itself says so too, in one word - see `ProbeReport.complete` - and
+    these name which conditions it means.
+
+    Read from the effective checks and not from the form, for the reason the
+    request is: a caveat about a condition the object does not actually have,
+    or a missing one about a condition it does, is the same defect as probing
+    the wrong port.
     """
 
-    def text(key: str) -> str:
-        return str(form.get(key, "") or "").strip()
-
     notes: list[str] = []
-    if check_kind(text("health_type")) == "tcp" and text("health_send"):
+    if any(check.type == "tcp" and check.send for check in checks):
         notes.append(
             "The send and expect exchange is not run here. This opens the connection "
             "and stops there, so a server that answers the wrong thing still reads as reached."
         )
-    if check_kind(text("health_type")) == "http" and text("health_expect_body"):
+    if any(check.type == "http" and check.expect_body for check in checks):
         notes.append(
             "The expected body is not checked here. The node reads the status line and "
             "no more of the answer, so a page with the wrong contents still reads as reached."
         )
-    if check_is_encrypted(form):
+    if any(check.encrypted for check in checks):
         notes.append(
             "This sends the server name in the TLS handshake as SNI, and HAProxy's own check "
             "does not. The Host header is a different name and is sent by both. A pool that "
@@ -371,12 +331,38 @@ def run(
     """
 
     #
+    # The object as it stands on the screen, read by the engine. Unsaved on
+    # purpose - the question is whether the check *would* work, and the change
+    # somebody is testing has not been saved yet - but read the same way a
+    # publish would read it, so the check that runs is the check that would be
+    # written.
+    #
+    try:
+        proxy = load_proxy(
+            str(form.get("name", "") or "").strip() or "object",
+            build_document(dict(form)).encode(),
+        )
+    except (ValueError, ModelError) as refusal:
+        #
+        # Not a pool that failed. An object this version cannot read has no
+        # check to run, and probing an approximation of it would answer for a
+        # connection HAProxy will never make.
+        #
+        return ProbeReport(
+            ran=False,
+            source="",
+            nodes=(),
+            problem=f"This object cannot be read as written, so its check cannot be run: {refusal}",
+        )
+
+    checks = effective_checks(proxy)
+    #
     # Nothing to trigger. The button runs the object's check early, and an
     # object without one has no check to run - probing anyway would answer for
     # a connection HAProxy will never make, and read as a healthy pool that is
     # in fact unchecked.
     #
-    if check_kind(str(form.get("health_type", "") or "").strip()) == "disabled":
+    if not any(check.runs for check in checks):
         return ProbeReport(
             ran=False,
             source="",
@@ -384,7 +370,7 @@ def run(
             problem="This object has no health check. Choose a type above, then test it.",
         )
 
-    targets = targets_from(form)
+    targets = targets_from(checks)
     if not targets:
         return ProbeReport(
             ran=False, source="", nodes=(), problem="This pool names no server to check."
@@ -421,6 +407,6 @@ def run(
         return ProbeReport(ran=False, source="", nodes=(), problem=str(error["message"]))
 
     source, nodes = _read(payload)
-    if check_kind(str(form.get("health_type", "") or "").strip()) == "http":
-        nodes = _judged(nodes, accepted_status(form))
-    return ProbeReport(ran=True, source=source, nodes=nodes, caveats=caveats_for(form))
+    if any(check.type == "http" for check in checks):
+        nodes = _judged(nodes, accepted_status(checks))
+    return ProbeReport(ran=True, source=source, nodes=nodes, caveats=caveats_for(checks))

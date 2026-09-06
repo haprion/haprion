@@ -14,8 +14,11 @@ from __future__ import annotations
 import json
 import unittest
 
+from haproxy_mgmt.check_policy import EffectiveCheck, effective_checks
 from haproxy_mgmt.probe_socket import ProbeUnavailable
+from haproxy_mgmt.proxy_model import ModelError, load_proxy
 
+from haproxy_ui.preview import build_document
 from haproxy_ui.probe import (
     MAX_TARGETS,
     ProbeReport,
@@ -27,7 +30,20 @@ from haproxy_ui.probe import (
 
 
 def form(**fields: object) -> dict[str, object]:
+    """A whole object's form, because the probe now reads a whole object.
+
+    It used to be enough to name the health fields: the request was built from
+    them one at a time. It is built from the model now - the same load a
+    publish makes - so the form has to be one an object can be read from, and
+    a test that skipped the rest was testing a path the page cannot take.
+    """
+
     written: dict[str, object] = {
+        "name": "shop",
+        "protocol": "http",
+        "hostnames": "shop.example.com",
+        "balance": "roundrobin",
+        "redirect_status": "301",
         "servers": "198.51.100.10:8080\n198.51.100.11:8080",
         "health_type": "http",
         "health_path": "/healthz",
@@ -39,6 +55,19 @@ def form(**fields: object) -> dict[str, object]:
     }
     written.update(fields)
     return written
+
+
+def checks(**fields: object) -> tuple[EffectiveCheck, ...]:
+    """The object's effective checks, by the road the page takes to them.
+
+    Form to document to model to policy. Asserting on the checks alone would
+    prove nothing about what the button does; this is the whole derivation,
+    and it is the one that drifted before.
+    """
+
+    written = form(**fields)
+    document = build_document(dict(written))
+    return effective_checks(load_proxy(str(written["name"]), document.encode()))
 
 
 CHOICES = {
@@ -65,7 +94,7 @@ def answered(nodes: list[dict[str, object]], error: object = None) -> str:
 
 class WhatTheNodesAreAskedToTry(unittest.TestCase):
     def test_one_target_per_server_in_the_pool(self) -> None:
-        targets = targets_from(form())
+        targets = targets_from(checks())
         self.assertEqual([entry["host"] for entry in targets], ["198.51.100.10", "198.51.100.11"])
         self.assertEqual([entry["port"] for entry in targets], [8080, 8080])
         self.assertEqual(targets[0]["type"], "http")
@@ -73,43 +102,59 @@ class WhatTheNodesAreAskedToTry(unittest.TestCase):
 
     def test_a_check_port_replaces_the_traffic_port_the_way_haproxy_does(self) -> None:
         self.assertEqual(
-            [entry["port"] for entry in targets_from(form(health_port="9443"))], [9443, 9443]
+            [entry["port"] for entry in targets_from(checks(health_port="9443"))], [9443, 9443]
         )
 
     def test_a_tls_check_is_verified_the_way_the_pool_is(self) -> None:
-        """The box says the check speaks TLS; the pool says whose certificate is trusted."""
+        """The box says the check speaks TLS; the pool says whose certificate is trusted.
 
-        system = targets_from(form(health_type="https", backend_tls="system"))[0]
+        Named servers, because a verified pool refuses addressed ones - the
+        name is what the certificate is checked against. The old derivation
+        built a request for that combination anyway, which is a probe of a
+        configuration that cannot exist.
+        """
+
+        named = "pool-a.example.net:8080\npool-b.example.net:8080"
+        system = targets_from(checks(health_type="https", backend_tls="system", servers=named))[0]
         self.assertTrue(system["tls"])
         self.assertTrue(system["verify"])
 
-        unverified = targets_from(form(health_type="https", backend_tls="none"))[0]
+        unverified = targets_from(checks(health_type="https", backend_tls="none"))[0]
         self.assertTrue(unverified["tls"])
         self.assertFalse(unverified["verify"])
 
-        self.assertFalse(targets_from(form())[0]["tls"])
+        self.assertFalse(targets_from(checks())[0]["tls"])
 
     def test_the_type_box_carries_the_protocol_too(self) -> None:
         """`https` is an http check over TLS, which is what the box says."""
 
-        secure = targets_from(form(health_type="https"))[0]
+        secure = targets_from(checks(health_type="https"))[0]
         self.assertEqual((secure["type"], secure["tls"]), ("http", True))
 
-        plain = targets_from(form(health_type="http", backend_tls="system"))[0]
+        named = "pool-a.example.net:8080"
+        plain = targets_from(checks(health_type="http", backend_tls="system", servers=named))[0]
         self.assertEqual((plain["type"], plain["tls"]), ("http", False))
 
     def test_a_tcp_handshake_check_is_a_tcp_target(self) -> None:
-        handshake = targets_from(form(health_type="tcp-tls"))[0]
+        handshake = targets_from(checks(health_type="tcp-tls"))[0]
 
         self.assertEqual((handshake["type"], handshake["tls"]), ("tcp", True))
 
-    def test_a_line_that_is_not_a_server_is_skipped_rather_than_sent(self) -> None:
-        targets = targets_from(form(servers="198.51.100.10:8080\nnot-a-server\n\n"))
-        self.assertEqual(len(targets), 1)
+    def test_a_line_that_is_not_a_server_is_refused_rather_than_skipped(self) -> None:
+        """The model decides this now, and it refuses rather than dropping one.
+
+        Skipping was this module's own leniency, and it meant a probe could
+        report a whole pool green while quietly leaving a member out of it. The
+        engine reads the same line and says what is wrong with it, which is the
+        answer the editor gives everywhere else.
+        """
+
+        with self.assertRaises((ValueError, ModelError)):
+            checks(servers="198.51.100.10:8080\nnot-a-server\n\n")
 
     def test_a_pool_larger_than_the_bound_is_cut_rather_than_refused_by_the_node(self) -> None:
         many = "\n".join(f"198.51.100.10:{port}" for port in range(9000, 9000 + MAX_TARGETS + 5))
-        self.assertEqual(len(targets_from(form(servers=many))), MAX_TARGETS)
+        self.assertEqual(len(targets_from(checks(servers=many))), MAX_TARGETS)
 
 
 class WhetherTheVerdictIsTheChecksOwn(unittest.TestCase):
@@ -201,19 +246,19 @@ class WhatThisRunCannotReproduce(unittest.TestCase):
     """Said on the page. A green row under an unsaid caveat is the failure to avoid."""
 
     def test_a_tcp_exchange_is_not_run(self) -> None:
-        notes = caveats_for(form(health_type="tcp", health_send="PING"))
+        notes = caveats_for(checks(health_type="tcp", health_send="PING", health_expect="PONG"))
         self.assertTrue(any("send and expect" in note for note in notes))
-        self.assertEqual(caveats_for(form(health_type="tcp")), ())
+        self.assertEqual(caveats_for(checks(health_type="tcp")), ())
 
     def test_an_expected_body_is_not_read(self) -> None:
-        notes = caveats_for(form(health_expect_body="ok"))
+        notes = caveats_for(checks(health_expect_body="ok"))
         self.assertTrue(any("expected body" in note for note in notes))
 
     def test_the_probe_sends_a_server_name_where_the_check_sends_none(self) -> None:
         self.assertTrue(
-            any("server name" in note for note in caveats_for(form(health_type="https")))
+            any("server name" in note for note in caveats_for(checks(health_type="https")))
         )
-        self.assertEqual(caveats_for(form()), ())
+        self.assertEqual(caveats_for(checks()), ())
 
 
 class WhetherTheRunWasTheWholeCheck(unittest.TestCase):
@@ -227,7 +272,7 @@ class WhetherTheRunWasTheWholeCheck(unittest.TestCase):
     """
 
     def report(self, **fields: object) -> ProbeReport:
-        return ProbeReport(ran=True, source="", nodes=(), caveats=caveats_for(form(**fields)))
+        return ProbeReport(ran=True, source="", nodes=(), caveats=caveats_for(checks(**fields)))
 
     def test_a_check_this_run_can_reproduce_is_complete(self) -> None:
         self.assertTrue(self.report().complete)
@@ -236,7 +281,9 @@ class WhetherTheRunWasTheWholeCheck(unittest.TestCase):
         self.assertFalse(self.report(health_expect_body="ok").complete)
 
     def test_a_tcp_exchange_makes_the_run_partial(self) -> None:
-        self.assertFalse(self.report(health_type="tcp", health_send="PING").complete)
+        self.assertFalse(
+            self.report(health_type="tcp", health_send="PING", health_expect="PONG").complete
+        )
 
     def test_a_name_the_check_never_sends_makes_the_run_partial(self) -> None:
         """The one that passes here and fails there, rather than the reverse."""
@@ -332,9 +379,16 @@ class WhatThePageIsToldAfterwards(unittest.TestCase):
         self.assertIn("probe identity", str(report.problem))
 
     def test_a_pool_with_no_servers_is_said_rather_than_asked_about(self) -> None:
+        """In the engine's words, which is the point of reading the object.
+
+        A pool with no members is refused wherever it is read, and a second
+        sentence written here would be a second rule to keep in step with the
+        first. What the reader needs is that this is not a pool that failed.
+        """
+
         report = run("alpha", form(servers=""), CHOICES, call=lambda *a, **k: answered([]))
         self.assertFalse(report.ran)
-        self.assertIn("no server", str(report.problem))
+        self.assertIn("at least one server", str(report.problem))
 
 
 if __name__ == "__main__":

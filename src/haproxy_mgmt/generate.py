@@ -33,6 +33,7 @@ import ipaddress
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from haproxy_mgmt.check_policy import check_speaks_tls
 from haproxy_mgmt.config import AbuseProtection, ConfigError, UnknownHost, Vip
 from haproxy_mgmt.guid import (
     backend_guid,
@@ -1609,7 +1610,12 @@ def _check_encryption(backend: Backend, health: Health) -> str:
     the check - and lives in `_server_tls` with the rest of them.
     """
 
-    if health.tls is False:
+    #
+    # What the answer is comes from `check_policy`; this decides how to write
+    # it. The two used to be one function here, and the interface's probe held
+    # a second copy of the deciding half - which drifted, and cost B92.
+    #
+    if not check_speaks_tls(backend, health):
         #
         # Only where there is something to opt out of. On a plain pool the
         # check is already plaintext, and the word would say a decision was
@@ -1617,6 +1623,12 @@ def _check_encryption(backend: Backend, health: Health) -> str:
         #
         return " no-check-ssl" if backend.tls is not None else ""
     if backend.tls is not None and health.port is not None:
+        #
+        # Inheritance stops at a different port, so what would have been
+        # implied is written out. The decision is unchanged - this pool's
+        # check speaks TLS either way - and only its spelling depends on
+        # where the check is sent.
+        #
         return " check-ssl"
     return ""
 

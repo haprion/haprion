@@ -298,6 +298,7 @@ class WhetherTheChangeReachedTheNodes(unittest.TestCase):
             [self.version(29, published=True)],
             release_state="Deploy Pending",
             node_version="v25",
+            object_state="changed",
         )
 
         self.assertEqual(state.label, "Waiting for deploy")
@@ -316,11 +317,43 @@ class WhetherTheChangeReachedTheNodes(unittest.TestCase):
             [self.version(29, published=True)],
             release_state="Deploy Pending",
             node_version="v25",
-            reconfigured=False,
+            object_state="current",
         )
 
         self.assertEqual(state.label, "Serving")
         self.assertIn("v25", state.detail)
+
+    def test_an_object_the_nodes_have_never_had_is_waiting(self) -> None:
+        """A published object absent from the release the nodes run."""
+
+        state = publication(
+            f"{29:040d}",
+            [self.version(29, published=True)],
+            release_state="Deploy Pending",
+            node_version="v25",
+            object_state="absent",
+        )
+
+        self.assertEqual(state.label, "Waiting for deploy")
+
+    def test_an_object_nothing_could_be_read_about_claims_neither(self) -> None:
+        """The default, and the reason the parameter stopped being a boolean.
+
+        A boolean had to pick one of two claims when the truth was that the
+        comparison could not be made - and it picked "serving", so a release
+        with no manifest, or a node that never said what it runs, reported
+        every object as reaching the nodes.
+        """
+
+        state = publication(
+            f"{29:040d}",
+            [self.version(29, published=True)],
+            release_state="Deploy Pending",
+            node_version="v25",
+        )
+
+        self.assertEqual(state.label, "Unknown")
+        self.assertEqual(state.tone, "unknown")
 
     def test_a_commit_that_is_versioned_but_not_released_is_awaiting_publish(self) -> None:
         state = publication(

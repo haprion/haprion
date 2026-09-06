@@ -308,3 +308,47 @@ class HaproxysCodesAsSentences(unittest.TestCase):
 
     def test_nothing_stays_nothing(self) -> None:
         self.assertEqual(health.check_phrase(""), "")
+
+
+class TheStateOfEachObjectOnTheNodes(unittest.TestCase):
+    """Read from the status document, never derived a second time here.
+
+    The engine compares two release manifests and puts the answer in the
+    status. A web layer that worked it out again would be the second reader
+    that eventually disagrees with the first - which is the drift that made
+    the comparison necessary, back when the listing and the object page each
+    read the job history their own way.
+    """
+
+    def rows(self, objects: Any, cluster: str = "alpha") -> list[Reading]:
+        return [Reading(cluster=cluster, result={"nodes": [], "objects": objects})]
+
+    def test_each_object_carries_its_own_state(self) -> None:
+        rows = self.rows(
+            {
+                "shop": {"state": "current", "parts": []},
+                "intranet": {"state": "changed", "parts": ["routing"]},
+            }
+        )
+
+        self.assertEqual(
+            health.object_states(rows, cluster="alpha"),
+            {"shop": "current", "intranet": "changed"},
+        )
+
+    def test_another_clusters_reading_is_not_borrowed(self) -> None:
+        rows = self.rows({"shop": {"state": "current"}}, cluster="beta")
+
+        self.assertEqual(health.object_states(rows, cluster="alpha"), {})
+
+    def test_a_status_without_the_comparison_says_nothing(self) -> None:
+        """Every release published before manifests existed looks like this."""
+
+        rows = [Reading(cluster="alpha", result={"nodes": []})]
+
+        self.assertEqual(health.object_states(rows, cluster="alpha"), {})
+
+    def test_an_entry_that_is_not_a_state_is_left_out(self) -> None:
+        rows = self.rows({"shop": {"state": 7}, "intranet": "current"})
+
+        self.assertEqual(health.object_states(rows, cluster="alpha"), {})

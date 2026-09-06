@@ -124,13 +124,15 @@ def awaiting_deploy(jobs: Iterable[Job]) -> frozenset[str]:
     """Clusters whose network description was published since the last deploy.
 
     The same question the proxy listing asks about an object, asked about the
-    one description a cluster has: `objects.published_awaiting_deploy` reads
-    the names a publish carried, and a network publish carries no names - the
-    description is one document per cluster, so the answer is the cluster.
+    one description a cluster has. The listing no longer asks it of the jobs:
+    an object is compared release against release, by fingerprint, because a
+    job window ages and knows nothing of what the command line did. A network
+    publish carries no object names - the description is one document per
+    cluster - so the answer here is the cluster, and the jobs are still what
+    says a publish happened and a deploy has not.
 
-    Read from the jobs for the same reason: a publish job is what happened, and
-    a deploy job is what makes it current. Newest first, so the first finished
-    deploy for a cluster ends the search for that cluster.
+    Newest first, so the first finished deploy for a cluster ends the search
+    for that cluster.
 
     Bounded by whatever window the caller read, which understates rather than
     invents - the safe direction for a page that would otherwise claim a

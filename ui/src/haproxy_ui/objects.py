@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from haproxy_mgmt.generate import PORTS
+from haproxy_mgmt.object_manifest import CURRENT
 
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
@@ -27,6 +28,13 @@ from haproxy_ui.db import ClusterObjects, Job
 from haproxy_ui.history import VersionView
 from haproxy_ui.jobs import ATTENTION, error_code
 from haproxy_ui.proxies import ProxyView, Tone
+
+#
+# The engine's own word for an object nothing could be read about. Not a
+# state the manifest produces: it is what the status reports when a node did
+# not say what it runs, or the release it named carries no manifest.
+#
+UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,7 +186,7 @@ def publication(
     *,
     release_state: str = "",
     node_version: str = "",
-    reconfigured: bool = True,
+    object_state: str = UNKNOWN,
 ) -> Publication:
     """Whether the commit this object was read at has been released and deployed.
 
@@ -227,10 +235,16 @@ def publication(
     # And a deploy the nodes owe is not a deploy this object is waiting for.
     # The release is the cluster's, but a release carries only the objects the
     # publish named: every other object is byte for byte what the nodes are
-    # already serving. `reconfigured` is that per-object fact, read from the
-    # jobs the same way the listing reads it, and without it opening any
-    # untouched object during somebody else's pending deploy said the site was
-    # waiting on a change nobody had made to it.
+    # already serving. `object_state` is that per-object fact, and it comes
+    # from comparing the published release's manifest against the manifest of
+    # the release each node reports - not from the jobs, which knew only what
+    # this application published recently enough to still be in the listing.
+    #
+    # Which means the answer can be "we do not know", and it has to be said.
+    # The job window could not say it: an object it had no row for looked
+    # untouched, so an object changed from the command line, or changed longer
+    # ago than the window reaches, or changed by a network edit that never
+    # names it, was reported as being served.
     #
     #
     # "Unknown" is what the dashboard says about a cluster it could not read,
@@ -238,12 +252,20 @@ def publication(
     # report a deploy as owed on the strength of a status nobody had.
     #
     if release_state and release_state.lower() not in {"converged", "unknown"}:
-        if not reconfigured:
+        if object_state == CURRENT:
             return Publication(
                 "Serving",
                 f"The nodes are on {node_version or 'an earlier release'}, "
                 "which serves this object as written",
                 "healthy",
+                match.version,
+            )
+        if object_state == UNKNOWN:
+            return Publication(
+                "Unknown",
+                f"{match.version} is the release, and whether the nodes serve "
+                "this object as it is written could not be read",
+                "unknown",
                 match.version,
             )
         return Publication(
@@ -266,7 +288,7 @@ def build_object_detail(
     *,
     release_state: str = "",
     node_version: str = "",
-    reconfigured: bool = True,
+    object_state: str = UNKNOWN,
     vip: str | None = None,
     vip_address: str | None = None,
     vip_is_default: bool = False,
@@ -317,7 +339,7 @@ def build_object_detail(
                 versions,
                 release_state=release_state,
                 node_version=node_version,
-                reconfigured=reconfigured,
+                object_state=object_state,
             )
             if stored is not None
             else None
@@ -384,44 +406,6 @@ def names_being_published(jobs: Iterable[Job]) -> frozenset[str]:
         named = job.payload.get("objects") if isinstance(job.payload, Mapping) else None
         if isinstance(named, Mapping):
             waiting.update(name for name in named if isinstance(name, str))
-    return frozenset(waiting)
-
-
-def published_awaiting_deploy(jobs: Iterable[Job]) -> frozenset[str]:
-    """Objects published since the last deploy finished.
-
-    The fact a row can honestly carry. That the nodes are behind is true of the
-    cluster, and wearing it on every row said three objects had been changed
-    when one had - which is worse than saying nothing, because the two that
-    were untouched looked like work somebody had forgotten.
-
-    Read from the jobs rather than by comparing documents: a publish job names
-    exactly the objects it carried, and a deploy job is what makes them
-    current. So the answer is the names published after the newest finished
-    deploy, and it empties itself the moment one runs.
-
-    Bounded by whatever window the caller read. A publish older than that is
-    not reported, which is the safe direction: this understates rather than
-    invents.
-    """
-
-    waiting: set[str] = set()
-    for job in jobs:
-        if job.operation == "deploy" and job.state == "done":
-            #
-            # Newest first, so the first finished deploy ends the search: every
-            # publish older than it has already reached the nodes.
-            #
-            break
-        if job.operation != "objects_publish" or job.state != "done":
-            continue
-        named = job.payload.get("objects") if isinstance(job.payload, Mapping) else None
-        if isinstance(named, Mapping):
-            waiting.update(
-                name
-                for name, document in named.items()
-                if isinstance(name, str) and document is not None
-            )
     return frozenset(waiting)
 
 

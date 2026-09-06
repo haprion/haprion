@@ -400,6 +400,39 @@ def clusters_behind(rows: Iterable[Any]) -> frozenset[str]:
     return frozenset(behind)
 
 
+def object_states(rows: Iterable[Any], *, cluster: str) -> dict[str, str]:
+    """Per object, whether the nodes are serving the version that is published.
+
+    The engine decides this by comparing two release manifests - the published
+    one against the one each node reports - and the answer arrives in the
+    status document already made. Nothing is derived here: a second derivation
+    in the web layer is exactly the drift that made this comparison necessary
+    in the first place, when the listing and the object page each read the job
+    history their own way.
+
+    A name with no entry is not present in the mapping, and a caller that finds
+    none reports unknown. That includes every cluster whose published release
+    was built before manifests existed.
+    """
+
+    for row in rows:
+        if getattr(row, "cluster", None) != cluster:
+            continue
+        result = row.result if hasattr(row, "result") else None
+        if not isinstance(result, Mapping):
+            continue
+        entries = result.get("objects")
+        if not isinstance(entries, Mapping):
+            continue
+        states: dict[str, str] = {}
+        for name, entry in entries.items():
+            state = entry.get("state") if isinstance(entry, Mapping) else None
+            if isinstance(name, str) and isinstance(state, str):
+                states[name] = state
+        return states
+    return {}
+
+
 def served_objects(rows: Iterable[Any], *, cluster: str, names: Iterable[str]) -> frozenset[str]:
     """The objects some node reports a backend for: what is on the nodes now.
 

@@ -611,12 +611,24 @@ def build_router(config: Config) -> APIRouter:
             failed = {cluster: objects.publish_failures(rows) for cluster, rows in recent.items()}
             #
             # Per object, not per cluster. What the nodes are behind on is a
-            # release, but which objects that release changed is in the jobs -
-            # and a row that wore the cluster's fact claimed every site had
-            # been reconfigured when one had.
+            # release, but which objects that release changed is not: a row that
+            # wore the cluster's fact claimed every site had been reconfigured when
+            # one had.
+            #
+            # Read from the status rather than from the jobs. The jobs knew only
+            # what this application published recently enough to still be in the
+            # listing, so an object changed from the command line, or changed
+            # longer ago than the window reaches, wore no badge at all.
             #
             reconfigured = {
-                cluster: objects.published_awaiting_deploy(rows) for cluster, rows in recent.items()
+                view.cluster: frozenset(
+                    name
+                    for name, state in health.object_states(
+                        health_rows, cluster=view.cluster
+                    ).items()
+                    if state in {"changed", "absent"}
+                )
+                for view in overview.clusters
             }
             #
             # And what a finished removal took away that the nodes have not
@@ -964,10 +976,7 @@ def build_router(config: Config) -> APIRouter:
         # untouched site that it was waiting for a deploy - the same mistake
         # the listing rows made before they were given this per-object answer.
         #
-        with request.app.state.pool.connection() as connection:
-            reconfigured = name in objects.published_awaiting_deploy(
-                db.recent_jobs(connection, cluster=cluster)
-            )
+        object_state = health.object_states(status_rows, cluster=cluster).get(name, objects.UNKNOWN)
         detail = objects.build_object_detail(
             cluster,
             name,
@@ -976,7 +985,7 @@ def build_router(config: Config) -> APIRouter:
             versions,
             release_state=serving.release_state if serving else "",
             node_version=node_version,
-            reconfigured=reconfigured,
+            object_state=object_state,
             vip=vip.name if vip else None,
             vip_address=vip.address if vip else None,
             vip_is_default=vip is not None,

@@ -1,0 +1,34 @@
+#!/bin/bash
+#
+# Read all independently installed parts as one compatibility report.
+#
+#     sudo ./check-compatibility <answers-file>
+#
+# This changes nothing. Requirements come from the running UI release, not from
+# the checkout containing this wrapper, so the answer remains meaningful after
+# that checkout moves on to the next commit.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars PLATFORM_ROOT DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER CLUSTERS
+
+CLI_ROOT="${CLI_ROOT:-/opt/haproxy-mgmt}"
+clusters=()
+for cluster in $(each_cluster); do
+    clusters+=("$cluster")
+done
+
+exec "${PLATFORM_ROOT}/current/venv/bin/python" -m haproxy_ui.compatibility \
+    --platform-root "$PLATFORM_ROOT" \
+    --cli-root "$CLI_ROOT" \
+    --database "$DB_NAME" \
+    --database-role "$DB_MIGRATION_ROLE" \
+    --web-user "$WEB_USER" \
+    --worker-user "$WORKER_USER" \
+    --poller-user "$POLLER_USER" \
+    --clusters "${clusters[@]}"

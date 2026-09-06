@@ -816,6 +816,12 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
 | `haproxy-health-probe` | opens one connection per named target and reports the status line |
 
+Step 4 also writes `/etc/haproxy-manager/node-installation.json`. It records the
+node compatibility API and a SHA-256 digest for each of these seven scripts.
+`haproxy-node-status` recomputes the digests on every reading, so copied metadata
+cannot hide a script changed after installation. The report contains code
+digests only, never node configuration or key material.
+
 Two of these deserve attention:
 
 **`haproxy-cert-trigger` exists because sudoers cannot express a list.** The certificate IDs arrive
@@ -904,6 +910,11 @@ Release directories are `root:root`, directories and launchers are mode `555`, a
 mode `444`. The `current` link is replaced atomically only after the new release passes validation.
 Short stable wrappers and exact sudoers rules may point into `current/bin`; they must never point
 into a source checkout.
+
+`INSTALLATION.json` also records the engine compatibility API carried by the
+wheel. A wheel from before that metadata existed remains installable for
+rollback and is recorded as API zero; the whole-installation check will not
+silently treat an unknown old engine as compatible with a newer UI.
 
 ### Rollback
 
@@ -995,6 +1006,21 @@ what the running database reports, and it checks both directions.
 Both directions matters more than it sounds. A suite that only asks what a role
 must *not* do passes completely when a role has no privileges at all — which is
 a broken system reading as a perfectly secured one. Ask what must work too.
+
+`install/platform/check-compatibility` is the read-only check above that local
+database proof. Run it after the independently released pieces have been
+installed:
+
+```bash
+sudo ./check-compatibility /path/to/answers.env
+```
+
+The running UI release supplies the accepted database revisions and minimum CLI
+and node APIs. The command reports both release IDs, queries `alembic_version`,
+checks that worker, poller and web really execute from `current`, compares the
+active sudo rules with the helpers the UI requires, and reads each node bundle
+through the existing status helper. It ends in one `COMPATIBLE` or `INCOMPATIBLE`
+verdict and changes no file, row, service or HAProxy release.
 
 ### 4.5 HTTPS and the certificate
 

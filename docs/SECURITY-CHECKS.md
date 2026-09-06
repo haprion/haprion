@@ -21,6 +21,9 @@ The repository has complementary gates. No single scanner replaces the others.
    in both directions. It is a deployment check rather than a repository one, so it is not part of
    `run-checks` — but it belongs to the same family, and the reason it checks both directions is in
    [`INSTALLATION.md`](INSTALLATION.md#44-verifying-it).
+8. `install/platform/check-compatibility` reads the separately installed CLI, UI, schema, service
+   processes, sudo rules and node bundle metadata as one result. It changes nothing and fails on an
+   unknown compatibility level rather than assuming an older component is usable.
 
 A release wheel is installed only by `tools/install-release.py` with an explicitly supplied
 SHA-256 digest. The installer rejects path traversal, symlinks, special files and unexpected entry

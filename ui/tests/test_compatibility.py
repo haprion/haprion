@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+import json
+import re
+import tempfile
+import unittest
+from pathlib import Path
+
+from haproxy_ui import compatibility
+
+ROOT = Path(__file__).resolve().parents[2]
+MANIFEST = ROOT / "ui/src/haproxy_ui/compatibility.json"
+
+
+class CompatibilityMetadataTests(unittest.TestCase):
+    def test_the_running_ui_names_every_helper_its_services_need(self) -> None:
+        requirements = compatibility.load_requirements(MANIFEST)
+        worker = (ROOT / "install/platform/examples/haproxy-ui-worker.sudoers.example").read_text()
+        poller = (ROOT / "install/platform/examples/haproxy-ui-poller.sudoers.example").read_text()
+
+        self.assertEqual(
+            compatibility.active_sudo_rules(worker.replace("WORKER_USER", "svc-app")),
+            compatibility.expected_sudo_rules(
+                "svc-app", requirements.worker_helpers, Path("/opt/haproxy-mgmt")
+            ),
+        )
+        self.assertEqual(
+            compatibility.active_sudo_rules(poller.replace("POLLER_USER", "svc-app")),
+            compatibility.expected_sudo_rules(
+                "svc-app", requirements.poller_helpers, Path("/opt/haproxy-mgmt")
+            ),
+        )
+
+    def test_invalid_metadata_is_refused_instead_of_defaulted(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "compatibility.json"
+            path.write_text('{"schema_version":1,"requires":{}}')
+            with self.assertRaises(compatibility.CompatibilityError):
+                compatibility.load_requirements(path)
+
+    def test_requirements_match_this_deliverys_engine_schema_and_node_installer(self) -> None:
+        requirements = compatibility.load_requirements(MANIFEST)
+        engine = json.loads((ROOT / "src/haproxy_mgmt/compatibility.json").read_text())
+        self.assertGreaterEqual(engine["engine_api"], requirements.engine_api)
+
+        migrations = ROOT / "ui/migrations/versions"
+        revisions: set[str] = set()
+        parents: set[str] = set()
+        for path in migrations.glob("[0-9]*.py"):
+            text = path.read_text()
+            revision = re.search(r'^revision = "([0-9]+)"$', text, re.MULTILINE)
+            parent = re.search(r'^down_revision = "([0-9]+)"$', text, re.MULTILINE)
+            if revision is None:
+                self.fail(f"{path.name} has no revision")
+            revisions.add(revision.group(1))
+            if parent is not None:
+                parents.add(parent.group(1))
+        self.assertEqual(set(requirements.database_revisions), revisions - parents)
+
+        installer = (ROOT / "install/04-node-prepare").read_text()
+        node_api = re.search(r"^NODE_API=([0-9]+)$", installer, re.MULTILINE)
+        if node_api is None:
+            self.fail("the node installer has no API level")
+        self.assertEqual(int(node_api.group(1)), requirements.node_api)
+
+
+class SudoRuleTests(unittest.TestCase):
+    def test_comments_and_spacing_do_not_become_compatibility(self) -> None:
+        text = """\
+# explanation
+
+svc-app   ALL=(root)   NOPASSWD: /opt/example ""
+"""
+        self.assertEqual(
+            compatibility.active_sudo_rules(text),
+            ('svc-app ALL=(root) NOPASSWD: /opt/example ""',),
+        )
+
+
+class NodeCompatibilityTests(unittest.TestCase):
+    def test_a_current_bundle_at_the_required_api_is_usable(self) -> None:
+        name, api, current = compatibility._node_installation(
+            {
+                "name": "node-a",
+                "status": {"installation": {"node_api": 1, "scripts_current": True, "scripts": {}}},
+            }
+        )
+        self.assertEqual((name, api, current), ("node-a", 1, True))
+
+    def test_an_old_node_is_unknown_not_silently_api_zero(self) -> None:
+        self.assertEqual(
+            compatibility._node_installation({"name": "node-a", "status": {}}),
+            ("node-a", None, False),
+        )
+
+    def test_a_changed_script_invalidates_an_otherwise_new_bundle(self) -> None:
+        self.assertEqual(
+            compatibility._node_installation(
+                {
+                    "name": "node-a",
+                    "status": {
+                        "installation": {
+                            "node_api": 2,
+                            "scripts_current": False,
+                            "scripts": {},
+                        }
+                    },
+                }
+            ),
+            ("node-a", 2, False),
+        )
+
+
+class FrozenSchemaTests(unittest.TestCase):
+    def test_node_installation_metadata_is_documented_in_the_status_contract(self) -> None:
+        schema = json.loads((ROOT / "schemas/v1/haproxy-status.schema.json").read_text())
+        installation = schema["$defs"]["node_status"]["properties"]["installation"]
+        self.assertEqual(installation["required"], ["node_api", "scripts_current", "scripts"])
+
+
+if __name__ == "__main__":
+    unittest.main()

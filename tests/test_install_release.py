@@ -24,6 +24,10 @@ class InstallReleaseTests(unittest.TestCase):
         wheel = root / "haproxy_manager-0.1.0-py3-none-any.whl"
         with zipfile.ZipFile(wheel, "w") as archive:
             archive.writestr("haproxy_mgmt/__init__.py", "")
+            archive.writestr(
+                "haproxy_mgmt/compatibility.json",
+                '{"schema_version":1,"engine_api":1}\n',
+            )
             archive.writestr("haproxy_mgmt/cli/__init__.py", "")
             archive.writestr(
                 "haproxy_mgmt/cli/example.py",
@@ -58,6 +62,7 @@ class InstallReleaseTests(unittest.TestCase):
             metadata = json.loads((release / "INSTALLATION.json").read_text())
             self.assertEqual(metadata["wheel_sha256"], digest)
             self.assertEqual(metadata["entry_points"], ["haproxy-example"])
+            self.assertEqual(metadata["engine_api"], 1)
             self.assertEqual(stat.S_IMODE(release.stat().st_mode), 0o555)
             self.assertEqual(stat.S_IMODE((release / "bin/haproxy-example").stat().st_mode), 0o555)
             self.assertEqual(
@@ -101,6 +106,35 @@ class InstallReleaseTests(unittest.TestCase):
                 )
 
             self.assertNotEqual(digest, unsafe_digest)
+
+    def test_a_pre_metadata_wheel_remains_installable_as_engine_api_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw).resolve()
+            wheel, _ = self.make_wheel(work)
+            with zipfile.ZipFile(wheel, "r") as source:
+                members = {
+                    item.filename: source.read(item)
+                    for item in source.infolist()
+                    if item.filename != "haproxy_mgmt/compatibility.json"
+                }
+            wheel.unlink()
+            with zipfile.ZipFile(wheel, "w") as target:
+                for name, content in members.items():
+                    target.writestr(name, content)
+            digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+
+            release_id = install_release_module.install_release(
+                wheel=wheel,
+                expected_sha256=digest,
+                target=work / "target",
+                python=Path(sys.executable),
+                require_root=False,
+            )
+
+            metadata = json.loads(
+                ((work / "target/releases" / release_id) / "INSTALLATION.json").read_text()
+            )
+            self.assertEqual(metadata["engine_api"], 0)
 
 
 if __name__ == "__main__":

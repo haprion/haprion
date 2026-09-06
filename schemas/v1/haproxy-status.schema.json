@@ -222,6 +222,30 @@
           "type": "array",
           "items": { "$ref": "common.schema.json#/$defs/carried_certificate" }
         },
+        "installation": {
+          "description": "The node bundle's compatibility level and a digest check of every script installed with it. Absent from nodes installed before this measurement existed.",
+          "type": "object",
+          "required": ["node_api", "scripts_current", "scripts"],
+          "properties": {
+            "node_api": { "type": ["integer", "null"], "minimum": 1 },
+            "scripts_current": { "type": "boolean" },
+            "scripts": {
+              "type": "object",
+              "propertyNames": { "pattern": "^haproxy-[a-z0-9-]+$" },
+              "additionalProperties": {
+                "type": "object",
+                "required": ["expected_sha256", "installed_sha256", "current"],
+                "properties": {
+                  "expected_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                  "installed_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+                  "current": { "type": "boolean" }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "servers": {
           "description": "One row per pool member as the runtime reports it, null when the socket could not be read, and absent from a node still running an older status script.",
           "type": ["array", "null"],

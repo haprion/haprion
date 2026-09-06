@@ -15,6 +15,7 @@ sudo ./migrate ../answers.env
 sudo ./03-verify ../answers.env
 sudo ./04-platform-service ../answers.env
 sudo ./05-platform-nginx ../answers.env
+sudo ./check-compatibility ../answers.env
 ```
 
 Step 11 is optional and comes after them:
@@ -52,6 +53,11 @@ The order is not arbitrary. The release has to exist before the migrations run,
 because the migrations belong to the release being installed; and the schema has
 to exist before the service starts, because a service that starts against an
 empty database reports itself healthy and fails at the first request.
+
+The final compatibility check is read-only. It reports the running UI and CLI
+releases, database revision, actual service processes, exact worker/poller sudo
+rules and every node bundle. Its verdict uses compatibility levels shipped by
+the running UI rather than requiring unrelated release hashes to be equal.
 
 ## Step 1 — the filesystem
 
@@ -183,6 +189,29 @@ pending and Step 4 creates, starts and health-checks it instead.
 
 Rolling back is pointing `current` at the previous release and restarting. The
 platform is isolated from the command line, so it never touches HAProxy.
+
+## Checking the whole installation
+
+```bash
+sudo ./check-compatibility ../answers.env
+```
+
+The local install steps each prove their own result. This command answers the
+different question: whether the independently installed results work together.
+It changes nothing and contacts nodes only through the existing status path.
+
+`COMPATIBLE` requires the database revision accepted by the running UI, an
+installed CLI engine API new enough for that UI, every helper named by the UI,
+the exact worker and poller sudo rules, all three services executing from the
+current UI release, and node bundles at a sufficient API level whose recorded
+script digests still match. The release IDs are printed for diagnosis but are
+not compared for equality; a UI-only correction must not force an unrelated CLI
+or node rollout.
+
+An old component that predates compatibility metadata is reported as
+incompatible rather than guessed compatible. Install that component from the
+same delivery, then run the check again. The command does not install, migrate,
+restart or deploy anything on its own.
 
 ## Step 11 — retention
 

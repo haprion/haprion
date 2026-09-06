@@ -64,7 +64,7 @@ haproxy-objects-publish-helper = "haproxy_mgmt.cli.managed_objects_publish:main"
 # this is what makes them visible.
 #
 [tool.setuptools.package-data]
-haproxy_mgmt = ["py.typed"]
+haproxy_mgmt = ["py.typed", "compatibility.json"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

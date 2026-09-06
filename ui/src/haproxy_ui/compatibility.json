@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "requires": {
+    "database_revisions": [
+      "0020"
+    ],
+    "engine_api": 1,
+    "node_api": 1,
+    "poller_helpers": [
+      "haproxy-status-helper",
+      "haproxy-inventory-helper",
+      "haproxy-list-helper",
+      "haproxy-list-backups-helper",
+      "haproxy-cert-list-helper",
+      "haproxy-network-helper",
+      "haproxy-objects-helper"
+    ],
+    "worker_helpers": [
+      "haproxy-deploy-helper",
+      "haproxy-cert-deploy-helper",
+      "haproxy-revert-helper",
+      "haproxy-network-publish-helper",
+      "haproxy-objects-publish-helper"
+    ]
+  }
+}

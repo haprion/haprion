@@ -140,6 +140,32 @@ def inspect_wheel(
         return project, version, scripts, members
 
 
+def inspect_engine_api(wheel: Path) -> int:
+    """Read the engine's compatibility level without importing untrusted wheel code.
+
+    Wheels from before compatibility metadata remain installable for rollback. They
+    report level zero, which lets the read-only compatibility check describe them as
+    older without turning the release installer into a one-way door.
+    """
+
+    member = "haproxy_mgmt/compatibility.json"
+    try:
+        with zipfile.ZipFile(wheel) as archive:
+            if member not in archive.namelist():
+                return 0
+            document = json.loads(archive.read(member))
+    except (OSError, zipfile.BadZipFile, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise InstallError(f"invalid engine compatibility metadata: {exc}") from exc
+    if (
+        not isinstance(document, dict)
+        or document.get("schema_version") != 1
+        or type(document.get("engine_api")) is not int
+        or document["engine_api"] < 1
+    ):
+        raise InstallError("invalid engine compatibility metadata")
+    return int(document["engine_api"])
+
+
 def _write_launchers(
     bin_dir: Path,
     lib_dir: Path,
@@ -210,6 +236,7 @@ def install_release(
 
     runtime = inspect_runtime(python)
     project, version, scripts, _ = inspect_wheel(wheel)
+    engine_api = inspect_engine_api(wheel)
     release_id = f"{version}-{actual_sha256[:12]}"
     releases = target / "releases"
     final_release = releases / release_id
@@ -245,6 +272,7 @@ def install_release(
                 "python": runtime["python"],
                 "pyyaml": runtime["pyyaml"],
                 "entry_points": sorted(scripts),
+                "engine_api": engine_api,
             }
             (staging / "INSTALLATION.json").write_text(
                 json.dumps(installation, indent=2, sort_keys=True) + "\n", encoding="utf-8"

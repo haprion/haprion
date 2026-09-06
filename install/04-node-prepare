@@ -38,6 +38,7 @@ SCRIPTS=(
     haproxy-keepalived-state
     haproxy-state-export
 )
+NODE_API=1
 
 step "Service accounts"
 
@@ -145,6 +146,33 @@ for script in "${SCRIPTS[@]}"; do
     install -o root -g root -m 755 "node/${script}" "$target"
     log "  installed ${target}"
 done
+
+#
+# A compatibility level says whether two independently released components may
+# speak to each other. The hashes say whether this particular installation still
+# contains the bundle that declared that level. Keeping both avoids the two bad
+# shortcuts: requiring every harmless edit to be deployed everywhere, or trusting
+# a version marker beside scripts somebody later changed by hand.
+#
+node_installation="$(/usr/bin/python3 - "$NODE_API" "${SCRIPTS[@]}" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+scripts = {}
+for name in sys.argv[2:]:
+    scripts[name] = hashlib.sha256((Path("node") / name).read_bytes()).hexdigest()
+print(
+    json.dumps(
+        {"schema_version": 1, "node_api": int(sys.argv[1]), "scripts": scripts},
+        sort_keys=True,
+    )
+)
+PY
+)"
+install_file /etc/haproxy-manager/node-installation.json root:root 644 "$node_installation"
+log "  recorded node API ${NODE_API} and ${#SCRIPTS[@]} script digests"
 
 step "Node configuration"
 

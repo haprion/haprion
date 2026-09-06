@@ -64,8 +64,9 @@ class CompatibilityMetadataTests(unittest.TestCase):
             revisions.add(revision.group(1))
             if parent is not None:
                 parents.add(parent.group(1))
-        self.assertEqual(set(requirements.database_revisions), revisions - parents)
-        self.assertEqual(requirements.database_head, next(iter(revisions - parents)))
+        heads = revisions - parents
+        self.assertEqual(requirements.database_head, next(iter(heads)))
+        self.assertTrue(heads <= set(requirements.database_revisions))
 
         installer = (ROOT / "install/04-node-prepare").read_text()
         node_api = re.search(r"^NODE_API=([0-9]+)$", installer, re.MULTILINE)

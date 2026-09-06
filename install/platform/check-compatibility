@@ -15,13 +15,22 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars PLATFORM_ROOT DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER CLUSTERS
+require_vars PLATFORM_ROOT DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER
 
 CLI_ROOT="${CLI_ROOT:-/opt/haproxy-mgmt}"
-clusters=()
-for cluster in $(each_cluster); do
-    clusters+=("$cluster")
-done
+cluster_lines="$("${PLATFORM_ROOT}/current/venv/bin/python" - \
+    "${PLATFORM_ROOT}/config/ui.toml" <<'PY'
+import sys
+from pathlib import Path
+
+from haproxy_ui.config import load
+
+for cluster in load(Path(sys.argv[1])).clusters:
+    print(cluster)
+PY
+)" || die "cannot read clusters from the installed UI configuration"
+[[ -n "$cluster_lines" ]] || die "the installed UI configuration contains no clusters"
+mapfile -t clusters <<<"$cluster_lines"
 
 exec "${PLATFORM_ROOT}/current/venv/bin/python" -m haproxy_ui.compatibility \
     --platform-root "$PLATFORM_ROOT" \

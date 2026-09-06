@@ -19,7 +19,7 @@
       "path": "src/haproxy_mgmt/release_install.py",
       "message": "Overly permissive mask in open sets file to group readable.",
       "decided": "2026-08-28",
-      "reason": "Same release tree, same group: the staged files are created with the mode they will keep, so the open and the later chmod agree rather than leaving a window at a different mode."
+      "reason": "Same release tree, same group: the staged files are created with the mode they will keep, so the open and the later chmod agree rather than leaving a window at a different mode. Covers two writes since 2026-09-06 (B103): the node artifact under node_path, and MANIFEST.json beside it. The manifest is not pulled by a node and needs no group read of its own, but it lives in the release tree and is owned like the rest of it - a file in that tree with a mode of its own would be the exception somebody has to remember."
     },
     {
       "rule": "py/insecure-protocol",

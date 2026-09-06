@@ -1031,6 +1031,20 @@ check again without `--before-migration`. Only after those pass is the same
 prepared release activated by rerunning `install-ui-release` without `--prepare`.
 The final ordinary compatibility check proves the processes after the switch.
 
+`update-platform-release` owns that complete order for normal updates:
+
+```bash
+sudo ./update-platform-release /path/to/answers.env /path/to/source-tree
+```
+
+The CLI and node scripts remain independent installations; the command checks
+them and stops before migration when either is too old. It also requires the
+currently running UI to accept the candidate's declared database head. When a
+new revision would not be safe for the old process and for rollback, first ship
+a bridge UI release whose compatibility metadata accepts both revisions, then
+ship the migration release. A failure after activation runs the installed UI
+rollback command and checks the restored processes before returning failure.
+
 ### 4.5 HTTPS and the certificate
 
 `install/platform/05-platform-nginx` puts nginx in front of the web service and

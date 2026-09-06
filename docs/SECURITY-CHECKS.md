@@ -24,6 +24,9 @@ The repository has complementary gates. No single scanner replaces the others.
 8. `install/platform/check-compatibility` reads the separately installed CLI, UI, schema, service
    processes, sudo rules and node bundle metadata as one result. It changes nothing and fails on an
    unknown compatibility level rather than assuming an older component is usable.
+9. `install/platform/update-platform-release` applies those checks to a prepared candidate before
+   it migrates or activates anything, and proves the running release accepts the target schema so
+   the automatic UI rollback remains a supported combination.
 
 A release wheel is installed only by `tools/install-release.py` with an explicitly supplied
 SHA-256 digest. The installer rejects path traversal, symlinks, special files and unexpected entry

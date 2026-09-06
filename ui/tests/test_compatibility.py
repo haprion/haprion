@@ -38,6 +38,15 @@ class CompatibilityMetadataTests(unittest.TestCase):
             with self.assertRaises(compatibility.CompatibilityError):
                 compatibility.load_requirements(path)
 
+    def test_database_head_must_be_one_of_the_accepted_revisions(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "compatibility.json"
+            document = json.loads(MANIFEST.read_text())
+            document["requires"]["database_head"] = "9999"
+            path.write_text(json.dumps(document))
+            with self.assertRaisesRegex(compatibility.CompatibilityError, "database_head"):
+                compatibility.load_requirements(path)
+
     def test_requirements_match_this_deliverys_engine_schema_and_node_installer(self) -> None:
         requirements = compatibility.load_requirements(MANIFEST)
         engine = json.loads((ROOT / "src/haproxy_mgmt/compatibility.json").read_text())
@@ -56,6 +65,7 @@ class CompatibilityMetadataTests(unittest.TestCase):
             if parent is not None:
                 parents.add(parent.group(1))
         self.assertEqual(set(requirements.database_revisions), revisions - parents)
+        self.assertEqual(requirements.database_head, next(iter(revisions - parents)))
 
         installer = (ROOT / "install/04-node-prepare").read_text()
         node_api = re.search(r"^NODE_API=([0-9]+)$", installer, re.MULTILINE)
@@ -86,6 +96,41 @@ class PreparedReleaseTests(unittest.TestCase):
             (releases / "candidate").symlink_to(outside)
             with self.assertRaises(compatibility.CompatibilityError):
                 compatibility.named_release(root, "candidate", "UI")
+
+
+class UpgradeFailureTests(unittest.TestCase):
+    def requirements(self, *, head: str, accepts: tuple[str, ...]) -> compatibility.Requirements:
+        return compatibility.Requirements(
+            engine_api=2,
+            node_api=2,
+            database_head=head,
+            database_revisions=accepts,
+            worker_helpers=("worker-helper",),
+            poller_helpers=("poller-helper",),
+        )
+
+    def test_a_new_schema_needs_a_bridge_release_before_it_can_be_migrated(self) -> None:
+        active = self.requirements(head="0020", accepts=("0020",))
+        candidate = self.requirements(head="0021", accepts=("0021",))
+        self.assertEqual(
+            compatibility.schema_upgrade_failures(active, candidate, "0020"),
+            ("running UI does not accept candidate head 0021",),
+        )
+
+    def test_a_bridge_release_makes_both_live_migration_and_rollback_safe(self) -> None:
+        bridge = self.requirements(head="0020", accepts=("0020", "0021"))
+        candidate = self.requirements(head="0021", accepts=("0021",))
+        self.assertEqual(compatibility.schema_upgrade_failures(bridge, candidate, "0020"), ())
+
+    def test_an_old_or_unreadable_cli_is_not_silently_current(self) -> None:
+        self.assertEqual(compatibility.engine_api({"engine_api": 1}), 1)
+        self.assertEqual(compatibility.engine_api({"engine_api": "2"}), 0)
+
+    def test_a_missing_helper_is_visible_before_activation(self) -> None:
+        installed = compatibility.installed_entry_points(
+            {"entry_points": ["worker-helper", "poller-helper"]}
+        )
+        self.assertEqual({"new-helper"} - installed, {"new-helper"})
 
 
 class SudoRuleTests(unittest.TestCase):

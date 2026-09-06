@@ -63,6 +63,20 @@ releases, database revision, actual service processes, exact worker/poller sudo
 rules and every node bundle. Its verdict uses compatibility levels shipped by
 the running UI rather than requiring unrelated release hashes to be equal.
 
+After the first installation, use the coordinated update command instead of
+running the release and migration helpers separately:
+
+```bash
+sudo ./update-platform-release ../answers.env /path/to/source-tree
+```
+
+It prepares the candidate without moving `current`, checks the independently
+installed CLI, helpers and node bundles, proves that the running UI can tolerate
+the candidate's target schema, migrates from the candidate's own bundle, verifies
+database privileges, activates, and checks the real processes. A failure after
+the symlink moves invokes the installed rollback command and proves the restored
+installation before it reports failure.
+
 ## Step 1 — the filesystem
 
 Creates the release layout and the directories that outlive a release. Config,
@@ -224,9 +238,13 @@ correctly still run the previous release:
 sudo ./check-compatibility ../answers.env --release <release-id>
 ```
 
-Add `--before-migration` for the earlier prerequisite pass. It omits the schema
-revision as well; after `migrate --release`, rerun without that flag so the
-candidate's database contract is proved before activation.
+Add `--before-migration` for the earlier prerequisite pass. It checks the current
+revision against the running UI and requires that UI to accept the candidate's
+declared database head. That second condition is what makes both the live
+migration and rollback safe. A schema change the running release does not accept
+needs a bridge release which accepts both revisions before the migration release.
+After `migrate --release`, rerun without the flag so the candidate's own database
+contract is proved before activation.
 
 An old component that predates compatibility metadata is reported as
 incompatible rather than guessed compatible. Install that component from the

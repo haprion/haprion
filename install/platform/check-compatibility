@@ -46,7 +46,7 @@ if [[ -n "$release_id" ]]; then
     extra_args+=(--ui-release "$release_id" --skip-services)
 fi
 if [[ "$before_migration" -eq 1 ]]; then
-    extra_args+=(--skip-database)
+    extra_args+=(--upgrade-from-current)
 fi
 
 CLI_ROOT="${CLI_ROOT:-/opt/haproxy-mgmt}"

@@ -1,0 +1,85 @@
+#!/bin/bash
+#
+# Prepare, migrate, activate and prove one UI platform release as one update.
+#
+#     sudo ./update-platform-release <answers-file> <source-tree>
+#
+# The CLI and node bundle remain independent installations. This flow checks
+# them before it changes the database; it never installs either one. The first
+# platform installation still uses the numbered steps in README.md.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+answers="${1:-}"
+source_tree="${2:-}"
+load_answers "$answers"
+require_vars PLATFORM_ROOT DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER
+[[ -n "$source_tree" && -d "${source_tree}/ui" ]] \
+    || die "usage: $(basename "$0") <answers-file> <source-tree>"
+
+current="${PLATFORM_ROOT}/current"
+[[ -L "$current" ]] || die "${current} is missing; use the numbered first-install steps"
+previous_path="$(readlink -f "$current")"
+[[ -d "$previous_path" && "$previous_path" == "${PLATFORM_ROOT}/releases/"* ]] \
+    || die "${current} does not point into ${PLATFORM_ROOT}/releases"
+previous_id="$(basename "$previous_path")"
+rollback="/usr/local/sbin/haproxy-ui-rollback"
+[[ -x "$rollback" ]] || die "${rollback} is missing; reinstall the current UI release first"
+
+if [[ -n "$(git -C "$source_tree" status --porcelain)" ]]; then
+    die "the source tree has uncommitted changes. A release is a commit."
+fi
+commit="$(git -C "$source_tree" rev-parse --short=12 HEAD)"
+version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "${source_tree}/ui/pyproject.toml" | head -1)"
+[[ -n "$version" ]] || die "cannot read the version from ui/pyproject.toml"
+release_id="${version}-${commit}"
+
+step "Preparing ${release_id}"
+./install-ui-release --prepare "$answers" "$source_tree"
+
+step "Checking prerequisites and rollback-safe schema transition"
+./check-compatibility "$answers" --release "$release_id" --before-migration
+
+step "Migrating from the prepared release"
+./migrate "$answers" --release "$release_id"
+
+step "Proving database privileges after migration"
+./03-verify "$answers"
+
+step "Checking the complete candidate before activation"
+./check-compatibility "$answers" --release "$release_id"
+
+restore_previous() {
+    local active
+    active="$(readlink -f "$current" 2>/dev/null || true)"
+    if [[ "$active" != "${PLATFORM_ROOT}/releases/${release_id}" ]]; then
+        warn "the candidate is not current; no UI rollback is needed"
+        return 0
+    fi
+    warn "restoring UI release ${previous_id}"
+    "$rollback" --to "$previous_id"
+    ./check-compatibility "$answers" \
+        || die "release ${previous_id} was restored but the installation is not compatible"
+}
+
+step "Activating ${release_id}"
+if ! ./install-ui-release "$answers" "$source_tree"; then
+    restore_previous
+    die "activation failed; UI release ${previous_id} was restored"
+fi
+
+step "Proving the running installation"
+if ! ./check-compatibility "$answers"; then
+    restore_previous
+    die "the final compatibility check failed; UI release ${previous_id} was restored"
+fi
+
+echo
+log "platform update complete"
+log "  previous  ${previous_id}"
+log "  current   ${release_id}"
+log "  rollback  ${rollback} --to ${previous_id}"

@@ -16,6 +16,7 @@ import stat
 import subprocess  # noqa: S404 - fixed diagnostic commands are the boundary here
 import sys
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,7 @@ class CompatibilityError(ValueError):
 class Requirements:
     engine_api: int
     node_api: int
+    database_head: str
     database_revisions: tuple[str, ...]
     worker_helpers: tuple[str, ...]
     poller_helpers: tuple[str, ...]
@@ -76,10 +78,18 @@ def load_requirements(path: Path) -> Requirements:
             raise CompatibilityError(f"{name} must be a non-empty string list")
         return tuple(values)
 
+    database_head = required.get("database_head")
+    if not isinstance(database_head, str) or not database_head:
+        raise CompatibilityError("database_head must be a non-empty string")
+    revisions = strings("database_revisions")
+    if database_head not in revisions:
+        raise CompatibilityError("database_head must be one of database_revisions")
+
     return Requirements(
         engine_api=_positive_int(required.get("engine_api"), "engine_api"),
         node_api=_positive_int(required.get("node_api"), "node_api"),
-        database_revisions=strings("database_revisions"),
+        database_head=database_head,
+        database_revisions=revisions,
         worker_helpers=strings("worker_helpers"),
         poller_helpers=strings("poller_helpers"),
     )
@@ -136,6 +146,31 @@ def cli_metadata(release: Path) -> dict[str, Any]:
     if not isinstance(document, dict):
         raise CompatibilityError("CLI installation metadata is not an object")
     return document
+
+
+def engine_api(document: Mapping[str, Any]) -> int:
+    value = document.get("engine_api", 0)
+    return value if type(value) is int else 0
+
+
+def installed_entry_points(document: Mapping[str, Any]) -> set[str]:
+    value = document.get("entry_points")
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        return set()
+    return set(value)
+
+
+def schema_upgrade_failures(
+    active: Requirements, candidate: Requirements, current_revision: str
+) -> tuple[str, ...]:
+    """Why migrating under the active UI would make service or rollback unsafe."""
+
+    failures = []
+    if current_revision not in active.database_revisions:
+        failures.append(f"running UI does not accept current revision {current_revision}")
+    if candidate.database_head not in active.database_revisions:
+        failures.append(f"running UI does not accept candidate head {candidate.database_head}")
+    return tuple(failures)
 
 
 def active_sudo_rules(text: str) -> tuple[str, ...]:
@@ -290,6 +325,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ui-release")
     parser.add_argument("--skip-database", action="store_true")
     parser.add_argument("--skip-services", action="store_true")
+    parser.add_argument("--upgrade-from-current", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -314,20 +350,16 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\n== Releases")
     report.pass_("UI release", ui_release.name)
-    engine_api = installed_cli.get("engine_api", 0)
-    if type(engine_api) is int and engine_api >= requirements.engine_api:
-        report.pass_("CLI release", f"{cli_release.name}, engine API {engine_api}")
+    installed_engine_api = engine_api(installed_cli)
+    if installed_engine_api >= requirements.engine_api:
+        report.pass_("CLI release", f"{cli_release.name}, engine API {installed_engine_api}")
     else:
         report.fail(
             "CLI release",
-            f"{cli_release.name}, engine API {engine_api!r}; requires {requirements.engine_api}",
+            f"{cli_release.name}, engine API {installed_engine_api}; "
+            f"requires {requirements.engine_api}",
         )
-    entry_points = installed_cli.get("entry_points")
-    installed_helpers = (
-        set(entry_points)
-        if isinstance(entry_points, list) and all(isinstance(item, str) for item in entry_points)
-        else set()
-    )
+    installed_helpers = installed_entry_points(installed_cli)
     required_helpers = set(requirements.worker_helpers + requirements.poller_helpers)
     missing = sorted(required_helpers - installed_helpers)
     if missing:
@@ -344,6 +376,10 @@ def main(argv: list[str] | None = None) -> int:
         else:
             report.pass_("CLI helpers", f"{len(required_helpers)} required helpers installed")
 
+    if args.upgrade_from_current and not args.ui_release:
+        print("ERROR: --upgrade-from-current requires --ui-release", file=sys.stderr)
+        return 1
+
     if not args.skip_database:
         print("\n== Database")
         try:
@@ -351,9 +387,40 @@ def main(argv: list[str] | None = None) -> int:
         except CompatibilityError as exc:
             report.fail("schema revision", str(exc))
         else:
+            if args.upgrade_from_current:
+                try:
+                    active_release = current_release(args.platform_root, "UI")
+                    active_requirements = ui_requirements(active_release)
+                except CompatibilityError as exc:
+                    report.fail("schema transition", str(exc))
+                else:
+                    transition_failures = schema_upgrade_failures(
+                        active_requirements, requirements, revision
+                    )
+                    if not any("current revision" in failure for failure in transition_failures):
+                        report.pass_(
+                            "running schema", f"{revision}, accepted by {active_release.name}"
+                        )
+                    else:
+                        report.fail(
+                            "running schema",
+                            f"{revision}; running {active_release.name} does not accept it",
+                        )
+                    if not any("candidate head" in failure for failure in transition_failures):
+                        report.pass_(
+                            "rollback schema",
+                            f"{requirements.database_head}, accepted by {active_release.name}",
+                        )
+                    else:
+                        report.fail(
+                            "rollback schema",
+                            f"candidate head {requirements.database_head}; running "
+                            f"{active_release.name} does not accept it",
+                        )
+                revision = ""
             if revision in requirements.database_revisions:
                 report.pass_("schema revision", revision)
-            else:
+            elif not args.upgrade_from_current:
                 report.fail(
                     "schema revision",
                     f"{revision}; accepts {', '.join(requirements.database_revisions)}",

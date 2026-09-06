@@ -130,8 +130,13 @@ class WhatHappenedInBetween(unittest.TestCase):
         self.assertFalse(found[0].handed_over)
         self.assertEqual(found[0].counters["req_tot"], 7)
 
-    def test_a_window_that_changed_node_has_no_total(self) -> None:
-        """And the card says which of the two reasons it was."""
+    def test_a_window_that_changed_node_counts_the_rest_of_itself(self) -> None:
+        """The card keeps the 100 it saw, says which reason cost it the rest.
+
+        The handover interval is missing from the figure; node-b's own 100 is
+        not, and an operator asking whether the pool went quiet after a
+        failover is asking about exactly that.
+        """
 
         card = metrics.pool_traffic(
             "be_alpha",
@@ -143,7 +148,10 @@ class WhatHappenedInBetween(unittest.TestCase):
         )
         self.assertTrue(card.handed_over)
         self.assertFalse(card.restarted)
-        self.assertEqual(dict(card.totals).get("Requests"), None)
+        requests = next(total for total in card.totals if total.label == "Requests")
+        self.assertEqual(requests.value, 100)
+        self.assertFalse(requests.whole)
+        self.assertEqual(card.coverage, 50)
 
     def test_one_sample_is_no_interval_at_all(self) -> None:
         self.assertEqual(metrics.intervals([sample(0, uptime=100, req_tot=1)]), [])
@@ -161,13 +169,18 @@ class TotallingAWindow(unittest.TestCase):
         )
 
     def test_a_whole_window_has_a_total(self) -> None:
-        self.assertEqual(metrics.totalled(self.window(), "req_tot"), 10)
+        total = metrics.totalled(self.window(), "req_tot")
+        self.assertEqual(total.value, 10)
+        self.assertTrue(total.whole)
+        self.assertEqual(total.coverage, 100)
 
-    def test_a_window_with_a_gap_has_none(self) -> None:
-        """Not "sum what is known": that number reads as the window's traffic.
+    def test_a_window_with_a_gap_still_says_what_it_counted(self) -> None:
+        """The part that was measured is given, and it says how much that was.
 
-        Somebody comparing two windows would be comparing one that counted
-        everything against one that quietly skipped a restart.
+        Withholding it answers a month containing one reload with nothing at
+        all. What the earlier version was right about is that the bare number
+        would be read as the window's traffic - so the coverage travels with
+        it and the figure is a floor, stated as one.
         """
 
         broken = metrics.intervals(
@@ -177,12 +190,62 @@ class TotallingAWindow(unittest.TestCase):
                 sample(40, uptime=25, req_tot=9),
             ]
         )
-        self.assertIsNone(metrics.totalled(broken, "req_tot"))
+        total = metrics.totalled(broken, "req_tot")
+        self.assertEqual(total.value, 6)
+        self.assertFalse(total.whole)
+        self.assertEqual(total.coverage, 50)
+
+    def test_a_counter_the_node_never_reported_does_not_speak_for_the_window(self) -> None:
+        """It stars its own figure; it does not make the card claim a hole.
+
+        An earlier version took the card's coverage as the lowest across every
+        counter, so a column the node does not report announced 0% beside a
+        figure that covered half the window.
+        """
+
+        card = metrics.pool_traffic(
+            "be_alpha",
+            [
+                sample(0, uptime=100, node="node-a", req_tot=10),
+                sample(20, uptime=120, node="node-a", req_tot=17),
+            ],
+        )
+        self.assertEqual(card.coverage, 100)
+        unreported = next(total for total in card.totals if total.label == "4xx")
+        self.assertFalse(unreported.whole)
+        self.assertEqual(unreported.coverage, 0)
+
+    def test_coverage_is_time_rather_than_a_count_of_intervals(self) -> None:
+        """Two short holes in a long window are not half of it missing."""
+
+        broken = metrics.intervals(
+            [
+                sample(0, uptime=100, req_tot=10),
+                sample(900, uptime=1000, req_tot=910),
+                sample(910, uptime=5, req_tot=3),
+            ]
+        )
+        total = metrics.totalled(broken, "req_tot")
+        self.assertEqual(total.value, 900)
+        self.assertEqual(total.coverage, 98)
+
+    def test_a_partial_window_never_rounds_up_to_whole(self) -> None:
+        """99.6% is not 100, and the figure that says so is the one people trust."""
+
+        readings = [sample(0, uptime=100, req_tot=0)]
+        for step in range(1, 251):
+            readings.append(sample(step * 10, uptime=100 + step * 10, req_tot=step))
+        readings.append(sample(2520, uptime=5, req_tot=1))
+        total = metrics.totalled(metrics.intervals(readings), "req_tot")
+        self.assertFalse(total.whole)
+        self.assertEqual(total.coverage, 99)
 
     def test_an_empty_window_totals_zero_rather_than_unknown(self) -> None:
         """Nothing to subtract is not the same as something unsubtractable."""
 
-        self.assertEqual(metrics.totalled([], "req_tot"), 0)
+        total = metrics.totalled([], "req_tot")
+        self.assertEqual(total.value, 0)
+        self.assertTrue(total.whole)
 
 
 class DrawingTheShape(unittest.TestCase):

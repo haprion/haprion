@@ -308,23 +308,69 @@ def intervals(samples: Sequence[Sample]) -> list[Interval]:
     return found
 
 
-def totalled(found: Sequence[Interval], name: str) -> int | None:
-    """One counter summed over a run of intervals, or None if a gap makes it a lie.
+@dataclass(frozen=True, slots=True)
+class Total:
+    """One counter summed over a window, and how much of the window it covers.
 
-    Deliberately not "sum what is known and ignore the rest". A total over a
-    window that quietly skipped a restart reads as the traffic for that window
-    and is not, and somebody comparing two windows would be comparing one that
-    counted everything against one that did not. Either the window is whole or
-    it has no total.
+    **The coverage is not a footnote, it is half the reading.** An earlier
+    version answered a window with a hole in it with nothing at all, on the
+    grounds that a partial sum reads as the whole window's traffic and would be
+    compared against one that was complete. The danger is real; withholding the
+    number is the wrong answer to it. A month with one reload in it is a month
+    with one reload in it, and refusing to say anything about the other 27 days
+    leaves the operator with an em dash where the data is.
+
+    So the number is given and the coverage travels with it, always, in the same
+    breath. `whole` is what the strict version used to return; what changed is
+    that not-whole now still carries what was counted.
     """
 
-    running = 0
+    label: str
+    value: int
+    counted_sec: float
+    span_sec: float
+
+    @property
+    def whole(self) -> bool:
+        """Whether every interval in the window could be counted."""
+
+        return self.counted_sec >= self.span_sec
+
+    @property
+    def coverage(self) -> int:
+        """How much of the window the figure covers, as a whole percent.
+
+        Rounded down, so a window missing any measurable part of itself cannot
+        round up to a confident 100. An empty window covers nothing and says
+        100 rather than dividing by zero: there is no span to have missed, and
+        `measured` is the property that says the window is empty.
+        """
+
+        if self.span_sec <= 0:
+            return 100
+        return int(self.counted_sec / self.span_sec * 100)
+
+
+def totalled(found: Sequence[Interval], name: str, label: str = "") -> Total:
+    """One counter summed over a run of intervals, with the part it could not see.
+
+    Intervals whose difference could not be taken - a restart, a change of
+    node, a counter the node did not report - contribute neither to the value
+    nor to the time counted. The window's own span includes them, which is
+    precisely what makes the difference between the two visible.
+    """
+
+    value = 0
+    counted = 0.0
+    span = 0.0
     for interval in found:
-        value = interval.counters.get(name)
-        if value is None:
-            return None
-        running += value
-    return running
+        span += interval.seconds
+        amount = interval.counters.get(name)
+        if amount is None:
+            continue
+        value += amount
+        counted += interval.seconds
+    return Total(label=label, value=value, counted_sec=counted, span_sec=span)
 
 
 def spark_paths(
@@ -415,11 +461,11 @@ class PoolTraffic:
     started_at: datetime | None
     ended_at: datetime | None
     #
-    # (label, value) in `CARD_COUNTERS` order, value None where the window
-    # cannot be totalled. The template prints an em dash for those and says why
-    # in the title, rather than a zero nobody measured.
+    # One `Total` per `CARD_COUNTERS` entry, in that order. Each carries its
+    # own coverage, so a figure the window could not fully see is printed with
+    # what it did see rather than as an em dash.
     #
-    totals: tuple[tuple[str, int | None], ...]
+    totals: tuple[Total, ...]
     paths: tuple[str, ...]
     #
     # (percentage across, label) so the template can place each one without
@@ -432,6 +478,14 @@ class PoolTraffic:
     peak: int
     restarted: bool
     handed_over: bool = False
+    #
+    # How much of the window's time sits in intervals that could be measured at
+    # all, as a whole percent. A property of the window rather than of any one
+    # counter: a restart and a change of node cost every figure the same
+    # stretch, while a counter the node never reported costs only itself and
+    # says so on its own figure.
+    #
+    coverage: int = 100
 
     @property
     def quiet(self) -> bool:
@@ -448,7 +502,7 @@ class PoolTraffic:
         with a hole, which is a different sentence.
         """
 
-        return self.measured and all(value == 0 for _, value in self.totals)
+        return self.measured and all(total.whole and total.value == 0 for total in self.totals)
 
     @property
     def measured(self) -> bool:
@@ -488,10 +542,35 @@ def spark_ticks(
     return ticks
 
 
+def window_coverage(found: Sequence[Interval]) -> int:
+    """How much of a window's time could be measured at all, as a whole percent.
+
+    Counted from the structural gaps alone - a restart, a change of node -
+    because those are what cost every figure on the card the same stretch of
+    time. A counter the node did not report is a hole in that figure and not in
+    the window, and folding it in here once produced a card that announced 0%
+    coverage beside a figure covering half the window.
+
+    Rounded down, so a window missing a measurable part of itself cannot round
+    up to a confident 100.
+    """
+
+    span = sum(interval.seconds for interval in found)
+    if span <= 0:
+        return 100
+    measured = sum(
+        interval.seconds
+        for interval in found
+        if not interval.restarted and not interval.handed_over
+    )
+    return int(measured / span * 100)
+
+
 def pool_traffic(
     backend: str, samples: Sequence[Sample], *, tick_format: str = "%H:%M"
 ) -> PoolTraffic:
     found = intervals(samples)
+    totals = tuple(totalled(found, name, label) for name, label in CARD_COUNTERS)
     paths, peak = spark_paths(
         [interval.counters.get("req_tot") for interval in found],
         width=SPARK_WIDTH,
@@ -502,12 +581,13 @@ def pool_traffic(
         intervals=len(found),
         started_at=found[0].started_at if found else None,
         ended_at=found[-1].ended_at if found else None,
-        totals=tuple((label, totalled(found, name)) for name, label in CARD_COUNTERS),
+        totals=totals,
         paths=tuple(paths),
         ticks=tuple(spark_ticks(found, fmt=tick_format)),
         peak=peak,
         restarted=any(interval.restarted for interval in found),
         handed_over=any(interval.handed_over for interval in found),
+        coverage=window_coverage(found),
     )
 
 

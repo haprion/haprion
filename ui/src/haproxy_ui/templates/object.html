@@ -134,11 +134,14 @@
         {% if pool.peak %}<span class="traffic-peak">peak {{ pool.peak }} per {{ traffic_bucket }}</span>{% endif %}
       </div>
       <dl class="traffic-figures">
-        {% for label, value in pool.totals %}
-        <div><dt>{{ label }}</dt><dd>{% if value is none %}<span class="traffic-unknown" title="A restart or a change of node falls inside this window, or a counter was not reported, so the window cannot be totalled without inventing the part that is missing.">—</span>{% else %}{{ value }}{% endif %}</dd></div>
+        {% for total in pool.totals %}
+        <div><dt>{{ total.label }}</dt><dd>{{ total.value }}{% if not total.whole %}<span class="traffic-partial" title="Counted over {{ total.coverage }}% of this window. The rest fell inside an interval that could not be measured, so it is missing from this figure rather than counted as nothing.">*</span>{% endif %}</dd></div>
         {% endfor %}
       </dl>
     </div>
+    {% if pool.coverage < 100 %}
+    <p class="traffic-note">The figures marked * were counted over {{ pool.coverage }}% of this window. What the gaps contained is missing from them rather than counted as nothing, so they are a floor and not the window's traffic.</p>
+    {% endif %}
     {% if pool.quiet %}
     <p class="traffic-note">Nothing reached this pool in {{ traffic_window }}. That is a reading rather than a gap: the samples are there and every counter stood still.</p>
     {% endif %}

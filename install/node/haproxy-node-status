@@ -23,6 +23,15 @@ NODE_INSTALLATION = Path("/etc/haproxy-manager/node-installation.json")
 SBIN = Path("/usr/local/sbin")
 MAX_INSTALLATION_BYTES = 64 * 1024
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+NODE_SCRIPTS = (
+    "haproxy-pull-deploy",
+    "haproxy-cert-pull",
+    "haproxy-cert-trigger",
+    "haproxy-node-status",
+    "haproxy-health-probe",
+    "haproxy-keepalived-state",
+    "haproxy-state-export",
+)
 
 #
 # Assembled rather than written out. A literal PEM header in a file that is
@@ -48,6 +57,24 @@ def read_installation():
     hand-edited scripts is therefore not accepted as a current installation.
     """
 
+    def installed_scripts(expected_scripts=None):
+        scripts = {}
+        all_current = expected_scripts is not None
+        for name in NODE_SCRIPTS:
+            try:
+                installed = hashlib.sha256((SBIN / name).read_bytes()).hexdigest()
+            except Exception:
+                installed = None
+            expected = expected_scripts.get(name) if expected_scripts is not None else None
+            current = expected is not None and installed == expected
+            all_current = all_current and current
+            scripts[name] = {
+                "expected_sha256": expected,
+                "installed_sha256": installed,
+                "current": current,
+            }
+        return all_current, scripts
+
     try:
         if NODE_INSTALLATION.stat().st_size > MAX_INSTALLATION_BYTES:
             raise ValueError("installation metadata is too large")
@@ -58,12 +85,11 @@ def read_installation():
             or type(document.get("node_api")) is not int
             or document["node_api"] < 1
             or not isinstance(document.get("scripts"), dict)
+            or set(document["scripts"]) != set(NODE_SCRIPTS)
         ):
             raise ValueError("invalid installation metadata")
 
-        scripts = {}
-        all_current = True
-        for name, expected in sorted(document["scripts"].items()):
+        for name, expected in document["scripts"].items():
             if (
                 not isinstance(name, str)
                 or not re.fullmatch(r"haproxy-[a-z0-9-]+", name)
@@ -71,24 +97,15 @@ def read_installation():
                 or not SHA256.fullmatch(expected)
             ):
                 raise ValueError("invalid script metadata")
-            try:
-                installed = hashlib.sha256((SBIN / name).read_bytes()).hexdigest()
-            except Exception:
-                installed = None
-            current = installed == expected
-            all_current = all_current and current
-            scripts[name] = {
-                "expected_sha256": expected,
-                "installed_sha256": installed,
-                "current": current,
-            }
+        all_current, scripts = installed_scripts(document["scripts"])
         return {
             "node_api": document["node_api"],
-            "scripts_current": all_current and bool(scripts),
+            "scripts_current": all_current,
             "scripts": scripts,
         }
     except Exception:
-        return {"node_api": None, "scripts_current": False, "scripts": {}}
+        _, scripts = installed_scripts()
+        return {"node_api": None, "scripts_current": False, "scripts": scripts}
 
 
 def run(*argv):

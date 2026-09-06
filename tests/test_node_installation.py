@@ -11,6 +11,15 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "install/node/haproxy-node-status"
 READING = re.compile(r"^def read_installation\(\):.*?(?=^def run\()", re.DOTALL | re.MULTILINE)
+NODE_SCRIPTS = (
+    "haproxy-pull-deploy",
+    "haproxy-cert-pull",
+    "haproxy-cert-trigger",
+    "haproxy-node-status",
+    "haproxy-health-probe",
+    "haproxy-keepalived-state",
+    "haproxy-state-export",
+)
 
 
 class NodeInstallationReadingTests(unittest.TestCase):
@@ -35,19 +44,20 @@ class NodeInstallationReadingTests(unittest.TestCase):
             "SBIN": self.sbin,
             "MAX_INSTALLATION_BYTES": 64 * 1024,
             "SHA256": re.compile(r"^[0-9a-f]{64}$"),
+            "NODE_SCRIPTS": NODE_SCRIPTS,
         }
         exec(self.source, namespace)  # noqa: S102 - verbatim function from the node script
         return namespace["read_installation"]()  # type: ignore[operator,no-any-return]
 
     def install(self, content: bytes = b"script\n") -> None:
-        script = self.sbin / "haproxy-node-status"
-        script.write_bytes(content)
+        for name in NODE_SCRIPTS:
+            (self.sbin / name).write_bytes(content)
         self.metadata.write_text(
             json.dumps(
                 {
                     "schema_version": 1,
                     "node_api": 1,
-                    "scripts": {"haproxy-node-status": hashlib.sha256(content).hexdigest()},
+                    "scripts": {name: hashlib.sha256(content).hexdigest() for name in NODE_SCRIPTS},
                 }
             )
         )
@@ -65,9 +75,22 @@ class NodeInstallationReadingTests(unittest.TestCase):
         self.assertIs(result["scripts_current"], False)
 
     def test_missing_or_malformed_metadata_is_unknown(self) -> None:
-        self.assertEqual(self.read(), {"node_api": None, "scripts_current": False, "scripts": {}})
+        result = self.read()
+        self.assertIsNone(result["node_api"])
+        self.assertIs(result["scripts_current"], False)
+        self.assertEqual(set(result["scripts"]), set(NODE_SCRIPTS))
+        self.assertTrue(all(row["installed_sha256"] is None for row in result["scripts"].values()))
         self.metadata.write_text("{}")
-        self.assertEqual(self.read(), {"node_api": None, "scripts_current": False, "scripts": {}})
+        self.assertEqual(self.read(), result)
+
+    def test_missing_metadata_still_inventories_installed_scripts(self) -> None:
+        (self.sbin / "haproxy-node-status").write_bytes(b"installed\n")
+        result = self.read()
+        self.assertEqual(
+            result["scripts"]["haproxy-node-status"]["installed_sha256"],
+            hashlib.sha256(b"installed\n").hexdigest(),
+        )
+        self.assertIsNone(result["scripts"]["haproxy-node-status"]["expected_sha256"])
 
 
 if __name__ == "__main__":

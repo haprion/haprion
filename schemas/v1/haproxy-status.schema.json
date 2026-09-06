@@ -236,7 +236,7 @@
                 "type": "object",
                 "required": ["expected_sha256", "installed_sha256", "current"],
                 "properties": {
-                  "expected_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                  "expected_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
                   "installed_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
                   "current": { "type": "boolean" }
                 },

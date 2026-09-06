@@ -52,20 +52,27 @@ class WhatHappenedInBetween(unittest.TestCase):
             [sample(0, uptime=900, req_tot=4000), sample(20, uptime=8, req_tot=12)]
         )
         self.assertTrue(found[0].restarted)
-        self.assertIsNone(found[0].counters["req_tot"])
 
-    def test_the_new_process_total_is_not_the_interval(self) -> None:
-        """12 requests are real, but they are not what happened in this interval.
+    def test_the_new_process_total_is_what_it_counted_and_no_more(self) -> None:
+        """12 requests are real, and they are part of this interval.
 
-        The events before the restart were counted by a process that is gone.
-        Reporting the survivor's total would understate a busy minute as a
-        quiet one, on exactly the minute somebody is investigating.
+        This used to report nothing at all, on the grounds that the survivor's
+        total is not the interval's traffic. True, and the alternative was
+        worse: discarding it threw away as much traffic as the bucket was wide,
+        so the same reload subtracted a minute from the hour view and six hours
+        from the month - and the month then showed less than the day.
+
+        Measured on the live cluster 2026-09-06: one reload, 31 381 requests
+        over 24 hours against 18 702 over 30 days. What the process running now
+        has counted since it started is a measurement; the seconds before it
+        are what is unknown, and the interval stays marked for them.
         """
 
         found = metrics.intervals(
             [sample(0, uptime=900, req_tot=4000), sample(20, uptime=8, req_tot=12)]
         )
-        self.assertIsNone(found[0].counters["req_tot"])
+        self.assertEqual(found[0].counters["req_tot"], 12)
+        self.assertTrue(found[0].restarted)
 
     def test_a_counter_that_fell_is_refused_even_without_an_uptime(self) -> None:
         """An older node reports no uptime; a fall is still not a negative rate."""
@@ -194,7 +201,11 @@ class TotallingAWindow(unittest.TestCase):
             ]
         )
         total = metrics.totalled(broken, "req_tot")
-        self.assertEqual(total.value, 6)
+        #
+        # Six across the whole interval, and three the new process counted
+        # before the reading that closed the restart's own interval.
+        #
+        self.assertEqual(total.value, 9)
         self.assertFalse(total.whole)
         self.assertEqual(total.coverage, 50)
 
@@ -232,7 +243,7 @@ class TotallingAWindow(unittest.TestCase):
             ]
         )
         total = metrics.totalled(broken, "req_tot")
-        self.assertEqual(total.value, 900)
+        self.assertEqual(total.value, 903)
         self.assertEqual(total.coverage, 98)
 
     def test_a_partial_window_never_rounds_up_to_whole(self) -> None:
@@ -439,7 +450,7 @@ class DrawingTheShape(unittest.TestCase):
         counted = next(point for point in points if point.value == 3)
         self.assertIn("Requests 3", counted.reading)
         self.assertIn("Connection errors not measured", counted.reading)
-        self.assertIn(counted.at.strftime("%y-%m-%d %H:%M:%S"), counted.reading)
+        self.assertIn(metrics.shown(counted.at).strftime("%y-%m-%d %H:%M:%S"), counted.reading)
 
     def test_a_point_writes_its_moment_the_agreed_way(self) -> None:
         """`yy-mm-dd hh:mm:ss`, 24-hour: fixed width and read the same by anyone."""
@@ -519,6 +530,11 @@ class WhetherTheWindowSaysAnything(unittest.TestCase):
         )
         self.assertTrue(card.measured)
         self.assertTrue(card.restarted)
+        #
+        # Nothing was seen whole here, and the figures say so even though the
+        # new process's own count is carried: coverage is what was seen from
+        # end to end, not whether a number could be produced.
+        #
         self.assertEqual(card.coverage, 0)
         self.assertTrue(all(not total.whole for total in card.totals))
 
@@ -567,8 +583,15 @@ class WhichWindowIsAsked(unittest.TestCase):
             counters={"req_tot": 1500},
         )
         found = metrics.intervals([earlier, later])
+        #
+        # Seen, and therefore marked: the bucket's floor is what shows the
+        # restart the two readings hid. What is carried is the 1500 the process
+        # running at the end of the bucket had counted - which is this bucket's
+        # traffic since it started, and the reason the busiest hour is no
+        # longer reported as the quietest.
+        #
         self.assertTrue(found[0].restarted)
-        self.assertIsNone(found[0].counters["req_tot"])
+        self.assertEqual(found[0].counters["req_tot"], 1500)
 
 
 class LocatingTheShapeInTime(unittest.TestCase):
@@ -595,8 +618,12 @@ class LocatingTheShapeInTime(unittest.TestCase):
         """
 
         found = self.ticks(timedelta(hours=4))
-        self.assertEqual(found[0][1], START.strftime("%H:%M"))
-        self.assertEqual(found[-1][1], (START + timedelta(hours=4)).strftime("%H:%M"))
+        #
+        # Converted to the reader's clock, which is a separate question from
+        # which moments the axis spans. See `TheTimesAreTheReadersOwn`.
+        #
+        self.assertEqual(found[0][1], metrics.shown(START).strftime("%H:%M"))
+        self.assertEqual(found[-1][1], metrics.shown(START + timedelta(hours=4)).strftime("%H:%M"))
 
     def test_the_labels_are_evenly_spaced(self) -> None:
         found = self.ticks(timedelta(hours=4))
@@ -620,3 +647,34 @@ class LocatingTheShapeInTime(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheTimesAreTheReadersOwn(unittest.TestCase):
+    """Stored in UTC, shown in the clock the person is holding.
+
+    The card printed UTC, so an operator on CEST read 12:27 for something that
+    happened at 14:27 - two hours from the journal, from `systemctl`, and from
+    the deploy they were trying to line it up against. A traffic dip that
+    cannot be matched to the event that caused it is a card that sends somebody
+    to the wrong minute.
+    """
+
+    def test_a_moment_is_converted_rather_than_relabelled(self) -> None:
+        at = datetime(2026, 9, 6, 12, 32, tzinfo=UTC)
+
+        self.assertEqual(metrics.shown(at), at.astimezone())
+        self.assertEqual(metrics.shown(at).utcoffset(), at.astimezone().utcoffset())
+
+    def test_the_axis_labels_carry_the_conversion(self) -> None:
+        at = datetime(2026, 9, 6, 12, 32, tzinfo=UTC)
+        ticks = metrics.spark_ticks(start=at, end=at + timedelta(hours=1), fmt="%H:%M")
+
+        self.assertEqual(ticks[0][1], at.astimezone().strftime("%H:%M"))
+
+    def test_the_hover_carries_it_too(self) -> None:
+        """The two are read together; one of them in UTC would be worse than both."""
+
+        at = datetime(2026, 9, 6, 12, 32, tzinfo=UTC)
+
+        self.assertIn(at.astimezone().strftime("%H:%M"), metrics.unread_at(at))
+        self.assertIn(at.astimezone().strftime("%H:%M"), metrics.reading_at(at, {"req_tot": 5}))

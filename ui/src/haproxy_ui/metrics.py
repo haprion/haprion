@@ -253,10 +253,23 @@ def intervals(samples: Sequence[Sample]) -> list[Interval]:
     reported none - a counter that fell is still refused rather than guessed,
     because the alternative is reporting a busy minute as a quiet one.
 
-    Events between the last reading and the restart are lost either way. The
-    process that counted them is gone, and the new one starts from zero, so the
-    interval that spans a restart reports `None` rather than the new process's
-    total: that total is real, but it is not what happened in this interval.
+    **A restart loses what came before it and nothing after.** The process that
+    counted the earlier events is gone; the one that replaced it started at
+    zero, so its own counters are exactly the traffic since it started - a
+    measurement, not an estimate. That part is counted, and only the remainder
+    of the interval is unknown.
+
+    This used to report the whole interval as `None`, and how much that threw
+    away depended on the bucket: a minute on the hour view, six hours on the
+    month view. The same reload therefore subtracted six hours of traffic from
+    the month and a minute from the hour, so the longer window showed the
+    smaller number - which is not a coverage note, it is two answers to one
+    question. Measured on the live cluster 2026-09-06: 31 381 requests over 24
+    hours and 18 702 over 30 days, from one reload each window shared.
+
+    The interval is still marked `restarted`, because part of it is still
+    unaccounted for and the reader is owed that. What changed is that the part
+    that was measured is no longer discarded with it.
 
     **A change of node is refused for the same reason, and it does not show up
     in the uptime.** Pool members are recorded only from the node holding the
@@ -293,7 +306,27 @@ def intervals(samples: Sequence[Sample]) -> list[Interval]:
         for name in METRIC_COUNTERS:
             before = earlier.counters.get(name)
             after = later.counters.get(name)
-            if restarted or handed_over or before is None or after is None or after < before:
+            if handed_over or before is None or after is None:
+                #
+                # A handover is the case no arithmetic reaches: neither node
+                # observed what happened between the last reading of one and
+                # the first of the other, and the incoming node's totals are
+                # its own lifetime rather than this interval's.
+                #
+                counters[name] = None
+            elif restarted:
+                #
+                # What the process that is running now has counted since it
+                # started, which began inside this interval. The rest of the
+                # interval belonged to a process that is gone.
+                #
+                counters[name] = after
+            elif after < before:
+                #
+                # A counter that fell with no restart to explain it. Reporting
+                # a busy minute as a quiet one is the one outcome worse than
+                # reporting nothing.
+                #
                 counters[name] = None
             else:
                 counters[name] = after - before
@@ -355,10 +388,20 @@ class Total:
 def totalled(found: Sequence[Interval], name: str, label: str = "") -> Total:
     """One counter summed over a run of intervals, with the part it could not see.
 
-    Intervals whose difference could not be taken - a restart, a change of
-    node, a counter the node did not report - contribute neither to the value
-    nor to the time counted. The window's own span includes them, which is
-    precisely what makes the difference between the two visible.
+    Two questions, and they stopped having one answer when a restart began
+    carrying what the new process had counted. What was measured goes into the
+    value; what was *fully* seen decides the time counted. An interval spanning
+    a restart is both: the traffic since the new process started is real and is
+    counted, and the seconds before it belonged to a process that is gone - so
+    the interval still says the window was not seen whole.
+
+    Keying the coverage off "is there a number" was right while the two were
+    the same thing. It is not any more: it would have made a restart vanish
+    from the reading entirely, which is the marker doing the opposite of its
+    job.
+
+    A change of node contributes to neither. Nothing observed that interval at
+    all, so there is no half of it to keep.
     """
 
     value = 0
@@ -367,10 +410,10 @@ def totalled(found: Sequence[Interval], name: str, label: str = "") -> Total:
     for interval in found:
         span += interval.seconds
         amount = interval.counters.get(name)
-        if amount is None:
-            continue
-        value += amount
-        counted += interval.seconds
+        if amount is not None:
+            value += amount
+        if amount is not None and not interval.restarted and not interval.handed_over:
+            counted += interval.seconds
     return Total(label=label, value=value, counted_sec=counted, span_sec=span)
 
 
@@ -649,6 +692,23 @@ def spark(
     return [" ".join(run) for run in runs], points, peak
 
 
+def shown(at: datetime) -> datetime:
+    """One moment, in the clock the person reading it is holding.
+
+    Every time in this module is stored and reasoned about in UTC, which is
+    right, and was also what the card printed - so an operator on CEST read
+    12:27 for something that happened at 14:27 and correlated it against a
+    journal two hours away. A card whose times cannot be lined up against
+    `journalctl` or a deploy is a card that sends people to the wrong minute.
+
+    The host's own zone rather than a configured one: this page is read on the
+    machine's terms by whoever runs it, and a second setting to keep in step
+    would be a second way to be wrong.
+    """
+
+    return at.astimezone()
+
+
 def unread_at(at: datetime) -> str:
     """What a bucket says when the line rests on the baseline without a reading.
 
@@ -658,7 +718,7 @@ def unread_at(at: datetime) -> str:
     Tuesday" with a confident nothing, for an hour the poller was not running.
     """
 
-    return f"{at.strftime(TIMESTAMP)} · no reading"
+    return f"{shown(at).strftime(TIMESTAMP)} · no reading"
 
 
 def reading_at(at: datetime, totals: Mapping[str, int | None]) -> str:
@@ -674,7 +734,7 @@ def reading_at(at: datetime, totals: Mapping[str, int | None]) -> str:
     not known to be.
     """
 
-    when = at.strftime(TIMESTAMP)
+    when = shown(at).strftime(TIMESTAMP)
     parts = [
         f"{label} {value if (value := totals.get(name)) is not None else 'not measured'}"
         for name, label in CARD_COUNTERS
@@ -830,7 +890,7 @@ def spark_ticks(
     for index in range(count):
         share = index / (count - 1)
         at = start + timedelta(seconds=seconds * share)
-        ticks.append((share * 100, at.strftime(fmt)))
+        ticks.append((share * 100, shown(at).strftime(fmt)))
     return ticks
 
 

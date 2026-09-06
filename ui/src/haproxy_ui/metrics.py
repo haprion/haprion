@@ -15,9 +15,10 @@ days the samples are worth having.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 #
@@ -391,6 +392,102 @@ class Point:
     measured: bool = True
 
 
+#
+# The grid every bucket is measured from, and it must be an absolute moment
+# rather than the window's own start.
+#
+# The reader's SQL bins rows with `date_bin(width, observed_at, '2000-01-01')`,
+# which is a fixed grid. A drawing that binned the same readings from `now -
+# span` would use a grid that moves every time the page is loaded, and the two
+# would sit a fraction of a bucket apart: some buckets would hold two readings
+# and their neighbours none, which draws a sawtooth down to zero - and a
+# different sawtooth on every refresh. It did, for one release.
+#
+BUCKET_EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
+
+
+def _bucket_of(at: datetime, bucket: timedelta) -> int:
+    return int((at - BUCKET_EPOCH) / bucket)
+
+
+def bucketed(
+    found: Sequence[Interval],
+    *,
+    start: datetime,
+    end: datetime,
+    bucket: timedelta,
+) -> list[tuple[datetime, dict[str, int | None], bool]]:
+    """The window as fixed buckets, each carrying what happened inside it.
+
+    **Traffic is shared out over the time it covers, not dropped on one
+    bucket.** A reading answers for the stretch since the previous one, and
+    that stretch does not have to be one bucket: the poller runs on its own
+    period, a poll can be late, and a long window reads hourly rollup rows into
+    six-hour buckets. Attributing the whole count to the bucket the reading
+    lands in leaves its neighbours at zero and draws a spike beside a hole,
+    both invented. Splitting it by overlap keeps the total and puts it where
+    the time was.
+
+    A counter that could not be differenced anywhere across a bucket makes that
+    counter unknown for the bucket. It is not shared out as zero, which is the
+    one value it is known not to be.
+
+    Returns one entry per bucket in the window: when it begins, what it counted,
+    and whether anything was recorded for it at all.
+    """
+
+    #
+    # Whole buckets only. The window's edges fall wherever `now` puts them, so
+    # the first and last buckets it touches are part buckets - and a part
+    # bucket holds part of a bucket's traffic, which draws as a dip at each end
+    # that no reader can tell from a quiet minute. The one at the right is the
+    # minute in progress and dipped on every page load.
+    #
+    first = math.ceil((start - BUCKET_EPOCH) / bucket)
+    last = _bucket_of(end, bucket) - 1
+
+    counted: dict[int, dict[str, float]] = {}
+    unknown: dict[int, set[str]] = {}
+    touched: set[int] = set()
+
+    for interval in found:
+        span = interval.seconds
+        if span <= 0:
+            continue
+        for index in range(
+            _bucket_of(interval.started_at, bucket), _bucket_of(interval.ended_at, bucket) + 1
+        ):
+            edge = BUCKET_EPOCH + bucket * index
+            overlap = (
+                min(interval.ended_at, edge + bucket) - max(interval.started_at, edge)
+            ).total_seconds()
+            if overlap <= 0 or not first <= index <= last:
+                continue
+            touched.add(index)
+            share = overlap / span
+            for name in METRIC_COUNTERS:
+                value = interval.counters.get(name)
+                if value is None:
+                    unknown.setdefault(index, set()).add(name)
+                    continue
+                counted.setdefault(index, {})[name] = (
+                    counted.setdefault(index, {}).get(name, 0.0) + value * share
+                )
+
+    grid: list[tuple[datetime, dict[str, int | None], bool]] = []
+    for index in range(first, last + 1):
+        at = BUCKET_EPOCH + bucket * index
+        missing = unknown.get(index, set())
+        totals: dict[str, int | None] = {}
+        for name in METRIC_COUNTERS:
+            if name in missing:
+                totals[name] = None
+            else:
+                totals[name] = round(counted.get(index, {}).get(name, 0.0))
+        grid.append((at, totals, index in touched))
+    return grid
+
+
 def spark(
     found: Sequence[Interval],
     *,
@@ -406,85 +503,65 @@ def spark(
     readings evenly across the card, so a day of samples filled a 30-day view
     edge to edge and the same shape meant a different stretch of time in every
     window. Trends are read by comparing one part of a window against another;
-    that needs a fixed scale, so a point sits where its moment sits and a
-    period without readings is left empty rather than closed up.
+    that needs a fixed scale, so a point sits where its moment sits.
 
     **A bucket nothing was recorded for rests on the baseline.** The
-    maintainer's call, and the reason is the card's purpose: a trend is read
-    off a continuous line, and a window that only draws where the poller has
-    history gives a month-long view a short scribble in one corner. The cost is
-    stated rather than hidden - the line cannot then distinguish "no traffic"
-    from "no poller", so the hover says which of the two each bucket was, and
-    the figures beside the card carry their own coverage.
+    maintainer's call, and the reason is the card's purpose: a trend is read off
+    a continuous line, and a window that only draws where the poller has history
+    gives a month-long view a short scribble in one corner. The cost is stated
+    rather than hidden - the line cannot then separate "no traffic" from "no
+    poller", so the hover says which of the two each bucket was, and the figures
+    beside the card carry their own coverage.
 
-    **A reading that could not be differenced is still a gap.** A restart, a
-    change of node, a counter the node did not report: the line breaks there
-    and the next known value starts a new run. That is deliberately not the
-    same as an empty bucket. Something was measured across it and the
-    measurement cannot be turned into a rate, which is a narrower and more
-    suspicious thing than a stretch nobody sampled - and it is the one the
-    figures' coverage is counted from.
+    **A counter that could not be differenced is still a gap.** A restart, a
+    change of node, a counter the node did not report: the line breaks there and
+    the next known value starts a new run. That is deliberately not the same as
+    an empty bucket. Something was measured across it and could not be turned
+    into a rate, which is a narrower and more suspicious thing than a stretch
+    nobody sampled - and it is the one the figures' coverage is counted from.
 
-    Scaled to its own peak rather than to a fixed ceiling, because the question
-    a sparkline answers is "what shape", not "how much" - the figures beside it
+    Scaled to its own peak rather than to a fixed ceiling, because the question a
+    sparkline answers is "what shape", not "how much" - the figures beside it
     answer that. A window with no traffic has no peak to scale to and is drawn
     flat on the baseline, which is the truth: nothing happened.
     """
 
-    peak = max(
-        (value for interval in found if (value := interval.counters.get("req_tot")) is not None),
-        default=0,
-    )
-
     seconds = (end - start).total_seconds()
     if seconds <= 0 or bucket <= timedelta(0):
-        return [], [], peak
+        return [], [], 0
 
-    #
-    # The readings, indexed by the bucket their end falls in, so the grid below
-    # can ask for one by position rather than searching the list per bucket.
-    #
-    step = bucket.total_seconds()
-    measured: dict[int, Interval] = {}
-    for interval in found:
-        offset = (interval.ended_at - start).total_seconds()
-        if 0 <= offset <= seconds:
-            measured[min(int(offset // step), int(seconds // step))] = interval
+    grid = bucketed(found, start=start, end=end, bucket=bucket)
+    peak = max(
+        (value for _, totals, _ in grid if (value := totals.get("req_tot")) is not None),
+        default=0,
+    )
 
     runs: list[list[str]] = []
     current: list[str] = []
     points: list[Point] = []
 
-    for index in range(int(seconds // step) + 1):
-        at = start + timedelta(seconds=min(index * step, seconds))
-        reading = measured.get(index)
-        value = reading.counters.get("req_tot") if reading is not None else 0
+    for at, totals, measured in grid:
+        value = totals.get("req_tot")
+        position = min(max((at - start).total_seconds() / seconds, 0.0), 1.0)
+        x = position * width
         if value is None:
             if len(current) > 1:
                 runs.append(current)
             current = []
             points.append(
-                Point(
-                    at=reading.ended_at if reading else at,
-                    x=min(max((at - start).total_seconds() / seconds, 0.0), 1.0) * width,
-                    y=height,
-                    value=0,
-                    reading=reading_of(reading) if reading else unread_at(at),
-                    measured=reading is not None,
-                )
+                Point(at=at, x=x, y=height, value=0, reading=reading_at(at, totals), measured=True)
             )
             continue
-        x = min(max((at - start).total_seconds() / seconds, 0.0), 1.0) * width
         y = height if peak == 0 else height - (value / peak) * height
         current.append(f"{'M' if not current else 'L'}{x:.1f} {y:.1f}")
         points.append(
             Point(
-                at=reading.ended_at if reading else at,
+                at=at,
                 x=x,
                 y=y,
                 value=value,
-                reading=reading_of(reading) if reading else unread_at(at),
-                measured=reading is not None,
+                reading=reading_at(at, totals) if measured else unread_at(at),
+                measured=measured,
             )
         )
     if len(current) > 1:
@@ -505,8 +582,8 @@ def unread_at(at: datetime) -> str:
     return f"{at.strftime(TIMESTAMP)} · no reading"
 
 
-def reading_of(interval: Interval) -> str:
-    """What one point says when the pointer rests on it.
+def reading_at(at: datetime, totals: Mapping[str, int | None]) -> str:
+    """What one bucket says when the pointer rests on it.
 
     Every figure the card carries, not only the one the line draws, because the
     question a spike raises is usually about a different counter than the one
@@ -518,11 +595,11 @@ def reading_of(interval: Interval) -> str:
     not known to be.
     """
 
-    when = interval.ended_at.strftime(TIMESTAMP)
-    parts = []
-    for name, label in CARD_COUNTERS:
-        value = interval.counters.get(name)
-        parts.append(f"{label} {value if value is not None else 'not measured'}")
+    when = at.strftime(TIMESTAMP)
+    parts = [
+        f"{label} {value if (value := totals.get(name)) is not None else 'not measured'}"
+        for name, label in CARD_COUNTERS
+    ]
     return f"{when} · " + " · ".join(parts)
 
 

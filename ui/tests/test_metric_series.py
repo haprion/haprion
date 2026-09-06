@@ -307,19 +307,19 @@ class DrawingTheShape(unittest.TestCase):
     def test_an_empty_window_is_flat_on_the_baseline(self) -> None:
         paths, _, peak = self.drawn([0, 0, 0], span=timedelta(seconds=30))
         self.assertEqual(peak, 0)
-        self.assertEqual(paths, ["M0.0 20.0 L33.3 20.0 L66.7 20.0 L100.0 20.0"])
+        self.assertEqual(paths, ["M0.0 20.0 L33.3 20.0 L66.7 20.0"])
 
     def test_the_peak_touches_the_top(self) -> None:
         paths, _, peak = self.drawn([0, 10], span=timedelta(seconds=20))
         self.assertEqual(peak, 10)
-        self.assertEqual(paths, ["M0.0 20.0 L50.0 20.0 L100.0 0.0"])
+        self.assertEqual(paths, ["M0.0 20.0 L50.0 0.0"])
 
     def test_a_reading_sits_where_its_moment_sits(self) -> None:
         """The shape is read against the axis, not stretched to fill the card."""
 
         _, points, _ = self.drawn([1, 1], span=timedelta(seconds=200))
         placed = {round(point.x, 1): point for point in points if point.measured}
-        self.assertEqual(sorted(placed), [5.0, 10.0])
+        self.assertEqual(sorted(placed), [0.0, 5.0])
 
     def test_a_bucket_without_a_reading_rests_on_the_baseline(self) -> None:
         """One line across the whole window, on the maintainer's call.
@@ -332,9 +332,72 @@ class DrawingTheShape(unittest.TestCase):
 
         paths, points, _ = self.drawn([5, 5], span=timedelta(seconds=100))
         self.assertEqual(len(paths), 1)
-        self.assertEqual(len(points), 11)
+        self.assertEqual(len(points), 10)
         self.assertEqual(sum(1 for point in points if point.measured), 2)
-        self.assertTrue(paths[0].startswith("M0.0 20.0"))
+        #
+        # One unbroken run: the two measured buckets and then the baseline all
+        # the way to the window's end, rather than a line that stops.
+        #
+        self.assertTrue(paths[0].startswith("M0.0 "))
+        self.assertTrue(paths[0].endswith("L90.0 20.0"))
+
+    def test_the_buckets_do_not_move_with_the_window(self) -> None:
+        """The bug that drew a different sawtooth on every page load.
+
+        The reader's SQL bins rows on a fixed grid (`date_bin` from
+        2000-01-01). The drawing binned them from the window's own start, which
+        moves with `now`, so the two sat a fraction of a bucket apart: some
+        buckets held two readings and their neighbours none. Same readings,
+        same buckets, wherever the window happens to begin.
+        """
+
+        found = [
+            metrics.Interval(
+                started_at=START + timedelta(seconds=step * 10),
+                ended_at=START + timedelta(seconds=(step + 1) * 10),
+                counters=dict.fromkeys(metrics.METRIC_COUNTERS) | {"req_tot": 5},
+                restarted=False,
+            )
+            for step in range(6)
+        ]
+        moments = []
+        for drift in (timedelta(0), timedelta(seconds=3), timedelta(seconds=7)):
+            _, points, _ = metrics.spark(
+                found,
+                width=100,
+                height=20,
+                start=START - timedelta(seconds=30) + drift,
+                end=START + timedelta(seconds=60) + drift,
+                bucket=timedelta(seconds=10),
+            )
+            moments.append([point.at for point in points if point.measured])
+        self.assertEqual(moments[0], moments[1])
+        self.assertEqual(moments[1], moments[2])
+        self.assertEqual(len(moments[0]), 6)
+
+    def test_traffic_is_shared_over_the_time_it_covers(self) -> None:
+        """A reading answers for the stretch since the last one, not for a point.
+
+        A poll that arrives late covers two buckets, and dropping its whole
+        count on the one it landed in leaves a hole beside a spike - both
+        invented. The total across the window is what must survive.
+        """
+
+        found = [
+            metrics.Interval(
+                started_at=START,
+                ended_at=START + timedelta(seconds=30),
+                counters=dict.fromkeys(metrics.METRIC_COUNTERS) | {"req_tot": 30},
+                restarted=False,
+            )
+        ]
+        grid = metrics.bucketed(
+            found,
+            start=START,
+            end=START + timedelta(seconds=30),
+            bucket=timedelta(seconds=10),
+        )
+        self.assertEqual([totals["req_tot"] for _, totals, _ in grid], [10, 10, 10])
 
     def test_a_bucket_nobody_sampled_says_so_on_hover(self) -> None:
         """Drawn at zero, and never claiming zero was measured."""
@@ -353,8 +416,9 @@ class DrawingTheShape(unittest.TestCase):
         sampled, so the line breaks here where it rests on the baseline there.
         """
 
-        paths, _, _ = self.drawn([1, None, 1], span=timedelta(seconds=40))
+        paths, _, _ = self.drawn([1, 1, None, 1, 1], span=timedelta(seconds=60))
         self.assertEqual(len(paths), 2)
+        self.assertTrue(paths[1].startswith("M50.0"))
 
     def test_a_point_says_the_moment_and_every_figure(self) -> None:
         """Including the ones the line does not draw, and the ones unmeasured."""

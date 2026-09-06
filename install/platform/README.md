@@ -10,9 +10,11 @@ Run them after the CLI installation, with the same answers file:
 ```bash
 sudo ./01-platform-prepare ../answers.env
 sudo ./02-platform-database ../answers.env
-sudo ./install-ui-release ../answers.env /path/to/source-tree
-sudo ./migrate ../answers.env
+sudo ./install-ui-release --prepare ../answers.env /path/to/source-tree
+sudo ./migrate ../answers.env --release <release-id>
 sudo ./03-verify ../answers.env
+sudo ./check-compatibility ../answers.env --release <release-id>
+sudo ./install-ui-release ../answers.env /path/to/source-tree
 sudo ./04-platform-service ../answers.env
 sudo ./05-platform-nginx ../answers.env
 sudo ./check-compatibility ../answers.env
@@ -49,10 +51,12 @@ and poller accounts receive no production credentials, never contact
 production, and can only read the bounded static copy written under the dev
 platform's `config/` directory.
 
-The order is not arbitrary. The release has to exist before the migrations run,
-because the migrations belong to the release being installed; and the schema has
-to exist before the service starts, because a service that starts against an
-empty database reports itself healthy and fails at the first request.
+The order is not arbitrary. A release is first prepared without moving `current`.
+Its own immutable migration bundle prepares the schema, and its compatibility is
+checked before it becomes active. Only then is the release activated and checked
+again with the real running processes. The schema has to exist before the service
+starts, because a service that starts against an empty database reports itself
+healthy and fails at the first request.
 
 The final compatibility check is read-only. It reports the running UI and CLI
 releases, database revision, actual service processes, exact worker/poller sudo
@@ -113,10 +117,10 @@ command line each time, which meant getting them wrong each time.
 `ALEMBIC_BIN` names the **development** environment's alembic, never a release's:
 alembic is a development dependency and a release is built with `--no-dev`, so no
 release venv contains it - correctly, because a running service must not be able
-to alter the schema it reads. That is not a release running from a checkout;
-`./migrate` reads the migrations from the source tree by design, and alembic is
-the tool that applies them rather than application code that serves requests. The
-application itself is only ever installed from a wheel.
+to alter the schema it reads. The migration files themselves are copied into the
+prepared release and verified against its commit. `./migrate --release` reads that
+bundle, so the schema cannot accidentally come from a newer checkout. Alembic is
+the tool that applies them rather than application code that serves requests.
 
 An environment variable of either name still overrides the answers file, for the
 one-off case of testing a different version.
@@ -148,7 +152,9 @@ be lost with nothing looking wrong.
 
 ## Installing a release
 
-`./install-ui-release` builds one and activates it.
+`./install-ui-release --prepare` builds a release without activating it. After
+its migration and candidate compatibility checks, rerun the command without
+`--prepare` to activate that already verified release.
 
 **A release is a commit.** The installer refuses a source tree with uncommitted
 changes, because a release built from an edited tree is one nobody can
@@ -156,9 +162,10 @@ reproduce — and the moment it is running, "what is in it" has no answer. The
 release is named after the commit, so reading the `current` symlink answers that
 question, and answers it the same way in a year.
 
-The release directory holds one thing: a virtual environment with both
-distributions installed non-editably. One directory replaced whole is simpler
-than code beside an environment, and it cannot half-update.
+The release directory holds a virtual environment with both distributions
+installed non-editably and the matching Alembic environment under `migration/`.
+The runtime cannot invoke Alembic, but an operator can prepare exactly the schema
+that the named release expects before moving `current`.
 
 **It is built at its final path, never staged and renamed.** A virtual
 environment is not relocatable: every console script carries an absolute shebang
@@ -176,8 +183,9 @@ scripts must point into the release — because the symptom is `203/EXEC` and
 "no such file or directory", which reads as almost anything else.
 
 Nothing becomes current until the release has been imported successfully **as
-the account that will run it**. A release the service cannot read, or that
-cannot import its own dependencies, must not be what a restart picks up. The
+the account that will run it**. In the update path it is also migrated and
+checked by name while the old processes still run. A release the service cannot
+read, or that cannot import its own dependencies, must not be what a restart picks up. The
 symlink is then written beside and renamed over, so a service restarting during
 the switch finds one release or the other and never nothing.
 
@@ -207,6 +215,18 @@ current UI release, and node bundles at a sufficient API level whose recorded
 script digests still match. The release IDs are printed for diagnosis but are
 not compared for equality; a UI-only correction must not force an unrelated CLI
 or node rollout.
+
+Before activation, name a prepared release explicitly. The check then reads that
+candidate's requirements and omits only the process check, because the processes
+correctly still run the previous release:
+
+```bash
+sudo ./check-compatibility ../answers.env --release <release-id>
+```
+
+Add `--before-migration` for the earlier prerequisite pass. It omits the schema
+revision as well; after `migrate --release`, rerun without that flag so the
+candidate's database contract is proved before activation.
 
 An old component that predates compatibility metadata is reported as
 incompatible rather than guessed compatible. Install that component from the

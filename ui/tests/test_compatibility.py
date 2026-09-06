@@ -64,6 +64,30 @@ class CompatibilityMetadataTests(unittest.TestCase):
         self.assertEqual(int(node_api.group(1)), requirements.node_api)
 
 
+class PreparedReleaseTests(unittest.TestCase):
+    def test_a_named_release_must_be_a_direct_child_of_releases(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            release = root / "releases/0.1.0-example"
+            release.mkdir(parents=True)
+            self.assertEqual(
+                compatibility.named_release(root, "0.1.0-example", "UI"), release.resolve()
+            )
+            with self.assertRaises(compatibility.CompatibilityError):
+                compatibility.named_release(root, "../elsewhere", "UI")
+
+    def test_a_symlink_cannot_make_a_named_release_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            outside = root / "outside"
+            outside.mkdir()
+            releases = root / "releases"
+            releases.mkdir()
+            (releases / "candidate").symlink_to(outside)
+            with self.assertRaises(compatibility.CompatibilityError):
+                compatibility.named_release(root, "candidate", "UI")
+
+
 class SudoRuleTests(unittest.TestCase):
     def test_comments_and_spacing_do_not_become_compatibility(self) -> None:
         text = """\

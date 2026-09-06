@@ -942,6 +942,7 @@ is what you follow; this section explains the shape.
 /apps/haproxy-manager/
 ├── current -> releases/<version>-<commit>/
 ├── releases/<version>-<commit>/venv/
+├── releases/<version>-<commit>/migration/
 ├── config/          ui.toml, root-owned, readable by the platform group
 ├── secrets/         root-only, granted one file at a time
 └── data/
@@ -960,8 +961,8 @@ someone's home directory is invisible to a service running with `ProtectHome`.
 Both are checked before `current` is switched.
 
 The release is also compared with its source tree before activation. The check
-covers Python, templates, CSS and JavaScript; a build that reused an older local
-wheel or omitted a frontend asset is removed rather than activated. This keeps
+covers Python, templates, CSS, JavaScript and the complete Alembic environment;
+a build that reused an older local wheel or omitted a frontend asset is removed rather than activated. This keeps
 the visible interface under the same “a release is a commit” rule as its server
 code.
 
@@ -1021,6 +1022,14 @@ checks that worker, poller and web really execute from `current`, compares the
 active sudo rules with the helpers the UI requires, and reads each node bundle
 through the existing status helper. It ends in one `COMPATIBLE` or `INCOMPATIBLE`
 verdict and changes no file, row, service or HAProxy release.
+
+For an update, first run `install-ui-release --prepare`. The candidate is built
+and verified but `current` stays on the old release. Run `check-compatibility
+--release <release-id> --before-migration` to prove its CLI, helper and node
+requirements, then `migrate --release <release-id>`, `03-verify`, and the candidate
+check again without `--before-migration`. Only after those pass is the same
+prepared release activated by rerunning `install-ui-release` without `--prepare`.
+The final ordinary compatibility check proves the processes after the switch.
 
 ### 4.5 HTTPS and the certificate
 

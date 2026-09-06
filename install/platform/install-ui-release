@@ -1,17 +1,16 @@
 #!/bin/bash
 #
-# Build and activate a release of the web interface.
+# Build and activate a release of the web interface, or only prepare it.
 #
-#     sudo UV_BIN=/path/to/uv ./install-ui-release <answers-file> <source-tree>
+#     sudo UV_BIN=/path/to/uv ./install-ui-release [--prepare] <answers-file> <source-tree>
 #
 # A release is a commit. The source tree must be a clean checkout, and the
 # release is named after the commit it was built from - so "which code is
 # running" is answerable by reading a symlink, and answerable the same way in a
 # year.
 #
-# The release directory holds one thing: a virtual environment with both
-# distributions installed non-editably. The plan sketched app/ beside venv/;
-# one directory that is replaced whole is simpler and cannot half-update.
+# The release directory holds the runtime environment and the migrations that
+# prepare its schema. Both are immutable parts of the same named delivery.
 #
 # `current` is switched only after the new release has imported successfully.
 # It is then restarted and proved through the running service. A release that
@@ -23,11 +22,17 @@ cd "$(dirname "$0")"
 source ../lib.sh
 
 need_root
+prepare_only=0
+if [[ "${1:-}" == "--prepare" ]]; then
+    prepare_only=1
+    shift
+fi
 load_answers "${1:-}"
 source_tree="${2:-}"
 require_vars PLATFORM_ROOT PLATFORM_GROUP WEB_USER
 
-[[ -n "$source_tree" ]] || die "usage: $(basename "$0") <answers-file> <source-tree>"
+[[ -n "$source_tree" ]] \
+    || die "usage: $(basename "$0") [--prepare] <answers-file> <source-tree>"
 [[ -d "${source_tree}/ui" ]] || die "not a source tree: ${source_tree}"
 
 uv="${UV_BIN:-}"
@@ -117,6 +122,22 @@ else
              --no-editable --python "$PYTHON_BIN" --python-preference only-system \
              --refresh-package haproxy-ui --refresh-package haproxy-manager )
     clear_staging
+
+    #
+    # Migrations belong to the release they prepare, not to whichever checkout
+    # happens to be on disk when an operator runs them. Alembic itself remains
+    # outside the runtime environment: services still have neither the tool nor
+    # the database identity required to alter the schema.
+    #
+    migration="${release}/migration"
+    install -d -m 750 "$migration"
+    install -m 640 "${source_tree}/ui/alembic.ini" "${migration}/alembic.ini"
+    while IFS= read -r -d '' file; do
+        relative="${file#"${source_tree}"/ui/}"
+        install -D -m 640 "$file" "${migration}/${relative}"
+    done < <(find "${source_tree}/ui/migrations" -type f \
+        -not -path '*/__pycache__/*' -print0)
+
     trap - EXIT
     log "  built    ${release}"
 fi
@@ -157,6 +178,33 @@ for package in haproxy_ui haproxy_mgmt; do
     fi
     log "  ok       ${package} matches the source tree at ${commit}"
 done
+
+
+# The migration bundle is release material too. Include every file rather than
+# only Python: script.py.mako is needed by Alembic even though normal upgrades
+# do not create a revision, and the ini file decides where the versions live.
+bundle_digest() {
+    ( cd "$1" && find . -type f -not -path '*/__pycache__/*' -printf '%P\n' \
+      | LC_ALL=C sort \
+      | while read -r file; do printf '%s ' "$file"; sha256sum "$file" | cut -d' ' -f1; done \
+      | sha256sum | cut -d' ' -f1 )
+}
+migration_source="$(mktemp -d)"
+trap 'rm -rf -- "$migration_source"' EXIT
+install -d "${migration_source}/migrations"
+install -m 640 "${source_tree}/ui/alembic.ini" "${migration_source}/alembic.ini"
+while IFS= read -r -d '' file; do
+    relative="${file#"${source_tree}"/ui/}"
+    install -D -m 640 "$file" "${migration_source}/${relative}"
+done < <(find "${source_tree}/ui/migrations" -type f \
+    -not -path '*/__pycache__/*' -print0)
+if [[ ! -d "${release}/migration" ]] \
+    || [[ "$(bundle_digest "$migration_source")" != "$(bundle_digest "${release}/migration")" ]]; then
+    die "the release's migration bundle does not match the source tree at ${commit}"
+fi
+rm -rf -- "$migration_source"
+trap - EXIT
+log "  ok       migrations match the source tree at ${commit}"
 
 step "Ownership"
 #
@@ -206,6 +254,14 @@ sudo -u "$WEB_USER" "${release}/venv/bin/python" -c \
     'import haproxy_ui.app, haproxy_mgmt.cluster_status, haproxy_mgmt.inventory; print("imports ok")' \
     || die "the release cannot be imported by ${WEB_USER}"
 log "  ok       ${WEB_USER} can import the release"
+
+if [[ "$prepare_only" -eq 1 ]]; then
+    echo
+    log "release ${release_id} is prepared but not active"
+    log "migrate it with: ./migrate <answers-file> --release ${release_id}"
+    log "activate it by rerunning this command without --prepare"
+    exit 0
+fi
 
 step "Activating"
 link="${PLATFORM_ROOT}/current"

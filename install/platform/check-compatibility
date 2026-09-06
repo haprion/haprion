@@ -2,11 +2,11 @@
 #
 # Read all independently installed parts as one compatibility report.
 #
-#     sudo ./check-compatibility <answers-file>
+#     sudo ./check-compatibility <answers-file> [--release <release-id>] [--before-migration]
 #
-# This changes nothing. Requirements come from the running UI release, not from
-# the checkout containing this wrapper, so the answer remains meaningful after
-# that checkout moves on to the next commit.
+# This changes nothing. Requirements come from either the running UI release or
+# an explicitly named prepared release, never from the checkout containing this
+# wrapper, so the answer remains meaningful after that checkout moves on.
 #
 set -Eeuo pipefail
 cd "$(dirname "$0")"
@@ -15,10 +15,42 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
+shift
 require_vars PLATFORM_ROOT DB_NAME DB_MIGRATION_ROLE WEB_USER WORKER_USER POLLER_USER
 
+release_id=""
+before_migration=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --release)
+            [[ -n "${2:-}" ]] || die "--release needs a release id"
+            release_id="$2"
+            shift 2
+            ;;
+        --before-migration)
+            before_migration=1
+            shift
+            ;;
+        *) die "usage: $(basename "$0") <answers-file> [--release <release-id>] [--before-migration]" ;;
+    esac
+done
+[[ "$before_migration" -eq 0 || -n "$release_id" ]] \
+    || die "--before-migration requires --release"
+
+python_root="${PLATFORM_ROOT}/current"
+extra_args=()
+if [[ -n "$release_id" ]]; then
+    [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+        || die "invalid release id: ${release_id}"
+    python_root="${PLATFORM_ROOT}/releases/${release_id}"
+    extra_args+=(--ui-release "$release_id" --skip-services)
+fi
+if [[ "$before_migration" -eq 1 ]]; then
+    extra_args+=(--skip-database)
+fi
+
 CLI_ROOT="${CLI_ROOT:-/opt/haproxy-mgmt}"
-cluster_lines="$("${PLATFORM_ROOT}/current/venv/bin/python" - \
+cluster_lines="$("${python_root}/venv/bin/python" - \
     "${PLATFORM_ROOT}/config/ui.toml" <<'PY'
 import sys
 from pathlib import Path
@@ -32,7 +64,7 @@ PY
 [[ -n "$cluster_lines" ]] || die "the installed UI configuration contains no clusters"
 mapfile -t clusters <<<"$cluster_lines"
 
-exec "${PLATFORM_ROOT}/current/venv/bin/python" -m haproxy_ui.compatibility \
+exec "${python_root}/venv/bin/python" -m haproxy_ui.compatibility \
     --platform-root "$PLATFORM_ROOT" \
     --cli-root "$CLI_ROOT" \
     --database "$DB_NAME" \
@@ -40,4 +72,5 @@ exec "${PLATFORM_ROOT}/current/venv/bin/python" -m haproxy_ui.compatibility \
     --web-user "$WEB_USER" \
     --worker-user "$WORKER_USER" \
     --poller-user "$POLLER_USER" \
-    --clusters "${clusters[@]}"
+    --clusters "${clusters[@]}" \
+    "${extra_args[@]}"

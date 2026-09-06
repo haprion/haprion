@@ -105,6 +105,21 @@ def current_release(root: Path, what: str) -> Path:
     return release
 
 
+def named_release(root: Path, name: str, what: str) -> Path:
+    """Resolve one prepared release without allowing a path outside releases/."""
+
+    if not name or Path(name).name != name:
+        raise CompatibilityError(f"invalid {what} release id")
+    releases = (root / "releases").resolve(strict=True)
+    try:
+        release = (releases / name).resolve(strict=True)
+    except OSError as exc:
+        raise CompatibilityError(f"{what} release {name} cannot be resolved: {exc}") from exc
+    if release.parent != releases or not release.is_dir():
+        raise CompatibilityError(f"{what} release points outside its release directory")
+    return release
+
+
 def ui_requirements(release: Path) -> Requirements:
     metadata = _one(
         list(release.glob("venv/lib/python*/site-packages/haproxy_ui/compatibility.json")),
@@ -272,6 +287,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--poller-user", required=True)
     parser.add_argument("--clusters", required=True, nargs="+")
     parser.add_argument("--sudoers-root", type=Path, default=Path("/etc/sudoers.d"))
+    parser.add_argument("--ui-release")
+    parser.add_argument("--skip-database", action="store_true")
+    parser.add_argument("--skip-services", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -282,7 +300,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     report = Report()
     try:
-        ui_release = current_release(args.platform_root, "UI")
+        ui_release = (
+            named_release(args.platform_root, args.ui_release, "UI")
+            if args.ui_release
+            else current_release(args.platform_root, "UI")
+        )
         requirements = ui_requirements(ui_release)
         cli_release = current_release(args.cli_root, "CLI")
         installed_cli = cli_metadata(cli_release)
@@ -322,23 +344,25 @@ def main(argv: list[str] | None = None) -> int:
         else:
             report.pass_("CLI helpers", f"{len(required_helpers)} required helpers installed")
 
-    print("\n== Database")
-    try:
-        revision = database_revision(args.database_role, args.database)
-    except CompatibilityError as exc:
-        report.fail("schema revision", str(exc))
-    else:
-        if revision in requirements.database_revisions:
-            report.pass_("schema revision", revision)
+    if not args.skip_database:
+        print("\n== Database")
+        try:
+            revision = database_revision(args.database_role, args.database)
+        except CompatibilityError as exc:
+            report.fail("schema revision", str(exc))
         else:
-            report.fail(
-                "schema revision",
-                f"{revision}; accepts {', '.join(requirements.database_revisions)}",
-            )
+            if revision in requirements.database_revisions:
+                report.pass_("schema revision", revision)
+            else:
+                report.fail(
+                    "schema revision",
+                    f"{revision}; accepts {', '.join(requirements.database_revisions)}",
+                )
 
-    print("\n== Services")
-    for user in (args.worker_user, args.poller_user, args.web_user):
-        check_service(report, unit=f"{user}.service", release=ui_release)
+    if not args.skip_services:
+        print("\n== Services")
+        for user in (args.worker_user, args.poller_user, args.web_user):
+            check_service(report, unit=f"{user}.service", release=ui_release)
 
     print("\n== Sudo rules")
     check_sudoers(

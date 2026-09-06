@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# Apply database migrations. Run after installing a release, and only then.
+# Apply database migrations from a prepared release.
 #
 # This is a deliberate root action, not something a service does when it starts.
 # The migration role owns every object in the database and no operating-system
 # account maps to it except root, so a service that restarts cannot alter the
 # schema even by accident.
 #
-#     sudo ./migrate <answers-file> [alembic arguments]
+#     sudo ./migrate <answers-file> [--release <release-id>] [alembic arguments]
 #
 # With no alembic arguments it runs `upgrade head`. Anything else is passed
 # through, so `sudo ./migrate answers.env current` and `... history` work.
@@ -22,6 +22,19 @@ answers="${1:-}"
 load_answers "$answers"
 shift
 require_vars DB_NAME DB_MIGRATION_ROLE
+
+release_id=""
+if [[ "${1:-}" == "--release" ]]; then
+    [[ -n "${2:-}" ]] || die "--release needs a release id"
+    release_id="$2"
+    shift 2
+    require_vars PLATFORM_ROOT
+    [[ "$release_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+        || die "invalid release id: ${release_id}"
+    migration_root="${PLATFORM_ROOT}/releases/${release_id}/migration"
+    [[ -f "${migration_root}/alembic.ini" && -f "${migration_root}/migrations/env.py" ]] \
+        || die "release ${release_id} has no migration bundle; prepare it first"
+fi
 
 alembic="${ALEMBIC_BIN:-}"
 #
@@ -67,5 +80,15 @@ if [[ $# -eq 0 ]]; then
 fi
 
 step "Migrating ${DB_NAME} as ${DB_MIGRATION_ROLE}"
+if [[ -n "$release_id" ]]; then
+    log "  release  ${release_id}"
+    cd "$migration_root"
+    exec "$alembic" -c alembic.ini "$@"
+fi
+
+# Compatibility path for an installation made before releases carried their
+# migrations. The coordinated update path always supplies --release; retain
+# this only so an existing installation can reach its first bundled release.
+warn "reading migrations from the source tree; use --release after preparing a bundled release"
 cd ../../ui
 exec "$alembic" "$@"

@@ -579,8 +579,15 @@ class TheHealthCardOnThePage(EditorTestCase):
     nothing about the page. These render it.
     """
 
-    def probe(self, nodes: list[probe_module.NodeReport], source: str = "192.0.2.25") -> str:
-        report = probe_module.ProbeReport(ran=True, source=source, nodes=tuple(nodes))
+    def probe(
+        self,
+        nodes: list[probe_module.NodeReport],
+        source: str = "192.0.2.25",
+        caveats: tuple[str, ...] = (),
+    ) -> str:
+        report = probe_module.ProbeReport(
+            ran=True, source=source, nodes=tuple(nodes), caveats=caveats
+        )
         with (
             mock.patch("haproxy_ui.probe.run", return_value=report),
             mock.patch("haproxy_ui.db.wake_poller"),
@@ -620,6 +627,40 @@ class TheHealthCardOnThePage(EditorTestCase):
         )
         self.assertIn("node-a", body)
         self.assertIn("node-b", body)
+
+    def test_a_run_that_was_the_whole_check_says_up(self) -> None:
+        body = self.probe([self.node("node-a", held=True)])
+
+        self.assertIn(">UP<", body.replace("</span>", "</span>"))
+        self.assertNotIn("Part tried", body)
+
+    def test_a_run_that_reproduced_only_part_of_it_does_not_say_up(self) -> None:
+        """The word the nodes use for having run all of it is not this run's.
+
+        A pool that answers here can still be marked down there - for a body,
+        a tcp exchange, or a name this run sent and the check never does - so
+        the cell that is read first must not say the same thing.
+        """
+
+        body = self.probe(
+            [self.node("node-a", held=True)],
+            caveats=("The expected body is not checked here.",),
+        )
+
+        self.assertIn("Part tried", body)
+        self.assertIn("Part of the check was not tried here.", body)
+        self.assertIn("status-warning", body)
+
+    def test_a_server_that_failed_still_says_down_whatever_was_skipped(self) -> None:
+        """A refusal is a refusal; the parts not tried cannot soften it."""
+
+        body = self.probe(
+            [self.node("node-a", held=True, ok=False)],
+            caveats=("The expected body is not checked here.",),
+        )
+
+        self.assertIn("DOWN", body)
+        self.assertNotIn("Part tried", body)
 
 
 class WhereASaveLands(EditorTestCase):

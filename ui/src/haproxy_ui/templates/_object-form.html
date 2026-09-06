@@ -342,6 +342,16 @@
         describe one check - one just ran it, the other has been running it -
         and saying `Reached · status 200` above `UP · L7OK 200` made them read
         as two different measurements of two different things.
+
+        With one deliberate exception. Where this run could not reproduce every
+        condition of the check, its state must not be the word the nodes use
+        for having run all of it: `UP` beside `UP` is read as the same verdict,
+        and a pool that answers here can still be marked down on the nodes for
+        a body, a tcp exchange or a name this run never asked for. So a partial
+        run says so in the cell somebody actually looks at, and the sentences
+        under the table say which conditions were left out. They were there
+        before this and were not enough - three green rows are read before a
+        paragraph is.
       #}
       <table class="node-health-table">
         <colgroup><col style="width: 22%"><col style="width: 34%"><col style="width: 14%"><col style="width: 30%"></colgroup>
@@ -360,7 +370,7 @@
           <tr>
             <td>{{ node.node }}</td>
             <td>{{ entry.host }}:{{ entry.port }}</td>
-            <td><span class="status-dot {{ 'status-healthy' if entry.ok else 'status-critical' }}"></span>{{ 'UP' if entry.ok else 'DOWN' }}</td>
+            <td>{% if not entry.ok %}<span class="status-dot status-critical"></span>DOWN{% elif probe.complete %}<span class="status-dot status-healthy"></span>UP{% else %}<span class="status-dot status-warning"></span>Part tried{% endif %}</td>
             <td>{{ entry.phrase }}{% if entry.ms is not none %} · {{ entry.ms }} ms{% endif %}</td>
           </tr>
           {% endfor %}{% endif %}{% endfor %}
@@ -368,10 +378,11 @@
       </table>
       {#
         Where this run is narrower than the check it stands in for. Under the
-        table rather than above it: it qualifies the rows that were just read,
-        and a reader who has seen three green rows and no sentence has been
-        told the check passed when only part of it was tried.
+        table rather than above it: it qualifies the rows that were just read.
+        The rows now carry the same fact in one word, so these say which
+        conditions it refers to rather than being the only place it is said.
       #}
+      {% if not probe.complete %}<p class="node-health-note"><strong>Part of the check was not tried here.</strong> A server above can read as reached and still be marked down by the nodes.</p>{% endif %}
       {% for caveat in probe.caveats %}<p class="node-health-note">{{ caveat }}</p>{% endfor %}
       {% endif %}
     </div>

@@ -16,7 +16,14 @@ import unittest
 
 from haproxy_mgmt.probe_socket import ProbeUnavailable
 
-from haproxy_ui.probe import MAX_TARGETS, caveats_for, run, source_address, targets_from
+from haproxy_ui.probe import (
+    MAX_TARGETS,
+    ProbeReport,
+    caveats_for,
+    run,
+    source_address,
+    targets_from,
+)
 
 
 def form(**fields: object) -> dict[str, object]:
@@ -207,6 +214,41 @@ class WhatThisRunCannotReproduce(unittest.TestCase):
             any("server name" in note for note in caveats_for(form(health_type="https")))
         )
         self.assertEqual(caveats_for(form()), ())
+
+
+class WhetherTheRunWasTheWholeCheck(unittest.TestCase):
+    """The verdict the row carries, not just the sentence under the table.
+
+    A run that could not reproduce every condition proved less than HAProxy
+    will ask for, and until this it said so only in prose below three green
+    rows saying `UP` - the same word the nodes' own table uses for having run
+    the whole thing. The rows are read first, so the distinction has to be in
+    them.
+    """
+
+    def report(self, **fields: object) -> ProbeReport:
+        return ProbeReport(ran=True, source="", nodes=(), caveats=caveats_for(form(**fields)))
+
+    def test_a_check_this_run_can_reproduce_is_complete(self) -> None:
+        self.assertTrue(self.report().complete)
+
+    def test_an_expected_body_makes_the_run_partial(self) -> None:
+        self.assertFalse(self.report(health_expect_body="ok").complete)
+
+    def test_a_tcp_exchange_makes_the_run_partial(self) -> None:
+        self.assertFalse(self.report(health_type="tcp", health_send="PING").complete)
+
+    def test_a_name_the_check_never_sends_makes_the_run_partial(self) -> None:
+        """The one that passes here and fails there, rather than the reverse."""
+
+        self.assertFalse(self.report(health_type="https").complete)
+
+    def test_completeness_is_the_caveats_and_not_a_second_judgement(self) -> None:
+        """Two answers to one question is how they end up disagreeing."""
+
+        self.assertEqual(
+            ProbeReport(ran=True, source="", nodes=(), caveats=("anything",)).complete, False
+        )
 
 
 class WhichAddressTheProbeLeavesFrom(unittest.TestCase):

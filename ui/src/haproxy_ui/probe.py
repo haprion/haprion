@@ -109,6 +109,23 @@ class ProbeReport:
     caveats: tuple[str, ...] = ()
 
     @property
+    def complete(self) -> bool:
+        """Whether this run was the whole check or only the part it can do.
+
+        The caveats are the answer, so this is not a second judgement: each one
+        is a condition of the check that the node did not reproduce, and a run
+        carrying any of them proved less than HAProxy will ask for.
+
+        It exists because the reading is what matters. A green row saying `UP`
+        beside the nodes' own `UP` reads as the same verdict, and it is not one
+        - the pool may answer this and still be marked down for a body, a tcp
+        exchange, or a name it was never asked for. The row says which of the
+        two it is now, and the sentences below say what was left out.
+        """
+
+        return not self.caveats
+
+    @property
     def failing(self) -> int:
         return sum(not entry.ok for node in self.nodes for entry in node.results)
 

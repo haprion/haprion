@@ -1280,7 +1280,7 @@ what makes "put that one table back" an ordinary afternoon.
 ### 4.8 Keeping the job table bounded
 
 `install/platform/11-platform-retention` installs `haproxy-ui-retention` and a
-weekly timer. It is optional, and it is separate from the backup step because
+daily timer. It is optional, and it is separate from the backup step because
 it is the only thing here that removes rows from a live table. **The step itself
 deletes nothing** — it reports what the first run would remove and leaves the
 deciding to the timer or to an operator.
@@ -1288,7 +1288,7 @@ deciding to the timer or to an operator.
 ```bash
 sudo haproxy-ui-retention report              # how many rows, how many removable
 sudo haproxy-ui-retention prune --dry-run     # the same, deleting nothing
-sudo haproxy-ui-retention prune               # what the weekly timer runs
+sudo haproxy-ui-retention prune               # what the daily timer runs
 ```
 
 **It is a root command because no application role holds `delete` on any table,
@@ -1318,8 +1318,17 @@ being ungranted would matter.
   way it would select a different twenty rows and quietly stop promising
   anything.
 
-The timer runs weekly, after the daily dump rather than before it, so the newest
+The timer runs daily, after the daily dump rather than before it, so the newest
 dump still contains the rows the prune removes.
+
+Daily rather than weekly because of the rollup rather than the prune. The
+interface answers anything older than seven days from the hourly rollup, and the
+rollup itself stops one day short of the present so that a partly filled hour is
+never summarised. Run weekly, the summarised edge falls behind the seven-day
+boundary for about a day before each run, and the traffic card then draws hours
+nobody has summarised as a quiet day rather than as a missing one. Run daily, the
+edge stays six days ahead of the boundary. The prune is indifferent to the
+change: it removes what is older than a week either way.
 
 Unlike the backup step, this one is meant to be run for development too — a
 development platform's job table grows exactly as production's does, and

@@ -186,7 +186,7 @@ platform is isolated from the command line, so it never touches HAProxy.
 
 ## Step 11 — retention
 
-`./11-platform-retention` installs `haproxy-ui-retention` and a weekly timer.
+`./11-platform-retention` installs `haproxy-ui-retention` and a daily timer.
 
 **A root command, because no application role holds `delete` on any table and
 none is going to.** The audit trail, the login attempts and the job queue follow

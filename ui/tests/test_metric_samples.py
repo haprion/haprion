@@ -225,7 +225,11 @@ class WhatTheRetentionCommandKeeps(unittest.TestCase):
         self.assertIn("metric_partition(", self.script)
 
     def test_the_horizon_is_long_enough_that_a_missed_run_is_harmless(self) -> None:
-        """Weekly timer, so days of headroom would be a single point of failure."""
+        """A horizon of days would make the timer a single point of failure.
+
+        There is no default partition, so a day without one is an insert that
+        fails rather than a row that lands somewhere misleading.
+        """
 
         ahead = int(self.script.split("METRIC_AHEAD_DAYS=", 1)[1].split("\n", 1)[0])
         keep = int(self.script.split("METRIC_KEEP_DAYS=", 1)[1].split("\n", 1)[0])

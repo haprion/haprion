@@ -1,14 +1,25 @@
 [Unit]
-Description=Weekly pruning of finished HAProxy Manager jobs
+Description=Daily pruning and hourly rollup for HAProxy Manager
 
 [Timer]
 # After the daily dump rather than before it, so the newest dump still holds the
 # rows this removes. A week of job rows is small; losing the ability to read
 # them back out of a backup for the sake of half an hour is not a trade worth
 # making.
-OnCalendar=Sun *-*-* 03:30:00
-# Persistent so a machine that was off on Sunday prunes when it comes back,
-# rather than skipping a week and then removing twice as much unannounced.
+#
+# Daily rather than weekly, and the reason is the rollup rather than the prune.
+# The reader answers anything older than seven days from the hourly rollup,
+# while the rollup itself stops a day short of the present. Run weekly, the
+# computed edge falls behind that boundary for about a day before each run, and
+# the reader then asks for hours nobody has summarised - which the traffic card
+# draws as a quiet day rather than as a missing one. Run daily, the edge is
+# never more than a day old and the boundary is six days beyond it.
+#
+# The prune is unaffected by the change: it removes what is older than a week,
+# so running it more often removes the same rows a little sooner.
+OnCalendar=*-*-* 03:30:00
+# Persistent so a machine that was off at 03:30 catches up when it comes back,
+# rather than skipping a day and then removing twice as much unannounced.
 Persistent=true
 RandomizedDelaySec=15m
 

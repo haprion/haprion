@@ -58,9 +58,9 @@ METRIC_KEEP_DAYS=7
 # How far ahead partitions are created. Long, and that is the point: there is no
 # default partition, so a day with no partition is an insert that fails rather
 # than a row that lands somewhere misleading. At two months of headroom a
-# missed run - or eight of them - costs nothing, while a horizon of days would
-# make this weekly timer a single point of failure between the poller and a
-# sample with nowhere to go.
+# missed run - or sixty of them - costs nothing, while a horizon of days would
+# make this timer a single point of failure between the poller and a sample
+# with nowhere to go.
 #
 METRIC_AHEAD_DAYS=60
 
@@ -78,8 +78,15 @@ METRIC_ROLLUP_KEEP_DAYS=365
 #
 # A day rather than an hour, and the slack is the point. The raw samples live
 # for a week, so six days pass between an hour becoming eligible and the rows
-# it was computed from being dropped. A missed weekly run - or five of them -
-# costs nothing.
+# it was computed from being dropped. A missed run - or five of them - costs
+# nothing.
+#
+# That slack is what protects the *rows*. What it does not protect is the
+# *reader*, and the two were confused once: the reader answers anything older
+# than seven days from the rollup, so an hour that is eligible but not yet
+# summarised is an hour it asks for and does not get. The timer therefore runs
+# daily rather than weekly, which keeps the computed edge six days ahead of
+# that boundary instead of arriving at it. See the timer unit.
 #
 METRIC_ROLLUP_LAG_DAYS=1
 
@@ -250,8 +257,8 @@ metrics() {
         #
         # One statement over a series rather than one call per day. The
         # function is `create table if not exists`, so a run that overlaps an
-        # earlier one adds only what is missing - and the normal weekly answer
-        # is that it added seven, which is not worth 61 round trips to find out.
+        # earlier one adds only what is missing - and the normal daily answer
+        # is that it added one, which is not worth 61 round trips to find out.
         #
         if [[ "$dry_run" -eq 1 ]]; then
             log "  ${table}: dry run, would cover to $(date -d "+${METRIC_AHEAD_DAYS} days" +%F)"
@@ -313,7 +320,7 @@ done
 
 #
 # `client_min_messages=warning` silences one NOTICE per partition that already
-# exists - about seventy-five of them on a normal weekly run, since `create
+# exists - about seventy of them on a normal daily run, since `create
 # table if not exists` is how the horizon is kept idempotent. A command whose
 # successful output is seventy-five lines of noise is one whose output stops
 # being read, and the run that finally has something to say says it in the

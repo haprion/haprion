@@ -4,7 +4,7 @@
 #
 #     sudo ./11-platform-retention <answers-file>
 #
-# Installs haproxy-ui-retention and a weekly timer. Optional, and separate from
+# Installs haproxy-ui-retention and a daily timer. Optional, and separate from
 # the backup step on purpose: this removes rows from a live table, which is a
 # different kind of action from writing a dump, and an installation that wants
 # one does not necessarily want the other.
@@ -54,7 +54,7 @@ done
 systemctl daemon-reload
 log "  reloaded systemd"
 systemctl enable --quiet --now "${unit}.timer"
-log "  enabled  weekly pruning for ${ENVIRONMENT}"
+log "  enabled  daily pruning and rollup for ${ENVIRONMENT}"
 
 #
 # Asked of the running system rather than assumed from a clean enable. A timer
@@ -91,6 +91,7 @@ done
 [[ $failed -eq 0 ]] || die "an application identity can reach the database as its owner"
 
 step "Done"
-log "  ${unit}.timer prunes finished jobs older than a week, keeping the 20 most recent"
+log "  ${unit}.timer runs daily: prunes finished jobs older than a week, keeping the 20 most recent,"
+log "           and summarises complete hours before the reader's seven-day boundary reaches them"
 log "  nothing has been deleted yet; run it now with:"
 log "    sudo haproxy-ui-retention prune -e ${ENVIRONMENT}"

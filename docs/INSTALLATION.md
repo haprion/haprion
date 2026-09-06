@@ -385,6 +385,13 @@ clusters:
 `node_path` is the subdirectory a node fetches from on the management host. It is the only
 per-cluster value the node side needs.
 
+A release directory holds that subdirectory and, beside it, `MANIFEST.json` - the manager's own
+record of what each object in that release amounts to. It is written outside `node_path`
+deliberately: a node fetches that subdirectory whole with `--delete`, and HAProxy loads everything
+in `conf.d` with `-f`, so a file the manager keeps for itself has no business being inside either.
+Nothing on the node side reads it, and a release published before this existed simply has none -
+the status then reports each object as unknown rather than guessing.
+
 `address_prefix` and `address_interface` are optional and describe how this pair's nodes write an
 address they carry:
 

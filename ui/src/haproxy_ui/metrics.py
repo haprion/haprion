@@ -424,19 +424,24 @@ class Level:
 
 
 def levels_for(ceiling: int, *, height: float) -> tuple[Level, ...]:
-    """The ceiling and its halfway mark, or nothing to say.
+    """The ceiling, its halfway mark and the floor - or nothing to say.
 
-    Two, on the maintainer's call, and the baseline is not one of them: the
-    line rests on it and the card would be labelling the obvious. A window with
-    no traffic has no ceiling to divide, and drawing `0` twice across an empty
-    card is furniture.
+    **The zero is not the obvious one it looked like.** It was left out at
+    first, on the grounds that the line rests on the baseline and the card
+    would be labelling something already visible. Seen on a real card it read
+    as a scale that had been cut off: two numbers hanging in the middle of the
+    drawing with nothing underneath to measure them against. An axis needs its
+    origin to be an axis.
+
+    A window with no traffic has no ceiling to divide, and `0` alone across an
+    empty card is furniture rather than a scale.
     """
 
     if ceiling <= 0:
         return ()
     return tuple(
         Level(label=_plainly(ceiling * share), y=height * (1 - share), share=(1 - share) * 100)
-        for share in (1.0, 0.5)
+        for share in (1.0, 0.5, 0.0)
     )
 
 

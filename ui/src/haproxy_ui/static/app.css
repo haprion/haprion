@@ -1116,16 +1116,24 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    Two boxes rather than one, because the x-axis labels are placed by
    percentage and a percentage of a box that included the gutter would put
    every date a little to the left of the point it names. */
-.traffic-spark { position: relative; flex: 1 1 380px; min-width: 260px; padding-left: 38px; }
+/* One height for the drawing and the gutter beside it, because two numbers
+   for one measurement is how a label ends up half a line off the mark it
+   names. The drawing's own coordinate space is a separate matter and stays
+   where it is: the SVG is stretched to whatever this says. */
+.traffic-spark { --spark-height: 96px; position: relative; flex: 1 1 380px; min-width: 260px; padding-left: 38px; }
 .traffic-plot { position: relative; }
-.traffic-spark svg { display: block; width: 100%; height: 64px; }
+/* `overflow: visible` so the guide along the floor is not half outside the
+   viewBox and drawn at half its width. */
+.traffic-spark svg { display: block; width: 100%; height: var(--spark-height); overflow: visible; }
 /* Sized to the drawing rather than to the card: the labels mark heights on the
    line, and the axis below it is not part of that. */
-.traffic-levels { position: absolute; top: 0; left: 0; width: 38px; height: 64px; }
+.traffic-levels { position: absolute; top: 0; left: 0; width: 38px; height: var(--spark-height); }
 .traffic-levels span { position: absolute; right: 8px; transform: translateY(-50%); color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-/* The top label would hang half above the drawing and collide with the card's
-   own edge, so it sits under its line rather than centred on it. */
+/* The ends are pulled inside the drawing rather than centred on their guides,
+   the way the dates under the line are: centred, the top label would hang half
+   above the card's own edge and the floor label half below the axis. */
 .traffic-levels span:first-child { transform: none; }
+.traffic-levels span:last-child { transform: translateY(-100%); }
 /* Absolutely placed so each label sits under the point it names, and the ends
    pulled back inside the drawing so neither hangs off the card. */
 .traffic-axis { position: relative; height: 14px; margin-top: 4px; }

@@ -469,10 +469,20 @@ class TheScaleBesideTheLine(unittest.TestCase):
         self.assertEqual(metrics.ceiling_for(0), 0)
         self.assertEqual(metrics.levels_for(0, height=64), ())
 
-    def test_the_guides_are_the_ceiling_and_its_half(self) -> None:
-        top, middle = metrics.levels_for(80, height=64)
+    def test_the_guides_are_the_ceiling_its_half_and_the_floor(self) -> None:
+        top, middle, floor = metrics.levels_for(80, height=64)
         self.assertEqual((top.label, top.y, top.share), ("80", 0.0, 0.0))
         self.assertEqual((middle.label, middle.y, middle.share), ("40", 32.0, 50.0))
+        self.assertEqual((floor.label, floor.y, floor.share), ("0", 64.0, 100.0))
+
+    def test_the_floor_is_labelled_even_though_the_line_rests_on_it(self) -> None:
+        """Left out at first as labelling the obvious; on a real card the scale
+        read as one that had been cut off - two numbers in mid-air with nothing
+        underneath to measure them against."""
+
+        self.assertEqual(
+            [level.label for level in metrics.levels_for(6, height=64)], ["6", "3", "0"]
+        )
 
 
 class WhetherTheWindowSaysAnything(unittest.TestCase):

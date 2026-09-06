@@ -258,6 +258,55 @@ class CurrentSkipTests(unittest.TestCase):
         self.assertIs(outcome, Outcome.DONE)
         self.assertEqual(code, 0)
 
+    def test_the_release_hash_alone_does_not_make_a_node_current(self) -> None:
+        """The half-way node, and the reason current means every component.
+
+        The node took the configuration and did not take the address list its
+        release publishes. Its hash is the target hash, so the hash alone calls
+        it done and passes over the one node that still needs the repair.
+        """
+
+        state = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, hash_=TARGET, addresses=False),
+            node("node-b", owner=False, hash_=TARGET, addresses=True),
+        )
+
+        trace, outcome, code = drive([state, state], target=ReleaseTarget(version=8, hash=TARGET))
+
+        self.assertEqual(trace, ["skip:node-b", "deploy:node-a"])
+        self.assertIs(outcome, Outcome.DONE)
+        self.assertEqual(code, 0)
+
+    def test_a_node_that_said_nothing_about_its_addresses_is_not_called_current(self) -> None:
+        """Unknown is not the same as right, and it is not the same as wrong.
+
+        A node still running an older status script cannot answer the question,
+        so it is reconciled rather than skipped. Redeploying a node that was
+        already right costs one pull; skipping one that was not costs the VIP.
+        """
+
+        state = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, hash_=TARGET, addresses=None),
+            node("node-b", owner=False, hash_=TARGET, addresses=None),
+        )
+
+        trace, _, _ = drive([state, state, state], target=ReleaseTarget(version=8, hash=TARGET))
+
+        self.assertEqual(trace, ["deploy:node-b", "deploy:node-a"])
+
+    def test_a_node_behind_on_the_release_is_behind_whatever_its_addresses_say(self) -> None:
+        state = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=True, hash_=TARGET),
+            node("node-b", owner=False, hash_=BEHIND, addresses=None),
+        )
+
+        target = ReleaseTarget(version=8, hash=TARGET)
+
+        self.assertIs(target.is_current(state.nodes[1]), False)
+
     def test_without_a_target_nothing_is_skipped_as_current(self) -> None:
         state = pair(
             VipState.SINGLE_OWNER,

@@ -84,6 +84,11 @@ class NodeObservation:
     status_ok: bool
     owns_vip: bool | None = None
     release_hash: str | None = None
+    #
+    # Whether the node carries the keepalived address list its release
+    # publishes. None means nobody measured it, which is not the same as False.
+    #
+    addresses_current: bool | None = None
     certificates: tuple[tuple[str, str], ...] | None = None
 
 
@@ -141,13 +146,34 @@ class Target(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class ReleaseTarget:
-    """The published configuration release this deploy is for."""
+    """The published configuration release this deploy is for.
+
+    A release activates two things on a node, and they can end up in different
+    states. The node installs and reloads HAProxy first and the keepalived
+    address list second; when the second step fails the address file is
+    restored while the new configuration stays live, so the node reports the
+    new release hash and the old addresses. The hash alone would then call that
+    node current and skip the very node that needs the repair - and the node
+    deploy's own unchanged-release branch, which re-syncs the addresses, would
+    never be reached because nothing calls it.
+
+    So current means every component this release owns is where it should be.
+    A node left half-way is a node the next reconcile finishes.
+    """
 
     version: int
     hash: str
 
     def is_current(self, node: NodeObservation) -> bool | None:
-        return node.release_hash == self.hash
+        if node.release_hash is None:
+            #
+            # The node did not say which release it runs. Not compared, and it
+            # must not read as agreement in the status command either.
+            #
+            return None
+        if node.release_hash != self.hash:
+            return False
+        return node.addresses_current
 
     def skip_reason(self, node: NodeObservation) -> str:
         return f"{node.name} already runs this version; nothing to do"

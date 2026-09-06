@@ -508,6 +508,19 @@ an address it cannot parse at runtime and carries on, which would turn a mistype
 VIP that never appears and never says why. A failed test restores the previous list and reports
 the deploy as failed with the HAProxy configuration already live.
 
+**That failure leaves the node half-way, and the status says which half.** The configuration is
+live on the new release while the address list is the old one, so the release hash alone would
+report the node as up to date and a second deploy would pass over the node that still needs the
+work. `haproxy-node-status` therefore reports three measurements about the list - the digest the
+release publishes, the digest the node installed, and whether `keepalived.conf` includes it - and
+both `haproxy-status` and `haproxy-deploy` call a node current only when every component the
+release owns is where it should be. Re-running the deploy after fixing the cause finishes the half
+that was left; the node script syncs the addresses even on a release it already runs.
+
+The include is reported and never compared. Putting that line into `keepalived.conf` is a person's
+step, taken one node at a time (below), and a deploy that treated it as a target would try forever
+to reach a state only a human can put the node in.
+
 The application writes the address list and nothing else. `priority`, `virtual_router_id`,
 `authentication`, `unicast_src_ip`, `unicast_peer` and the `notify_` lines stay in a file a person
 edits. Those decide who owns an address, and getting one wrong gives two masters or none - neither
@@ -791,7 +804,7 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 | `haproxy-pull-deploy` | fetches the published release, validates it, installs it, reloads once |
 | `haproxy-cert-trigger` | unprivileged wrapper: validates certificate IDs, then escalates |
 | `haproxy-cert-pull` | fetches the requested certificates, validates them, installs, reloads |
-| `haproxy-node-status` | reports version, health, carried certificates and keepalived state |
+| `haproxy-node-status` | reports version, health, carried certificates, keepalived state and the address list |
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
 | `haproxy-health-probe` | opens one connection per named target and reports the status line |

@@ -111,6 +111,35 @@ def _release_line(node: dict[str, Any]) -> str:
     return f"{shown}   (not compared)"
 
 
+def _addresses_line(status: dict[str, Any]) -> str | None:
+    """What the node said about its keepalived address list, in one line.
+
+    Printed only when the node reported it at all, and only as description: the
+    verdict on the far right of the version line is the helper's, decided once
+    by `ReleaseTarget.is_current`. Without this line a node whose version says
+    BEHIND while matching the published version is unexplainable from the
+    status output, because the half that is behind is the address list.
+    """
+
+    reported = status.get("keepalived", {}).get("addresses")
+    if not isinstance(reported, dict):
+        return None
+    if reported.get("published") is False:
+        return "not managed from here"
+
+    published = reported.get("published_sha256")
+    installed = reported.get("installed_sha256")
+    if not isinstance(published, str) or not isinstance(installed, str):
+        if reported.get("installed") is False:
+            return "MISSING - run haproxy-deploy"
+        return "unknown"
+    if published != installed:
+        return "BEHIND the release - run haproxy-deploy"
+    if reported.get("included") is False:
+        return "installed, not included in keepalived.conf"
+    return "in use"
+
+
 def _render(envelope: dict[str, Any], writer: TextIO) -> None:
     cluster = envelope.get("cluster")
     result = envelope.get("result") or {}
@@ -137,7 +166,11 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         writer.write(f"  KA state:     {status['keepalived']['state'] or 'UNKNOWN'}\n")
         writer.write(f"  VIP owner:    {status['vip']['owner']}\n")
         writer.write(f"  Runtime:      {'OK' if status['stats_ok'] else 'FAILED'}\n")
-        writer.write(f"  Version:      {_release_line(node)}\n\n")
+        writer.write(f"  Version:      {_release_line(node)}\n")
+        addresses = _addresses_line(status)
+        if addresses is not None:
+            writer.write(f"  Addresses:    {addresses}\n")
+        writer.write("\n")
 
     writer.write(f"VIP state:      {summary.get('vip_state')}\n")
     owners = summary.get("vip_owners") or []

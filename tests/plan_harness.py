@@ -30,8 +30,29 @@ TARGET = "a" * 40
 BEHIND = "b" * 40
 
 
-def node(name: str, *, ok: bool = True, owner: bool | None = False, hash_: str | None = BEHIND):
-    return NodeObservation(name=name, status_ok=ok, owns_vip=owner, release_hash=hash_)
+def node(
+    name: str,
+    *,
+    ok: bool = True,
+    owner: bool | None = False,
+    hash_: str | None = BEHIND,
+    addresses: bool | None = True,
+):
+    """One node as the status read saw it.
+
+    `addresses` defaults to True - the node carries the address list its release
+    publishes - so a case about ordering or ownership stays a case about
+    ordering or ownership. The half-way node, where the release is live and the
+    addresses are not, is asked for explicitly by the cases that are about it.
+    """
+
+    return NodeObservation(
+        name=name,
+        status_ok=ok,
+        owns_vip=owner,
+        release_hash=hash_,
+        addresses_current=addresses,
+    )
 
 
 def pair(vip_state: VipState, *nodes: NodeObservation) -> ClusterObservation:

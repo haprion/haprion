@@ -42,6 +42,13 @@ OLD_HASH = "0" * 40
 # Exit codes a node trigger can come back with. 255 is what SSH itself returns
 # when it cannot reach the host, which is how an unreachable node shows up.
 #
+#
+# Digests of an address list, made up rather than computed: nothing here hashes
+# a file, and what the comparison needs is only whether two answers are equal.
+#
+PUBLISHED_ADDRESSES = "a1" * 32
+OLD_ADDRESSES = "b2" * 32
+
 TRIGGER_OK = 0
 TRIGGER_RELOAD_FAILED = 1
 TRIGGER_UNREACHABLE = 255
@@ -72,6 +79,14 @@ class FakeNode:
     # differently, so both have to be representable here.
     #
     certificates: tuple[tuple[str, str], ...] | None = ()
+    #
+    # How this node stands on the keepalived address list its release carries.
+    # A release activates HAProxy and the addresses in two steps, so the node
+    # can be on the new release with the old list - the state the release hash
+    # alone cannot see. "silent" is a node running a status script from before
+    # the list was reported, which is unknown and not the same as wrong.
+    #
+    addresses: str = "in_use"
 
     def status(self) -> Any:
         if self.answers == "null":
@@ -83,7 +98,11 @@ class FakeNode:
             "node": self.name,
             "cluster": "alpha",
             "haproxy": {"active": True},
-            "keepalived": {"active": True, "state": "MASTER" if self.owns_vip else "BACKUP"},
+            "keepalived": {
+                "active": True,
+                "state": "MASTER" if self.owns_vip else "BACKUP",
+                **({} if self.addresses == "silent" else {"addresses": self._addresses()}),
+            },
             "vip": {
                 "address": "192.0.2.10",
                 "interface": "eth0",
@@ -100,6 +119,26 @@ class FakeNode:
             "stats_ok": True,
             "runtime": {"version": "3.2.1", "uptime_sec": 3600},
             "certificates": self._certificates(),
+        }
+
+    def _addresses(self) -> Any:
+        """The three measurements the node reports about its address list."""
+
+        if self.addresses == "unmanaged":
+            return {
+                "published": False,
+                "published_sha256": None,
+                "installed": False,
+                "installed_sha256": None,
+                "included": True,
+            }
+        installed = OLD_ADDRESSES if self.addresses == "stale" else PUBLISHED_ADDRESSES
+        return {
+            "published": True,
+            "published_sha256": PUBLISHED_ADDRESSES,
+            "installed": True,
+            "installed_sha256": installed,
+            "included": self.addresses != "not_included",
         }
 
     def _certificates(self) -> Any:
@@ -241,6 +280,14 @@ class FakeCluster:
 
         if self.target_certificates is None:
             node.release_hash = self.target_hash
+            #
+            # A successful pull activated both halves. The node deploy syncs the
+            # address list on every run, including one where the release itself
+            # did not change, which is what makes a half-way node repairable by
+            # the same command that left it that way.
+            #
+            if node.addresses == "stale":
+                node.addresses = "in_use"
         else:
             node.certificates = self.target_certificates
         if self.on_deploy is not None:

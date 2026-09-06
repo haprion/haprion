@@ -267,6 +267,47 @@ class CurrentSkipTests(unittest.TestCase):
         self.assertIn("RESULT: OK", shown)
 
 
+class HalfWayNodeTests(unittest.TestCase):
+    """The failure the release hash cannot see, and the run that repairs it.
+
+    A node activates the configuration and then the keepalived address list.
+    When the second step fails the address file is put back and the new
+    configuration stays live, so the node reports the target hash with the old
+    addresses - and the deploy that reports the failure is the same deploy the
+    operator re-runs after fixing the cause.
+    """
+
+    def test_a_node_left_half_way_is_not_skipped_as_current(self) -> None:
+        cluster = pair()
+        for node in cluster.nodes:
+            node.release_hash = TARGET_HASH
+        cluster.node("node-a").addresses = "stale"
+
+        code, shown = deploy(cluster, expected_hash=TARGET_HASH)
+
+        self.assertEqual(cluster.triggered, ["node-a"])
+        self.assertEqual(code, 0)
+        self.assertIn("node-b already runs this version", shown)
+
+    def test_the_rerun_finishes_the_half_that_was_left(self) -> None:
+        cluster = pair()
+        for node in cluster.nodes:
+            node.release_hash = TARGET_HASH
+        cluster.node("node-a").addresses = "stale"
+
+        deploy(cluster, expected_hash=TARGET_HASH)
+        self.assertEqual(cluster.node("node-a").addresses, "in_use")
+
+        code, _ = deploy(cluster, expected_hash=TARGET_HASH)
+
+        #
+        # Nothing left to do on the second run: the repair happened on the
+        # first, and the node is now current in both of its components.
+        #
+        self.assertEqual(cluster.triggered, ["node-a"])
+        self.assertEqual(code, 0)
+
+
 class ZeroOwnerTests(unittest.TestCase):
     def test_with_the_vip_down_both_nodes_are_deployed_in_configured_order(self) -> None:
         cluster = pair()

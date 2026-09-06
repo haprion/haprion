@@ -28,8 +28,29 @@ NODES = (
 TARGET = ReleaseTarget(version=18, hash="a" * 40)
 
 
+#
+# A node carrying exactly the address list its release publishes. Made up
+# digests: nothing here hashes a file, and the comparison only asks whether two
+# answers are equal. A case about the release hash says nothing about addresses
+# on purpose, so this is the default and the cases that are about the address
+# list pass their own.
+#
+ADDRESSES: dict[str, object] = {
+    "published": True,
+    "published_sha256": "a1" * 32,
+    "installed": True,
+    "installed_sha256": "a1" * 32,
+    "included": True,
+}
+
+
 def node_status(
-    name: str, *, owner: bool | None, release_hash: str | None, version: object = "18"
+    name: str,
+    *,
+    owner: bool | None,
+    release_hash: str | None,
+    version: object = "18",
+    addresses: object = None,
 ) -> dict[str, object]:
     release: dict[str, object] | None = None
     if release_hash is not None:
@@ -44,7 +65,11 @@ def node_status(
         "node": name,
         "cluster": "alpha",
         "haproxy": {"active": True},
-        "keepalived": {"active": True, "state": "MASTER" if owner else "BACKUP"},
+        "keepalived": {
+            "active": True,
+            "state": "MASTER" if owner else "BACKUP",
+            "addresses": ADDRESSES if addresses is None else addresses,
+        },
         "vip": {"address": "192.0.2.10", "interface": "eth0", "owner": owner},
         "ip_nonlocal_bind": True,
         "release": release,

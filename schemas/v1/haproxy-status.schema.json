@@ -145,6 +145,24 @@
             "state": {
               "type": ["string", "null"],
               "enum": ["MASTER", "BACKUP", "FAULT", "UNKNOWN", null]
+            },
+            "addresses": {
+              "type": "object",
+              "required": [
+                "published",
+                "published_sha256",
+                "installed",
+                "installed_sha256",
+                "included"
+              ],
+              "properties": {
+                "published": { "type": ["boolean", "null"] },
+                "published_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+                "installed": { "type": ["boolean", "null"] },
+                "installed_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+                "included": { "type": ["boolean", "null"] }
+              },
+              "additionalProperties": true
             }
           },
           "additionalProperties": true

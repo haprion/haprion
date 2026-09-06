@@ -40,14 +40,39 @@ def request(cluster: str = "alpha", **overrides: object) -> bytes:
     return json.dumps(document).encode()
 
 
-def node_status(name: str, *, owner: bool, release_hash: str) -> str:
+#
+# The node carries the address list its release publishes. Digests made up: the
+# comparison only asks whether two answers are equal.
+#
+ADDRESSES: dict[str, object] = {
+    "published": True,
+    "published_sha256": "a1" * 32,
+    "installed": True,
+    "installed_sha256": "a1" * 32,
+    "included": True,
+}
+
+
+def node_status(name: str, *, owner: bool, release_hash: str, addresses: object = None) -> str:
     return json.dumps(
         {
             "schema_version": 1,
             "node": name,
             "cluster": "alpha",
             "haproxy": {"active": True},
-            "keepalived": {"active": True, "state": "MASTER" if owner else "BACKUP"},
+            "keepalived": {
+                "active": True,
+                "state": "MASTER" if owner else "BACKUP",
+                #
+                # `False` models the node that reported no address list at all,
+                # which is a status script from before it was measured.
+                #
+                **(
+                    {}
+                    if addresses is False
+                    else {"addresses": ADDRESSES if addresses is None else addresses}
+                ),
+            },
             "vip": {"address": "192.0.2.10", "interface": "eth0", "owner": owner},
             "ip_nonlocal_bind": True,
             "release": {
@@ -250,6 +275,53 @@ class HelperReadingTests(HelperFixture):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out)["result"]["summary"]["release_state"], "behind")
 
+    def test_a_node_with_the_release_but_not_its_addresses_is_behind(self) -> None:
+        """The state the release hash alone reports as converged.
+
+        Both nodes run the published version. One of them did not take the
+        address list that version publishes, which is the half a deploy still
+        has to finish - so the status has to say behind, or the operator is
+        told to do nothing about a cluster that is not yet where it was sent.
+        """
+
+        stale = dict(ADDRESSES, installed_sha256="b2" * 32)
+        code, out, _ = self.run_helper(
+            request(),
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status("node-a", owner=True, release_hash=TARGET_HASH),
+                    "node-b": node_status(
+                        "node-b", owner=False, release_hash=TARGET_HASH, addresses=stale
+                    ),
+                }
+            ),
+        )
+
+        self.assertEqual(code, 0)
+        result = json.loads(out)["result"]
+        self.assertEqual(result["summary"]["release_state"], "behind")
+        self.assertIs(result["nodes"][1]["current"], False)
+
+    def test_a_node_that_said_nothing_about_addresses_is_not_compared(self) -> None:
+        """An older status script. Unknown, and never reported as converged."""
+
+        code, out, _ = self.run_helper(
+            request(),
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status("node-a", owner=True, release_hash=TARGET_HASH),
+                    "node-b": node_status(
+                        "node-b", owner=False, release_hash=TARGET_HASH, addresses=False
+                    ),
+                }
+            ),
+        )
+
+        self.assertEqual(code, 0)
+        result = json.loads(out)["result"]
+        self.assertIsNone(result["nodes"][1]["current"])
+        self.assertEqual(result["summary"]["release_state"], "incomplete")
+
     def test_nothing_published_is_reported_as_unknown(self) -> None:
         code, out, _ = self.run_helper(request(), published_hash=None)
         self.assertEqual(code, 0)
@@ -293,6 +365,26 @@ class CallerTests(HelperFixture):
         self.assertIn("Version:      8   (published)", out)
         self.assertIn("Published:      8", out)
         self.assertIn("both nodes run the published version", out)
+
+    def test_the_address_list_is_named_when_it_is_the_half_that_is_behind(self) -> None:
+        """Otherwise BEHIND on a matching version reads as a contradiction."""
+
+        stale = dict(ADDRESSES, installed_sha256="b2" * 32)
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status("node-a", owner=True, release_hash=TARGET_HASH),
+                    "node-b": node_status(
+                        "node-b", owner=False, release_hash=TARGET_HASH, addresses=stale
+                    ),
+                }
+            )
+        )
+
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+
+        self.assertIn("Addresses:    in use", out)
+        self.assertIn("Addresses:    BEHIND the release - run haproxy-deploy", out)
 
     def test_a_node_behind_is_told_what_to_do_about_it(self) -> None:
         payload = self.envelope(

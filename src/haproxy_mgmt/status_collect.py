@@ -36,8 +36,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from haproxy_mgmt.cluster_status import addresses_current
 from haproxy_mgmt.config import DeployIdentity, Node
-from haproxy_mgmt.deploy_plan import ReleaseTarget, VipState
+from haproxy_mgmt.deploy_plan import NodeObservation, ReleaseTarget, VipState
 from haproxy_mgmt.envelope import Message, envelope
 from haproxy_mgmt.release_layout import parse_release_file
 
@@ -248,13 +249,28 @@ def _node_result(
     entry["status"] = _normalised(status)
 
     #
-    # None means "not compared", and it has two causes that must not be reported
-    # as being in sync: nothing is published for this cluster, or the node did
-    # not say which release it runs.
+    # None means "not compared", and it has three causes that must not be
+    # reported as being in sync: nothing is published for this cluster, the node
+    # did not say which release it runs, or it said nothing about a component
+    # the release owns.
+    #
+    # The comparison is `ReleaseTarget.is_current` itself rather than a hash
+    # test written out again here. This module used to do the second, and the
+    # difference stopped being cosmetic the moment "current" grew to mean more
+    # than one component: a status that answered from the hash alone would call
+    # a half-way node converged while the deploy it is meant to inform would
+    # still have work to do on it.
     #
     if target is not None:
         observed = _mapping(entry["status"].get("release")).get("hash")
-        entry["current"] = target.hash == observed if isinstance(observed, str) else None
+        entry["current"] = target.is_current(
+            NodeObservation(
+                name=str(entry["name"]),
+                status_ok=True,
+                release_hash=observed if isinstance(observed, str) else None,
+                addresses_current=addresses_current(_mapping(entry["status"])),
+            )
+        )
 
     return entry, None
 

@@ -119,6 +119,20 @@ class NodeStatus:
     # were reported, told apart from a node that answered and has none.
     #
     frontends: tuple[FrontendTraffic, ...] | None = None
+    #
+    # Does the node carry the keepalived address list its release publishes?
+    # None when it did not say - an older status script, or a file it could not
+    # read. A release hash cannot answer this: a deploy that activated the
+    # configuration and failed to activate the addresses leaves the new hash in
+    # place with the old list restored. See B57 and the deploy matrix.
+    #
+    addresses_current: bool | None = None
+    #
+    # Whether keepalived.conf includes the installed list. Reported, never
+    # compared: the include line is one deliberate step by a person, one node at
+    # a time, and the node deploy exits 0 without it.
+    #
+    addresses_included: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +161,7 @@ class ClusterStatus:
                     status_ok=node.status_ok,
                     owns_vip=node.owns_vip,
                     release_hash=node.release_hash,
+                    addresses_current=node.addresses_current,
                     certificates=node.certificates,
                 )
                 for node in self.nodes
@@ -270,6 +285,50 @@ def _frontends(status: Mapping[str, Any]) -> tuple[FrontendTraffic, ...] | None:
     return tuple(listeners)
 
 
+def _addresses(status: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The node's three address measurements, or None when it reported none."""
+
+    data = _mapping(status.get("keepalived")).get("addresses")
+    return data if isinstance(data, Mapping) else None
+
+
+def addresses_current(status: Mapping[str, Any]) -> bool | None:
+    """Does the node carry the address list its release publishes?
+
+    True also when the release publishes none: an absent list means the
+    addresses are not managed from here, never that the node should be emptied,
+    and the node deploy says the same. None is reserved for what nobody
+    measured - an older status script, or a file that could not be read - so an
+    unverifiable node is never counted as verified.
+    """
+
+    data = _addresses(status)
+    if data is None:
+        return None
+    if data.get("published") is False:
+        return True
+
+    published = _text(data.get("published_sha256"))
+    installed = _text(data.get("installed_sha256"))
+    if published is None:
+        return None
+    if installed is None:
+        #
+        # The release publishes a list the node does not carry. Absent is a
+        # measured answer and means behind; unreadable is not an answer at all.
+        #
+        return False if data.get("installed") is False else None
+    return published == installed
+
+
+def addresses_included(status: Mapping[str, Any]) -> bool | None:
+    data = _addresses(status)
+    if data is None:
+        return None
+    included = data.get("included")
+    return included if isinstance(included, bool) else None
+
+
 def _count(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
@@ -290,6 +349,8 @@ def _node(entry: Mapping[str, Any]) -> NodeStatus:
         status_ok=usable,
         owns_vip=owner if isinstance(owner, bool) else None,
         release_hash=_text(_mapping(status.get("release")).get("hash")),
+        addresses_current=addresses_current(status),
+        addresses_included=addresses_included(status),
         certificates=_certificates(status),
         servers=_servers(status),
         frontends=_frontends(status),

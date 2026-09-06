@@ -13,6 +13,8 @@ from pathlib import Path
 
 KEEPALIVED_CONFIG = Path("/etc/keepalived/keepalived.conf")
 KEEPALIVED_STATE = Path("/run/haproxy/keepalived.state")
+KEEPALIVED_ADDRESSES = Path("/etc/keepalived/addresses.conf")
+PUBLISHED_ADDRESSES = Path("/etc/haproxy/current/keepalived/addresses.conf")
 RUNTIME_SOCKET = "/run/haproxy/ui-status.sock"
 CURRENT_RELEASE = Path("/etc/haproxy/current/RELEASE")
 VALIDATION_STATE = Path("/run/haproxy/last-validation.json")
@@ -163,6 +165,78 @@ def owns_vip(interface, vip):
                 return True
 
     return False
+
+
+def address_list(path):
+    """One address file as (present, digest). Two facts, told apart on purpose.
+
+    `present` False means the file is not there; a digest of None with
+    `present` True means it is there and could not be read or was too large.
+    The manager needs the difference: a release that publishes no address list
+    is not managing addresses from here at all, while one whose list cannot be
+    read is a question nobody has answered yet.
+    """
+
+    try:
+        if not path.is_file():
+            return False, None
+        if path.stat().st_size > MAX_KEEPALIVED_BYTES:
+            return True, None
+        return True, hashlib.sha256(path.read_bytes()).hexdigest()
+    except Exception:
+        return None, None
+
+
+def read_addresses():
+    """The keepalived address list as three measurements, not as a verdict.
+
+    The release carries the list, the node installs it, and keepalived.conf
+    includes it - three states that a single release hash cannot tell apart.
+    A deploy that activated the configuration and failed to activate the
+    addresses leaves the new hash in place with the old list restored, so the
+    hash alone reports that node as current. See B57 and the deploy matrix.
+
+    The include is reported and not compared: putting the line into
+    keepalived.conf is one deliberate step by a person, one node at a time, and
+    `haproxy-pull-deploy` exits 0 when it is absent. It is a fact the reader
+    needs, not a target a deploy can reach.
+    """
+
+    published, published_digest = address_list(PUBLISHED_ADDRESSES)
+    installed, installed_digest = address_list(KEEPALIVED_ADDRESSES)
+
+    text = read_config(KEEPALIVED_CONFIG)
+    included = None if text is None else str(KEEPALIVED_ADDRESSES) in text
+
+    return {
+        "published": published,
+        "published_sha256": published_digest,
+        "installed": installed,
+        "installed_sha256": installed_digest,
+        "included": included,
+    }
+
+
+def address_summary(addresses):
+    """The address list in one line, for the person standing at the node.
+
+    Facts in the same order the deploy cares about them: does the release
+    publish a list, does the node carry that exact list, and is it in use.
+    """
+
+    if addresses["published"] is False:
+        return "none published by this release"
+    if addresses["published_sha256"] is None or addresses["installed_sha256"] is None:
+        if addresses["installed"] is False:
+            return "published, not installed"
+        return "UNKNOWN"
+    if addresses["published_sha256"] != addresses["installed_sha256"]:
+        return "installed list differs from the release"
+    if addresses["included"] is False:
+        return "installed, not included in keepalived.conf"
+    if addresses["included"] is None:
+        return "installed, include unknown"
+    return "installed and in use"
 
 
 def runtime_info():
@@ -512,6 +586,7 @@ servers = None if stat is None else stat["servers"]
 release = read_release()
 validation = read_validation()
 certificates = read_certificates()
+addresses = read_addresses()
 
 result = {
     "schema_version": 1,
@@ -523,6 +598,7 @@ result = {
     "keepalived": {
         "active": keepalived_active,
         "state": keepalived_state,
+        "addresses": addresses,
     },
     "vip": {
         "address": vip,
@@ -552,6 +628,7 @@ else:
     print(f"HAProxy:           {'ACTIVE' if haproxy_active else 'INACTIVE'}")
     print(f"Keepalived:        {'ACTIVE' if keepalived_active else 'INACTIVE'}")
     print(f"Keepalived state:  {keepalived_state or 'UNKNOWN'}")
+    print(f"Addresses:         {address_summary(addresses)}")
     print(f"VIP:               {vip or 'UNKNOWN'}")
     print(f"VIP owner:         {vip_owner}")
     print(f"ip_nonlocal_bind:  {ip_nonlocal_bind}")

@@ -1038,14 +1038,13 @@ WINDOWS: tuple[Window, ...] = (
 DEFAULT_WINDOW = "24h"
 
 #
-# How long the raw samples are kept, and therefore where the reader stops
-# asking the raw table and starts asking the hourly rollup. The same number
-# lives in the retention command, which is what makes it true; here it decides
-# which table a window is answered from.
+# How long the raw samples are normally kept, and therefore the preferred point
+# where the reader changes to the hourly rollup. The retention command's
+# completion marker can move that point further into the past after a missed
+# run, and prevents the corresponding raw partition from being removed.
 #
-# It is a fixed age rather than "whatever the rollup happens to hold", so the
-# two halves of a long window cannot overlap and an hour cannot be counted
-# twice. The rollup is computed with six days of slack for exactly that reason.
+# Both halves use the one resulting boundary, so an hour cannot be counted
+# twice. Seven days remains the normal point to preserve recent raw resolution.
 #
 RAW_RETENTION = timedelta(days=7)
 

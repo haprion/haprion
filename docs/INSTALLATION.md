@@ -1346,7 +1346,7 @@ crash-consistent rather than transactionally clean, and restoring a single table
 out of a machine image is not something anyone does under pressure. The dump is
 what makes "put that one table back" an ordinary afternoon.
 
-### 4.8 Keeping the job table bounded
+### 4.8 Keeping jobs and metric history bounded
 
 `install/platform/11-platform-retention` installs `haproxy-ui-retention` and a
 daily timer. It is optional, and it is separate from the backup step because
@@ -1390,14 +1390,28 @@ being ungranted would matter.
 The timer runs daily, after the daily dump rather than before it, so the newest
 dump still contains the rows the prune removes.
 
-Daily rather than weekly because of the rollup rather than the prune. The
-interface answers anything older than seven days from the hourly rollup, and the
-rollup itself stops one day short of the present so that a partly filled hour is
-never summarised. Run weekly, the summarised edge falls behind the seven-day
-boundary for about a day before each run, and the traffic card then draws hours
-nobody has summarised as a quiet day rather than as a missing one. Run daily, the
-edge stays six days ahead of the boundary. The prune is indifferent to the
-change: it removes what is older than a week either way.
+The same command creates the metric tables' future partitions, writes the pool's
+hourly rollup and removes expired partitions. It performs those actions in that
+order. The rollup and its `metric_rollup_state` completion boundary are written
+by one SQL statement; a failed statement advances neither. Only then may raw
+pool partitions be dropped, and only when their complete day is at least one
+further day behind that boundary. Listener metrics have no rollup and keep their
+fixed seven-day raw retention.
+
+The interface normally changes from raw pool samples to the hourly rollup at
+seven days. If maintenance has fallen behind, it moves that boundary back to the
+last continuously completed hour and reads the still-retained raw samples from
+there. An hour with no samples still advances the boundary: the marker says the
+interval was considered, whereas the newest rollup row cannot distinguish an
+empty hour from an unprocessed one. `report` prints the boundary so lag is
+visible without changing the database.
+
+The timer is daily because that normally keeps the completed edge six days
+ahead of the preferred reader boundary. The explicit boundary is what keeps a
+longer outage correct; the schedule is no longer treated as proof that work
+finished. The installed command also remains usable against revision `0020`
+during a staged upgrade. There it rolls up before age-based pruning but cannot
+publish a completion boundary until migration `0021` exists.
 
 Unlike the backup step, this one is meant to be run for development too — a
 development platform's job table grows exactly as production's does, and

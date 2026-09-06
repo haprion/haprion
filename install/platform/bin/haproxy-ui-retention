@@ -69,24 +69,19 @@ METRIC_AHEAD_DAYS=60
 # decided, in monthly partitions.
 #
 METRIC_ROLLUP_TABLE=metric_pool_hour
+METRIC_ROLLUP_NAME=pool_hour
 METRIC_ROLLUP_KEEP_DAYS=365
+METRIC_ROLLUP_SAFETY_DAYS=1
 
 #
 # How far behind the present the rollup stops. An hour still being filled would
 # be rolled up half-finished and then never revisited, so the boundary sits a
 # day back: everything older than this is complete and will not change again.
 #
-# A day rather than an hour, and the slack is the point. The raw samples live
-# for a week, so six days pass between an hour becoming eligible and the rows
-# it was computed from being dropped. A missed run - or five of them - costs
-# nothing.
-#
-# That slack is what protects the *rows*. What it does not protect is the
-# *reader*, and the two were confused once: the reader answers anything older
-# than seven days from the rollup, so an hour that is eligible but not yet
-# summarised is an hour it asks for and does not get. The timer therefore runs
-# daily rather than weekly, which keeps the computed edge six days ahead of
-# that boundary instead of arriving at it. See the timer unit.
+# A day rather than an hour gives the normal daily run six days of slack before
+# the reader's preferred seven-day boundary. The explicit completion boundary
+# below is what keeps longer failures correct: readers stay on raw rows beyond
+# it, and the prune cannot remove those rows while the rollup is behind.
 #
 METRIC_ROLLUP_LAG_DAYS=1
 
@@ -115,6 +110,19 @@ usage() {
 #
 metric_partitions_expired() {
     local table="$1"
+    local completed=""
+    if [[ "$table" == "metric_pool_member" ]] && rollup_state_present; then
+        #
+        # Age alone is not proof that the derived copy exists. Keep the whole
+        # partition unless the rollup's continuous boundary is at least one
+        # further day ahead; if the state row is absent, the scalar comparison
+        # is unknown and no pool partition is eligible.
+        #
+        completed="and to_date(right(child.relname, 8), 'YYYYMMDD') + interval '1 day'
+                   <= (select complete_before - make_interval(days => ${METRIC_ROLLUP_SAFETY_DAYS})
+                         from metric_rollup_state
+                        where rollup_name = '${METRIC_ROLLUP_NAME}')"
+    fi
     cat <<SQL
     select child.relname
       from pg_inherits
@@ -124,6 +132,7 @@ metric_partitions_expired() {
        and child.relname ~ '^${table}_[0-9]{8}\$'
        and to_date(right(child.relname, 8), 'YYYYMMDD')
            < current_date - ${METRIC_KEEP_DAYS}
+       ${completed}
      order by child.relname
 SQL
 }
@@ -148,12 +157,27 @@ metrics_present() {
     [[ "$(psql_as -c "select to_regclass('public.metric_listener') is not null")" == "t" ]]
 }
 
+rollup_state_present() {
+    [[ "$(psql_as -c "select to_regclass('public.metric_rollup_state') is not null")" == "t" ]]
+}
+
 metrics_report() {
-    local table covered expired
+    local table covered expired complete_before
 
     if ! metrics_present; then
         log "  metrics: no metric tables in ${DB_NAME} (migration 0018 not applied)"
         return 0
+    fi
+
+    if rollup_state_present; then
+        complete_before="$(psql_as -c "select complete_before
+                                          from metric_rollup_state
+                                         where rollup_name = '${METRIC_ROLLUP_NAME}'")"
+        [[ -n "$complete_before" ]] \
+            || die "${METRIC_ROLLUP_NAME} has no completion boundary"
+        log "  ${METRIC_ROLLUP_TABLE}: complete before ${complete_before}"
+    else
+        log "  ${METRIC_ROLLUP_TABLE}: no completion boundary (migration 0021 not applied)"
     fi
 
     for table in "${METRIC_TABLES[@]}"; do
@@ -180,19 +204,72 @@ metrics_report() {
 # rewriting history from rows that may since have been dropped.
 #
 rollup() {
-    local written
+    local written complete_before
 
     log "  ${METRIC_ROLLUP_TABLE}: hourly rollup"
-    psql_as -c "select metric_month_partition('${METRIC_ROLLUP_TABLE}', month::date)
-                  from generate_series(
-                      date_trunc('month', current_date - ${METRIC_ROLLUP_KEEP_DAYS}),
-                      date_trunc('month', current_date + interval '1 month'),
-                      interval '1 month'
-                  ) as month" >/dev/null
-
     if [[ "$dry_run" -eq 1 ]]; then
         log "  ${METRIC_ROLLUP_TABLE}: dry run, nothing computed"
     else
+        psql_as -c "select metric_month_partition('${METRIC_ROLLUP_TABLE}', month::date)
+                      from generate_series(
+                          date_trunc('month', current_date - ${METRIC_ROLLUP_KEEP_DAYS}),
+                          date_trunc('month', current_date + interval '1 month'),
+                          interval '1 month'
+                      ) as month" >/dev/null
+    fi
+
+    if [[ "$dry_run" -eq 1 ]]; then
+        :
+    elif rollup_state_present; then
+        IFS=$'\t' read -r written complete_before <<< "$(psql_as -F $'\t' <<SQL
+with boundary as (
+    select date_trunc('hour', statement_timestamp())
+           - make_interval(days => ${METRIC_ROLLUP_LAG_DAYS}) as complete_before
+), hours as (
+    select distinct on (cluster, node, backend, member, bucket)
+           cluster, node, backend, member,
+           date_trunc('hour', observed_at) as bucket,
+           observed_at, uptime_sec, status, check_status, check_code,
+           min(uptime_sec) over (
+               partition by cluster, node, backend, member, date_trunc('hour', observed_at)
+           ) as floor_uptime_sec,
+           ${METRIC_COUNTERS}
+      from metric_pool_member
+     where observed_at < (select complete_before from boundary)
+     order by cluster, node, backend, member, bucket, observed_at desc
+), added as (
+    insert into ${METRIC_ROLLUP_TABLE}
+        (cluster, node, backend, member, bucket_at, observed_at, uptime_sec,
+         floor_uptime_sec, status, check_status, check_code, ${METRIC_COUNTERS})
+    select cluster, node, backend, member, bucket, observed_at, uptime_sec,
+           floor_uptime_sec, status, check_status, check_code, ${METRIC_COUNTERS}
+      from hours
+    on conflict do nothing
+    returning 1
+), advanced as (
+    insert into metric_rollup_state (rollup_name, complete_before)
+    select '${METRIC_ROLLUP_NAME}', complete_before from boundary
+    on conflict (rollup_name) do update
+       set complete_before = greatest(
+               metric_rollup_state.complete_before,
+               excluded.complete_before
+           ),
+           updated_at = transaction_timestamp()
+    returning complete_before
+)
+select (select count(*) from added), (select complete_before from advanced);
+SQL
+        )"
+        [[ -n "$written" && -n "$complete_before" ]] \
+            || die "${METRIC_ROLLUP_NAME} did not advance its completion boundary"
+        log "  ${METRIC_ROLLUP_TABLE}: added ${written} hour(s), complete before ${complete_before}"
+    else
+        #
+        # The command is one global file while environments may deliberately
+        # sit at different migrations during a rollout. Keep the old schema
+        # working until it reaches 0021; the corrected call order still rolls
+        # these rows up before age-based pruning.
+        #
         written="$(psql_as <<SQL
 with hours as (
     select distinct on (cluster, node, backend, member, bucket)
@@ -204,7 +281,8 @@ with hours as (
            ) as floor_uptime_sec,
            ${METRIC_COUNTERS}
       from metric_pool_member
-     where observed_at < date_trunc('hour', now()) - make_interval(days => ${METRIC_ROLLUP_LAG_DAYS})
+     where observed_at < date_trunc('hour', statement_timestamp())
+                         - make_interval(days => ${METRIC_ROLLUP_LAG_DAYS})
      order by cluster, node, backend, member, bucket, observed_at desc
 ), added as (
     insert into ${METRIC_ROLLUP_TABLE}
@@ -215,10 +293,11 @@ with hours as (
       from hours
     on conflict do nothing
     returning 1
-) select count(*) from added;
+)
+select count(*) from added;
 SQL
         )"
-        log "  ${METRIC_ROLLUP_TABLE}: added ${written} hour(s)"
+        log "  ${METRIC_ROLLUP_TABLE}: added ${written} hour(s); completion boundary unavailable"
     fi
 
     mapfile -t dropped < <(psql_as -c "
@@ -245,8 +324,8 @@ SQL
     log "  ${METRIC_ROLLUP_TABLE}: dropped ${#dropped[@]} partition(s)"
 }
 
-metrics() {
-    local table created dropped partition
+metric_partitions_prepare() {
+    local table created
 
     if ! metrics_present; then
         log "  metrics: no metric tables in ${DB_NAME} (migration 0018 not applied)"
@@ -271,6 +350,13 @@ metrics() {
             log "  ${table}: ${created} day(s) covered, to $(date -d "+${METRIC_AHEAD_DAYS} days" +%F)"
         fi
 
+    done
+}
+
+metric_partitions_prune() {
+    local table dropped partition
+
+    for table in "${METRIC_TABLES[@]}"; do
         mapfile -t dropped < <(psql_as -c "$(metric_partitions_expired "${table}")")
         if [[ ${#dropped[@]} -eq 0 || -z "${dropped[0]}" ]]; then
             log "  ${table}: nothing older than ${METRIC_KEEP_DAYS} day(s)"
@@ -382,7 +468,7 @@ main() {
             # than after - a database with a week of jobs pruned and no
             # partition for tomorrow is worse than one with neither done.
             #
-            metrics
+            metric_partitions_prepare
             if metrics_present; then
                 #
                 # After the partitions and before the pruning, because the
@@ -392,6 +478,7 @@ main() {
                 # restart.
                 #
                 rollup
+                metric_partitions_prune
             fi
             if [[ "$dry_run" -eq 1 ]]; then
                 log "  dry run: nothing was deleted"

@@ -1,6 +1,6 @@
 [Unit]
-# Keeps the job table bounded. Rendered by 11-platform-retention.
-Description=Prune finished HAProxy Manager jobs older than a week
+# Keeps jobs and metric history bounded. Rendered by 11-platform-retention.
+Description=Roll up metrics and prune bounded HAProxy Manager history
 Documentation=file:///apps/haproxy-manager-dev/src/haproxy-manager/docs/INSTALLATION.md
 After=postgresql.service
 Requires=postgresql.service
@@ -11,8 +11,8 @@ Type=oneshot
 # The migration role owns the table, and the ident map lets only root be it.
 User=root
 ExecStart=/usr/local/sbin/haproxy-ui-retention prune -e ENVIRONMENT
-# A table that quietly stops being pruned grows until something else breaks
-# first, so a failure is a failed unit rather than a line in a log nobody reads.
+# A rollup that quietly stops leaves readers on growing raw history, so a
+# failure is a failed unit rather than a line in a log nobody reads.
 SuccessExitStatus=0
 
 [Install]

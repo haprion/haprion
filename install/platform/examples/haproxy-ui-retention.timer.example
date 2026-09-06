@@ -8,12 +8,11 @@ Description=Daily pruning and hourly rollup for HAProxy Manager
 # making.
 #
 # Daily rather than weekly, and the reason is the rollup rather than the prune.
-# The reader answers anything older than seven days from the hourly rollup,
-# while the rollup itself stops a day short of the present. Run weekly, the
-# computed edge falls behind that boundary for about a day before each run, and
-# the reader then asks for hours nobody has summarised - which the traffic card
-# draws as a quiet day rather than as a missing one. Run daily, the edge is
-# never more than a day old and the boundary is six days beyond it.
+# The reader normally changes to hourly history at seven days, while the rollup
+# stops a day short of the present. Daily therefore leaves six days of normal
+# slack. A stored completion boundary protects longer outages: readers remain
+# on raw rows beyond it and those rows cannot be pruned as if time proved the
+# rollup had succeeded.
 #
 # The prune is unaffected by the change: it removes what is older than a week,
 # so running it more often removes the same rows a little sooner.

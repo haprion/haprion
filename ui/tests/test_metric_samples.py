@@ -27,6 +27,7 @@ SAMPLE_INSTANT = ROOT / "ui" / "migrations" / "versions" / "0019_sample_instant.
 RETENTION = ROOT / "install" / "platform" / "bin" / "haproxy-ui-retention"
 NODE_SCRIPT = ROOT / "install" / "node" / "haproxy-node-status"
 ROLLUP = ROOT / "ui" / "migrations" / "versions" / "0020_metric_pool_hour.py"
+ROLLUP_STATE = ROOT / "ui" / "migrations" / "versions" / "0021_metric_rollup_state.py"
 
 
 class PoolTotalConnection:
@@ -40,16 +41,23 @@ class PoolTotalConnection:
         def __exit__(self, *_: object) -> None:
             return None
 
-        def execute(self, statement: object, arguments: dict[str, object]) -> None:
+        def execute(self, statement: object, arguments: dict[str, object] | None = None) -> None:
             self.owner.statement = str(statement)
-            self.owner.arguments = arguments
+            self.owner.statements.append(self.owner.statement)
+            self.owner.arguments = arguments or {}
 
-        def fetchone(self) -> tuple[object, ...]:
+        def fetchone(self) -> tuple[object, ...] | None:
+            if "metric_rollup_state" in self.owner.statement:
+                if self.owner.complete_before is None:
+                    return None
+                return (self.owner.complete_before,)
             return self.owner.row
 
-    def __init__(self, row: tuple[object, ...]) -> None:
+    def __init__(self, row: tuple[object, ...], *, complete_before: datetime | None = None) -> None:
         self.row = row
+        self.complete_before = complete_before
         self.statement = ""
+        self.statements: list[str] = []
         self.arguments: dict[str, object] = {}
 
     def cursor(self) -> PoolTotalConnection.Cursor:
@@ -65,7 +73,8 @@ class ThePoolFiguresQuery(unittest.TestCase):
         for index, _counter in enumerate(CARD_COUNTERS, start=1):
             pairs.extend((index * 100, 60.0))
         connection = PoolTotalConnection(
-            (3, at - timedelta(minutes=1), at, False, False, 60.0, 60.0, *pairs)
+            (3, at - timedelta(minutes=1), at, False, False, 60.0, 60.0, *pairs),
+            complete_before=at - timedelta(days=1),
         )
 
         measured = db.read_pool_totals(
@@ -82,6 +91,42 @@ class ThePoolFiguresQuery(unittest.TestCase):
         self.assertNotIn("width", connection.arguments)
         self.assertEqual(connection.arguments["raw_from"], at - timedelta(days=7))
         self.assertEqual([total.value for total in measured.totals], [100, 200, 300, 400, 500, 600])
+
+    def test_an_incomplete_rollup_moves_the_reader_back_to_retained_raw_data(self) -> None:
+        at = datetime(2026, 9, 6, 12, tzinfo=UTC)
+        complete_before = at - timedelta(days=10)
+        pairs = [value for _counter in CARD_COUNTERS for value in (0, 0.0)]
+        connection = PoolTotalConnection(
+            (0, None, None, False, False, 0.0, 0.0, *pairs),
+            complete_before=complete_before,
+        )
+
+        db.read_pool_totals(
+            connection,  # type: ignore[arg-type]
+            cluster="alpha",
+            backend="mgd-site-web",
+            since=at - timedelta(days=30),
+            until=at,
+        )
+
+        self.assertIn("metric_rollup_state", connection.statements[0])
+        self.assertEqual(connection.arguments["raw_from"], complete_before)
+
+    def test_a_missing_completion_marker_claims_no_rollup_coverage(self) -> None:
+        at = datetime(2026, 9, 6, 12, tzinfo=UTC)
+        since = at - timedelta(days=30)
+        pairs = [value for _counter in CARD_COUNTERS for value in (0, 0.0)]
+        connection = PoolTotalConnection((0, None, None, False, False, 0.0, 0.0, *pairs))
+
+        db.read_pool_totals(
+            connection,  # type: ignore[arg-type]
+            cluster="alpha",
+            backend="mgd-site-web",
+            since=since,
+            until=at,
+        )
+
+        self.assertEqual(connection.arguments["raw_from"], since)
 
     def test_the_same_sql_measurement_carries_counter_and_window_coverage(self) -> None:
         at = datetime(2026, 9, 6, 12, tzinfo=UTC)
@@ -241,6 +286,13 @@ class WhatTheRollupPromises(unittest.TestCase):
     def test_the_hour_is_an_hour(self) -> None:
         self.assertIn("check (bucket_at = date_trunc('hour', bucket_at))", self.sql)
 
+    def test_completion_is_stored_even_for_an_hour_with_no_row(self) -> None:
+        state = ROLLUP_STATE.read_text()
+        self.assertIn("create table metric_rollup_state", state)
+        self.assertIn("complete_before timestamptz not null", state)
+        self.assertIn("grant select (rollup_name, complete_before)", state)
+        self.assertNotIn("to app_poller", state)
+
     def test_no_application_role_may_write_it(self) -> None:
         """Derived data, written by the one privileged hand. See B93."""
 
@@ -257,7 +309,21 @@ class WhatTheRollupPromises(unittest.TestCase):
         """It reads rows the pruning removes; reversed, it would make a gap."""
 
         prune = self.script.split("        prune)\n", 1)[1]
-        self.assertLess(prune.index("rollup"), prune.index("where_removable"))
+        self.assertLess(prune.index("rollup\n"), prune.index("metric_partitions_prune\n"))
+
+    def test_rows_and_completion_advance_in_one_statement(self) -> None:
+        rollup = self.script.split("\nrollup() {", 1)[1].split("\n}\n", 1)[0]
+        statement = rollup.split("<<SQL", 1)[1].split("\nSQL", 1)[0]
+        self.assertIn("insert into ${METRIC_ROLLUP_TABLE}", statement)
+        self.assertIn("insert into metric_rollup_state", statement)
+
+    def test_pool_raw_data_is_gated_by_completion_and_a_safety_day(self) -> None:
+        predicate = self.script.split("metric_partitions_expired() {", 1)[1].split("\n}", 1)[0]
+        self.assertIn(
+            'if [[ "$table" == "metric_pool_member" ]] && rollup_state_present', predicate
+        )
+        self.assertIn("complete_before - make_interval", predicate)
+        self.assertIn("METRIC_ROLLUP_SAFETY_DAYS", predicate)
 
     def test_it_calls_only_helpers_it_defines(self) -> None:
         """The command is standalone; it does not source the installer's lib.
@@ -272,6 +338,13 @@ class WhatTheRollupPromises(unittest.TestCase):
         called = set(re.findall(r"^\s{4}([a-z_][a-z_0-9]*)\b", self.script, re.MULTILINE))
         undefined = called - defined - set(re.findall(r"^([a-z_]+)\(\)", self.script, re.MULTILINE))
         self.assertEqual(undefined & {"step", "fail", "need_root", "require_vars"}, set())
+
+    def test_the_global_command_still_serves_an_environment_on_revision_0020(self) -> None:
+        """One installed script serves databases migrated at different times."""
+
+        rollup = self.script.split("\nrollup() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn("elif rollup_state_present; then", rollup)
+        self.assertIn("completion boundary unavailable", rollup)
 
     def test_a_successful_run_is_quiet(self) -> None:
         """Keeping the horizon idempotent costs one NOTICE per existing partition.
@@ -328,9 +401,15 @@ class WhatTheRetentionCommandKeeps(unittest.TestCase):
                 self.assertNotIn(writing, body)
 
     def test_a_dry_run_neither_creates_nor_drops(self) -> None:
-        body = self.script.split("\nmetrics() {", 1)[1].split("\n}\n", 1)[0]
-        for guard in ('if [[ "$dry_run" -eq 1 ]]; then',):
-            self.assertEqual(body.count(guard), 2)
+        prepare = self.script.split("\nmetric_partitions_prepare() {", 1)[1].split("\n}\n", 1)[0]
+        prune = self.script.split("\nmetric_partitions_prune() {", 1)[1].split("\n}\n", 1)[0]
+        rollup = self.script.split("\nrollup() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertIn('if [[ "$dry_run" -eq 1 ]]; then', prepare)
+        self.assertIn('if [[ "$dry_run" -eq 1 ]]; then', prune)
+        self.assertLess(
+            rollup.index('if [[ "$dry_run" -eq 1 ]]; then'),
+            rollup.index("metric_month_partition("),
+        )
 
     def test_an_unmigrated_environment_still_gets_its_jobs_pruned(self) -> None:
         """One script, several environments, and they sit at different migrations.
@@ -342,7 +421,7 @@ class WhatTheRetentionCommandKeeps(unittest.TestCase):
         """
 
         self.assertIn("to_regclass('public.metric_listener') is not null", self.script)
-        for function in ("metrics_report() {", "metrics() {"):
+        for function in ("metrics_report() {", "metric_partitions_prepare() {"):
             body = self.script.split(function, 1)[1].split("\n}", 1)[0]
             with self.subTest(function=function):
                 self.assertLess(body.index("metrics_present"), body.index("for table"))
@@ -357,7 +436,7 @@ class WhatTheRetentionCommandKeeps(unittest.TestCase):
         """A failure should not leave the horizon short and the jobs gone."""
 
         prune = self.script.split("        prune)\n", 1)[1]
-        self.assertLess(prune.index("metrics\n"), prune.index("where_removable"))
+        self.assertLess(prune.index("metric_partitions_prepare\n"), prune.index("where_removable"))
 
 
 if __name__ == "__main__":

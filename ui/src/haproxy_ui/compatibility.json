@@ -1,9 +1,8 @@
 {
   "schema_version": 1,
   "requires": {
-    "database_head": "0020",
+    "database_head": "0021",
     "database_revisions": [
-      "0020",
       "0021"
     ],
     "engine_api": 1,

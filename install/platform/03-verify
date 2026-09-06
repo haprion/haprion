@@ -39,7 +39,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_network\ncluster_objects\ncluster_status\njob\nlogin_attempt\nmetric_listener\nmetric_pool_hour\nmetric_pool_member\nproxy_draft'
+expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_network\ncluster_objects\ncluster_status\njob\nlogin_attempt\nmetric_listener\nmetric_pool_hour\nmetric_pool_member\nmetric_rollup_state\nproxy_draft'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -116,6 +116,7 @@ app_web	login_attempt	SELECT	at, client_ip, id, succeeded, username_normalised
 app_web	metric_listener	SELECT	bin, bout, cluster, dreq, dresp, econ, ereq, eresp, frontend, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, node, observed_at, owns_vip, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
 app_web	metric_pool_hour	SELECT	backend, bin, bout, bucket_at, check_code, check_status, cluster, dreq, dresp, econ, ereq, eresp, floor_uptime_sec, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, member, node, observed_at, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
 app_web	metric_pool_member	SELECT	backend, bin, bout, check_code, check_status, cluster, dreq, dresp, econ, ereq, eresp, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, member, node, observed_at, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
+app_web	metric_rollup_state	SELECT	complete_before, rollup_name
 app_web	proxy_draft	INSERT	base_hash, base_version, cluster, deleted, object_id, updated_by, yaml
 app_web	proxy_draft	SELECT	base_hash, base_version, cluster, deleted, id, object_id, revision, updated_at, updated_by, yaml
 app_web	proxy_draft	UPDATE	base_hash, base_version, deleted, updated_by, yaml

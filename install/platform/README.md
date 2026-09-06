@@ -269,6 +269,13 @@ empty the jobs page and read as lost history rather than as a quiet fortnight.
 The audit trail is untouched: this removes the queue's working copy, not the
 record of what happened.
 
+It also creates metric partitions, writes the hourly pool rollup and only then
+prunes raw metric partitions. Revision `0021` records the continuously completed
+rollup boundary. Readers stay on raw rows when that boundary falls behind their
+normal seven-day split, and pool raw data is retained until the boundary plus a
+safety day proves it replaceable. `report` shows the boundary without changing
+it. Listener metrics have no rollup and retain their fixed seven days.
+
 Its units are named after the environment, unlike the backup step's. Development
 runs this step and does not run step 6, so these are the units that would
 otherwise collide on a machine carrying both platforms — and two timers pruning

@@ -1667,6 +1667,31 @@ def _rolled_up() -> sql.Composed:
     ).format(columns=columns)
 
 
+def _pool_history_boundary(
+    connection: Connection[Any], *, since: datetime, until: datetime
+) -> datetime:
+    """Where a pool history changes from completed rollup to retained raw rows.
+
+    Seven days remains the normal boundary and keeps recent views at raw
+    resolution. If maintenance has fallen behind, its continuous completion
+    marker moves the boundary further into the past instead. No marker is the
+    conservative answer: use whatever raw data remains and claim no rollup
+    coverage for this window.
+    """
+
+    retained_from = until - metrics.RAW_RETENTION
+    if since >= retained_from:
+        return retained_from
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select complete_before from metric_rollup_state where rollup_name = 'pool_hour'"
+        )
+        row = cursor.fetchone()
+    if row is None or not isinstance(row[0], datetime):
+        return since
+    return max(since, min(retained_from, row[0]))
+
+
 def read_pool_samples(
     connection: Connection[Any],
     *,
@@ -1683,17 +1708,17 @@ def read_pool_samples(
     the sum across its servers, counted by the thing doing the balancing rather
     than added up here. A caller that wants one server names it.
 
-    **Two sources, one shape.** The raw samples are kept for a week; anything
-    older is answered from the hourly rollup. The boundary is a fixed age
-    rather than "whatever the rollup has", so the two halves cannot overlap and
-    an hour cannot be counted twice - and the rollup is computed with six days
-    of slack precisely so the older half is always there.
+    **Two sources, one shape.** The raw samples are normally kept for a week;
+    anything older is answered from the hourly rollup. Its continuous
+    completion marker may move that boundary further back after missed runs,
+    and the raw prune follows the same marker. The two halves still meet at one
+    instant, so they cannot overlap and count an hour twice.
 
     A window inside the retention never reads the rollup at all, so the common
     case costs one query and the long one costs two.
     """
 
-    raw_from = until - metrics.RAW_RETENTION
+    raw_from = _pool_history_boundary(connection, since=since, until=until)
     arguments = {
         "cluster": cluster,
         "backend": backend,
@@ -1736,10 +1761,10 @@ def read_pool_samples(
 def _pool_totals() -> sql.Composed:
     """Aggregate cumulative counters before drawing resolution can touch them.
 
-    The recent half reads every raw sample.  The older half can only read the
-    finest history that still exists, which is one cumulative reading per hour.
-    The two are split on `observed_at`, so the boundary reading cannot occur in
-    both halves.
+    The recent or not-yet-rolled-up half reads every raw sample. The completed
+    older half can only read the finest history that still exists, which is one
+    cumulative reading per hour. The two are split on `observed_at`, so the
+    boundary reading cannot occur in both halves.
     """
 
     names = tuple(name for name, _label in metrics.CARD_COUNTERS)
@@ -1830,7 +1855,7 @@ def read_pool_totals(
         "backend": backend,
         "member": member,
         "since": since,
-        "raw_from": until - metrics.RAW_RETENTION,
+        "raw_from": _pool_history_boundary(connection, since=since, until=until),
         "until": until,
     }
     with connection.cursor() as cursor:

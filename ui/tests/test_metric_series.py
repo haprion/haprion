@@ -283,6 +283,7 @@ class DrawingTheShape(unittest.TestCase):
             height=20,
             start=START,
             end=START + span,
+            bucket=timedelta(seconds=10),
         )
 
     def test_a_gap_is_drawn_as_a_gap(self) -> None:
@@ -301,44 +302,75 @@ class DrawingTheShape(unittest.TestCase):
 
         paths, points, _ = self.drawn([None, 7, None])
         self.assertEqual(paths, [])
-        self.assertEqual(len(points), 1)
+        self.assertEqual([point.value for point in points if point.measured], [0, 7, 0])
 
     def test_an_empty_window_is_flat_on_the_baseline(self) -> None:
         paths, _, peak = self.drawn([0, 0, 0], span=timedelta(seconds=30))
         self.assertEqual(peak, 0)
-        self.assertEqual(paths, ["M33.3 20.0 L66.7 20.0 L100.0 20.0"])
+        self.assertEqual(paths, ["M0.0 20.0 L33.3 20.0 L66.7 20.0 L100.0 20.0"])
 
     def test_the_peak_touches_the_top(self) -> None:
         paths, _, peak = self.drawn([0, 10], span=timedelta(seconds=20))
         self.assertEqual(peak, 10)
-        self.assertEqual(paths, ["M50.0 20.0 L100.0 0.0"])
+        self.assertEqual(paths, ["M0.0 20.0 L50.0 20.0 L100.0 0.0"])
 
     def test_a_reading_sits_where_its_moment_sits(self) -> None:
-        """A day of samples in a month-long window fills the last of it.
+        """The shape is read against the axis, not stretched to fill the card."""
 
-        Not the whole card. The shape is read against the axis, and a scale
-        that stretches to whatever data arrived makes two windows of the same
-        pool incomparable.
+        _, points, _ = self.drawn([1, 1], span=timedelta(seconds=200))
+        placed = {round(point.x, 1): point for point in points if point.measured}
+        self.assertEqual(sorted(placed), [5.0, 10.0])
+
+    def test_a_bucket_without_a_reading_rests_on_the_baseline(self) -> None:
+        """One line across the whole window, on the maintainer's call.
+
+        A month-long view that drew only where the poller has history gives a
+        short scribble in one corner, and a trend is read off a continuous
+        line. The cost is that the line cannot separate no traffic from no
+        poller - which is why the point still knows.
         """
 
-        paths, points, _ = self.drawn([1, 1], span=timedelta(seconds=200))
-        self.assertEqual(paths, ["M5.0 0.0 L10.0 0.0"])
-        self.assertEqual([round(point.x, 1) for point in points], [5.0, 10.0])
+        paths, points, _ = self.drawn([5, 5], span=timedelta(seconds=100))
+        self.assertEqual(len(paths), 1)
+        self.assertEqual(len(points), 11)
+        self.assertEqual(sum(1 for point in points if point.measured), 2)
+        self.assertTrue(paths[0].startswith("M0.0 20.0"))
+
+    def test_a_bucket_nobody_sampled_says_so_on_hover(self) -> None:
+        """Drawn at zero, and never claiming zero was measured."""
+
+        _, points, _ = self.drawn([5], span=timedelta(seconds=50))
+        empty = [point for point in points if not point.measured]
+        self.assertTrue(empty)
+        self.assertTrue(all("no reading" in point.reading for point in empty))
+        self.assertRegex(empty[0].reading, r"^\d\d-\d\d-\d\d \d\d:\d\d:\d\d · no reading$")
+
+    def test_an_unmeasurable_reading_is_still_a_gap(self) -> None:
+        """Narrower than an empty bucket, and the one coverage is counted from.
+
+        Something was measured across it and could not be turned into a rate.
+        That is a different and more suspicious thing than a stretch nobody
+        sampled, so the line breaks here where it rests on the baseline there.
+        """
+
+        paths, _, _ = self.drawn([1, None, 1], span=timedelta(seconds=40))
+        self.assertEqual(len(paths), 2)
 
     def test_a_point_says_the_moment_and_every_figure(self) -> None:
         """Including the ones the line does not draw, and the ones unmeasured."""
 
         _, points, _ = self.drawn([3, None])
-        self.assertEqual(len(points), 1)
-        self.assertIn("Requests 3", points[0].reading)
-        self.assertIn("Connection errors not measured", points[0].reading)
-        self.assertIn(points[0].at.strftime("%y-%m-%d %H:%M:%S"), points[0].reading)
+        counted = next(point for point in points if point.value == 3)
+        self.assertIn("Requests 3", counted.reading)
+        self.assertIn("Connection errors not measured", counted.reading)
+        self.assertIn(counted.at.strftime("%y-%m-%d %H:%M:%S"), counted.reading)
 
     def test_a_point_writes_its_moment_the_agreed_way(self) -> None:
         """`yy-mm-dd hh:mm:ss`, 24-hour: fixed width and read the same by anyone."""
 
         _, points, _ = self.drawn([1, 1])
-        self.assertRegex(points[0].reading, r"^\d\d-\d\d-\d\d \d\d:\d\d:\d\d · ")
+        for point in points:
+            self.assertRegex(point.reading, r"^\d\d-\d\d-\d\d \d\d:\d\d:\d\d · ")
 
 
 class WhetherTheWindowSaysAnything(unittest.TestCase):

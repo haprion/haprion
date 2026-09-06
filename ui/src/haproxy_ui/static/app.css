@@ -1126,19 +1126,40 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .traffic-figures dt { color: var(--muted); font-size: 12px; }
 .traffic-figures dd { margin: 0; font-variant-numeric: tabular-nums; font-size: 18px; color: var(--text-strong); }
 /*
+ * The hover targets over the line. Invisible but present: they carry the
+ * reading a pointer asks for, and a fill of `none` would let the pointer
+ * through them.
+ *
+ * `stroke: none` is the load-bearing half. The base `svg` rule above dresses
+ * this app's icons - `fill: none; stroke: currentcolor` - and it reaches every
+ * shape in every SVG, so a rect that only clears its fill is drawn as a 1.8px
+ * outline. Sixty of those across an hour is a picket fence over the line. The
+ * paths escaped it by setting stroke as an attribute.
+ */
+.traffic-hit { fill: transparent; stroke: none; cursor: crosshair; }
+
+/*
+ * The tooltip the script raises, placed against the card rather than the
+ * pointer: a reader moving along the line gets a box that stays on one
+ * baseline instead of one that swims. `pointer-events: none` so it can sit
+ * over the hover targets without stealing the hover that produced it.
+ */
+.traffic-tip {
+  position: absolute; bottom: calc(100% + 8px); transform: translateX(-50%);
+  z-index: 2; pointer-events: none; white-space: nowrap;
+  padding: 6px 9px; border: 1px solid var(--line-strong); border-radius: 7px;
+  background: var(--surface-raised, var(--surface)); color: var(--text-strong);
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 28%);
+}
+.traffic-hit:hover { fill: color-mix(in srgb, var(--info) 14%, transparent); }
+
+/*
  * The marker on a figure the window could not fully see. Muted and small:
  * it qualifies the number beside it and must not compete with it for the
  * eye, but it has to be there, because a partial sum that looks like a
  * whole one is the thing the coverage note exists to prevent.
  */
-/*
- * The hover targets over the line. Invisible but present: they carry the
- * reading a pointer asks for, and a fill of `none` would let the pointer
- * through them. The faint wash on hover is the only thing that says which
- * bucket answered.
- */
-.traffic-hit { fill: transparent; cursor: crosshair; }
-.traffic-hit:hover { fill: color-mix(in srgb, var(--info) 14%, transparent); }
 .traffic-partial { color: var(--muted); cursor: help; font-size: 11px; vertical-align: super; margin-left: 1px; }
 .traffic-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
 /* The range switch, as one segmented control rather than four loose links:

@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_ui.views import asset_token
+from haproxy_ui.views import STATIC_DIRECTORY, asset_token
 
 
 class AssetTokenTests(unittest.TestCase):
@@ -49,3 +49,33 @@ class AssetTokenTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShapesTheIconRuleReaches(unittest.TestCase):
+    """Every SVG shape in the app inherits the icon dressing, whether it wants it.
+
+    `svg { fill: none; stroke: currentcolor; stroke-width: 1.8 }` is written for
+    the icon set and reaches every shape in every SVG on the page. A hover
+    target added to the traffic sparkline cleared its fill and not its stroke,
+    and shipped as sixty vertical bars drawn over the line - a picket fence
+    where an invisible rectangle was intended.
+
+    So: a shape meant to be invisible says so about both properties. Checked as
+    text because that is where the mistake lives; no test can render CSS here,
+    but this one names the rule that will catch the next shape.
+    """
+
+    def stylesheet(self) -> str:
+        return (STATIC_DIRECTORY / "app.css").read_text(encoding="utf-8")
+
+    def test_the_icon_rule_still_strokes_everything(self) -> None:
+        """If this fails the rule below may no longer be needed - check, do not delete."""
+
+        self.assertIn("svg { fill: none; stroke: currentcolor;", self.stylesheet())
+
+    def test_an_invisible_shape_clears_its_stroke_too(self) -> None:
+        rule = next(
+            line for line in self.stylesheet().splitlines() if line.startswith(".traffic-hit {")
+        )
+        self.assertIn("stroke: none", rule)
+        self.assertIn("fill: transparent", rule)

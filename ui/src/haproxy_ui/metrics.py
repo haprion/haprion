@@ -375,13 +375,20 @@ def totalled(found: Sequence[Interval], name: str, label: str = "") -> Total:
 
 @dataclass(frozen=True, slots=True)
 class Point:
-    """One plotted interval, where it sits and what a hover over it says."""
+    """One plotted bucket, where it sits and what a hover over it says."""
 
     at: datetime
     x: float
     y: float
     value: int
     reading: str
+    #
+    # Whether a reading stood behind it, as opposed to a bucket the line rests
+    # on the baseline for. The drawing treats them alike on the maintainer's
+    # call; the hover does not, because "0" and "nobody was watching" are not
+    # the same answer to "what happened at 09:40".
+    #
+    measured: bool = True
 
 
 def spark(
@@ -391,6 +398,7 @@ def spark(
     height: float,
     start: datetime,
     end: datetime,
+    bucket: timedelta,
 ) -> tuple[list[str], list[Point], int]:
     """A sparkline on an absolute time axis, its hover points, and its peak.
 
@@ -401,14 +409,21 @@ def spark(
     that needs a fixed scale, so a point sits where its moment sits and a
     period without readings is left empty rather than closed up.
 
-    **A gap is drawn as a gap.** An interval whose difference could not be
-    taken - a restart, a change of node, a counter the node did not report -
-    ends the current run and the next known value starts a new one. Joining
-    across it draws a straight line through the one place the data does not
-    know what happened, which reads as the calmest part of the window. The same
-    applies to a stretch with no readings at all: no line is drawn there,
-    because nothing measured it. Drawing it at zero would be inventing the
-    quietest possible month out of a month nobody watched.
+    **A bucket nothing was recorded for rests on the baseline.** The
+    maintainer's call, and the reason is the card's purpose: a trend is read
+    off a continuous line, and a window that only draws where the poller has
+    history gives a month-long view a short scribble in one corner. The cost is
+    stated rather than hidden - the line cannot then distinguish "no traffic"
+    from "no poller", so the hover says which of the two each bucket was, and
+    the figures beside the card carry their own coverage.
+
+    **A reading that could not be differenced is still a gap.** A restart, a
+    change of node, a counter the node did not report: the line breaks there
+    and the next known value starts a new run. That is deliberately not the
+    same as an empty bucket. Something was measured across it and the
+    measurement cannot be turned into a rate, which is a narrower and more
+    suspicious thing than a stretch nobody sampled - and it is the one the
+    figures' coverage is counted from.
 
     Scaled to its own peak rather than to a fixed ceiling, because the question
     a sparkline answers is "what shape", not "how much" - the figures beside it
@@ -416,43 +431,78 @@ def spark(
     flat on the baseline, which is the truth: nothing happened.
     """
 
-    known = [
-        interval.counters.get("req_tot")
-        for interval in found
-        if interval.counters.get("req_tot") is not None
-    ]
-    peak = max((value for value in known if value is not None), default=0)
+    peak = max(
+        (value for interval in found if (value := interval.counters.get("req_tot")) is not None),
+        default=0,
+    )
 
     seconds = (end - start).total_seconds()
-    if seconds <= 0:
+    if seconds <= 0 or bucket <= timedelta(0):
         return [], [], peak
+
+    #
+    # The readings, indexed by the bucket their end falls in, so the grid below
+    # can ask for one by position rather than searching the list per bucket.
+    #
+    step = bucket.total_seconds()
+    measured: dict[int, Interval] = {}
+    for interval in found:
+        offset = (interval.ended_at - start).total_seconds()
+        if 0 <= offset <= seconds:
+            measured[min(int(offset // step), int(seconds // step))] = interval
 
     runs: list[list[str]] = []
     current: list[str] = []
     points: list[Point] = []
 
-    for interval in found:
-        value = interval.counters.get("req_tot")
+    for index in range(int(seconds // step) + 1):
+        at = start + timedelta(seconds=min(index * step, seconds))
+        reading = measured.get(index)
+        value = reading.counters.get("req_tot") if reading is not None else 0
         if value is None:
             if len(current) > 1:
                 runs.append(current)
             current = []
+            points.append(
+                Point(
+                    at=reading.ended_at if reading else at,
+                    x=min(max((at - start).total_seconds() / seconds, 0.0), 1.0) * width,
+                    y=height,
+                    value=0,
+                    reading=reading_of(reading) if reading else unread_at(at),
+                    measured=reading is not None,
+                )
+            )
             continue
-        #
-        # Plotted at the interval's end, which is the moment its traffic had
-        # been counted by. Clamped, because a reading can sit a fraction
-        # outside a window whose edge is "now".
-        #
-        at = interval.ended_at
-        position = (at - start).total_seconds() / seconds
-        x = min(max(position, 0.0), 1.0) * width
+        x = min(max((at - start).total_seconds() / seconds, 0.0), 1.0) * width
         y = height if peak == 0 else height - (value / peak) * height
         current.append(f"{'M' if not current else 'L'}{x:.1f} {y:.1f}")
-        points.append(Point(at=at, x=x, y=y, value=value, reading=reading_of(interval)))
+        points.append(
+            Point(
+                at=reading.ended_at if reading else at,
+                x=x,
+                y=y,
+                value=value,
+                reading=reading_of(reading) if reading else unread_at(at),
+                measured=reading is not None,
+            )
+        )
     if len(current) > 1:
         runs.append(current)
 
     return [" ".join(run) for run in runs], points, peak
+
+
+def unread_at(at: datetime) -> str:
+    """What a bucket says when the line rests on the baseline without a reading.
+
+    The line cannot make this distinction - it is drawn at zero either way, so
+    that a month-long window has a month-long line - so the hover is where it
+    is kept. Without it the card would answer "how much traffic at 03:00 last
+    Tuesday" with a confident nothing, for an hour the poller was not running.
+    """
+
+    return f"{at.strftime(TIMESTAMP)} · no reading"
 
 
 def reading_of(interval: Interval) -> str:
@@ -665,6 +715,7 @@ def pool_traffic(
         height=SPARK_HEIGHT,
         start=start,
         end=end,
+        bucket=bucket,
     )
     buckets = max((end - start) / bucket, 1) if bucket else 1
     return PoolTraffic(

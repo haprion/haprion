@@ -1133,7 +1133,6 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  */
 .traffic-partial { color: var(--muted); cursor: help; font-size: 11px; vertical-align: super; margin-left: 1px; }
 .traffic-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
-.traffic-footnote { padding: 0 20px 16px; margin-top: 0; }
 /* The range switch, as one segmented control rather than four loose links:
    they are alternatives to each other, and a shared border is what says so.
    Recessive - it is a control on a card, not the subject of the page - and

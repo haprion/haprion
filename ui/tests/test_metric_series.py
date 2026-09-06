@@ -286,28 +286,27 @@ class WhetherTheWindowSaysAnything(unittest.TestCase):
 
         card = self.traffic()
         self.assertFalse(card.measured)
-        self.assertFalse(card.quiet)
 
-    def test_a_measured_nothing_says_so_once(self) -> None:
-        """Rather than as a flat line, a peak of zero and six zeros."""
+    def test_a_window_of_zeroes_is_measured(self) -> None:
+        """Counted nothing, as opposed to having nothing to count."""
 
         card = self.traffic(
             sample(0, uptime=100, **dict.fromkeys(metrics.METRIC_COUNTERS, 0)),
             sample(20, uptime=120, **dict.fromkeys(metrics.METRIC_COUNTERS, 0)),
         )
         self.assertTrue(card.measured)
-        self.assertTrue(card.quiet)
 
-    def test_a_window_with_a_hole_is_not_quiet(self) -> None:
-        """A different sentence: nothing happened, versus we cannot say."""
+    def test_a_window_with_a_hole_is_still_a_window(self) -> None:
+        """Measured, and its figures marked rather than withheld."""
 
         card = self.traffic(
             sample(0, uptime=900, **dict.fromkeys(metrics.METRIC_COUNTERS, 0)),
             sample(20, uptime=4, **dict.fromkeys(metrics.METRIC_COUNTERS, 0)),
         )
         self.assertTrue(card.measured)
-        self.assertFalse(card.quiet)
         self.assertTrue(card.restarted)
+        self.assertEqual(card.coverage, 0)
+        self.assertTrue(all(not total.whole for total in card.totals))
 
 
 class WhichWindowIsAsked(unittest.TestCase):

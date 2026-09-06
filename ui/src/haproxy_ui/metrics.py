@@ -487,23 +487,14 @@ class PoolTraffic:
     #
     coverage: int = 100
 
-    @property
-    def quiet(self) -> bool:
-        """Whether the whole window is a measured nothing.
-
-        The figures and the line stay either way - they are the reading, and
-        an interface that removes them to avoid repeating itself has removed
-        the answer to keep the phrasing tidy. What this earns is one sentence
-        under them saying the stillness was measured, and the dropping of the
-        peak label, which beside a flat line and a row of zeros is the third
-        copy of one fact.
-
-        A window with a single unknown interval is not quiet - it is a window
-        with a hole, which is a different sentence.
-        """
-
-        return self.measured and all(total.whole and total.value == 0 for total in self.totals)
-
+    #
+    # There was a `quiet` property here, and the sentence it turned on -
+    # "nothing reached this pool in the last hour" - was removed on the
+    # maintainer's call. A row of zeros beside a flat line already says it, and
+    # saying it a third time in prose is what made the card wordy. The figures
+    # and the line are the reading; `measured` still separates a window that
+    # counted nothing from one that has nothing to count.
+    #
     @property
     def measured(self) -> bool:
         """Whether there is a window at all, as opposed to one that is empty.

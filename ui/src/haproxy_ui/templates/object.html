@@ -96,7 +96,7 @@
 {% if traffic %}
 <article class="cluster-card cluster-accent-{{ object.accent }}">
   <header class="cluster-header">
-    <div class="cluster-identity"><div><h3>Traffic</h3><p>What went through this object's pool, counted by HAProxy on the node holding the address</p></div></div>
+    <div class="cluster-identity"><div><h3>Traffic</h3></div></div>
     {#
       The ranges as links rather than a control that needs script: the page is
       rendered per request anyway, and a link is what survives being opened in
@@ -135,29 +135,16 @@
       </div>
       <dl class="traffic-figures">
         {% for total in pool.totals %}
-        <div><dt>{{ total.label }}</dt><dd>{{ total.value }}{% if not total.whole %}<span class="traffic-partial" title="Counted over {{ total.coverage }}% of this window. The rest fell inside an interval that could not be measured, so it is missing from this figure rather than counted as nothing.">*</span>{% endif %}</dd></div>
+        <div><dt>{{ total.label }}</dt><dd>{{ total.value }}{% if not total.whole %}<span class="traffic-partial" title="Counted over {{ total.coverage }}% of this window. The rest fell in intervals that could not be measured - a restart, the address moving to the other node, or a counter this node did not report - so it is missing from this figure rather than counted as nothing.">*</span>{% endif %}</dd></div>
         {% endfor %}
       </dl>
     </div>
-    {% if pool.coverage < 100 %}
-    <p class="traffic-note">The figures marked * were counted over {{ pool.coverage }}% of this window. What the gaps contained is missing from them rather than counted as nothing, so they are a floor and not the window's traffic.</p>
-    {% endif %}
-    {% if pool.quiet %}
-    <p class="traffic-note">Nothing reached this pool in {{ traffic_window }}. That is a reading rather than a gap: the samples are there and every counter stood still.</p>
-    {% endif %}
-    {% if pool.restarted %}
-    <p class="traffic-note">HAProxy restarted inside this window, so the counters began again. The intervals across the restart are left out rather than guessed.</p>
-    {% endif %}
-    {% if pool.handed_over %}
-    <p class="traffic-note">The address moved to the other node inside this window. Pool counters are recorded from the node holding it, so the two halves were counted by different machines and the interval between them is left out rather than subtracted across.</p>
-    {% endif %}
     {% else %}
-    <p class="traffic-note">No samples yet. The poller stores one reading per cluster every time it runs, so this fills in from the next pass — and an object that has never been deployed has nothing to store.</p>
+    <p class="traffic-note">No samples yet.</p>
     {% endif %}
   </div>
   {% endfor %}
   {% if traffic_truncated %}
-  <p class="traffic-note traffic-footnote">Beyond {{ traffic_retention_days }} days this reads the hourly rollup rather than the samples, so the line is drawn at one point per hour however far back it goes.</p>
   {% endif %}
 </article>
 {% endif %}

@@ -1084,7 +1084,6 @@ def build_router(config: Config) -> APIRouter:
                 # little traffic in it.
                 #
                 "traffic_truncated": chosen.span > metrics.RAW_RETENTION,
-                "traffic_retention_days": metrics.RAW_RETENTION.days,
                 #
                 # More than one pool is the only case where naming them helps.
                 # With one, the name is the object's own backend written twice

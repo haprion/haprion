@@ -1773,10 +1773,18 @@ class EveryClassThatStartsHaproxySaysSoFirst(unittest.TestCase):
         )
 
     def test_a_class_that_spawns_one_is_skipped_where_there_is_none(self) -> None:
-        module = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        #
+        # Every test file, not just this one. The guard read its own module
+        # until 2026-09-06, which is the failure its own docstring describes -
+        # a behaviour test written in a new file inherited none of it, and the
+        # runner without HAProxy would have reported it broken rather than
+        # skipped. There is no list of files to keep in step: the directory is
+        # the list.
+        #
         unguarded = sorted(
-            node.name
-            for node in module.body
+            f"{path.name}:{node.name}"
+            for path in sorted(Path(__file__).parent.glob("test_*.py"))
+            for node in ast.parse(path.read_text(encoding="utf-8")).body
             if isinstance(node, ast.ClassDef)
             and self._starts_haproxy(node)
             and not any("skipUnless" in ast.dump(decorator) for decorator in node.decorator_list)

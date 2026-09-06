@@ -15,9 +15,11 @@ from __future__ import annotations
 import ast
 import re
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from haproxy_ui.metrics import METRIC_COUNTERS
+from haproxy_ui import db
+from haproxy_ui.metrics import CARD_COUNTERS, METRIC_COUNTERS
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = ROOT / "ui" / "migrations" / "versions" / "0018_metric_samples.py"
@@ -25,6 +27,82 @@ SAMPLE_INSTANT = ROOT / "ui" / "migrations" / "versions" / "0019_sample_instant.
 RETENTION = ROOT / "install" / "platform" / "bin" / "haproxy-ui-retention"
 NODE_SCRIPT = ROOT / "install" / "node" / "haproxy-node-status"
 ROLLUP = ROOT / "ui" / "migrations" / "versions" / "0020_metric_pool_hour.py"
+
+
+class PoolTotalConnection:
+    class Cursor:
+        def __init__(self, owner: PoolTotalConnection) -> None:
+            self.owner = owner
+
+        def __enter__(self) -> PoolTotalConnection.Cursor:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def execute(self, statement: object, arguments: dict[str, object]) -> None:
+            self.owner.statement = str(statement)
+            self.owner.arguments = arguments
+
+        def fetchone(self) -> tuple[object, ...]:
+            return self.owner.row
+
+    def __init__(self, row: tuple[object, ...]) -> None:
+        self.row = row
+        self.statement = ""
+        self.arguments: dict[str, object] = {}
+
+    def cursor(self) -> PoolTotalConnection.Cursor:
+        return self.Cursor(self)
+
+
+class ThePoolFiguresQuery(unittest.TestCase):
+    """The figure reads the finest stored series, never the graph's buckets."""
+
+    def test_it_combines_raw_samples_with_the_hourly_history_at_one_boundary(self) -> None:
+        at = datetime(2026, 9, 6, 12, tzinfo=UTC)
+        pairs: list[object] = []
+        for index, _counter in enumerate(CARD_COUNTERS, start=1):
+            pairs.extend((index * 100, 60.0))
+        connection = PoolTotalConnection(
+            (3, at - timedelta(minutes=1), at, False, False, 60.0, 60.0, *pairs)
+        )
+
+        measured = db.read_pool_totals(
+            connection,  # type: ignore[arg-type]
+            cluster="alpha",
+            backend="mgd-site-web",
+            since=at - timedelta(days=30),
+            until=at,
+        )
+
+        self.assertIn("metric_pool_member", connection.statement)
+        self.assertIn("metric_pool_hour", connection.statement)
+        self.assertNotIn("date_bin", connection.statement)
+        self.assertNotIn("width", connection.arguments)
+        self.assertEqual(connection.arguments["raw_from"], at - timedelta(days=7))
+        self.assertEqual([total.value for total in measured.totals], [100, 200, 300, 400, 500, 600])
+
+    def test_the_same_sql_measurement_carries_counter_and_window_coverage(self) -> None:
+        at = datetime(2026, 9, 6, 12, tzinfo=UTC)
+        pairs: list[object] = []
+        for index, _counter in enumerate(CARD_COUNTERS, start=1):
+            pairs.extend((index, 40.0 if index == 1 else 20.0))
+        connection = PoolTotalConnection(
+            (4, at - timedelta(seconds=60), at, True, False, 50.0, 60.0, *pairs)
+        )
+
+        measured = db.read_pool_totals(
+            connection,  # type: ignore[arg-type]
+            cluster="alpha",
+            backend="mgd-site-web",
+            since=at - timedelta(hours=1),
+            until=at,
+        )
+
+        self.assertEqual(measured.coverage, 83)
+        self.assertEqual(measured.totals[0].coverage, 66)
+        self.assertTrue(measured.restarted)
 
 
 def _tuple_named(source: str, name: str) -> tuple[str, ...]:

@@ -758,6 +758,25 @@ CARD_COUNTERS: tuple[tuple[str, str], ...] = (
     ("wretr", "Retries"),
 )
 
+
+@dataclass(frozen=True, slots=True)
+class PoolMeasurement:
+    """One window measured independently of how its line is drawn.
+
+    A line needs tens of buckets; a cumulative counter needs every retained
+    reading.  Keeping those two products separate is what makes changing the
+    window's drawing resolution unable to change the figures beside it.
+    """
+
+    intervals: int
+    started_at: datetime | None
+    ended_at: datetime | None
+    totals: tuple[Total, ...]
+    restarted: bool
+    handed_over: bool
+    coverage: int
+
+
 #
 # The drawing's own coordinate space, not its size on screen. The stylesheet
 # gives it the width the card has to spare and the stroke is told not to scale,
@@ -926,6 +945,7 @@ def pool_traffic(
     start: datetime,
     end: datetime,
     bucket: timedelta,
+    measurement: PoolMeasurement | None = None,
 ) -> PoolTraffic:
     """One pool's card, drawn across the window that was asked for.
 
@@ -936,7 +956,16 @@ def pool_traffic(
     """
 
     found = intervals(samples)
-    totals = tuple(totalled(found, name, label) for name, label in CARD_COUNTERS)
+    if measurement is None:
+        measurement = PoolMeasurement(
+            intervals=len(found),
+            started_at=found[0].started_at if found else None,
+            ended_at=found[-1].ended_at if found else None,
+            totals=tuple(totalled(found, name, label) for name, label in CARD_COUNTERS),
+            restarted=any(interval.restarted for interval in found),
+            handed_over=any(interval.handed_over for interval in found),
+            coverage=window_coverage(found),
+        )
     paths, points, peak = spark(
         found,
         width=SPARK_WIDTH,
@@ -948,19 +977,19 @@ def pool_traffic(
     buckets = max((end - start) / bucket, 1) if bucket else 1
     return PoolTraffic(
         backend=backend,
-        intervals=len(found),
-        started_at=found[0].started_at if found else None,
-        ended_at=found[-1].ended_at if found else None,
-        totals=totals,
+        intervals=measurement.intervals,
+        started_at=measurement.started_at,
+        ended_at=measurement.ended_at,
+        totals=measurement.totals,
         paths=tuple(paths),
         points=tuple(points),
         hit_width=SPARK_WIDTH / buckets,
         ticks=tuple(spark_ticks(start=start, end=end, fmt=tick_format)),
         levels=levels_for(ceiling_for(peak), height=SPARK_HEIGHT),
         peak=peak,
-        restarted=any(interval.restarted for interval in found),
-        handed_over=any(interval.handed_over for interval in found),
-        coverage=window_coverage(found),
+        restarted=measurement.restarted,
+        handed_over=measurement.handed_over,
+        coverage=measurement.coverage,
     )
 
 

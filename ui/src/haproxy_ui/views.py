@@ -1079,12 +1079,20 @@ def build_router(config: Config) -> APIRouter:
                             cluster=cluster,
                             backend=backend,
                             since=since,
+                            until=now,
                             width=chosen.bucket,
                         ),
                         tick_format=chosen.tick,
                         start=since,
                         end=now,
                         bucket=chosen.bucket,
+                        measurement=db.read_pool_totals(
+                            connection,
+                            cluster=cluster,
+                            backend=backend,
+                            since=since,
+                            until=now,
+                        ),
                     )
                     for backend in served
                 ]

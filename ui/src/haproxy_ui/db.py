@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -1640,6 +1640,7 @@ def _bucketed_raw(width: timedelta) -> sql.Composed:
         "        where cluster = %(cluster)s and backend = %(backend)s "
         "          and member = %(member)s and observed_at >= %(since)s "
         "          and observed_at >= %(raw_from)s "
+        "          and observed_at <= %(until)s "
         "       ) as bucketed "
         " order by node, bucket, observed_at desc"
     ).format(columns=columns)
@@ -1659,8 +1660,9 @@ def _rolled_up() -> sql.Composed:
         "select bucket_at as at, observed_at, uptime_sec, floor_uptime_sec, node, {columns} "
         "  from metric_pool_hour "
         " where cluster = %(cluster)s and backend = %(backend)s "
-        "   and member = %(member)s and bucket_at >= %(since)s "
-        "   and bucket_at < %(raw_from)s "
+        "   and member = %(member)s and bucket_at >= date_trunc('hour', %(since)s) "
+        "   and bucket_at < %(raw_from)s and observed_at >= %(since)s "
+        "   and observed_at < %(raw_from)s and observed_at <= %(until)s "
         " order by bucket_at, node"
     ).format(columns=columns)
 
@@ -1671,6 +1673,7 @@ def read_pool_samples(
     cluster: str,
     backend: str,
     since: datetime,
+    until: datetime,
     width: timedelta,
     member: str = "BACKEND",
 ) -> list[metrics.Sample]:
@@ -1690,7 +1693,7 @@ def read_pool_samples(
     case costs one query and the long one costs two.
     """
 
-    raw_from = datetime.now(UTC) - metrics.RAW_RETENTION
+    raw_from = until - metrics.RAW_RETENTION
     arguments = {
         "cluster": cluster,
         "backend": backend,
@@ -1698,6 +1701,7 @@ def read_pool_samples(
         "since": since,
         "width": width,
         "raw_from": raw_from,
+        "until": until,
     }
 
     rows: list[Any] = []
@@ -1727,3 +1731,132 @@ def read_pool_samples(
     #
     found.sort(key=lambda sample: (sample.observed_at, sample.node or ""))
     return found
+
+
+def _pool_totals() -> sql.Composed:
+    """Aggregate cumulative counters before drawing resolution can touch them.
+
+    The recent half reads every raw sample.  The older half can only read the
+    finest history that still exists, which is one cumulative reading per hour.
+    The two are split on `observed_at`, so the boundary reading cannot occur in
+    both halves.
+    """
+
+    names = tuple(name for name, _label in metrics.CARD_COUNTERS)
+    columns = sql.SQL(", ").join(sql.Identifier(name) for name in names)
+    previous = sql.SQL(", ").join(
+        sql.SQL("lag({name}) over ordered as {before}").format(
+            name=sql.Identifier(name), before=sql.Identifier(f"before_{name}")
+        )
+        for name in names
+    )
+    deltas = sql.SQL(", ").join(
+        sql.SQL(
+            "case when handed_over or {before} is null or {after} is null then null "
+            "     when restarted then {after} "
+            "     when {after} < {before} then null "
+            "     else {after} - {before} end as {delta}"
+        ).format(
+            before=sql.Identifier(f"before_{name}"),
+            after=sql.Identifier(name),
+            delta=sql.Identifier(f"delta_{name}"),
+        )
+        for name in names
+    )
+    aggregates = sql.SQL(", ").join(
+        sql.SQL(
+            "coalesce(sum({delta}), 0)::bigint, "
+            "coalesce(sum(span_sec) filter ("
+            "    where {delta} is not null and not restarted and not handed_over"
+            "), 0)"
+        ).format(delta=sql.Identifier(f"delta_{name}"))
+        for name in names
+    )
+    return sql.SQL(
+        "with readings as ("
+        "    select observed_at, uptime_sec, uptime_sec as floor_uptime_sec, node, {columns} "
+        "      from metric_pool_member "
+        "     where cluster = %(cluster)s and backend = %(backend)s "
+        "       and member = %(member)s and observed_at >= %(since)s "
+        "       and observed_at >= %(raw_from)s and observed_at <= %(until)s "
+        "    union all "
+        "    select observed_at, uptime_sec, floor_uptime_sec, node, {columns} "
+        "      from metric_pool_hour "
+        "     where cluster = %(cluster)s and backend = %(backend)s "
+        "       and member = %(member)s "
+        "       and bucket_at >= date_trunc('hour', %(since)s) "
+        "       and bucket_at < %(raw_from)s and observed_at >= %(since)s "
+        "       and observed_at < %(raw_from)s and observed_at <= %(until)s"
+        "), paired as ("
+        "    select observed_at as ended_at, "
+        "           lag(observed_at) over ordered as started_at, "
+        "           uptime_sec, floor_uptime_sec, node, {columns}, "
+        "           lag(uptime_sec) over ordered as previous_uptime_sec, "
+        "           lag(node) over ordered as previous_node, {previous} "
+        "      from readings "
+        "    window ordered as (order by observed_at, node)"
+        "), marked as ("
+        "    select *, "
+        "           coalesce(floor_uptime_sec < previous_uptime_sec, false) as restarted, "
+        "           (previous_node is not null and node is not null "
+        "            and previous_node <> node) as handed_over, "
+        "           extract(epoch from ended_at - started_at) as span_sec "
+        "      from paired where started_at is not null"
+        "), differences as ("
+        "    select *, {deltas} from marked"
+        ") "
+        "select count(*)::bigint, min(started_at), max(ended_at), "
+        "       coalesce(bool_or(restarted), false), "
+        "       coalesce(bool_or(handed_over), false), "
+        "       coalesce(sum(span_sec) filter (where not restarted and not handed_over), 0), "
+        "       coalesce(sum(span_sec), 0), {aggregates} "
+        "  from differences"
+    ).format(columns=columns, previous=previous, deltas=deltas, aggregates=aggregates)
+
+
+def read_pool_totals(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    backend: str,
+    since: datetime,
+    until: datetime,
+    member: str = "BACKEND",
+) -> metrics.PoolMeasurement:
+    """One pool's figures at stored resolution, independent of its graph."""
+
+    arguments = {
+        "cluster": cluster,
+        "backend": backend,
+        "member": member,
+        "since": since,
+        "raw_from": until - metrics.RAW_RETENTION,
+        "until": until,
+    }
+    with connection.cursor() as cursor:
+        cursor.execute(_pool_totals(), arguments)
+        row = cursor.fetchone()
+
+    if row is None:
+        raise RuntimeError("the pool totals aggregate returned no row")
+    span = float(row[6])
+    counted = float(row[5])
+    totals = tuple(
+        metrics.Total(
+            label=label,
+            value=int(row[7 + index * 2]),
+            counted_sec=float(row[8 + index * 2]),
+            span_sec=span,
+        )
+        for index, (_name, label) in enumerate(metrics.CARD_COUNTERS)
+    )
+    coverage = 100 if span <= 0 else int(counted / span * 100)
+    return metrics.PoolMeasurement(
+        intervals=int(row[0]),
+        started_at=row[1],
+        ended_at=row[2],
+        restarted=bool(row[3]),
+        handed_over=bool(row[4]),
+        coverage=coverage,
+        totals=totals,
+    )

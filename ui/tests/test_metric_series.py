@@ -539,6 +539,44 @@ class WhetherTheWindowSaysAnything(unittest.TestCase):
         self.assertTrue(all(not total.whole for total in card.totals))
 
 
+class TheFiguresAreNotTheDrawing(unittest.TestCase):
+    """Changing the graph's buckets cannot change the window's counters."""
+
+    def test_a_sql_measurement_replaces_only_the_downsampled_figures(self) -> None:
+        drawing = [
+            sample(0, uptime=100, req_tot=10),
+            sample(20, uptime=120, req_tot=17),
+        ]
+        measured = metrics.PoolMeasurement(
+            intervals=3269,
+            started_at=START,
+            ended_at=START + timedelta(hours=24),
+            totals=tuple(
+                metrics.Total(label=label, value=34601, counted_sec=86400, span_sec=86400)
+                for _name, label in metrics.CARD_COUNTERS
+            ),
+            restarted=True,
+            handed_over=False,
+            coverage=99,
+        )
+
+        card = metrics.pool_traffic(
+            "mgd-site-web",
+            drawing,
+            start=START,
+            end=START + timedelta(hours=24),
+            bucket=timedelta(hours=6),
+            measurement=measured,
+        )
+
+        drawn_total = metrics.totalled(metrics.intervals(drawing), "req_tot")
+        self.assertEqual(card.totals[0].value, 34601)
+        self.assertNotEqual(card.totals[0].value, drawn_total.value)
+        self.assertEqual(card.intervals, 3269)
+        self.assertEqual(card.coverage, 99)
+        self.assertTrue(card.restarted)
+
+
 class WhichWindowIsAsked(unittest.TestCase):
     def test_nothing_asked_is_a_day(self) -> None:
         """ "Is this normal" needs a normal, and an hour is too short to have one."""

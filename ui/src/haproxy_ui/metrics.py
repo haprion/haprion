@@ -202,6 +202,13 @@ class Sample:
     uptime_sec: int | None
     counters: Mapping[str, int | None]
     floor_uptime_sec: int | None = None
+    #
+    # Which node counted it. Pool members are stored only from the node holding
+    # the VIP, so the series changes author at a failover and the two halves
+    # are different processes' cumulative counters. Without this the reader
+    # cannot tell that apart from one process that kept counting.
+    #
+    node: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +225,13 @@ class Interval:
     ended_at: datetime
     counters: Mapping[str, int | None]
     restarted: bool
+    #
+    # The other reason a difference cannot be taken: the two readings were
+    # counted by different nodes. Kept apart from `restarted` because the
+    # sentence a reader needs is different - one process began again, or the
+    # address moved and another machine started answering.
+    #
+    handed_over: bool = False
 
     @property
     def seconds(self) -> float:
@@ -242,9 +256,22 @@ def intervals(samples: Sequence[Sample]) -> list[Interval]:
     process that counted them is gone, and the new one starts from zero, so the
     interval that spans a restart reports `None` rather than the new process's
     total: that total is real, but it is not what happened in this interval.
+
+    **A change of node is refused for the same reason, and it does not show up
+    in the uptime.** Pool members are recorded only from the node holding the
+    VIP, so a failover hands the series to a machine that has been up longer
+    than the one it replaced - higher uptime and higher counters, which is
+    exactly what a healthy interval looks like. Subtracting across it reports
+    the incoming node's lifetime total as this interval's traffic. What
+    happened between the last reading of one and the first of the other was
+    never observed by either, and no arithmetic recovers it.
+
+    Samples that predate the node being carried have `node` as `None`. Two of
+    those are compared as before rather than treated as a change, so a reader
+    of older rows keeps the behaviour it had.
     """
 
-    ordered = sorted(samples, key=lambda sample: sample.observed_at)
+    ordered = sorted(samples, key=lambda sample: (sample.observed_at, sample.node or ""))
     found: list[Interval] = []
 
     for earlier, later in zip(ordered, ordered[1:], strict=False):
@@ -258,11 +285,14 @@ def intervals(samples: Sequence[Sample]) -> list[Interval]:
         restarted = (
             earlier.uptime_sec is not None and floor is not None and floor < earlier.uptime_sec
         )
+        handed_over = (
+            earlier.node is not None and later.node is not None and earlier.node != later.node
+        )
         counters: dict[str, int | None] = {}
         for name in METRIC_COUNTERS:
             before = earlier.counters.get(name)
             after = later.counters.get(name)
-            if restarted or before is None or after is None or after < before:
+            if restarted or handed_over or before is None or after is None or after < before:
                 counters[name] = None
             else:
                 counters[name] = after - before
@@ -272,6 +302,7 @@ def intervals(samples: Sequence[Sample]) -> list[Interval]:
                 ended_at=later.observed_at,
                 counters=counters,
                 restarted=restarted,
+                handed_over=handed_over,
             )
         )
     return found
@@ -400,6 +431,7 @@ class PoolTraffic:
     ticks: tuple[tuple[float, str], ...]
     peak: int
     restarted: bool
+    handed_over: bool = False
 
     @property
     def quiet(self) -> bool:
@@ -475,6 +507,7 @@ def pool_traffic(
         ticks=tuple(spark_ticks(found, fmt=tick_format)),
         peak=peak,
         restarted=any(interval.restarted for interval in found),
+        handed_over=any(interval.handed_over for interval in found),
     )
 
 

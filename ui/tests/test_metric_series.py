@@ -17,11 +17,14 @@ from haproxy_ui import metrics
 START = datetime(2026, 9, 5, 20, 0, tzinfo=UTC)
 
 
-def sample(seconds: int, *, uptime: int | None, **counters: int | None) -> metrics.Sample:
+def sample(
+    seconds: int, *, uptime: int | None, node: str | None = None, **counters: int | None
+) -> metrics.Sample:
     return metrics.Sample(
         observed_at=START + timedelta(seconds=seconds),
         member="BACKEND",
         uptime_sec=uptime,
+        node=node,
         counters=dict.fromkeys(metrics.METRIC_COUNTERS) | counters,
     )
 
@@ -82,6 +85,65 @@ class WhatHappenedInBetween(unittest.TestCase):
             [sample(20, uptime=120, req_tot=17), sample(0, uptime=100, req_tot=10)]
         )
         self.assertEqual(found[0].counters["req_tot"], 7)
+
+    def test_the_address_moving_is_not_a_busy_interval(self) -> None:
+        """The failure the uptime cannot catch.
+
+        Members are recorded only from the node holding the VIP, so the series
+        changes author at a failover - and the node taking over has usually
+        been up longer than the one it replaced. Higher uptime and higher
+        counters is what a healthy interval looks like, so nothing but the node
+        itself says that 9000 is node-b's lifetime rather than 8000 requests.
+        """
+
+        found = metrics.intervals(
+            [
+                sample(0, uptime=100, node="node-a", req_tot=1000),
+                sample(20, uptime=90000, node="node-b", req_tot=9000),
+            ]
+        )
+        self.assertTrue(found[0].handed_over)
+        self.assertFalse(found[0].restarted)
+        self.assertIsNone(found[0].counters["req_tot"])
+
+    def test_the_same_node_still_subtracts(self) -> None:
+        found = metrics.intervals(
+            [
+                sample(0, uptime=100, node="node-a", req_tot=10),
+                sample(20, uptime=120, node="node-a", req_tot=17),
+            ]
+        )
+        self.assertFalse(found[0].handed_over)
+        self.assertEqual(found[0].counters["req_tot"], 7)
+
+    def test_rows_from_before_the_node_was_carried_are_unchanged(self) -> None:
+        """Samples written before the column was read back have no node.
+
+        Two unknowns are not a change of node. Refusing them would turn every
+        older interval into a hole, which is a different lie from the one this
+        prevents.
+        """
+
+        found = metrics.intervals(
+            [sample(0, uptime=100, req_tot=10), sample(20, uptime=120, req_tot=17)]
+        )
+        self.assertFalse(found[0].handed_over)
+        self.assertEqual(found[0].counters["req_tot"], 7)
+
+    def test_a_window_that_changed_node_has_no_total(self) -> None:
+        """And the card says which of the two reasons it was."""
+
+        card = metrics.pool_traffic(
+            "be_alpha",
+            [
+                sample(0, uptime=100, node="node-a", req_tot=1000),
+                sample(20, uptime=90000, node="node-b", req_tot=9000),
+                sample(40, uptime=90020, node="node-b", req_tot=9100),
+            ],
+        )
+        self.assertTrue(card.handed_over)
+        self.assertFalse(card.restarted)
+        self.assertEqual(dict(card.totals).get("Requests"), None)
 
     def test_one_sample_is_no_interval_at_all(self) -> None:
         self.assertEqual(metrics.intervals([sample(0, uptime=100, req_tot=1)]), [])

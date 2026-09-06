@@ -1616,24 +1616,32 @@ def _bucketed_raw(width: timedelta) -> sql.Composed:
     hide a restart that happened and was climbed past between two kept
     readings, and that interval would then be reported as a quiet stretch - so
     the lowest uptime anywhere inside the bucket travels with the reading.
+
+    **Every bucket is per node.** Pool members are recorded only from the node
+    holding the VIP, so a failover leaves one series written by two machines,
+    and a bucket that kept whichever row happened to be last would hand the
+    reader two processes' cumulative counters as one. The node is in the
+    table's primary key; taking it into the bucket, the restart window and the
+    result is what carries that fact as far as the difference is taken.
     """
 
     columns = sql.SQL(", ").join(sql.Identifier(name) for name in metrics.METRIC_COUNTERS)
     return sql.SQL(
-        "select distinct on (bucket) bucket as at, observed_at, uptime_sec, "
-        "       floor_uptime_sec, {columns} "
+        "select distinct on (node, bucket) bucket as at, observed_at, uptime_sec, "
+        "       floor_uptime_sec, node, {columns} "
         "  from ( "
         "       select date_bin(%(width)s, observed_at, timestamptz '2000-01-01') as bucket, "
-        "              observed_at, uptime_sec, {columns}, "
+        "              observed_at, uptime_sec, node, {columns}, "
         "              min(uptime_sec) over ( "
-        "                  partition by date_bin(%(width)s, observed_at, timestamptz '2000-01-01') "
+        "                  partition by node, "
+        "                               date_bin(%(width)s, observed_at, timestamptz '2000-01-01') "
         "              ) as floor_uptime_sec "
         "         from metric_pool_member "
         "        where cluster = %(cluster)s and backend = %(backend)s "
         "          and member = %(member)s and observed_at >= %(since)s "
         "          and observed_at >= %(raw_from)s "
         "       ) as bucketed "
-        " order by bucket, observed_at desc"
+        " order by node, bucket, observed_at desc"
     ).format(columns=columns)
 
 
@@ -1648,11 +1656,12 @@ def _rolled_up() -> sql.Composed:
 
     columns = sql.SQL(", ").join(sql.Identifier(name) for name in metrics.METRIC_COUNTERS)
     return sql.SQL(
-        "select bucket_at as at, observed_at, uptime_sec, floor_uptime_sec, {columns} "
+        "select bucket_at as at, observed_at, uptime_sec, floor_uptime_sec, node, {columns} "
         "  from metric_pool_hour "
         " where cluster = %(cluster)s and backend = %(backend)s "
         "   and member = %(member)s and bucket_at >= %(since)s "
-        "   and bucket_at < %(raw_from)s"
+        "   and bucket_at < %(raw_from)s "
+        " order by bucket_at, node"
     ).format(columns=columns)
 
 
@@ -1705,7 +1714,8 @@ def read_pool_samples(
             member=member,
             uptime_sec=row[2],
             floor_uptime_sec=row[3],
-            counters=dict(zip(metrics.METRIC_COUNTERS, row[4:], strict=True)),
+            node=row[4],
+            counters=dict(zip(metrics.METRIC_COUNTERS, row[5:], strict=True)),
         )
         for row in rows
     ]
@@ -1715,5 +1725,5 @@ def read_pool_samples(
     # be right - and a `happens to be` in the one place a difference is taken
     # is how a negative interval appears months later.
     #
-    found.sort(key=lambda sample: sample.observed_at)
+    found.sort(key=lambda sample: (sample.observed_at, sample.node or ""))
     return found

@@ -135,7 +135,7 @@
       </div>
       <dl class="traffic-figures">
         {% for label, value in pool.totals %}
-        <div><dt>{{ label }}</dt><dd>{% if value is none %}<span class="traffic-unknown" title="A restart falls inside this window, or a counter was not reported, so the window cannot be totalled without inventing the part that is missing.">—</span>{% else %}{{ value }}{% endif %}</dd></div>
+        <div><dt>{{ label }}</dt><dd>{% if value is none %}<span class="traffic-unknown" title="A restart or a change of node falls inside this window, or a counter was not reported, so the window cannot be totalled without inventing the part that is missing.">—</span>{% else %}{{ value }}{% endif %}</dd></div>
         {% endfor %}
       </dl>
     </div>
@@ -144,6 +144,9 @@
     {% endif %}
     {% if pool.restarted %}
     <p class="traffic-note">HAProxy restarted inside this window, so the counters began again. The intervals across the restart are left out rather than guessed.</p>
+    {% endif %}
+    {% if pool.handed_over %}
+    <p class="traffic-note">The address moved to the other node inside this window. Pool counters are recorded from the node holding it, so the two halves were counted by different machines and the interval between them is left out rather than subtracted across.</p>
     {% endif %}
     {% else %}
     <p class="traffic-note">No samples yet. The poller stores one reading per cluster every time it runs, so this fills in from the next pass — and an object that has never been deployed has nothing to store.</p>

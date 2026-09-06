@@ -64,6 +64,7 @@ class EmptyDirectoryTests(unittest.TestCase):
                 publish,
                 node_path=NODE_PATH,
                 artifact={"haproxy.cfg": b"global\n  daemon\n"},
+                index={},
                 metadata=metadata(),
                 group=grp.getgrgid(os.getgid()).gr_name,
                 change_owner=recorder,
@@ -90,12 +91,45 @@ class InstallFixture(unittest.TestCase):
         arguments: dict[str, object] = {
             "node_path": NODE_PATH,
             "artifact": ARTIFACT,
+            "index": {},
             "metadata": metadata(),
             "group": grp.getgrgid(os.getgid()).gr_name,
             "change_owner": recorder,
         }
         arguments.update(overrides)
         return install_release(publish, **arguments)  # type: ignore[arg-type]
+
+
+class WhatTheReleaseKeepsAndTheNodeNeverSees(InstallFixture):
+    """The manager's own index of a release, one level above the node's view.
+
+    The nodes fetch `node_path` whole, with `--delete`, and everything under it
+    that ends in `.cfg` is loaded by HAProxy. A file the manager keeps about a
+    release therefore cannot live there - not because it would be read, but
+    because it would be one careless glob or one rsync away from being read or
+    removed.
+    """
+
+    def test_the_index_lands_beside_the_level_the_node_pulls(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            publish = Path(raw) / "alpha"
+            result = self.install(publish, Recorder(), index={"MANIFEST.json": b'{"schema": 1}\n'})
+            self.assertEqual((result.release / "MANIFEST.json").read_bytes(), b'{"schema": 1}\n')
+            self.assertFalse((result.release / NODE_PATH / "MANIFEST.json").exists())
+
+    def test_a_release_from_a_tree_without_one_carries_none(self) -> None:
+        """Every release published before the manifest existed looks like this."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            result = self.install(Path(raw) / "alpha", Recorder(), index={})
+            self.assertFalse((result.release / "MANIFEST.json").exists())
+
+    def test_the_index_is_owned_like_the_rest_of_the_release(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            recorder = Recorder()
+            result = self.install(Path(raw) / "alpha", recorder, index={"MANIFEST.json": b"{}\n"})
+            manifest = result.release / "MANIFEST.json"
+            self.assertEqual(manifest.stat().st_mode & 0o777, FILE_MODE)
 
 
 class InstallTests(InstallFixture):
@@ -270,6 +304,7 @@ class GroupTests(unittest.TestCase):
                     Path(raw) / "alpha",
                     node_path=NODE_PATH,
                     artifact=ARTIFACT,
+                    index={},
                     metadata=metadata(),
                     group="no-such-group-exists-here",
                     change_owner=Recorder(),

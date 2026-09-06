@@ -71,7 +71,12 @@ from haproxy_mgmt.release_install import (
     default_change_owner,
     install_release,
 )
-from haproxy_mgmt.release_layout import LayoutError, ReleaseMetadata, build_node_artifact
+from haproxy_mgmt.release_layout import (
+    LayoutError,
+    ReleaseMetadata,
+    build_node_artifact,
+    build_release_index,
+)
 from haproxy_mgmt.repo_health import unsaved_changes
 from haproxy_mgmt.repo_snapshot import (
     ConcurrentUpdate,
@@ -349,6 +354,7 @@ def _revert(
         )
 
     target_tree = _tree_of(repo, expected_commit)
+    target_files = read_tree_files(repo, target_tree)
 
     if target_tree == _tree_of(repo, head):
         #
@@ -366,7 +372,8 @@ def _revert(
         installed = install_release(
             cluster.publish_path,
             node_path=cluster.node_path,
-            artifact=build_node_artifact(read_tree_files(repo, target_tree)),
+            artifact=build_node_artifact(target_files),
+            index=build_release_index(target_files),
             metadata=ReleaseMetadata(
                 cluster=request.cluster,
                 version=from_version,
@@ -420,7 +427,8 @@ def _revert(
         )
         return 0
 
-    artifact = build_node_artifact(read_tree_files(repo, target_tree))
+    artifact = build_node_artifact(target_files)
+    index = build_release_index(target_files)
 
     certificate = read_validation_certificate(
         cluster.validation_certs / VALIDATION_CERTIFICATE,
@@ -475,6 +483,7 @@ def _revert(
         cluster.publish_path,
         node_path=cluster.node_path,
         artifact=artifact,
+        index=index,
         metadata=metadata,
         group=group,
         change_owner=change_owner,

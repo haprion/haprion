@@ -20,6 +20,9 @@ from haproxy_mgmt.keepalived_fragment import NAME as KEEPALIVED_NAME
 from haproxy_mgmt.keepalived_fragment import render as keepalived_addresses
 from haproxy_mgmt.managed_network import load_document
 from haproxy_mgmt.managed_network import location as network_location
+from haproxy_mgmt.object_manifest import REPOSITORY_PATH as MANIFEST_PATH
+from haproxy_mgmt.object_manifest import build as build_manifest
+from haproxy_mgmt.object_manifest import render as render_manifest
 from haproxy_mgmt.proxy_model import NAME, NAME_RULE, Proxy, load_proxy, name_refusal
 from haproxy_mgmt.reservations import RESERVATIONS_PATH, load_reservations
 
@@ -177,4 +180,12 @@ def managed_files(
         prefix=cluster.address_prefix,
         interface=cluster.address_interface,
     ).encode("utf-8")
+    #
+    # What each object in this version amounts to, so a later reading can ask
+    # whether one object reached the nodes without asking who published it or
+    # how long ago. Derived here for the same reason the generated files are:
+    # this is where the objects being published are known, and a manifest built
+    # anywhere else would describe a different set.
+    #
+    result[MANIFEST_PATH] = render_manifest(build_manifest(generated.object_parts))
     return result

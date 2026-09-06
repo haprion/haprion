@@ -32,14 +32,14 @@ SHOP = {
 INTRANET = {**SHOP, "backends": "backend mgd-intranet-portal\n"}
 
 
-def release(objects, *, version=1, commit="aaaa"):
-    return build(cluster="alpha", version=version, commit=commit, object_parts=objects)
+def release(objects):
+    return build(objects)
 
 
 class WhatTwoReleasesSayAboutOneObject(unittest.TestCase):
     def test_the_same_bytes_are_the_same_object(self) -> None:
         published = release({"shop": SHOP})
-        observed = release({"shop": dict(SHOP)}, version=2, commit="bbbb")
+        observed = release({"shop": dict(SHOP)})
         self.assertEqual(compare(published, observed)["shop"], Difference(CURRENT, ()))
 
     def test_a_changed_part_is_named(self) -> None:

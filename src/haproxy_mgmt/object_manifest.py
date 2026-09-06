@@ -20,11 +20,22 @@ published what. That difference is the point:
   whose own document is untouched. It lands in `listener`, and the comparison
   sees it.
 
-**Where it is written.** In the release directory, beside the level the nodes
-pull rather than inside it. Everything under that level reaches the node, and
-`conf.d` is read with `-f` - a stray file there is configuration HAProxy tries
-to parse. This is the manager's index of what it published, not part of the
-contract with the node.
+**Where it is written.** Into the repository beside the generated files, by
+the same publish that produces them, and from there into the release directory
+beside the level the nodes pull rather than inside it. Everything under that
+level reaches the node, and `conf.d` is read with `-f` - a stray file there is
+configuration HAProxy tries to parse. This is the manager's index of what it
+published, not part of the contract with the node.
+
+Written into the tree for the reason the keepalived list is: a revert restores
+a previous version's bytes, and a manifest derived at install time would have
+to be regenerated from objects that no longer exist to match. Carried in the
+commit, the fingerprints of an old release are simply what that release said.
+
+**It does not name the release it belongs to.** It cannot: the commit is made
+from the tree that holds it. Identity comes from the release directory it sits
+in and from the RELEASE stamp beside it, which is also what keeps two
+derivations of the same commit byte identical.
 
 **What it does not answer.** Whether the file on the node still holds what the
 release put there. A fingerprint compares two releases; somebody editing a file
@@ -42,6 +53,10 @@ from typing import Any
 SCHEMA = 1
 
 MANIFEST_FILE = "MANIFEST.json"
+"""The name it has in a release, beside the level the nodes pull."""
+
+REPOSITORY_PATH = "managed/manifest.json"
+"""The name it has in the repository, beside the network document."""
 
 #
 # The four pieces an object's behaviour is spread across, in the order a reader
@@ -66,11 +81,8 @@ class ObjectFingerprint:
 
 @dataclass(frozen=True, slots=True)
 class Manifest:
-    """Every object one release carries, and which release it is."""
+    """Every object one release carries."""
 
-    cluster: str
-    version: int
-    commit: str
     objects: Mapping[str, ObjectFingerprint]
 
 
@@ -107,21 +119,10 @@ def fingerprint(parts: Mapping[str, str]) -> ObjectFingerprint:
     return ObjectFingerprint(fingerprint=_digest(summary), parts=hashed)
 
 
-def build(
-    *,
-    cluster: str,
-    version: int,
-    commit: str,
-    object_parts: Mapping[str, Mapping[str, str]],
-) -> Manifest:
-    """The manifest for one generated release."""
+def build(object_parts: Mapping[str, Mapping[str, str]]) -> Manifest:
+    """The manifest for one generated layer."""
 
-    return Manifest(
-        cluster=cluster,
-        version=version,
-        commit=commit,
-        objects={name: fingerprint(parts) for name, parts in object_parts.items()},
-    )
+    return Manifest(objects={name: fingerprint(parts) for name, parts in object_parts.items()})
 
 
 def render(manifest: Manifest) -> bytes:
@@ -133,9 +134,6 @@ def render(manifest: Manifest) -> bytes:
 
     document = {
         "schema": SCHEMA,
-        "cluster": manifest.cluster,
-        "version": manifest.version,
-        "commit": manifest.commit,
         "objects": {
             name: {
                 "fingerprint": entry.fingerprint,
@@ -164,16 +162,7 @@ def parse(text: str) -> Manifest | None:
         return None
     if not isinstance(document, Mapping) or document.get("schema") != SCHEMA:
         return None
-    cluster, version, commit = (
-        document.get("cluster"),
-        document.get("version"),
-        document.get("commit"),
-    )
     entries = document.get("objects")
-    if not isinstance(cluster, str) or not isinstance(commit, str):
-        return None
-    if not isinstance(version, int) or isinstance(version, bool):
-        return None
     if not isinstance(entries, Mapping):
         return None
     objects: dict[str, ObjectFingerprint] = {}
@@ -182,7 +171,7 @@ def parse(text: str) -> Manifest | None:
         if not isinstance(name, str) or parsed is None:
             return None
         objects[name] = parsed
-    return Manifest(cluster=cluster, version=version, commit=commit, objects=objects)
+    return Manifest(objects=objects)
 
 
 def _entry(entry: Any) -> ObjectFingerprint | None:

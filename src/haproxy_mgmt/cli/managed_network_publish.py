@@ -51,7 +51,12 @@ from haproxy_mgmt.release_install import (
     default_change_owner,
     install_release,
 )
-from haproxy_mgmt.release_layout import LayoutError, ReleaseMetadata, build_node_artifact
+from haproxy_mgmt.release_layout import (
+    LayoutError,
+    ReleaseMetadata,
+    build_node_artifact,
+    build_release_index,
+)
 from haproxy_mgmt.repo_health import unsaved_changes
 from haproxy_mgmt.repo_snapshot import (
     ConcurrentUpdate,
@@ -243,6 +248,7 @@ def _publish(
     snapshot = build_candidate_tree(repo, head, managed, prefixes=(MANAGED_PREFIX,))
     published_files = read_tree_files(repo, snapshot.tree)
     artifact = build_node_artifact(published_files)
+    index = build_release_index(published_files)
     version = count_versions(repo, head)
 
     if snapshot.unchanged:
@@ -250,6 +256,7 @@ def _publish(
             cluster.publish_path,
             node_path=cluster.node_path,
             artifact=artifact,
+            index=index,
             metadata=ReleaseMetadata(
                 cluster=request.cluster,
                 version=version,
@@ -339,6 +346,7 @@ def _publish(
         cluster.publish_path,
         node_path=cluster.node_path,
         artifact=artifact,
+        index=index,
         metadata=metadata,
         group=group,
         change_owner=change_owner,

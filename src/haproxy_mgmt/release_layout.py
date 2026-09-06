@@ -26,6 +26,8 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from haproxy_mgmt.object_manifest import MANIFEST_FILE, REPOSITORY_PATH
+
 #
 # Frozen order. Not alphabetical and not configurable: it is the order the
 # published contract names, and a collision between two layers is reported
@@ -43,6 +45,13 @@ MAP_LAYERS: tuple[tuple[str, str], ...] = (
 )
 
 REQUIRED_FILES: tuple[str, ...] = ("core/haproxy.cfg", "manual/reservations.yaml")
+
+#
+# The manager's index of what each object in this version amounts to. Its two
+# names - in the tree and in the release - are imported rather than repeated:
+# a layout that spelled either of them its own way would quietly stop carrying
+# the file, and the comparison would report unknown for a release that has one.
+#
 
 #
 # Directories the node layout always has, even when nothing lands in them.
@@ -190,6 +199,24 @@ def _check_number(relative: str, layer: str) -> None:
             f"{GENERATED_BAND.start:04d}-{GENERATED_BAND.stop - 1:04d} band reserved for "
             f"generated files, which are rewritten without warning."
         )
+
+
+def build_release_index(files: Mapping[str, bytes]) -> dict[str, bytes]:
+    """What travels with a release without travelling to the nodes.
+
+    The object manifest, and so far only that. It is written beside the level a
+    node pulls rather than inside it, because a node fetches that level whole
+    and `conf.d` is loaded with `-f`: the manager's own index has no business
+    being parsed as configuration, or being deleted by an rsync that syncs the
+    node's view of the release.
+
+    Empty for a tree published before the manifest existed. That release then
+    has none, and a comparison against it answers unknown - which is the honest
+    answer and the reason nothing here invents a default.
+    """
+
+    manifest = files.get(REPOSITORY_PATH)
+    return {} if manifest is None else {MANIFEST_FILE: manifest}
 
 
 def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:

@@ -7,6 +7,9 @@ from pathlib import Path
 
 from haproxy_mgmt.config import Cluster, ConfigError, Node, UnknownHost
 from haproxy_mgmt.managed_publish import managed_files
+from haproxy_mgmt.object_manifest import REPOSITORY_PATH as MANIFEST_PATH
+from haproxy_mgmt.object_manifest import parse as parse_manifest
+from haproxy_mgmt.release_layout import build_node_artifact, build_release_index
 
 
 def cluster() -> Cluster:
@@ -89,6 +92,53 @@ class ManagedNetworkPublishTests(unittest.TestCase):
             managed_files(
                 {"managed/proxies/shop.yaml": proxy}, network_document=network, cluster=cluster()
             )
+
+
+class TheManifestIsPartOfTheVersion(unittest.TestCase):
+    """Written into the tree, not derived when a release is built.
+
+    A revert restores an earlier version's bytes. A manifest derived at install
+    time would have to be regenerated from objects that version no longer has;
+    carried in the commit, an old release's fingerprints are simply what that
+    release said.
+    """
+
+    def snapshot(self, proxy: bytes = PROXY):
+        return managed_files(
+            {"managed/network.yaml": NETWORK, "managed/proxies/shop.yaml": proxy},
+            network_document=NETWORK,
+            cluster=cluster(),
+        )
+
+    def test_a_publish_writes_a_fingerprint_for_every_object(self) -> None:
+        manifest = parse_manifest(self.snapshot()[MANIFEST_PATH].decode())
+        assert manifest is not None
+        self.assertEqual(sorted(manifest.objects), ["shop"])
+
+    def test_the_same_objects_publish_to_the_same_manifest(self) -> None:
+        """Two derivations of one version must not differ in bytes."""
+
+        self.assertEqual(self.snapshot()[MANIFEST_PATH], self.snapshot()[MANIFEST_PATH])
+
+    def test_a_changed_object_changes_its_fingerprint(self) -> None:
+        moved = PROXY.replace(b"198.51.100.10", b"198.51.100.11")
+        before = parse_manifest(self.snapshot()[MANIFEST_PATH].decode())
+        after = parse_manifest(self.snapshot(moved)[MANIFEST_PATH].decode())
+        assert before is not None and after is not None
+        self.assertNotEqual(before.objects["shop"].fingerprint, after.objects["shop"].fingerprint)
+
+    def test_the_manifest_never_reaches_the_node(self) -> None:
+        """`conf.d` is loaded with `-f`; the manager's index is not for HAProxy."""
+
+        files = {
+            **self.snapshot(),
+            "core/haproxy.cfg": b"global\n",
+            "manual/reservations.yaml": b"{}\n",
+        }
+        artifact = build_node_artifact(files)
+        self.assertNotIn(MANIFEST_PATH, artifact)
+        self.assertFalse([name for name in artifact if name.endswith("manifest.json")])
+        self.assertEqual(build_release_index(files), {"MANIFEST.json": files[MANIFEST_PATH]})
 
 
 class OneEditsObjectsReachTheSameSnapshot(unittest.TestCase):

@@ -138,6 +138,7 @@ def install_release(
     *,
     node_path: str,
     artifact: Mapping[str, bytes],
+    index: Mapping[str, bytes],
     metadata: ReleaseMetadata,
     group: str = PUBLISH_GROUP,
     change_owner: ChangeOwner = default_change_owner,
@@ -148,6 +149,13 @@ def install_release(
     is placed under the level the node actually pulls. RELEASE is added here
     rather than being carried in the artifact, because it carries a timestamp
     and would otherwise make two derivations of the same commit differ.
+
+    `index` is release relative, one level above that, and is what the manager
+    keeps about a release without handing it to the nodes: the object manifest.
+    Required rather than defaulted, so that a call site which forgets it fails
+    to type check instead of writing a release whose objects can never be
+    compared. A tree that carries no manifest passes an empty mapping, which is
+    the same thing every release published before it looks like.
     """
 
     gid = _group_id(group)
@@ -194,6 +202,22 @@ def install_release(
                 )
                 with os.fdopen(descriptor, "wb") as output:
                     output.write(files[relative])
+
+            #
+            # Beside `node_path`, not inside it. What a node pulls is that
+            # directory whole, and the manager's own index is neither
+            # configuration the node loads nor something an rsync of the node's
+            # view should be able to delete.
+            #
+            for relative in sorted(index):
+                target = stage / relative
+                descriptor = os.open(
+                    target,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    FILE_MODE,
+                )
+                with os.fdopen(descriptor, "wb") as output:
+                    output.write(index[relative])
 
             for path in (stage, *sorted(stage.rglob("*"))):
                 _own(

@@ -374,6 +374,78 @@ def totalled(found: Sequence[Interval], name: str, label: str = "") -> Total:
     return Total(label=label, value=value, counted_sec=counted, span_sec=span)
 
 
+#
+# The ceilings a line may be scaled to, per power of ten. Round numbers a
+# reader recognises without doing arithmetic, and all even, so the halfway
+# gridline is a whole number too - `40` above `80` reads at a glance where
+# `37` above `74` reads as a measurement of something.
+#
+# 1 is here so that a peak already on a round number keeps it - a pool topping
+# out at exactly 10 should be drawn against 10, not against 20 with a third of
+# the card left empty. `MIN_CEILING` is what stops that from also giving a pool
+# that peaked at one request a midpoint of half a request.
+#
+CEILING_STEPS: tuple[int, ...] = (1, 2, 3, 4, 5, 6, 8, 10)
+MIN_CEILING = 2
+
+
+def ceiling_for(peak: int) -> int:
+    """The round number a line is drawn against, at or above its peak.
+
+    **Not the peak itself, which is what it used to be.** A line scaled to its
+    own maximum touches the top of the card whatever it measures, so a pool
+    serving three requests a minute and one serving three thousand drew the
+    same picture - and switching windows silently changed what "high" meant.
+    Against a fixed round ceiling the height of the line is information.
+    """
+
+    if peak <= 0:
+        return 0
+    unit = 10 ** math.floor(math.log10(peak))
+    for step in CEILING_STEPS:
+        candidate = step * unit
+        if candidate >= peak and candidate >= MIN_CEILING:
+            return int(candidate)
+    return int(10 * unit)
+
+
+@dataclass(frozen=True, slots=True)
+class Level:
+    """One horizontal guide across the drawing, and what it is worth."""
+
+    label: str
+    #
+    # Where it sits, twice: in the drawing's own units for the line inside the
+    # SVG, and as a share of the height for the label beside it, which is HTML
+    # and knows nothing of the viewBox.
+    #
+    y: float
+    share: float
+
+
+def levels_for(ceiling: int, *, height: float) -> tuple[Level, ...]:
+    """The ceiling and its halfway mark, or nothing to say.
+
+    Two, on the maintainer's call, and the baseline is not one of them: the
+    line rests on it and the card would be labelling the obvious. A window with
+    no traffic has no ceiling to divide, and drawing `0` twice across an empty
+    card is furniture.
+    """
+
+    if ceiling <= 0:
+        return ()
+    return tuple(
+        Level(label=_plainly(ceiling * share), y=height * (1 - share), share=(1 - share) * 100)
+        for share in (1.0, 0.5)
+    )
+
+
+def _plainly(value: float) -> str:
+    """A number without a decimal point it does not need."""
+
+    return f"{value:.0f}" if float(value).is_integer() else f"{value:.1f}"
+
+
 @dataclass(frozen=True, slots=True)
 class Point:
     """One plotted bucket, where it sits and what a hover over it says."""
@@ -520,10 +592,11 @@ def spark(
     into a rate, which is a narrower and more suspicious thing than a stretch
     nobody sampled - and it is the one the figures' coverage is counted from.
 
-    Scaled to its own peak rather than to a fixed ceiling, because the question a
-    sparkline answers is "what shape", not "how much" - the figures beside it
-    answer that. A window with no traffic has no peak to scale to and is drawn
-    flat on the baseline, which is the truth: nothing happened.
+    **Scaled to a round ceiling at or above its peak**, so the height of the
+    line means something. Drawn against its own maximum it touched the top of
+    the card whatever it measured, which made every window look equally busy
+    and every pool look alike. A window with no traffic has no ceiling and is
+    drawn flat on the baseline, which is the truth: nothing happened.
     """
 
     seconds = (end - start).total_seconds()
@@ -535,6 +608,7 @@ def spark(
         (value for _, totals, _ in grid if (value := totals.get("req_tot")) is not None),
         default=0,
     )
+    ceiling = ceiling_for(peak)
 
     runs: list[list[str]] = []
     current: list[str] = []
@@ -552,7 +626,7 @@ def spark(
                 Point(at=at, x=x, y=height, value=0, reading=reading_at(at, totals), measured=True)
             )
             continue
-        y = height if peak == 0 else height - (value / peak) * height
+        y = height if ceiling == 0 else height - (value / ceiling) * height
         current.append(f"{'M' if not current else 'L'}{x:.1f} {y:.1f}")
         points.append(
             Point(
@@ -672,6 +746,18 @@ class PoolTraffic:
     # names as soon as it was.
     #
     ticks: tuple[tuple[float, str], ...]
+    #
+    # The horizontal guides, top first. Empty for a window with no traffic:
+    # there is no ceiling to divide, and two zeroes across an empty card are
+    # furniture rather than a scale.
+    #
+    levels: tuple[Level, ...]
+    #
+    # The highest bucket, kept for the drawing's own description. It is no
+    # longer printed beside the line - the ceiling above it says the same thing
+    # in a rounder number, and two near-identical figures is the repetition the
+    # card was stripped of.
+    #
     peak: int
     restarted: bool
     #
@@ -805,6 +891,7 @@ def pool_traffic(
         points=tuple(points),
         hit_width=SPARK_WIDTH / buckets,
         ticks=tuple(spark_ticks(start=start, end=end, fmt=tick_format)),
+        levels=levels_for(ceiling_for(peak), height=SPARK_HEIGHT),
         peak=peak,
         restarted=any(interval.restarted for interval in found),
         handed_over=any(interval.handed_over for interval in found),

@@ -117,11 +117,27 @@
       #}
       <div class="traffic-spark">
         {#
+          The scale, in its own gutter beside the drawing rather than inside
+          it: the SVG is stretched to the card's width, so text placed in it
+          would be stretched with it.
+        #}
+        {% if pool.levels %}
+        <div class="traffic-levels" aria-hidden="true">{% for level in pool.levels %}<span style="top: {{ level.share }}%">{{ level.label }}</span>{% endfor %}</div>
+        {% endif %}
+        <div class="traffic-plot">
+        {#
           Stretched to the card's width, so the stroke is told not to scale
           with it - otherwise a wide card draws a thick line rather than a
           long one.
         #}
-        <svg viewBox="0 0 {{ spark_width }} {{ spark_height }}" preserveAspectRatio="none" role="img" aria-label="Requests per bucket over {{ traffic_window }}, peaking at {{ pool.peak }}">
+        <svg viewBox="0 0 {{ spark_width }} {{ spark_height }}" preserveAspectRatio="none" role="img" aria-label="Requests per {{ traffic_bucket }} over {{ traffic_window }}, against a scale of {{ pool.levels[0].label if pool.levels else 0 }}, peaking at {{ pool.peak }}">
+          {#
+            The guides first, so the line and its hover targets sit above them.
+            Stroke named on the element because the base `svg` rule would
+            otherwise give them the text colour, which is far too loud for
+            something the eye should pass over on the way to the data.
+          #}
+          {% for level in pool.levels %}<line class="traffic-level" x1="0" y1="{{ level.y }}" x2="{{ spark_width }}" y2="{{ level.y }}" stroke="var(--line-strong)" stroke-width="1" vector-effect="non-scaling-stroke"></line>{% endfor %}
           {% for path in pool.paths %}<path d="{{ path }}" fill="none" stroke="var(--info)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>{% endfor %}
           {#
             One hover target per reading, as wide as the bucket it stands for
@@ -140,7 +156,7 @@
         {% if pool.ticks %}
         <div class="traffic-axis" aria-hidden="true">{% for at, label in pool.ticks %}<span style="left: {{ at }}%">{{ label }}</span>{% endfor %}</div>
         {% endif %}
-        {% if pool.peak %}<span class="traffic-peak">peak {{ pool.peak }} per {{ traffic_bucket }}</span>{% endif %}
+        </div>
       </div>
       <dl class="traffic-figures">
         {% for total in pool.totals %}

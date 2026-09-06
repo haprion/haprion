@@ -309,10 +309,22 @@ class DrawingTheShape(unittest.TestCase):
         self.assertEqual(peak, 0)
         self.assertEqual(paths, ["M0.0 20.0 L33.3 20.0 L66.7 20.0"])
 
-    def test_the_peak_touches_the_top(self) -> None:
+    def test_a_peak_already_round_touches_the_top(self) -> None:
         paths, _, peak = self.drawn([0, 10], span=timedelta(seconds=20))
         self.assertEqual(peak, 10)
         self.assertEqual(paths, ["M0.0 20.0 L50.0 0.0"])
+
+    def test_a_peak_that_is_not_round_stops_below_it(self) -> None:
+        """Which is the point of a ceiling: the height of the line means something.
+
+        Against its own maximum the line touched the top whatever it measured,
+        so three requests a minute and three thousand drew the same picture.
+        """
+
+        paths, _, peak = self.drawn([0, 7], span=timedelta(seconds=20))
+        self.assertEqual(peak, 7)
+        self.assertEqual(metrics.ceiling_for(peak), 8)
+        self.assertEqual(paths, ["M0.0 20.0 L50.0 2.5"])
 
     def test_a_reading_sits_where_its_moment_sits(self) -> None:
         """The shape is read against the axis, not stretched to fill the card."""
@@ -435,6 +447,32 @@ class DrawingTheShape(unittest.TestCase):
         _, points, _ = self.drawn([1, 1])
         for point in points:
             self.assertRegex(point.reading, r"^\d\d-\d\d-\d\d \d\d:\d\d:\d\d · ")
+
+
+class TheScaleBesideTheLine(unittest.TestCase):
+    """Two guides, and both of them round enough to read without arithmetic."""
+
+    def test_a_ceiling_is_the_round_number_at_or_above_the_peak(self) -> None:
+        self.assertEqual(metrics.ceiling_for(74), 80)
+        self.assertEqual(metrics.ceiling_for(10), 10)
+        self.assertEqual(metrics.ceiling_for(1240), 2000)
+        self.assertEqual(metrics.ceiling_for(3), 3)
+
+    def test_a_single_request_is_not_halved(self) -> None:
+        """A midpoint of half a request is not a quantity anybody counted."""
+
+        self.assertEqual(metrics.ceiling_for(1), 2)
+
+    def test_an_empty_window_has_no_ceiling_and_no_guides(self) -> None:
+        """Two zeroes across an empty card are furniture rather than a scale."""
+
+        self.assertEqual(metrics.ceiling_for(0), 0)
+        self.assertEqual(metrics.levels_for(0, height=64), ())
+
+    def test_the_guides_are_the_ceiling_and_its_half(self) -> None:
+        top, middle = metrics.levels_for(80, height=64)
+        self.assertEqual((top.label, top.y, top.share), ("80", 0.0, 0.0))
+        self.assertEqual((middle.label, middle.y, middle.share), ("40", 32.0, 50.0))
 
 
 class WhetherTheWindowSaysAnything(unittest.TestCase):

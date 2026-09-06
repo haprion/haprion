@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import ipaddress
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from haproxy_mgmt.config import AbuseProtection, ConfigError, UnknownHost, Vip
 from haproxy_mgmt.guid import (
@@ -173,6 +173,21 @@ class GeneratedLayer:
     certificate_lists: dict[str, str]
     """`managed/crt-lists/`, and `crt-lists/` on the node. Bind lines name these."""
 
+    object_parts: dict[str, dict[str, str]] = field(default_factory=dict)
+    """Per object, the four pieces its behaviour is spread across.
+
+    The same bytes as `configuration` and `certificate_lists`, split by which
+    object they belong to rather than by which file they land in. A release
+    manifest hashes these so two releases can be compared per object, which is
+    a question the flat file listing cannot answer: the frontend is shared, so
+    a change to one object moves a file every other object also sits in.
+
+    Kept apart for exactly that reason. `listener` holds only what the group
+    decides - the bind line, the timeouts, the forwarded and abuse rules - and
+    never a sibling's routing, so adding a second site to a VIP does not report
+    the first one as changed.
+    """
+
 
 class GeneratorError(ConfigError):
     """A set of objects cannot be turned into configuration.
@@ -257,6 +272,7 @@ def generate(
     _refuse_shared_listeners(placed, ports)
 
     listings: dict[str, str] = {}
+    shared: dict[str, dict[str, list[str]]] = {}
     files = {
         FRONTEND_FILE: _frontend_file(
             placed,
@@ -266,13 +282,23 @@ def generate(
             tuple(trusted_proxies),
             abuse_protection,
             listings,
+            shared,
         )
     }
     for vip, proxy in placed:
         files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(
             proxy, _source_of(proxy, vip, known_sources), resolvers
         )
-    return GeneratedLayer(configuration=files, certificate_lists=listings)
+    parts = {
+        proxy.name: {
+            "backends": files[f"{OBJECT_BAND}-{proxy.name}.cfg"],
+            "routing": _lines(shared.get(proxy.name, {}).get("routing", [])),
+            "listener": _lines(shared.get(proxy.name, {}).get("listener", [])),
+            "certificate": _certificate_line(proxy),
+        }
+        for _, proxy in placed
+    }
+    return GeneratedLayer(configuration=files, certificate_lists=listings, object_parts=parts)
 
 
 def _source_of(proxy: Proxy, vip: Vip, sources: Mapping[str, str]) -> str | None:
@@ -591,6 +617,25 @@ def _lines(*blocks: Iterable[str]) -> str:
     return "\n".join(out) + "\n"
 
 
+def _record(
+    shared: dict[str, dict[str, list[str]]],
+    name: str,
+    *,
+    listener: Sequence[str] = (),
+    routing: Sequence[str] = (),
+) -> None:
+    """Keep one object's share of the shared file, as it is written.
+
+    An object can appear twice - a site that also redirects plain http sits in
+    two groups - so the lines accumulate rather than replace. Groups are walked
+    in sorted order, which is what makes the result the same on every run.
+    """
+
+    entry = shared.setdefault(name, {"listener": [], "routing": []})
+    entry["listener"].extend(listener)
+    entry["routing"].extend(routing)
+
+
 def _frontend_file(
     placed: Sequence[tuple[Vip, Proxy]],
     ports: Mapping[str, int],
@@ -599,6 +644,7 @@ def _frontend_file(
     trusted_proxies: Sequence[str],
     abuse_protection: AbuseProtection | None,
     listings: dict[str, str],
+    shared: dict[str, dict[str, list[str]]],
 ) -> str:
     """Where every request is decided: one frontend per address and protocol.
 
@@ -636,7 +682,13 @@ def _frontend_file(
         vip = members[0][0]
         protocol = key[1]
         identity = f"{vip.name}-{protocol}"
-        body += [
+        #
+        # The group's own lines, kept as their own list because they are what
+        # every member of this listener is subject to and nothing a member
+        # decides. A release manifest fingerprints them per object, so the list
+        # must not pick up a sibling's routing on the way past.
+        #
+        envelope = [
             "",
             f"frontend {_frontend_name(vip, protocol)}",
             f"    guid {frontend_guid(identity)}",
@@ -649,13 +701,28 @@ def _frontend_file(
             *_forwarded_rules(protocol, trusted_proxies),
             *_abuse_rules(abuse_protection, bool(trusted_proxies)),
         ]
-        for _, proxy, role in members:
-            body.extend(_frontend_rules(proxy, role, networks))
+        #
+        # Written after the members in the file, but part of the same envelope:
+        # it is the listener's answer for a name no member claims.
+        #
+        tail: list[str] = []
         if unknown_host is not None:
-            body.append(f"    default_backend {_fallback_name(vip, protocol)}")
+            tail.append(f"    default_backend {_fallback_name(vip, protocol)}")
             fallbacks.extend(_fallback(vip, protocol, unknown_host))
+        body += envelope
+        for _, proxy, role in members:
+            rules = _frontend_rules(proxy, role, networks)
+            body.extend(rules)
+            _record(shared, proxy.name, listener=[*envelope, *tail], routing=rules)
+        body += tail
     for vip, proxy in sorted(tcp, key=lambda member: member[1].name):
-        body.extend(_tcp_frontend(vip, proxy, networks, abuse_protection))
+        #
+        # A tcp object owns its whole frontend, so there is no envelope to
+        # separate: the bind line is as much its own as the rules are.
+        #
+        block = _tcp_frontend(vip, proxy, networks, abuse_protection)
+        body.extend(block)
+        _record(shared, proxy.name, routing=block)
     body.extend(fallbacks)
     if not body:
         body = ["", "# No object listens anywhere on this cluster."]
@@ -887,12 +954,33 @@ def _crt_list(members: Sequence[tuple[Vip, Proxy, str]]) -> str:
         terms[certificate] = policy
         asked_by.setdefault(certificate, proxy.name)
 
-    lines = []
-    for name in sorted(terms):
-        policy = terms[name]
-        options = "" if policy is None else f" [{TLS_POLICIES[policy].strip()}]"
-        lines.append(f"{NODE_CERTIFICATE_DIR}/{name}.pem{options}")
-    return "".join(f"{line}\n" for line in lines)
+    return "".join(f"{_certificate_terms(name, terms[name])}\n" for name in sorted(terms))
+
+
+def _certificate_terms(certificate: str, policy: str | None) -> str:
+    """One line of a certificate list: the file, and any terms of its own."""
+
+    options = "" if policy is None else f" [{TLS_POLICIES[policy].strip()}]"
+    return f"{NODE_CERTIFICATE_DIR}/{certificate}.pem{options}"
+
+
+def _certificate_line(proxy: Proxy) -> str:
+    """The line this object puts in its listener's certificate list.
+
+    The same writer the list itself uses, not a second rendering of the same
+    rule: a manifest that fingerprinted a certificate one way while the node
+    was served another would report a difference nobody made, or miss one
+    somebody did.
+
+    Empty for an object that terminates no TLS. `_crt_list` writes a line only
+    for a member serving under a certificate, and this answers for the same
+    member.
+    """
+
+    certificate = proxy.listen.certificate
+    if proxy.listen.protocol != "https" or certificate is None:
+        return ""
+    return f"{_certificate_terms(certificate, proxy.listen.tls_policy)}\n"
 
 
 def _tls(members: Sequence[tuple[Vip, Proxy, str]], protocol: str, listing: str) -> str:

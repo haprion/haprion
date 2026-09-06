@@ -30,6 +30,7 @@ cannot be used to diagnose the node. The one exception is documented at
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -40,6 +41,15 @@ from haproxy_mgmt.cluster_status import addresses_current
 from haproxy_mgmt.config import DeployIdentity, Node
 from haproxy_mgmt.deploy_plan import NodeObservation, ReleaseTarget, VipState
 from haproxy_mgmt.envelope import Message, envelope
+from haproxy_mgmt.object_manifest import (
+    CURRENT,
+    MANIFEST_FILE,
+    Difference,
+    Manifest,
+    compare,
+    worst,
+)
+from haproxy_mgmt.object_manifest import parse as parse_manifest
 from haproxy_mgmt.release_layout import parse_release_file
 
 OPERATION = "status"
@@ -151,6 +161,97 @@ def read_target(publish_path: Path, node_path: str) -> ReleaseTarget | None:
     if not version or not version.isdigit() or not commit:
         return None
     return ReleaseTarget(version=int(version), hash=commit)
+
+
+#
+# A release is named by its commit, and this is the only shape that name may
+# have. The name arrives in a node's own status document, so it crosses the
+# privilege boundary as text a node chose: root opens a path built from it, and
+# a node answering with a traversal would otherwise decide which file root
+# reads. Refused rather than sanitised - a name that is not a commit is not a
+# release this manager published.
+#
+RELEASE_NAME = re.compile(r"^[0-9a-f]{7,64}$")
+
+UNKNOWN = "unknown"
+
+
+def read_manifest(publish_path: Path, *, release: str | None = None) -> Manifest | None:
+    """What one release says its objects amount to, or nothing at all.
+
+    `release` names a release directory; without it the answer is the published
+    release, read through `current` so it is whatever the nodes are being told
+    to run right now.
+
+    Nothing for a release that has no manifest, and every release published
+    before manifests existed is one. The caller reports unknown, which is the
+    difference this whole comparison exists to preserve: not knowing is not the
+    same as being in sync.
+    """
+
+    if release is None:
+        path = publish_path / "current" / MANIFEST_FILE
+    elif RELEASE_NAME.fullmatch(release):
+        path = publish_path / "releases" / release / MANIFEST_FILE
+    else:
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return parse_manifest(text)
+
+
+def _object_states(publish_path: Path, results: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per object, whether every node is serving the published version of it.
+
+    The question a row on a page asks, and one the cluster's release state
+    cannot answer: a release carries every object, so "the nodes are behind"
+    is true of objects nobody touched. Two manifests answer it per object
+    instead, and the entrance somebody used and how long ago they used it stop
+    being part of the answer.
+
+    Unknown wherever the comparison could not be made - no published manifest,
+    a node that did not say what it runs, a release with no manifest, one that
+    could not be read. Unknown loses to `changed`, because a node that is
+    demonstrably behind decides the answer whatever a second node could not
+    tell us, and it beats `current`, because agreement among the nodes that
+    could be read is not agreement.
+    """
+
+    published = read_manifest(publish_path)
+    if published is None:
+        return {}
+
+    cache: dict[str, Manifest | None] = {}
+    readings: dict[str, list[Difference]] = {name: [] for name in published.objects}
+    unreadable = False
+
+    for entry in results:
+        if not entry["status_ok"]:
+            unreadable = True
+            continue
+        observed = _mapping(_mapping(entry["status"]).get("release")).get("hash")
+        if not isinstance(observed, str):
+            unreadable = True
+            continue
+        if observed not in cache:
+            cache[observed] = read_manifest(publish_path, release=observed)
+        manifest = cache[observed]
+        if manifest is None:
+            unreadable = True
+            continue
+        for name, difference in compare(published, manifest).items():
+            readings[name].append(difference)
+
+    states: dict[str, dict[str, Any]] = {}
+    for name, differences in readings.items():
+        verdict = worst(differences)
+        if verdict is None or (unreadable and verdict.state == CURRENT):
+            states[name] = {"state": UNKNOWN, "parts": []}
+        else:
+            states[name] = {"state": verdict.state, "parts": list(verdict.parts)}
+    return states
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -361,9 +462,21 @@ class StatusReport:
 
 
 def collect(
-    nodes: tuple[Node, ...], read_node: ReadNode, *, target: ReleaseTarget | None
+    nodes: tuple[Node, ...],
+    read_node: ReadNode,
+    *,
+    target: ReleaseTarget | None,
+    publish_path: Path | None = None,
 ) -> StatusReport:
-    """Ask every node, then say what the pair adds up to."""
+    """Ask every node, then say what the pair adds up to.
+
+    `publish_path` is what makes the per-object answer possible: the manifests
+    being compared are two releases in that tree, and reading them is a root
+    reading of the published directory rather than anything a node is asked.
+    Left out by a caller that only wants the cluster's own state - the deploy
+    loop measures a rollout, and the objects it carries are the same objects
+    either way.
+    """
 
     results: list[dict[str, Any]] = []
     warnings: list[Message] = []
@@ -395,6 +508,13 @@ def collect(
             "target": None if target is None else {"version": target.version, "hash": target.hash},
             "release_state": _release_state(results, target),
         },
+        #
+        # Per object rather than per cluster, and empty when the comparison
+        # could not be made at all. A row that finds no entry here reports
+        # unknown, which is what every release published before manifests
+        # existed produces.
+        #
+        "objects": {} if publish_path is None else _object_states(publish_path, results),
     }
 
     return StatusReport(

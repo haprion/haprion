@@ -147,6 +147,7 @@ def main(
         cluster.nodes,
         node_reader or default_reader,
         target=read_target(Path(cluster.publish_path), cluster.node_path),
+        publish_path=Path(cluster.publish_path),
     )
 
     write_document(writer, report.as_envelope(request.cluster, request_id=request.request_id))

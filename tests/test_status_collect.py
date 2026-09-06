@@ -9,17 +9,31 @@ cluster that needed a deploy.
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from haproxy_mgmt.config import Node
 from haproxy_mgmt.deploy_plan import ReleaseTarget, VipState
+from haproxy_mgmt.object_manifest import MANIFEST_FILE
+from haproxy_mgmt.object_manifest import build as build_manifest
+from haproxy_mgmt.object_manifest import render as render_manifest
 from haproxy_mgmt.status_collect import (
     EXIT_OK,
     EXIT_PARTIAL,
     EXIT_UNAVAILABLE,
     NodeResponse,
     collect,
+    read_manifest,
 )
+
+SHOP = {
+    "backends": "backend mgd-shop-web\n",
+    "routing": "    use_backend mgd-shop-web if host\n",
+    "listener": "frontend mgd-main-http\n",
+    "certificate": "",
+}
+INTRANET = {**SHOP, "backends": "backend mgd-intranet-portal\n"}
 
 NODES = (
     Node(name="node-a", mgmt_host="node-a.example.com"),
@@ -261,3 +275,102 @@ class CollectTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhatEachObjectIsDoingOnTheNodes(unittest.TestCase):
+    """The per-object answer, read from two releases rather than from history.
+
+    A release carries every object, so "the nodes are behind" says nothing
+    about which object somebody changed. These cases hold the difference: an
+    untouched object stays current through a deploy it is not part of, and a
+    node that could not be compared never turns into agreement.
+    """
+
+    PUBLISHED = "a" * 40
+    OLD = "b" * 40
+
+    def tree(self, raw: str, *, published: dict, releases: dict[str, dict | None]):
+        """A published tree with a release per commit, `current` on one of them."""
+
+        publish = Path(raw) / "alpha"
+        for commit, objects in releases.items():
+            release = publish / "releases" / commit
+            (release / "node").mkdir(parents=True)
+            if objects is not None:
+                (release / MANIFEST_FILE).write_bytes(render_manifest(build_manifest(objects)))
+        (publish / "current").symlink_to(publish / "releases" / self.PUBLISHED)
+        return publish
+
+    def states(self, publish: Path, *, hash_a: str | None, hash_b: str | None):
+        report = collect(
+            NODES,
+            answering(
+                **{
+                    "node-a": node_status("node-a", owner=True, release_hash=hash_a),
+                    "node-b": node_status("node-b", owner=False, release_hash=hash_b),
+                }
+            ),
+            target=TARGET,
+            publish_path=publish,
+        )
+        return report.result["objects"]
+
+    def test_an_untouched_object_is_current_while_the_cluster_is_behind(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            publish = self.tree(
+                raw,
+                published={},
+                releases={
+                    self.PUBLISHED: {"shop": SHOP, "intranet": INTRANET},
+                    self.OLD: {"shop": SHOP},
+                },
+            )
+            states = self.states(publish, hash_a=self.OLD, hash_b=self.OLD)
+            self.assertEqual(states["shop"]["state"], "current")
+            self.assertEqual(states["intranet"]["state"], "absent")
+
+    def test_one_node_behind_decides_the_object(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            changed = {"shop": {**SHOP, "routing": "    use_backend other\n"}}
+            publish = self.tree(
+                raw,
+                published={},
+                releases={self.PUBLISHED: {"shop": SHOP}, self.OLD: changed},
+            )
+            states = self.states(publish, hash_a=self.PUBLISHED, hash_b=self.OLD)
+            self.assertEqual(states["shop"], {"state": "changed", "parts": ["routing"]})
+
+    def test_a_node_that_cannot_be_compared_is_not_agreement(self) -> None:
+        """Silence read as `current` is the mistake this whole path removes."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            publish = self.tree(
+                raw,
+                published={},
+                releases={self.PUBLISHED: {"shop": SHOP}, self.OLD: None},
+            )
+            states = self.states(publish, hash_a=self.PUBLISHED, hash_b=self.OLD)
+            self.assertEqual(states["shop"]["state"], "unknown")
+
+    def test_a_node_that_names_no_release_leaves_the_object_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            publish = self.tree(raw, published={}, releases={self.PUBLISHED: {"shop": SHOP}})
+            states = self.states(publish, hash_a=self.PUBLISHED, hash_b=None)
+            self.assertEqual(states["shop"]["state"], "unknown")
+
+    def test_a_release_without_a_manifest_answers_nothing_at_all(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            publish = self.tree(raw, published={}, releases={self.PUBLISHED: None})
+            self.assertEqual(self.states(publish, hash_a=self.PUBLISHED, hash_b=self.PUBLISHED), {})
+
+    def test_a_node_naming_something_that_is_not_a_release_reads_nothing(self) -> None:
+        """The name reaches root as a path. It is held to the shape of a commit."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            publish = self.tree(raw, published={}, releases={self.PUBLISHED: {"shop": SHOP}})
+            secret = Path(raw) / "elsewhere"
+            secret.mkdir()
+            (secret / MANIFEST_FILE).write_bytes(render_manifest(build_manifest({"shop": SHOP})))
+            states = self.states(publish, hash_a=self.PUBLISHED, hash_b="../../elsewhere")
+            self.assertEqual(states["shop"]["state"], "unknown")
+            self.assertIsNone(read_manifest(publish, release="../../elsewhere"))

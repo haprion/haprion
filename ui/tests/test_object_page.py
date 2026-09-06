@@ -205,18 +205,27 @@ class TheOverviewOrdering(LoginTestCase):
         self.assertIn("Inactive · deploy to add", row)
         self.assertIn("ownership-managed", row)
 
-    def test_the_state_takes_the_cell_rather_than_crowding_it(self) -> None:
+    def test_the_state_takes_the_protocol_cell_and_spares_the_hostnames(self) -> None:
         """A badge beside the hostnames was a second thing in a column sized for
-        one, and on a narrow screen it ran into the column after it."""
+        one, and on a narrow screen it ran into the column after it.
+
+        It moved into hosts / ports and replaced them, which cost more than it
+        saved: the longest badge is wider than that column, so it was clipped
+        mid-word and drew over the health lamp - and the hostnames it displaced
+        are what somebody opened the listing to read. It sits in the protocol
+        cell now, which carries one word that is also on the object's own page.
+        """
 
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)
 
         text = client.get("/proxies").text
-        cell = text.split('data-label="Hosts / ports"', 1)[1].split("</td>", 1)[0]
+        protocol = text.split('data-label="Protocol"', 1)[1].split("</td>", 1)[0]
+        hosts = text.split('data-label="Hosts / ports"', 1)[1].split("</td>", 1)[0]
 
-        self.assertIn("Inactive · deploy to add", cell)
-        self.assertNotIn("shop.demo.example", cell)
+        self.assertIn("Inactive · deploy to add", protocol)
+        self.assertIn("shop.demo.example", hosts)
+        self.assertNotIn("Inactive", hosts)
 
     def test_the_listing_does_not_count_backends_at_all(self) -> None:
         """It counted pools, which the form writes exactly one of.

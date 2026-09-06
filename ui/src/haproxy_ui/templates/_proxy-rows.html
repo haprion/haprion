@@ -14,14 +14,14 @@
   somebody reloads.
 #}
 {% for draft in unpublished %}
-      <tr class="proxy-draft"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol"><span class="table-empty">—</span></td><td data-label="Hosts / ports">{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% elif draft.object_id in failed %}{#
+      <tr class="proxy-draft"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol">{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% elif draft.object_id in failed %}{#
         A publish that was refused used to leave this row saying "Draft" and
         nothing else. The row stopped spinning, the work stayed, and the reason
         was on the jobs page behind a click nobody had a reason to make - so
         what it looked like was that publishing had quietly turned the object
         back into a draft. The reason is named here; the full text is one click
         away, where it has room.
-      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}</td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
+      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}</td><td data-label="Hosts / ports"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
 {% endfor %}
 {#
   Then what a finished removal took out of the repository and the nodes have
@@ -34,7 +34,7 @@
   finishes it.
 #}
 {% for name in removed %}
-      <tr class="proxy-waiting"><td data-label="Proxy"><strong>{{ name }}</strong></td><td data-label="Protocol"><span class="table-empty">—</span></td><td data-label="Hosts / ports"><span class="status-badge status-badge-warning waiting-badge">Active · deploy to remove</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td></tr>
+      <tr class="proxy-waiting"><td data-label="Proxy"><strong>{{ name }}</strong></td><td data-label="Protocol"><span class="status-badge status-badge-warning waiting-badge">Active · deploy to remove</span></td><td data-label="Hosts / ports"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td></tr>
 {% endfor %}
 {#
   Three badges now, and the third took a wrong turn first: it sat beside the
@@ -45,8 +45,25 @@
   And it is per object, which took a second wrong turn to get right. Worn as a
   cluster-wide fact it appeared on every row, so three sites claimed to have
   been reconfigured when one had - and the two that were untouched looked like
-  work somebody had forgotten. The jobs know which objects a publish carried,
-  so the row asks them.
+  work somebody had forgotten.
+
+  Which object a publish carried is read from the releases themselves since
+  B103: the published release's manifest against the manifest of the release
+  the nodes report. It used to be read from the recent jobs, and absence from
+  that window was taken as "unchanged" - so a change made from the command
+  line, or made longer ago than the window reaches, wore no badge at all.
+
+  That comparison has a third answer - it could not be made, because the nodes
+  run a release built before manifests existed - and that answer gets no badge
+  of its own. One was tried and reverted the same afternoon: every object on
+  the cluster wore it at once, which is the cluster-wide claim all over again
+  and the exact thing this badge was made per object to avoid.
+
+  Where the releases cannot answer, the jobs are asked instead, and only for
+  what they can say in the positive: which objects a publish named. That points
+  at the one that changed and leaves the rest alone. What the jobs must never
+  be asked is the other direction - absence from a bounded window is not a
+  claim that an object is in step, and reading it as one is what B103 removed.
 
   The two other badges are a pair, and the first word of each is what is true now:
   an object the nodes do not serve is inactive and a deploy adds it, one whose
@@ -76,15 +93,21 @@
           The protocol of a pending object is on its own page, where the rest
           of what it will become is.
         #}
-        <td data-label="Protocol">{% if object.protocol and object.serving %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
         {#
-          The badge takes the cell rather than sitting beside the hostnames.
-          Beside them it was a second thing in a column sized for one, and on a
-          narrow screen it ran into the column after it. The rows above do the
-          same: a row with something to say says that, and the hostnames are on
-          the object's own page.
+          The badges take the protocol cell, which is the one this table can
+          spare. They sat in hosts / ports first, and that was the wrong trade
+          twice over: the longest of them is wider than the column, so on a
+          narrow window it was clipped mid-word and drew over the health lamp
+          beside it - and the price of making room was the hostnames, which are
+          what somebody came to the listing to read.
+
+          The protocol is the least of it. It is one word, it is on the
+          object's own page, and a row with something to say has something more
+          urgent to say than "https". So the badge replaces it and the
+          hostnames stay where they are, on every row, always.
         #}
-        <td data-label="Hosts / ports">{% if not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Inactive · deploy to add</span>{% elif object.name in reconfigured %}<span class="status-badge status-badge-warning waiting-badge">Reconfigured · deploy to activate</span>{% else %}<span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span>{% endif %}</td>
+        <td data-label="Protocol">{% if not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Inactive · deploy to add</span>{% elif object.name in reconfigured %}<span class="status-badge status-badge-warning waiting-badge">Reconfigured · deploy to activate</span>{% elif object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        <td data-label="Hosts / ports"><span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span></td>
         {#
           The nodes' own verdict on this object's servers, not a probe. Grey
           is no answer, and it covers both ways of having none: an object with

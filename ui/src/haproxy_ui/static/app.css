@@ -420,24 +420,61 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .inline-status .status-dot { width: 6px; height: 6px; }
 .warning-text { color: var(--warning) !important; }
 .release-value { font-variant-numeric: tabular-nums; }
+/* Fixed columns, for the reason the proxy table got them on 2026-08-29: with
+   automatic layout each cluster's table sizes to its own longest value, so two
+   cards above one another disagree about where a column begins - and the eye
+   reads that as two different tables rather than the same one twice. Service is
+   the one left to take the remaining width, because its detail sentence is the
+   only cell here with no natural bound. */
+.node-table { table-layout: fixed; }
+.node-table th:nth-child(1), .node-table td:nth-child(1) { width: 250px; }
+.node-table th:nth-child(3), .node-table td:nth-child(3) { width: 120px; }
+.node-table th:nth-child(4), .node-table td:nth-child(4) { width: 120px; }
+.node-table th:nth-child(5), .node-table td:nth-child(5) { width: 110px; }
+.node-table th:nth-child(6), .node-table td:nth-child(6) { width: 260px; }
 /* Fixed columns, for the same reason the version tables have them: with
    automatic layout each cluster's table sizes to its own longest value, so two
-   cards above one another disagree about where a column begins. Hosts / ports
-   is the one left to take the remaining width, because it is the only cell
-   whose content has no natural bound. */
+   cards above one another disagree about where a column begins.
+
+   Shares of the card rather than pixel counts. Fixed pixels were tried twice
+   and were wrong in opposite directions: too narrow for the protocol column
+   and the longest badge was clipped mid-word and drew over the lamp beside it;
+   wide enough for it and the width came out of the hostnames, which ellipsised
+   on every row.
+
+   The number that settles it, measured on a screenshot at two device pixels
+   per CSS pixel: the widest badge is about 155px, and the hostnames beside it
+   want roughly 150. So protocol needs a fifth of the card and no more, and the
+   rest belongs to hosts / ports, which holds the answer somebody came for.
+
+   Shares also fail more gracefully than pixels. The card is the same width for
+   every cluster, so the columns still line up between cards - which is what
+   the fixed layout is here for - and each column keeps its proportion as the
+   window changes rather than one of them absorbing all of the difference. At
+   the 900px where the table becomes cards, protocol is still 198px against a
+   badge of 155. */
 .proxy-table { table-layout: fixed; }
-.proxy-table th:nth-child(1), .proxy-table td:nth-child(1) { width: 260px; }
-.proxy-table th:nth-child(2), .proxy-table td:nth-child(2) { width: 130px; }
-.proxy-table th:nth-child(4), .proxy-table td:nth-child(4) { width: 130px; }
+.proxy-table th:nth-child(1), .proxy-table td:nth-child(1) { width: 20%; }
+.proxy-table th:nth-child(2), .proxy-table td:nth-child(2) { width: 22%; }
+.proxy-table th:nth-child(3), .proxy-table td:nth-child(3) { width: 36%; }
+.proxy-table th:nth-child(4), .proxy-table td:nth-child(4) { width: 10%; }
+.proxy-table td:nth-child(1) strong, .proxy-table td:nth-child(1) a {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A guard, not a layout: the refusal badge carries an exit code from a helper
+   and has no length anyone here decides. Clipped at its own cell it is still
+   read as a badge; running past it, it drew over the column beside it and made
+   the row look like a rendering fault rather than a message. */
+.proxy-table td:nth-child(2) { overflow: hidden; }
 /* Five columns since the backend count left. It counted pools rather than
    servers - the form writes one pool per object, so it was a column of ones -
    and the health cell beside it already says how many servers there are and
    how many are up. The width it held goes to hosts / ports. */
-.proxy-table th:nth-child(5), .proxy-table td:nth-child(5) { width: 150px; }
+.proxy-table th:nth-child(5), .proxy-table td:nth-child(5) { width: 12%; }
 .proxy-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .proxy-table th { padding-top: 7px; padding-bottom: 7px; }
 .proxy-table td strong { font-weight: var(--font-weight-regular); }
-.proxy-hosts { display: block; max-width: 430px; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
+.proxy-hosts { display: block; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .protocol-badge, .ownership-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; letter-spacing: 0.025em; }
 .protocol-http { color: var(--info); background: var(--info-soft); }
 .protocol-https { color: var(--healthy); background: var(--healthy-soft); }

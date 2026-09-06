@@ -620,13 +620,17 @@ def build_router(config: Config) -> APIRouter:
             # listing, so an object changed from the command line, or changed
             # longer ago than the window reaches, wore no badge at all.
             #
+            # The jobs are still asked where the releases cannot answer - the
+            # nodes run a release built before manifests existed - and only for
+            # what they say in the positive. A badge for "could not be
+            # compared" was tried and reverted the same afternoon: it landed on
+            # every object at once, which is the cluster-wide claim this badge
+            # was made per object to avoid.
+            #
             reconfigured = {
-                view.cluster: frozenset(
-                    name
-                    for name, state in health.object_states(
-                        health_rows, cluster=view.cluster
-                    ).items()
-                    if state in {"changed", "absent"}
+                view.cluster: objects.awaiting_deploy(
+                    health.object_states(health_rows, cluster=view.cluster),
+                    recent[view.cluster],
                 )
                 for view in overview.clusters
             }
@@ -977,6 +981,17 @@ def build_router(config: Config) -> APIRouter:
         # the listing rows made before they were given this per-object answer.
         #
         object_state = health.object_states(status_rows, cluster=cluster).get(name, objects.UNKNOWN)
+        #
+        # The same fallback the listing uses, so the two pages cannot say
+        # different things about one object. Where the releases cannot be
+        # compared, a publish job naming this object is still a fact about
+        # something that happened - and it is asked only for that.
+        #
+        if object_state == objects.UNKNOWN:
+            with request.app.state.pool.connection() as connection:
+                carried = objects.carried_since_deploy(db.recent_jobs(connection, cluster=cluster))
+            if name in carried:
+                object_state = objects.CHANGED
         detail = objects.build_object_detail(
             cluster,
             name,

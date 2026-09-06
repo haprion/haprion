@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import re
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest import mock
 from uuid import uuid4
 
+from haproxy_ui import objects
 from haproxy_ui.db import ClusterInventory, ClusterObjects, ClusterStatus, Job
 from haproxy_ui.objects import ListedObject
 from haproxy_ui.views import TEMPLATES
@@ -385,22 +388,160 @@ class AServingObjectSaysWhenTheNodesAreBehind(unittest.TestCase):
         macro = TEMPLATES.env.get_template("_proxy-rows.html").module.proxy_rows
         return str(macro("alpha", "admin", (), (), (self.SERVING,), (), {}, (), {}, reconfigured))
 
-    def test_the_badge_takes_the_cell_like_the_other_two(self) -> None:
-        """Beside the hostnames it was a second thing in a column sized for one."""
+    def test_the_badge_takes_the_protocol_cell_and_leaves_the_hostnames(self) -> None:
+        """What the row serves is why somebody opened the listing.
+
+        The badge sat in hosts / ports first and replaced them. It was the
+        wrong trade: the protocol is one word that is also on the object's own
+        page, while the hostnames are the thing being looked up.
+        """
 
         body = self.rendered(("shop",))
 
         self.assertIn("Reconfigured · deploy to activate", body)
-        self.assertNotIn("shop.example.com", body)
+        self.assertIn("shop.example.com", body)
+        self.assertNotIn("protocol-badge", body)
 
     def test_an_object_nobody_republished_is_left_alone(self) -> None:
         """The mistake worth a test: the fact is per object, not per cluster.
 
         Worn cluster-wide it appeared on every row, so untouched sites looked
-        like work somebody had forgotten.
+        like work somebody had forgotten. Tried a second time on 2026-09-06 as
+        a badge for "could not be compared", with the same result on every row
+        of the cluster, and reverted the same afternoon.
         """
 
         self.assertNotIn("Reconfigured", self.rendered(("something-else",)))
 
     def test_nothing_awaiting_a_deploy_says_nothing(self) -> None:
         self.assertNotIn("Reconfigured", self.rendered())
+
+
+class WhichObjectsAPendingDeployCarries(unittest.TestCase):
+    """The releases answer; the jobs fill in only what the releases cannot.
+
+    Two manifests compared say which object changed, whoever changed it and
+    however long ago. They say nothing at all when the nodes run a release
+    built before manifests existed - and that silence must not become a badge
+    on every row, which is what the cluster-wide claim looked like.
+    """
+
+    def job(self, operation: str, *names: str, state: str = "done") -> Job:
+        return Job(
+            id=1,
+            request_id=uuid4(),
+            operation=operation,
+            cluster="alpha",
+            payload={"objects": {name: "document" for name in names}},
+            state=state,
+            created_at=OBSERVED,
+            started_at=None,
+            finished_at=None,
+            exit_code=None,
+            outcome="done",
+            result=None,
+            stderr_excerpt=None,
+            idempotency_key=uuid4(),
+            attempts=1,
+        )
+
+    def test_the_releases_decide_when_they_can(self) -> None:
+        states = {"shop": "changed", "intranet": "current"}
+        jobs = [self.job("objects_publish", "intranet")]
+
+        self.assertEqual(objects.awaiting_deploy(states, jobs), frozenset({"shop"}))
+
+    def test_an_object_absent_from_the_running_release_counts_too(self) -> None:
+        self.assertEqual(objects.awaiting_deploy({"shop": "absent"}, []), frozenset({"shop"}))
+
+    def test_the_jobs_are_asked_only_where_nothing_could_be_compared(self) -> None:
+        """The case the whole fallback exists for: no manifest on the nodes."""
+
+        states = {"shop": "unknown", "intranet": "unknown", "wiki": "unknown"}
+        jobs = [self.job("objects_publish", "shop")]
+
+        self.assertEqual(objects.awaiting_deploy(states, jobs), frozenset({"shop"}))
+
+    def test_nothing_known_and_no_job_leaves_every_row_alone(self) -> None:
+        states = {"shop": "unknown", "intranet": "unknown"}
+
+        self.assertEqual(objects.awaiting_deploy(states, []), frozenset())
+
+    def test_a_job_older_than_the_last_deploy_is_not_carried(self) -> None:
+        jobs = [self.job("deploy"), self.job("objects_publish", "shop")]
+
+        self.assertEqual(objects.awaiting_deploy({"shop": "unknown"}, jobs), frozenset())
+
+    def test_the_jobs_never_overrule_a_release_that_answered(self) -> None:
+        """Absence from a bounded window is not a claim that anything is in step."""
+
+        jobs = [self.job("objects_publish", "shop")]
+
+        self.assertEqual(objects.awaiting_deploy({"shop": "current"}, jobs), frozenset())
+
+
+class TheRowStateBadgesFitTheColumnTheySitIn(unittest.TestCase):
+    """The badges share one cell, so the longest of them sets its width.
+
+    A pixel width cannot be measured here - the page is drawn by a browser in
+    a font this repository ships as a binary - so what is held instead is the
+    vocabulary: every badge in the listing is a literal in one template, and
+    a new one longer than the ones the column was sized for has to be a
+    deliberate act rather than a surprise on somebody's screen.
+
+    The budget is characters, and it is honest about being an approximation.
+    It was set from the longest badge in use plus headroom, and the column it
+    guards is `.proxy-table` column two, at a share of the card. Widen one and
+    the other has to follow; that is the whole reason this test names both.
+    """
+
+    BUDGET = 36
+    COLUMN_SHARE = "22%"
+
+    def badges(self) -> list[str]:
+        markup = (
+            Path(__file__).resolve().parents[1] / "src/haproxy_ui/templates/_proxy-rows.html"
+        ).read_text()
+        #
+        # The spinner is a span inside a span, and a non-greedy match would end
+        # the badge at its closing tag - so "Waiting for publish" was silently
+        # not measured by the first version of this. Removed before matching,
+        # so the badge is one element again.
+        #
+        markup = re.sub(r'<span class="badge-spinner"[^>]*></span>', "", markup)
+        found = re.findall(r'class="status-badge[^"]*"[^>]*>(.*?)</(?:span|a)>', markup)
+        texts: list[str] = []
+        for block in found:
+            #
+            # A badge may be written as a choice - "Draft: removal" or "Draft"
+            # - so the branches are separated and measured one at a time. The
+            # cell shows one of them, never their concatenation.
+            #
+            for part in re.split(r"{%.*?%}", re.sub(r"<[^>]+>", "", block)):
+                #
+                # A badge carrying a value has no length this repository
+                # decides; the refusal badge takes an exit code from a helper.
+                # That one is guarded by clipping at its own cell instead.
+                #
+                if "{{" not in part and part.strip():
+                    texts.append(part.strip())
+        return texts
+
+    def test_every_badge_is_short_enough_for_its_column(self) -> None:
+        found = self.badges()
+
+        self.assertTrue(found, "no badge literals were found to check")
+        for text in found:
+            with self.subTest(badge=text):
+                self.assertLessEqual(len(text), self.BUDGET)
+
+    def test_the_longest_badge_is_the_one_the_column_was_sized_for(self) -> None:
+        """So that widening a badge cannot quietly outgrow the column."""
+
+        css = (Path(__file__).resolve().parents[1] / "src/haproxy_ui/static/app.css").read_text()
+
+        self.assertIn(
+            f".proxy-table th:nth-child(2), .proxy-table td:nth-child(2) "
+            f"{{ width: {self.COLUMN_SHARE}; }}",
+            css,
+        )

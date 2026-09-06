@@ -20,6 +20,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from haproxy_mgmt.generate import PORTS
+from haproxy_mgmt.object_manifest import ABSENT as ABSENT
+from haproxy_mgmt.object_manifest import CHANGED as CHANGED
 from haproxy_mgmt.object_manifest import CURRENT
 
 from haproxy_ui.cluster_identity import accent_index
@@ -407,6 +409,59 @@ def names_being_published(jobs: Iterable[Job]) -> frozenset[str]:
         if isinstance(named, Mapping):
             waiting.update(name for name in named if isinstance(name, str))
     return frozenset(waiting)
+
+
+def carried_since_deploy(jobs: Iterable[Job]) -> frozenset[str]:
+    """Objects a publish named after the newest finished deploy.
+
+    A fallback, and only for what it can say in the positive. The releases
+    decide whether an object is in step - two manifests, compared - and this is
+    asked only where that comparison has no answer: the nodes run a release
+    built before manifests existed, so nothing can be held against anything.
+
+    The distinction is the whole reason this function came back after B103
+    removed its predecessor. "A publish job names this object" is a fact about
+    something that happened. "No publish job names it" is not a fact about
+    anything: the window is bounded, the command line writes no jobs, and a
+    network edit carries no object names. The first is used here; the second is
+    what made the old status wrong, and it is not used at all.
+
+    So an object nothing can be said about wears no badge rather than a badge
+    every object would wear - which is the cluster-wide claim the per-object
+    answer was built to remove.
+    """
+
+    waiting: set[str] = set()
+    for job in jobs:
+        if job.operation == "deploy" and job.state == "done":
+            #
+            # Newest first, so the first finished deploy ends the search: every
+            # publish older than it has already reached the nodes.
+            #
+            break
+        if job.operation != "objects_publish" or job.state != "done":
+            continue
+        named = job.payload.get("objects") if isinstance(job.payload, Mapping) else None
+        if isinstance(named, Mapping):
+            waiting.update(
+                name
+                for name, document in named.items()
+                if isinstance(name, str) and document is not None
+            )
+    return frozenset(waiting)
+
+
+def awaiting_deploy(states: Mapping[str, str], jobs: Iterable[Job]) -> frozenset[str]:
+    """Which objects a pending deploy carries, said as precisely as it can be.
+
+    The releases answer first. Where they cannot - an object whose state is
+    unknown, or one the comparison never reached - the jobs are asked, and only
+    for the objects they name. Everything else is left alone.
+    """
+
+    named = {name for name, state in states.items() if state in {CHANGED, ABSENT}}
+    unresolved = carried_since_deploy(jobs)
+    return frozenset(named | {name for name in unresolved if states.get(name, UNKNOWN) == UNKNOWN})
 
 
 def publish_failures(jobs: Iterable[Job]) -> dict[str, str]:

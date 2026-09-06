@@ -1039,7 +1039,13 @@ def build_router(config: Config) -> APIRouter:
                     if health.backend_name(name, pool) not in served
                 )
         if served:
-            since = datetime.now(UTC) - chosen.span
+            #
+            # One moment for every pool on the page, so the cards share an axis
+            # and can be compared against each other rather than each against
+            # the instant its own query ran.
+            #
+            now = datetime.now(UTC)
+            since = now - chosen.span
             with request.app.state.pool.connection() as connection:
                 traffic = [
                     metrics.pool_traffic(
@@ -1052,6 +1058,9 @@ def build_router(config: Config) -> APIRouter:
                             width=chosen.bucket,
                         ),
                         tick_format=chosen.tick,
+                        start=since,
+                        end=now,
+                        bucket=chosen.bucket,
                     )
                     for backend in served
                 ]

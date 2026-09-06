@@ -373,45 +373,107 @@ def totalled(found: Sequence[Interval], name: str, label: str = "") -> Total:
     return Total(label=label, value=value, counted_sec=counted, span_sec=span)
 
 
-def spark_paths(
-    values: Sequence[int | None], *, width: float, height: float
-) -> tuple[list[str], int]:
-    """A sparkline as one SVG path per unbroken run, and the peak it is scaled to.
+@dataclass(frozen=True, slots=True)
+class Point:
+    """One plotted interval, where it sits and what a hover over it says."""
 
-    **A gap is drawn as a gap.** An interval whose difference could not be taken
-    - a restart, a counter the node did not report - ends the current path and
-    the next known value starts a new one. Joining across it would draw a
-    straight line through the one place the data does not know what happened,
-    which reads as the calmest part of the window.
+    at: datetime
+    x: float
+    y: float
+    value: int
+    reading: str
+
+
+def spark(
+    found: Sequence[Interval],
+    *,
+    width: float,
+    height: float,
+    start: datetime,
+    end: datetime,
+) -> tuple[list[str], list[Point], int]:
+    """A sparkline on an absolute time axis, its hover points, and its peak.
+
+    **The axis is the window, not the data.** An earlier version spaced the
+    readings evenly across the card, so a day of samples filled a 30-day view
+    edge to edge and the same shape meant a different stretch of time in every
+    window. Trends are read by comparing one part of a window against another;
+    that needs a fixed scale, so a point sits where its moment sits and a
+    period without readings is left empty rather than closed up.
+
+    **A gap is drawn as a gap.** An interval whose difference could not be
+    taken - a restart, a change of node, a counter the node did not report -
+    ends the current run and the next known value starts a new one. Joining
+    across it draws a straight line through the one place the data does not
+    know what happened, which reads as the calmest part of the window. The same
+    applies to a stretch with no readings at all: no line is drawn there,
+    because nothing measured it. Drawing it at zero would be inventing the
+    quietest possible month out of a month nobody watched.
 
     Scaled to its own peak rather than to a fixed ceiling, because the question
-    a sparkline answers is "what shape", not "how much" - the number beside it
-    answers that. A window with no traffic has no peak to scale to and is drawn
+    a sparkline answers is "what shape", not "how much" - the figures beside it
+    answer that. A window with no traffic has no peak to scale to and is drawn
     flat on the baseline, which is the truth: nothing happened.
     """
 
-    known = [value for value in values if value is not None]
-    peak = max(known) if known else 0
-    if len(values) < 2:
-        return [], peak
+    known = [
+        interval.counters.get("req_tot")
+        for interval in found
+        if interval.counters.get("req_tot") is not None
+    ]
+    peak = max((value for value in known if value is not None), default=0)
 
-    step = width / (len(values) - 1)
+    seconds = (end - start).total_seconds()
+    if seconds <= 0:
+        return [], [], peak
+
     runs: list[list[str]] = []
     current: list[str] = []
+    points: list[Point] = []
 
-    for index, value in enumerate(values):
+    for interval in found:
+        value = interval.counters.get("req_tot")
         if value is None:
             if len(current) > 1:
                 runs.append(current)
             current = []
             continue
-        x = index * step
+        #
+        # Plotted at the interval's end, which is the moment its traffic had
+        # been counted by. Clamped, because a reading can sit a fraction
+        # outside a window whose edge is "now".
+        #
+        at = interval.ended_at
+        position = (at - start).total_seconds() / seconds
+        x = min(max(position, 0.0), 1.0) * width
         y = height if peak == 0 else height - (value / peak) * height
         current.append(f"{'M' if not current else 'L'}{x:.1f} {y:.1f}")
+        points.append(Point(at=at, x=x, y=y, value=value, reading=reading_of(interval)))
     if len(current) > 1:
         runs.append(current)
 
-    return [" ".join(run) for run in runs], peak
+    return [" ".join(run) for run in runs], points, peak
+
+
+def reading_of(interval: Interval) -> str:
+    """What one point says when the pointer rests on it.
+
+    Every figure the card carries, not only the one the line draws, because the
+    question a spike raises is usually about a different counter than the one
+    that showed it - a rise in requests is asked about together with what
+    answered them.
+
+    A counter that could not be measured says so rather than being left out.
+    Absent from the list it would read as zero, which is the one thing it is
+    not known to be.
+    """
+
+    when = interval.ended_at.strftime(TIMESTAMP)
+    parts = []
+    for name, label in CARD_COUNTERS:
+        value = interval.counters.get(name)
+        parts.append(f"{label} {value if value is not None else 'not measured'}")
+    return f"{when} · " + " · ".join(parts)
 
 
 #
@@ -445,6 +507,14 @@ SPARK_HEIGHT = 64.0
 # two-thirds along" is not an answer somebody can act on, and a date is - and
 # few enough that they do not collide on a narrow card.
 #
+# How a moment is written wherever one is printed in full: `yy-mm-dd
+# hh:mm:ss` on a 24-hour clock. Fixed width, unambiguous between the
+# reader's conventions, and sortable as text - which the axis labels are
+# not trying to be, since they are read at a glance rather than compared.
+#
+TIMESTAMP = "%y-%m-%d %H:%M:%S"
+
+#
 SPARK_TICKS = 5
 
 
@@ -477,6 +547,17 @@ class PoolTraffic:
     ticks: tuple[tuple[float, str], ...]
     peak: int
     restarted: bool
+    #
+    # One per plotted reading, for the hover targets drawn over the line. The
+    # paths alone cannot answer "what exactly was that spike, and when" - a
+    # shape is read at a glance and a number is read on purpose.
+    #
+    points: tuple[Point, ...] = ()
+    #
+    # How wide one bucket is in the drawing's own units, so a hover target can
+    # be the width of what it represents rather than of the line.
+    #
+    hit_width: float = 0.0
     handed_over: bool = False
     #
     # How much of the window's time sits in intervals that could be measured at
@@ -508,28 +589,30 @@ class PoolTraffic:
 
 
 def spark_ticks(
-    found: Sequence[Interval], *, fmt: str, count: int = SPARK_TICKS
+    *, start: datetime, end: datetime, fmt: str, count: int = SPARK_TICKS
 ) -> list[tuple[float, str]]:
-    """Where the line sits in time, as evenly spaced labels along it.
+    """Where the line sits in time, as evenly spaced labels across the window.
 
     Without these the shape is unlocatable: a reader can see that something
     happened but not whether it was ten days ago or twenty, which is the
     question a month-long window is opened to answer.
 
-    Taken from the intervals themselves rather than computed from the window's
-    span, so the labels name moments that were actually measured. A window with
-    less history than it asks for then says so by where its labels start,
-    instead of drawing a month whose first three weeks are an assumption.
+    Computed from the window rather than from the readings. They used to name
+    moments that had been measured, which meant a 30-day view holding one day
+    of samples labelled both its ends with the same date - honest about the
+    data and misleading about the axis, now that the axis is the window. The
+    labels are the scale; where the readings start is shown by where the line
+    starts.
     """
 
-    if len(found) < 2:
+    if count < 2 or end <= start:
         return []
-    places = min(count, len(found))
-    step = (len(found) - 1) / (places - 1) if places > 1 else 0
+    seconds = (end - start).total_seconds()
     ticks: list[tuple[float, str]] = []
-    for index in range(places):
-        at = found[round(index * step)]
-        ticks.append((index / (places - 1) * 100 if places > 1 else 0.0, at.ended_at.strftime(fmt)))
+    for index in range(count):
+        share = index / (count - 1)
+        at = start + timedelta(seconds=seconds * share)
+        ticks.append((share * 100, at.strftime(fmt)))
     return ticks
 
 
@@ -558,15 +641,32 @@ def window_coverage(found: Sequence[Interval]) -> int:
 
 
 def pool_traffic(
-    backend: str, samples: Sequence[Sample], *, tick_format: str = "%H:%M"
+    backend: str,
+    samples: Sequence[Sample],
+    *,
+    tick_format: str = "%H:%M",
+    start: datetime,
+    end: datetime,
+    bucket: timedelta,
 ) -> PoolTraffic:
+    """One pool's card, drawn across the window that was asked for.
+
+    The window is given rather than derived from the samples. What the card
+    shows is "the last 30 days", and a view that quietly redrew itself as "the
+    last day, stretched" would answer a question nobody asked - and would make
+    two windows of the same pool incomparable, which is the whole use of them.
+    """
+
     found = intervals(samples)
     totals = tuple(totalled(found, name, label) for name, label in CARD_COUNTERS)
-    paths, peak = spark_paths(
-        [interval.counters.get("req_tot") for interval in found],
+    paths, points, peak = spark(
+        found,
         width=SPARK_WIDTH,
         height=SPARK_HEIGHT,
+        start=start,
+        end=end,
     )
+    buckets = max((end - start) / bucket, 1) if bucket else 1
     return PoolTraffic(
         backend=backend,
         intervals=len(found),
@@ -574,7 +674,9 @@ def pool_traffic(
         ended_at=found[-1].ended_at if found else None,
         totals=totals,
         paths=tuple(paths),
-        ticks=tuple(spark_ticks(found, fmt=tick_format)),
+        points=tuple(points),
+        hit_width=SPARK_WIDTH / buckets,
+        ticks=tuple(spark_ticks(start=start, end=end, fmt=tick_format)),
         peak=peak,
         restarted=any(interval.restarted for interval in found),
         handed_over=any(interval.handed_over for interval in found),

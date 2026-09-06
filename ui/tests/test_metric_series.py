@@ -145,6 +145,9 @@ class WhatHappenedInBetween(unittest.TestCase):
                 sample(20, uptime=90000, node="node-b", req_tot=9000),
                 sample(40, uptime=90020, node="node-b", req_tot=9100),
             ],
+            start=START,
+            end=START + timedelta(seconds=40),
+            bucket=timedelta(seconds=20),
         )
         self.assertTrue(card.handed_over)
         self.assertFalse(card.restarted)
@@ -209,6 +212,9 @@ class TotallingAWindow(unittest.TestCase):
                 sample(0, uptime=100, node="node-a", req_tot=10),
                 sample(20, uptime=120, node="node-a", req_tot=17),
             ],
+            start=START,
+            end=START + timedelta(seconds=20),
+            bucket=timedelta(seconds=10),
         )
         self.assertEqual(card.coverage, 100)
         unreported = next(total for total in card.totals if total.label == "4xx")
@@ -249,6 +255,36 @@ class TotallingAWindow(unittest.TestCase):
 
 
 class DrawingTheShape(unittest.TestCase):
+    """The line is drawn on the window's own scale, not on the readings'."""
+
+    def drawn(
+        self, values: list[int | None], *, span: timedelta = timedelta(seconds=40)
+    ) -> tuple[list[str], list[metrics.Point], int]:
+        """One interval per value, ten seconds each, into a window of `span`.
+
+        Built as intervals rather than as readings because this is what the
+        drawing is handed. Going through `samples` would make one unreported
+        reading remove the two differences it sits between, which is a fact
+        about `intervals` and is pinned there.
+        """
+
+        found = [
+            metrics.Interval(
+                started_at=START + timedelta(seconds=step * 10),
+                ended_at=START + timedelta(seconds=(step + 1) * 10),
+                counters=dict.fromkeys(metrics.METRIC_COUNTERS) | {"req_tot": value},
+                restarted=False,
+            )
+            for step, value in enumerate(values)
+        ]
+        return metrics.spark(
+            found,
+            width=100,
+            height=20,
+            start=START,
+            end=START + span,
+        )
+
     def test_a_gap_is_drawn_as_a_gap(self) -> None:
         """Joining across it draws a straight line through the unknown.
 
@@ -256,30 +292,64 @@ class DrawingTheShape(unittest.TestCase):
         is the opposite of what a restart in the middle of it means.
         """
 
-        paths, _ = metrics.spark_paths([1, 2, None, 4, 5], width=100, height=20)
+        paths, _, _ = self.drawn([1, 2, None, 4, 5], span=timedelta(seconds=60))
         self.assertEqual(len(paths), 2)
         self.assertTrue(all(path.startswith("M") for path in paths))
 
     def test_a_single_known_point_draws_nothing(self) -> None:
         """One point is not a line, and a dot would suggest a reading."""
 
-        paths, _ = metrics.spark_paths([None, 7, None], width=100, height=20)
+        paths, points, _ = self.drawn([None, 7, None])
         self.assertEqual(paths, [])
+        self.assertEqual(len(points), 1)
 
     def test_an_empty_window_is_flat_on_the_baseline(self) -> None:
-        paths, peak = metrics.spark_paths([0, 0, 0], width=100, height=20)
+        paths, _, peak = self.drawn([0, 0, 0], span=timedelta(seconds=30))
         self.assertEqual(peak, 0)
-        self.assertEqual(paths, ["M0.0 20.0 L50.0 20.0 L100.0 20.0"])
+        self.assertEqual(paths, ["M33.3 20.0 L66.7 20.0 L100.0 20.0"])
 
     def test_the_peak_touches_the_top(self) -> None:
-        paths, peak = metrics.spark_paths([0, 10], width=100, height=20)
+        paths, _, peak = self.drawn([0, 10], span=timedelta(seconds=20))
         self.assertEqual(peak, 10)
-        self.assertEqual(paths, ["M0.0 20.0 L100.0 0.0"])
+        self.assertEqual(paths, ["M50.0 20.0 L100.0 0.0"])
+
+    def test_a_reading_sits_where_its_moment_sits(self) -> None:
+        """A day of samples in a month-long window fills the last of it.
+
+        Not the whole card. The shape is read against the axis, and a scale
+        that stretches to whatever data arrived makes two windows of the same
+        pool incomparable.
+        """
+
+        paths, points, _ = self.drawn([1, 1], span=timedelta(seconds=200))
+        self.assertEqual(paths, ["M5.0 0.0 L10.0 0.0"])
+        self.assertEqual([round(point.x, 1) for point in points], [5.0, 10.0])
+
+    def test_a_point_says_the_moment_and_every_figure(self) -> None:
+        """Including the ones the line does not draw, and the ones unmeasured."""
+
+        _, points, _ = self.drawn([3, None])
+        self.assertEqual(len(points), 1)
+        self.assertIn("Requests 3", points[0].reading)
+        self.assertIn("Connection errors not measured", points[0].reading)
+        self.assertIn(points[0].at.strftime("%y-%m-%d %H:%M:%S"), points[0].reading)
+
+    def test_a_point_writes_its_moment_the_agreed_way(self) -> None:
+        """`yy-mm-dd hh:mm:ss`, 24-hour: fixed width and read the same by anyone."""
+
+        _, points, _ = self.drawn([1, 1])
+        self.assertRegex(points[0].reading, r"^\d\d-\d\d-\d\d \d\d:\d\d:\d\d · ")
 
 
 class WhetherTheWindowSaysAnything(unittest.TestCase):
     def traffic(self, *samples: metrics.Sample) -> metrics.PoolTraffic:
-        return metrics.pool_traffic("mgd-site-web", list(samples))
+        return metrics.pool_traffic(
+            "mgd-site-web",
+            list(samples),
+            start=START,
+            end=START + timedelta(minutes=1),
+            bucket=timedelta(seconds=10),
+        )
 
     def test_no_samples_is_not_observed_rather_than_quiet(self) -> None:
         """An object never deployed has no reading, which is not "no traffic"."""
@@ -364,30 +434,36 @@ class LocatingTheShapeInTime(unittest.TestCase):
     ten days ago or twenty - and a shape alone cannot answer it.
     """
 
-    def found(self, count: int) -> list[metrics.Interval]:
-        return metrics.intervals(
-            [sample(step * 600, uptime=100 + step * 600, req_tot=step) for step in range(count)]
-        )
+    def ticks(self, span: timedelta) -> list[tuple[float, str]]:
+        return metrics.spark_ticks(start=START, end=START + span, fmt="%H:%M")
 
-    def test_the_labels_span_the_whole_line(self) -> None:
-        ticks = metrics.spark_ticks(self.found(50), fmt="%H:%M")
-        self.assertEqual(ticks[0][0], 0.0)
-        self.assertEqual(ticks[-1][0], 100.0)
+    def test_the_labels_span_the_whole_window(self) -> None:
+        found = self.ticks(timedelta(hours=4))
+        self.assertEqual(found[0][0], 0.0)
+        self.assertEqual(found[-1][0], 100.0)
 
-    def test_a_label_names_a_moment_that_was_measured(self) -> None:
-        """Not one computed from the span, which a short history would invent."""
+    def test_a_label_names_the_window_rather_than_the_readings(self) -> None:
+        """The axis is the scale, so it spans the window whatever arrived.
 
-        ticks = metrics.spark_ticks(self.found(50), fmt="%H:%M")
-        measured = {interval.ended_at.strftime("%H:%M") for interval in self.found(50)}
-        for _, label in ticks:
-            self.assertIn(label, measured)
+        The labels used to be taken from the intervals, which meant a 30-day
+        view holding one day of samples wrote the same date at both ends -
+        true about the data and wrong about the axis.
+        """
 
-    def test_a_window_shorter_than_the_labels_asks_for_fewer(self) -> None:
-        ticks = metrics.spark_ticks(self.found(4), fmt="%H:%M")
-        self.assertEqual(len(ticks), 3)
+        found = self.ticks(timedelta(hours=4))
+        self.assertEqual(found[0][1], START.strftime("%H:%M"))
+        self.assertEqual(found[-1][1], (START + timedelta(hours=4)).strftime("%H:%M"))
 
-    def test_a_line_that_cannot_be_drawn_has_no_labels(self) -> None:
-        self.assertEqual(metrics.spark_ticks([], fmt="%H:%M"), [])
+    def test_the_labels_are_evenly_spaced(self) -> None:
+        found = self.ticks(timedelta(hours=4))
+        steps = {
+            round(later[0] - earlier[0], 6)
+            for earlier, later in zip(found, found[1:], strict=False)
+        }
+        self.assertEqual(len(steps), 1)
+
+    def test_a_window_with_no_span_has_no_labels(self) -> None:
+        self.assertEqual(self.ticks(timedelta(0)), [])
 
     def test_each_window_says_what_one_point_covers(self) -> None:
         """`peak 104` means nothing until it says per what."""

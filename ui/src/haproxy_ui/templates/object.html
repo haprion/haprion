@@ -122,6 +122,14 @@
         #}
         <svg viewBox="0 0 {{ spark_width }} {{ spark_height }}" preserveAspectRatio="none" role="img" aria-label="Requests per bucket over {{ traffic_window }}, peaking at {{ pool.peak }}">
           {% for path in pool.paths %}<path d="{{ path }}" fill="none" stroke="var(--info)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>{% endfor %}
+          {#
+            One hover target per reading, as wide as the bucket it stands for
+            and the full height of the drawing, so the pointer finds it by the
+            moment rather than by the pixel the line happens to pass through.
+            Transparent rather than hidden: `visibility` would take the title
+            with it. Drawn after the paths so they sit above the line.
+          #}
+          {% for point in pool.points %}<rect class="traffic-hit" x="{{ '%.1f'|format(point.x - pool.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(pool.hit_width) }}" height="{{ spark_height }}"><title>{{ point.reading }}</title></rect>{% endfor %}
         </svg>
         {#
           The labels are what make the shape locatable. Placed as percentages

@@ -95,7 +95,11 @@
   looking for first.
 #}
 {% if traffic %}
-<article class="cluster-card cluster-accent-{{ object.accent }}">
+{#
+  Named as a region so a click on the chart can replace it with the server's
+  own answer instead of reloading the page around it. See `traffic.js`.
+#}
+<article class="cluster-card cluster-accent-{{ object.accent }}" data-traffic-region="traffic">
   <header class="cluster-header">
     {#
       The link out is what makes this card honest about its own limits. It can

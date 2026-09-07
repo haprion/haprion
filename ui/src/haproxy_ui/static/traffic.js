@@ -16,94 +16,180 @@
   //
   // The `<title>` elements are removed as this script takes over, and only
   // then. They are what a browser with the script blocked still shows, so they
-  // stay in the markup - but where the row is doing the work, the browser's own
-  // tooltip is the floating box this design removed, arriving a second late
-  // over the line it covers. Two answers to one hover, one of them the one that
-  // was ruled out.
+  // stay in the markup - but where the row is doing the work, the browser's
+  // own tooltip is the floating box this design removed, arriving a second
+  // late over the line it covers.
   //
-  const cards = document.querySelectorAll(".traffic-pool");
-  if (!cards.length) return;
+  const REGION = "[data-traffic-region]";
 
-  const HELD = "traffic-scroll:" + window.location.pathname;
-  try {
-    const held = sessionStorage.getItem(HELD);
-    sessionStorage.removeItem(HELD);
-    if (held !== null) window.scrollTo(0, Number(held));
-  } catch {
-    /* Nothing held, or storage refused. The page opens at the top as before. */
-  }
+  const wire = (root) => {
+    for (const card of root.querySelectorAll(".traffic-pool")) {
+      const svg = card.querySelector("svg");
+      const row = card.querySelector(".traffic-figures");
+      const label = card.querySelector(".traffic-scope-label");
+      const note = card.querySelector(".traffic-scope-note");
+      const picks = card.querySelectorAll(".traffic-pick");
+      if (!svg || !row || !label) continue;
 
-  for (const card of cards) {
-    const svg = card.querySelector("svg");
-    const row = card.querySelector(".traffic-figures");
-    const label = card.querySelector(".traffic-scope-label");
-    const note = card.querySelector(".traffic-scope-note");
-    const picks = card.querySelectorAll(".traffic-pick");
-    if (!svg || !row || !label || !picks.length) continue;
+      for (const title of svg.querySelectorAll("title")) title.remove();
 
-    for (const title of svg.querySelectorAll("title")) title.remove();
-
-    //
-    // What the page was rendered with: the window's figures, or a marked
-    // range's. A hover is a look at something else and has to be able to put
-    // this back exactly, including the coverage marks beside the numbers.
-    //
-    const values = new Map();
-    for (const item of row.querySelectorAll("div")) {
-      const name = item.querySelector("dt");
-      const value = item.querySelector("dd");
-      if (name && value) values.set(name.textContent.trim(), { value, held: value.innerHTML });
-    }
-    const rendered = label.textContent.trim();
-
-    const show = (pick) => {
-      let figures;
-      try {
-        figures = JSON.parse(pick.dataset.figures || "[]");
-      } catch {
-        return;
-      }
-      for (const [name, amount] of figures) {
-        const found = values.get(name);
-        if (!found) continue;
-        found.value.textContent = amount === null ? "—" : String(amount);
-      }
-      label.textContent = pick.dataset.when || rendered;
-      if (note) note.textContent = pick.dataset.note || "";
-    };
-
-    const restore = () => {
-      for (const { value, held } of values.values()) value.innerHTML = held;
-      label.textContent = rendered;
-      if (note) note.textContent = "";
-    };
-
-    for (const pick of picks) {
-      pick.addEventListener("pointerenter", () => show(pick));
-      pick.addEventListener("focus", () => show(pick));
       //
-      // The mark is painted before the page comes back, so the click has an
-      // answer immediately rather than after a round trip. What the server
-      // renders is still the authority - this only covers the wait.
+      // What the page was rendered with: the window's figures, or a marked
+      // range's. A hover is a look at something else and has to be able to put
+      // this back exactly, including the coverage marks beside the numbers.
       //
-      pick.addEventListener("click", () => {
-        const rect = pick.querySelector("rect");
-        if (rect) rect.classList.add("traffic-picked");
+      const values = new Map();
+      for (const item of row.querySelectorAll("div")) {
+        const name = item.querySelector("dt");
+        const value = item.querySelector("dd");
+        if (name && value) values.set(name.textContent.trim(), { value, held: value.innerHTML });
+      }
+      const rendered = label.textContent.trim();
+
+      const show = (pick) => {
         //
-        // Marking a range is a navigation - the marks live in the address, so
-        // the browser loads a page and lands at the top of it, with the chart
-        // that was just clicked somewhere below the fold. The position is put
-        // back on the way in, so the second click leaves the reader looking at
-        // the same card as the first.
+        // A bucket inside the marked range answers with the range's own
+        // figures, which are the ones already on the card. The reader marked
+        // a stretch to ask about the stretch; replacing the answer with one
+        // bucket's numbers the moment the pointer crosses the band takes the
+        // answer away exactly where it is being read.
         //
-        try {
-          sessionStorage.setItem(HELD, String(window.scrollY));
-        } catch {
-          /* Storage can be refused outright; the mark still works. */
+        if (pick.dataset.selected) {
+          restore();
+          return;
         }
-      });
+        let figures;
+        try {
+          figures = JSON.parse(pick.dataset.figures || "[]");
+        } catch {
+          return;
+        }
+        for (const [name, amount] of figures) {
+          const found = values.get(name);
+          if (!found) continue;
+          found.value.textContent = amount === null ? "—" : String(amount);
+        }
+        label.textContent = pick.dataset.when || rendered;
+        if (note) note.textContent = pick.dataset.note || "";
+      };
+
+      const restore = () => {
+        for (const { value, held } of values.values()) value.innerHTML = held;
+        label.textContent = rendered;
+        if (note) note.textContent = "";
+      };
+
+      for (const pick of picks) {
+        pick.addEventListener("pointerenter", () => show(pick));
+        pick.addEventListener("focus", () => show(pick));
+      }
+      svg.addEventListener("pointerleave", restore);
+      svg.addEventListener("blur", restore, true);
+
+      //
+      // A figure that says its own piece: the star beside a qualified total,
+      // and a total large enough to be printed short. Both answer in the note
+      // row, where every other reading on this card answers.
+      //
+      for (const said of row.querySelectorAll("[data-note]")) {
+        said.addEventListener("pointerenter", () => {
+          if (note) note.textContent = said.dataset.note || "";
+        });
+        said.addEventListener("pointerleave", restore);
+      }
     }
-    svg.addEventListener("pointerleave", restore);
-    svg.addEventListener("blur", restore, true);
-  }
+  };
+
+  //
+  // Marking, and clearing, without reloading the page around the chart.
+  //
+  // The marks live in the address - that is what makes a range something you
+  // can paste to somebody mid-incident - so every click here is a navigation,
+  // and a navigation redraws the whole page and throws the reader back to the
+  // top of it. Three clicks to measure a stretch meant three of those.
+  //
+  // So the click is answered by fetching the very same address and swapping
+  // in the traffic regions the server rendered for it. The server still does
+  // every sum: the figures come from `read_pool_totals` exactly as they do on
+  // a full load, and nothing here recomputes them - a second implementation of
+  // that arithmetic in the browser is a second answer that can drift.
+  //
+  // Without this script the links are plain links and behave as they always
+  // did, which is the reason the marks are links in the first place.
+  //
+  //
+  // `href` off an SVG `<a>` is an `SVGAnimatedString`, not a string - the
+  // bucket links live inside the drawing, so reading the property produced
+  // "[object SVGAnimatedString]" and navigated to it. The attribute is the
+  // same text on both kinds of link, so it is what is read.
+  //
+  const address = (link) => link.getAttribute("href");
+
+  const swap = async (href, push) => {
+    const answer = await fetch(href, { credentials: "same-origin" });
+    if (!answer.ok) throw new Error(String(answer.status));
+    const parsed = new DOMParser().parseFromString(await answer.text(), "text/html");
+    const fresh = parsed.querySelectorAll(REGION);
+    const here = document.querySelectorAll(REGION);
+    //
+    // Refused rather than patched up. A page whose regions no longer line up
+    // is a different page - a session that expired into a login form, or a
+    // cluster that has gone - and half-replacing it would leave the reader
+    // looking at two answers at once.
+    //
+    if (!fresh.length || fresh.length !== here.length) throw new Error("shape");
+    here.forEach((region, index) => region.replaceWith(fresh[index]));
+    if (push) history.pushState({ traffic: true }, "", href);
+    wire(document);
+  };
+
+  const follow = (href) => {
+    swap(href, true).catch(() => {
+      //
+      // Anything unexpected - offline, a redirect to a login page, a shape
+      // that no longer matches - falls back to the navigation this replaced.
+      //
+      window.location.href = href;
+    });
+  };
+
+  document.addEventListener("click", (event) => {
+    if (event.button !== 0 || event.defaultPrevented) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+    const pick = event.target.closest(".traffic-pick, .traffic-clear");
+    if (pick) {
+      event.preventDefault();
+      follow(address(pick));
+      return;
+    }
+
+    //
+    // The third click clears the marked range, wherever it lands. It already
+    // did inside the drawing - the link under every bucket carries "clear both
+    // marks" once both are set - but a reader who has finished with a range
+    // clicks it away somewhere in the page, not on a bucket.
+    //
+    // Only while a range is marked, because that is the only state this can
+    // undo, and never over a link, a control, or a selection somebody is
+    // making with the pointer: those already mean something.
+    //
+    const clear = document.querySelector(".traffic-clear");
+    if (!clear) return;
+    if (event.target.closest("a, button, input, select, textarea, summary, label, [role]")) return;
+    if (String(window.getSelection() || "")) return;
+    event.preventDefault();
+    follow(address(clear));
+  });
+
+  //
+  // The back button walks the marks back, which is the whole reason they are
+  // in the address. Answered the same way as a click, so going back is as
+  // still as going forward.
+  //
+  window.addEventListener("popstate", () => {
+    swap(window.location.href, false).catch(() => window.location.reload());
+  });
+
+  wire(document);
 })();

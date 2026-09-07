@@ -276,24 +276,59 @@ def intervals(samples: Sequence[Sample]) -> list[Interval]:
     unaccounted for and the reader is owed that. What changed is that the part
     that was measured is no longer discarded with it.
 
-    **A change of node is refused for the same reason, and it does not show up
-    in the uptime.** Pool members are recorded only from the node holding the
-    VIP, so a failover hands the series to a machine that has been up longer
-    than the one it replaced - higher uptime and higher counters, which is
-    exactly what a healthy interval looks like. Subtracting across it reports
-    the incoming node's lifetime total as this interval's traffic. What
-    happened between the last reading of one and the first of the other was
-    never observed by either, and no arithmetic recovers it.
+    **A difference is only ever taken between two readings by the same node.**
+    Pool members are recorded from the node holding the VIP, so a failover
+    hands the series to a machine that has been up longer than the one it
+    replaced - higher uptime and higher counters, which is exactly what a
+    healthy interval looks like. Subtracting across it would report the
+    incoming node's lifetime total as this interval's traffic. Pairing inside
+    each node's own series is what makes that impossible rather than something
+    to detect afterwards, and it is why `handed_over` is no longer set: there
+    is no pair for it to describe.
 
-    Samples that predate the node being carried have `node` as `None`. Two of
-    those are compared as before rather than treated as a change, so a reader
-    of older rows keeps the behaviour it had.
+    Samples that predate the node being carried have `node` as `None`. They
+    form one series among themselves, which is the behaviour a reader of older
+    rows had.
     """
 
-    ordered = sorted(samples, key=lambda sample: (sample.observed_at, sample.node or ""))
-    found: list[Interval] = []
+    #
+    # Paired within each node's own series, never across two of them.
+    #
+    # The samples arrive as one list because they are one backend's history,
+    # but they are written by whichever node is holding the address, and two
+    # nodes' cumulative counters are two processes' lifetimes. Ordering them
+    # together by time and pairing neighbours therefore invented a difference
+    # at every point the author changed - refused as `handed_over`, which cost
+    # the whole interval either side of it.
+    #
+    # What that cost in practice, measured on the live cluster 2026-09-06: the
+    # standby node wrote four samples inside one hour in which the active node
+    # wrote 648. On the 7-day view a bucket keeps one reading per node, so that
+    # hour became active 16:59 -> standby 17:34 -> active 17:59, two refused
+    # differences spanning the whole hour, and the card said 1 % of it could be
+    # measured. On the 30-day view the same four rows would take six hours.
+    #
+    # Paired per node the stray rows form no pair at all - a lone sample is not
+    # an interval - and the active node's series runs through the hour
+    # unbroken. A real failover is not lost either: the outgoing node's
+    # intervals end where its samples stop, the incoming node's begin where its
+    # own start, and the stretch between them is time nobody observed, which
+    # the coverage already knows how to say. It is the one thing no arithmetic
+    # recovers, and it is now measured as the seconds it actually was rather
+    # than as the two buckets that happened to touch it.
+    #
+    series: dict[str, list[Sample]] = {}
+    for sample in samples:
+        series.setdefault(sample.node or "", []).append(sample)
 
-    for earlier, later in zip(ordered, ordered[1:], strict=False):
+    found: list[Interval] = []
+    pairs: list[tuple[Sample, Sample]] = []
+    for readings in series.values():
+        readings.sort(key=lambda sample: sample.observed_at)
+        pairs.extend(zip(readings, readings[1:], strict=False))
+    pairs.sort(key=lambda pair: (pair[1].observed_at, pair[1].node or ""))
+
+    for earlier, later in pairs:
         #
         # The floor inside the later bucket, where there is one, because a
         # restart can happen and be climbed past between two kept samples.
@@ -344,7 +379,48 @@ def intervals(samples: Sequence[Sample]) -> list[Interval]:
                 handed_over=handed_over,
             )
         )
+    found.extend(_handovers(series))
+    found.sort(key=lambda interval: (interval.ended_at, interval.started_at))
     return found
+
+
+def _handovers(series: Mapping[str, Sequence[Sample]]) -> list[Interval]:
+    """The unobserved stretch between one node's last reading and the next's.
+
+    A failover is real and it costs real time: the outgoing node stopped
+    reporting, the incoming one had not begun, and nobody counted what happened
+    in between. That stretch is an interval with no counters - it is exactly as
+    long as it was, rather than as long as the buckets that touch it.
+
+    **Only between series that do not overlap.** A node that reports a handful
+    of rows while another is reporting throughout has not taken anything over;
+    the address never moved, and treating those rows as a handover is what cost
+    a whole hour on the live cluster. Overlapping series say the two were
+    reporting at the same time, and no time was lost between them.
+    """
+
+    spans = sorted(
+        (
+            min(reading.observed_at for reading in readings),
+            max(reading.observed_at for reading in readings),
+        )
+        for readings in series.values()
+        if readings
+    )
+    handovers: list[Interval] = []
+    for (_, earlier_end), (later_start, _) in zip(spans, spans[1:], strict=False):
+        if later_start <= earlier_end:
+            continue
+        handovers.append(
+            Interval(
+                started_at=earlier_end,
+                ended_at=later_start,
+                counters=dict.fromkeys(METRIC_COUNTERS),
+                restarted=False,
+                handed_over=True,
+            )
+        )
+    return handovers
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,9 +447,60 @@ class Total:
 
     @property
     def whole(self) -> bool:
-        """Whether every interval in the window could be counted."""
+        """Whether enough of the window was counted to answer for it plainly.
 
-        return self.counted_sec >= self.span_sec
+        Not "every second of it". A reload takes five to eight seconds and this
+        is a traffic card, not an availability monitor: marking an otherwise
+        complete day because a restart cost it eight seconds tells the reader
+        to discount a figure that is right. The threshold is `COVERAGE_WHOLE`,
+        the same 95 % at which the drawing stops qualifying a bucket, so the
+        line and the figures agree about what counts as measured.
+        """
+
+        return self.counted_sec >= self.span_sec * COVERAGE_WHOLE
+
+    @property
+    def shown(self) -> str:
+        """The figure as the card prints it, shortened only when it has to be.
+
+        Nine digits are printed in full, because the reserved column is nine
+        wide and a figure that fits is always better read exactly - the answer
+        to "how many requests" is the number, not an approximation of it.
+
+        Past that the column would have to grow, and a column that grows is the
+        text moving under the reader again. So a billion becomes `1.23 B`: the
+        magnitude is what anyone reads at that size anyway, and the exact
+        figure is a hover away in the note row rather than gone.
+
+        `B` and `T` for the short scale, which is what English-language
+        interfaces and HAProxy's own documentation use.
+        """
+
+        if self.value < 1_000_000_000:
+            return str(self.value)
+        for limit, suffix in ((1_000_000_000_000, "B"), (1_000_000_000_000_000, "T")):
+            if self.value < limit:
+                return f"{self.value / (limit // 1000):.2f} {suffix}"
+        return f"{self.value / 1_000_000_000_000_000:.2f} Q"
+
+    @property
+    def shortened(self) -> bool:
+        """Whether `shown` is an approximation the exact figure belongs beside."""
+
+        return self.value >= 1_000_000_000
+
+    @property
+    def known(self) -> bool:
+        """Whether any of the window could be counted at all.
+
+        Nothing counted is not nought traffic. A window whose every interval
+        was refused - one reading each from two nodes, and nothing in between -
+        has a sum of zero because there was nothing to add, and printing that
+        as `0` beside a note saying it was counted over 0 % of the window is the
+        card contradicting itself in one line.
+        """
+
+        return self.counted_sec > 0 or self.span_sec <= 0
 
     @property
     def coverage(self) -> int:
@@ -1027,7 +1154,7 @@ def spark(
                 moment=shown(at).strftime(TIMESTAMP),
                 note=""
                 if measured and share >= COVERAGE_WHOLE
-                else (partial_note(share) if measured else "Nothing was sampled for this bucket."),
+                else (partial_note(share) if measured else "Nothing was sampled at this time."),
             )
         )
     if current:
@@ -1246,6 +1373,11 @@ class PoolTraffic:
     # be the width of what it represents rather than of the line.
     #
     hit_width: float = 0.0
+    #
+    # How many intervals the drawing was built from, as opposed to `intervals`,
+    # which counts what the figures were measured from. See `measured`.
+    #
+    drawn_intervals: int = 0
     handed_over: bool = False
     #
     # How much of the window's time sits in intervals that could be measured at
@@ -1271,9 +1403,14 @@ class PoolTraffic:
         A pool with no samples has not been observed; a pool with samples and
         no traffic has. The page says different things about them, and the
         difference is the one this whole table exists to keep.
+
+        Either count answers it. The figures may have been measured over a
+        marked range that holds nothing while the window around it holds a
+        week - the card still has a line to draw, and the empty figures say the
+        rest.
         """
 
-        return self.intervals > 0
+        return self.intervals > 0 or self.drawn_intervals > 0
 
 
 def spark_ticks(
@@ -1515,6 +1652,17 @@ def pool_traffic(
     return PoolTraffic(
         series=series,
         intervals=measurement.intervals,
+        #
+        # What the drawing itself has, beside what the figures were measured
+        # from. The two differ whenever the figures come from SQL at stored
+        # resolution - and whenever a range is marked, because the measurement
+        # then answers for the marks rather than for the window. A range marked
+        # over a stretch nobody sampled has no intervals at all, and reading
+        # emptiness from it replaced every card on the page with "No samples
+        # yet.", drawing and scale and dates included, leaving the reader to
+        # guess that the marks rather than the pool had gone quiet.
+        #
+        drawn_intervals=len(found),
         started_at=measurement.started_at,
         ended_at=measurement.ended_at,
         totals=measurement.totals,

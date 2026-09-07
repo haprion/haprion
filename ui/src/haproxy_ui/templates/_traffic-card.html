@@ -74,7 +74,7 @@
           back. The figures a hover shows are carried on the element rather
           than parsed back out of the title sentence.
         #}
-        {% for point in pool.points %}<a class="traffic-pick" href="{{ traffic_link(point.stamp) }}" data-when="{{ point.moment }}" data-note="{{ point.note }}" data-figures='{{ point.figures|tojson }}'><rect class="traffic-hit" x="{{ '%.1f'|format(point.x - pool.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(pool.hit_width) }}" height="{{ spark_height }}"><title>{{ point.reading }}</title></rect></a>{% endfor %}
+        {% for point in pool.points %}<a class="traffic-pick" href="{{ traffic_link(point.stamp) }}"{% if point.selected %} data-selected="1"{% endif %} data-when="{{ point.moment }}" data-note="{{ point.note }}" data-figures='{{ point.figures|tojson }}'><rect class="traffic-hit" x="{{ '%.1f'|format(point.x - pool.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(pool.hit_width) }}" height="{{ spark_height }}"><title>{{ point.reading }}</title></rect></a>{% endfor %}
       </svg>
       {#
         The labels are what make the shape locatable. Placed as percentages
@@ -102,13 +102,13 @@
     <div class="traffic-readings">
       <p class="traffic-scope">
         <span class="traffic-scope-label">{% if traffic_range %}{{ traffic_range }}{% else %}{{ traffic_window }}{% endif %}</span>
-        {% if traffic_clear %}<a class="traffic-clear" href="{{ traffic_clear }}">clear</a>{% endif %}
         <span class="traffic-scope-note"></span>
+        {% if traffic_clear %}<a class="traffic-clear" href="{{ traffic_clear }}">clear</a>{% endif %}
       </p>
       <dl class="traffic-figures">
         {% for total in pool.totals %}
         {% if (traffic_redirect and total.label != '2xx') or (not traffic_redirect and total.label != '3xx') %}
-        <div><dt>{{ total.label }}</dt><dd>{{ total.value }}{% if not total.whole %}<span class="traffic-partial" title="Counted over {{ total.coverage }}% of this window. The rest fell in intervals that could not be measured - a restart, the address moving to the other node, or a counter this node did not report - so it is missing from this figure rather than counted as nothing.">*</span>{% endif %}</dd></div>
+        <div><dt>{{ total.label }}</dt><dd>{% if total.known %}<span class="traffic-value"{% if total.shortened %} data-note="{{ total.label }}: {{ '{:,}'.format(total.value).replace(',', ' ') }} exactly."{% endif %}>{{ total.shown }}</span>{% else %}&mdash;{% endif %}{% if total.known and not total.whole %}<span class="traffic-partial" data-note="Measured over {{ total.coverage }}% of this window. The rest was time nobody counted - a restart, or the address moving - so it is missing from this figure rather than counted as nothing.">*</span>{% endif %}</dd></div>
         {% endif %}
         {% endfor %}
       </dl>

@@ -1774,10 +1774,13 @@ def _bucketed_listener(width: timedelta) -> sql.Composed:
 
     So the readings are those of whichever node held the address, which is the
     same rule pool members are already recorded under (B94) and makes the two
-    halves of the page one model. A failover then hands this series to another
-    machine exactly as it hands a pool's, and `intervals` marks that stretch as
-    a change of author rather than differencing one machine's counter against
-    another's.
+    halves of the page one model. Both nodes' rows are kept per bucket, and
+    `intervals` differences each node against itself - the standby's flat
+    series adds nothing, and a failover is the active series ending where the
+    incoming one begins. Pairing them as neighbours in time instead made every
+    interval on an address a refused difference, which is why these cards
+    carried a star and a coverage of 0 % while nothing was wrong with them
+    (B97, measured 2026-09-07).
 
     **Every bucket is per node**, exactly as the pool query's is, and that is
     load-bearing rather than symmetry for its own sake. Collapsing to one row
@@ -1969,7 +1972,7 @@ def _pool_totals() -> sql.Composed:
         "           lag(uptime_sec) over ordered as previous_uptime_sec, "
         "           lag(node) over ordered as previous_node, {previous} "
         "      from readings "
-        "    window ordered as (order by observed_at, node)"
+        "    window ordered as (partition by node order by observed_at)"
         "), marked as ("
         "    select *, "
         "           coalesce(floor_uptime_sec < previous_uptime_sec, false) as restarted, "
@@ -1994,8 +1997,8 @@ def _listener_totals() -> sql.Composed:
 
     The same arithmetic `_pool_totals` performs, over one raw table instead of
     a raw and a rolled-up half: there is no listener rollup to meet at a
-    boundary, so there is no boundary to get wrong. `handed_over` cannot arise
-    either - the node is fixed by the query - but the expression is kept
+    boundary, so there is no boundary to get wrong. The pairing is partitioned
+    by node here as well, so `handed_over` cannot arise; the expression is kept
     identical rather than simplified away, so the two readers cannot drift into
     two ideas of what a measurable interval is.
     """
@@ -2044,7 +2047,7 @@ def _listener_totals() -> sql.Composed:
         "           lag(uptime_sec) over ordered as previous_uptime_sec, "
         "           lag(node) over ordered as previous_node, {previous} "
         "      from readings "
-        "    window ordered as (order by observed_at, node)"
+        "    window ordered as (partition by node order by observed_at)"
         "), marked as ("
         "    select *, "
         "           coalesce(floor_uptime_sec < previous_uptime_sec, false) as restarted, "

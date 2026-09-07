@@ -1201,11 +1201,14 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * the pointer, and the figures moved to a new left edge, on a card whose whole
  * job is to hold two readings still enough to compare.
  *
- * 360px is what the three columns need at their widest heading ("Connection
- * errors"); the note is given whatever is left over and clipped.
+ * 380px is what the three columns need at their widest heading ("Connection
+ * errors"); the note is given whatever is left over beside the moment it
+ * belongs to, and clipped. The values reserve nine digits - a month at 385
+ * requests a second, two orders of magnitude above what this pair serves - and
+ * anything past that is shortened rather than allowed to widen the column.
  */
-.traffic-readings { display: flex; flex: 0 0 360px; min-width: 0; flex-direction: column; }
-.traffic-figures { display: grid; grid-template-columns: repeat(3, minmax(64px, auto)); gap: 14px 22px; margin: 0; flex: 0 0 auto; }
+.traffic-readings { display: flex; flex: 0 0 380px; min-width: 0; flex-direction: column; }
+.traffic-figures { display: grid; grid-template-columns: repeat(3, minmax(56px, auto)); gap: 12px 20px; margin: 0; flex: 0 0 auto; }
 /*
  * B95 on the figures: a value that rewrites itself gets a box wide enough for
  * its longest form. These columns are sized by their content, so 27115 makes a
@@ -1217,10 +1220,10 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * whose heading is the wider of the two - "Connection errors" - keeps its own
  * width and only the narrow ones are held open.
  */
-.traffic-figures dd { min-width: 7ch; }
+.traffic-figures dd { min-width: 9ch; }
 .traffic-figures div { display: flex; flex-direction: column; gap: 2px; }
 .traffic-figures dt { color: var(--muted); font-size: 12px; }
-.traffic-figures dd { margin: 0; font-variant-numeric: tabular-nums; font-size: 18px; color: var(--text-strong); }
+.traffic-figures dd { margin: 0; font-variant-numeric: tabular-nums; font-size: 16px; color: var(--text-strong); }
 /*
  * The hover targets over the line. Invisible but present: they carry the
  * reading a pointer asks for, and a fill of `none` would let the pointer
@@ -1260,7 +1263,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * the bucket under the pointer. Sized as a caption rather than as a heading -
  * it qualifies the numbers under it and the numbers are what is being read.
  */
-.traffic-scope { display: flex; flex-wrap: wrap; min-width: 0; align-items: baseline; gap: 2px 8px; margin: 0 0 10px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.traffic-scope { display: flex; min-width: 0; align-items: baseline; gap: 8px; min-height: 1.5em; line-height: 1.5; margin: 0 0 10px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 /*
  * B95 again, on the line that says what the figures answer for. It carries
  * three lengths - the window ("the last 24 hours"), one bucket's moment
@@ -1279,13 +1282,17 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  */
 .traffic-scope-label { min-width: 19ch; color: var(--text-strong); }
 /*
- * The note a hover writes - why a bucket has no reading - on its own line under
- * the label, with the line held open whether or not there is one. Beside the
- * label it pushed `clear` along the row; taking the height only when it had
- * something to say moved the figures underneath it up and down instead.
+ * The note a hover writes - why a bucket has no reading - straight after the
+ * moment it qualifies, which is the order it is read in.
+ *
+ * It takes the space between the label and `clear` rather than sizing itself,
+ * and `clear` is held against the right edge, so a note appearing or changing
+ * length moves neither. The row keeps its height whether or not there is a
+ * note, because taking the height only when there is one moves the figures
+ * underneath it up and down as the pointer travels.
  */
-.traffic-scope-note { flex: 1 0 100%; min-width: 0; min-height: 1.4em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.traffic-clear { color: var(--muted); }
+.traffic-scope-note { flex: 1 1 auto; min-width: 0; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.traffic-clear { margin-left: auto; color: var(--muted); }
 
 /*
  * The marker on a figure the window could not fully see. Muted and small:

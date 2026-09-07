@@ -93,14 +93,19 @@ class WhatHappenedInBetween(unittest.TestCase):
         )
         self.assertEqual(found[0].counters["req_tot"], 7)
 
-    def test_the_address_moving_is_not_a_busy_interval(self) -> None:
+    def test_the_address_moving_costs_the_seconds_it_took(self) -> None:
         """The failure the uptime cannot catch.
 
-        Members are recorded only from the node holding the VIP, so the series
+        Members are recorded from the node holding the VIP, so the series
         changes author at a failover - and the node taking over has usually
         been up longer than the one it replaced. Higher uptime and higher
         counters is what a healthy interval looks like, so nothing but the node
         itself says that 9000 is node-b's lifetime rather than 8000 requests.
+
+        Each node is differenced against itself, so the pair never forms. One
+        sample each is one interval short on both sides, and the seconds
+        between them are time nobody observed rather than a refused reading
+        that costs the buckets around it.
         """
 
         found = metrics.intervals(
@@ -109,9 +114,30 @@ class WhatHappenedInBetween(unittest.TestCase):
                 sample(20, uptime=90000, node="node-b", req_tot=9000),
             ]
         )
+        self.assertEqual(len(found), 1)
         self.assertTrue(found[0].handed_over)
-        self.assertFalse(found[0].restarted)
         self.assertIsNone(found[0].counters["req_tot"])
+        self.assertEqual(found[0].seconds, 20)
+
+    def test_a_stray_sample_from_the_standby_node_costs_nothing(self) -> None:
+        """The hour that read 1 % on the live cluster, 2026-09-06.
+
+        The standby wrote four samples inside an hour the active node measured
+        end to end. Ordered by time and paired as neighbours, those rows broke
+        the active node's series into refused differences spanning the whole
+        hour; paired per node they form no interval and the active series runs
+        through them.
+        """
+
+        found = metrics.intervals(
+            [
+                sample(0, uptime=100, node="node-a", req_tot=1000),
+                sample(20, uptime=90000, node="node-b", req_tot=9000),
+                sample(40, uptime=140, node="node-a", req_tot=1400),
+            ]
+        )
+        self.assertEqual([interval.counters["req_tot"] for interval in found], [400])
+        self.assertEqual(found[0].seconds, 40)
 
     def test_the_same_node_still_subtracts(self) -> None:
         found = metrics.intervals(
@@ -138,11 +164,11 @@ class WhatHappenedInBetween(unittest.TestCase):
         self.assertEqual(found[0].counters["req_tot"], 7)
 
     def test_a_window_that_changed_node_counts_the_rest_of_itself(self) -> None:
-        """The card keeps the 100 it saw, says which reason cost it the rest.
+        """The card keeps the 100 it saw, and the handover costs its own time.
 
-        The handover interval is missing from the figure; node-b's own 100 is
-        not, and an operator asking whether the pool went quiet after a
-        failover is asking about exactly that.
+        The stretch between the two nodes' readings is missing from the figure;
+        node-b's own 100 is not, and an operator asking whether the pool went
+        quiet after a failover is asking about exactly that.
         """
 
         card = metrics.pool_traffic(
@@ -156,7 +182,6 @@ class WhatHappenedInBetween(unittest.TestCase):
             end=START + timedelta(seconds=40),
             bucket=timedelta(seconds=20),
         )
-        self.assertTrue(card.handed_over)
         self.assertFalse(card.restarted)
         requests = next(total for total in card.totals if total.label == "Requests")
         self.assertEqual(requests.value, 100)
@@ -246,16 +271,33 @@ class TotallingAWindow(unittest.TestCase):
         self.assertEqual(total.value, 903)
         self.assertEqual(total.coverage, 98)
 
-    def test_a_partial_window_never_rounds_up_to_whole(self) -> None:
-        """99.6% is not 100, and the figure that says so is the one people trust."""
+    def test_a_reload_does_not_qualify_an_otherwise_complete_window(self) -> None:
+        """A restart costs seconds; a card that flags them tells people to
+        distrust a figure that is right.
+
+        This is a traffic card, not an availability monitor. Below 95 % the
+        figure is qualified - above it, the reader is told nothing, because
+        there is nothing worth saying.
+        """
 
         readings = [sample(0, uptime=100, req_tot=0)]
         for step in range(1, 251):
             readings.append(sample(step * 10, uptime=100 + step * 10, req_tot=step))
         readings.append(sample(2520, uptime=5, req_tot=1))
         total = metrics.totalled(metrics.intervals(readings), "req_tot")
-        self.assertFalse(total.whole)
         self.assertEqual(total.coverage, 99)
+        self.assertTrue(total.whole)
+
+    def test_a_window_missing_more_than_a_twentieth_is_still_qualified(self) -> None:
+        """The threshold is a threshold, not an amnesty."""
+
+        readings = [sample(0, uptime=100, req_tot=0)]
+        for step in range(1, 11):
+            readings.append(sample(step * 10, uptime=100 + step * 10, req_tot=step))
+        readings.append(sample(120, uptime=5, req_tot=1))
+        total = metrics.totalled(metrics.intervals(readings), "req_tot")
+        self.assertLess(total.coverage, 95)
+        self.assertFalse(total.whole)
 
     def test_an_empty_window_totals_zero_rather_than_unknown(self) -> None:
         """Nothing to subtract is not the same as something unsubtractable."""

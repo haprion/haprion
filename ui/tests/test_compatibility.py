@@ -224,3 +224,56 @@ class FrozenSchemaTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheDeclaredHeadIsTheOneOnDisk(unittest.TestCase):
+    """What the release says it needs, against what its migrations would apply.
+
+    These are two files and one fact. `migrate --release` runs the bundle's own
+    alembic head, and `check-compatibility` gates on the head declared in
+    `compatibility.json`; nothing has held them equal. A release whose
+    declaration lags its migrations migrates further than the running UI was
+    asked to accept, and one whose declaration runs ahead is refused for a
+    revision it does not carry - which is the shape of the bridge incident of
+    2026-09-07 (B109) rather than a hypothetical.
+    """
+
+    VERSIONS = Path(__file__).resolve().parents[1] / "migrations" / "versions"
+    DECLARED = Path(__file__).resolve().parents[1] / "src" / "haproxy_ui" / "compatibility.json"
+
+    def revisions(self) -> dict[str, str | None]:
+        found: dict[str, str | None] = {}
+        for path in self.VERSIONS.glob("[0-9]*.py"):
+            text = path.read_text()
+            revision = re.search(r'^revision = "([^"]+)"', text, re.MULTILINE)
+            down = re.search(r'^down_revision = (?:"([^"]+)"|None)', text, re.MULTILINE)
+            if revision is None:
+                self.fail(f"{path.name} declares no revision")
+            found[revision.group(1)] = down.group(1) if down and down.group(1) else None
+        return found
+
+    def head(self) -> str:
+        found = self.revisions()
+        parents = {down for down in found.values() if down is not None}
+        heads = sorted(set(found) - parents)
+        self.assertEqual(len(heads), 1, f"expected one head, found {heads}")
+        return heads[0]
+
+    def declared(self) -> dict[str, object]:
+        return json.loads(self.DECLARED.read_text())["requires"]
+
+    def test_the_declaration_names_the_head_the_migrations_reach(self) -> None:
+        self.assertEqual(self.declared()["database_head"], self.head())
+
+    def test_the_head_is_among_the_revisions_the_release_accepts(self) -> None:
+        """`load_requirements` refuses otherwise; this says it about the real file."""
+
+        self.assertIn(self.declared()["database_head"], self.declared()["database_revisions"])
+
+    def test_every_revision_has_exactly_one_child_or_is_the_head(self) -> None:
+        """A fork would make "the head" ambiguous and the release unbuildable."""
+
+        found = self.revisions()
+        parents = [down for down in found.values() if down is not None]
+
+        self.assertEqual(len(parents), len(set(parents)), "two migrations share a parent")

@@ -57,7 +57,7 @@ def _positive_int(value: object, name: str) -> int:
     return value
 
 
-def load_requirements(path: Path) -> Requirements:
+def load_requirements(path: Path, *, allow_legacy_database_head: bool = False) -> Requirements:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -78,10 +78,15 @@ def load_requirements(path: Path) -> Requirements:
             raise CompatibilityError(f"{name} must be a non-empty string list")
         return tuple(values)
 
+    revisions = strings("database_revisions")
     database_head = required.get("database_head")
+    if database_head is None and allow_legacy_database_head and len(revisions) == 1:
+        # Compatibility metadata predating coordinated schema upgrades named
+        # only the one revision it could run.  That singleton is unambiguous
+        # when checking the installed release during the first bridge update.
+        database_head = revisions[0]
     if not isinstance(database_head, str) or not database_head:
         raise CompatibilityError("database_head must be a non-empty string")
-    revisions = strings("database_revisions")
     if database_head not in revisions:
         raise CompatibilityError("database_head must be one of database_revisions")
 
@@ -130,12 +135,12 @@ def named_release(root: Path, name: str, what: str) -> Path:
     return release
 
 
-def ui_requirements(release: Path) -> Requirements:
+def ui_requirements(release: Path, *, allow_legacy_database_head: bool = False) -> Requirements:
     metadata = _one(
         list(release.glob("venv/lib/python*/site-packages/haproxy_ui/compatibility.json")),
         "installed UI compatibility file",
     )
-    return load_requirements(metadata)
+    return load_requirements(metadata, allow_legacy_database_head=allow_legacy_database_head)
 
 
 def cli_metadata(release: Path) -> dict[str, Any]:
@@ -390,7 +395,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.upgrade_from_current:
                 try:
                     active_release = current_release(args.platform_root, "UI")
-                    active_requirements = ui_requirements(active_release)
+                    active_requirements = ui_requirements(
+                        active_release, allow_legacy_database_head=True
+                    )
                 except CompatibilityError as exc:
                     report.fail("schema transition", str(exc))
                 else:

@@ -47,6 +47,30 @@ class CompatibilityMetadataTests(unittest.TestCase):
             with self.assertRaisesRegex(compatibility.CompatibilityError, "database_head"):
                 compatibility.load_requirements(path)
 
+    def test_a_legacy_single_revision_can_be_read_only_for_the_bridge_check(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "compatibility.json"
+            document = json.loads(MANIFEST.read_text())
+            document["requires"].pop("database_head")
+            document["requires"]["database_revisions"] = ["0020"]
+            path.write_text(json.dumps(document))
+
+            with self.assertRaisesRegex(compatibility.CompatibilityError, "database_head"):
+                compatibility.load_requirements(path)
+            requirements = compatibility.load_requirements(path, allow_legacy_database_head=True)
+            self.assertEqual(requirements.database_head, "0020")
+
+    def test_legacy_metadata_with_multiple_revisions_is_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "compatibility.json"
+            document = json.loads(MANIFEST.read_text())
+            document["requires"].pop("database_head")
+            document["requires"]["database_revisions"] = ["0020", "0021"]
+            path.write_text(json.dumps(document))
+
+            with self.assertRaisesRegex(compatibility.CompatibilityError, "database_head"):
+                compatibility.load_requirements(path, allow_legacy_database_head=True)
+
     def test_requirements_match_this_deliverys_engine_schema_and_node_installer(self) -> None:
         requirements = compatibility.load_requirements(MANIFEST)
         engine = json.loads((ROOT / "src/haproxy_mgmt/compatibility.json").read_text())

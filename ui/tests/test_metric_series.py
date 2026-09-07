@@ -716,3 +716,120 @@ class TheTimesAreTheReadersOwn(unittest.TestCase):
 
         self.assertIn(at.astimezone().strftime("%H:%M"), metrics.unread_at(at))
         self.assertIn(at.astimezone().strftime("%H:%M"), metrics.reading_at(at, {"req_tot": 5}))
+
+
+class OneScaleAcrossSeveralCards(unittest.TestCase):
+    """The comparison view's claim: two cards can be held against each other.
+
+    That is only true while they are drawn against the same ceiling. Against
+    its own maximum every line touches the top of its card, so a pool serving
+    three requests and one serving three thousand draw the same picture - which
+    is exactly what a page comparing pools must not do.
+    """
+
+    WINDOW = timedelta(seconds=40)
+
+    def series(self, values: list[int | None]) -> list[metrics.Interval]:
+        return [
+            metrics.Interval(
+                started_at=START + timedelta(seconds=step * 10),
+                ended_at=START + timedelta(seconds=(step + 1) * 10),
+                counters=dict.fromkeys(metrics.METRIC_COUNTERS) | {"req_tot": value},
+                restarted=False,
+            )
+            for step, value in enumerate(values)
+        ]
+
+    def ceiling(self, *series: list[int | None]) -> int:
+        return metrics.shared_ceiling(
+            [self.series(values) for values in series],
+            start=START,
+            end=START + self.WINDOW,
+            bucket=timedelta(seconds=10),
+        )
+
+    def card(self, values: list[int | None], *, ceiling: int | None) -> metrics.PoolTraffic:
+        return metrics.pool_traffic(
+            "pool",
+            [],
+            start=START,
+            end=START + self.WINDOW,
+            bucket=timedelta(seconds=10),
+            ceiling=ceiling,
+            measurement=metrics.PoolMeasurement(
+                intervals=len(values),
+                started_at=START,
+                ended_at=START + self.WINDOW,
+                totals=(),
+                restarted=False,
+                handed_over=False,
+                coverage=100,
+            ),
+        )
+
+    def test_the_ceiling_covers_the_busiest_series(self) -> None:
+        self.assertEqual(self.ceiling([1, 2, 3], [10, 400, 7]), 400)
+
+    def test_a_quiet_series_alone_keeps_its_own_ceiling(self) -> None:
+        """Sharing a scale must not inflate a page that has only one card."""
+
+        self.assertEqual(self.ceiling([1, 2, 3]), 3)
+
+    def test_nothing_measured_anywhere_has_no_ceiling(self) -> None:
+        """No traffic has no scale to divide; `0` alone is furniture."""
+
+        self.assertEqual(self.ceiling([], []), 0)
+
+    def test_a_given_ceiling_is_what_the_levels_are_drawn_from(self) -> None:
+        card = self.card([1], ceiling=400)
+
+        self.assertEqual([level.label for level in card.levels], ["400", "200", "0"])
+
+    def test_without_one_a_card_still_scales_to_itself(self) -> None:
+        """The object page passes no ceiling and must be untouched by this."""
+
+        found = self.series([1, 2, 3])
+        paths, _points, peak = metrics.spark(
+            found,
+            width=100,
+            height=20,
+            start=START,
+            end=START + self.WINDOW,
+            bucket=timedelta(seconds=10),
+        )
+
+        self.assertEqual(peak, 3)
+        self.assertTrue(paths)
+
+    def test_the_peak_reported_is_the_series_own_not_the_shared_one(self) -> None:
+        """So a reader can tell a flat line from a card with nothing on it."""
+
+        found = self.series([1, 2, 3])
+        _paths, _points, peak = metrics.spark(
+            found,
+            width=100,
+            height=20,
+            start=START,
+            end=START + self.WINDOW,
+            bucket=timedelta(seconds=10),
+            ceiling=400,
+        )
+
+        self.assertEqual(peak, 3)
+
+    def test_a_quiet_series_is_drawn_low_against_a_shared_ceiling(self) -> None:
+        """The stated cost of sharing: quiet really does look quiet."""
+
+        found = self.series([1])
+        _paths, points, _peak = metrics.spark(
+            found,
+            width=100,
+            height=20,
+            start=START,
+            end=START + self.WINDOW,
+            bucket=timedelta(seconds=10),
+            ceiling=400,
+        )
+        plotted = next(point for point in points if point.value == 1)
+
+        self.assertGreater(plotted.y, 19.0)

@@ -1758,6 +1758,128 @@ def read_pool_samples(
     return found
 
 
+def _bucketed_listener(width: timedelta) -> sql.Composed:
+    """One listener's raw readings on one node, reduced to one per bucket.
+
+    The same reduction the pool query makes, against `metric_listener` and
+    without a rollup half: listeners have no rollup, and their raw rows are
+    kept for a fixed seven days. A window reaching further back is answered by
+    the part of it that still exists, which the card's own coverage states.
+
+    **The VIP is what listens, so the series is the VIP's.** Every node
+    reports its own frontends, but only the node holding the address receives
+    anything on it - its peer binds the same ports and sits flat. Drawing both
+    put an implementation detail on the page and answered a question nobody
+    asks: what a standby did not serve.
+
+    So the readings are those of whichever node held the address, which is the
+    same rule pool members are already recorded under (B94) and makes the two
+    halves of the page one model. A failover then hands this series to another
+    machine exactly as it hands a pool's, and `intervals` marks that stretch as
+    a change of author rather than differencing one machine's counter against
+    another's.
+    """
+
+    columns = sql.SQL(", ").join(sql.Identifier(name) for name in metrics.METRIC_COUNTERS)
+    return sql.SQL(
+        "select distinct on (bucket) bucket as at, observed_at, uptime_sec, "
+        "       floor_uptime_sec, node, {columns} "
+        "  from ( "
+        "       select date_bin(%(width)s, observed_at, timestamptz '2000-01-01') as bucket, "
+        "              observed_at, uptime_sec, node, {columns}, "
+        "              min(uptime_sec) over ( "
+        "                  partition by date_bin("
+        "                      %(width)s, observed_at, timestamptz '2000-01-01')"
+        "              ) as floor_uptime_sec "
+        "         from metric_listener "
+        "        where cluster = %(cluster)s and frontend = %(frontend)s "
+        "          and owns_vip and observed_at >= %(since)s "
+        "          and observed_at <= %(until)s "
+        "       ) as bucketed "
+        " order by bucket, observed_at desc"
+    ).format(columns=columns)
+
+
+def read_listener_samples(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    frontend: str,
+    since: datetime,
+    until: datetime,
+    width: timedelta,
+) -> list[metrics.Sample]:
+    """One VIP listener's readings, one per bucket, oldest first."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            _bucketed_listener(width),
+            {
+                "cluster": cluster,
+                "frontend": frontend,
+                "since": since,
+                "width": width,
+                "until": until,
+            },
+        )
+        rows = cursor.fetchall()
+
+    return [
+        metrics.Sample(
+            observed_at=row[1],
+            member=frontend,
+            uptime_sec=row[2],
+            floor_uptime_sec=row[3],
+            node=row[4],
+            counters=dict(zip(metrics.METRIC_COUNTERS, row[5:], strict=True)),
+        )
+        for row in rows
+    ]
+
+
+def read_cluster_listeners(
+    connection: Connection[Any], *, cluster: str, since: datetime, until: datetime
+) -> list[str]:
+    """Which VIP frontends this cluster has readings for.
+
+    Asked of the samples rather than of the configuration, because the card is
+    history: a listener removed yesterday still has a window worth reading, and
+    one added this morning has nothing to show whatever the document says. The
+    page is about what was observed.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select distinct frontend from metric_listener "
+            " where cluster = %(cluster)s and owns_vip "
+            "   and observed_at >= %(since)s and observed_at <= %(until)s "
+            " order by frontend",
+            {"cluster": cluster, "since": since, "until": until},
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+
+def read_cluster_pools(
+    connection: Connection[Any], *, cluster: str, since: datetime, until: datetime
+) -> list[str]:
+    """Which pools this cluster has readings for, by the runtime's own names.
+
+    `BACKEND` only - HAProxy's aggregate row for each pool, which is what the
+    comparison is between. A per-server breakdown is a different question and
+    belongs on the pool it is asked about, not on a page comparing pools.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select distinct backend from metric_pool_member "
+            " where cluster = %(cluster)s and member = 'BACKEND' "
+            "   and observed_at >= %(since)s and observed_at <= %(until)s "
+            " order by backend",
+            {"cluster": cluster, "since": since, "until": until},
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+
 def _pool_totals() -> sql.Composed:
     """Aggregate cumulative counters before drawing resolution can touch them.
 
@@ -1839,6 +1961,138 @@ def _pool_totals() -> sql.Composed:
     ).format(columns=columns, previous=previous, deltas=deltas, aggregates=aggregates)
 
 
+def _listener_totals() -> sql.Composed:
+    """One listener's figures, differenced at stored resolution.
+
+    The same arithmetic `_pool_totals` performs, over one raw table instead of
+    a raw and a rolled-up half: there is no listener rollup to meet at a
+    boundary, so there is no boundary to get wrong. `handed_over` cannot arise
+    either - the node is fixed by the query - but the expression is kept
+    identical rather than simplified away, so the two readers cannot drift into
+    two ideas of what a measurable interval is.
+    """
+
+    names = tuple(name for name, _label in metrics.CARD_COUNTERS)
+    columns = sql.SQL(", ").join(sql.Identifier(name) for name in names)
+    previous = sql.SQL(", ").join(
+        sql.SQL("lag({name}) over ordered as {before}").format(
+            name=sql.Identifier(name), before=sql.Identifier(f"before_{name}")
+        )
+        for name in names
+    )
+    deltas = sql.SQL(", ").join(
+        sql.SQL(
+            "case when handed_over or {before} is null or {after} is null then null "
+            "     when restarted then {after} "
+            "     when {after} < {before} then null "
+            "     else {after} - {before} end as {delta}"
+        ).format(
+            before=sql.Identifier(f"before_{name}"),
+            after=sql.Identifier(name),
+            delta=sql.Identifier(f"delta_{name}"),
+        )
+        for name in names
+    )
+    aggregates = sql.SQL(", ").join(
+        sql.SQL(
+            "coalesce(sum({delta}), 0)::bigint, "
+            "coalesce(sum(span_sec) filter ("
+            "    where {delta} is not null and not restarted and not handed_over"
+            "), 0)"
+        ).format(delta=sql.Identifier(f"delta_{name}"))
+        for name in names
+    )
+    return sql.SQL(
+        "with readings as ("
+        "    select observed_at, uptime_sec, uptime_sec as floor_uptime_sec, node, {columns} "
+        "      from metric_listener "
+        "     where cluster = %(cluster)s and frontend = %(frontend)s "
+        "       and owns_vip and observed_at >= %(since)s "
+        "       and observed_at <= %(until)s"
+        "), paired as ("
+        "    select observed_at as ended_at, "
+        "           lag(observed_at) over ordered as started_at, "
+        "           uptime_sec, floor_uptime_sec, node, {columns}, "
+        "           lag(uptime_sec) over ordered as previous_uptime_sec, "
+        "           lag(node) over ordered as previous_node, {previous} "
+        "      from readings "
+        "    window ordered as (order by observed_at, node)"
+        "), marked as ("
+        "    select *, "
+        "           coalesce(floor_uptime_sec < previous_uptime_sec, false) as restarted, "
+        "           (previous_node is not null and node is not null "
+        "            and previous_node <> node) as handed_over, "
+        "           extract(epoch from ended_at - started_at) as span_sec "
+        "      from paired where started_at is not null"
+        "), differences as ("
+        "    select *, {deltas} from marked"
+        ") "
+        "select count(*)::bigint, min(started_at), max(ended_at), "
+        "       coalesce(bool_or(restarted), false), "
+        "       coalesce(bool_or(handed_over), false), "
+        "       coalesce(sum(span_sec) filter (where not restarted and not handed_over), 0), "
+        "       coalesce(sum(span_sec), 0), {aggregates} "
+        "  from differences"
+    ).format(columns=columns, previous=previous, deltas=deltas, aggregates=aggregates)
+
+
+def _measurement(row: Any) -> metrics.PoolMeasurement:
+    """One aggregate row, in the shape both totals readers return.
+
+    Written once because the two queries deliberately produce the same columns
+    in the same order. A second copy of this unpacking is how a column added to
+    one of them would come back as a figure silently read from the wrong place.
+    """
+
+    span = float(row[6])
+    counted = float(row[5])
+    totals = tuple(
+        metrics.Total(
+            label=label,
+            value=int(row[7 + index * 2]),
+            counted_sec=float(row[8 + index * 2]),
+            span_sec=span,
+        )
+        for index, (_name, label) in enumerate(metrics.CARD_COUNTERS)
+    )
+    return metrics.PoolMeasurement(
+        intervals=int(row[0]),
+        started_at=row[1],
+        ended_at=row[2],
+        restarted=bool(row[3]),
+        handed_over=bool(row[4]),
+        coverage=100 if span <= 0 else int(counted / span * 100),
+        totals=totals,
+    )
+
+
+def read_listener_totals(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    frontend: str,
+    since: datetime,
+    until: datetime,
+) -> metrics.PoolMeasurement:
+    """One VIP listener's figures at stored resolution, apart from its graph."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            _listener_totals(),
+            {
+                "cluster": cluster,
+                "frontend": frontend,
+                "since": since,
+                "until": until,
+            },
+        )
+        row = cursor.fetchone()
+
+    if row is None:
+        raise RuntimeError("the listener totals aggregate returned no row")
+    return _measurement(row)
+
+
 def read_pool_totals(
     connection: Connection[Any],
     *,
@@ -1864,24 +2118,4 @@ def read_pool_totals(
 
     if row is None:
         raise RuntimeError("the pool totals aggregate returned no row")
-    span = float(row[6])
-    counted = float(row[5])
-    totals = tuple(
-        metrics.Total(
-            label=label,
-            value=int(row[7 + index * 2]),
-            counted_sec=float(row[8 + index * 2]),
-            span_sec=span,
-        )
-        for index, (_name, label) in enumerate(metrics.CARD_COUNTERS)
-    )
-    coverage = 100 if span <= 0 else int(counted / span * 100)
-    return metrics.PoolMeasurement(
-        intervals=int(row[0]),
-        started_at=row[1],
-        ended_at=row[2],
-        restarted=bool(row[3]),
-        handed_over=bool(row[4]),
-        coverage=coverage,
-        totals=totals,
-    )
+    return _measurement(row)

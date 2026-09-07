@@ -1142,7 +1142,20 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  */
 .traffic-pool { padding: 16px 20px; border-top: 1px solid var(--line); }
 .traffic-pool:first-of-type { border-top: 0; }
-.traffic-head { margin-bottom: 10px; }
+.traffic-head { display: flex; align-items: center; gap: 8px; margin: 16px 20px 0; }
+/*
+  A section heading inside a cluster card. The card already carries the
+  cluster's accent down its edge, so these separate the three readings within
+  it without starting a second card and losing that accent.
+*/
+.traffic-section { margin: 20px 20px 4px; color: var(--text-strong); font-size: 13px; font-weight: 660; letter-spacing: 0.02em; text-transform: uppercase; }
+.traffic-section:first-of-type { margin-top: 8px; }
+.traffic-note-lede { margin: 0 20px 8px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+/*
+  The range control belongs to the whole page here rather than to one card, so
+  it sits above the list instead of in a card header.
+*/
+.page-ranges { margin-bottom: 14px; }
 .traffic-backend { color: var(--muted); font-size: 12px; }
 /* The shape first and the figures after it, with the line taking every pixel
    the figures do not need. A month is 120 points, and they have to be far

@@ -16,10 +16,14 @@ days the samples are worth having.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
+
+from haproxy_mgmt.generate import PREFIX, REDIRECT_PREFIX
+from haproxy_mgmt.guid import redirect_name
 
 #
 # HAProxy's own `show stat` column names. The same list appears in
@@ -616,6 +620,7 @@ def spark(
     start: datetime,
     end: datetime,
     bucket: timedelta,
+    ceiling: int | None = None,
 ) -> tuple[list[str], list[Point], int]:
     """A sparkline on an absolute time axis, its hover points, and its peak.
 
@@ -645,6 +650,13 @@ def spark(
     the card whatever it measured, which made every window look equally busy
     and every pool look alike. A window with no traffic has no ceiling and is
     drawn flat on the baseline, which is the truth: nothing happened.
+
+    **A caller may supply that ceiling instead**, which is how several lines
+    come to share one scale. A page comparing pools is asking which of them
+    carries the traffic, and that question cannot be answered from cards that
+    each rescale to their own maximum: the quiet pool and the busy one draw the
+    same picture. The peak returned is still this line's own, so a caller can
+    tell a flat line from a flat card.
     """
 
     seconds = (end - start).total_seconds()
@@ -656,7 +668,8 @@ def spark(
         (value for _, totals, _ in grid if (value := totals.get("req_tot")) is not None),
         default=0,
     )
-    ceiling = ceiling_for(peak)
+    if ceiling is None:
+        ceiling = ceiling_for(peak)
 
     runs: list[list[str]] = []
     current: list[str] = []
@@ -805,13 +818,16 @@ SPARK_TICKS = 5
 
 @dataclass(frozen=True, slots=True)
 class PoolTraffic:
-    """One pool's window, ready to draw.
+    """One series' window, ready to draw.
 
-    Named by the runtime's own name for the pool, which is the only name that
-    exists for a proxy nobody wrote here.
+    Named by the runtime's own name for it, which is the only name that exists
+    for a proxy nobody wrote here. A pool and a listener are drawn by the same
+    arithmetic against the same axis, so they are one type: the difference
+    between them is which table the readings came out of, and that difference
+    is spent by the time a card exists.
     """
 
-    backend: str
+    series: str
     intervals: int
     started_at: datetime | None
     ended_at: datetime | None
@@ -937,8 +953,149 @@ def window_coverage(found: Sequence[Interval]) -> int:
     return int(measured / span * 100)
 
 
+#
+# What the generator puts in front of every name it writes. Taken from the
+# engine rather than spelled again here: the interface reads these names out of
+# the metrics tables, where they are strings by then, but the rule that made
+# them belongs to one module and a second copy is a second thing to change.
+#
+GENERATED_PREFIX = f"{PREFIX}-"
+
+#
+# The protocols a VIP frontend is built for, longest first so `https` is not
+# matched as `http` with a stray `s`.
+#
+LISTENER_PROTOCOLS = ("https", "http")
+
+#
+# A generated redirect answer, which is a backend to HAProxy and not a pool.
+# `redirect_name` derives eight hex characters from what the route redirects,
+# so this is the shape those names always take.
+#
+REDIRECT_SUFFIX = re.compile(r"-redirect-[0-9a-f]{8}$")
+
+
+@dataclass(frozen=True, slots=True)
+class Listening:
+    """A VIP frontend's name, read back into the two facts it was built from.
+
+    The generator writes `mgd-<vip>-<protocol>`, so the name on a metrics row
+    carries a VIP the network page already names and a protocol that belongs
+    beside it rather than inside it. Printing the raw name made a reader match
+    `mgd-vip-int-http` against `vip-int` by eye, which is a translation the
+    page should be doing.
+
+    A name that does not fit the rule is kept whole and its protocol left
+    empty. The rule is the generator's and could change; guessing at a name
+    that does not match it would rename somebody's listener on screen.
+    """
+
+    vip: str
+    protocol: str
+
+    @property
+    def known(self) -> bool:
+        return bool(self.protocol)
+
+
+def listening(frontend: str) -> Listening:
+    """`mgd-vip-int-http` as the VIP `vip-int` serving `http`."""
+
+    name = frontend.removeprefix(GENERATED_PREFIX)
+    for protocol in LISTENER_PROTOCOLS:
+        if name.endswith(f"-{protocol}"):
+            return Listening(vip=name[: -len(protocol) - 1], protocol=protocol)
+    return Listening(vip=frontend, protocol="")
+
+
+def is_redirect(backend: str) -> bool:
+    """Whether this generated backend is a redirect answer rather than a pool.
+
+    It carries counters like any backend and belongs on the page, but not in a
+    comparison of pools: it has no servers, it answers 301 itself, and letting
+    it into the shared scale would size every real pool against traffic that
+    never reached one.
+    """
+
+    return bool(REDIRECT_SUFFIX.search(backend))
+
+
+def redirect_targets(objects: Mapping[str, Any]) -> dict[str, str]:
+    """Generated redirect backends, mapped to what each one actually does.
+
+    The generator names a redirect from a digest of the route that made it -
+    eight hex characters, so that adding a route above one moves neither its
+    name nor its counters. That is right for the configuration and unreadable
+    on a page: `...-redirect-eee20480` tells an operator nothing about which
+    redirect it is.
+
+    Resolved by building rather than by parsing. Every route that redirects is
+    asked what the generator would call it, and the answer is compared against
+    the name the metrics row carries. So no name is split on a hyphen that
+    might belong to somebody's object, and a name nothing accounts for is
+    simply left alone.
+    """
+
+    found: dict[str, str] = {}
+    for name, proxy in objects.items():
+        for route in getattr(proxy, "routes", ()):
+            redirect = getattr(route, "redirect", None)
+            if redirect is None:
+                continue
+            derived = redirect_name(route.path, route.match, redirect.location)
+            generated = f"{PREFIX}-{name}-{REDIRECT_PREFIX}-{derived}"
+            found[generated] = f"{name} · {route.path} → {redirect.location}"
+    return found
+
+
+def without_prefix(name: str) -> str:
+    """A generated name as the operator wrote the thing it was built from.
+
+    Only the prefix comes off. `mgd-<object>-<backend>` cannot be split any
+    further without knowing which hyphen the operator's own names contain, and
+    a page that guessed would relabel a pool whenever somebody used a hyphen.
+    """
+
+    return name.removeprefix(GENERATED_PREFIX)
+
+
+def shared_ceiling(
+    series: Sequence[Sequence[Interval]],
+    *,
+    start: datetime,
+    end: datetime,
+    bucket: timedelta,
+) -> int:
+    """One round ceiling at or above every line's peak.
+
+    The comparison view's whole claim is that two cards can be held against
+    each other, and that is only true while they are drawn against the same
+    scale. Measured across the buckets each line will actually be drawn at,
+    not across the raw readings: a peak that two buckets share is not a peak
+    the drawing ever shows, and scaling to it would leave every line sitting
+    in the bottom third of its card for no visible reason.
+
+    The cost is stated rather than hidden. A cluster with one busy pool and
+    several quiet ones draws the quiet ones nearly flat - which is the honest
+    picture, and the one a per-card ceiling was concealing by giving a pool
+    serving three requests the same shape as one serving three thousand.
+    """
+
+    peak = 0
+    for found in series:
+        grid = bucketed(found, start=start, end=end, bucket=bucket)
+        peak = max(
+            peak,
+            max(
+                (value for _, totals, _ in grid if (value := totals.get("req_tot")) is not None),
+                default=0,
+            ),
+        )
+    return ceiling_for(peak)
+
+
 def pool_traffic(
-    backend: str,
+    series: str,
     samples: Sequence[Sample],
     *,
     tick_format: str = "%H:%M",
@@ -946,8 +1103,9 @@ def pool_traffic(
     end: datetime,
     bucket: timedelta,
     measurement: PoolMeasurement | None = None,
+    ceiling: int | None = None,
 ) -> PoolTraffic:
-    """One pool's card, drawn across the window that was asked for.
+    """One series' card, drawn across the window that was asked for.
 
     The window is given rather than derived from the samples. What the card
     shows is "the last 30 days", and a view that quietly redrew itself as "the
@@ -973,10 +1131,12 @@ def pool_traffic(
         start=start,
         end=end,
         bucket=bucket,
+        ceiling=ceiling,
     )
     buckets = max((end - start) / bucket, 1) if bucket else 1
+    drawn = peak if ceiling is None else ceiling
     return PoolTraffic(
-        backend=backend,
+        series=series,
         intervals=measurement.intervals,
         started_at=measurement.started_at,
         ended_at=measurement.ended_at,
@@ -985,7 +1145,7 @@ def pool_traffic(
         points=tuple(points),
         hit_width=SPARK_WIDTH / buckets,
         ticks=tuple(spark_ticks(start=start, end=end, fmt=tick_format)),
-        levels=levels_for(ceiling_for(peak), height=SPARK_HEIGHT),
+        levels=levels_for(ceiling_for(drawn) if ceiling is None else drawn, height=SPARK_HEIGHT),
         peak=peak,
         restarted=measurement.restarted,
         handed_over=measurement.handed_over,

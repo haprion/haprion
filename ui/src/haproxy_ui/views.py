@@ -1140,6 +1140,232 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
+    def _documents(readings: Iterable[Any], cluster: str) -> dict[str, Any]:
+        """One cluster's stored objects, as the engine's own model reads them.
+
+        Read with `load_proxy` rather than with a second parser here, so this
+        page cannot hold an opinion about a document that differs from the one
+        the generator acts on. An object this version cannot read is skipped:
+        it is reported where it is opened, and a traffic card is not the place
+        to raise it a second time.
+        """
+
+        by_cluster = {reading.cluster: reading for reading in readings}
+        found: dict[str, Any] = {}
+        for view in objects.cluster_object_views(by_cluster.get(cluster)):
+            try:
+                found[view.name] = load_proxy(view.name, view.document.encode())
+            except ModelError:
+                continue
+        return found
+
+    def _cluster_traffic(request: Request, config: Config, only: str | None) -> Response:
+        """Traffic for every cluster, or for one of them.
+
+        Cluster-level from end to end, which is why it is its own page rather
+        than something reached from a proxy: a listener belongs to the address
+        and to the cluster and never to an object (B94), and "which pool
+        carries this" cannot be asked from inside the pool somebody already
+        picked.
+
+        Admin only, for the same reason as the object page: naming every
+        listener and pool a cluster carries describes the shape of what is
+        published, which the overview deliberately does not.
+        """
+
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if session.role != "admin":
+            return PlainTextResponse("Refused", status_code=403)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        clusters, _rows, captured_at = read_source(request, config, STATUS_SOURCE)
+        if only is not None and only not in clusters:
+            raise HTTPException(status_code=404)
+        wanted = [only] if only is not None else list(clusters)
+        #
+        # The stored documents, only so a generated redirect can be named by
+        # what it does. Its configuration name is a digest of the route that
+        # made it, which is right for counters that must survive an edit and
+        # unreadable on a page.
+        #
+        _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
+
+        chosen = metrics.window(request.query_params.get("traffic"))
+        #
+        # One moment for the whole page. Two queries taken a second apart would
+        # give the sections axes that do not quite line up, and the only use of
+        # this page is holding one against another.
+        #
+        now = datetime.now(UTC)
+        since = now - chosen.span
+
+        def section(
+            named: Sequence[str],
+            read: Callable[[str], list[metrics.Sample]],
+            total: Callable[[str], metrics.PoolMeasurement],
+            label: Callable[[str], str],
+        ) -> list[metrics.PoolTraffic]:
+            """One section: read every series, then draw them against one scale.
+
+            The ceiling has to be known before any card is drawn, so this is
+            two passes over the same list rather than one - which is the price
+            of the comparison the section exists to make.
+            """
+
+            found = [(name, read(name), total(name)) for name in named]
+            ceiling = metrics.shared_ceiling(
+                [metrics.intervals(samples) for _name, samples, _totals in found],
+                start=since,
+                end=now,
+                bucket=chosen.bucket,
+            )
+            return [
+                metrics.pool_traffic(
+                    label(name),
+                    samples,
+                    tick_format=chosen.tick,
+                    start=since,
+                    end=now,
+                    bucket=chosen.bucket,
+                    measurement=totals,
+                    ceiling=ceiling,
+                )
+                for name, samples, totals in found
+            ]
+
+        drawn = []
+        with request.app.state.pool.connection() as connection:
+            for cluster in wanted:
+                #
+                # Bound once per cluster and named, rather than written as
+                # lambdas at each call. Four readers differing only in which
+                # table they ask is exactly the shape that reads as noise
+                # inline - and neither the type checker nor a person could
+                # follow which cluster each one had closed over.
+                #
+                def listener_samples(name: str, cluster: str = cluster) -> list[metrics.Sample]:
+                    return db.read_listener_samples(
+                        connection,
+                        cluster=cluster,
+                        frontend=name,
+                        since=since,
+                        until=now,
+                        width=chosen.bucket,
+                    )
+
+                def listener_totals(name: str, cluster: str = cluster) -> metrics.PoolMeasurement:
+                    return db.read_listener_totals(
+                        connection, cluster=cluster, frontend=name, since=since, until=now
+                    )
+
+                def pool_samples(name: str, cluster: str = cluster) -> list[metrics.Sample]:
+                    return db.read_pool_samples(
+                        connection,
+                        cluster=cluster,
+                        backend=name,
+                        since=since,
+                        until=now,
+                        width=chosen.bucket,
+                    )
+
+                def pool_totals(name: str, cluster: str = cluster) -> metrics.PoolMeasurement:
+                    return db.read_pool_totals(
+                        connection, cluster=cluster, backend=name, since=since, until=now
+                    )
+
+                targets = metrics.redirect_targets(_documents(object_rows, cluster))
+
+                def redirect_label(name: str, targets: Mapping[str, str] = targets) -> str:
+                    """What it redirects, or the stored name where nothing says.
+
+                    A page that invented a name would be worse than one showing
+                    an opaque name it could not resolve.
+                    """
+
+                    return targets.get(name, metrics.without_prefix(name))
+
+                backends = db.read_cluster_pools(
+                    connection, cluster=cluster, since=since, until=now
+                )
+                listeners = db.read_cluster_listeners(
+                    connection, cluster=cluster, since=since, until=now
+                )
+                drawn.append(
+                    {
+                        "cluster": cluster,
+                        "accent": accent_index(cluster),
+                        "listeners": list(
+                            zip(
+                                [metrics.listening(name) for name in listeners],
+                                section(
+                                    listeners,
+                                    listener_samples,
+                                    listener_totals,
+                                    lambda name: metrics.listening(name).vip,
+                                ),
+                                strict=True,
+                            )
+                        ),
+                        #
+                        # Pools and redirect answers are drawn apart and scaled
+                        # apart. A redirect has no servers and answers 301
+                        # itself, so letting it into the comparison would size
+                        # every real pool against traffic that never reached
+                        # one.
+                        #
+                        "pools": section(
+                            [name for name in backends if not metrics.is_redirect(name)],
+                            pool_samples,
+                            pool_totals,
+                            metrics.without_prefix,
+                        ),
+                        "redirects": section(
+                            [name for name in backends if metrics.is_redirect(name)],
+                            pool_samples,
+                            pool_totals,
+                            redirect_label,
+                        ),
+                    }
+                )
+
+        return TEMPLATES.TemplateResponse(
+            request,
+            "cluster.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "section": "traffic",
+                "clusters": drawn,
+                "one_cluster": only,
+                "traffic_window": chosen.label,
+                "traffic_bucket": chosen.bucket_label,
+                "traffic_windows": metrics.WINDOWS,
+                "traffic_chosen": chosen.key,
+                #
+                # Always named here, unlike the object page. Every card on this
+                # page is one of several being compared, so which series a line
+                # belongs to is the first thing a reader needs.
+                #
+                "traffic_named": True,
+                "spark_width": metrics.SPARK_WIDTH,
+                "spark_height": metrics.SPARK_HEIGHT,
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": snapshot_age(captured_at),
+            },
+        )
+
+    @router.get("/traffic", response_class=HTMLResponse)
+    def all_traffic(request: Request) -> Response:
+        return _cluster_traffic(request, config, None)
+
+    @router.get("/clusters/{cluster}/traffic", response_class=HTMLResponse)
+    def cluster_traffic(request: Request, cluster: str) -> Response:
+        return _cluster_traffic(request, config, cluster)
+
     @router.get("/network", response_class=HTMLResponse)
     def network_overview(request: Request) -> Response:
         return _network_page(request, config)

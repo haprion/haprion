@@ -102,13 +102,20 @@ def _read_findings(path: Path) -> list[Finding]:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("Usage: check-codeql-sarif.py <results.sarif>", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print("Usage: check-codeql-sarif.py <results.sarif> [results.sarif ...]", file=sys.stderr)
         return 64
 
+    #
+    # Every result file in one verdict. The run analyses one database per
+    # language, and an acceptance that matches nothing is itself a failure - so
+    # judging the files one at a time would report every Python acceptance as
+    # stale against the JavaScript results, and the gate would fail on its own
+    # bookkeeping rather than on the code.
+    #
     try:
         accepted = _load_accepted(ACCEPTED_PATH)
-        findings = _read_findings(Path(sys.argv[1]))
+        findings = [finding for name in sys.argv[1:] for finding in _read_findings(Path(name))]
     except GateError as exc:
         print(f"CodeQL gate: {exc}", file=sys.stderr)
         return 2

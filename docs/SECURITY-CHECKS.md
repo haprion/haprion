@@ -11,8 +11,8 @@ The repository has complementary gates. No single scanner replaces the others.
 4. The same command measures branch coverage with a non-regression floor, runs unit and frozen
    contract tests, builds both sdist and wheel, imports the installed wheel from an isolated target,
    and runs `pip-audit` against the locked active environment.
-5. `tools/run-codeql` performs the heavier CodeQL Python `security-extended` analysis before the
-   first push and before releases.
+5. `tools/run-codeql` performs the heavier CodeQL `security-extended` analysis, Python and
+   JavaScript, before the first push and before releases.
 6. `ui/run-tests` runs the interface's own suite and type checking in the environment holding its
    dependencies. `run-tests` calls it rather than skipping it: a gate that passes because it could
    not import what it was meant to check is not a gate. It needs `HAPROXY_UI_PYTHON` and fails
@@ -120,8 +120,15 @@ CODEQL_BIN=/path/to/codeql tools/run-codeql /path/to/new-results-directory
 ```
 
 The wrapper rejects an output directory inside the source tree, refuses to overwrite an existing
-result directory, uses the Python `security-extended` suite, and fails if the SARIF contains any
-alerts. Source snippets are not printed by the final gate summary.
+result directory, and fails if either SARIF file contains an alert. Source snippets are not printed
+by the final gate summary.
+
+Two languages are analysed in one run: the engine and the interface in Python, and the interface's
+own scripts under `ui/src/haproxy_ui/static` in JavaScript, each against its `security-extended`
+suite. Those scripts have no build step and no dependencies, but they are the only code here that
+runs inside a reader's browser, and that is where a value's reach is not something the tests answer.
+Both result files are judged in one call, because an acceptance that matches nothing is a failure -
+checked separately, every Python acceptance would go stale against the JavaScript results.
 
 ### Recorded acceptances
 

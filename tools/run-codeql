@@ -26,14 +26,35 @@ if [ -e "$output" ]; then
 fi
 
 mkdir -p "$output"
+
+# Two languages, one run. The engine is Python and the interface ships four
+# hand-written scripts under ui/src/haproxy_ui/static - no build step, no
+# dependencies, and until now nothing looking at them at all. They are the only
+# code in the repository that runs inside somebody else's browser, which is the
+# one place where "who can reach this value" is not a question the tests answer.
+#
+# --db-cluster writes one database per language under $output/database. The
+# suites are the extended security ones for each, so the standard is the same
+# on both halves of the same application.
 "$codeql_bin" database create "$output/database" \
-    --language=python \
+    --db-cluster \
+    --language=python,javascript \
     --source-root="$base" \
     --threads=0
-"$codeql_bin" database analyze "$output/database" \
+"$codeql_bin" database analyze "$output/database/python" \
     codeql/python-queries:codeql-suites/python-security-extended.qls \
     --format=sarif-latest \
-    --output="$output/results.sarif" \
+    --output="$output/python.sarif" \
     --sarif-add-baseline-file-info \
     --threads=0
-python3 "$base/tools/check-codeql-sarif.py" "$output/results.sarif"
+"$codeql_bin" database analyze "$output/database/javascript" \
+    codeql/javascript-queries:codeql-suites/javascript-security-extended.qls \
+    --format=sarif-latest \
+    --output="$output/javascript.sarif" \
+    --sarif-add-baseline-file-info \
+    --threads=0
+
+# Both results in one call, because an acceptance that matches nothing is a
+# failure: checked one file at a time, every Python acceptance would go stale
+# against the JavaScript results and the gate would fail on its own bookkeeping.
+python3 "$base/tools/check-codeql-sarif.py" "$output/python.sarif" "$output/javascript.sarif"

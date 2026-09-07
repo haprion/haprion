@@ -439,9 +439,12 @@ class DrawingTheShape(unittest.TestCase):
         sampled, so the line breaks here where it rests on the baseline there.
         """
 
-        paths, _, _ = self.drawn([1, 1, None, 1, 1], span=timedelta(seconds=60))
+        paths, points, _ = self.drawn([1, 1, None, 1, 1], span=timedelta(seconds=60))
         self.assertEqual(len(paths), 2)
         self.assertTrue(paths[1].startswith("M50.0"))
+        gap = next(point for point in points if point.value == 0 and point.measured)
+        self.assertRegex(gap.reading, r"^\d\d-\d\d-\d\d \d\d:\d\d:\d\d · data gap$")
+        self.assertNotIn("not measured", gap.reading)
 
     def test_a_point_says_the_moment_and_every_figure(self) -> None:
         """Including the ones the line does not draw, and the ones unmeasured."""

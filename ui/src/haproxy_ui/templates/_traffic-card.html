@@ -10,8 +10,8 @@
   Expects `pool` in context, plus `traffic_named`, `spark_width`,
   `spark_height`, `traffic_bucket` and `traffic_window`.
 #}
+{% if traffic_named %}<div class="traffic-head"><code class="traffic-backend">{{ pool.series }}</code></div>{% endif %}
 <div class="traffic-pool">
-  {% if traffic_named %}<div class="traffic-head"><code class="traffic-backend">{{ pool.series }}</code></div>{% endif %}
   {% if pool.measured %}
   <div class="traffic-body">
     {#

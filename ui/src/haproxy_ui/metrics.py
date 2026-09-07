@@ -683,9 +683,7 @@ def spark(
             if len(current) > 1:
                 runs.append(current)
             current = []
-            points.append(
-                Point(at=at, x=x, y=height, value=0, reading=reading_at(at, totals), measured=True)
-            )
+            points.append(Point(at=at, x=x, y=height, value=0, reading=gap_at(at), measured=True))
             continue
         y = height if ceiling == 0 else height - (value / ceiling) * height
         current.append(f"{'M' if not current else 'L'}{x:.1f} {y:.1f}")
@@ -732,6 +730,12 @@ def unread_at(at: datetime) -> str:
     """
 
     return f"{shown(at).strftime(TIMESTAMP)} · no reading"
+
+
+def gap_at(at: datetime) -> str:
+    """Name an interval whose request count could not be measured."""
+
+    return f"{shown(at).strftime(TIMESTAMP)} · data gap"
 
 
 def reading_at(at: datetime, totals: Mapping[str, int | None]) -> str:

@@ -74,6 +74,13 @@ running the release and migration helpers separately:
 sudo ./update-platform-release ../answers.env /path/to/source-tree
 ```
 
+For a commit that changes both the management engine and the UI, release the CLI wheel first.
+The platform check deliberately compares the independently installed CLI before it activates the
+UI candidate, so reversing that order stops the update. Where both environments exist, run the
+coordinated platform update for development first and production second. A change confined to the
+UI needs only the applicable platform updates; rerun optional installers such as retention only
+when their installed files actually changed.
+
 It prepares the candidate without moving `current`, checks the independently
 installed CLI, helpers and node bundles, proves that the running UI can tolerate
 the candidate's target schema, migrates from the candidate's own bundle, verifies

@@ -62,6 +62,10 @@ The final compatibility check is read-only. It reports the running UI and CLI
 releases, database revision, actual service processes, exact worker/poller sudo
 rules and every node bundle. Its verdict uses compatibility levels shipped by
 the running UI rather than requiring unrelated release hashes to be equal.
+For a non-production answers file it instead proves the deliberately smaller
+development boundary: UI release, database revision and web process. Development
+has no worker, poller, sudo rules or node list to check; treating their documented
+absence as an incompatibility would make the release path impossible to use there.
 
 After the first installation, use the coordinated update command instead of
 running the release and migration helpers separately:
@@ -229,6 +233,12 @@ current UI release, and node bundles at a sufficient API level whose recorded
 script digests still match. The release IDs are printed for diagnosis but are
 not compared for equality; a UI-only correction must not force an unrelated CLI
 or node rollout.
+
+With a non-production answers file, the same command checks only what that
+platform installs: the UI release, database and web process. It also requires
+the web account to have no sudoers file. The absent worker, poller, standalone
+CLI access and nodes are the development isolation boundary, not skipped
+production checks.
 
 Before activation, name a prepared release explicitly. The check then reads that
 candidate's requirements and omits only the process check, because the processes

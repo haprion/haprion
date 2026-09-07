@@ -1023,6 +1023,12 @@ active sudo rules with the helpers the UI requires, and reads each node bundle
 through the existing status helper. It ends in one `COMPATIBLE` or `INCOMPATIBLE`
 verdict and changes no file, row, service or HAProxy release.
 
+For the development platform described below, the command follows its smaller
+installed boundary: UI release, database revision and web process, plus the
+absence of a sudo rule for the web account. Development deliberately has no
+worker, poller or node access, so an empty `clusters` list and those absent
+components are required isolation rather than missing production pieces.
+
 For an update, first run `install-ui-release --prepare`. The candidate is built
 and verified but `current` stays on the old release. Run `check-compatibility
 --release <release-id> --before-migration` to prove its CLI, helper and node

@@ -11,6 +11,11 @@ to paste.
 [`../docs/INSTALLATION.md`](../docs/INSTALLATION.md) explains *why* each step
 looks the way it does. This file is what you follow.
 
+**This is a first installation.** Shipping a later change is a different
+question — which of the CLI engine, the web platform and the node scripts it
+touches, and in what order — and it is answered once in
+[Releasing a change](../docs/INSTALLATION.md#releasing-a-change).
+
 ## Before you start
 
 You need HAProxy and, if your clusters use a virtual address, keepalived already

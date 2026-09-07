@@ -24,6 +24,7 @@ only works with the names used below, that is a bug in the software, not in this
 - [Keeping HAProxy current](#keeping-haproxy-current)
 - [Part 1 — the management host](#part-1--the-management-host)
 - [Part 2 — the nodes](#part-2--the-nodes)
+- [Releasing a change](#releasing-a-change)
 - [Part 3 — the versioned CLI release](#part-3--the-versioned-cli-release)
 - [Part 4 — the web platform](#part-4--the-web-platform)
 - [Verifying the installation](#verifying-the-installation)
@@ -893,6 +894,66 @@ of them can copy a file. Installing or changing a node script is a manual, inter
 an administrator's own login, escalating with `sudo` on the node.
 
 Take a state backup before and after, in the same working session.
+
+## Releasing a change
+
+Three things install independently — the CLI engine, the web platform, and the
+node scripts — and a release ships only the ones a change actually touched.
+Which of them a change touched is a question with a measurable answer, so
+measure it rather than deciding by feel:
+
+```bash
+git show --stat <commit>
+```
+
+| What the commit touched | What to release |
+|---|---|
+| `src/haproxy_mgmt/`, `tools/`, `install/` | the CLI wheel — [Part 3](#part-3--the-versioned-cli-release) |
+| `ui/` | the platform, `update-platform-release`, development then production |
+| `install/node/`, node scripts | the node bundle, per [Part 2](#part-2--the-nodes) |
+| more than one of those | **the CLI wheel first**, then the platform, then the nodes |
+
+**The CLI wheel goes first when both move**, and the order is not a preference.
+The platform check deliberately compares the independently installed CLI before
+it activates a UI candidate, so releasing the UI first stops its own update —
+correctly, but after it has already prepared and migrated.
+
+**Development before production**, for the same reason both exist: production
+is where the real configuration lives, so it is the environment where a bad
+release costs something.
+
+A CLI-only change does not need a UI release, and forcing one would be the
+mistake the compatibility check was built to avoid. It compares engine API
+levels and helper names, never release hashes, precisely so an engine
+correction does not drag an unrelated UI rollout along with it. What decides
+whether the running UI still fits the new engine is:
+
+- `src/haproxy_mgmt/compatibility.json` — the engine API the wheel carries. A
+  UI release declares the minimum it needs.
+- the console scripts in `pyproject.toml` — the check requires every helper the
+  UI names by name.
+
+Unchanged in both means the running UI keeps working, whatever the new release
+is called. Changed in either means the UI release moves with it, in that order.
+
+**Prove it afterwards rather than assuming it.** The install steps each prove
+their own result; the whole-installation check answers the different question of
+whether the independently installed pieces still work together:
+
+```bash
+sudo install/platform/check-compatibility /path/to/answers.env
+```
+
+Run it against the production answers file after any of the three. Development
+installs no CLI, no worker, no poller and no nodes — that is its isolation
+boundary, not a skipped check — so its own check cannot say anything about an
+engine release.
+
+**Every release is a commit.** Both installers refuse a source tree with
+uncommitted changes, because a release built from an edited tree is one nobody
+can reproduce, and the moment it runs, "what is in it" has no answer. Run the
+full repository gate before building; a release is not the place to find out
+that a test fails.
 
 ## Part 3 — the versioned CLI release
 

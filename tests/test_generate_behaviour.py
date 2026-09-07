@@ -1929,26 +1929,21 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
 
         certificates = cls.root / "certs"
         certificates.mkdir()
+        certificate, key = self_signed(
+            cls.root, "shared", expired=False, common_name="*.example.com"
+        )
+        (certificates / "shared.pem").write_bytes(certificate.read_bytes() + key.read_bytes())
         documents = []
         for name, host, policy in (
             ("strict", "strict.example.com", "  tls: modern\n"),
             ("ordinary", "ordinary.example.com", ""),
             ("capped", "capped.example.com", "  tls: tls12only\n"),
         ):
-            #
-            # Named for the site it serves, and not for the address. HAProxy
-            # picks the crt-list entry by the name the client asked for; a
-            # certificate that matches no SNI sends the connection to the first
-            # entry instead, which is how a per-site policy can look like it
-            # does nothing at all. Measured the hard way.
-            #
-            certificate, key = self_signed(cls.root, name, expired=False, common_name=host)
-            (certificates / f"{name}.pem").write_bytes(certificate.read_bytes() + key.read_bytes())
             documents.append(
                 load_proxy(
                     name,
                     LISTENER_POLICY.format(
-                        name=name, host=host, certificate=name, policy=policy, web=backend
+                        name=name, host=host, certificate="shared", policy=policy, web=backend
                     ).encode(),
                 )
             )
@@ -1957,7 +1952,7 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
             documents,
             vips={"main": Vip(name="main", address="127.0.0.1", tls_policy="intermediate")},
             default_vip="main",
-            certificates=("strict", "ordinary", "capped"),
+            certificates=("shared",),
             ports={"https": cls.port, "http": free_port()},
         )
         arguments = write_release(cls.root, layer, certificates)
@@ -1974,7 +1969,7 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
         cls.backend.server_close()
         cls.directory.cleanup()
 
-    def handshake(self, host: str, ceiling: ssl.TLSVersion) -> bool:
+    def handshake(self, host: str | None, ceiling: ssl.TLSVersion) -> bool:
         """Whether a client that will go no higher than `ceiling` is served."""
 
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -2014,10 +2009,27 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
         except (ssl.SSLError, OSError):
             return None
 
+    def request_status(self, sni: str | None, host: str) -> int:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.minimum_version = ssl.TLSVersion.TLSv1_3
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        with (
+            socket.create_connection(("127.0.0.1", self.port), timeout=5) as raw,
+            context.wrap_socket(raw, server_hostname=sni) as secure,
+        ):
+            secure.sendall(f"GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
+            status_line = secure.recv(4096).split(b"\r\n", 1)[0]
+        return int(status_line.split()[1])
+
     def test_the_vip_decides_for_a_site_that_asks_for_nothing(self) -> None:
         """`intermediate` on the bind line, so a TLS 1.2 client is served."""
 
         self.assertTrue(self.handshake("ordinary.example.com", ssl.TLSVersion.TLSv1_2))
+
+    def test_missing_and_unknown_sni_use_the_explicit_listener_fallback(self) -> None:
+        self.assertTrue(self.handshake(None, ssl.TLSVersion.TLSv1_2))
+        self.assertTrue(self.handshake("unknown.example.com", ssl.TLSVersion.TLSv1_2))
 
     def test_a_site_that_asked_for_more_gets_it(self) -> None:
         """Same listener, same port, same connection attempt - and refused.
@@ -2049,3 +2061,8 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
         """The ceiling follows the name asked for, not the address."""
 
         self.assertEqual(self.negotiated("ordinary.example.com"), "TLSv1.3")
+
+    def test_http_host_cannot_cross_from_another_tls_policy(self) -> None:
+        self.assertEqual(self.request_status("ordinary.example.com", "strict.example.com"), 421)
+        self.assertEqual(self.request_status(None, "strict.example.com"), 421)
+        self.assertEqual(self.request_status("strict.example.com", "strict.example.com"), 200)

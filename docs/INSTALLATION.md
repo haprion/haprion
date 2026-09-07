@@ -254,6 +254,13 @@ after — the refusal will tell you which clusters are still behind.
 A **revert** is never refused for this. Going back to a release that was good before must not depend
 on a file being current.
 
+An HTTPS object may override its VIP's TLS policy. The generated certificate list then contains an
+explicit SNI-filtered row for every object, so several names may use the same wildcard certificate
+with different policies. The first, unfiltered row is an intentional fallback: a client with no or
+unknown SNI inherits the VIP/bind policy. When one listener carries several effective policies,
+HAProxy also returns `421 Misdirected Request` if the HTTP Host belongs to a different policy group
+than the connection's SNI; HTTP/2 connection reuse remains possible between names in the same group.
+
 Nothing derives this file — `manual/` is read, never interpreted, and a promise a person writes is
 the only thing available. It exists because both collisions are silent: two frontends binding one
 port both bind it under `SO_REUSEPORT` and the kernel splits new connections between them at random,

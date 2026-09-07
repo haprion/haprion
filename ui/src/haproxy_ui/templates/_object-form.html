@@ -77,16 +77,10 @@
         </select>
       </label>
       {#
-        Directly after the certificate, because the certificate is the unit:
-        HAProxy holds one to one set of terms, chosen by the name the client
-        asked for. Two sites sharing one certificate share its terms, and asking
-        for different ones is refused at publish rather than resolved.
-
-        The unit is the certificate on one listener, not everywhere: each VIP
-        writes a list of its own, so the same certificate has a line in each
-        file and can be held to different terms in each. Said in the help text
-        because "sites sharing one certificate" was read as meaning every site
-        anywhere, which would cost somebody a certificate they do not need.
+        Directly after the certificate because both decisions happen during
+        the handshake. The generated certificate list binds this site's names
+        and terms explicitly, so sites may share a certificate without sharing
+        a TLS policy.
 
         Off for anything but https, like the TCP port and the balancing key.
       #}
@@ -425,4 +419,3 @@
     </div>
     {% endif %}
   </section>
-

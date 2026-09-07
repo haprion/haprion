@@ -929,16 +929,7 @@ backends:
         self.assertIn("frontend mgd-main-tcp-6379", frontends)
 
 
-class OneCertificateIsHeldToOneSetOfTerms(unittest.TestCase):
-    """The limitation of doing this per certificate, said out loud.
-
-    HAProxy chooses a crt-list entry by the name the client asked for, and the
-    options ride on that entry. Two sites served by one certificate - a
-    wildcard, most often - therefore share whatever terms it names. Applying
-    the first alphabetically would leave a site protected by a policy nobody
-    chose for it, and nothing on its page would say so.
-    """
-
+class OneCertificateMayCarrySeveralNamedPolicies(unittest.TestCase):
     def document(self, name: str, policy: str) -> Proxy:
         return load_proxy(
             name,
@@ -952,20 +943,24 @@ class OneCertificateIsHeldToOneSetOfTerms(unittest.TestCase):
             ).encode(),
         )
 
-    def test_two_sites_asking_differently_are_refused(self) -> None:
-        with self.assertRaises(GeneratorError) as caught:
-            generate(
-                [self.document("one", "  tls: modern\n"), self.document("two", "")],
-                vips=dict(DEFAULT_VIPS),
-                default_vip="main",
-                certificates=("shared",),
-                certificate_sans={"shared": ("one.example.com", "two.example.com")},
-            )
+    def test_two_sites_asking_differently_get_sni_filtered_lines(self) -> None:
+        files = generate(
+            [self.document("one", "  tls: modern\n"), self.document("two", "")],
+            vips=dict(DEFAULT_VIPS),
+            default_vip="main",
+            certificates=("shared",),
+            certificate_sans={"shared": ("one.example.com", "two.example.com")},
+        )
 
-        message = str(caught.exception)
-        self.assertIn("same certificate", message)
-        self.assertIn("one", message)
-        self.assertIn("two", message)
+        listing = next(iter(files.certificate_lists.values()))
+        self.assertEqual(listing.count("shared.pem"), 3)
+        self.assertTrue(listing.startswith(f"{NODE_CERTIFICATE_DIR}/shared.pem\n"))
+        self.assertIn("shared.pem [ssl-min-ver TLSv1.3", listing)
+        self.assertIn("one.example.com", listing)
+        self.assertIn("shared.pem two.example.com", listing)
+        frontend = files.configuration["1000-frontends.cfg"]
+        self.assertIn("ssl_fc_sni,lower -m str one.example.com", frontend)
+        self.assertIn("deny_status 421", frontend)
 
     def test_the_same_certificate_may_differ_between_two_vips(self) -> None:
         """The unit is the certificate on one listener, not everywhere.
@@ -998,8 +993,8 @@ class OneCertificateIsHeldToOneSetOfTerms(unittest.TestCase):
         listings = files.certificate_lists
         self.assertEqual(len(listings), 2)
         held = sorted(body.strip() for body in listings.values())
-        self.assertTrue(held[0].endswith("shared.pem"))
-        self.assertIn("shared.pem [", held[1])
+        self.assertTrue(all("shared.pem" in body for body in held))
+        self.assertTrue(any("shared.pem [" in body for body in held))
 
     def test_two_sites_asking_the_same_are_fine(self) -> None:
         """The refusal is about disagreement, not about sharing."""
@@ -1016,3 +1011,4 @@ class OneCertificateIsHeldToOneSetOfTerms(unittest.TestCase):
         ).configuration
 
         self.assertIn("1000-frontends.cfg", files)
+        self.assertNotIn("deny_status 421", files["1000-frontends.cfg"])

@@ -712,7 +712,7 @@ def _frontend_file(
             fallbacks.extend(_fallback(vip, protocol, unknown_host))
         body += envelope
         for _, proxy, role in members:
-            rules = _frontend_rules(proxy, role, networks)
+            rules = _frontend_rules(proxy, role, networks, members=members)
             body.extend(rules)
             _record(shared, proxy.name, listener=[*envelope, *tail], routing=rules)
         body += tail
@@ -927,42 +927,30 @@ def _crt_list(members: Sequence[tuple[Vip, Proxy, str]]) -> str:
     ride on the certificate's line; the bind line's policy applies to every
     line that names none.
 
-    Order is fixed so the file is stable, and the first line is what a client
-    sending no SNI, or an unknown one, is given.
-
-    **The unit is the certificate, not the object.** Two objects served by one
-    certificate cannot be held to two sets of terms - there is one line for it
-    and HAProxy chooses it by name - so two that ask for different ones are
-    refused here. Silently applying the first would be a site protected by
-    terms it did not ask for, decided by alphabetical order.
+    Each object owns one line with explicit SNI filters. HAProxy may therefore
+    load one certificate on several lines and choose the object's terms by the
+    name offered in the handshake. Keeping the line per object also keeps its
+    release-manifest fingerprint independent of a sibling.
     """
 
-    terms: dict[str, str | None] = {}
-    asked_by: dict[str, str] = {}
+    lines: list[str] = []
+    certificates: list[str] = []
     for _, proxy, role in members:
         certificate = proxy.listen.certificate
         if role != "serve" or certificate is None:
             continue
-        policy = proxy.listen.tls_policy
-        if certificate in terms and terms[certificate] != policy:
-            first, second = sorted((asked_by[certificate], proxy.name))
-            raise GeneratorError(
-                f"{first} and {second} are served by the same certificate "
-                f"'{certificate}' and ask for different TLS policies. One "
-                f"certificate is held to one set of terms; give them separate "
-                f"certificates, or the same policy."
-            )
-        terms[certificate] = policy
-        asked_by.setdefault(certificate, proxy.name)
-
-    return "".join(f"{_certificate_terms(name, terms[name])}\n" for name in sorted(terms))
+        certificates.append(certificate)
+        lines.append(_certificate_terms(certificate, proxy.listen.tls_policy, proxy.hostnames))
+    fallback = _certificate_terms(sorted(certificates)[0], None)
+    return "".join(f"{line}\n" for line in (fallback, *sorted(lines)))
 
 
-def _certificate_terms(certificate: str, policy: str | None) -> str:
+def _certificate_terms(certificate: str, policy: str | None, hostnames: Sequence[str] = ()) -> str:
     """One line of a certificate list: the file, and any terms of its own."""
 
     options = "" if policy is None else f" [{TLS_POLICIES[policy].strip()}]"
-    return f"{NODE_CERTIFICATE_DIR}/{certificate}.pem{options}"
+    filters = "" if not hostnames else f" {' '.join(sorted(hostnames))}"
+    return f"{NODE_CERTIFICATE_DIR}/{certificate}.pem{options}{filters}"
 
 
 def _certificate_line(proxy: Proxy) -> str:
@@ -981,7 +969,7 @@ def _certificate_line(proxy: Proxy) -> str:
     certificate = proxy.listen.certificate
     if proxy.listen.protocol != "https" or certificate is None:
         return ""
-    return f"{_certificate_terms(certificate, proxy.listen.tls_policy)}\n"
+    return f"{_certificate_terms(certificate, proxy.listen.tls_policy, proxy.hostnames)}\n"
 
 
 def _tls(members: Sequence[tuple[Vip, Proxy, str]], protocol: str, listing: str) -> str:
@@ -1179,7 +1167,11 @@ def _fallback(vip: Vip, protocol: str, unknown_host: UnknownHost) -> list[str]:
 
 
 def _frontend_rules(
-    proxy: Proxy, role: str = "serve", networks: Mapping[str, Sequence[str]] | None = None
+    proxy: Proxy,
+    role: str = "serve",
+    networks: Mapping[str, Sequence[str]] | None = None,
+    *,
+    members: Sequence[tuple[Vip, Proxy, str]] = (),
 ) -> list[str]:
     """One object's whole contribution to the shared frontend.
 
@@ -1204,6 +1196,8 @@ def _frontend_rules(
         #
         return [*lines, f"    redirect scheme https code 301 if {host}"]
 
+    lines.extend(_tls_sni_guard(proxy, host, members))
+
     lines.extend(_maintenance_rule(proxy, host))
 
     decisions: list[str] = []
@@ -1223,6 +1217,32 @@ def _frontend_rules(
         decisions.append(f"    use_backend {backend} if {condition}")
 
     return lines + decisions
+
+
+def _tls_sni_guard(
+    proxy: Proxy, host_acl: str, members: Sequence[tuple[Vip, Proxy, str]]
+) -> list[str]:
+    """Do not route an HTTP site over another policy group's TLS connection."""
+
+    served = [(vip, member) for vip, member, role in members if role == "serve"]
+    policies = {member.listen.tls_policy or vip.tls_policy for vip, member in served}
+    if proxy.listen.protocol != "https" or len(policies) < 2:
+        return []
+    vip = next(vip for vip, member in served if member is proxy)
+    policy = proxy.listen.tls_policy or vip.tls_policy
+    allowed = sorted(
+        {
+            hostname
+            for other_vip, member in served
+            if (member.listen.tls_policy or other_vip.tls_policy) == policy
+            for hostname in member.hostnames
+        }
+    )
+    sni_acl = _acl_name(proxy.name, "tls-sni")
+    return [
+        f"    acl {sni_acl} ssl_fc_sni,lower -m str {' '.join(allowed)}",
+        f"    http-request deny deny_status 421 if {host_acl} !{sni_acl}",
+    ]
 
 
 def _destination(route: Route) -> str:

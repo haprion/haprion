@@ -685,14 +685,10 @@ class Listen:
     """Which TLS versions this object's listener accepts, overriding its VIP's.
 
     None means the VIP decides, which is the normal case. Named here because
-    HAProxy can hold one certificate on a listener to different terms than the
-    next, chosen by SNI - so a site with a requirement of its own does not have
-    to be given a VIP of its own.
-
-    The unit is the certificate, not the object: a certificate serving two
-    objects can only be held to one set of terms, and two objects sharing one
-    that ask for different ones are refused rather than silently given the
-    first. See `_crt_list` in the generator.
+    HAProxy chooses a filtered certificate-list line by SNI. The same
+    certificate may therefore occur on several lines with different terms, so
+    a site with a requirement of its own needs neither a separate certificate
+    nor a VIP. See `_crt_list` and `_tls_sni_guard` in the generator.
     """
     redirect_http: bool = False
     hsts: Hsts | None = None

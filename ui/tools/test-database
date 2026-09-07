@@ -1,0 +1,68 @@
+#!/bin/bash
+# Run migrations and database integration tests in a disposable PostgreSQL cluster.
+set -Eeuo pipefail
+
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+python_bin="${HAPROXY_UI_PYTHON:-}"
+[[ -n "$python_bin" && -x "$python_bin" ]] || {
+    echo "set HAPROXY_UI_PYTHON to the locked UI environment's Python" >&2
+    exit 1
+}
+[[ "$(id -u)" -ne 0 ]] || {
+    echo "run this as the developer, not as root" >&2
+    exit 1
+}
+
+pg_bindir="$(pg_config --bindir)"
+for program in initdb pg_ctl psql createdb; do
+    [[ -x "${pg_bindir}/${program}" ]] || {
+        echo "PostgreSQL program is missing: ${pg_bindir}/${program}" >&2
+        exit 1
+    }
+done
+
+test_root="$(mktemp -d "${TMPDIR:-/tmp}/haproxy-ui-test-db.XXXXXX")"
+data_dir="${test_root}/data"
+socket_dir="${test_root}/socket"
+database="haproxy_ui_test"
+started=false
+
+cleanup() {
+    if [[ "$started" == true ]]; then
+        "${pg_bindir}/pg_ctl" -D "$data_dir" -m fast -w stop >/dev/null
+    fi
+    rm -rf -- "$test_root"
+}
+trap cleanup EXIT INT TERM
+
+mkdir -m 700 "$socket_dir"
+"${pg_bindir}/initdb" -D "$data_dir" --no-locale --encoding=UTF8 --auth=trust >/dev/null
+"${pg_bindir}/pg_ctl" -D "$data_dir" -o "-h '' -k ${socket_dir}" -w start >/dev/null
+started=true
+
+psql=("${pg_bindir}/psql" -h "$socket_dir" -d postgres -v ON_ERROR_STOP=1 -qtAX)
+"${psql[@]}" <<'SQL'
+create role app_web nologin noinherit;
+create role app_worker nologin noinherit;
+create role app_poller nologin noinherit;
+create role hm_test_migrate login inherit nosuperuser nocreatedb nocreaterole;
+create role hm_test_web login inherit nosuperuser nocreatedb nocreaterole;
+create role hm_test_worker login inherit nosuperuser nocreatedb nocreaterole;
+create role hm_test_poller login inherit nosuperuser nocreatedb nocreaterole;
+grant app_web to hm_test_web with inherit true;
+grant app_worker to hm_test_worker with inherit true;
+grant app_poller to hm_test_poller with inherit true;
+SQL
+"${pg_bindir}/createdb" -h "$socket_dir" -O hm_test_migrate "$database"
+
+export HAPROXY_UI_DATABASE_URL="postgresql+psycopg://hm_test_migrate@/${database}?host=${socket_dir}"
+export HAPROXY_UI_TEST_DATABASE_DSN="dbname=${database} host=${socket_dir}"
+export HAPROXY_UI_TEST_MIGRATION_ROLE=hm_test_migrate
+export HAPROXY_UI_TEST_WEB_ROLE=hm_test_web
+export HAPROXY_UI_TEST_WORKER_ROLE=hm_test_worker
+export HAPROXY_UI_TEST_POLLER_ROLE=hm_test_poller
+
+(cd "${root}/ui" && "${python_bin%/python}/alembic" upgrade head)
+(cd "${root}/ui" && "$python_bin" -m unittest -v tests.test_database_integration)
+
+echo "database integration: OK (disposable cluster removed)"

@@ -93,5 +93,9 @@ coverage, unit and frozen contract tests, an sdist/wheel smoke test, and depende
 CodeQL is the heavier pre-push and release gate described in
 [`docs/SECURITY-CHECKS.md`](docs/SECURITY-CHECKS.md).
 
+Changes to migrations, grants or database read/write paths also run against a disposable real
+PostgreSQL cluster with `ui/tools/test-database`; its accounts and isolation boundary are described
+in [`docs/SECURITY-CHECKS.md`](docs/SECURITY-CHECKS.md#disposable-database-integration-gate).
+
 Versioned installation and rollback under `/opt/haproxy-mgmt` are described in
 [`docs/INSTALLATION.md`](docs/INSTALLATION.md).

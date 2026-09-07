@@ -71,6 +71,41 @@ The interface has a second locked environment, because it has a second lockfile:
 `ui/uv.lock`. `HAPROXY_UI_PYTHON` points at it, and the gate refuses to run without it rather than
 quietly leaving the interface unchecked.
 
+## Disposable database integration gate
+
+Cursor imitations catch query shape, but they do not execute migrations, PostgreSQL permissions,
+partition routing or SQL semantics. Run the real-database gate after changing a migration, a
+database read/write path, role grants, metric rollups or retention:
+
+```bash
+HAPROXY_UI_PYTHON=/path/to/ui-environment/bin/python ui/tools/test-database
+```
+
+The command must run as the developer, not root. It finds the installed PostgreSQL tools through
+`pg_config`, creates a private temporary cluster under `TMPDIR`, listens only on a Unix socket in
+that directory, applies every Alembic migration and runs `tests.test_database_integration`. A trap
+stops PostgreSQL and removes the complete temporary cluster on success, failure or interruption.
+It never reads an answers file and has no connection string for the development or production
+databases.
+
+The temporary accounts deliberately mirror the installed privilege model:
+
+| Test role | Login | Purpose |
+|---|---:|---|
+| `hm_test_migrate` | yes | owns the test database and applies migrations |
+| `app_web` | no | fixed contract role for web grants |
+| `app_worker` | no | fixed contract role for worker grants |
+| `app_poller` | no | fixed contract role for poller grants |
+| `hm_test_web` | yes | inherits only `app_web`; exercises browser-facing SQL |
+| `hm_test_worker` | yes | inherits only `app_worker`; exercises job SQL |
+| `hm_test_poller` | yes | inherits only `app_poller`; exercises cache and metric writes |
+
+PostgreSQL's bootstrap superuser exists only inside the disposable cluster and is used only to
+create those roles and the database. Application queries are tested through the corresponding
+login role. Add integration cases to `ui/tests/test_database_integration.py`; they are skipped by
+the ordinary unit suite unless the harness supplies its private socket and role variables. Never
+set those variables by hand against an installed database.
+
 `uv.lock` is committed and CI installs it with `uv sync --locked --group dev`; a stale lockfile
 therefore fails instead of being silently refreshed. The local project is installed editable, so
 tests do not depend on an implicit `PYTHONPATH`.

@@ -17,6 +17,19 @@ if [ ! -x "${HAPROXY_UI_PYTHON}" ]; then
     exit 2
 fi
 
+#
+# The browser suite drives the chart in a real browser, and where that browser
+# lives is a property of the machine rather than of the repository. Named here
+# rather than defaulted inside the tests: a default is a path that is right on
+# one host and quietly wrong on the next.
+#
+if [ -z "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
+    echo "run-tests: set PLAYWRIGHT_BROWSERS_PATH to the Playwright browser directory" >&2
+    echo "run-tests: install with: playwright install chromium" >&2
+    exit 2
+fi
+export PLAYWRIGHT_BROWSERS_PATH
+
 cd "$base"
 "$HAPROXY_UI_PYTHON" -m unittest discover -s tests -t . -v
 "$(dirname -- "$HAPROXY_UI_PYTHON")/mypy"

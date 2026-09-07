@@ -52,6 +52,14 @@ dev = [
     # form posts included - rather than by calling the handlers directly.
     "httpx==0.28.1",
     "mypy==2.3.1",
+    #
+    # Test-only, and a real browser. The interface ships four hand-written
+    # scripts, and the faults they have had are the ones only a browser has:
+    # `href` on an SVG link is an `SVGAnimatedString` rather than a string, and
+    # a stand-in DOM either implements that correctly by accident or not at
+    # all. A test that passes where the fault is is worse than no test.
+    #
+    "playwright==1.62.0",
     "ruff==0.16.4",
 ]
 

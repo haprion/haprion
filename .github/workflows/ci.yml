@@ -76,6 +76,19 @@ jobs:
           set -euo pipefail
           uv sync --locked --group dev
 
+      # The chart is half script, and the browser suite drives it in a real
+      # browser. Installed from the locked interface environment, so the
+      # browser build matches the pinned Playwright rather than whatever the
+      # runner image happens to carry, and placed outside any home directory.
+      - name: Install the browser the interface suite drives
+        shell: bash
+        working-directory: ui
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/venv-ui/bin/playwright" install --with-deps chromium
+
       - name: Install pinned standalone checks
         shell: bash
         run: |
@@ -93,4 +106,7 @@ jobs:
           # interface. That is the point of it: a gate that passes because it
           # could not import what it was asked to check is not a gate.
           HAPROXY_UI_PYTHON: ${{ runner.temp }}/venv-ui/bin/python
+          # Same rule again: no browser, no verdict. The interface gate refuses
+          # to start rather than reporting a pass it did not earn.
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
         run: ./run-checks

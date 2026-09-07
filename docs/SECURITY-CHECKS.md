@@ -14,7 +14,9 @@ The repository has complementary gates. No single scanner replaces the others.
 5. `tools/run-codeql` performs the heavier CodeQL `security-extended` analysis, Python and
    JavaScript, before the first push and before releases.
 6. `ui/run-tests` runs the interface's own suite and type checking in the environment holding its
-   dependencies. `run-tests` calls it rather than skipping it: a gate that passes because it could
+   dependencies, including the browser suite that drives the traffic chart in a real Chromium -
+   `PLAYWRIGHT_BROWSERS_PATH` must name where the browsers are installed, and the gate refuses to
+   start without it. `run-tests` calls it rather than skipping it: a gate that passes because it could
    not import what it was meant to check is not a gate. It needs `HAPROXY_UI_PYTHON` and fails
    closed without it.
 7. `install/platform/03-verify` checks the database privilege surface against the running database,

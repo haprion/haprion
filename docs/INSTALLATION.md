@@ -1037,6 +1037,12 @@ check again without `--before-migration`. Only after those pass is the same
 prepared release activated by rerunning `install-ui-release` without `--prepare`.
 The final ordinary compatibility check proves the processes after the switch.
 
+The first bridge may encounter a running release from before compatibility
+metadata existed. It can be activated only when its database head is exactly the
+revision already running, so the operation makes no schema change. A candidate
+that would migrate from such a release is refused because rollback safety cannot
+be inferred without metadata.
+
 `update-platform-release` owns that complete order for normal updates:
 
 ```bash

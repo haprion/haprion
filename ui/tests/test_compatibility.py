@@ -147,6 +147,16 @@ class UpgradeFailureTests(unittest.TestCase):
         candidate = self.requirements(head="0021", accepts=("0021",))
         self.assertEqual(compatibility.schema_upgrade_failures(bridge, candidate, "0020"), ())
 
+    def test_metadata_free_release_can_bridge_only_without_a_schema_change(self) -> None:
+        unchanged = self.requirements(head="0020", accepts=("0020", "0021"))
+        migrating = self.requirements(head="0021", accepts=("0021",))
+
+        self.assertEqual(compatibility.schema_upgrade_failures(None, unchanged, "0020"), ())
+        self.assertEqual(
+            compatibility.schema_upgrade_failures(None, migrating, "0020"),
+            ("running UI has no compatibility metadata for a schema change",),
+        )
+
     def test_an_old_or_unreadable_cli_is_not_silently_current(self) -> None:
         self.assertEqual(compatibility.engine_api({"engine_api": 1}), 1)
         self.assertEqual(compatibility.engine_api({"engine_api": "2"}), 0)

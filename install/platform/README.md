@@ -261,6 +261,12 @@ incompatible rather than guessed compatible. Install that component from the
 same delivery, then run the check again. The command does not install, migrate,
 restart or deploy anything on its own.
 
+The one schema exception is the first bridge from a UI release with no
+compatibility file at all: it may activate only while its declared database
+head equals the revision already running. That changes no schema and therefore
+needs no claim about what the old release could roll back across. Any actual
+schema change still stops until a metadata-bearing bridge is active.
+
 ## Step 11 — retention
 
 `./11-platform-retention` installs `haproxy-ui-retention` and a daily timer.

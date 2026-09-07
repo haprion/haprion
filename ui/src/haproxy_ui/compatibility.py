@@ -166,10 +166,14 @@ def installed_entry_points(document: Mapping[str, Any]) -> set[str]:
 
 
 def schema_upgrade_failures(
-    active: Requirements, candidate: Requirements, current_revision: str
+    active: Requirements | None, candidate: Requirements, current_revision: str
 ) -> tuple[str, ...]:
     """Why migrating under the active UI would make service or rollback unsafe."""
 
+    if active is None:
+        if candidate.database_head == current_revision:
+            return ()
+        return ("running UI has no compatibility metadata for a schema change",)
     failures = []
     if current_revision not in active.database_revisions:
         failures.append(f"running UI does not accept current revision {current_revision}")
@@ -397,13 +401,22 @@ def main(argv: list[str] | None = None) -> int:
             report.fail("schema revision", str(exc))
         else:
             if args.upgrade_from_current:
+                active_release: Path | None = None
                 try:
                     active_release = current_release(args.platform_root, "UI")
                     active_requirements = ui_requirements(
                         active_release, allow_legacy_database_head=True
                     )
                 except CompatibilityError as exc:
-                    report.fail("schema transition", str(exc))
+                    transition_failures = schema_upgrade_failures(None, requirements, revision)
+                    if active_release is None or transition_failures:
+                        report.fail("schema transition", str(exc))
+                    else:
+                        report.pass_(
+                            "running schema",
+                            f"{revision}, unchanged from metadata-free {active_release.name}",
+                        )
+                        report.pass_("rollback schema", f"{revision}, no schema transition")
                 else:
                     transition_failures = schema_upgrade_failures(
                         active_requirements, requirements, revision

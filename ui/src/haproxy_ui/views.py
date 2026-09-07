@@ -144,6 +144,32 @@ def selected_theme(request: Request) -> str:
 TEMPLATES.env.filters["selected_theme"] = selected_theme
 
 
+def _traffic_marks(request: Request, marked: metrics.Selection) -> dict[str, object]:
+    """What a card needs to draw and extend the reader's marked range.
+
+    The link is handed over as a callable rather than one link per bucket:
+    every page draws between sixty and a hundred and eighty buckets per card
+    and several cards, and building all of them for the one the reader will
+    click is a page assembled for the click that did not happen yet.
+
+    The rest of the query string is carried through it, so a range marked on
+    the 7-day view stays on the 7-day view - and so does anything else the
+    address is carrying that this function has never heard of.
+    """
+
+    base = {name: value for name, value in request.query_params.items()}
+    return {
+        "traffic_marked": marked,
+        "traffic_range": metrics.range_label(marked),
+        "traffic_link": lambda stamp: metrics.link_to(base, marked, stamp),
+        #
+        # Where "clear the marks" leads, for the reader who wants out without
+        # hunting for the third click.
+        #
+        "traffic_clear": metrics.link_clear(base) if marked.since is not None else "",
+    }
+
+
 def snapshot_age(captured_at: datetime | None) -> str:
     """How old the snapshot is, or empty for a mode that has no snapshot.
 
@@ -1050,6 +1076,30 @@ def build_router(config: Config) -> APIRouter:
         #
         traffic: list[metrics.PoolTraffic] = []
         chosen = metrics.window(request.query_params.get("traffic"))
+        #
+        # One moment for every pool on the page, so the cards share an axis and
+        # can be compared against each other rather than each against the
+        # instant its own query ran. Taken before the marked range is read,
+        # because a range only means anything inside the window it was marked
+        # in and is checked against these two.
+        #
+        now = datetime.now(UTC)
+        since = now - chosen.span
+        marked = metrics.selection(
+            request.query_params.get("from"),
+            request.query_params.get("to"),
+            start=since,
+            end=now,
+            bucket=chosen.bucket,
+        )
+        #
+        # The figures answer for the marked range where there is one, while the
+        # drawing keeps the whole window. That is the point of marking: the
+        # shape says where to look and the numbers say what was there, and a
+        # graph that redrew itself to the marks would throw away the context
+        # that made them worth marking.
+        #
+        counted_since, counted_until = marked.counted(since, now)
         served: list[str] = list(detail.published.backends if detail.published else ())
         if detail.stored is not None:
             try:
@@ -1063,13 +1113,6 @@ def build_router(config: Config) -> APIRouter:
                     if health.backend_name(name, pool) not in served
                 )
         if served:
-            #
-            # One moment for every pool on the page, so the cards share an axis
-            # and can be compared against each other rather than each against
-            # the instant its own query ran.
-            #
-            now = datetime.now(UTC)
-            since = now - chosen.span
             with request.app.state.pool.connection() as connection:
                 traffic = [
                     metrics.pool_traffic(
@@ -1086,12 +1129,13 @@ def build_router(config: Config) -> APIRouter:
                         start=since,
                         end=now,
                         bucket=chosen.bucket,
+                        chosen=marked,
                         measurement=db.read_pool_totals(
                             connection,
                             cluster=cluster,
                             backend=backend,
-                            since=since,
-                            until=now,
+                            since=counted_since,
+                            until=counted_until,
                         ),
                     )
                     for backend in served
@@ -1118,6 +1162,7 @@ def build_router(config: Config) -> APIRouter:
                 "traffic_bucket": chosen.bucket_label,
                 "traffic_windows": metrics.WINDOWS,
                 "traffic_chosen": chosen.key,
+                **_traffic_marks(request, marked),
                 #
                 # Whether the window asks for more history than the raw samples
                 # are kept for. The card says so rather than drawing a month
@@ -1199,6 +1244,19 @@ def build_router(config: Config) -> APIRouter:
         #
         now = datetime.now(UTC)
         since = now - chosen.span
+        marked = metrics.selection(
+            request.query_params.get("from"),
+            request.query_params.get("to"),
+            start=since,
+            end=now,
+            bucket=chosen.bucket,
+        )
+        #
+        # One range across every card on the page. The sections already share
+        # an axis, and the question this page exists to answer - which of these
+        # carried the traffic - is asked of one stretch of time at a time.
+        #
+        counted_since, counted_until = marked.counted(since, now)
 
         def section(
             named: Sequence[str],
@@ -1230,6 +1288,7 @@ def build_router(config: Config) -> APIRouter:
                     bucket=chosen.bucket,
                     measurement=totals,
                     ceiling=ceiling,
+                    chosen=marked,
                 )
                 for name, samples, totals in found
             ]
@@ -1256,7 +1315,11 @@ def build_router(config: Config) -> APIRouter:
 
                 def listener_totals(name: str, cluster: str = cluster) -> metrics.PoolMeasurement:
                     return db.read_listener_totals(
-                        connection, cluster=cluster, frontend=name, since=since, until=now
+                        connection,
+                        cluster=cluster,
+                        frontend=name,
+                        since=counted_since,
+                        until=counted_until,
                     )
 
                 def pool_samples(name: str, cluster: str = cluster) -> list[metrics.Sample]:
@@ -1271,7 +1334,11 @@ def build_router(config: Config) -> APIRouter:
 
                 def pool_totals(name: str, cluster: str = cluster) -> metrics.PoolMeasurement:
                     return db.read_pool_totals(
-                        connection, cluster=cluster, backend=name, since=since, until=now
+                        connection,
+                        cluster=cluster,
+                        backend=name,
+                        since=counted_since,
+                        until=counted_until,
                     )
 
                 targets = metrics.redirect_targets(_documents(object_rows, cluster))
@@ -1355,6 +1422,7 @@ def build_router(config: Config) -> APIRouter:
                 "traffic_bucket": chosen.bucket_label,
                 "traffic_windows": metrics.WINDOWS,
                 "traffic_chosen": chosen.key,
+                **_traffic_marks(request, marked),
                 #
                 # Always named here, unlike the object page. Every card on this
                 # page is one of several being compared, so which series a line

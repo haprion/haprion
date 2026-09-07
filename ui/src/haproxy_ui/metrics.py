@@ -21,6 +21,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlencode
 
 from haproxy_mgmt.generate import PREFIX, REDIRECT_PREFIX
 from haproxy_mgmt.guid import redirect_name
@@ -514,6 +515,45 @@ class Point:
     # the same answer to "what happened at 09:40".
     #
     measured: bool = True
+    #
+    # How much of the bucket's own length the drawn counter could be measured
+    # over, as a whole percent, and whether that was little enough to be worth
+    # marking. A bucket is drawn from what was seen and scaled to its length,
+    # so a reader is owed the size of the part that was not seen - and owed it
+    # on the bucket itself rather than only in the window's total.
+    #
+    covered: int = 100
+    partial: bool = False
+    #
+    # The bucket's start as whole seconds, which is what a link to it is
+    # written with. Seconds rather than a formatted time: the value travels in
+    # a query string and comes back parsed, and every format that reads nicely
+    # in a URL is also one that a zone or a locale can change the meaning of.
+    #
+    stamp: int = 0
+    #
+    # Whether this bucket falls inside the range the reader has marked.
+    #
+    selected: bool = False
+    #
+    # The same figures the hover text says, kept apart so the card's own figure
+    # row can be written with them without parsing a sentence. `None` is a
+    # counter this bucket could not measure, which the row prints rather than
+    # skips.
+    #
+    figures: tuple[tuple[str, int | None], ...] = ()
+    #
+    # The bucket's moment, written the way the card writes every other one.
+    # The hover sentence carries it too, but the figure row needs it on its
+    # own and should not have to cut it back out of a sentence.
+    #
+    moment: str = ""
+    #
+    # What qualifies the figures, where anything does: a gap, an hour nobody
+    # sampled, or a bucket measured over part of itself. Empty when the bucket
+    # answers for itself whole.
+    #
+    note: str = ""
 
 
 #
@@ -534,13 +574,60 @@ def _bucket_of(at: datetime, bucket: timedelta) -> int:
     return int((at - BUCKET_EPOCH) / bucket)
 
 
+#
+# How much of a bucket must be measured before it is drawn at all, and how
+# much before the drawing stops calling it partial.
+#
+# A bucket used to be all or nothing: one interval that could not be
+# differenced - a ten-second reload, a failover - made every counter unknown
+# for every bucket that interval touched, so the 7-day view drew a two-hour
+# hole for ten seconds of downtime. A gap in a time axis that is twelve
+# hundred times wider than the thing it stands for is not a cautious reading of
+# the data, it is a wrong one: the width is the only quantity a gap has.
+#
+# The thresholds are the ones monitoring has long settled on. RRDtool's
+# `xFilesFactor` invalidates a bucket only when less than a set share of it was
+# collected, and defaults to a half. Prometheus' `rate()` divides the increase
+# it saw by the time it saw it and scales that to the window it was asked
+# about, breaking the series only after a whole staleness period with no sample
+# at all.
+#
+COVERAGE_DRAWN = 0.5
+COVERAGE_WHOLE = 0.95
+
+
+@dataclass(frozen=True, slots=True)
+class Bucket:
+    """One fixed bucket of the window, and how much of it was seen.
+
+    Coverage is per counter rather than per bucket. A restart and a change of
+    node cost every counter the same stretch, but a counter a node did not
+    report costs only itself - and a bucket that answered for requests and not
+    for retries should say so about retries alone.
+    """
+
+    at: datetime
+    counters: Mapping[str, int | None]
+    #
+    # Whether any interval reached this bucket at all. A bucket nothing was
+    # recorded for is a different thing from one that was watched and could
+    # not be differenced, and only the second is a gap.
+    #
+    sampled: bool
+    #
+    # Per counter, the share of the bucket's own length that could be measured,
+    # from 0 to 1.
+    #
+    covered: Mapping[str, float]
+
+
 def bucketed(
     found: Sequence[Interval],
     *,
     start: datetime,
     end: datetime,
     bucket: timedelta,
-) -> list[tuple[datetime, dict[str, int | None], bool]]:
+) -> list[Bucket]:
     """The window as fixed buckets, each carrying what happened inside it.
 
     **Traffic is shared out over the time it covers, not dropped on one
@@ -552,12 +639,29 @@ def bucketed(
     both invented. Splitting it by overlap keeps the total and puts it where
     the time was.
 
-    A counter that could not be differenced anywhere across a bucket makes that
-    counter unknown for the bucket. It is not shared out as zero, which is the
-    one value it is known not to be.
+    **A bucket is measured over the part of it that could be differenced, and
+    scaled to its whole length.** What is summed is only observed traffic; what
+    it is divided by is only observed time. An hour that lost ten seconds to a
+    reload is drawn from its other fifty-nine minutes and fifty seconds, which
+    is a measurement of that hour rather than a guess about it - the same
+    arithmetic `rate()` does, and the reason the drawn buckets stay comparable
+    with each other at all. The part that was not seen is carried on the bucket
+    as `covered` instead of being hidden inside the figure.
 
-    Returns one entry per bucket in the window: when it begins, what it counted,
-    and whether anything was recorded for it at all.
+    **Below `COVERAGE_DRAWN` the counter is unknown for the bucket**, because
+    at some point what was seen is too small a corner of the hour to speak for
+    it. It is still never shared out as zero, which is the one value it is
+    known not to be.
+
+    **Coverage is counted against the part of the bucket the series reaches,
+    not against the bucket.** A history that begins halfway through an hour
+    leaves the first half unobservable rather than unmeasured: nobody was owed
+    a reading there, and no amount of polling would have produced one. Counting
+    it as missing would call the first and last bucket of every series a gap,
+    and scaling across it would double a figure for time that does not belong
+    to the series at all.
+
+    Returns one entry per bucket in the window.
     """
 
     #
@@ -569,9 +673,16 @@ def bucketed(
     #
     first = math.ceil((start - BUCKET_EPOCH) / bucket)
     last = _bucket_of(end, bucket) - 1
+    bucket_sec = bucket.total_seconds()
+    #
+    # The stretch the series could have answered for at all, which is what
+    # coverage is a share of.
+    #
+    reaches_from = min((interval.started_at for interval in found), default=None)
+    reaches_to = max((interval.ended_at for interval in found), default=None)
 
     counted: dict[int, dict[str, float]] = {}
-    unknown: dict[int, set[str]] = {}
+    seen: dict[int, dict[str, float]] = {}
     touched: set[int] = set()
 
     for interval in found:
@@ -592,24 +703,210 @@ def bucketed(
             for name in METRIC_COUNTERS:
                 value = interval.counters.get(name)
                 if value is None:
-                    unknown.setdefault(index, set()).add(name)
+                    #
+                    # Not counted and not counted against: this stretch simply
+                    # was not measured, and the bucket is answered from the
+                    # stretches that were.
+                    #
                     continue
                 counted.setdefault(index, {})[name] = (
                     counted.setdefault(index, {}).get(name, 0.0) + value * share
                 )
+                seen.setdefault(index, {})[name] = (
+                    seen.setdefault(index, {}).get(name, 0.0) + overlap
+                )
 
-    grid: list[tuple[datetime, dict[str, int | None], bool]] = []
+    grid: list[Bucket] = []
     for index in range(first, last + 1):
         at = BUCKET_EPOCH + bucket * index
-        missing = unknown.get(index, set())
+        measured = seen.get(index, {})
+        observable = bucket_sec
+        if reaches_from is not None and reaches_to is not None:
+            observable = max(
+                (min(reaches_to, at + bucket) - max(reaches_from, at)).total_seconds(), 0.0
+            )
         totals: dict[str, int | None] = {}
+        covered: dict[str, float] = {}
         for name in METRIC_COUNTERS:
-            if name in missing:
+            #
+            # Capped at the bucket: consecutive intervals cannot overlap each
+            # other, but a rounding of the last fraction of a second should not
+            # be able to report more than a whole.
+            #
+            measured_sec = min(measured.get(name, 0.0), observable)
+            share = measured_sec / observable if observable else 0.0
+            covered[name] = share
+            if index not in touched:
+                totals[name] = 0
+            elif share < COVERAGE_DRAWN:
                 totals[name] = None
             else:
-                totals[name] = round(counted.get(index, {}).get(name, 0.0))
-        grid.append((at, totals, index in touched))
+                totals[name] = round(
+                    counted.get(index, {}).get(name, 0.0) * observable / measured_sec
+                )
+        grid.append(Bucket(at=at, counters=totals, sampled=index in touched, covered=covered))
     return grid
+
+
+@dataclass(frozen=True, slots=True)
+class Selection:
+    """A stretch of the window the reader has marked off by clicking it.
+
+    Two clicks, and the second may land before the first - a range is dragged
+    out in whichever direction the eye moved, and refusing the backwards one
+    would be a rule the drawing gives no sign of.
+
+    Held in the query string rather than in the page, so a marked range can be
+    reloaded, bookmarked and pasted to somebody else. Mid-incident that last
+    one is the whole point: "look at these twenty minutes" is a link, not a
+    description of where to click.
+    """
+
+    since: datetime | None = None
+    until: datetime | None = None
+
+    @property
+    def started(self) -> bool:
+        """One end marked and the other still open."""
+
+        return self.since is not None and self.until is None
+
+    @property
+    def complete(self) -> bool:
+        return self.since is not None and self.until is not None
+
+    def counted(self, start: datetime, end: datetime) -> tuple[datetime, datetime]:
+        """The stretch the figures answer for: the marks, or the whole window.
+
+        A half-marked range is still the whole window. One click has not asked
+        a question yet, and answering it with the stretch from the mark to now
+        would be a figure the reader never asked for changing under the second
+        click.
+        """
+
+        if self.since is None or self.until is None:
+            return start, end
+        return self.since, self.until
+
+    def holds(self, at: datetime, bucket: timedelta) -> bool:
+        """Whether a bucket beginning at `at` falls inside the marked range.
+
+        The single clicked bucket counts as inside while the range is still
+        open, so the first click leaves a mark rather than appearing to do
+        nothing at all.
+        """
+
+        if self.since is None:
+            return False
+        if self.until is None:
+            return self.since <= at < self.since + bucket
+        return self.since <= at < self.until
+
+
+def selection(
+    raw_since: str | None,
+    raw_until: str | None,
+    *,
+    start: datetime,
+    end: datetime,
+    bucket: timedelta,
+) -> Selection:
+    """The marked range a query string asks for, snapped to the drawn buckets.
+
+    **Nonsense clears rather than fails.** These values arrive in a bookmark
+    that outlived a window, from a hand-edited URL, or from a range marked on
+    the hour view and reloaded on the month. A page that answered 400 to any of
+    those would be answering a question of its own making; the reader asked to
+    see traffic.
+
+    **Snapped to the bucket grid**, because a bucket is the smallest thing the
+    drawing can show and a range that began inside one could not be drawn where
+    it claims. The end is snapped up, so a marked bucket is included whole -
+    clicking one bucket twice measures that bucket, not nothing.
+
+    The range is clamped to the window and ordered. A second click before the
+    first is a range, not a mistake.
+    """
+
+    ends: list[datetime] = []
+    for raw in (raw_since, raw_until):
+        if raw is None:
+            continue
+        try:
+            at = datetime.fromtimestamp(int(raw), UTC)
+        except (TypeError, ValueError, OSError, OverflowError):
+            return Selection()
+        if not start <= at <= end:
+            return Selection()
+        ends.append(BUCKET_EPOCH + bucket * _bucket_of(at, bucket))
+    if not ends:
+        return Selection()
+    if len(ends) == 1:
+        return Selection(since=ends[0])
+    first, last = min(ends), max(ends)
+    return Selection(since=first, until=last + bucket)
+
+
+def _carried(base: Mapping[str, str]) -> dict[str, str]:
+    """Every query parameter except the marks themselves."""
+
+    return {name: value for name, value in base.items() if name not in ("from", "to")}
+
+
+def link_clear(base: Mapping[str, str]) -> str:
+    """The same page with the marks taken off.
+
+    The third click does this too. This is the same thing said in a place the
+    reader can find without knowing that, because "click a third time" is a
+    rule the drawing does not state anywhere.
+    """
+
+    query = urlencode(_carried(base))
+    return f"?{query}" if query else "?"
+
+
+def range_label(chosen: Selection) -> str:
+    """The marked range as one line, in the reader's own clock.
+
+    The end's date is dropped where it repeats the start's, which is the
+    common case: a range is usually marked inside one afternoon, and printing
+    the date twice makes the reader compare two long strings to find the one
+    difference between them.
+    """
+
+    if chosen.since is None or chosen.until is None:
+        return ""
+    since, until = shown(chosen.since), shown(chosen.until)
+    if since.date() == until.date():
+        return f"{since.strftime(TIMESTAMP)} → {until.strftime('%H:%M:%S')}"
+    return f"{since.strftime(TIMESTAMP)} → {until.strftime(TIMESTAMP)}"
+
+
+def link_to(base: Mapping[str, str], chosen: Selection, stamp: int) -> str:
+    """Where a click on one bucket leads, given what is already marked.
+
+    Three clicks and three answers, which is the whole interaction: the first
+    marks an end, the second closes the range, and the third clears it. The
+    state lives in the link rather than in the page, so the same rule holds for
+    a reader with script and for one without - and a browser's back button
+    walks the marks back one at a time, which is what a reader expects of
+    something that changed the address.
+
+    Every other parameter is carried through. The window a range was marked in
+    is part of what the range means, and a click that quietly reset it to the
+    default would answer about a different stretch of time than the one under
+    the pointer.
+    """
+
+    carried = _carried(base)
+    if chosen.complete:
+        marks: dict[str, str] = {}
+    elif chosen.since is not None:
+        marks = {"from": str(int(chosen.since.timestamp())), "to": str(stamp)}
+    else:
+        marks = {"from": str(stamp)}
+    query = urlencode({**carried, **marks})
+    return f"?{query}" if query else "?"
 
 
 def spark(
@@ -621,6 +918,7 @@ def spark(
     end: datetime,
     bucket: timedelta,
     ceiling: int | None = None,
+    chosen: Selection | None = None,
 ) -> tuple[list[str], list[Point], int]:
     """A sparkline on an absolute time axis, its hover points, and its peak.
 
@@ -662,10 +960,11 @@ def spark(
     seconds = (end - start).total_seconds()
     if seconds <= 0 or bucket <= timedelta(0):
         return [], [], 0
+    chosen = chosen or Selection()
 
     grid = bucketed(found, start=start, end=end, bucket=bucket)
     peak = max(
-        (value for _, totals, _ in grid if (value := totals.get("req_tot")) is not None),
+        (value for entry in grid if (value := entry.counters.get("req_tot")) is not None),
         default=0,
     )
     if ceiling is None:
@@ -676,8 +975,12 @@ def spark(
     points: list[Point] = []
     bucket_width = width * bucket.total_seconds() / seconds
 
-    for at, totals, measured in grid:
+    for entry in grid:
+        at = entry.at
+        totals = entry.counters
+        measured = entry.sampled
         value = totals.get("req_tot")
+        share = entry.covered.get("req_tot", 0.0)
         position = min(max((at - start).total_seconds() / seconds, 0.0), 1.0)
         x = position * width
         point_x = min(x + bucket_width / 2, width)
@@ -686,7 +989,20 @@ def spark(
                 runs.append(current)
             current = []
             points.append(
-                Point(at=at, x=point_x, y=height, value=0, reading=gap_at(at), measured=True)
+                Point(
+                    at=at,
+                    x=point_x,
+                    y=height,
+                    value=0,
+                    reading=gap_at(at, share),
+                    measured=True,
+                    covered=round(share * 100),
+                    stamp=int(at.timestamp()),
+                    selected=chosen.holds(at, bucket),
+                    figures=tuple((label, None) for _name, label in CARD_COUNTERS),
+                    moment=shown(at).strftime(TIMESTAMP),
+                    note=gap_note(share),
+                )
             )
             continue
         y = height if ceiling == 0 else height - (value / ceiling) * height
@@ -699,8 +1015,19 @@ def spark(
                 x=point_x,
                 y=y,
                 value=value,
-                reading=reading_at(at, totals) if measured else unread_at(at),
+                reading=reading_at(at, totals, share) if measured else unread_at(at),
                 measured=measured,
+                covered=round(share * 100) if measured else 0,
+                partial=measured and share < COVERAGE_WHOLE,
+                stamp=int(at.timestamp()),
+                selected=chosen.holds(at, bucket),
+                figures=tuple(
+                    (label, totals.get(name) if measured else None) for name, label in CARD_COUNTERS
+                ),
+                moment=shown(at).strftime(TIMESTAMP),
+                note=""
+                if measured and share >= COVERAGE_WHOLE
+                else (partial_note(share) if measured else "Nothing was sampled for this bucket."),
             )
         )
     if current:
@@ -738,13 +1065,42 @@ def unread_at(at: datetime) -> str:
     return f"{shown(at).strftime(TIMESTAMP)} · no reading"
 
 
-def gap_at(at: datetime) -> str:
-    """Name an interval whose request count could not be measured."""
+def gap_at(at: datetime, covered: float = 0.0) -> str:
+    """Name a bucket whose request count could not be measured.
 
-    return f"{shown(at).strftime(TIMESTAMP)} · data gap"
+    A bucket reaches this only when too little of it was seen to answer for it,
+    so the share that *was* seen is the reader's next question - "nothing at
+    all" and "a fifth of it, which is not enough" send an operator to different
+    places.
+    """
+
+    when = shown(at).strftime(TIMESTAMP)
+    if covered <= 0:
+        return f"{when} · data gap"
+    return f"{when} · data gap · only {round(covered * 100)}% of it was measured"
 
 
-def reading_at(at: datetime, totals: Mapping[str, int | None]) -> str:
+def gap_note(covered: float) -> str:
+    """Why a marked-off gap has no figures, in the card's own row."""
+
+    if covered <= 0:
+        return "Nothing across this bucket could be measured."
+    return (
+        f"Only {round(covered * 100)}% of this bucket could be measured, "
+        "which is too little to answer for it."
+    )
+
+
+def partial_note(covered: float) -> str:
+    """Why a figure stands for more time than was watched."""
+
+    return (
+        f"Measured over {round(covered * 100)}% of this bucket and scaled to it. "
+        "The rest fell in a stretch that could not be measured."
+    )
+
+
+def reading_at(at: datetime, totals: Mapping[str, int | None], covered: float = 1.0) -> str:
     """What one bucket says when the pointer rests on it.
 
     Every figure the card carries, not only the one the line draws, because the
@@ -762,7 +1118,15 @@ def reading_at(at: datetime, totals: Mapping[str, int | None]) -> str:
         f"{label} {value if (value := totals.get(name)) is not None else 'not measured'}"
         for name, label in CARD_COUNTERS
     ]
-    return f"{when} · " + " · ".join(parts)
+    reading = f"{when} · " + " · ".join(parts)
+    if covered < COVERAGE_WHOLE:
+        #
+        # Said as a share of the bucket rather than as a duration, because the
+        # bucket's own length differs by window and the figure has to mean the
+        # same thing on all four.
+        #
+        reading += f" · measured over {round(covered * 100)}% of this bucket, and scaled to it"
+    return reading
 
 
 #
@@ -1098,7 +1462,7 @@ def shared_ceiling(
         peak = max(
             peak,
             max(
-                (value for _, totals, _ in grid if (value := totals.get("req_tot")) is not None),
+                (value for entry in grid if (value := entry.counters.get("req_tot")) is not None),
                 default=0,
             ),
         )
@@ -1115,6 +1479,7 @@ def pool_traffic(
     bucket: timedelta,
     measurement: PoolMeasurement | None = None,
     ceiling: int | None = None,
+    chosen: Selection | None = None,
 ) -> PoolTraffic:
     """One series' card, drawn across the window that was asked for.
 
@@ -1143,6 +1508,7 @@ def pool_traffic(
         end=end,
         bucket=bucket,
         ceiling=ceiling,
+        chosen=chosen,
     )
     buckets = max((end - start) / bucket, 1) if bucket else 1
     drawn = peak if ceiling is None else ceiling

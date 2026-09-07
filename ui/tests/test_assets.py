@@ -80,10 +80,16 @@ class ShapesTheIconRuleReaches(unittest.TestCase):
         self.assertIn("stroke: none", rule)
         self.assertIn("fill: transparent", rule)
 
-    def test_the_traffic_tooltip_is_centred_inside_the_plot(self) -> None:
-        rule_at = self.stylesheet().index(".traffic-tip {")
-        rule = self.stylesheet()[rule_at : self.stylesheet().index("}", rule_at)]
+    def test_a_reading_is_not_shown_in_a_floating_box(self) -> None:
+        """There is nowhere on a card this size to float one.
 
-        self.assertIn("top: calc(var(--spark-height) / 2)", rule)
-        self.assertIn("translate(-50%, -50%)", rule)
-        self.assertNotIn("bottom:", rule)
+        A box wide enough for seven figures covers either the scale beside the
+        line or the line itself, and clamping it to the card put it half
+        outside on every bucket wider than the card. The figure row beneath the
+        line has room, holds still, and was already there.
+        """
+
+        self.assertNotIn(".traffic-tip", self.stylesheet())
+        script = (STATIC_DIRECTORY / "traffic.js").read_text(encoding="utf-8")
+        self.assertNotIn("traffic-tip", script)
+        self.assertIn(".traffic-figures", script)

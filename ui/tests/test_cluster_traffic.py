@@ -291,6 +291,71 @@ class OneScalePerSection(ReadingACluster):
         self.assertGreater(len(peaks), 1)
 
 
+class MarkingARangeOnThePage(ReadingACluster):
+    """Two clicks on the drawing, and the figures answer for what was marked.
+
+    The drawing keeps the whole window either way. The marks say which part of
+    it the numbers are about, which is the question this page is opened with -
+    "which of these carried the traffic between these two moments".
+    """
+
+    def marks(self, back: int, forward: int) -> str:
+        now = datetime.now(UTC)
+        return (
+            f"?from={int((now - timedelta(minutes=back)).timestamp())}"
+            f"&to={int((now - timedelta(minutes=forward)).timestamp())}"
+        )
+
+    def test_the_figures_are_counted_over_the_marked_range(self) -> None:
+        with mock.patch(
+            "haproxy_ui.db.read_pool_totals", side_effect=lambda *_a, **_k: measurement()
+        ) as totals:
+            self.page(self.marks(50, 40))
+
+        asked = {(call.kwargs["since"], call.kwargs["until"]) for call in totals.call_args_list}
+        self.assertEqual(len(asked), 1)
+        since, until = asked.pop()
+        self.assertLess(until - since, timedelta(minutes=30))
+        self.assertGreater(until - since, timedelta(minutes=5))
+
+    def test_an_unmarked_page_counts_the_whole_window(self) -> None:
+        with mock.patch(
+            "haproxy_ui.db.read_pool_totals", side_effect=lambda *_a, **_k: measurement()
+        ) as totals:
+            self.page()
+
+        since, until = (
+            totals.call_args_list[0].kwargs["since"],
+            totals.call_args_list[0].kwargs["until"],
+        )
+        self.assertGreater(until - since, timedelta(hours=23))
+
+    def test_the_marked_buckets_are_drawn_as_marked_and_can_be_cleared(self) -> None:
+        text = self.page(self.marks(50, 40)).text  # type: ignore[attr-defined]
+
+        self.assertIn('class="traffic-marked"', text)
+        self.assertIn('class="traffic-clear"', text)
+
+    def test_an_unmarked_page_marks_nothing(self) -> None:
+        text = self.page().text  # type: ignore[attr-defined]
+
+        self.assertNotIn('class="traffic-marked"', text)
+        self.assertNotIn('class="traffic-clear"', text)
+
+    def test_every_bucket_is_a_link_that_carries_the_window(self) -> None:
+        """So a range can be marked with the keyboard, and without script."""
+
+        text = self.page("?traffic=7d").text  # type: ignore[attr-defined]
+
+        self.assertIn('class="traffic-pick" href="?traffic=7d&amp;from=', text)
+
+    def test_marks_that_outlived_their_window_are_ignored_rather_than_refused(self) -> None:
+        answer = self.page("?from=1&to=2")
+
+        self.assertEqual(answer.status_code, 200)  # type: ignore[attr-defined]
+        self.assertNotIn('class="traffic-marked"', answer.text)  # type: ignore[attr-defined]
+
+
 class TheWayBackAndForth(ReadingACluster):
     def setUp(self) -> None:
         super().setUp()

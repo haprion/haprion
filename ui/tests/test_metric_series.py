@@ -425,7 +425,7 @@ class DrawingTheShape(unittest.TestCase):
             end=START + timedelta(seconds=30),
             bucket=timedelta(seconds=10),
         )
-        self.assertEqual([totals["req_tot"] for _, totals, _ in grid], [10, 10, 10])
+        self.assertEqual([entry.counters["req_tot"] for entry in grid], [10, 10, 10])
 
     def test_a_bucket_nobody_sampled_says_so_on_hover(self) -> None:
         """Drawn at zero, and never claiming zero was measured."""
@@ -467,6 +467,239 @@ class DrawingTheShape(unittest.TestCase):
         _, points, _ = self.drawn([1, 1])
         for point in points:
             self.assertRegex(point.reading, r"^\d\d-\d\d-\d\d \d\d:\d\d:\d\d · ")
+
+
+class WhatABucketCouldSee(unittest.TestCase):
+    """A bucket answers from the part of itself that was measured.
+
+    The behaviour this replaces made a bucket all or nothing: a single interval
+    that could not be differenced marked every bucket it touched unknown, so a
+    ten-second reload drew a two-hour hole in the 7-day view. The width of a gap
+    is the only thing it says, and that one said something false.
+    """
+
+    def spans(
+        self, values: list[int | None], *, bucket: int = 60, span: int = 0
+    ) -> list[metrics.Bucket]:
+        """One ten-second interval per value, into buckets of `bucket` seconds.
+
+        `span` is the window, which is not the same as the stretch the intervals
+        cover: only whole buckets are kept, so a window that stops where the
+        readings stop has no whole bucket in it at all.
+        """
+
+        found = [
+            metrics.Interval(
+                started_at=START + timedelta(seconds=step * 10),
+                ended_at=START + timedelta(seconds=(step + 1) * 10),
+                counters=dict.fromkeys(metrics.METRIC_COUNTERS) | {"req_tot": value},
+                restarted=False,
+            )
+            for step, value in enumerate(values)
+        ]
+        return metrics.bucketed(
+            found,
+            start=START,
+            end=START + timedelta(seconds=span or 10 * len(values)),
+            bucket=timedelta(seconds=bucket),
+        )
+
+    def test_a_short_unmeasurable_stretch_no_longer_voids_the_bucket(self) -> None:
+        """Ten seconds of a minute cost ten seconds, not the minute."""
+
+        grid = self.spans([10, 10, 10, 10, 10, None])
+
+        self.assertEqual(len(grid), 1)
+        self.assertIsNotNone(grid[0].counters["req_tot"])
+
+    def test_what_was_seen_is_scaled_to_the_part_of_the_bucket_it_answers_for(self) -> None:
+        """Fifty requests over fifty seconds is a minute of sixty, not of fifty.
+
+        Only observed traffic is summed and only observed time divides it, which
+        is what keeps one bucket comparable with the next. It is not an estimate
+        of the missing ten seconds - it is this bucket's measured rate, stated
+        over the bucket's own length.
+        """
+
+        grid = self.spans([10, 10, 10, 10, 10, None])
+
+        self.assertEqual(grid[0].counters["req_tot"], 60)
+        self.assertAlmostEqual(grid[0].covered["req_tot"], 50 / 60)
+
+    def test_a_bucket_measured_over_too_little_of_itself_is_still_a_gap(self) -> None:
+        """Past some point what was seen is too small a corner to speak for the hour."""
+
+        grid = self.spans([10, 10, None, None, None, None])
+
+        self.assertIsNone(grid[0].counters["req_tot"])
+
+    def test_a_bucket_history_only_reaches_into_is_not_a_gap(self) -> None:
+        """Unobservable is not unmeasured.
+
+        A series that begins halfway through a bucket was never owed a reading
+        for the first half. Counting that as missing would call the first and
+        last bucket of every card a gap, and scaling across it would double the
+        figure for time the series does not cover.
+        """
+
+        grid = self.spans([10, 10], span=60)
+
+        self.assertEqual(grid[0].counters["req_tot"], 20)
+        self.assertEqual(grid[0].covered["req_tot"], 1.0)
+
+    def test_a_partly_measured_bucket_is_marked_and_says_how_much(self) -> None:
+        """The line stays continuous; the reader is still told which buckets."""
+
+        _paths, points, _peak = metrics.spark(
+            [
+                metrics.Interval(
+                    started_at=START + timedelta(seconds=step * 10),
+                    ended_at=START + timedelta(seconds=(step + 1) * 10),
+                    counters=dict.fromkeys(metrics.METRIC_COUNTERS) | {"req_tot": value},
+                    restarted=False,
+                )
+                for step, value in enumerate([10, 10, 10, 10, 10, None])
+            ],
+            width=100,
+            height=20,
+            start=START,
+            end=START + timedelta(seconds=60),
+            bucket=timedelta(seconds=60),
+        )
+
+        self.assertTrue(points[0].partial)
+        self.assertEqual(points[0].covered, 83)
+        self.assertIn("measured over 83%", points[0].reading)
+
+    def test_a_gap_says_whether_anything_at_all_was_seen(self) -> None:
+        """ "Nothing" and "not enough" send an operator to different places."""
+
+        _paths, points, _peak = metrics.spark(
+            [
+                metrics.Interval(
+                    started_at=START + timedelta(seconds=step * 10),
+                    ended_at=START + timedelta(seconds=(step + 1) * 10),
+                    counters=dict.fromkeys(metrics.METRIC_COUNTERS) | {"req_tot": value},
+                    restarted=False,
+                )
+                for step, value in enumerate([10, None, None, None, None, None])
+            ],
+            width=100,
+            height=20,
+            start=START,
+            end=START + timedelta(seconds=60),
+            bucket=timedelta(seconds=60),
+        )
+
+        self.assertIn("data gap", points[0].reading)
+        self.assertIn("only 17% of it was measured", points[0].reading)
+
+
+class MarkingOffAStretch(unittest.TestCase):
+    """Two clicks make a range, a third clears it, and the marks live in the URL."""
+
+    BUCKET = timedelta(minutes=10)
+
+    def marked(self, since: object = None, until: object = None) -> metrics.Selection:
+        return metrics.selection(
+            None if since is None else str(since),
+            None if until is None else str(until),
+            start=START,
+            end=START + timedelta(days=1),
+            bucket=self.BUCKET,
+        )
+
+    def stamp(self, minutes: int) -> int:
+        return int((START + timedelta(minutes=minutes)).timestamp())
+
+    def test_one_click_marks_an_end_and_leaves_the_range_open(self) -> None:
+        chosen = self.marked(self.stamp(30))
+
+        self.assertTrue(chosen.started)
+        self.assertFalse(chosen.complete)
+
+    def test_the_second_click_closes_the_range_around_both_buckets(self) -> None:
+        """Including the bucket clicked last, whole - it was pointed at."""
+
+        chosen = self.marked(self.stamp(30), self.stamp(50))
+
+        self.assertIsNotNone(chosen.since)
+        self.assertIsNotNone(chosen.until)
+        self.assertEqual(
+            chosen.counted(START, START)[1] - chosen.counted(START, START)[0], timedelta(minutes=30)
+        )
+
+    def test_a_range_dragged_backwards_is_still_a_range(self) -> None:
+        """The eye moves in both directions and the drawing says nothing about order."""
+
+        forwards = self.marked(self.stamp(30), self.stamp(50))
+        backwards = self.marked(self.stamp(50), self.stamp(30))
+
+        self.assertEqual((backwards.since, backwards.until), (forwards.since, forwards.until))
+
+    def test_a_click_inside_a_bucket_marks_the_bucket(self) -> None:
+        """A range is only ever as fine as what the drawing can show."""
+
+        since, until = self.marked(self.stamp(34), self.stamp(34)).counted(START, START)
+
+        self.assertEqual(until - since, self.BUCKET)
+
+    def test_marks_outside_the_window_clear_rather_than_fail(self) -> None:
+        """A bookmark that outlived its window is not an error the reader made."""
+
+        self.assertFalse(self.marked(int((START - timedelta(days=2)).timestamp())).started)
+        self.assertFalse(self.marked("yesterday").started)
+        self.assertFalse(self.marked(None, None).complete)
+
+    def test_a_half_marked_range_still_counts_the_whole_window(self) -> None:
+        """One click has not asked a question yet."""
+
+        chosen = self.marked(self.stamp(30))
+        end = START + timedelta(days=1)
+
+        self.assertEqual(chosen.counted(START, end), (START, end))
+
+    def test_three_clicks_mark_close_and_clear(self) -> None:
+        base = {"traffic": "24h"}
+        first = metrics.link_to(base, metrics.Selection(), self.stamp(30))
+        second = metrics.link_to(base, self.marked(self.stamp(30)), self.stamp(50))
+        third = metrics.link_to(base, self.marked(self.stamp(30), self.stamp(50)), self.stamp(20))
+
+        self.assertEqual(first, f"?traffic=24h&from={self.stamp(30)}")
+        self.assertEqual(second, f"?traffic=24h&from={self.stamp(30)}&to={self.stamp(50)}")
+        self.assertEqual(third, "?traffic=24h")
+
+    def test_the_window_a_range_was_marked_in_travels_with_it(self) -> None:
+        """A range means something different on another window, so it keeps its own."""
+
+        self.assertIn("traffic=7d", metrics.link_to({"traffic": "7d"}, metrics.Selection(), 1))
+        self.assertEqual(
+            metrics.link_clear({"traffic": "7d", "from": "1", "to": "2"}), "?traffic=7d"
+        )
+
+    def test_a_marked_bucket_is_marked_on_the_drawing(self) -> None:
+        found = [
+            metrics.Interval(
+                started_at=START + timedelta(seconds=step * 10),
+                ended_at=START + timedelta(seconds=(step + 1) * 10),
+                counters=dict.fromkeys(metrics.METRIC_COUNTERS) | {"req_tot": 1},
+                restarted=False,
+            )
+            for step in range(6)
+        ]
+        _paths, points, _peak = metrics.spark(
+            found,
+            width=100,
+            height=20,
+            start=START,
+            end=START + timedelta(seconds=60),
+            bucket=timedelta(seconds=20),
+            chosen=metrics.Selection(
+                since=START + timedelta(seconds=20), until=START + timedelta(seconds=40)
+            ),
+        )
+
+        self.assertEqual([point.selected for point in points], [False, True, False])
 
 
 class TheScaleBesideTheLine(unittest.TestCase):

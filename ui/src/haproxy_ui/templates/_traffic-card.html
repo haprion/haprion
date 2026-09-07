@@ -8,7 +8,8 @@
   a scale, a hover target or a contrast token to drift apart.
 
   Expects `pool` in context, plus `traffic_named`, `spark_width`,
-  `spark_height`, `traffic_bucket` and `traffic_window`.
+  `spark_height`, `traffic_bucket`, `traffic_window`, and the marked range:
+  `traffic_marked`, `traffic_range`, `traffic_link` and `traffic_clear`.
 #}
 {% if traffic_named %}<div class="traffic-head"><code class="traffic-backend">{{ pool.series }}</code></div>{% endif %}
 <div class="traffic-pool">
@@ -41,7 +42,24 @@
           otherwise give them the text colour, which is far too loud for
           something the eye should pass over on the way to the data.
         #}
+        {#
+          The marked range, behind the guides and the line: it is the ground
+          the reading stands on rather than a mark over it. One band per
+          bucket instead of one across the range, because the buckets are what
+          was clicked and a single rectangle would have to re-derive their
+          edges to land on them.
+        #}
+        {% for point in pool.points %}{% if point.selected %}<rect class="traffic-marked" x="{{ '%.1f'|format(point.x - pool.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(pool.hit_width) }}" height="{{ spark_height }}"></rect>{% endif %}{% endfor %}
         {% for level in pool.levels %}<line class="traffic-level" x1="0" y1="{{ level.y }}" x2="{{ spark_width }}" y2="{{ level.y }}" stroke="var(--line-strong)" stroke-width="1" vector-effect="non-scaling-stroke"></line>{% endfor %}
+        {#
+          A faint band behind the buckets that could only be measured over part
+          of themselves - a reload, a failover, a poll that never arrived. The
+          line is drawn across them from what was seen, scaled to the bucket,
+          because a ten-second reload is not an hour of missing traffic; the
+          band is how the reader is told which buckets that was, and the hover
+          says over how much of each.
+        #}
+        {% for point in pool.points %}{% if point.partial %}<rect class="traffic-part" x="{{ '%.1f'|format(point.x - pool.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(pool.hit_width) }}" height="{{ spark_height }}"></rect>{% endif %}{% endfor %}
         {% for path in pool.paths %}<path d="{{ path }}" fill="none" stroke="var(--info)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>{% endfor %}
         {#
           One hover target per reading, as wide as the bucket it stands for
@@ -50,7 +68,13 @@
           Transparent rather than hidden: `visibility` would take the title
           with it. Drawn after the paths so they sit above the line.
         #}
-        {% for point in pool.points %}<rect class="traffic-hit" x="{{ '%.1f'|format(point.x - pool.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(pool.hit_width) }}" height="{{ spark_height }}"><title>{{ point.reading }}</title></rect>{% endfor %}
+        {#
+          Each target is a link, so marking a range works with the keyboard and
+          without script, and so the browser's own back button walks the marks
+          back. The figures a hover shows are carried on the element rather
+          than parsed back out of the title sentence.
+        #}
+        {% for point in pool.points %}<a class="traffic-pick" href="{{ traffic_link(point.stamp) }}" data-when="{{ point.moment }}" data-note="{{ point.note }}" data-figures='{{ point.figures|tojson }}'><rect class="traffic-hit" x="{{ '%.1f'|format(point.x - pool.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(pool.hit_width) }}" height="{{ spark_height }}"><title>{{ point.reading }}</title></rect></a>{% endfor %}
       </svg>
       {#
         The labels are what make the shape locatable. Placed as percentages
@@ -62,6 +86,17 @@
       {% endif %}
       </div>
     </div>
+    {#
+      What the figures answer for. Without it the row is a set of numbers whose
+      question changes under the reader - the window, a marked range, or the
+      bucket under the pointer - and three answers that look identical are
+      worse than one.
+    #}
+    <p class="traffic-scope">
+      <span class="traffic-scope-label">{% if traffic_range %}{{ traffic_range }}{% else %}{{ traffic_window }}{% endif %}</span>
+      {% if traffic_clear %}<a class="traffic-clear" href="{{ traffic_clear }}">clear</a>{% endif %}
+      <span class="traffic-scope-note"></span>
+    </p>
     <dl class="traffic-figures">
       {% for total in pool.totals %}
       {% if (traffic_redirect and total.label != '2xx') or (not traffic_redirect and total.label != '3xx') %}

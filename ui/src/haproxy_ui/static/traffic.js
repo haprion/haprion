@@ -1,88 +1,83 @@
 (() => {
   //
-  // The traffic card's tooltip.
+  // The traffic card's reading of one bucket, and the range a reader marks.
   //
   // The readings were carried by SVG `<title>`, which is the browser's own
-  // tooltip and correct in every way but one: it waits about a second before
-  // it appears, and it follows the pointer's idea of a hover rather than the
-  // chart's. Reading a line means moving along it, and a tooltip that arrives
-  // after the pointer has left is not a tooltip.
+  // tooltip and correct in every way but two: it waits about a second before
+  // it appears, and it is a floating box. A box wide enough to hold seven
+  // figures cannot be placed anywhere over a card this size without covering
+  // either the scale it is read against or the line it is read from - which is
+  // how it was, at both ends of every window.
   //
-  // So the title text is read out of the markup and shown immediately. The
-  // `<title>` elements stay where they are: they are what a screen reader and
-  // a browser with this script blocked still find, and removing them to avoid
-  // showing the same thing twice would trade a small redundancy for a page
-  // that answers nothing without script.
+  // So the figures are written into the row the card already has beneath the
+  // line. It is where the window's own figures are printed, the numbers land
+  // in the same place for every bucket - which is what makes two of them
+  // comparable by eye - and nothing is covered by anything.
   //
-  const cards = document.querySelectorAll(".traffic-spark");
+  // The `<title>` elements stay where they are. They are what a screen reader
+  // and a browser with this script blocked still find, and the row's own
+  // values are what the page renders without script.
+  //
+  const cards = document.querySelectorAll(".traffic-pool");
   if (!cards.length) return;
 
   for (const card of cards) {
     const svg = card.querySelector("svg");
-    const targets = card.querySelectorAll(".traffic-hit");
-    if (!svg || !targets.length) continue;
+    const row = card.querySelector(".traffic-figures");
+    const label = card.querySelector(".traffic-scope-label");
+    const note = card.querySelector(".traffic-scope-note");
+    const picks = card.querySelectorAll(".traffic-pick");
+    if (!svg || !row || !label || !picks.length) continue;
 
     //
-    // One tip per card rather than one per point: only one can be visible, and
-    // a hundred and forty-four detached nodes per pool is a page built for the
-    // pointer rather than for the reader.
+    // What the page was rendered with: the window's figures, or a marked
+    // range's. A hover is a look at something else and has to be able to put
+    // this back exactly, including the coverage marks beside the numbers.
     //
-    const tip = document.createElement("div");
-    tip.className = "traffic-tip";
-    tip.hidden = true;
-    card.appendChild(tip);
+    const values = new Map();
+    for (const item of row.querySelectorAll("div")) {
+      const name = item.querySelector("dt");
+      const value = item.querySelector("dd");
+      if (name && value) values.set(name.textContent.trim(), { value, held: value.innerHTML });
+    }
+    const rendered = label.textContent.trim();
 
-    //
-    // Suppressed while the tip is up, so the native tooltip does not arrive a
-    // second later and sit on top of it. Restored on the way out, which is what
-    // keeps the markup's own answer available when this script is not driving.
-    //
-    let held = null;
-
-    const show = (target) => {
-      const title = target.querySelector("title");
-      if (!title) return;
-      if (held && held !== target) restore();
-      tip.textContent = title.textContent;
-      tip.hidden = false;
-
-      const box = card.getBoundingClientRect();
-      const at = target.getBoundingClientRect();
-      const middle = at.left + at.width / 2 - box.left;
-      //
-      // Clamped to the card, because a point at either end would otherwise
-      // push the tip off the edge - and the ends of a window are where a
-      // reader looks first.
-      //
-      const half = tip.offsetWidth / 2;
-      const place = Math.min(Math.max(middle, half), box.width - half);
-      tip.style.left = `${place}px`;
-
-      held = target;
-      target.dataset.title = title.textContent;
-      title.remove();
+    const show = (pick) => {
+      let figures;
+      try {
+        figures = JSON.parse(pick.dataset.figures || "[]");
+      } catch {
+        return;
+      }
+      for (const [name, amount] of figures) {
+        const found = values.get(name);
+        if (!found) continue;
+        found.value.textContent = amount === null ? "—" : String(amount);
+      }
+      label.textContent = pick.dataset.when || rendered;
+      if (note) note.textContent = pick.dataset.note || "";
     };
 
     const restore = () => {
-      if (!held) return;
-      if (!held.querySelector("title") && held.dataset.title) {
-        const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
-        title.textContent = held.dataset.title;
-        held.appendChild(title);
-      }
-      held = null;
+      for (const { value, held } of values.values()) value.innerHTML = held;
+      label.textContent = rendered;
+      if (note) note.textContent = "";
     };
 
-    const hide = () => {
-      tip.hidden = true;
-      restore();
-    };
-
-    for (const target of targets) {
-      target.addEventListener("pointerenter", () => show(target));
-      target.addEventListener("focus", () => show(target));
+    for (const pick of picks) {
+      pick.addEventListener("pointerenter", () => show(pick));
+      pick.addEventListener("focus", () => show(pick));
+      //
+      // The mark is painted before the page comes back, so the click has an
+      // answer immediately rather than after a round trip. What the server
+      // renders is still the authority - this only covers the wait.
+      //
+      pick.addEventListener("click", () => {
+        const rect = pick.querySelector("rect");
+        if (rect) rect.classList.add("traffic-picked");
+      });
     }
-    svg.addEventListener("pointerleave", hide);
-    svg.addEventListener("blur", hide, true);
+    svg.addEventListener("pointerleave", restore);
+    svg.addEventListener("blur", restore, true);
   }
 })();

@@ -1208,13 +1208,14 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .traffic-hit { fill: transparent; stroke: none; cursor: crosshair; }
 
 /*
- * The tooltip the script raises, placed against the card rather than the
- * pointer: a reader moving along the line gets a box that stays on one
- * baseline instead of one that swims. `pointer-events: none` so it can sit
- * over the hover targets without stealing the hover that produced it.
+ * The tooltip the script raises, centred vertically in the plot rather than
+ * above it: the space above belongs to the series name and explanatory copy.
+ * A reader moving along the line still gets a box that stays on one baseline
+ * instead of one that swims. `pointer-events: none` so it can sit over the
+ * hover targets without stealing the hover that produced it.
  */
 .traffic-tip {
-  position: absolute; bottom: calc(100% + 8px); transform: translateX(-50%);
+  position: absolute; top: calc(var(--spark-height) / 2); transform: translate(-50%, -50%);
   z-index: 2; pointer-events: none; white-space: nowrap;
   padding: 6px 9px; border: 1px solid var(--line-strong); border-radius: 7px;
   background: var(--surface-raised, var(--surface)); color: var(--text-strong);

@@ -79,3 +79,11 @@ class ShapesTheIconRuleReaches(unittest.TestCase):
         )
         self.assertIn("stroke: none", rule)
         self.assertIn("fill: transparent", rule)
+
+    def test_the_traffic_tooltip_is_centred_inside_the_plot(self) -> None:
+        rule_at = self.stylesheet().index(".traffic-tip {")
+        rule = self.stylesheet()[rule_at : self.stylesheet().index("}", rule_at)]
+
+        self.assertIn("top: calc(var(--spark-height) / 2)", rule)
+        self.assertIn("translate(-50%, -50%)", rule)
+        self.assertNotIn("bottom:", rule)

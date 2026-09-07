@@ -674,30 +674,36 @@ def spark(
     runs: list[list[str]] = []
     current: list[str] = []
     points: list[Point] = []
+    bucket_width = width * bucket.total_seconds() / seconds
 
     for at, totals, measured in grid:
         value = totals.get("req_tot")
         position = min(max((at - start).total_seconds() / seconds, 0.0), 1.0)
         x = position * width
+        point_x = min(x + bucket_width / 2, width)
         if value is None:
-            if len(current) > 1:
+            if current:
                 runs.append(current)
             current = []
-            points.append(Point(at=at, x=x, y=height, value=0, reading=gap_at(at), measured=True))
+            points.append(
+                Point(at=at, x=point_x, y=height, value=0, reading=gap_at(at), measured=True)
+            )
             continue
         y = height if ceiling == 0 else height - (value / ceiling) * height
+        right = min(x + bucket_width, width)
         current.append(f"{'M' if not current else 'L'}{x:.1f} {y:.1f}")
+        current.append(f"L{right:.1f} {y:.1f}")
         points.append(
             Point(
                 at=at,
-                x=x,
+                x=point_x,
                 y=y,
                 value=value,
                 reading=reading_at(at, totals) if measured else unread_at(at),
                 measured=measured,
             )
         )
-    if len(current) > 1:
+    if current:
         runs.append(current)
 
     return [" ".join(run) for run in runs], points, peak

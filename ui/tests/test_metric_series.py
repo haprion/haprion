@@ -307,23 +307,28 @@ class DrawingTheShape(unittest.TestCase):
         paths, _, _ = self.drawn([1, 2, None, 4, 5], span=timedelta(seconds=60))
         self.assertEqual(len(paths), 2)
         self.assertTrue(all(path.startswith("M") for path in paths))
+        self.assertTrue(paths[0].endswith("L33.3 12.0"))
+        self.assertTrue(paths[1].startswith("M50.0 4.0"))
 
-    def test_a_single_known_point_draws_nothing(self) -> None:
-        """One point is not a line, and a dot would suggest a reading."""
+    def test_a_single_known_bucket_occupies_its_whole_width(self) -> None:
+        """A bucket is an interval, not a point at its left edge."""
 
         paths, points, _ = self.drawn([None, 7, None])
-        self.assertEqual(paths, [])
+        self.assertEqual(paths[0], "M25.0 2.5 L50.0 2.5")
         self.assertEqual([point.value for point in points if point.measured], [0, 7, 0])
 
     def test_an_empty_window_is_flat_on_the_baseline(self) -> None:
         paths, _, peak = self.drawn([0, 0, 0], span=timedelta(seconds=30))
         self.assertEqual(peak, 0)
-        self.assertEqual(paths, ["M0.0 20.0 L33.3 20.0 L66.7 20.0"])
+        self.assertEqual(
+            paths,
+            ["M0.0 20.0 L33.3 20.0 L33.3 20.0 L66.7 20.0 L66.7 20.0 L100.0 20.0"],
+        )
 
     def test_a_peak_already_round_touches_the_top(self) -> None:
         paths, _, peak = self.drawn([0, 10], span=timedelta(seconds=20))
         self.assertEqual(peak, 10)
-        self.assertEqual(paths, ["M0.0 20.0 L50.0 0.0"])
+        self.assertEqual(paths, ["M0.0 20.0 L50.0 20.0 L50.0 0.0 L100.0 0.0"])
 
     def test_a_peak_that_is_not_round_stops_below_it(self) -> None:
         """Which is the point of a ceiling: the height of the line means something.
@@ -335,14 +340,14 @@ class DrawingTheShape(unittest.TestCase):
         paths, _, peak = self.drawn([0, 7], span=timedelta(seconds=20))
         self.assertEqual(peak, 7)
         self.assertEqual(metrics.ceiling_for(peak), 8)
-        self.assertEqual(paths, ["M0.0 20.0 L50.0 2.5"])
+        self.assertEqual(paths, ["M0.0 20.0 L50.0 20.0 L50.0 2.5 L100.0 2.5"])
 
     def test_a_reading_sits_where_its_moment_sits(self) -> None:
         """The shape is read against the axis, not stretched to fill the card."""
 
         _, points, _ = self.drawn([1, 1], span=timedelta(seconds=200))
         placed = {round(point.x, 1): point for point in points if point.measured}
-        self.assertEqual(sorted(placed), [0.0, 5.0])
+        self.assertEqual(sorted(placed), [2.5, 7.5])
 
     def test_a_bucket_without_a_reading_rests_on_the_baseline(self) -> None:
         """One line across the whole window, on the maintainer's call.
@@ -362,7 +367,7 @@ class DrawingTheShape(unittest.TestCase):
         # the way to the window's end, rather than a line that stops.
         #
         self.assertTrue(paths[0].startswith("M0.0 "))
-        self.assertTrue(paths[0].endswith("L90.0 20.0"))
+        self.assertTrue(paths[0].endswith("L100.0 20.0"))
 
     def test_the_buckets_do_not_move_with_the_window(self) -> None:
         """The bug that drew a different sawtooth on every page load.
@@ -441,7 +446,8 @@ class DrawingTheShape(unittest.TestCase):
 
         paths, points, _ = self.drawn([1, 1, None, 1, 1], span=timedelta(seconds=60))
         self.assertEqual(len(paths), 2)
-        self.assertTrue(paths[1].startswith("M50.0"))
+        self.assertTrue(paths[0].endswith("L33.3 10.0"))
+        self.assertTrue(paths[1].startswith("M50.0 10.0"))
         gap = next(point for point in points if point.value == 0 and point.measured)
         self.assertRegex(gap.reading, r"^\d\d-\d\d-\d\d \d\d:\d\d:\d\d · data gap$")
         self.assertNotIn("not measured", gap.reading)

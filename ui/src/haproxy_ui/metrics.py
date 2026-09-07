@@ -765,6 +765,7 @@ def reading_at(at: datetime, totals: Mapping[str, int | None]) -> str:
 CARD_COUNTERS: tuple[tuple[str, str], ...] = (
     ("req_tot", "Requests"),
     ("hrsp_2xx", "2xx"),
+    ("hrsp_3xx", "3xx"),
     ("hrsp_4xx", "4xx"),
     ("hrsp_5xx", "5xx"),
     ("econ", "Connection errors"),

@@ -1302,7 +1302,12 @@ def build_router(config: Config) -> APIRouter:
                         "cluster": cluster,
                         "accent": accent_index(cluster),
                         "listeners": [
-                            (metrics.listening(name), owned, card)
+                            (
+                                metrics.listening(name),
+                                owned,
+                                card,
+                                metrics.listening(name).protocol == "http",
+                            )
                             for (name, owned), card in zip(
                                 seen,
                                 section(
@@ -1316,7 +1321,7 @@ def build_router(config: Config) -> APIRouter:
                         ],
                         #
                         # Pools and redirect answers are drawn apart and scaled
-                        # apart. A redirect has no servers and answers 301
+                        # apart. A redirect has no servers and answers 3xx
                         # itself, so letting it into the comparison would size
                         # every real pool against traffic that never reached
                         # one.

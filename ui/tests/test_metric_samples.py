@@ -109,7 +109,9 @@ class ThePoolFiguresQuery(unittest.TestCase):
         self.assertNotIn("date_bin", connection.statement)
         self.assertNotIn("width", connection.arguments)
         self.assertEqual(connection.arguments["raw_from"], at - timedelta(days=7))
-        self.assertEqual([total.value for total in measured.totals], [100, 200, 300, 400, 500, 600])
+        self.assertEqual(
+            [total.value for total in measured.totals], [100, 200, 300, 400, 500, 600, 700]
+        )
 
     def test_an_incomplete_rollup_moves_the_reader_back_to_retained_raw_data(self) -> None:
         at = datetime(2026, 9, 6, 12, tzinfo=UTC)

@@ -64,7 +64,9 @@
     </div>
     <dl class="traffic-figures">
       {% for total in pool.totals %}
+      {% if (traffic_redirect and total.label != '2xx') or (not traffic_redirect and total.label != '3xx') %}
       <div><dt>{{ total.label }}</dt><dd>{{ total.value }}{% if not total.whole %}<span class="traffic-partial" title="Counted over {{ total.coverage }}% of this window. The rest fell in intervals that could not be measured - a restart, the address moving to the other node, or a counter this node did not report - so it is missing from this figure rather than counted as nothing.">*</span>{% endif %}</dd></div>
+      {% endif %}
       {% endfor %}
     </dl>
   </div>

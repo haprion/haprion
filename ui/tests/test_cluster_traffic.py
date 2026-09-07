@@ -160,6 +160,21 @@ class WhatThePageSays(ReadingACluster):
         self.assertIn("protocol-https", text)
         self.assertIn("protocol-http", text)
 
+    def test_an_http_address_shows_3xx_where_the_other_addresses_show_2xx(self) -> None:
+        text = self.page().text  # type: ignore[attr-defined]
+        addresses = text.split("Addresses", 1)[1].split("Pools", 1)[0]
+        https_card = addresses.split('protocol-https">', 1)[1]
+        https = https_card[
+            https_card.index('<dl class="traffic-figures">') : https_card.index("</dl>")
+        ]
+        http_card = addresses.split('protocol-http">', 1)[1]
+        http = http_card[http_card.index('<dl class="traffic-figures">') : http_card.index("</dl>")]
+
+        self.assertIn("2xx", https)
+        self.assertNotIn("3xx", https)
+        self.assertIn("3xx", http)
+        self.assertNotIn("2xx", http)
+
     def test_a_name_that_does_not_fit_the_rule_is_kept_whole(self) -> None:
         """The generator's rule could change; renaming on a guess would be worse."""
 
@@ -196,6 +211,33 @@ class WhatThePageSays(ReadingACluster):
         self.assertNotIn("redirect-eee20480", pools)
         self.assertIn("Redirect answers", text)
         self.assertIn("shop-redirect-eee20480", text)
+
+    def test_a_redirect_answer_shows_response_classes_that_it_can_answer(self) -> None:
+        """Only the response class changes; the card keeps its other five figures."""
+
+        text = self.page().text  # type: ignore[attr-defined]
+        redirect_card = text.split("Redirect answers", 1)[1]
+        redirect = redirect_card[
+            redirect_card.index('<dl class="traffic-figures">') : redirect_card.index("</dl>")
+        ]
+
+        self.assertIn("Requests", redirect)
+        self.assertIn("3xx", redirect)
+        self.assertIn("4xx", redirect)
+        self.assertIn("5xx", redirect)
+        self.assertIn("Connection errors", redirect)
+        self.assertIn("Retries", redirect)
+        self.assertNotIn("2xx", redirect)
+
+    def test_a_regular_pool_keeps_2xx_and_does_not_gain_3xx(self) -> None:
+        text = self.page().text  # type: ignore[attr-defined]
+        pool_card = text.split("Pools", 1)[1].split("Redirect answers", 1)[0]
+        pools = pool_card[
+            pool_card.index('<dl class="traffic-figures">') : pool_card.index("</dl>")
+        ]
+
+        self.assertIn("2xx", pools)
+        self.assertNotIn("3xx", pools)
 
     def test_the_cluster_carries_its_own_accent(self) -> None:
         """Without it a card reads as belonging to whatever came above it."""

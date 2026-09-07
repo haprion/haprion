@@ -325,7 +325,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--web-user", required=True)
     parser.add_argument("--worker-user", required=True)
     parser.add_argument("--poller-user", required=True)
-    parser.add_argument("--clusters", required=True, nargs="+")
+    parser.add_argument("--clusters", required=True, nargs="*")
+    parser.add_argument("--environment", default="prod")
     parser.add_argument("--sudoers-root", type=Path, default=Path("/etc/sudoers.d"))
     parser.add_argument("--ui-release")
     parser.add_argument("--skip-database", action="store_true")
@@ -347,39 +348,42 @@ def main(argv: list[str] | None = None) -> int:
             else current_release(args.platform_root, "UI")
         )
         requirements = ui_requirements(ui_release)
-        cli_release = current_release(args.cli_root, "CLI")
-        installed_cli = cli_metadata(cli_release)
+        cli_release = current_release(args.cli_root, "CLI") if args.environment == "prod" else None
+        installed_cli = cli_metadata(cli_release) if cli_release is not None else None
     except CompatibilityError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
     print("\n== Releases")
     report.pass_("UI release", ui_release.name)
-    installed_engine_api = engine_api(installed_cli)
-    if installed_engine_api >= requirements.engine_api:
-        report.pass_("CLI release", f"{cli_release.name}, engine API {installed_engine_api}")
+    if cli_release is None or installed_cli is None:
+        report.pass_("development boundary", "no standalone CLI, helpers or nodes")
     else:
-        report.fail(
-            "CLI release",
-            f"{cli_release.name}, engine API {installed_engine_api}; "
-            f"requires {requirements.engine_api}",
-        )
-    installed_helpers = installed_entry_points(installed_cli)
-    required_helpers = set(requirements.worker_helpers + requirements.poller_helpers)
-    missing = sorted(required_helpers - installed_helpers)
-    if missing:
-        report.fail("CLI helpers", f"missing: {', '.join(missing)}")
-    else:
-        missing_files = sorted(
-            helper
-            for helper in required_helpers
-            if not (cli_release / "bin" / helper).is_file()
-            or not os.access(cli_release / "bin" / helper, os.X_OK)
-        )
-        if missing_files:
-            report.fail("CLI helpers", f"not executable: {', '.join(missing_files)}")
+        installed_engine_api = engine_api(installed_cli)
+        if installed_engine_api >= requirements.engine_api:
+            report.pass_("CLI release", f"{cli_release.name}, engine API {installed_engine_api}")
         else:
-            report.pass_("CLI helpers", f"{len(required_helpers)} required helpers installed")
+            report.fail(
+                "CLI release",
+                f"{cli_release.name}, engine API {installed_engine_api}; "
+                f"requires {requirements.engine_api}",
+            )
+        installed_helpers = installed_entry_points(installed_cli)
+        required_helpers = set(requirements.worker_helpers + requirements.poller_helpers)
+        missing = sorted(required_helpers - installed_helpers)
+        if missing:
+            report.fail("CLI helpers", f"missing: {', '.join(missing)}")
+        else:
+            missing_files = sorted(
+                helper
+                for helper in required_helpers
+                if not (cli_release / "bin" / helper).is_file()
+                or not os.access(cli_release / "bin" / helper, os.X_OK)
+            )
+            if missing_files:
+                report.fail("CLI helpers", f"not executable: {', '.join(missing_files)}")
+            else:
+                report.pass_("CLI helpers", f"{len(required_helpers)} required helpers installed")
 
     if args.upgrade_from_current and not args.ui_release:
         print("ERROR: --upgrade-from-current requires --ui-release", file=sys.stderr)
@@ -435,26 +439,32 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.skip_services:
         print("\n== Services")
-        for user in (args.worker_user, args.poller_user, args.web_user):
+        service_users = (
+            (args.worker_user, args.poller_user, args.web_user)
+            if args.environment == "prod"
+            else (args.web_user,)
+        )
+        for user in service_users:
             check_service(report, unit=f"{user}.service", release=ui_release)
 
     print("\n== Sudo rules")
-    check_sudoers(
-        report,
-        root=args.sudoers_root,
-        user=args.worker_user,
-        helpers=requirements.worker_helpers,
-        cli_root=args.cli_root,
-        label="worker sudoers",
-    )
-    check_sudoers(
-        report,
-        root=args.sudoers_root,
-        user=args.poller_user,
-        helpers=requirements.poller_helpers,
-        cli_root=args.cli_root,
-        label="poller sudoers",
-    )
+    if args.environment == "prod":
+        check_sudoers(
+            report,
+            root=args.sudoers_root,
+            user=args.worker_user,
+            helpers=requirements.worker_helpers,
+            cli_root=args.cli_root,
+            label="worker sudoers",
+        )
+        check_sudoers(
+            report,
+            root=args.sudoers_root,
+            user=args.poller_user,
+            helpers=requirements.poller_helpers,
+            cli_root=args.cli_root,
+            label="poller sudoers",
+        )
     web_rule = args.sudoers_root / args.web_user
     if web_rule.exists():
         report.fail("web sudoers", f"unexpected rule file {web_rule}")
@@ -462,11 +472,12 @@ def main(argv: list[str] | None = None) -> int:
         report.pass_("web sudoers", "no rule file")
 
     print("\n== Nodes")
-    helper = cli_release / "bin/haproxy-status-helper"
-    for cluster in args.clusters:
-        check_cluster_nodes(
-            report, cluster=cluster, helper=helper, required_api=requirements.node_api
-        )
+    if cli_release is not None:
+        helper = cli_release / "bin/haproxy-status-helper"
+        for cluster in args.clusters:
+            check_cluster_nodes(
+                report, cluster=cluster, helper=helper, required_api=requirements.node_api
+            )
 
     print()
     if report.failures:

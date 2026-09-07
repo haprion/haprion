@@ -61,8 +61,13 @@ for cluster in load(Path(sys.argv[1])).clusters:
     print(cluster)
 PY
 )" || die "cannot read clusters from the installed UI configuration"
-[[ -n "$cluster_lines" ]] || die "the installed UI configuration contains no clusters"
-mapfile -t clusters <<<"$cluster_lines"
+clusters=()
+if [[ -n "$cluster_lines" ]]; then
+    mapfile -t clusters <<<"$cluster_lines"
+fi
+
+environment="${ENVIRONMENT:-prod}"
+extra_args+=(--environment "$environment")
 
 exec "${python_root}/venv/bin/python" -m haproxy_ui.compatibility \
     --platform-root "$PLATFORM_ROOT" \

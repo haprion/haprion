@@ -44,6 +44,12 @@ class PreparedReleaseTests(unittest.TestCase):
         self.assertIn('extra_args+=(--ui-release "$release_id" --skip-services)', wrapper)
         self.assertIn("extra_args+=(--upgrade-from-current)", wrapper)
 
+    def test_the_development_platform_passes_its_boundary_to_the_check(self) -> None:
+        wrapper = (ROOT / "install/platform/check-compatibility").read_text()
+        self.assertIn('environment="${ENVIRONMENT:-prod}"', wrapper)
+        self.assertIn('extra_args+=(--environment "$environment")', wrapper)
+        self.assertNotIn("contains no clusters", wrapper)
+
 
 class CoordinatedUpdateTests(unittest.TestCase):
     update: str

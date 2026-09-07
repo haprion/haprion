@@ -87,23 +87,32 @@
       </div>
     </div>
     {#
-      What the figures answer for. Without it the row is a set of numbers whose
-      question changes under the reader - the window, a marked range, or the
-      bucket under the pointer - and three answers that look identical are
-      worse than one.
+      What the figures answer for, on its own line above them rather than
+      beside them. Without it the row is a set of numbers whose question
+      changes under the reader - the window, a marked range, or the bucket
+      under the pointer - and three answers that look identical are worse than
+      one.
+
+      Above rather than beside, because it is the one thing here that rewrites
+      itself: "the last 24 hours" becomes a timestamp and then a range, each
+      one longer than the last, and next to the figures every rewrite pushed
+      them sideways. On its own line it grows into space nothing else is
+      using.
     #}
-    <p class="traffic-scope">
-      <span class="traffic-scope-label">{% if traffic_range %}{{ traffic_range }}{% else %}{{ traffic_window }}{% endif %}</span>
-      {% if traffic_clear %}<a class="traffic-clear" href="{{ traffic_clear }}">clear</a>{% endif %}
-      <span class="traffic-scope-note"></span>
-    </p>
-    <dl class="traffic-figures">
-      {% for total in pool.totals %}
-      {% if (traffic_redirect and total.label != '2xx') or (not traffic_redirect and total.label != '3xx') %}
-      <div><dt>{{ total.label }}</dt><dd>{{ total.value }}{% if not total.whole %}<span class="traffic-partial" title="Counted over {{ total.coverage }}% of this window. The rest fell in intervals that could not be measured - a restart, the address moving to the other node, or a counter this node did not report - so it is missing from this figure rather than counted as nothing.">*</span>{% endif %}</dd></div>
-      {% endif %}
-      {% endfor %}
-    </dl>
+    <div class="traffic-readings">
+      <p class="traffic-scope">
+        <span class="traffic-scope-label">{% if traffic_range %}{{ traffic_range }}{% else %}{{ traffic_window }}{% endif %}</span>
+        {% if traffic_clear %}<a class="traffic-clear" href="{{ traffic_clear }}">clear</a>{% endif %}
+        <span class="traffic-scope-note"></span>
+      </p>
+      <dl class="traffic-figures">
+        {% for total in pool.totals %}
+        {% if (traffic_redirect and total.label != '2xx') or (not traffic_redirect and total.label != '3xx') %}
+        <div><dt>{{ total.label }}</dt><dd>{{ total.value }}{% if not total.whole %}<span class="traffic-partial" title="Counted over {{ total.coverage }}% of this window. The rest fell in intervals that could not be measured - a restart, the address moving to the other node, or a counter this node did not report - so it is missing from this figure rather than counted as nothing.">*</span>{% endif %}</dd></div>
+        {% endif %}
+        {% endfor %}
+      </dl>
+    </div>
   </div>
   {% else %}
   <p class="traffic-note">No samples yet.</p>

@@ -14,12 +14,24 @@
   // in the same place for every bucket - which is what makes two of them
   // comparable by eye - and nothing is covered by anything.
   //
-  // The `<title>` elements stay where they are. They are what a screen reader
-  // and a browser with this script blocked still find, and the row's own
-  // values are what the page renders without script.
+  // The `<title>` elements are removed as this script takes over, and only
+  // then. They are what a browser with the script blocked still shows, so they
+  // stay in the markup - but where the row is doing the work, the browser's own
+  // tooltip is the floating box this design removed, arriving a second late
+  // over the line it covers. Two answers to one hover, one of them the one that
+  // was ruled out.
   //
   const cards = document.querySelectorAll(".traffic-pool");
   if (!cards.length) return;
+
+  const HELD = "traffic-scroll:" + window.location.pathname;
+  try {
+    const held = sessionStorage.getItem(HELD);
+    sessionStorage.removeItem(HELD);
+    if (held !== null) window.scrollTo(0, Number(held));
+  } catch {
+    /* Nothing held, or storage refused. The page opens at the top as before. */
+  }
 
   for (const card of cards) {
     const svg = card.querySelector("svg");
@@ -28,6 +40,8 @@
     const note = card.querySelector(".traffic-scope-note");
     const picks = card.querySelectorAll(".traffic-pick");
     if (!svg || !row || !label || !picks.length) continue;
+
+    for (const title of svg.querySelectorAll("title")) title.remove();
 
     //
     // What the page was rendered with: the window's figures, or a marked
@@ -75,6 +89,18 @@
       pick.addEventListener("click", () => {
         const rect = pick.querySelector("rect");
         if (rect) rect.classList.add("traffic-picked");
+        //
+        // Marking a range is a navigation - the marks live in the address, so
+        // the browser loads a page and lands at the top of it, with the chart
+        // that was just clicked somewhere below the fold. The position is put
+        // back on the way in, so the second click leaves the reader looking at
+        // the same card as the first.
+        //
+        try {
+          sessionStorage.setItem(HELD, String(window.scrollY));
+        } catch {
+          /* Storage can be refused outright; the mark still works. */
+        }
       });
     }
     svg.addEventListener("pointerleave", restore);

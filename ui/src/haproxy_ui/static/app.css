@@ -1190,7 +1190,34 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .traffic-axis span { position: absolute; transform: translateX(-50%); color: var(--muted); font-size: 11px; white-space: nowrap; }
 .traffic-axis span:first-child { transform: none; }
 .traffic-axis span:last-child { transform: translateX(-100%); }
+/*
+ * The figures and the line that says what they answer for, as one column, so
+ * the label above them can change length without moving anything.
+ *
+ * A fixed width rather than one sized to its content, because the content is
+ * exactly what changes: the note beside the label - "Nothing was sampled for
+ * this bucket." - is written on a hover, and a block that grew to hold it took
+ * the width out of the drawing beside it. The line then redrew itself under
+ * the pointer, and the figures moved to a new left edge, on a card whose whole
+ * job is to hold two readings still enough to compare.
+ *
+ * 360px is what the three columns need at their widest heading ("Connection
+ * errors"); the note is given whatever is left over and clipped.
+ */
+.traffic-readings { display: flex; flex: 0 0 360px; min-width: 0; flex-direction: column; }
 .traffic-figures { display: grid; grid-template-columns: repeat(3, minmax(64px, auto)); gap: 14px 22px; margin: 0; flex: 0 0 auto; }
+/*
+ * B95 on the figures: a value that rewrites itself gets a box wide enough for
+ * its longest form. These columns are sized by their content, so 27115 makes a
+ * wider column than 618 - and every hover over a bucket therefore shifts the
+ * labels beside it sideways, under the pointer, while the reader is trying to
+ * compare two readings that are supposed to land in the same place.
+ *
+ * The reservation sits on the value rather than on the column, so a column
+ * whose heading is the wider of the two - "Connection errors" - keeps its own
+ * width and only the narrow ones are held open.
+ */
+.traffic-figures dd { min-width: 7ch; }
 .traffic-figures div { display: flex; flex-direction: column; gap: 2px; }
 .traffic-figures dt { color: var(--muted); font-size: 12px; }
 .traffic-figures dd { margin: 0; font-variant-numeric: tabular-nums; font-size: 18px; color: var(--text-strong); }
@@ -1217,7 +1244,12 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * script paints on a click while the page comes back. Stronger than the hover
  * highlight and weaker than the line: it is the ground a reading stands on.
  */
-.traffic-marked, .traffic-picked { fill: color-mix(in srgb, var(--info) 22%, transparent); }
+/* `stroke: none` for the same reason as the hit targets above: the base `svg`
+   rule dresses this app's icons and reaches every shape, so a band that only
+   sets its fill is drawn with a pale outline around each bucket - and a marked
+   range is one band per bucket, which turns the whole range into a picket
+   fence of white bars. Seen on a marked range on 2026-09-07. */
+.traffic-marked, .traffic-picked { fill: color-mix(in srgb, var(--info) 22%, transparent); stroke: none; }
 /* The click target itself carries no decoration - the band is the feedback,
    and an underline inside a chart is a line the reader has to learn to ignore. */
 .traffic-pick { cursor: pointer; outline: none; }
@@ -1228,9 +1260,31 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * the bucket under the pointer. Sized as a caption rather than as a heading -
  * it qualifies the numbers under it and the numbers are what is being read.
  */
-.traffic-scope { display: flex; align-items: baseline; gap: 8px; margin: 10px 0 2px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.traffic-scope-label { color: var(--text-strong); }
-.traffic-scope-note { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.traffic-scope { display: flex; flex-wrap: wrap; min-width: 0; align-items: baseline; gap: 2px 8px; margin: 0 0 10px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/*
+ * B95 again, on the line that says what the figures answer for. It carries
+ * three lengths - the window ("the last 24 hours"), one bucket's moment
+ * ("26-09-07 18:00:00") and a marked range ("26-09-07 12:20:00 -> 15:00:00") -
+ * and without a reserved width the `clear` link and the note beside it move
+ * every time the label is rewritten.
+ *
+ * 30ch holds the same-day range, which is the longest form in ordinary use; a
+ * range marked across midnight prints both dates and grows past it, and a
+ * label wider than its box is not what this rule exists for.
+ */
+/*
+ * B95 on the label: it is rewritten as the pointer moves - "the last 7 days"
+ * becomes a timestamp and then a marked range - and without a reserved width
+ * the `clear` link beside it steps sideways on every rewrite.
+ */
+.traffic-scope-label { min-width: 19ch; color: var(--text-strong); }
+/*
+ * The note a hover writes - why a bucket has no reading - on its own line under
+ * the label, with the line held open whether or not there is one. Beside the
+ * label it pushed `clear` along the row; taking the height only when it had
+ * something to say moved the figures underneath it up and down instead.
+ */
+.traffic-scope-note { flex: 1 0 100%; min-width: 0; min-height: 1.4em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .traffic-clear { color: var(--muted); }
 
 /*

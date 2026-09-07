@@ -11,8 +11,9 @@ import unittest
 from haproxy_mgmt.reservations import (
     ReservationError,
     Reservations,
+    fragment_digest,
     load_reservations,
-    unpromised_fragments,
+    review_fragments,
 )
 
 
@@ -135,42 +136,115 @@ class APortIsClaimedOnAnAddressOrOnAllOfThem(unittest.TestCase):
         self.assertIn("not a port number", str(raised.exception))
 
 
-class HandwrittenFragmentsNobodyWroteDown(unittest.TestCase):
-    """B86: an empty promise is as easy to leave behind as the collision is to make."""
+class HandwrittenFragmentsTheePromiseDoesNotCover(unittest.TestCase):
+    """L8: an old promise must not look exactly like a current one."""
+
+    STATS = b"listen stats\n"
+    LEGACY = b"frontend legacy\n"
 
     FILES = {
         "core/haproxy.cfg": b"global\n",
-        "core/conf.d/0010-stats.cfg": b"listen stats\n",
-        "manual/conf.d/0050-legacy.cfg": b"frontend legacy\n",
+        "core/conf.d/0010-stats.cfg": STATS,
+        "manual/conf.d/0050-legacy.cfg": LEGACY,
         "manual/reservations.yaml": b"{}\n",
     }
 
-    def test_fragments_are_named_when_nothing_at_all_is_reserved(self) -> None:
+    def _reviewed(self, **paths: bytes) -> bytes:
+        lines = "".join(
+            f"  {path.replace('__', '/').replace('_cfg', '.cfg')}: {fragment_digest(data)}\n"
+            for path, data in paths.items()
+        )
+        return f"reviewed:\n{lines}".encode()
+
+    ALL_REVIEWED = (
+        b"reviewed:\n"
+        b"  core/conf.d/0010-stats.cfg: " + fragment_digest(STATS).encode() + b"\n"
+        b"  manual/conf.d/0050-legacy.cfg: " + fragment_digest(LEGACY).encode() + b"\n"
+    )
+
+    def test_fragments_are_named_when_nothing_has_been_confirmed(self) -> None:
+        review = review_fragments(self.FILES, load_reservations(b"{}\n"))
+
         self.assertEqual(
-            unpromised_fragments(self.FILES, load_reservations(b"{}\n")),
+            review.unreviewed,
             ("core/conf.d/0010-stats.cfg", "manual/conf.d/0050-legacy.cfg"),
         )
 
     def test_both_handwritten_bands_are_watched_not_only_manual(self) -> None:
         """The collision that made this necessary came from a file in `core/`."""
 
-        found = unpromised_fragments(self.FILES, Reservations())
+        review = review_fragments(self.FILES, Reservations())
 
-        self.assertIn("core/conf.d/0010-stats.cfg", found)
+        self.assertIn("core/conf.d/0010-stats.cfg", review.unreviewed)
 
-    def test_it_goes_quiet_once_anything_is_reserved(self) -> None:
-        """Whether a promise is complete cannot be known without reading them."""
+    def test_reserving_something_no_longer_silences_the_rest(self) -> None:
+        """B86's rule went quiet here, which is the whole reason for L8."""
+
+        review = review_fragments(self.FILES, load_reservations(b"tcp_ports: [80]\n"))
+
+        self.assertEqual(len(review.unreviewed), 2)
+
+    def test_a_confirmed_fragment_is_quiet(self) -> None:
+        review = review_fragments(self.FILES, load_reservations(self.ALL_REVIEWED))
+
+        self.assertFalse(review)
+
+    def test_a_fragment_edited_after_confirmation_is_named(self) -> None:
+        """The failure the whole point rests on: a listener added afterwards."""
+
+        edited = dict(self.FILES)
+        edited["manual/conf.d/0050-legacy.cfg"] = b"frontend legacy\n  bind :8404\n"
+
+        review = review_fragments(edited, load_reservations(self.ALL_REVIEWED))
+
+        self.assertEqual(review.changed, ("manual/conf.d/0050-legacy.cfg",))
+        self.assertEqual(review.unreviewed, ())
+
+    def test_it_stays_loud_even_when_the_promise_is_not_empty(self) -> None:
+        """A filled-in reservations file must not hide a stale confirmation."""
+
+        edited = dict(self.FILES)
+        edited["core/conf.d/0010-stats.cfg"] = b"listen stats\n  bind :8405\n"
+        promise = b"tcp_ports: [8404]\n" + self.ALL_REVIEWED
 
         self.assertEqual(
-            unpromised_fragments(self.FILES, load_reservations(b"tcp_ports: [80]\n")), ()
+            review_fragments(edited, load_reservations(promise)).changed,
+            ("core/conf.d/0010-stats.cfg",),
         )
+
+    def test_a_confirmation_about_a_removed_fragment_is_named(self) -> None:
+        remaining = {"core/haproxy.cfg": b"global\n"}
+
+        review = review_fragments(remaining, load_reservations(self.ALL_REVIEWED))
+
         self.assertEqual(
-            unpromised_fragments(self.FILES, load_reservations(b"hostnames: [a.example.com]\n")), ()
+            review.vanished,
+            ("core/conf.d/0010-stats.cfg", "manual/conf.d/0050-legacy.cfg"),
         )
+        self.assertEqual(review.unreviewed, ())
 
     def test_a_cluster_with_no_fragments_says_nothing(self) -> None:
         """`core/haproxy.cfg` exists everywhere; counting it would fire every time."""
 
-        self.assertEqual(
-            unpromised_fragments({"core/haproxy.cfg": b"global\n"}, Reservations()), ()
-        )
+        self.assertFalse(review_fragments({"core/haproxy.cfg": b"global\n"}, Reservations()))
+
+    def test_a_confirmation_outside_the_fragment_directories_is_refused(self) -> None:
+        """A line that silences nothing must not read as though it did."""
+
+        with self.assertRaises(ReservationError) as raised:
+            load_reservations(b"reviewed:\n  core/haproxy.cfg: " + b"a" * 64 + b"\n")
+
+        self.assertIn("not a fragment", str(raised.exception))
+
+    def test_a_digest_that_is_not_a_sha256_is_refused(self) -> None:
+        with self.assertRaises(ReservationError) as raised:
+            load_reservations(b"reviewed:\n  manual/conf.d/a.cfg: notadigest\n")
+
+        self.assertIn("SHA-256", str(raised.exception))
+
+    def test_an_uppercase_digest_is_read_as_the_same_digest(self) -> None:
+        """`sha256sum` prints lowercase, but a person may paste either."""
+
+        promise = b"reviewed:\n  core/conf.d/a.cfg: " + fragment_digest(b"x").upper().encode()
+
+        self.assertFalse(review_fragments({"core/conf.d/a.cfg": b"x"}, load_reservations(promise)))

@@ -205,6 +205,9 @@ hostnames:
 tcp_ports:
   - 8443                 # every address this cluster has
   - 192.0.2.10:8443      # only that one
+reviewed:
+  # Each handwritten fragment, with the SHA-256 of the bytes you read.
+  core/conf.d/0010-stats.cfg: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
 ```
 
 A bare port and a port written `:8443` mean the same thing: claimed on every
@@ -215,10 +218,28 @@ cannot reserve anything without blocking every managed object on all the others.
 An IPv6 address is bracketed, `[2001:db8::1]:8443`, exactly as a bind line
 requires.
 
+`reviewed:` is what keeps the promise current. A reservation written once and
+never revisited looks exactly like a complete one, so a listener added to a
+fragment afterwards would be invisible. Naming each fragment together with the
+digest of what you read closes that: when the file changes, the digest stops
+matching and the next publish asks you to look again. Get the digest with
+`sha256sum core/conf.d/0010-stats.cfg`.
+
+Which files it covers is fixed, not a selection: everything under
+`core/conf.d/` and `manual/conf.d/`. Listing a fragment that reserves nothing is
+how you say you read it and it claims no listener — that confirmation is the
+point, not the reservations it did or did not produce. A confirmation for a file
+outside those directories, or a digest that is not SHA-256 hex, is refused
+rather than quietly ignored.
+
+It proves currency and that somebody looked. It does not prove the promise is
+complete — only reading the fragments could, and nothing here interprets
+handwritten HAProxy configuration.
+
 The file is seeded empty by step 1 and named in the operator editing policy by
 step 2. Empty is correct while nothing handwritten defines a listener; a publish
-says so when the cluster carries handwritten fragments and this file still
-reserves nothing.
+says so when the cluster carries handwritten fragments this file does not
+account for, and when a fragment has changed since it was confirmed.
 
 `core/haproxy.cfg` is the handwritten `global` and `defaults` for the cluster — the file every
 generated fragment is assembled behind. It must declare the TLS defaults every listener falls back

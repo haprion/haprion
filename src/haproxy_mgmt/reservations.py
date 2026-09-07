@@ -30,10 +30,27 @@ The bare form is the wider one on purpose. `bind :8404` binds every address the
 host carries, including whichever VIP a node happens to hold, so a handwritten
 line without an address really has taken the port everywhere. Reading a bare
 number as cluster-wide is therefore what that line means, not a convenience.
+
+A promise also has to be current. What a person wrote down describes the
+handwritten fragments as they read them, and nothing about the file says so:
+an old reservation and a complete one look alike, and a new listener can be
+added to a fragment without the promise moving. `reviewed:` closes that gap by
+naming each handwritten fragment together with the SHA-256 of the bytes that
+were read. When a fragment changes, its digest stops matching and the operator
+is asked to look again.
+
+It proves currency and that somebody looked, not that the promise is
+semantically complete - that would need the parser this project has decided
+not to write. Listing a fragment whose reservations are empty is the explicit
+way to say "I read this and it claims nothing", which is why the confirmation
+is per file and not a single digest over all of them: one digest could say
+that something changed, but never which file to go and read.
 """
 
 from __future__ import annotations
 
+import hashlib
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -54,6 +71,41 @@ RESERVATIONS_PATH = "manual/reservations.yaml"
 # Bounded like every other document that reaches a parser here.
 #
 MAX_RESERVATIONS_BYTES = 64 * 1024
+
+#
+# Where a handwritten listener can be defined. Both bands, not only `manual/`:
+# the collision that made this necessary came from `core/conf.d/0010-stats.cfg`,
+# and a rule that watched one of the two handwritten layers would have missed
+# the incident it was written for.
+#
+# `haproxy.cfg` and `maps/` are deliberately outside it. `core/haproxy.cfg`
+# exists in every cluster, so counting it would make the observation fire on
+# every publish - and an observation that always fires is one nobody reads.
+#
+# It is also the answer to which files a confirmation covers. A digest over an
+# arbitrary selection would move the problem rather than solve it, so the set
+# is named once, here, and both the promise and the check read it from here.
+#
+FRAGMENT_DIRECTORIES = ("core/conf.d/", "manual/conf.d/")
+
+#
+# Lowercase hex, the form `hashlib` produces and `sha256sum` prints.
+#
+DIGEST = re.compile(r"[0-9a-f]{64}")
+
+
+def fragment_digest(content: bytes) -> str:
+    """What a confirmation records about one handwritten fragment.
+
+    Over the exact bytes the version carries, so the answer is about what was
+    published rather than about a work tree somebody has since edited. Not a
+    security boundary - the fragment and the promise sit in the same repository
+    and anyone who can change one can change the other - so a plain content
+    digest is what the question needs: did this file move since a person read
+    it.
+    """
+
+    return hashlib.sha256(content).hexdigest()
 
 
 class ReservationError(ConfigError):
@@ -76,10 +128,26 @@ class Reservations:
     tcp_listeners: frozenset[tuple[str, int]] = frozenset()
     """Ports claimed on one address, as `(address, port)`."""
 
+    reviewed: frozenset[tuple[str, str]] = frozenset()
+    """Fragments a person has confirmed reading, as `(path, sha256)`.
+
+    A pair set rather than a mapping so the whole value stays hashable like
+    every other field here. The same path cannot appear twice - YAML would
+    not allow it and `_reviewed` refuses it anyway - so a lookup is exact.
+    """
+
     def claims(self, address: str, port: int) -> bool:
         """Whether the handwritten layer has this address and port."""
 
         return port in self.tcp_ports or (address, port) in self.tcp_listeners
+
+    def reviewed_digest(self, path: str) -> str | None:
+        """What was confirmed about this fragment, if anything was."""
+
+        for reviewed_path, digest in self.reviewed:
+            if reviewed_path == path:
+                return digest
+        return None
 
 
 #
@@ -118,13 +186,39 @@ def _load(document: bytes, location: str) -> Reservations:
         return Reservations()
 
     data = _mapping(loaded, location)
-    _only_keys(data, {"hostnames", "tcp_ports"}, location)
+    _only_keys(data, {"hostnames", "tcp_ports", "reviewed"}, location)
     ports, listeners = _claims(data.get("tcp_ports"), f"{location}.tcp_ports")
     return Reservations(
         hostnames=frozenset(_hostnames(data.get("hostnames"), f"{location}.hostnames")),
         tcp_ports=frozenset(ports),
         tcp_listeners=frozenset(listeners),
+        reviewed=frozenset(_reviewed(data.get("reviewed"), f"{location}.reviewed")),
     )
+
+
+def _reviewed(value: Any, location: str) -> list[tuple[str, str]]:
+    """`path: sha256` for each handwritten fragment somebody has read.
+
+    Paths are refused outside `FRAGMENT_DIRECTORIES`, because a confirmation
+    about a file the check never looks at is a line that silences nothing while
+    reading as though it did. A digest that is not a SHA-256 is refused for the
+    same reason: it can never match, so it would be a permanent complaint about
+    a file that may be perfectly fine.
+    """
+
+    if value is None:
+        return []
+    reviewed = []
+    for path, digest in _mapping(value, location).items():
+        if not isinstance(path, str) or not path.startswith(FRAGMENT_DIRECTORIES):
+            listed = " or ".join(FRAGMENT_DIRECTORIES)
+            raise ReservationError(
+                f"{location} names {path!r}, which is not a fragment under {listed}"
+            )
+        if not isinstance(digest, str) or not DIGEST.fullmatch(digest.strip().lower()):
+            raise ReservationError(f"{location}.{path} must be the SHA-256 of that file, in hex")
+        reviewed.append((path, digest.strip().lower()))
+    return reviewed
 
 
 def _claims(value: Any, location: str) -> tuple[list[int], list[tuple[str, int]]]:
@@ -225,36 +319,73 @@ def _hostnames(value: Any, location: str) -> list[str]:
     return names
 
 
-#
-# Where a handwritten listener can be defined. Both bands, not only `manual/`:
-# the collision that made this necessary came from `core/conf.d/0010-stats.cfg`,
-# and a rule that watched one of the two handwritten layers would have missed
-# the incident it was written for.
-#
-# `haproxy.cfg` and `maps/` are deliberately outside it. `core/haproxy.cfg`
-# exists in every cluster, so counting it would make the observation fire on
-# every publish - and an observation that always fires is one nobody reads.
-#
-FRAGMENT_DIRECTORIES = ("core/conf.d/", "manual/conf.d/")
+@dataclass(frozen=True, slots=True)
+class FragmentReview:
+    """What the promise fails to say about the handwritten fragments.
 
-
-def unpromised_fragments(files: Mapping[str, bytes], reservations: Reservations) -> tuple[str, ...]:
-    """Handwritten fragments present while the promise reserves nothing.
-
-    Not a parser, and it must not become one: `manual/` is read and never
-    interpreted, so this asks only which files exist and whether anybody wrote
-    anything down about them. Two frontends on one address bind it under
-    SO_REUSEPORT and split the traffic at random, and the reservation file is
-    the only thing standing between that and a publish that reports success -
-    but the file is a promise a person makes, and an empty promise is exactly
-    as easy to leave behind as the collision is to make.
-
-    Silent once anything at all is reserved. Whether the promise is *complete*
-    is a question only reading the fragments could answer, and reading them is
-    the thing this project has decided not to do; what can be said honestly is
-    that nobody has said anything yet.
+    Three questions rather than one flag, because the operator does something
+    different about each. Empty in all three is the quiet, correct state.
     """
 
-    if reservations.hostnames or reservations.tcp_ports or reservations.tcp_listeners:
-        return ()
-    return tuple(sorted(path for path in files if path.startswith(FRAGMENT_DIRECTORIES)))
+    unreviewed: tuple[str, ...] = ()
+    """Fragments present that nobody has confirmed reading."""
+
+    changed: tuple[str, ...] = ()
+    """Fragments confirmed once and edited since."""
+
+    vanished: tuple[str, ...] = ()
+    """Confirmations about fragments that are no longer in the version.
+
+    Worth saying, though it claims nothing dangerous on its own: it means the
+    reservations file still describes a file that is gone, and whatever that
+    file reserved may have been dropped or moved without the promise following.
+    """
+
+    def __bool__(self) -> bool:
+        return bool(self.unreviewed or self.changed or self.vanished)
+
+
+#
+# The quiet answer, built once and shared. Frozen, so sharing it is safe - the
+# same reason `NOTHING_RESERVED` is a module-level value rather than a call in
+# a default argument.
+#
+NOTHING_TO_REVIEW = FragmentReview()
+
+
+def review_fragments(files: Mapping[str, bytes], reservations: Reservations) -> FragmentReview:
+    """Whether the promise is current with the fragments it describes.
+
+    Not a parser, and it must not become one: `manual/` is read and never
+    interpreted, so this asks only which fragments exist and whether the person
+    who wrote the promise had read these exact bytes. Two frontends on one
+    address bind it under SO_REUSEPORT and split the traffic at random, and the
+    reservation file is the only thing standing between that and a publish that
+    reports success.
+
+    What replaced the earlier rule is why B86 was not enough. That one went
+    quiet the moment anything at all was reserved, so a promise written once and
+    never revisited looked exactly like a complete one, and a listener added to
+    a fragment afterwards was invisible. Comparing digests moves the question
+    from "has anybody said anything" to "did they say it about this version of
+    this file", which is the part a person can actually answer.
+
+    It still cannot say the promise is *complete*. Only reading the fragments
+    could, and reading them is the thing this project has decided not to do.
+    """
+
+    present = {path: data for path, data in files.items() if path.startswith(FRAGMENT_DIRECTORIES)}
+    unreviewed = []
+    changed = []
+    for path, data in present.items():
+        confirmed = reservations.reviewed_digest(path)
+        if confirmed is None:
+            unreviewed.append(path)
+        elif confirmed != fragment_digest(data):
+            changed.append(path)
+    vanished = [path for path, _ in reservations.reviewed if path not in present]
+    return FragmentReview(
+        unreviewed=tuple(sorted(unreviewed)),
+        changed=tuple(sorted(changed)),
+        vanished=tuple(sorted(vanished)),
+    )

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli import publish, publish_helper
+from haproxy_mgmt.reservations import fragment_digest
 from tests.test_publish_helper import (
     CORE_CFG,
     GENERATED,
@@ -154,7 +155,7 @@ class EndToEndTests(CallerFixture):
             self.assertIn("No changes to publish", output)
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
 
-    def test_handwritten_fragments_with_an_empty_promise_are_pointed_out(self) -> None:
+    def test_handwritten_fragments_nobody_has_confirmed_are_pointed_out(self) -> None:
         """B86: two frontends on one address bind it and split the traffic at random."""
 
         with tempfile.TemporaryDirectory() as raw:
@@ -163,11 +164,11 @@ class EndToEndTests(CallerFixture):
             code, output = self.run_caller(policy_path, "-c", "alpha", "A change")
 
             self.assertEqual(code, 0)
-            self.assertIn("reserves nothing", output)
+            self.assertIn("Not written down at all", output)
             self.assertIn("core/conf.d/0010-core.cfg", output)
 
-    def test_it_goes_quiet_once_the_promise_says_anything(self) -> None:
-        """Whether a promise is complete needs reading the fragments; this does not."""
+    def test_reserving_something_no_longer_silences_the_note(self) -> None:
+        """L8: an old promise must not look exactly like a current one."""
 
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))
@@ -175,7 +176,30 @@ class EndToEndTests(CallerFixture):
             code, output = self.run_caller(policy_path, "-c", "alpha", "A reservation")
 
             self.assertEqual(code, 0)
-            self.assertNotIn("reserves nothing", output)
+            self.assertIn("Not written down at all", output)
+
+    def test_a_confirmed_fragment_is_quiet_until_it_changes(self) -> None:
+        """The whole point: the note follows the bytes, not the file's existence."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            promise = (
+                b"reviewed:\n  core/conf.d/0010-core.cfg: "
+                + fragment_digest(CORE_CFG).encode()
+                + b"\n"
+            )
+            self.edit("manual/reservations.yaml", promise)
+            code, output = self.run_caller(policy_path, "-c", "alpha", "Read and confirmed")
+
+            self.assertEqual(code, 0)
+            self.assertNotIn("not current with", output)
+
+            self.edit("core/conf.d/0010-core.cfg", CORE_CFG + b"  option httplog\n")
+            code, output = self.run_caller(policy_path, "-c", "alpha", "Edited afterwards")
+
+            self.assertEqual(code, 0)
+            self.assertIn("Changed since somebody read them", output)
+            self.assertIn("core/conf.d/0010-core.cfg", output)
 
     def test_an_invalid_configuration_reaches_the_operator(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

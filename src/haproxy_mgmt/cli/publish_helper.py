@@ -31,7 +31,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Protocol, TextIO
@@ -92,9 +92,11 @@ from haproxy_mgmt.repo_snapshot import (
     resolve_head,
 )
 from haproxy_mgmt.reservations import (
+    NOTHING_TO_REVIEW,
     RESERVATIONS_PATH,
+    FragmentReview,
     load_reservations,
-    unpromised_fragments,
+    review_fragments,
 )
 from haproxy_mgmt.version_history import count_versions, with_request_trailer
 
@@ -209,12 +211,12 @@ class Refuse(Protocol):
     ) -> int: ...
 
 
-def _unpromised(files: Mapping[str, bytes]) -> tuple[str, ...]:
-    """Handwritten fragments nobody has written a reservation about.
+def _fragment_review(files: Mapping[str, bytes]) -> FragmentReview:
+    """Whether the promise is current with the handwritten fragments.
 
-    Reads the promise from the same tree the publish is built from, so the
-    answer describes the version being published rather than whatever happens
-    to be in the work tree.
+    Reads both the promise and the fragments from the same tree the publish is
+    built from, so the digests compared describe the version being published
+    rather than whatever happens to be in the work tree.
     """
 
     try:
@@ -226,8 +228,8 @@ def _unpromised(files: Mapping[str, bytes]) -> tuple[str, ...]:
         # be the one the operator sees, instead of a second, vaguer line about
         # the same file.
         #
-        return ()
-    return unpromised_fragments(files, reservations)
+        return NOTHING_TO_REVIEW
+    return review_fragments(files, reservations)
 
 
 def _result(
@@ -243,7 +245,7 @@ def _result(
     candidate_sha256: str | None = None,
     release: str | None = None,
     already_current: bool = False,
-    unpromised: Sequence[str] = (),
+    review: FragmentReview = NOTHING_TO_REVIEW,
 ) -> dict[str, Any]:
     """The frozen `publish` result.
 
@@ -282,11 +284,20 @@ def _result(
         #
         # An observation, not a refusal. The handwritten layer is read and
         # never interpreted, so nothing here knows whether these fragments
-        # actually collide - only that nobody has written down what they
-        # use. Refusing on that would block a cluster whose fragments are
-        # perfectly fine; saying it is what a person needs to hear.
+        # actually collide - only whether the promise about them is current.
+        # Refusing on that would block a cluster whose fragments are perfectly
+        # fine; saying it is what a person needs to hear.
         #
-        "unpromised_fragments": list(unpromised),
+        # Three lists rather than the single one B86 returned, because the
+        # operator does something different about each. Both halves of this
+        # command ship in one release and reach each other through
+        # `current/bin`, so the shape moves in step with its only reader.
+        #
+        "fragment_review": {
+            "unreviewed": list(review.unreviewed),
+            "changed": list(review.changed),
+            "vanished": list(review.vanished),
+        },
     }
 
 
@@ -498,7 +509,7 @@ def _publish(
                     cluster=request.cluster,
                     release=str(installed.release),
                     already_current=installed.already_current,
-                    unpromised=_unpromised(current_files),
+                    review=_fragment_review(current_files),
                 ),
             ),
         )
@@ -603,7 +614,7 @@ def _publish(
                 candidate_sha256=candidate.sha256,
                 release=str(installed.release),
                 already_current=installed.already_current,
-                unpromised=_unpromised(published_files),
+                review=_fragment_review(published_files),
             ),
         ),
     )

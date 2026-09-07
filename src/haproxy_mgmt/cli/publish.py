@@ -134,8 +134,8 @@ def _report_managed(repo: Path, writer: TextIO) -> None:
         )
 
 
-def _say_what_nobody_promised(writer: TextIO, result: dict[str, Any]) -> None:
-    """Handwritten fragments exist and the reservations file is empty.
+def _say_what_the_promise_misses(writer: TextIO, result: dict[str, Any]) -> None:
+    """The reservations file is not current with the handwritten fragments.
 
     Said, not refused. Nothing here has read the fragments - `manual/` is read
     and never interpreted - so this cannot know whether they collide with
@@ -146,19 +146,42 @@ def _say_what_nobody_promised(writer: TextIO, result: dict[str, Any]) -> None:
     report. Two frontends on one address both bind it under SO_REUSEPORT and
     the kernel splits new connections between them, so the publish succeeds and
     the node answers correctly for roughly half the traffic. The reservations
-    file is what prevents it, and an empty one is exactly as easy to leave
-    behind as the collision is to make.
+    file is what prevents it - and a promise written once and never revisited
+    looks exactly like a current one, which is the gap the digests close.
+
+    Each list gets its own sentence. "Nobody wrote this down" and "this changed
+    since somebody read it" are different situations, and one merged list would
+    leave the operator to work out which of the two they are in.
     """
 
-    fragments = result.get("unpromised_fragments")
-    if not isinstance(fragments, list) or not fragments:
+    review = result.get("fragment_review")
+    if not isinstance(review, dict):
         return
-    listed = "\n".join(f"    {path}" for path in fragments)
+
+    def listed(key: str) -> str | None:
+        paths = review.get(key)
+        if not isinstance(paths, list) or not paths:
+            return None
+        return "\n".join(f"    {path}" for path in paths)
+
+    unreviewed, changed, vanished = listed("unreviewed"), listed("changed"), listed("vanished")
+    if not (unreviewed or changed or vanished):
+        return
+
+    writer.write("Note: manual/reservations.yaml is not current with this cluster's\n")
+    writer.write("handwritten configuration.\n\n")
+    if unreviewed:
+        writer.write(f"Not written down at all:\n{unreviewed}\n\n")
+    if changed:
+        writer.write(f"Changed since somebody read them:\n{changed}\n\n")
+    if vanished:
+        writer.write(f"Written down but no longer present:\n{vanished}\n\n")
     writer.write(
-        "Note: this cluster carries handwritten configuration, and\n"
-        "manual/reservations.yaml reserves nothing.\n\n"
-        f"{listed}\n\n"
-        "If any of those bind an address or a hostname, write it down there.\n"
+        "If any of those bind an address or a hostname, write it down there, then\n"
+        "record what you read under `reviewed:`:\n\n"
+        "    reviewed:\n"
+        "      <path>: <sha256sum of that file>\n\n"
+        "Listing a fragment that reserves nothing is how you say you read it.\n"
         "Nothing reads them, so a collision would be found by its traffic.\n\n"
     )
 
@@ -233,11 +256,11 @@ def main(
 
     result = document.get("result") or {}
     if not result.get("changed"):
-        _say_what_nobody_promised(writer, result)
+        _say_what_the_promise_misses(writer, result)
         writer.write(f"No changes to publish for cluster '{cluster_id}'.\n")
         return 0
 
-    _say_what_nobody_promised(writer, result)
+    _say_what_the_promise_misses(writer, result)
     writer.write(
         "HAProxy configuration OK.\n\n"
         f"Cluster '{cluster_id}' is published.\n\n"

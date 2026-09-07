@@ -15,6 +15,7 @@ from __future__ import annotations
 import ast
 import re
 import unittest
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -53,8 +54,26 @@ class PoolTotalConnection:
                 return (self.owner.complete_before,)
             return self.owner.row
 
-    def __init__(self, row: tuple[object, ...], *, complete_before: datetime | None = None) -> None:
+        def fetchall(self) -> list[tuple[object, ...]]:
+            """For the readers that return a set of rows rather than one.
+
+            The listing queries and the bucketed reads take this path; the
+            aggregates take `fetchone`. One fake serves both so a test does not
+            have to know which, which is also how a reader that changed shape
+            would be caught here rather than in a page.
+            """
+
+            return list(self.owner.rows)
+
+    def __init__(
+        self,
+        row: tuple[object, ...],
+        *,
+        complete_before: datetime | None = None,
+        rows: Sequence[tuple[object, ...]] = (),
+    ) -> None:
         self.row = row
+        self.rows = rows
         self.complete_before = complete_before
         self.statement = ""
         self.statements: list[str] = []
@@ -441,3 +460,116 @@ class WhatTheRetentionCommandKeeps(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheListenerQueriesReadWhatTheyClaimTo(unittest.TestCase):
+    """The newest reader in the phase, and the one nothing executed.
+
+    Its pool counterpart has had this since the raw chain was built; this half
+    was mocked wherever it appeared, so a difference between the two reached
+    production as a number on a page. The 2026-09-07 review found exactly that:
+    the listener query collapsed its buckets across nodes where the pool query
+    does not, and an address moving inside one bucket then reported a node's
+    lifetime counter as that bucket's traffic.
+    """
+
+    AT = datetime(2026, 9, 7, 12, tzinfo=UTC)
+
+    def figures(self) -> PoolTotalConnection:
+        pairs: list[object] = []
+        for index, _counter in enumerate(CARD_COUNTERS, start=1):
+            pairs.extend((index * 10, 60.0))
+        return PoolTotalConnection((2, self.AT, self.AT, False, False, 60.0, 60.0, *pairs))
+
+    def test_the_figures_read_one_raw_table_and_no_rollup(self) -> None:
+        """Listeners have none, so there is no boundary to meet wrongly."""
+
+        connection = self.figures()
+
+        db.read_listener_totals(
+            connection,  # type: ignore[arg-type]
+            cluster="alpha",
+            frontend="mgd-vip-int-https",
+            since=self.AT - timedelta(days=1),
+            until=self.AT,
+        )
+
+        self.assertIn("metric_listener", connection.statement)
+        self.assertNotIn("metric_pool_hour", connection.statement)
+        self.assertNotIn("raw_from", connection.arguments)
+
+    def test_the_figures_are_the_holding_node_s(self) -> None:
+        connection = self.figures()
+
+        db.read_listener_totals(
+            connection,  # type: ignore[arg-type]
+            cluster="alpha",
+            frontend="mgd-vip-int-https",
+            since=self.AT - timedelta(days=1),
+            until=self.AT,
+        )
+
+        self.assertIn("owns_vip", connection.statement)
+
+    def test_every_bucket_is_per_node_exactly_as_the_pool_query_is(self) -> None:
+        """The 2026-09-07 finding: collapsing across nodes invents a restart.
+
+        An address that moves away and back inside one bucket leaves the other
+        machine's low uptime as the floor while the kept row is the original
+        node - a restart with no change of author, which the reader answers
+        with that node's cumulative counter.
+        """
+
+        connection = PoolTotalConnection(())
+
+        db.read_listener_samples(
+            connection,  # type: ignore[arg-type]
+            cluster="alpha",
+            frontend="mgd-vip-int-https",
+            since=self.AT - timedelta(days=1),
+            until=self.AT,
+            width=timedelta(minutes=10),
+        )
+
+        self.assertIn("distinct on (node, bucket)", connection.statement)
+        self.assertIn("partition by node", connection.statement)
+
+    def test_the_listing_asks_which_addresses_were_seen_not_which_were_held(self) -> None:
+        """`owns_vip` is nullable, and null is "this node could not say".
+
+        Filtering the list by it removed the whole address from the page while
+        its rows sat in the table - and went quiet during the total outage this
+        page exists to diagnose.
+        """
+
+        connection = PoolTotalConnection(())
+
+        db.read_cluster_listeners(
+            connection,  # type: ignore[arg-type]
+            cluster="alpha",
+            since=self.AT - timedelta(days=1),
+            until=self.AT,
+        )
+
+        listing = connection.statement
+        self.assertIn("bool_or(owns_vip)", listing)
+        self.assertNotIn("and owns_vip and", listing)
+
+    def test_both_aggregates_return_the_same_columns_in_the_same_order(self) -> None:
+        """`_measurement` unpacks both by position, so a drift is silent.
+
+        The two builders are deliberate copies - one reads a rollup half and
+        the other cannot - and a comment saying they must match is not a thing
+        that fails. This is.
+        """
+
+        pool = str(db._pool_totals())
+        listener = str(db._listener_totals())
+        tail = "select count(*)::bigint, min(started_at), max(ended_at), "
+
+        self.assertIn(tail, pool)
+        self.assertIn(tail, listener)
+        self.assertEqual(
+            pool.split(tail, 1)[1].split(" from differences", 1)[0],
+            listener.split(tail, 1)[1].split(" from differences", 1)[0],
+        )

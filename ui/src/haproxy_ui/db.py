@@ -1778,25 +1778,36 @@ def _bucketed_listener(width: timedelta) -> sql.Composed:
     machine exactly as it hands a pool's, and `intervals` marks that stretch as
     a change of author rather than differencing one machine's counter against
     another's.
+
+    **Every bucket is per node**, exactly as the pool query's is, and that is
+    load-bearing rather than symmetry for its own sake. Collapsing to one row
+    per bucket looked safe while only the owner is read - and is not. An
+    address that moves away and back inside one bucket leaves the *other*
+    machine's low uptime as the bucket's floor while the kept row is the
+    original node, so the reader sees a restart with no change of author and
+    reports the node's cumulative counter as this bucket's traffic. Measured
+    2026-09-07: 5 000 400 requests where 400 had passed. Keeping both nodes'
+    rows makes it what it is - two handovers, refused.
     """
 
     columns = sql.SQL(", ").join(sql.Identifier(name) for name in metrics.METRIC_COUNTERS)
     return sql.SQL(
-        "select distinct on (bucket) bucket as at, observed_at, uptime_sec, "
+        "select distinct on (node, bucket) bucket as at, observed_at, uptime_sec, "
         "       floor_uptime_sec, node, {columns} "
         "  from ( "
         "       select date_bin(%(width)s, observed_at, timestamptz '2000-01-01') as bucket, "
         "              observed_at, uptime_sec, node, {columns}, "
         "              min(uptime_sec) over ( "
-        "                  partition by date_bin("
-        "                      %(width)s, observed_at, timestamptz '2000-01-01')"
+        "                  partition by node, "
+        "                               date_bin("
+        "                                   %(width)s, observed_at, timestamptz '2000-01-01')"
         "              ) as floor_uptime_sec "
         "         from metric_listener "
         "        where cluster = %(cluster)s and frontend = %(frontend)s "
         "          and owns_vip and observed_at >= %(since)s "
         "          and observed_at <= %(until)s "
         "       ) as bucketed "
-        " order by bucket, observed_at desc"
+        " order by node, bucket, observed_at desc"
     ).format(columns=columns)
 
 
@@ -1839,24 +1850,41 @@ def read_listener_samples(
 
 def read_cluster_listeners(
     connection: Connection[Any], *, cluster: str, since: datetime, until: datetime
-) -> list[str]:
-    """Which VIP frontends this cluster has readings for.
+) -> list[tuple[str, bool]]:
+    """Which VIP frontends this cluster saw, and whether any node held each.
 
     Asked of the samples rather than of the configuration, because the card is
     history: a listener removed yesterday still has a window worth reading, and
-    one added this morning has nothing to show whatever the document says. The
-    page is about what was observed.
+    one added this morning has nothing to show whatever the document says.
+
+    **Existing and being held are two questions, and asking them as one hid
+    rows the table had.** `owns_vip` is `boolean` and nullable: false is "this
+    node did not hold the address", and null is "this node could not say" - an
+    older status script, or a `vip` block that would not read. `where
+    owns_vip` is false for null, so filtering the list by it removed the whole
+    address from the page while its rows sat in the table, and the page then
+    said it had no samples. It also went blank during a total outage, when
+    nothing holds the address at all - which is the one moment this page is
+    opened.
+
+    So the address is listed whenever anything was recorded for it, and
+    ownership travels beside it as its own answer. The card is still drawn from
+    the owner's readings; what changed is that an address with none of them
+    says so instead of vanishing.
+
+    This is also what reads the non-owning node's rows. They are written every
+    poll, and until now nothing looked at them.
     """
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "select distinct frontend from metric_listener "
-            " where cluster = %(cluster)s and owns_vip "
+            "select frontend, coalesce(bool_or(owns_vip), false) from metric_listener "
+            " where cluster = %(cluster)s "
             "   and observed_at >= %(since)s and observed_at <= %(until)s "
-            " order by frontend",
+            " group by frontend order by frontend",
             {"cluster": cluster, "since": since, "until": until},
         )
-        return [row[0] for row in cursor.fetchall()]
+        return [(row[0], bool(row[1])) for row in cursor.fetchall()]
 
 
 def read_cluster_pools(

@@ -79,7 +79,7 @@ def measurement(intervals: int = 2) -> metrics.PoolMeasurement:
 class ReadingACluster(LoginTestCase):
     """Every database call the page makes, answered with a known shape."""
 
-    listeners: list[str] = ["mgd-vip-int-https", "mgd-vip-int-http"]
+    listeners: list[tuple[str, bool]] = [("mgd-vip-int-https", True), ("mgd-vip-int-http", True)]
     pools: list[str] = ["mgd-shop-web", "mgd-shop-api", "mgd-shop-redirect-eee20480"]
 
     def setUp(self) -> None:
@@ -163,7 +163,7 @@ class WhatThePageSays(ReadingACluster):
     def test_a_name_that_does_not_fit_the_rule_is_kept_whole(self) -> None:
         """The generator's rule could change; renaming on a guess would be worse."""
 
-        self.listeners = ["something-handwritten"]
+        self.listeners = [("something-handwritten", True)]
 
         self.assertIn("something-handwritten", self.page().text)  # type: ignore[attr-defined]
 
@@ -343,3 +343,39 @@ backends:
 
     def test_a_route_that_sends_to_a_pool_is_not_one(self) -> None:
         self.assertEqual(len(self.targets()), 1)
+
+
+class AnAddressNobodyReportedHolding(ReadingACluster):
+    """`owns_vip` is nullable, and null is "this node could not say".
+
+    Filtering the listing by it removed the address from the page while its
+    rows sat in the table, and the page then said it had no samples. It also
+    went blank during a total outage - the one moment this page is opened.
+    """
+
+    def test_the_address_is_still_listed(self) -> None:
+        self.listeners = [("mgd-vip-int-https", False)]
+
+        text = self.page().text  # type: ignore[attr-defined]
+
+        self.assertIn(">vip-int<", text)
+        self.assertNotIn("No address samples in this window", text)
+
+    def test_it_says_what_is_missing_rather_than_drawing_a_line(self) -> None:
+        self.listeners = [("mgd-vip-int-https", False)]
+
+        text = self.page().text  # type: ignore[attr-defined]
+
+        self.assertIn("No node reported holding this address", text)
+
+    def test_an_address_that_was_held_is_drawn_as_before(self) -> None:
+        self.listeners = [("mgd-vip-int-https", True)]
+
+        self.assertIn("traffic-spark", self.page().text)  # type: ignore[attr-defined]
+
+
+class TheCardsBehaveTheSameOnBothPages(ReadingACluster):
+    def test_the_cluster_view_loads_the_tooltip_script_the_object_page_does(self) -> None:
+        """Shared markup promised shared behaviour and delivered half of it."""
+
+        self.assertIn("traffic.js", self.page().text)  # type: ignore[attr-defined]

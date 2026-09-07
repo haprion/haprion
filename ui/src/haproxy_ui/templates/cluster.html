@@ -1,6 +1,13 @@
 {% extends "layout.html" %}
 {% block title %}Traffic — HAProxy Manager{% endblock %}
 {% block content %}
+{#
+  The card's tooltip. The markup is shared with the object page, and so is the
+  behaviour: without this the readings fall back to the browser's own `<title>`
+  tooltip, which waits about a second - on the page carrying the most cards and
+  the one where reading means moving along the lines to compare them.
+#}
+<script defer src="{{ url_for('static', path='/traffic.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
   <div class="heading-title">
     <h1>Traffic</h1>
@@ -35,7 +42,7 @@
     <h4 class="traffic-section">Addresses</h4>
     <p class="traffic-note-lede">What arrived at each VIP. An <code>http</code> line exists where a site redirects plain http to https: that redirect is served by a real listener on port 80, and this is the traffic it turned away.</p>
     {% if view.listeners %}
-    {% for named, pool in view.listeners %}
+    {% for named, owned, pool in view.listeners %}
     {#
       The head is written here rather than by the card, because a VIP is named
       by two facts and the card knows one string. The protocol sits beside the
@@ -45,7 +52,18 @@
     <div class="traffic-head">
       <code class="traffic-backend">{{ named.vip }}</code>{% if named.known %} <span class="protocol-badge protocol-{{ named.protocol }}">{{ named.protocol | upper }}</span>{% endif %}
     </div>
+    {#
+      An address that was seen but that no node reported holding. Said rather
+      than left off the page: the readings are drawn from the node that holds
+      the address, so without one there is nothing to draw - and going quiet
+      here would be going quiet in precisely the situation this page is opened
+      for.
+    #}
+    {% if not owned %}
+    <p class="traffic-note">No node reported holding this address in this window, so there is nothing to draw from. Rows for the listener exist; what is missing is who was serving it.</p>
+    {% else %}
     {% with traffic_named = false %}{% include "_traffic-card.html" %}{% endwith %}
+    {% endif %}
     {% endfor %}
     {% else %}
     <p class="traffic-note">No address samples in this window.</p>

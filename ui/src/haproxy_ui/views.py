@@ -1288,16 +1288,23 @@ def build_router(config: Config) -> APIRouter:
                 backends = db.read_cluster_pools(
                     connection, cluster=cluster, since=since, until=now
                 )
-                listeners = db.read_cluster_listeners(
+                #
+                # Name and ownership apart: an address nobody reported holding
+                # is still an address this cluster saw, and it says so on its
+                # own card rather than being left off the page.
+                #
+                seen = db.read_cluster_listeners(
                     connection, cluster=cluster, since=since, until=now
                 )
+                listeners = [frontend for frontend, _owned in seen]
                 drawn.append(
                     {
                         "cluster": cluster,
                         "accent": accent_index(cluster),
-                        "listeners": list(
-                            zip(
-                                [metrics.listening(name) for name in listeners],
+                        "listeners": [
+                            (metrics.listening(name), owned, card)
+                            for (name, owned), card in zip(
+                                seen,
                                 section(
                                     listeners,
                                     listener_samples,
@@ -1306,7 +1313,7 @@ def build_router(config: Config) -> APIRouter:
                                 ),
                                 strict=True,
                             )
-                        ),
+                        ],
                         #
                         # Pools and redirect answers are drawn apart and scaled
                         # apart. A redirect has no servers and answers 301

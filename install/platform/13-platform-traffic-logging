@@ -140,10 +140,15 @@ config="${PLATFORM_ROOT}/config/ui.toml"
 section="$(sed -n '/^\[traffic_logs\]$/,/^\[/p' "$config")"
 disabled_count="$(grep -c '^enabled = false$' <<<"$section" || true)"
 enabled_count="$(grep -c '^enabled = true$' <<<"$section" || true)"
-if [[ "$disabled_count" == 1 && "$enabled_count" == 0 ]]; then
+section_count="$(grep -c '^\[traffic_logs\]$' "$config" || true)"
+if [[ "$section_count" == 0 ]]; then
+    printf '\n[traffic_logs]\nenabled = true\ndirectory = "%s/data/logs"\nmax_lines = 500\n' \
+        "$PLATFORM_ROOT" >> "$config"
+    log "  added    traffic_logs"
+elif [[ "$section_count" == 1 && "$disabled_count" == 1 && "$enabled_count" == 0 ]]; then
     sed -i '/^\[traffic_logs\]$/,/^\[/ s/^enabled = false$/enabled = true/' "$config"
     log "  enabled  traffic_logs"
-elif [[ "$enabled_count" == 1 && "$disabled_count" == 0 ]]; then
+elif [[ "$section_count" == 1 && "$enabled_count" == 1 && "$disabled_count" == 0 ]]; then
     log "  ok       traffic_logs already enabled"
 else
     die "enable [traffic_logs] explicitly in ${config}; its current shape was not rewritten"

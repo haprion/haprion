@@ -1,0 +1,310 @@
+#!/bin/bash
+#
+# Platform step 13 - mirror each node's traffic log onto the manager.
+#
+#     sudo ./13-platform-traffic-collector <answers-file>
+#
+# Creates the collector's own directories, its SSH identity, the pinned
+# known_hosts it is allowed to trust, the inventory-derived configuration and
+# the timer that runs it. It contacts no node: pinning reuses the host keys the
+# management host already accepted for its other forced commands.
+#
+# Optional, and last on purpose. Nothing else on the platform depends on it, and
+# an installation that does not want a second log stream simply does not run it.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars PLATFORM_ROOT WEB_USER WORKER_USER POLLER_USER COLLECTOR_USER LOGREAD_USER \
+             CLUSTERS DB_NAME
+ENVIRONMENT="${ENVIRONMENT:-prod}"
+
+valid_abs_path "$PLATFORM_ROOT" || die "not an absolute path without '..': ${PLATFORM_ROOT}"
+valid_id "$COLLECTOR_USER" || die "invalid collector account: ${COLLECTOR_USER}"
+valid_id "$LOGREAD_USER" || die "invalid node traffic log account: ${LOGREAD_USER}"
+
+#
+# Decided in the pull plan, not a preference. A development platform is built
+# not to reach the real nodes; giving it a key and an inventory would undo the
+# one property that makes it safe to rehearse against.
+#
+[[ "$ENVIRONMENT" == "prod" ]] \
+    || die "the traffic collector is production-only; ENVIRONMENT is ${ENVIRONMENT}"
+
+for role in "$WEB_USER" "$WORKER_USER" "$POLLER_USER" "$COLLECTOR_USER"; do
+    id -u "$role" >/dev/null 2>&1 \
+        || die "service account ${role} does not exist. Render and apply the
+  sysusers fragment first: haproxy-render-sysusers --policy <file>"
+done
+for role in "$WEB_USER" "$WORKER_USER" "$POLLER_USER"; do
+    [[ "$COLLECTOR_USER" != "$role" ]] \
+        || die "COLLECTOR_USER must be distinct from the other service accounts"
+done
+
+IDENTITY_DIR="/etc/haproxy-manager/traffic-collector"
+COLLECTOR_KEY="${IDENTITY_DIR}/id_ed25519"
+COLLECTOR_KNOWN_HOSTS="${IDENTITY_DIR}/known_hosts"
+COLLECTOR_CONFIG="/etc/haproxy-manager/traffic-collector.json"
+LOG_ROOT="${PLATFORM_ROOT}/logs"
+MIRROR="${LOG_ROOT}/mirror"
+STAGING="${LOG_ROOT}/staging"
+ROOT_KNOWN_HOSTS="${ROOT_KNOWN_HOSTS:-/root/.ssh/known_hosts}"
+UNIT="haproxy-ui-traffic-collector"
+
+step "Where the mirror lives"
+
+#
+# A sibling of data/, not a directory inside it. Reaching a mirror under
+# data/logs would mean opening data/ for traversal by the web account, and
+# data/dumps holds every session and every audit record in one file. B123.
+#
+ensure_dir "$LOG_ROOT" root:root 755
+
+#
+# 2750, and the set-group-id bit is what makes this work at all. The collector
+# is deliberately not a member of the web account's group, so it cannot create a
+# file in that group - letting the directory decide the group is what gives the
+# web account read access without giving the collector anything.
+#
+ensure_dir "$MIRROR" "${COLLECTOR_USER}:${WEB_USER}" 2750
+
+#
+# The staging area is the collector's alone. It holds the per-day parts a run
+# assembles from, which are partial by definition; nothing else has a reason to
+# read a file that may be half a fetch old.
+#
+ensure_dir "$STAGING" "${COLLECTOR_USER}:${COLLECTOR_USER}" 700
+
+step "The collector's identity"
+
+ensure_dir "$IDENTITY_DIR" "${COLLECTOR_USER}:root" 500
+
+#
+# Generated here and never anywhere else, and owned by the collector rather than
+# by root. That is a deliberate departure from the pattern where root owns every
+# key: the collector never runs as root, so a root-owned key would have to be
+# opened by something that does - and the whole point is that no privileged
+# process takes part in moving data a compromised node controls.
+#
+if [[ -f "$COLLECTOR_KEY" ]]; then
+    log "  ok       ${COLLECTOR_KEY}"
+else
+    ssh-keygen -t ed25519 -N "" -C "haproxy-manager traffic collector" -f "$COLLECTOR_KEY" >/dev/null
+    log "  created  ${COLLECTOR_KEY}"
+fi
+chown "${COLLECTOR_USER}:root" "$COLLECTOR_KEY" "${COLLECTOR_KEY}.pub"
+chmod 400 "$COLLECTOR_KEY"
+chmod 444 "${COLLECTOR_KEY}.pub"
+
+step "Host keys this identity may trust"
+
+#
+# Copied from the host keys the management host already accepted for its
+# configuration, certificate and status paths - not scanned from the network.
+#
+# ssh-keyscan would ask each node who it is and believe the answer, which is
+# trust on first use wearing a pinning costume. A successful DNS lookup is not
+# an identity. If a node is missing here, the honest fix is to accept it once
+# through the path that already exists, deliberately, and run this again.
+#
+[[ -r "$ROOT_KNOWN_HOSTS" ]] \
+    || die "${ROOT_KNOWN_HOSTS} is missing; accept the nodes' host keys through the existing
+  management path first, then run this step again"
+
+pinned="$(mktemp)"
+trap 'rm -f "$pinned"' EXIT
+missing=""
+count=0
+while read -r cluster; do
+    nodes="$(cluster_value NODES "$cluster")"
+    [[ -n "$nodes" ]] || die "NODES_${cluster} is not set in the answers file"
+    for entry in $nodes; do
+        host="$(node_host "$entry")"
+        if lines="$(ssh-keygen -F "$host" -f "$ROOT_KNOWN_HOSTS" 2>/dev/null | grep -v '^#')" \
+            && [[ -n "$lines" ]]; then
+            printf '%s\n' "$lines" >> "$pinned"
+            count=$((count + 1))
+        else
+            missing+=" ${host}"
+        fi
+    done
+done < <(each_cluster)
+
+[[ -z "$missing" ]] \
+    || die "no pinned host key in ${ROOT_KNOWN_HOSTS} for:${missing}
+  Accept each one once from this host, deliberately, then run this step again:
+    ssh -o StrictHostKeyChecking=ask <node> true"
+
+install -o root -g "$COLLECTOR_USER" -m 640 "$pinned" "$COLLECTOR_KNOWN_HOSTS"
+log "  installed ${COLLECTOR_KNOWN_HOSTS}  (${count} node(s), copied not scanned)"
+
+step "Configuration from the inventory"
+
+#
+# The manager decides which node a fetch is written under. Nothing a node
+# answers picks a local path, so a compromised node can lie about its own
+# traffic and about nothing else.
+#
+#
+# The inventory is assembled here, in the same helpers every other step reads it
+# with, and handed over as arguments. The answers file is shell rather than
+# environment, and exporting all of it into a child process to pass six values
+# would put every deployment secret in that process's environment.
+#
+inventory=()
+while read -r cluster; do
+    for entry in $(cluster_value NODES "$cluster"); do
+        inventory+=("${cluster}:$(node_name "$entry"):$(node_host "$entry")")
+    done
+done < <(each_cluster)
+[[ ${#inventory[@]} -gt 0 ]] || die "no nodes are defined in the answers file"
+
+config="$(/usr/bin/python3 - "$LOGREAD_USER" "$COLLECTOR_KEY" "$COLLECTOR_KNOWN_HOSTS" \
+    "$MIRROR" "$STAGING" "${inventory[@]}" <<'PY'
+import json
+import sys
+
+user, key, known_hosts, mirror, staging = sys.argv[1:6]
+nodes = []
+for entry in sys.argv[6:]:
+    cluster, name, host = entry.split(":", 2)
+    nodes.append({"cluster": cluster, "node": name, "host": host})
+print(
+    json.dumps(
+        {
+            "schema_version": 1,
+            "user": user,
+            "key": key,
+            "known_hosts": known_hosts,
+            "mirror": mirror,
+            "staging": staging,
+            "nodes": nodes,
+        },
+        indent=2,
+        sort_keys=True,
+    )
+)
+PY
+)"
+install_file "$COLLECTOR_CONFIG" "root:${COLLECTOR_USER}" 640 "$config"
+
+#
+# Read back through the collector's own loader rather than trusted because this
+# step wrote it. A configuration that the command will reject is worse installed
+# than absent: the timer would then fail every minute for a reason nothing here
+# reported.
+#
+"${PLATFORM_ROOT}/current/venv/bin/python" -c '
+import sys
+from pathlib import Path
+from haproxy_ui.traffic_collector import load_config
+
+config = load_config(Path(sys.argv[1]))
+print(f"  parsed   {len(config.nodes)} node(s) as {config.user}")
+' "$COLLECTOR_CONFIG" || die "the collector rejected the configuration this step wrote"
+
+step "Timer"
+
+for kind in service timer; do
+    install_file "/etc/systemd/system/${UNIT}.${kind}" root:root 644 \
+        "$(sed -e "s|PLATFORM_ROOT|${PLATFORM_ROOT}|g" -e "s|COLLECTOR_USER|${COLLECTOR_USER}|g" \
+            "examples/${UNIT}.${kind}.example")"
+done
+systemctl daemon-reload
+log "  reloaded systemd"
+systemctl enable --quiet --now "${UNIT}.timer"
+systemctl list-timers --no-pager --no-legend "${UNIT}.timer" | sed 's/^/  /'
+
+step "What must not be able to do this"
+
+#
+# The boundary, checked rather than described. Traversal, not listing: `ls` on
+# an unreadable directory fails whether or not the account can reach through it,
+# which is precisely how the withdrawn build's data/ change went unnoticed.
+#
+failed=0
+deny() {
+    local who="$1" what="$2"
+    shift 2
+    if sudo -n -u "$who" "$@" >/dev/null 2>&1; then
+        warn "  FAIL     ${who} ${what}"
+        failed=1
+    else
+        log "  ok       ${who} cannot ${what}"
+    fi
+}
+allow() {
+    local who="$1" what="$2"
+    shift 2
+    if sudo -n -u "$who" "$@" >/dev/null 2>&1; then
+        log "  ok       ${who} can ${what}"
+    else
+        warn "  FAIL     ${who} cannot ${what}"
+        failed=1
+    fi
+}
+
+for role in "$WEB_USER" "$WORKER_USER" "$POLLER_USER"; do
+    deny "$role" "read the collector's private key" cat "$COLLECTOR_KEY"
+done
+for role in "$WORKER_USER" "$POLLER_USER"; do
+    deny "$role" "traverse into the mirror" sh -c "cd '${MIRROR}'"
+done
+deny "$COLLECTOR_USER" "traverse into secrets" sh -c "cd '${PLATFORM_ROOT}/secrets'"
+deny "$COLLECTOR_USER" "read the interface configuration" cat "${PLATFORM_ROOT}/config/ui.toml"
+deny "$COLLECTOR_USER" "write into the release tree" \
+    sh -c "touch '${PLATFORM_ROOT}/releases/.collector-probe'"
+#
+# Guarded rather than assumed. A check that passes because the client is not
+# installed proves nothing about the boundary, and would keep passing after
+# somebody installed it.
+#
+if command -v psql >/dev/null; then
+    deny "$COLLECTOR_USER" "reach the database" psql -d "$DB_NAME" -qtAX -c 'select 1'
+else
+    warn "psql is not installed here; the database boundary was not checked"
+fi
+
+#
+# Positive controls. A matrix where everything is denied can be correct for the
+# wrong reason - an account that does not exist denies beautifully.
+#
+allow "$WEB_USER" "traverse into the mirror" sh -c "cd '${MIRROR}'"
+allow "$COLLECTOR_USER" "read its own key" cat "$COLLECTOR_KEY"
+allow "$COLLECTOR_USER" "write into staging" \
+    sh -c "touch '${STAGING}/.probe' && rm -f '${STAGING}/.probe'"
+
+if sudo -n -l -U "$COLLECTOR_USER" >/dev/null 2>&1; then
+    warn "  FAIL     ${COLLECTOR_USER} has at least one sudo rule"
+    failed=1
+else
+    log "  ok       ${COLLECTOR_USER} has no sudo rule"
+fi
+
+[[ $failed -eq 0 ]] || die "the collector's privilege boundary is not what this step intends"
+
+step "Done"
+log "  ${UNIT}.timer runs every minute and mirrors into ${MIRROR}"
+log "  nothing is fetched yet: each node must accept this key first"
+
+cat <<INTRO
+
+One thing left, by hand, on each NODE - this host cannot write to them.
+
+Add the line below to the traffic-log reader's authorized_keys, then enable the
+node's own log route with 'sudo haproxy-traffic-log-enable'.
+
+  /home/${LOGREAD_USER}/.ssh/authorized_keys   (owner ${LOGREAD_USER}, mode 600)
+
+INTRO
+echo "restrict,command=\"/usr/local/sbin/haproxy-traffic-log-read\" $(cut -d' ' -f1,2 < "${COLLECTOR_KEY}.pub")"
+cat <<'OUTRO'
+
+One line, the same on every node: the manager decides which node a fetch is
+written under, so a node cannot claim to be another one. `restrict` and the
+forced command are what make the key unable to do anything but answer.
+OUTRO

@@ -1,0 +1,54 @@
+[Unit]
+# Mirrors each node's structured traffic log to the manager. Rendered by
+# 13-platform-traffic-collector.
+Description=Mirror HAProxy node traffic logs to the manager
+Documentation=file:///apps/haproxy-manager/current
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=COLLECTOR_USER
+Group=COLLECTOR_USER
+
+ExecStart=PLATFORM_ROOT/current/venv/bin/haproxy-ui-traffic-collector --config /etc/haproxy-manager/traffic-collector.json
+
+# A timer, not a daemon. A run that cannot reach a node exits non-zero and the
+# next run tries again; a long-lived process would have to reimplement that
+# retry itself, and would hold an SSH identity in memory between runs for no
+# reason.
+#
+# No database, no sudo, no privileged helper - so unlike the poller this unit
+# gets every restriction, with nothing relaxed.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+# The mirror and the staging area, and nothing else on the machine. Both are
+# needed because assembling a node's mirror renames a staging file into the
+# mirror, and rename is only atomic within one filesystem.
+ReadWritePaths=PLATFORM_ROOT/logs/mirror PLATFORM_ROOT/logs/staging
+# tmpfs rather than yes: the key lives under /etc, not under a home directory,
+# so there is nothing to punch a hole for. This unit reads no home at all.
+ProtectHome=tmpfs
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete @privileged
+# SSH to the nodes, and the local socket ssh itself needs. Nothing else - this
+# process never listens and never speaks any other protocol.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

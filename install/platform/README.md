@@ -20,15 +20,19 @@ sudo ./05-platform-nginx ../answers.env
 sudo ./check-compatibility ../answers.env
 ```
 
-Step 11 is optional and comes after them:
+Steps 11 and 13 are optional and come after them:
 
 ```bash
 sudo ./11-platform-retention ../answers.env
+sudo ./13-platform-traffic-collector ../answers.env
 ```
 
-It keeps the job table bounded. Separate from the backup step because it is the
-only thing here that touches rows in a live table, and it deletes nothing itself:
-it reports what the first run would remove and leaves that to the timer.
+Step 11 keeps the job table bounded. Separate from the backup step because it is
+the only thing here that touches rows in a live table, and it deletes nothing
+itself: it reports what the first run would remove and leaves that to the timer.
+
+Step 13 mirrors each node's structured traffic log onto this host. Production
+only, and it fetches nothing until each node has accepted the key it prints.
 
 For an isolated dev platform the normal path stops at step 4, though step 11 is
 worth running there too. If developers
@@ -457,3 +461,39 @@ from anyone.
 
 See [`docs/INSTALLATION.md`](../../docs/INSTALLATION.md) §4.6 for how a session
 and the sign-in throttle behave.
+
+## Step 13 — the traffic collector
+
+`./13-platform-traffic-collector` installs a fourth, deliberately small identity
+and a timer that asks each node for its own traffic log.
+
+**Manager to node, never the other way round.** The first attempt at this had
+the nodes forward their logs to this host over TLS, and a DMZ node correctly
+could not open that connection. Nothing here asks for a new network path: the
+management host already reaches every node over SSH for configuration, status
+and certificates, so this adds one key on a path the product already requires.
+
+**The collector is not one of the three service accounts and joins no group.**
+It has no database role, no sudo rule, and cannot read `secrets/`, `ui.toml` or
+any other identity's key. What it owns is one SSH key whose far end is a forced
+command that can do nothing but return one validated day of one node's traffic
+log. The step proves that boundary rather than describing it, with traversal
+rather than listing — `ls` fails whether or not an account can reach through a
+directory, which is exactly how an earlier privilege slip went unnoticed.
+
+**Host keys are copied, never scanned.** `ssh-keyscan` asks each node who it is
+and believes the answer, which is trust on first use wearing a pinning costume.
+The step takes the keys this host already accepted for its existing paths, and
+refuses to continue if a node is missing from them — the honest fix is to accept
+that one deliberately, once, through the path that already exists.
+
+**The mirror is a sibling of `data/`, not a directory inside it.** Reaching a
+mirror under `data/logs` would mean opening `data/` for traversal by the web
+account, and `data/dumps` beside it holds every session and every audit record
+in one file. The mirror directory is set-group-id so files land in the web
+account's group: the collector is not a member of that group and so could not
+otherwise create a file the interface can read.
+
+**No collector on a development platform.** The step refuses to run unless
+`ENVIRONMENT` is `prod`. A dev platform is built not to reach the real nodes,
+and a key plus an inventory would undo the property that makes it safe.

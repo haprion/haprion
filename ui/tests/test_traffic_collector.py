@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import UTC, date, datetime
@@ -192,3 +196,143 @@ class TrafficCollectorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+INSTALL = Path(__file__).resolve().parents[2] / "install" / "platform"
+STEP = INSTALL / "13-platform-traffic-collector"
+RENDER = re.compile(r"^import json\nimport sys\n.*?^PY$", re.DOTALL | re.MULTILINE)
+
+
+class WhatTheInstallationStepWrites(unittest.TestCase):
+    """The step and the loader must agree, and only one of them is tested code.
+
+    The configuration is rendered by a small Python block inside a shell
+    script. Extracting and running that block is the only way this suite can
+    say the installed file will parse; asserting the field names by hand would
+    pass while the script wrote something else.
+    """
+
+    def render(self, inventory: list[str]) -> dict[str, object]:
+        found = RENDER.search(STEP.read_text())
+        if found is None:
+            self.fail("the configuration renderer is no longer where the test extracts it from")
+        source = found.group(0).removesuffix("PY")
+        # The command is this interpreter and a block read out of our own
+        # installation script; nothing here comes from outside the repository.
+        result = subprocess.run(  # noqa: S603
+            [
+                sys.executable,
+                "-c",
+                source,
+                "svc-logread",
+                "/etc/haproxy-manager/traffic-collector/id_ed25519",
+                "/etc/haproxy-manager/traffic-collector/known_hosts",
+                "/apps/haproxy-manager/logs/mirror",
+                "/apps/haproxy-manager/logs/staging",
+                *inventory,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        value: dict[str, object] = json.loads(result.stdout)
+        return value
+
+    def written(self, inventory: list[str]) -> Path:
+        directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, directory)
+        path = Path(directory) / "traffic-collector.json"
+        path.write_text(json.dumps(self.render(inventory)))
+        return path
+
+    def test_the_collector_accepts_what_the_step_renders(self) -> None:
+        path = self.written(["alpha:node-a:node-a.example.com", "beta:node-c:node-c.example.com"])
+
+        config = load_config(path, require_secure=False)
+
+        self.assertEqual(config.user, "svc-logread")
+        self.assertEqual(
+            [(item.cluster, item.node, item.host) for item in config.nodes],
+            [
+                ("alpha", "node-a", "node-a.example.com"),
+                ("beta", "node-c", "node-c.example.com"),
+            ],
+        )
+        self.assertEqual(config.mirror, Path("/apps/haproxy-manager/logs/mirror"))
+        self.assertEqual(config.staging, Path("/apps/haproxy-manager/logs/staging"))
+
+    def test_a_node_whose_name_is_its_hostname_is_rendered_whole(self) -> None:
+        """`node_host` returns the whole entry when there is no colon."""
+
+        config = load_config(self.written(["alpha:lb-01:lb-01"]), require_secure=False)
+
+        self.assertEqual(config.nodes[0].host, "lb-01")
+
+    def test_the_mirror_and_staging_share_a_parent(self) -> None:
+        """Assembling a mirror renames out of staging, and rename needs one filesystem."""
+
+        config = load_config(
+            self.written(["alpha:node-a:node-a.example.com"]), require_secure=False
+        )
+
+        self.assertEqual(config.mirror.parent, config.staging.parent)
+
+
+class TheCollectorUnits(unittest.TestCase):
+    def setUp(self) -> None:
+        self.rendered = {}
+        for kind in ("service", "timer"):
+            source = INSTALL / "examples" / f"haproxy-ui-traffic-collector.{kind}.example"
+            self.rendered[kind] = (
+                source.read_text()
+                .replace("PLATFORM_ROOT", "/apps/haproxy-manager")
+                .replace("COLLECTOR_USER", "haproxy-ui-collector")
+            )
+
+    def test_it_runs_as_the_collector_and_may_gain_nothing(self) -> None:
+        service = self.rendered["service"]
+
+        self.assertIn("User=haproxy-ui-collector", service)
+        self.assertIn("NoNewPrivileges=yes", service)
+        self.assertIn("CapabilityBoundingSet=\n", service)
+
+    def test_it_may_write_only_the_mirror_and_staging(self) -> None:
+        self.assertIn(
+            "ReadWritePaths=/apps/haproxy-manager/logs/mirror /apps/haproxy-manager/logs/staging",
+            self.rendered["service"],
+        )
+        self.assertIn("ProtectSystem=strict", self.rendered["service"])
+
+    def test_it_speaks_ssh_and_nothing_else(self) -> None:
+        self.assertIn("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", self.rendered["service"])
+
+    def test_it_is_a_timer_rather_than_a_daemon(self) -> None:
+        self.assertIn("Type=oneshot", self.rendered["service"])
+        self.assertIn("OnUnitActiveSec=1min", self.rendered["timer"])
+
+    @unittest.skipUnless(shutil.which("systemd-analyze"), "systemd is not installed here")
+    def test_real_systemd_accepts_both_units(self) -> None:
+        analyze = shutil.which("systemd-analyze") or ""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for kind, text in self.rendered.items():
+                (root / f"haproxy-ui-traffic-collector.{kind}").write_text(text)
+            for kind in ("timer", "service"):
+                result = subprocess.run(  # noqa: S603
+                    [analyze, "verify", str(root / f"haproxy-ui-traffic-collector.{kind}")],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                #
+                # The release tree is not installed where this suite runs, so
+                # the command the unit starts is expected to be unreachable.
+                # Every other complaint about our own units is a defect.
+                #
+                complaints = [
+                    line
+                    for line in (result.stderr + result.stdout).splitlines()
+                    if "haproxy-ui-traffic-collector" in line and "is not executable" not in line
+                ]
+
+                self.assertEqual(complaints, [], result.stderr or result.stdout)

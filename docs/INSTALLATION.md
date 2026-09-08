@@ -1524,6 +1524,54 @@ rehearsal traffic fills it fastest. Its units are therefore named after the
 environment, since a machine carrying both platforms would otherwise have two
 timers pruning each other's database.
 
+### 4.8b Mirroring node traffic logs
+
+`install/platform/13-platform-traffic-collector` installs a fourth, deliberately
+small identity and a timer that asks each node for its own traffic log. Optional,
+production only, and last: nothing else on the platform depends on it.
+
+```text
+${PLATFORM_ROOT}/logs/mirror     collector writes, the interface reads
+${PLATFORM_ROOT}/logs/staging    the collector's alone
+/etc/haproxy-manager/traffic-collector/{id_ed25519,known_hosts}
+/etc/haproxy-manager/traffic-collector.json
+```
+
+**The direction is manager to node, and that is the whole design.** The first
+attempt had each node forward its log to the management host over TLS, and a DMZ
+node correctly could not open that connection. Nothing here asks for a new
+network path in any topology: the management host already reaches every node
+over SSH for configuration, certificates and status, so this adds one key to a
+path the product already requires. An installation whose firewall differs still
+needs nothing new.
+
+**A fourth account that joins nothing.** The collector is not a member of the
+configuration group, holds no database role and has no sudoers rule. It owns one
+SSH key, and the far end of that key is a forced command that can return one
+validated day of one node's traffic log and nothing else. The step checks that
+boundary rather than describing it, and checks it by traversal: `ls` on a
+directory fails whether or not an account can reach through it, so listing is not
+evidence.
+
+**Host keys are copied from what this host already trusts, never scanned.**
+`ssh-keyscan` asks a node who it is and believes the answer. If a node has no
+pinned key yet, the step refuses and says so; accept that one deliberately,
+once, through the path that already exists.
+
+**The mirror is a sibling of `data/`.** Reaching a mirror under `data/logs`
+would mean opening `data/` for traversal by the web account, and `data/dumps`
+holds every session and every audit record in one file. The mirror directory is
+set-group-id, because the collector is deliberately outside the web account's
+group and could not otherwise create a file the interface can read.
+
+**No collector on a development platform.** The step refuses unless
+`ENVIRONMENT` is `prod`. A development platform is built not to reach the real
+nodes, and giving it a key and an inventory would undo exactly that.
+
+The step fetches nothing on its own. It prints one `authorized_keys` line to add
+to `svc-logread` on each node, and each node also needs its own log route
+switched on with `sudo haproxy-traffic-log-enable`.
+
 ### 4.9 The worker and the poller
 
 `install/platform/07-platform-services` installs both, each as its own operating

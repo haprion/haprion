@@ -1,0 +1,15 @@
+[Unit]
+Description=Regular mirroring of HAProxy node traffic logs
+
+[Timer]
+# Every minute, which is the interval B122 set as a starting value and R3 is to
+# measure. The cursor makes a run proportional to new data, so an idle minute
+# costs one SSH round trip per node and transfers nothing.
+OnBootSec=2min
+OnUnitActiveSec=1min
+# Not Persistent: a manager that was off has nothing to catch up on. The nodes
+# keep fourteen days, and the next run asks for whatever the cursor missed.
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

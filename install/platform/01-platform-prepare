@@ -70,11 +70,14 @@ ensure_dir "${PLATFORM_ROOT}/data"       root:root              750
 ensure_dir "${PLATFORM_ROOT}/data/dumps" root:root              700
 
 #
-# Left root-owned with no group. Traffic logging arrives in a later phase, and
-# the identity that writes here is decided then, by whichever service actually
-# writes - guessing now would hand out write access nothing has asked for.
+# There is deliberately no logs/ directory under data/. Traffic logs live in
+# ${PLATFORM_ROOT}/logs, a sibling, created by 13-platform-traffic-collector.
 #
-ensure_dir "${PLATFORM_ROOT}/data/logs"  root:root              750
+# An earlier version reserved data/logs here. Reaching it would mean opening
+# data/ for traversal by the web account, and data/dumps beside it holds every
+# session and every audit record in one file - so the reservation quietly
+# required weakening the boundary above it. A platform installed before this
+# change may still carry an empty data/logs; it is unused and safe to remove.
 
 #
 # Written from the example only if it is absent. A configuration file that an

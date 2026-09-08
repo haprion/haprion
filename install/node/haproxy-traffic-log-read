@@ -1,0 +1,131 @@
+#!/usr/bin/python3
+"""Forced-command reader for one node's bounded, query-free traffic log."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import stat
+import sys
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+from typing import BinaryIO
+
+LOG_ROOT = Path("/var/log/haproxy-manager")
+REQUEST = re.compile(r"^([0-9]{4}-[0-9]{2}-[0-9]{2}) ([0-9]{1,12})$")
+MAX_SEND = 8 * 1024 * 1024
+# HAProxy's target is capped at 2048. Allow one complete record beyond the
+# transfer window so a response never ends in the middle of JSON.
+MAX_RECORD = 16 * 1024
+RETENTION_DAYS = 14
+
+
+class RequestError(ValueError):
+    pass
+
+
+def _request(raw: str, today: date) -> tuple[date, int]:
+    match = REQUEST.fullmatch(raw)
+    if match is None:
+        raise RequestError("invalid request")
+    try:
+        wanted = date.fromisoformat(match.group(1))
+    except ValueError as exc:
+        raise RequestError("invalid date") from exc
+    if not today - timedelta(days=RETENTION_DAYS - 1) <= wanted <= today:
+        raise RequestError("date outside retention")
+    return wanted, int(match.group(2))
+
+
+def _header(**values: object) -> bytes:
+    return json.dumps(values, separators=(",", ":"), sort_keys=True).encode("ascii") + b"\n"
+
+
+def _empty(wanted: date, offset: int, *, size: int = 0, reset: bool = False) -> bytes:
+    return _header(
+        eof=True,
+        file=wanted.isoformat(),
+        offset=offset,
+        reset=reset,
+        sent=0,
+        size=size,
+        skipped_bytes=0,
+    )
+
+
+def serve(raw: str, root: Path, output: BinaryIO, *, today: date | None = None) -> int:
+    """Write one protocol response; paths are always derived from a validated date."""
+
+    try:
+        wanted, offset = _request(raw, today or datetime.now(UTC).date())
+    except RequestError:
+        return 64
+
+    path = root / f"traffic-{wanted.isoformat()}.jsonl"
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
+        output.write(_empty(wanted, offset))
+        return 0
+    except OSError:
+        return 65
+
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            return 65
+        size = metadata.st_size
+        if offset > size:
+            output.write(_empty(wanted, offset, size=size, reset=True))
+            return 0
+
+        os.lseek(descriptor, offset, os.SEEK_SET)
+        data = os.read(descriptor, MAX_SEND + MAX_RECORD + 1)
+        skipped = 0
+        if offset and data and not data.startswith(b"{"):
+            boundary = data.find(b"\n")
+            if boundary < 0 or boundary >= MAX_RECORD:
+                return 65
+            skipped = boundary + 1
+            data = data[skipped:]
+
+        if len(data) > MAX_SEND:
+            boundary = data.rfind(b"\n", 0, MAX_SEND + 1)
+            if boundary < 0:
+                return 65
+            payload = data[: boundary + 1]
+        else:
+            payload = data
+            if payload and not payload.endswith(b"\n"):
+                boundary = payload.rfind(b"\n")
+                payload = b"" if boundary < 0 else payload[: boundary + 1]
+
+        sent = len(payload)
+        output.write(
+            _header(
+                eof=offset + skipped + sent >= size,
+                file=wanted.isoformat(),
+                offset=offset,
+                reset=False,
+                sent=sent,
+                size=size,
+                skipped_bytes=skipped,
+            )
+        )
+        output.write(payload)
+        return 0
+    except OSError:
+        return 65
+    finally:
+        os.close(descriptor)
+
+
+def main() -> int:
+    raw = os.environ.get("SSH_ORIGINAL_COMMAND", "")
+    return serve(raw, LOG_ROOT, sys.stdout.buffer)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

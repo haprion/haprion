@@ -64,3 +64,17 @@ socket_directory = "/var/run/postgresql"
 # this port; the interface is never exposed directly.
 host = "127.0.0.1"
 port = 8080
+
+# [traffic_logs]
+# Off unless a deployment turns it on, and read-only in every sense: this
+# process reads files the collector already placed in the mirror, and never asks
+# a node anything. A node that is slow or unreachable therefore cannot make a
+# page slow - it can only make its own mirror old, which the page reports per
+# node rather than hiding behind an empty table.
+#
+# Requires platform step 13 and each node's own route. Cannot be combined with
+# demo_fixture or production_snapshot: a development platform has no collector,
+# no key and no node access, so a mirror it could read arrived some other way.
+# enabled = true
+# directory = "/apps/haproxy-manager/logs/mirror"
+# max_lines = 500

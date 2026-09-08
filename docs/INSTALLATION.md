@@ -1572,6 +1572,13 @@ The step fetches nothing on its own. It prints one `authorized_keys` line to add
 to `svc-logread` on each node, and each node also needs its own log route
 switched on with `sudo haproxy-traffic-log-enable`.
 
+The interface reads the mirror once `[traffic_logs]` is enabled in `ui.toml`. It
+reads files and never asks a node anything, so an unreachable node cannot make a
+page slow — it can only make its own mirror old. The page therefore names every
+node and how old its mirror is **before** the records, because a node that
+stopped answering renders an empty table that otherwise reads as calm. Log text
+is written by whoever made the request and is escaped as text, never as markup.
+
 ### 4.9 The worker and the poller
 
 `install/platform/07-platform-services` installs both, each as its own operating

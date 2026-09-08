@@ -1,0 +1,298 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from haproxy_ui.config import TrafficLogs
+from haproxy_ui.traffic_logs import MAX_RECORD_BYTES, Reading, parse, read
+from tests.test_login import LoginTestCase, configuration
+
+NOW = datetime(2026, 9, 8, 12, 0, 0, tzinfo=UTC)
+
+
+def record(**overrides: object) -> bytes:
+    value: dict[str, object] = {
+        "schema": 1,
+        "at": int(NOW.timestamp()),
+        "request": 1,
+        "client": "192.0.2.5",
+        "method": "GET",
+        "host": "app.example.com",
+        "path": "/index.html",
+        "frontend": "fe-https",
+        "backend": "be-app",
+        "server": "srv1",
+        "status": 200,
+        "request_time": 1,
+        "queue_time": 0,
+        "connect_time": 0,
+        "response_time": 2,
+        "total_time": 3,
+        "bytes": 512,
+    }
+    value.update(overrides)
+    return json.dumps(value).encode("utf-8") + b"\n"
+
+
+class TrafficLogReadingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+
+    def mirror(self, cluster: str, node: str, *records: bytes) -> None:
+        (self.root / f"{cluster}--{node}.jsonl").write_bytes(b"".join(records))
+
+    def meta(self, cluster: str, node: str, **overrides: object) -> None:
+        value: dict[str, object] = {
+            "schema_version": 1,
+            "cluster": cluster,
+            "node": node,
+            "last_attempt": NOW.isoformat(),
+            "last_success": NOW.isoformat(),
+            "outcome": "ok",
+        }
+        value.update(overrides)
+        (self.root / f"{cluster}--{node}.meta.json").write_text(json.dumps(value))
+
+    def test_records_are_read_and_newest_comes_first(self) -> None:
+        self.mirror(
+            "alpha",
+            "node-a",
+            record(at=int(NOW.timestamp()) - 5, path="/old"),
+            record(path="/new"),
+        )
+
+        reading = read(self.root, ("alpha",))
+
+        self.assertEqual([entry.path for entry in reading.entries], ["/new", "/old"])
+        self.assertEqual(reading.malformed, 0)
+
+    def test_one_busy_second_is_ordered_by_the_request_counter(self) -> None:
+        """The accept time is whole seconds, so it cannot order a busy second."""
+
+        self.mirror(
+            "alpha",
+            "node-a",
+            record(request=7, path="/seventh"),
+            record(request=9, path="/ninth"),
+            record(request=8, path="/eighth"),
+        )
+
+        reading = read(self.root, ("alpha",))
+
+        self.assertEqual(
+            [entry.path for entry in reading.entries], ["/ninth", "/eighth", "/seventh"]
+        )
+
+    def test_a_node_that_has_never_answered_is_still_listed(self) -> None:
+        """The whole point of the strip: silence must not look like calm.
+
+        A node with metadata and no mirror produced no records. Listing only
+        the mirrors would drop exactly the node an operator needs to see.
+        """
+
+        self.meta("alpha", "node-b", last_success=None, outcome="unreachable")
+
+        reading = read(self.root, ("alpha",))
+
+        self.assertEqual(reading.entries, ())
+        self.assertEqual([node.node for node in reading.nodes], ["node-b"])
+        self.assertIsNone(reading.nodes[0].last_success)
+        self.assertEqual(reading.nodes[0].outcome, "unreachable")
+        self.assertIsNone(reading.nodes[0].stale_seconds(now=NOW))
+
+    def test_a_stale_mirror_reports_its_age_rather_than_looking_current(self) -> None:
+        self.mirror("alpha", "node-a", record())
+        self.meta("alpha", "node-a", last_success=(NOW - timedelta(minutes=42)).isoformat())
+
+        reading = read(self.root, ("alpha",))
+        self.assertEqual(reading.nodes[0].stale_seconds(now=NOW), 2520.0)
+
+    def test_a_mirror_without_metadata_is_reported_as_unknown(self) -> None:
+        self.mirror("alpha", "node-a", record())
+
+        reading = read(self.root, ("alpha",))
+
+        self.assertEqual(reading.nodes[0].outcome, "unknown")
+        self.assertIsNone(reading.nodes[0].last_attempt)
+
+    def test_unreadable_metadata_never_stops_the_page(self) -> None:
+        self.mirror("alpha", "node-a", record())
+        (self.root / "alpha--node-a.meta.json").write_bytes(b"{ not json")
+
+        reading = read(self.root, ("alpha",))
+
+        self.assertEqual(len(reading.entries), 1)
+        self.assertEqual(reading.nodes[0].outcome, "unknown")
+
+    def test_a_malformed_record_is_counted_and_the_rest_still_render(self) -> None:
+        self.mirror("alpha", "node-a", b"not json at all\n", record(), b'{"schema":2}\n')
+
+        reading = read(self.root, ("alpha",))
+
+        self.assertEqual(len(reading.entries), 1)
+        self.assertEqual(reading.malformed, 2)
+
+    def test_an_oversized_record_is_refused_rather_than_rendered(self) -> None:
+        with self.assertRaises(ValueError):
+            parse(record(path="/" + "a" * MAX_RECORD_BYTES), "alpha", "node-a")
+
+    def test_fields_that_are_not_what_they_claim_are_refused(self) -> None:
+        for overrides in (
+            {"status": "200"},
+            {"status": True},
+            {"status": 1000},
+            {"at": -1},
+            {"bytes": -1},
+            {"client": 5},
+            {"path": "a" * 9000},
+            {"request": -1},
+        ):
+            with self.subTest(overrides=overrides), self.assertRaises(ValueError):
+                parse(record(**overrides), "alpha", "node-a")
+
+    def test_a_record_from_before_the_request_counter_still_parses(self) -> None:
+        raw = json.loads(record())
+        del raw["request"]
+
+        entry = parse(json.dumps(raw).encode("utf-8"), "alpha", "node-a")
+
+        self.assertEqual(entry.request, 0)
+
+    def test_a_cluster_the_deployment_does_not_name_reads_nothing(self) -> None:
+        """The mirror is on disk; whether it may be read is the config's call."""
+
+        self.mirror("beta", "node-c", record())
+
+        self.assertEqual(read(self.root, ("alpha",)), Reading((), (), 0, False))
+        self.assertEqual(read(self.root, ("alpha",), cluster="beta"), Reading((), (), 0, False))
+
+    def test_a_file_name_that_is_not_a_node_is_ignored(self) -> None:
+        for name in ("alpha--.jsonl", "alpha--../escape.jsonl", "alpha--a b.jsonl"):
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(record())
+
+        reading = read(self.root, ("alpha",))
+
+        self.assertEqual(reading.entries, ())
+        self.assertEqual(reading.nodes, ())
+
+    def test_a_symlinked_mirror_is_not_followed(self) -> None:
+        target = self.root / "elsewhere.jsonl"
+        target.write_bytes(record(path="/secret"))
+        (self.root / "alpha--node-a.jsonl").symlink_to(target)
+
+        reading = read(self.root, ("alpha",))
+
+        self.assertEqual(reading.entries, ())
+        self.assertTrue(reading.unavailable)
+
+    def test_filters_narrow_without_reaching_past_the_configured_clusters(self) -> None:
+        self.mirror(
+            "alpha",
+            "node-a",
+            record(status=200, path="/ok"),
+            record(status=503, path="/down", backend="be-other"),
+        )
+
+        self.assertEqual(len(read(self.root, ("alpha",), status="5xx").entries), 1)
+        self.assertEqual(len(read(self.root, ("alpha",), status="503").entries), 1)
+        self.assertEqual(len(read(self.root, ("alpha",), status="99").entries), 0)
+        self.assertEqual(len(read(self.root, ("alpha",), proxy="be-other").entries), 1)
+        self.assertEqual(len(read(self.root, ("alpha",), substring="/OK").entries), 1)
+
+    def test_the_limit_is_the_deployment_s_and_not_the_file_s(self) -> None:
+        self.mirror("alpha", "node-a", *(record(request=n) for n in range(50)))
+
+        self.assertEqual(len(read(self.root, ("alpha",), limit=10).entries), 10)
+
+
+class TheTrafficLogPage(LoginTestCase):
+    """What the page must not get wrong, whatever it looks like.
+
+    Two things carry weight here. Log text is written by whoever made the
+    request, so it has to reach the browser as text and never as markup. And
+    the page has to say how old each node's mirror is, because a node that
+    stopped answering renders an empty table that otherwise reads as calm.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+
+    def page(self, *, enabled: bool = True, clusters: tuple[str, ...] = ("alpha",)) -> str:
+        config = replace(
+            configuration(),
+            clusters=clusters,
+            traffic_logs=TrafficLogs(enabled=enabled, directory=self.root, max_lines=500),
+        )
+        client = self.client(config)
+        self.sign_in(client)
+        response = client.get("/logs")
+
+        self.assertEqual(response.status_code, 200)
+        return response.text
+
+    def test_a_hostile_path_reaches_the_browser_as_text(self) -> None:
+        hostile = "/<script>alert(1)</script>"
+        (self.root / "alpha--node-a.jsonl").write_bytes(record(path=hostile))
+
+        page = self.page()
+
+        self.assertNotIn("<script>alert(1)</script>", page)
+        self.assertIn("&lt;script&gt;", page)
+
+    def test_a_hostile_host_header_reaches_the_browser_as_text(self) -> None:
+        (self.root / "alpha--node-a.jsonl").write_bytes(record(host='x"><img src=x onerror=1>'))
+
+        page = self.page()
+
+        self.assertNotIn("<img src=x", page)
+        self.assertIn("&lt;img", page)
+
+    def test_a_silent_node_is_named_on_the_page(self) -> None:
+        (self.root / "alpha--node-b.meta.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "cluster": "alpha",
+                    "node": "node-b",
+                    "last_attempt": datetime.now(UTC).isoformat(),
+                    "last_success": None,
+                    "outcome": "unreachable",
+                }
+            )
+        )
+
+        page = self.page()
+
+        self.assertIn("node-b", page)
+        self.assertIn("never reached", page)
+        self.assertIn("unreachable", page)
+
+    def test_disabled_says_so_instead_of_showing_an_empty_table(self) -> None:
+        (self.root / "alpha--node-a.jsonl").write_bytes(record(path="/hidden"))
+
+        page = self.page(enabled=False)
+
+        self.assertIn("Traffic logging is disabled", page)
+        self.assertNotIn("/hidden", page)
+
+    def test_signing_out_is_required(self) -> None:
+        config = replace(
+            configuration(),
+            clusters=("alpha",),
+            traffic_logs=TrafficLogs(enabled=True, directory=self.root, max_lines=500),
+        )
+        response = self.client(config).get("/logs", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/login")

@@ -34,6 +34,7 @@ ALLOWED_KEYS = frozenset(
         "poller",
         "demo_fixture",
         "production_snapshot",
+        "traffic_logs",
     }
 )
 ALLOWED_DATABASE_KEYS = frozenset({"name", "socket_directory"})
@@ -41,6 +42,7 @@ ALLOWED_LISTEN_KEYS = frozenset({"host", "port"})
 ALLOWED_SESSION_KEYS = frozenset({"inactivity_minutes", "absolute_hours", "cookie_secure"})
 ALLOWED_THROTTLE_KEYS = frozenset({"max_failures", "window_minutes"})
 ALLOWED_POLLER_KEYS = frozenset({"interval_seconds"})
+ALLOWED_TRAFFIC_LOG_KEYS = frozenset({"enabled", "directory", "max_lines"})
 
 #
 # A cluster id, the same shape the engine and the database CHECK both use. The
@@ -138,6 +140,20 @@ class Poller:
 
 
 @dataclass(frozen=True, slots=True)
+class TrafficLogs:
+    """Where the collector's mirror is, and how much of it may be rendered.
+
+    Reading only. This process never asks a node anything: it reads files the
+    collector already placed here, so a node that is slow or hostile cannot make
+    a page slow or make a request hang.
+    """
+
+    enabled: bool
+    directory: Path
+    max_lines: int
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     database: Database
     listen: Listen
@@ -165,6 +181,17 @@ class Config:
     #
     clusters: tuple[str, ...]
     poller: Poller
+    #
+    # Off unless a deployment says otherwise, and defaulted to the mirror the
+    # platform step creates. Not data/logs: reaching that would mean opening
+    # data/ for traversal by this account, and data/dumps beside it holds every
+    # session and every audit record in one file (B123).
+    #
+    traffic_logs: TrafficLogs = TrafficLogs(
+        enabled=False,
+        directory=Path("/apps/haproxy-manager/logs/mirror"),
+        max_lines=500,
+    )
 
 
 def _section(data: Any, key: str, allowed: frozenset[str]) -> dict[str, Any]:
@@ -252,6 +279,7 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
     session = _optional_section(data, "session", ALLOWED_SESSION_KEYS)
     throttle = _optional_section(data, "throttle", ALLOWED_THROTTLE_KEYS)
     poller = _optional_section(data, "poller", ALLOWED_POLLER_KEYS)
+    traffic_logs = _optional_section(data, "traffic_logs", ALLOWED_TRAFFIC_LOG_KEYS)
 
     clusters = data.get("clusters", [])
     if not isinstance(clusters, list) or not all(isinstance(name, str) for name in clusters):
@@ -285,6 +313,22 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
         raise ConfigError("production_snapshot requires clusters = []")
     if production_snapshot and demo_fixture:
         raise ConfigError("production_snapshot cannot be combined with demo_fixture")
+
+    log_directory_value = traffic_logs.get("directory", "/apps/haproxy-manager/logs/mirror")
+    if not isinstance(log_directory_value, str) or not log_directory_value:
+        raise ConfigError("traffic_logs.directory must be a non-empty string")
+    log_directory = Path(log_directory_value)
+    if not log_directory.is_absolute() or ".." in log_directory.parts:
+        raise ConfigError("traffic_logs.directory must be an absolute path without '..'")
+    #
+    # A development platform has no collector, no key and no node access, so a
+    # mirror it could read would have to have arrived some other way. Refusing
+    # is better than rendering whatever that was.
+    #
+    if traffic_logs.get("enabled") and production_snapshot:
+        raise ConfigError("traffic_logs cannot be combined with production_snapshot")
+    if traffic_logs.get("enabled") and demo_fixture:
+        raise ConfigError("traffic_logs cannot be combined with demo_fixture")
 
     return Config(
         database=Database(
@@ -328,5 +372,12 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
                 high=3600,
                 default=20,
             )
+        ),
+        traffic_logs=TrafficLogs(
+            enabled=_boolean(traffic_logs, "enabled", "traffic_logs", default=False),
+            directory=log_directory,
+            max_lines=_bounded_int(
+                traffic_logs, "max_lines", "traffic_logs", low=1, high=500, default=500
+            ),
         ),
     )

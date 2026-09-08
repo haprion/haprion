@@ -1320,3 +1320,43 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .traffic-ranges a:first-child { border-left: 0; }
 .traffic-ranges a:hover { background: var(--hover-surface); color: var(--text-strong); }
 .traffic-ranges a.is-current { background: var(--hover-surface); color: var(--text-strong); font-weight: 660; }
+
+.log-freshness { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0 0 16px; padding: 0; }
+.log-freshness-item { display: flex; align-items: baseline; gap: 8px; padding: 6px 11px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); font-size: 12px; white-space: nowrap; }
+.log-freshness-node { color: var(--text-strong); font-weight: 620; }
+.log-freshness-age { color: var(--muted); }
+.log-freshness-item.is-stale { border-color: var(--warning); background: var(--warning-soft); }
+.log-freshness-item.is-stale .log-freshness-age { color: var(--text); }
+.log-freshness-item.is-silent { border-color: var(--critical); background: var(--critical-soft); }
+.log-freshness-item.is-silent .log-freshness-age { color: var(--text); }
+.log-filters { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(180px, 1fr) minmax(100px, .5fr) minmax(220px, 1.4fr) auto auto; gap: 12px; align-items: end; margin: 0 0 18px; }
+.log-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.log-filters input, .log-filters select { min-width: 0; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); }
+/*
+   .node-table is table-layout:fixed with column widths written for a table of a
+   different shape, so without these the request column inherits 120px and its
+   text paints over the status badge beside it. Every column is therefore stated
+   here, and the request column is the one left to take the slack.
+*/
+.log-table { min-width: 1180px; }
+.log-table th:nth-child(1), .log-table td:nth-child(1) { width: 150px; }
+.log-table th:nth-child(2), .log-table td:nth-child(2) { width: 130px; }
+.log-table th:nth-child(3), .log-table td:nth-child(3) { width: 132px; }
+.log-table th:nth-child(4), .log-table td:nth-child(4) { width: auto; }
+.log-table th:nth-child(5), .log-table td:nth-child(5) { width: 84px; }
+.log-table th:nth-child(6), .log-table td:nth-child(6) { width: 150px; }
+.log-table th:nth-child(7), .log-table td:nth-child(7) { width: 174px; }
+.log-table th:nth-child(8), .log-table td:nth-child(8) { width: 104px; }
+.log-table td { vertical-align: top; }
+/*
+   One line each, and an ellipsis where a value is longer than its column. A
+   path that wraps to four lines breaks the row rhythm of every other table
+   here and makes a page of requests unscannable; the full value stays in the
+   title attribute, and the Contains filter is how you find one.
+*/
+.log-table td strong, .log-table td small, .log-table td code {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.log-table td small, .log-table td .log-path { margin-top: 3px; }
+.log-path { color: var(--muted); font-size: 12px; }
+@media (max-width: 1000px) { .log-filters { grid-template-columns: 1fr 1fr; } }

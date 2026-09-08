@@ -7,7 +7,7 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars PLATFORM_ROOT WEB_USER WORKER_USER POLLER_USER PULL_USER PUBLISH_ROOT MANAGER_HOST CLUSTERS
+require_vars PLATFORM_ROOT WEB_USER WORKER_USER POLLER_USER SERVER_NAME
 ENVIRONMENT="${ENVIRONMENT:-prod}"
 [[ "$ENVIRONMENT" == "prod" ]] || die "traffic-log receiver is production-only"
 TRAFFIC_LOG_PORT="${TRAFFIC_LOG_PORT:-6514}"
@@ -15,12 +15,33 @@ if [[ ! "$TRAFFIC_LOG_PORT" =~ ^[0-9]+$ ]] \
     || (( TRAFFIC_LOG_PORT < 1 || TRAFFIC_LOG_PORT > 65535 )); then
     die "TRAFFIC_LOG_PORT must be an integer between 1 and 65535"
 fi
-[[ "$MANAGER_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] \
-    || die "MANAGER_HOST is not a valid certificate DNS name"
+[[ "$SERVER_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] \
+    || die "SERVER_NAME is not a valid certificate DNS name"
 command -v rsyslogd >/dev/null || die "rsyslog is not installed"
 command -v openssl >/dev/null || die "openssl is not installed"
 find /usr/lib -name lmnsd_gtls.so -print -quit 2>/dev/null | grep -q . \
     || die "the rsyslog GnuTLS driver is missing; install rsyslog-gnutls"
+
+engine_release="$(readlink -f /opt/haproxy-mgmt/current)"
+[[ -d "${engine_release}/lib" ]] || die "the installed CLI release is missing"
+mapfile -d '' -t inventory < <(/usr/bin/python3 -I - "${engine_release}/lib" <<'PY'
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from haproxy_mgmt.config import load_policy, load_runtime_config
+
+policy = load_policy()
+config = load_runtime_config(policy)
+print(policy.publish_root, end="\0")
+for cluster_id, cluster in config.clusters.items():
+    for node in cluster.nodes:
+        print(cluster_id, node.name, node.mgmt_host, sep="\t", end="\0")
+PY
+)
+[[ ${#inventory[@]} -gt 1 ]] || die "the installed CLI configuration contains no nodes"
+PUBLISH_ROOT="${inventory[0]}"
+PULL_USER="$(stat -c %G "$PUBLISH_ROOT")"
+[[ "$PULL_USER" != root ]] || die "the publish root has no dedicated read group"
 
 tls=/etc/haproxy-manager/traffic-log-tls
 ca_cert="${tls}/ca.crt"
@@ -39,7 +60,7 @@ CA_CERT=${ca_cert}
 CA_KEY=${ca_key}
 SERVER_CERT=${server_cert}
 SERVER_KEY=${server_key}
-SERVER_NAME=${MANAGER_HOST}
+SERVER_NAME=${SERVER_NAME}
 PUBLISHED_CA=${published_ca}
 PULL_USER=${PULL_USER}
 EOF
@@ -51,12 +72,8 @@ step "Source identities"
 rules=""
 senders=""
 declare -A seen=()
-for cluster in $(each_cluster); do
-    nodes="$(cluster_value NODES "$cluster")"
-    [[ -n "$nodes" ]] || die "NODES_${cluster} is not set"
-    for node in $nodes; do
-        name="$(node_name "$node")"
-        host="$(node_host "$node")"
+for entry in "${inventory[@]:1}"; do
+        IFS=$'\t' read -r cluster name host <<<"$entry"
         valid_id "$name" || die "invalid node name: ${name}"
         mapfile -t addresses < <(getent ahostsv4 "$host" | awk '{print $1}' | sort -u)
         [[ ${#addresses[@]} -eq 1 ]] || die "${host} must resolve to exactly one IPv4 management address"
@@ -65,7 +82,6 @@ for cluster in $(each_cluster); do
         seen[$address]="${cluster}/${name}"
         senders+="${address},"
         rules+="if (\$fromhost-ip == \"${address}\" and \$programname == \"haproxy\") then { action(type=\"omfile\" file=\"${PLATFORM_ROOT}/data/logs/${cluster}--${name}.jsonl\" template=\"haproxy-manager-json\" fileOwner=\"root\" fileGroup=\"${WEB_USER}\" fileCreateMode=\"0640\" dirCreateMode=\"0750\") stop }\n"
-    done
 done
 senders="${senders%,}"
 

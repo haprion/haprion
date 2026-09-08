@@ -12,7 +12,8 @@
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
 | `haproxy-traffic-log-read` | returns bounded, whole JSONL records for one validated UTC day and cursor |
-| `haproxy-traffic-log-enable` | installs or removes the node's rsyslog route for the structured stream |
+| `haproxy-traffic-log-enable` | installs or removes the node's rsyslog route and its retention timer |
+| `haproxy-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
 
 ## Nothing environment-specific is compiled in
 
@@ -53,9 +54,13 @@ out of every backup.
 The traffic-log reader is attested as part of the same bundle. Its account, read group and empty
 `authorized_keys` file are prepared by step 4. Step 4 does not turn the stream on: run
 `sudo haproxy-traffic-log-enable` on a node whose published configuration enables the second log
-stream, and `--disable` to take it away again. Retention and the collector key are still to come;
-until the route is installed no structured traffic file is written, and the empty account accepts
-no connection either way.
+stream, and `--disable` to take it away again. It also installs the daily retention timer. The
+collector key is still to come; until the route is installed no structured traffic file is written,
+and the empty account accepts no connection either way.
+
+Retention deletes whole day files and never renames one. logrotate would move the file a fetch is
+reading between two names, with no instant at which both names resolve - a run landing in that gap
+reads an empty file and reports success, which is worse than an error.
 
 `/var/log/haproxy-manager` is `syslog:haproxy-logread` mode **2750**, and the set-group-id bit is
 load-bearing. rsyslog drops to `syslog:syslog` before it opens a log file, so it cannot place a

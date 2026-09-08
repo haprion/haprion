@@ -846,10 +846,11 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
 | `haproxy-health-probe` | opens one connection per named target and reports the status line |
 | `haproxy-traffic-log-read` | returns whole records after a validated UTC day/cursor, capped at 8 MiB |
-| `haproxy-traffic-log-enable` | installs or removes this node's rsyslog route for the structured stream |
+| `haproxy-traffic-log-enable` | installs or removes this node's rsyslog route and retention timer |
+| `haproxy-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
 
 Step 4 also writes `/etc/haproxy-manager/node-installation.json`. It records the
-node compatibility API and a SHA-256 digest for each of these nine scripts.
+node compatibility API and a SHA-256 digest for each of these ten scripts.
 `haproxy-node-status` recomputes the digests on every reading, so copied metadata
 cannot hide a script changed after installation. The report contains code
 digests only, never node configuration or key material.

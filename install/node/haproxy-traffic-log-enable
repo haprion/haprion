@@ -4,9 +4,10 @@
 # after 04-node-prepare has created the reader account, the read group and
 # /var/log/haproxy-manager.
 #
-#     sudo haproxy-traffic-log-enable            # install and activate
-#     sudo haproxy-traffic-log-enable --disable  # remove and deactivate
-#          haproxy-traffic-log-enable --print    # show the rsyslog rule only
+#     sudo haproxy-traffic-log-enable                # install and activate
+#     sudo haproxy-traffic-log-enable --disable      # remove and deactivate
+#          haproxy-traffic-log-enable --print        # show the rsyslog rule only
+#          haproxy-traffic-log-enable --print-units  # show the retention units
 #
 # Activation is deliberately separate from 04-node-prepare. The second log
 # stream is opt-in in the generator too, and a node that has not been published
@@ -21,6 +22,9 @@ LOG_GROUP="haproxy-logread"
 # first build failed - so this file has to sort before it.
 RSYSLOG_RULE="/etc/rsyslog.d/48-haproxy-manager-traffic.conf"
 APPARMOR_SNIPPET="/etc/apparmor.d/rsyslog.d/haproxy-manager-traffic"
+PRUNE_SERVICE="/etc/systemd/system/haproxy-traffic-log-prune.service"
+PRUNE_TIMER="/etc/systemd/system/haproxy-traffic-log-prune.timer"
+PRUNE_COMMAND="/usr/local/sbin/haproxy-traffic-log-prune"
 # Left behind by the withdrawn push build. A node that still carries it keeps
 # trying to open a TLS connection to the management host that must not exist.
 WITHDRAWN=(
@@ -90,8 +94,63 @@ render_apparmor() {
 CONF
 }
 
+render_prune_service() {
+    cat <<CONF
+[Unit]
+Description=Delete haproxy-manager traffic log files past their retention window
+
+[Service]
+Type=oneshot
+ExecStart=${PRUNE_COMMAND}
+# Deleting whole day files is all this needs to reach, and everything else on
+# the node is made unreachable rather than merely unused.
+ProtectSystem=strict
+ReadWritePaths=${LOG_ROOT}
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+CONF
+}
+
+render_prune_timer() {
+    cat <<'CONF'
+[Unit]
+Description=Daily retention pass over the haproxy-manager traffic log
+
+[Timer]
+OnCalendar=daily
+# The window is whole days, so the exact minute does not matter - and a fleet
+# that deletes at the same second is a fleet that does its disk work together.
+RandomizedDelaySec=30m
+# A node that was off over the boundary still prunes on its next boot rather
+# than skipping the day silently.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+CONF
+}
+
 if [[ "${1:-}" == "--print" ]]; then
     render_rule
+    exit 0
+fi
+if [[ "${1:-}" == "--print-units" ]]; then
+    render_prune_service
+    echo "--- timer ---"
+    render_prune_timer
     exit 0
 fi
 
@@ -140,6 +199,9 @@ restart_or_restore() {
 }
 
 if [[ "${1:-}" == "--disable" ]]; then
+    systemctl disable --now haproxy-traffic-log-prune.timer >/dev/null 2>&1 || true
+    rm -f "$PRUNE_TIMER" "$PRUNE_SERVICE"
+    systemctl daemon-reload
     stage_rule
     rm -f "$RSYSLOG_RULE" "$APPARMOR_SNIPPET"
     [[ ! -x /usr/lib/rsyslog/reload-apparmor-profile ]] \
@@ -147,11 +209,11 @@ if [[ "${1:-}" == "--disable" ]]; then
     validate_or_restore
     restart_or_restore
     rm -f "$restore"
-    log "traffic logging disabled; ${LOG_ROOT} is left in place"
+    log "traffic logging disabled; ${LOG_ROOT} is left in place and no longer pruned"
     exit 0
 fi
 
-[[ -z "${1:-}" ]] || die "usage: $(basename "$0") [--disable|--print]"
+[[ -z "${1:-}" ]] || die "usage: $(basename "$0") [--disable|--print|--print-units]"
 
 getent group "$LOG_GROUP" >/dev/null \
     || die "group ${LOG_GROUP} is missing; run 04-node-prepare on this node first"
@@ -168,6 +230,9 @@ owner="$(stat -c '%U:%G %a' "$LOG_ROOT")"
 [[ "$owner" == "syslog:${LOG_GROUP} 2750" ]] \
     || die "${LOG_ROOT} is ${owner}, expected syslog:${LOG_GROUP} 2750; rerun 04-node-prepare"
 
+[[ -x "$PRUNE_COMMAND" ]] \
+    || die "${PRUNE_COMMAND} is missing; run 04-node-prepare on this node first"
+
 for stale in "${WITHDRAWN[@]}"; do
     if [[ -e "$stale" ]]; then
         rm -f "$stale"
@@ -183,6 +248,15 @@ rm -f "${APPARMOR_SNIPPET}.new-$$"
     || /usr/lib/rsyslog/reload-apparmor-profile
 log "  installed ${APPARMOR_SNIPPET}"
 
+render_prune_service > "${PRUNE_SERVICE}.new-$$"
+install -o root -g root -m 644 "${PRUNE_SERVICE}.new-$$" "$PRUNE_SERVICE"
+render_prune_timer > "${PRUNE_TIMER}.new-$$"
+install -o root -g root -m 644 "${PRUNE_TIMER}.new-$$" "$PRUNE_TIMER"
+rm -f "${PRUNE_SERVICE}.new-$$" "${PRUNE_TIMER}.new-$$"
+systemctl daemon-reload
+systemctl enable --now haproxy-traffic-log-prune.timer
+log "  installed ${PRUNE_TIMER}"
+
 stage_rule
 render_rule > "${RSYSLOG_RULE}.new-$$"
 install -o root -g root -m 644 "${RSYSLOG_RULE}.new-$$" "$RSYSLOG_RULE"
@@ -193,3 +267,4 @@ rm -f "$restore"
 log "  installed ${RSYSLOG_RULE}"
 log "traffic logging active; records appear in ${LOG_ROOT} once a published"
 log "  configuration enables the second log stream for this cluster"
+log "  day files are deleted whole after 14 days, never renamed"

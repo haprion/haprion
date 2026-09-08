@@ -1,0 +1,76 @@
+#!/usr/bin/python3
+"""Delete traffic day files older than the retention window.
+
+Deleting whole day files, never renaming one. logrotate would move the file the
+collector is reading between two names, and there is no instant at which both
+the old and the new name are visible - so a rotation could land exactly where a
+fetch is, and the run would silently see an empty file rather than an error.
+A finished day file is immutable here, and disappears whole.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import stat
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+
+LOG_ROOT = Path("/var/log/haproxy-manager")
+# The same window the node reader enforces. A file the reader would refuse to
+# serve has no reason to occupy disk, and a file inside the window must never
+# be removed while the collector may still ask for it.
+RETENTION_DAYS = 14
+DAY_FILE = re.compile(r"^traffic-([0-9]{4}-[0-9]{2}-[0-9]{2})\.jsonl$")
+
+
+def expired(name: str, today: date) -> bool:
+    """True only for a name this tool wrote and a date outside the window."""
+
+    match = DAY_FILE.fullmatch(name)
+    if match is None:
+        return False
+    try:
+        day = date.fromisoformat(match.group(1))
+    except ValueError:
+        return False
+    return day < today - timedelta(days=RETENTION_DAYS - 1)
+
+
+def prune(root: Path, *, today: date | None = None) -> list[str]:
+    """Remove expired day files and return what was removed, sorted."""
+
+    when = today or datetime.now(UTC).date()
+    removed: list[str] = []
+    try:
+        names = sorted(os.listdir(root))
+    except FileNotFoundError:
+        return removed
+
+    for name in names:
+        if not expired(name, when):
+            continue
+        path = root / name
+        #
+        # A symlink named like a day file would otherwise delete whatever it
+        # points at. Nothing in this chain creates one, which is exactly why an
+        # unexpected one must not be followed.
+        #
+        try:
+            if not stat.S_ISREG(os.lstat(path).st_mode):
+                continue
+            os.unlink(path)
+        except OSError:
+            continue
+        removed.append(name)
+    return removed
+
+
+def main() -> int:
+    for name in prune(LOG_ROOT):
+        print(f"removed {name}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

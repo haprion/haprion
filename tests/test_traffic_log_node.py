@@ -196,3 +196,131 @@ class TrafficLogRsyslogRuleTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
             self.assertNotIn("error", (result.stderr + result.stdout).lower())
+
+
+def load_prune() -> ModuleType:
+    path = BASE / "install" / "node" / "haproxy-traffic-log-prune"
+    spec = importlib.util.spec_from_loader(
+        "traffic_log_prune", SourceFileLoader("traffic_log_prune", str(path))
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load node helper")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+PRUNE = load_prune()
+
+
+class TrafficLogRetentionTests(unittest.TestCase):
+    """Whole files disappear; nothing is ever renamed.
+
+    logrotate would move the file a fetch is reading between two names, and
+    there is no instant where both names resolve. A run landing in that gap
+    reads an empty file and reports success, which is worse than an error.
+    """
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+
+    def write(self, name: str, data: bytes = b'{"schema":1}\n') -> Path:
+        path = self.root / name
+        path.write_bytes(data)
+        return path
+
+    def test_the_window_matches_what_the_reader_will_serve(self) -> None:
+        self.assertEqual(PRUNE.RETENTION_DAYS, HELPER.RETENTION_DAYS)
+
+    def test_the_oldest_day_inside_the_window_is_kept(self) -> None:
+        oldest = "traffic-2026-08-26.jsonl"
+        self.write(oldest)
+
+        self.assertEqual(PRUNE.prune(self.root, today=TODAY), [])
+        self.assertTrue((self.root / oldest).exists())
+
+    def test_the_day_just_outside_the_window_is_removed(self) -> None:
+        self.write("traffic-2026-08-25.jsonl")
+
+        self.assertEqual(PRUNE.prune(self.root, today=TODAY), ["traffic-2026-08-25.jsonl"])
+        self.assertFalse((self.root / "traffic-2026-08-25.jsonl").exists())
+
+    def test_nothing_this_chain_did_not_write_is_touched(self) -> None:
+        for name in (
+            "traffic-2026-08-25.jsonl.gz",
+            "traffic-2026-08-25.jsonl.1",
+            "traffic-2026-13-01.jsonl",
+            "traffic-old.jsonl",
+            "haproxy.log",
+            ".hidden",
+        ):
+            self.write(name)
+
+        self.assertEqual(PRUNE.prune(self.root, today=TODAY), [])
+        self.assertEqual(len(list(self.root.iterdir())), 6)
+
+    def test_a_symlink_named_like_an_expired_day_is_left_alone(self) -> None:
+        """Nothing here creates one, which is why one must not be followed."""
+
+        target = self.write("real.jsonl")
+        (self.root / "traffic-2026-08-01.jsonl").symlink_to(target)
+
+        self.assertEqual(PRUNE.prune(self.root, today=TODAY), [])
+        self.assertTrue(target.exists())
+
+    def test_a_missing_directory_is_not_an_error(self) -> None:
+        self.assertEqual(PRUNE.prune(self.root / "absent", today=TODAY), [])
+
+
+class TrafficLogRetentionUnitTests(unittest.TestCase):
+    def setUp(self) -> None:
+        script = BASE / "install" / "node" / "haproxy-traffic-log-enable"
+        printed = subprocess.run(
+            [str(script), "--print-units"], capture_output=True, text=True, check=True
+        ).stdout
+        self.service, self.timer = printed.split("--- timer ---\n")
+
+    def test_the_pass_runs_daily_and_catches_up_after_downtime(self) -> None:
+        self.assertIn("OnCalendar=daily", self.timer)
+        self.assertIn("Persistent=true", self.timer)
+
+    def test_the_pass_can_write_nowhere_but_the_log_directory(self) -> None:
+        self.assertIn("ProtectSystem=strict", self.service)
+        self.assertIn("ReadWritePaths=/var/log/haproxy-manager", self.service)
+        self.assertIn("PrivateNetwork=yes", self.service)
+        self.assertIn("NoNewPrivileges=yes", self.service)
+
+    @unittest.skipUnless(shutil.which("systemd-analyze"), "systemd is not installed here")
+    def test_real_systemd_accepts_both_units(self) -> None:
+        analyze = shutil.which("systemd-analyze")
+        assert analyze is not None
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "haproxy-traffic-log-prune.service").write_text(self.service)
+            (root / "haproxy-traffic-log-prune.timer").write_text(self.timer)
+            for unit in ("haproxy-traffic-log-prune.timer", "haproxy-traffic-log-prune.service"):
+                result = subprocess.run(
+                    [analyze, "verify", str(root / unit)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                #
+                # Verifying the timer does not reach into the service it
+                # starts, so both are checked. The one complaint expected on a
+                # machine that is not a node is that the command it starts is
+                # not installed here; anything else is a real defect.
+                #
+                complaints = [
+                    line
+                    for line in (result.stderr + result.stdout).splitlines()
+                    if line.strip() and "haproxy-traffic-log-prune" in line
+                ]
+
+                self.assertEqual(
+                    [line for line in complaints if "is not executable" not in line],
+                    [],
+                    result.stderr or result.stdout,
+                )

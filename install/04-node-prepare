@@ -55,6 +55,7 @@ SCRIPTS=(
     haproxy-state-export
     haproxy-traffic-log-read
     haproxy-traffic-log-enable
+    haproxy-traffic-log-prune
 )
 # Unchanged. This level says whether the manager and a node may speak to each
 # other; the traffic chain is opt-in and adds no operation the manager calls on

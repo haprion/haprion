@@ -1529,7 +1529,8 @@ timers pruning each other's database.
 
 `install/platform/13-platform-traffic-logging` installs the receiver on the
 management host. It creates a dedicated project-owned CA and a server
-certificate for `MANAGER_HOST`, configures rsyslog TLS on TCP 6514 by default,
+certificate for `TRAFFIC_LOG_SERVER_NAME` (the manager's `hostname -f` by
+default), configures rsyslog TLS on TCP 6514 by default,
 maps every resolved node management address to one fixed
 `<cluster>--<node>.jsonl` file, and installs daily log rotation with compression
 and 14 retained rotations. It then grants only the web service identity read

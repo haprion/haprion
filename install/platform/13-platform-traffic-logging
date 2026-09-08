@@ -7,16 +7,17 @@ source ../lib.sh
 
 need_root
 load_answers "${1:-}"
-require_vars PLATFORM_ROOT WEB_USER WORKER_USER POLLER_USER SERVER_NAME
+require_vars PLATFORM_ROOT WEB_USER WORKER_USER POLLER_USER
 ENVIRONMENT="${ENVIRONMENT:-prod}"
 [[ "$ENVIRONMENT" == "prod" ]] || die "traffic-log receiver is production-only"
+TRAFFIC_LOG_SERVER_NAME="${TRAFFIC_LOG_SERVER_NAME:-$(hostname -f)}"
 TRAFFIC_LOG_PORT="${TRAFFIC_LOG_PORT:-6514}"
 if [[ ! "$TRAFFIC_LOG_PORT" =~ ^[0-9]+$ ]] \
     || (( TRAFFIC_LOG_PORT < 1 || TRAFFIC_LOG_PORT > 65535 )); then
     die "TRAFFIC_LOG_PORT must be an integer between 1 and 65535"
 fi
-[[ "$SERVER_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] \
-    || die "SERVER_NAME is not a valid certificate DNS name"
+[[ "$TRAFFIC_LOG_SERVER_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] \
+    || die "TRAFFIC_LOG_SERVER_NAME is not a valid certificate DNS name"
 command -v rsyslogd >/dev/null || die "rsyslog is not installed"
 command -v openssl >/dev/null || die "openssl is not installed"
 getent group syslog >/dev/null || die "the rsyslog service group 'syslog' is missing"
@@ -61,7 +62,7 @@ CA_CERT=${ca_cert}
 CA_KEY=${ca_key}
 SERVER_CERT=${server_cert}
 SERVER_KEY=${server_key}
-SERVER_NAME=${SERVER_NAME}
+SERVER_NAME=${TRAFFIC_LOG_SERVER_NAME}
 PUBLISHED_CA=${published_ca}
 PULL_USER=${PULL_USER}
 RSYSLOG_GROUP=syslog
@@ -69,6 +70,10 @@ EOF
 )"
 install -o root -g root -m 755 bin/haproxy-traffic-log-tls /usr/local/sbin/haproxy-traffic-log-tls
 /usr/local/sbin/haproxy-traffic-log-tls init
+if ! openssl x509 -in "$server_cert" -noout -checkhost "$TRAFFIC_LOG_SERVER_NAME" >/dev/null; then
+    log "  renewing receiver certificate for ${TRAFFIC_LOG_SERVER_NAME}"
+    /usr/local/sbin/haproxy-traffic-log-tls renew
+fi
 
 step "Source identities"
 rules=""

@@ -35,6 +35,17 @@ openssl x509 -in "$stage/ca.pem" -noout -text | grep -q 'CA:TRUE' || {
 install -o root -g root -m 755 -d /etc/haproxy-manager/traffic-log-tls
 install -o root -g root -m 644 "$stage/ca.pem" /etc/haproxy-manager/traffic-log-tls/ca.crt
 
+if [[ -d /etc/apparmor.d/rsyslog.d ]]; then
+    printf '%s\n' \
+        '/etc/haproxy-manager/traffic-log-tls/ r,' \
+        '/etc/haproxy-manager/traffic-log-tls/ca.crt r,' \
+        > "$stage/apparmor"
+    install -o root -g root -m 644 "$stage/apparmor" \
+        /etc/apparmor.d/rsyslog.d/haproxy-manager-traffic-forward
+    [[ ! -x /usr/lib/rsyslog/reload-apparmor-profile ]] \
+        || /usr/lib/rsyslog/reload-apparmor-profile
+fi
+
 config="# Installed by haproxy-traffic-log-trust. Query strings have already been
 # excluded by HAProxy's log format before this action receives a message.
 if (\$programname == \"haproxy\") then {

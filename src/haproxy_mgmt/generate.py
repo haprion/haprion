@@ -157,9 +157,17 @@ RETRIES = 3
 # untouched: this profile applies only to the additional per-frontend log
 # target. `%HP` is the path without its query string. HAProxy owns JSON quoting
 # for every string value through `+json`.
+#
+# `%rt` is not decoration. rsyslog ships with `$RepeatedMsgReduction on`, which
+# silently collapses consecutive byte-identical messages into one - measured on
+# a node: three sends, one line written. Without a field that differs per
+# request, two identical requests inside the same second with identical timings
+# and byte counts become one traffic record, and nothing anywhere says a record
+# was dropped. The per-process request counter makes every record distinct, and
+# is a useful ordering key on its own.
 TRAFFIC_LOG_PROFILE = f"{PREFIX}-traffic-json"
 HTTP_TRAFFIC_LOG_FORMAT = (
-    '"%{+json}o %(schema)[int(1)] %(at)Ts %(client)ci %(method)HM '
+    '"%{+json}o %(schema)[int(1)] %(at)Ts %(request)rt %(client)ci %(method)HM '
     "%(host)[var(txn.traffic_host)] %(path)HP %(frontend)f %(backend)b "
     "%(server)s %(status)ST %(request_time)TR %(queue_time)Tw "
     '%(connect_time)Tc %(response_time)Tr %(total_time)Ta %(bytes)B"'

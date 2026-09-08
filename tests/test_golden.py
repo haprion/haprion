@@ -82,6 +82,16 @@ class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
         self.assertIn("%(path)HP", enabled)
         self.assertNotIn("capture request header", enabled)
 
+    def test_every_traffic_record_carries_a_field_that_differs_per_request(self) -> None:
+        """rsyslog collapses consecutive identical lines, so records must differ.
+
+        Ubuntu ships `$RepeatedMsgReduction on`. Two identical requests in the
+        same second with identical timings and byte counts would otherwise be
+        written once, with nothing reporting the loss.
+        """
+
+        self.assertIn("%(request)rt", HTTP_TRAFFIC_LOG_FORMAT)
+
     def test_a_server_named_by_hostname_is_kept_resolved(self) -> None:
         """The trap this repository would otherwise walk into.
 

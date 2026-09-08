@@ -1591,7 +1591,7 @@ listed in `NODES_<cluster>`. rsyslog enforces the same list, but a host firewall
 keeps rejected connections out of the daemon entirely.
 
 Rollback is independent on the two sides. Remove
-`/etc/rsyslog.d/51-haproxy-manager-forward.conf` on a node to stop forwarding.
+`/etc/rsyslog.d/48-haproxy-manager-forward.conf` on a node to stop forwarding.
 On the manager, set `traffic_logs.enabled = false`, remove the receiver file,
 restart rsyslog and restart the web service. Neither operation changes
 HAProxy's local logging or configuration.

@@ -48,7 +48,10 @@ if (\$programname == \"haproxy\") then {
            queue.saveOnShutdown=\"on\" action.resumeRetryCount=\"-1\")
 }"
 printf '%s\n' "$config" > "$stage/forward.conf"
-install -o root -g root -m 644 "$stage/forward.conf" /etc/rsyslog.d/51-haproxy-manager-forward.conf
+install -o root -g root -m 644 "$stage/forward.conf" /etc/rsyslog.d/48-haproxy-manager-forward.conf
+# Versions before 2026-09-08 installed this after Ubuntu's terminating
+# 49-haproxy.conf and consequently never saw a message.
+rm -f /etc/rsyslog.d/51-haproxy-manager-forward.conf
 rsyslogd -N1
 systemctl restart rsyslog
 echo "traffic-log TLS trust and forwarding installed"

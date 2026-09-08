@@ -390,25 +390,6 @@ The name must have a DNS record before the step runs. The separate hostname is
 also what prevents a browser from mixing development and production host-only
 session cookies.
 
-## Step 13 — traffic logs
-
-Production only, after the UI release is installed:
-
-```bash
-sudo ./13-platform-traffic-logging answers.env
-```
-
-This creates a dedicated private CA and rsyslog server certificate, publishes
-only the CA certificate through the existing read-only node export, installs a
-TLS listener and a fixed source-address-to-file mapping, sets 14-day compressed
-rotation, and gives only the web identity read access. It also enables the
-otherwise inert `[traffic_logs]` section in `ui.toml`.
-
-Install `rsyslog-gnutls` first on Debian/Ubuntu. Then update every node bundle
-with `04-node-prepare` and run `sudo haproxy-traffic-log-trust` on each node.
-Normal server-certificate renewal uses the same CA and therefore requires no
-node update.
-
 ## Step 7 — the worker and the poller
 
 `./07-platform-services` installs both as their own accounts, plus the two

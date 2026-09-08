@@ -1320,12 +1320,3 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .traffic-ranges a:first-child { border-left: 0; }
 .traffic-ranges a:hover { background: var(--hover-surface); color: var(--text-strong); }
 .traffic-ranges a.is-current { background: var(--hover-surface); color: var(--text-strong); font-weight: 660; }
-
-.log-filters { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(180px, 1fr) minmax(100px, .5fr) minmax(220px, 1.4fr) auto auto; gap: 12px; align-items: end; margin: 0 0 18px; }
-.log-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
-.log-filters input, .log-filters select { min-width: 0; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); }
-.log-table { min-width: 1180px; }
-.log-table td { vertical-align: top; }
-.log-table td small, .log-table td .log-path { display: block; margin-top: 3px; }
-.log-path { max-width: 38ch; overflow-wrap: anywhere; white-space: normal; }
-@media (max-width: 1000px) { .log-filters { grid-template-columns: 1fr 1fr; } }

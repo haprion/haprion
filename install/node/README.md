@@ -11,7 +11,6 @@
 | `haproxy-health-probe` | tries a health check against named servers, from this node, and reports whether they answered |
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
-| `haproxy-traffic-log-trust` | fetches the public traffic-log CA and installs TLS forwarding |
 
 ## Nothing environment-specific is compiled in
 
@@ -27,8 +26,6 @@ CONFIG_PULL_KEY="/root/.ssh/id_ed25519_config_pull"
 CONFIG_REMOTE_PATH="alpha/current/a/"
 CERT_PULL_USER="svc-cert-pull"
 CERT_PULL_KEY="/root/.ssh/id_ed25519_cert_pull"
-TRAFFIC_LOG_CA_REMOTE=".haproxy-manager/traffic-log-ca.pem"
-TRAFFIC_LOG_PORT="6514"
 ```
 
 A script that cannot read it, or finds a value missing, exits 78 (`EX_CONFIG`)

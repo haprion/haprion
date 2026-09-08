@@ -283,19 +283,26 @@ def _replace(path: Path, content: bytes, mode: int = 0o640) -> None:
     temporary = path.parent / f".{path.name}.new-{os.getpid()}"
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
     descriptor = os.open(temporary, flags, mode)
+    temporary_exists = True
     try:
-        with os.fdopen(descriptor, "wb", closefd=False) as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
+        try:
+            os.fchmod(descriptor, mode)
+            with os.fdopen(descriptor, "wb", closefd=False) as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, path)
+        temporary_exists = False
+        directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
-        os.close(descriptor)
-    os.replace(temporary, path)
-    directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
+        if temporary_exists:
+            temporary.unlink(missing_ok=True)
 
 
 def _append(path: Path, payload: bytes) -> None:

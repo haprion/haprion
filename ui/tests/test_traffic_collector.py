@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 import tempfile
 import unittest
 from datetime import UTC, date, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from haproxy_ui.traffic_collector import (
     CollectorConfig,
@@ -12,6 +15,7 @@ from haproxy_ui.traffic_collector import (
     NodeTarget,
     Response,
     _parse_response,
+    _replace,
     collect,
     load_config,
 )
@@ -161,6 +165,29 @@ class TrafficCollectorTests(unittest.TestCase):
                 self.assertRaisesRegex(CollectorError, "inconsistent"),
             ):
                 _parse_response(raw, day, 0)
+
+    def test_failed_atomic_replace_preserves_destination_and_removes_temporary(self) -> None:
+        destination = self.mirror / "state.json"
+        destination.write_bytes(b"old\n")
+
+        with (
+            patch("haproxy_ui.traffic_collector.os.replace", side_effect=OSError("full disk")),
+            self.assertRaisesRegex(OSError, "full disk"),
+        ):
+            _replace(destination, b"new\n")
+
+        self.assertEqual(destination.read_bytes(), b"old\n")
+        self.assertEqual(list(self.mirror.glob(".state.json.new-*")), [])
+
+    def test_atomic_replace_sets_the_requested_mode_independent_of_umask(self) -> None:
+        destination = self.mirror / "state.json"
+        previous = os.umask(0o077)
+        try:
+            _replace(destination, b"state\n", 0o640)
+        finally:
+            os.umask(previous)
+
+        self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o640)
 
 
 if __name__ == "__main__":

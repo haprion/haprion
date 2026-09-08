@@ -1554,6 +1554,11 @@ Then update the node bundle with `04-node-prepare` and run on each node:
 sudo haproxy-traffic-log-trust
 ```
 
+For an existing node, only the new `haproxy-traffic-log-trust` file needs to be
+installed. It reuses `MANAGER`, `CONFIG_PULL_USER` and `CONFIG_PULL_KEY` from
+the node's existing root-owned `node.conf`; the CA path and TCP port default to
+the values above. The management answers file must not be copied to a node.
+
 That command fetches `.haproxy-manager/traffic-log-ca.pem`, validates that it
 is a CA with at least 30 days left, installs the forwarding action and validates
 the complete rsyslog configuration before restarting the service. The existing

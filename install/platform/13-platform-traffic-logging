@@ -103,6 +103,19 @@ input(type=\"imtcp\" port=\"${TRAFFIC_LOG_PORT}\" ruleset=\"haproxy-manager-traf
       StreamDriver.Name=\"gtls\" StreamDriver.Mode=\"1\" StreamDriver.AuthMode=\"anon\")"
 install_file /etc/rsyslog.d/50-haproxy-manager-receiver.conf root:root 640 "$receiver"
 
+apparmor="# Read only the receiver identity; the private CA key is deliberately absent.
+/etc/haproxy-manager/traffic-log-tls/ r,
+/etc/haproxy-manager/traffic-log-tls/ca.crt r,
+/etc/haproxy-manager/traffic-log-tls/server.crt r,
+/etc/haproxy-manager/traffic-log-tls/server.key r,
+${PLATFORM_ROOT}/data/logs/ rw,
+${PLATFORM_ROOT}/data/logs/*.jsonl rwk,"
+if [[ -d /etc/apparmor.d/rsyslog.d ]]; then
+    install_file /etc/apparmor.d/rsyslog.d/haproxy-manager-traffic root:root 644 "$apparmor"
+    [[ ! -x /usr/lib/rsyslog/reload-apparmor-profile ]] \
+        || /usr/lib/rsyslog/reload-apparmor-profile
+fi
+
 rotation="${PLATFORM_ROOT}/data/logs/*.jsonl {
     daily
     rotate 14

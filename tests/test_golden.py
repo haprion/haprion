@@ -65,6 +65,13 @@ defaults
 
 
 class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
+    def test_http_logs_exclude_the_query_before_they_leave_haproxy(self) -> None:
+        generated = produced(GOLDEN / "minimal")["1000-frontends.cfg"]
+        log_format = next(line for line in generated.splitlines() if "log-format" in line)
+        self.assertIn("%(path)HP", log_format)
+        self.assertNotIn("%HU", log_format)
+        self.assertNotIn("%HQ", log_format)
+
     def test_a_server_named_by_hostname_is_kept_resolved(self) -> None:
         """The trap this repository would otherwise walk into.
 

@@ -37,6 +37,7 @@ SCRIPTS=(
     haproxy-health-probe
     haproxy-keepalived-state
     haproxy-state-export
+    haproxy-traffic-log-trust
 )
 NODE_API=1
 
@@ -203,6 +204,13 @@ CONFIG_REMOTE_PATH=\"${CLUSTER}/current/${node_path}/\"
 # to log in is not a restored node, so operator accounts belong here too.
 BACKUP_ACCOUNTS=\"${TRIGGER_USER} ${STATUS_USER} ${BACKUP_USER}${OPERATOR_ACCOUNTS:+ ${OPERATOR_ACCOUNTS}}\"
 BACKUP_GROUPS=\"${EXTRA_BACKUP_GROUPS:-}\""
+
+node_conf+="
+
+# Public trust for server-authenticated TLS traffic logging. The private CA
+# key never leaves the management host; this node fetches only the certificate.
+TRAFFIC_LOG_CA_REMOTE=\".haproxy-manager/traffic-log-ca.pem\"
+TRAFFIC_LOG_PORT=\"${TRAFFIC_LOG_PORT:-6514}\""
 
 if [[ -n "${CERT_PULL_USER:-}" ]]; then
     require_vars NODE_CERT_PULL_KEY
@@ -406,4 +414,7 @@ fetch fails on an unknown host:
 
 When every node is done, back on the management host:
   ./05-verify answers.env
+
+After platform step 13 has published the traffic-log CA, run on this node:
+  sudo haproxy-traffic-log-trust
 OUTRO

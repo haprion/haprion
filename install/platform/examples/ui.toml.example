@@ -52,6 +52,13 @@ clusters = []
 # of 10 is close enough to a pass that a slow one would run into the next.
 interval_seconds = 20
 
+[traffic_logs]
+# Off until platform step 13 has installed and verified the TLS receiver.
+enabled = false
+directory = "/apps/haproxy-manager/data/logs"
+# The hard upper bound is 500. Filters are applied before this newest-first cap.
+max_lines = 500
+
 [database]
 # Connections use the local socket and peer authentication. There is no user and
 # no password here, and no place to put one: each service account is named after

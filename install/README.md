@@ -30,9 +30,10 @@ host who owns the address. There is a working starting point in
 [`examples/keepalived.conf.example`](examples/keepalived.conf.example), and step
 4 checks all three and says so if one is missing.
 
-The
-management host needs Python 3.12+, the OS PyYAML package, `git`, `rsync`,
-`openssh-client` and a `sudo` new enough for no-argument rules.
+The management host needs Python 3.12+, the OS PyYAML package, `git`, `rsync`,
+`openssh-client` and a `sudo` new enough for no-argument rules. The optional
+traffic-log view additionally needs rsyslog's GnuTLS driver on the manager and
+nodes (`rsyslog-gnutls` on Debian/Ubuntu).
 
 Copy the answers file and fill it in. It is the only place you make decisions:
 
@@ -100,6 +101,12 @@ Then paste the `authorized_keys` lines for this node from step 3, and add the
 keepalived notify lines if the script asked for them.
 
 Repeat for every node.
+
+Traffic logging is installed after the web platform exists. Run platform step
+13 on the manager, update the node bundle with this step, then run
+`sudo haproxy-traffic-log-trust` on each node. The CA private key stays on the
+manager; the node fetches only public trust through its existing read-only
+configuration identity.
 
 ## Step 5 — check
 

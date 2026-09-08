@@ -128,6 +128,17 @@ class ConfigTests(unittest.TestCase):
             with self.subTest(port=port), self.assertRaises(ConfigError):
                 self.load(VALID.replace("port = 8080", f"port = {port}"))
 
+    def test_traffic_log_paths_and_the_500_row_ceiling_are_fixed(self) -> None:
+        base = '[traffic_logs]\nenabled = true\ndirectory = "/var/log/haproxy-manager"\n'
+        config = self.load(VALID + base + "max_lines = 500\n")
+        self.assertTrue(config.traffic_logs.enabled)
+        self.assertEqual(config.traffic_logs.max_lines, 500)
+        for bad in ('directory = "relative"', 'directory = "/var/../secret"'):
+            with self.subTest(bad=bad), self.assertRaises(ConfigError):
+                self.load(VALID + "[traffic_logs]\nenabled = true\n" + bad + "\n")
+        with self.assertRaises(ConfigError):
+            self.load(VALID + base + "max_lines = 501\n")
+
     def test_a_group_writable_file_is_refused(self) -> None:
         path = self.write(VALID, mode=0o660)
         if os.geteuid() == 0:  # pragma: no cover - the suite does not run as root

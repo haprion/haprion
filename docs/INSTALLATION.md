@@ -104,6 +104,8 @@ HAProxy itself. Before starting, you need:
   it happened to be when a grant was made
 - nginx
 - `uv`, for building a release environment from the committed lockfile
+- `rsyslog` with its GnuTLS driver (`rsyslog-gnutls` on Debian/Ubuntu), when
+  the traffic-log view is enabled
 
 **On every node**
 
@@ -111,6 +113,8 @@ HAProxy itself. Before starting, you need:
 - `keepalived`, if the cluster uses a virtual address
 - `rsync` and `openssh-server`
 - `sudo`
+- `rsyslog` with its GnuTLS driver (`rsyslog-gnutls` on Debian/Ubuntu), when
+  forwarding traffic logs
 
 **Names and addresses you decide before you start**
 
@@ -844,9 +848,10 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
 | `haproxy-health-probe` | opens one connection per named target and reports the status line |
+| `haproxy-traffic-log-trust` | fetches public CA trust and installs TLS log forwarding |
 
 Step 4 also writes `/etc/haproxy-manager/node-installation.json`. It records the
-node compatibility API and a SHA-256 digest for each of these seven scripts.
+node compatibility API and a SHA-256 digest for each of these eight scripts.
 `haproxy-node-status` recomputes the digests on every reading, so copied metadata
 cannot hide a script changed after installation. The report contains code
 digests only, never node configuration or key material.
@@ -1519,6 +1524,69 @@ development platform's job table grows exactly as production's does, and
 rehearsal traffic fills it fastest. Its units are therefore named after the
 environment, since a machine carrying both platforms would otherwise have two
 timers pruning each other's database.
+
+### 4.8b Traffic logs and their private TLS authority
+
+`install/platform/13-platform-traffic-logging` installs the receiver on the
+management host. It creates a dedicated project-owned CA and a server
+certificate for `MANAGER_HOST`, configures rsyslog TLS on TCP 6514 by default,
+maps every resolved node management address to one fixed
+`<cluster>--<node>.jsonl` file, and installs daily log rotation with compression
+and 14 retained rotations. It then grants only the web service identity read
+access to the log directory and enables the view in `ui.toml`.
+
+This authority is separate from both nginx's browser-facing certificate and
+the certificates HAProxy serves. Its private CA key remains root-only on the
+manager. Nodes receive only the public CA certificate through the existing
+read-only configuration-pull account, then verify the manager's certificate by
+name. Clients present no certificate of their own; the receiver's exact source
+address allowlist is the client identity and also decides the destination file.
+
+Run on the manager after the UI release is installed:
+
+```bash
+sudo install/platform/13-platform-traffic-logging answers.env
+```
+
+Then update the node bundle with `04-node-prepare` and run on each node:
+
+```bash
+sudo haproxy-traffic-log-trust
+```
+
+That command fetches `.haproxy-manager/traffic-log-ca.pem`, validates that it
+is a CA with at least 30 days left, installs the forwarding action and validates
+the complete rsyslog configuration before restarting the service. The existing
+HAProxy local log remains in place; forwarding is an additional action.
+
+The generated HTTP log uses HAProxy's `%HP` field, which excludes the query
+string. That happens before the message reaches rsyslog, so a query token is
+never first written locally and scrubbed later. Client address, method, Host,
+path, status, frontend, backend/server, timers and bytes remain. TCP proxy
+objects keep their normal `tcplog`; the browser view is deliberately an HTTP
+request log.
+
+Renew the manager's server certificate under the same CA with:
+
+```bash
+sudo haproxy-traffic-log-tls renew
+sudo haproxy-traffic-log-tls show
+```
+
+That renewal needs no node change: the trusted CA is unchanged. Replacing the
+CA itself is a separate maintenance event and requires distributing new public
+trust to every node before the receiver switches. The command intentionally
+does not automate that two-sided operation.
+
+The network firewall should admit TCP 6514 only from the management addresses
+listed in `NODES_<cluster>`. rsyslog enforces the same list, but a host firewall
+keeps rejected connections out of the daemon entirely.
+
+Rollback is independent on the two sides. Remove
+`/etc/rsyslog.d/51-haproxy-manager-forward.conf` on a node to stop forwarding.
+On the manager, set `traffic_logs.enabled = false`, remove the receiver file,
+restart rsyslog and restart the web service. Neither operation changes
+HAProxy's local logging or configuration.
 
 ### 4.9 The worker and the poller
 

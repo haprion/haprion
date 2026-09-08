@@ -59,6 +59,7 @@ from haproxy_ui import (
     operations,
     proxies,
     snapshot,
+    traffic_logs,
 )
 from haproxy_ui import editor as editor_module
 from haproxy_ui import preview as preview_module
@@ -1447,6 +1448,49 @@ def build_router(config: Config) -> APIRouter:
     @router.get("/clusters/{cluster}/traffic", response_class=HTMLResponse)
     def cluster_traffic(request: Request, cluster: str) -> Response:
         return _cluster_traffic(request, config, cluster)
+
+    @router.get("/logs", response_class=HTMLResponse)
+    def traffic_log_page(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        selected_cluster = request.query_params.get("cluster", "")[:32]
+        selected_proxy = request.query_params.get("proxy", "")[:128]
+        selected_status = request.query_params.get("status", "")[:3]
+        selected_query = request.query_params.get("q", "")[:200]
+        reading = (
+            traffic_logs.read(
+                config.traffic_logs.directory,
+                config.clusters,
+                limit=config.traffic_logs.max_lines,
+                cluster=selected_cluster,
+                proxy=selected_proxy,
+                status=selected_status,
+                substring=selected_query,
+            )
+            if config.traffic_logs.enabled
+            else traffic_logs.Reading((), 0, False)
+        )
+        return TEMPLATES.TemplateResponse(
+            request,
+            "logs.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "section": "logs",
+                "management_writes": config.management_writes,
+                "enabled": config.traffic_logs.enabled,
+                "reading": reading,
+                "clusters": config.clusters,
+                "selected_cluster": selected_cluster,
+                "selected_proxy": selected_proxy,
+                "selected_status": selected_status,
+                "selected_query": selected_query,
+                "max_lines": config.traffic_logs.max_lines,
+            },
+        )
 
     @router.get("/network", response_class=HTMLResponse)
     def network_overview(request: Request) -> Response:

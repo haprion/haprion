@@ -11,6 +11,7 @@ from haproxy_ui.traffic_collector import (
     CollectorError,
     NodeTarget,
     Response,
+    _parse_response,
     collect,
     load_config,
 )
@@ -130,6 +131,36 @@ class TrafficCollectorTests(unittest.TestCase):
         self.staging.symlink_to(self.mirror, target_is_directory=True)
         with self.assertRaisesRegex(CollectorError, "staging is not a directory or is a symlink"):
             collect(self.config, now=NOW, fetch=lambda *_args: None)  # type: ignore[arg-type]
+
+    def test_response_flags_must_agree_with_the_cursor_and_remote_size(self) -> None:
+        day = NOW.date()
+        headers = (
+            {
+                "file": day.isoformat(),
+                "size": 10,
+                "offset": 0,
+                "sent": 0,
+                "eof": True,
+                "reset": False,
+                "skipped_bytes": 0,
+            },
+            {
+                "file": day.isoformat(),
+                "size": 0,
+                "offset": 0,
+                "sent": 0,
+                "eof": True,
+                "reset": True,
+                "skipped_bytes": 0,
+            },
+        )
+        for header in headers:
+            raw = json.dumps(header).encode() + b"\n"
+            with (
+                self.subTest(header=header),
+                self.assertRaisesRegex(CollectorError, "inconsistent"),
+            ):
+                _parse_response(raw, day, 0)
 
 
 if __name__ == "__main__":

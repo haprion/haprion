@@ -67,6 +67,12 @@ class TrafficLogNodeReaderTests(unittest.TestCase):
         assert header is not None
         self.assertEqual((header["size"], header["sent"], header["eof"]), (0, 0, True))
 
+    def test_missing_day_resets_a_cursor_that_can_no_longer_exist(self) -> None:
+        code, header, payload = self.call("2026-09-08 12")
+        self.assertEqual((code, payload), (0, b""))
+        assert header is not None
+        self.assertEqual((header["size"], header["reset"], header["eof"]), (0, True, True))
+
     def test_cursor_returns_only_whole_records(self) -> None:
         first = b'{"schema":1,"path":"/one"}\n'
         second = b'{"schema":1,"path":"/two"}\n'

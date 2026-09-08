@@ -67,7 +67,7 @@ def serve(raw: str, root: Path, output: BinaryIO, *, today: date | None = None) 
     try:
         descriptor = os.open(path, flags)
     except FileNotFoundError:
-        output.write(_empty(wanted, offset))
+        output.write(_empty(wanted, offset, reset=offset > 0))
         return 0
     except OSError:
         return 65

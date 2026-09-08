@@ -211,10 +211,20 @@ def _parse_response(raw: bytes, wanted: date, offset: int) -> Response:
         raise CollectorError("node response payload length is invalid")
     if payload and not payload.endswith(b"\n"):
         raise CollectorError("node response ends in a partial record")
-    if header["reset"] and (payload or header["sent"] or header["skipped_bytes"]):
-        raise CollectorError("node reset response carries data")
-    if not header["reset"] and offset + header["skipped_bytes"] + len(payload) > header["size"]:
+    advanced = offset + header["skipped_bytes"] + len(payload)
+    if header["reset"]:
+        if (
+            payload
+            or header["sent"]
+            or header["skipped_bytes"]
+            or not header["eof"]
+            or header["size"] >= offset
+        ):
+            raise CollectorError("node reset response is inconsistent")
+    elif advanced > header["size"]:
         raise CollectorError("node response advances beyond its file size")
+    elif header["eof"] != (advanced == header["size"]):
+        raise CollectorError("node response eof flag is inconsistent")
     return Response(
         size=header["size"],
         offset=header["offset"],

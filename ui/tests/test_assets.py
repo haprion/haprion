@@ -93,3 +93,10 @@ class ShapesTheIconRuleReaches(unittest.TestCase):
         script = (STATIC_DIRECTORY / "traffic.js").read_text(encoding="utf-8")
         self.assertNotIn("traffic-tip", script)
         self.assertIn(".traffic-figures", script)
+
+    def test_the_page_range_switch_stays_below_the_sticky_header(self) -> None:
+        stylesheet = self.stylesheet()
+        rule = stylesheet.split(".page-ranges {", 1)[1].split("}", 1)[0]
+
+        self.assertIn("position: sticky", rule)
+        self.assertIn("top: 97px", rule)

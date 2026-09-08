@@ -1142,7 +1142,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  */
 .traffic-pool { padding: 16px 20px; border-top: 1px solid var(--line); }
 .traffic-pool:first-of-type { border-top: 0; }
-.traffic-head { display: flex; align-items: center; gap: 8px; margin: 16px 20px 0; }
+.traffic-head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin: 16px 20px 0; }
 /*
   A section heading inside a cluster card. The card already carries the
   cluster's accent down its edge, so these separate the three readings within
@@ -1155,8 +1155,15 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   The range control belongs to the whole page here rather than to one card, so
   it sits above the list instead of in a card header.
 */
-.page-ranges { margin-bottom: 14px; }
+.page-ranges {
+  position: sticky;
+  z-index: 10;
+  top: 97px;
+  margin-bottom: 14px;
+  box-shadow: 0 0 0 7px var(--bg);
+}
 .traffic-backend { color: var(--muted); font-size: 12px; }
+.traffic-rate { flex-basis: 100%; color: var(--muted); font-size: 11px; }
 /* The shape first and the figures after it, with the line taking every pixel
    the figures do not need. A month is 120 points, and they have to be far
    enough apart that a reader can put a finger on one and read the date under

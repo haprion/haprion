@@ -55,6 +55,7 @@
     #}
     <div class="traffic-head">
       <code class="traffic-backend">{{ named.vip }}</code>{% if named.known %} <span class="protocol-badge protocol-{{ named.protocol }}">{{ named.protocol | upper }}</span>{% endif %}
+      <span class="traffic-rate">Requests in each {{ traffic_bucket }} bucket</span>
     </div>
     {#
       An address that was seen but that no node reported holding. Said rather

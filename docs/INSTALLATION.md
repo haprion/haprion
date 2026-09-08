@@ -1534,6 +1534,9 @@ maps every resolved node management address to one fixed
 `<cluster>--<node>.jsonl` file, and installs daily log rotation with compression
 and 14 retained rotations. It then grants only the web service identity read
 access to the log directory and enables the view in `ui.toml`.
+The parent `data/` directory grants that identity traverse-only access; it
+cannot list the directory, and the sibling `data/dumps/` remains `0700
+root:root`.
 
 This authority is separate from both nginx's browser-facing certificate and
 the certificates HAProxy serves. Its private CA key remains root-only on the

@@ -88,6 +88,9 @@ done
 senders="${senders%,}"
 
 step "Receiver and files"
+# The web account needs to traverse data/ to reach logs/, but must not be able
+# to list that parent or enter the root-only dumps/ sibling.
+ensure_dir "${PLATFORM_ROOT}/data" "root:${WEB_USER}" 710
 ensure_dir "${PLATFORM_ROOT}/data/logs" "root:${WEB_USER}" 750
 receiver="global(DefaultNetstreamDriver=\"gtls\"
        DefaultNetstreamDriverCAFile=\"${ca_cert}\"

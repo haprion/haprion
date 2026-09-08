@@ -1,0 +1,195 @@
+#!/bin/bash
+#
+# Turn the node's structured traffic log on or off. Run this ON A NODE, as root,
+# after 04-node-prepare has created the reader account, the read group and
+# /var/log/haproxy-manager.
+#
+#     sudo haproxy-traffic-log-enable            # install and activate
+#     sudo haproxy-traffic-log-enable --disable  # remove and deactivate
+#          haproxy-traffic-log-enable --print    # show the rsyslog rule only
+#
+# Activation is deliberately separate from 04-node-prepare. The second log
+# stream is opt-in in the generator too, and a node that has not been published
+# with it would otherwise get a rule matching a tag nothing ever sends.
+#
+set -Eeuo pipefail
+
+LOG_ROOT="/var/log/haproxy-manager"
+LOG_GROUP="haproxy-logread"
+# Ubuntu's 49-haproxy.conf matches every tag starting with "haproxy" and stops.
+# A rule installed after it never sees a message - which is exactly how the
+# first build failed - so this file has to sort before it.
+RSYSLOG_RULE="/etc/rsyslog.d/48-haproxy-manager-traffic.conf"
+APPARMOR_SNIPPET="/etc/apparmor.d/rsyslog.d/haproxy-manager-traffic"
+# Left behind by the withdrawn push build. A node that still carries it keeps
+# trying to open a TLS connection to the management host that must not exist.
+WITHDRAWN=(
+    /etc/rsyslog.d/48-haproxy-manager-forward.conf
+    /etc/rsyslog.d/51-haproxy-manager-forward.conf
+)
+
+log()  { echo "[$(date '+%H:%M:%S')] $*"; }
+die()  { echo "ERROR: $*" >&2; exit 1; }
+
+render_rule() {
+    cat <<'CONF'
+# Installed by haproxy-traffic-log-enable. Do not edit by hand.
+#
+# HAProxy tags this second, opt-in stream "haproxy-traffic"; the ordinary
+# httplog stream keeps the tag "haproxy" and is not matched here, so classic
+# logging to /var/log/haproxy.log is untouched.
+#
+# This file must sort before Ubuntu's 49-haproxy.conf, which matches every tag
+# starting with "haproxy" and stops. It must also stop the message itself -
+# without that, every JSON record would additionally be appended to the classic
+# log, doubling the volume of the file an operator reads by hand.
+#
+# The day file is named from the current UTC date, not from the message
+# timestamp. The collector treats a finished day as immutable, and only a
+# monotonic clock source guarantees that a closed file is never appended to
+# after the rollover.
+
+template(name="haproxy-manager-traffic-file" type="string"
+         string="/var/log/haproxy-manager/traffic-%$now-utc%.jsonl")
+# Only the message, from its second character. HAProxy already emits one
+# complete JSON object per record, and a syslog header in front of it would
+# make the file something other than the JSONL the reader and the interface
+# parse.
+#
+# The offset is not arbitrary and `ltrim` is not the answer: this rsyslog
+# accepts `ltrim` in a template and then reports `invalid field option` at
+# startup while `rsyslogd -N1` still passes, so the option would be silently
+# dropped. RFC3164 puts one space between the tag and the payload, and the
+# message property keeps it - measured through a real rsyslog on a real Unix
+# socket, where `%msg%` produced " {" and this form produced "{".
+template(name="haproxy-manager-traffic-line" type="string"
+         string="%msg:2:$:drop-last-lf%\n")
+
+if ($programname == "haproxy-traffic") then {
+    action(type="omfile"
+           dynaFile="haproxy-manager-traffic-file"
+           template="haproxy-manager-traffic-line"
+           fileCreateMode="0640"
+           dirCreateMode="0750"
+           createDirs="off")
+    stop
+}
+CONF
+}
+
+render_apparmor() {
+    cat <<'CONF'
+# Installed by haproxy-traffic-log-enable.
+#
+# Ubuntu's shipped rsyslogd profile already allows /var/log/** rw, so this
+# grants nothing new today. It is written anyway: the traffic log's dependency
+# on that permission is otherwise invisible, and a site that narrows the broad
+# wildcard would break the log with no rule naming what it needed.
+/var/log/haproxy-manager/ r,
+/var/log/haproxy-manager/traffic-*.jsonl rw,
+CONF
+}
+
+if [[ "${1:-}" == "--print" ]]; then
+    render_rule
+    exit 0
+fi
+
+[[ $EUID -eq 0 ]] || die "run this with sudo"
+command -v rsyslogd >/dev/null || die "rsyslog is not installed on this node"
+
+#
+# Validate through the real parser before anything is activated, and put back
+# whatever was there when it does not pass. rsyslogd is confined by AppArmor to
+# /etc/rsyslog.conf and /etc/rsyslog.d/**, so the file genuinely has to be in
+# place to be checked - which is why the restore path exists rather than a
+# check in a temporary directory that would prove nothing about this location.
+#
+restore=""
+restore_rule() {
+    if [[ -n "$restore" ]]; then
+        mv -f "$restore" "$RSYSLOG_RULE"
+    else
+        rm -f "$RSYSLOG_RULE"
+    fi
+}
+
+stage_rule() {
+    if [[ -f "$RSYSLOG_RULE" ]]; then
+        restore="${RSYSLOG_RULE}.previous-$$"
+        cp -a "$RSYSLOG_RULE" "$restore"
+    fi
+}
+
+validate_or_restore() {
+    if rsyslogd -N1 >/dev/null 2>&1; then
+        return 0
+    fi
+    restore_rule
+    rsyslogd -N1 || die "rsyslog configuration was already broken before this ran"
+    die "the generated rule did not pass rsyslogd -N1; the previous state is back"
+}
+
+restart_or_restore() {
+    if systemctl restart rsyslog; then
+        return 0
+    fi
+    restore_rule
+    systemctl restart rsyslog || die "rsyslog will not start even after the rollback"
+    die "rsyslog refused to restart with the new rule; the previous state is back"
+}
+
+if [[ "${1:-}" == "--disable" ]]; then
+    stage_rule
+    rm -f "$RSYSLOG_RULE" "$APPARMOR_SNIPPET"
+    [[ ! -x /usr/lib/rsyslog/reload-apparmor-profile ]] \
+        || /usr/lib/rsyslog/reload-apparmor-profile
+    validate_or_restore
+    restart_or_restore
+    rm -f "$restore"
+    log "traffic logging disabled; ${LOG_ROOT} is left in place"
+    exit 0
+fi
+
+[[ -z "${1:-}" ]] || die "usage: $(basename "$0") [--disable|--print]"
+
+getent group "$LOG_GROUP" >/dev/null \
+    || die "group ${LOG_GROUP} is missing; run 04-node-prepare on this node first"
+[[ -d "$LOG_ROOT" ]] \
+    || die "${LOG_ROOT} is missing; run 04-node-prepare on this node first"
+
+#
+# The set-group-id bit is what makes the file readable by the collector at all.
+# rsyslog drops to syslog:syslog before it opens anything, so it cannot chown a
+# file into a group it is not a member of; inheriting the directory's group is
+# the only way that does not require widening the syslog account.
+#
+owner="$(stat -c '%U:%G %a' "$LOG_ROOT")"
+[[ "$owner" == "syslog:${LOG_GROUP} 2750" ]] \
+    || die "${LOG_ROOT} is ${owner}, expected syslog:${LOG_GROUP} 2750; rerun 04-node-prepare"
+
+for stale in "${WITHDRAWN[@]}"; do
+    if [[ -e "$stale" ]]; then
+        rm -f "$stale"
+        log "  removed  ${stale}  (withdrawn push build)"
+    fi
+done
+
+install -o root -g root -m 755 -d "$(dirname "$APPARMOR_SNIPPET")"
+render_apparmor > "${APPARMOR_SNIPPET}.new-$$"
+install -o root -g root -m 644 "${APPARMOR_SNIPPET}.new-$$" "$APPARMOR_SNIPPET"
+rm -f "${APPARMOR_SNIPPET}.new-$$"
+[[ ! -x /usr/lib/rsyslog/reload-apparmor-profile ]] \
+    || /usr/lib/rsyslog/reload-apparmor-profile
+log "  installed ${APPARMOR_SNIPPET}"
+
+stage_rule
+render_rule > "${RSYSLOG_RULE}.new-$$"
+install -o root -g root -m 644 "${RSYSLOG_RULE}.new-$$" "$RSYSLOG_RULE"
+rm -f "${RSYSLOG_RULE}.new-$$"
+validate_or_restore
+restart_or_restore
+rm -f "$restore"
+log "  installed ${RSYSLOG_RULE}"
+log "traffic logging active; records appear in ${LOG_ROOT} once a published"
+log "  configuration enables the second log stream for this cluster"

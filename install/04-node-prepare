@@ -54,7 +54,12 @@ SCRIPTS=(
     haproxy-keepalived-state
     haproxy-state-export
     haproxy-traffic-log-read
+    haproxy-traffic-log-enable
 )
+# Unchanged. This level says whether the manager and a node may speak to each
+# other; the traffic chain is opt-in and adds no operation the manager calls on
+# a node that has not enabled it. Raising it here would mark every node in the
+# fleet incompatible for a feature none of them was asked to run.
 NODE_API=1
 
 step "Service accounts"
@@ -105,7 +110,13 @@ for member in ${explicit_members//,/ }; do
 done
 ensure_account "$LOGREAD_USER"
 usermod -a -G "$LOGREAD_GROUP" "$LOGREAD_USER"
-ensure_dir "$TRAFFIC_LOG_ROOT" "syslog:${LOGREAD_GROUP}" 750
+#
+# 2750, not 750. rsyslog drops to syslog:syslog before it opens a log file, so
+# it cannot chown one into a group it is not a member of. The set-group-id bit
+# makes every traffic file inherit haproxy-logread on creation, which is what
+# lets the reader account read it - without widening the syslog account.
+#
+ensure_dir "$TRAFFIC_LOG_ROOT" "syslog:${LOGREAD_GROUP}" 2750
 log "  member    ${LOGREAD_USER} -> ${LOGREAD_GROUP}"
 
 step "HAProxy release layout"

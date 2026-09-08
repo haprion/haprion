@@ -43,7 +43,8 @@ shellcheck -x -P SCRIPTDIR "$base/run-checks" "$base/run-tests" "$base/tools/ins
     "$base/install/node/haproxy-cert-pull" \
     "$base/install/node/haproxy-cert-trigger" \
     "$base/install/node/haproxy-keepalived-state" \
-    "$base/install/node/haproxy-state-export"
+    "$base/install/node/haproxy-state-export" \
+    "$base/install/node/haproxy-traffic-log-enable"
 actionlint "$base/.github/workflows"/*.yml
 zizmor --pedantic "$base/.github/workflows"
 mypy

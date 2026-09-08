@@ -12,6 +12,7 @@
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
 | `haproxy-traffic-log-read` | returns bounded, whole JSONL records for one validated UTC day and cursor |
+| `haproxy-traffic-log-enable` | installs or removes the node's rsyslog route for the structured stream |
 
 ## Nothing environment-specific is compiled in
 
@@ -50,6 +51,13 @@ problem the accounts hid: an account added after it was written was silently lef
 out of every backup.
 
 The traffic-log reader is attested as part of the same bundle. Its account, read group and empty
-`authorized_keys` file are prepared by step 4. The later traffic-log installation step supplies
-the rsyslog route, retention policy and collector key; until then no structured traffic file is
-written and the empty account accepts no connection.
+`authorized_keys` file are prepared by step 4. Step 4 does not turn the stream on: run
+`sudo haproxy-traffic-log-enable` on a node whose published configuration enables the second log
+stream, and `--disable` to take it away again. Retention and the collector key are still to come;
+until the route is installed no structured traffic file is written, and the empty account accepts
+no connection either way.
+
+`/var/log/haproxy-manager` is `syslog:haproxy-logread` mode **2750**, and the set-group-id bit is
+load-bearing. rsyslog drops to `syslog:syslog` before it opens a log file, so it cannot place a
+file in a group it does not belong to; letting the directory decide the group is what makes the
+files readable to the reader account without widening the `syslog` account.

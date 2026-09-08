@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 from datetime import date
@@ -109,3 +111,88 @@ class TrafficLogNodeReaderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def render_rule() -> str:
+    """The rule exactly as the node installer writes it."""
+
+    script = BASE / "install" / "node" / "haproxy-traffic-log-enable"
+    return subprocess.run(
+        [str(script), "--print"], capture_output=True, text=True, check=True
+    ).stdout
+
+
+class TrafficLogRsyslogRuleTests(unittest.TestCase):
+    """What the node's own log chain has to be true for.
+
+    Every assertion here stands for a way the withdrawn build failed or could
+    have failed silently: a rule Ubuntu's own haproxy rule swallowed first, a
+    tag match wide enough to capture the classic stream, and a template option
+    this rsyslog accepts in validation and then ignores at startup.
+    """
+
+    def setUp(self) -> None:
+        self.rule = render_rule()
+
+    def test_it_sorts_before_ubuntus_terminating_haproxy_rule(self) -> None:
+        script = (BASE / "install" / "node" / "haproxy-traffic-log-enable").read_text()
+
+        self.assertIn('RSYSLOG_RULE="/etc/rsyslog.d/48-haproxy-manager-traffic.conf"', script)
+
+    def test_it_matches_the_traffic_tag_exactly_and_stops(self) -> None:
+        self.assertIn('$programname == "haproxy-traffic"', self.rule)
+        self.assertNotIn("startswith", self.rule)
+        self.assertIn("stop", self.rule)
+
+    def test_the_day_file_is_named_from_the_current_utc_date(self) -> None:
+        self.assertIn("/var/log/haproxy-manager/traffic-%$now-utc%.jsonl", self.rule)
+
+    def test_only_the_payload_is_written_and_not_a_syslog_header(self) -> None:
+        """Measured, not assumed: `%msg%` keeps RFC3164's separating space.
+
+        `ltrim` is rejected as a field option by this rsyslog at startup while
+        `rsyslogd -N1` still passes, so the option would be dropped in silence
+        and every line would begin with a space the reader does not expect.
+        """
+
+        directives = [line for line in self.rule.splitlines() if not line.lstrip().startswith("#")]
+
+        self.assertIn('string="%msg:2:$:drop-last-lf%\\n"', self.rule)
+        self.assertNotIn("ltrim", "\n".join(directives))
+        self.assertNotIn("%HOSTNAME%", self.rule)
+        self.assertNotIn("%TIMESTAMP%", self.rule)
+
+    def test_the_file_is_group_readable_and_no_wider(self) -> None:
+        self.assertIn('fileCreateMode="0640"', self.rule)
+
+    def test_the_directory_is_set_group_id_so_files_inherit_the_read_group(self) -> None:
+        prepare = (BASE / "install" / "04-node-prepare").read_text()
+
+        self.assertIn('ensure_dir "$TRAFFIC_LOG_ROOT" "syslog:${LOGREAD_GROUP}" 2750', prepare)
+
+    @unittest.skipUnless(shutil.which("rsyslogd"), "rsyslog is not installed here")
+    def test_the_real_rsyslog_parser_accepts_the_rule(self) -> None:
+        """The installed rsyslogd is confined to /etc/rsyslog.d by AppArmor.
+
+        A copy of the same binary under another path is unconfined, which is
+        the only way to run the real parser over a file this suite owns.
+        """
+
+        source = shutil.which("rsyslogd")
+        assert source is not None
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "rsyslogd"
+            shutil.copy2(source, binary)
+            binary.chmod(0o755)
+            configuration = root / "rule.conf"
+            configuration.write_text(self.rule)
+            result = subprocess.run(
+                [str(binary), "-N1", "-f", str(configuration)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            self.assertNotIn("error", (result.stderr + result.stdout).lower())

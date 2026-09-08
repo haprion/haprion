@@ -1155,12 +1155,14 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   The range control belongs to the whole page here rather than to one card, so
   it sits above the list instead of in a card header.
 */
-.page-ranges {
+.page-ranges-sticky {
   position: sticky;
   z-index: 10;
   top: 97px;
+  width: max-content;
+  padding: 6px 0;
   margin-bottom: 14px;
-  box-shadow: 0 0 0 7px var(--bg);
+  background: var(--bg);
 }
 .traffic-backend { color: var(--muted); font-size: 12px; }
 .traffic-rate { flex-basis: 100%; color: var(--muted); font-size: 11px; }

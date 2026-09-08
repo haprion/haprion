@@ -193,12 +193,12 @@ class WhatThePageSays(ReadingACluster):
     def test_every_named_graph_says_what_one_bucket_measures(self) -> None:
         text = self.page("?traffic=24h").text  # type: ignore[attr-defined]
 
-        self.assertEqual(text.count('class="traffic-rate">Requests in each 10 min bucket'), 5)
+        self.assertEqual(text.count('class="traffic-rate">Requests / 10 min'), 5)
 
     def test_the_bucket_description_changes_with_the_window(self) -> None:
         text = self.page("?traffic=7d").text  # type: ignore[attr-defined]
 
-        self.assertEqual(text.count('class="traffic-rate">Requests in each hour bucket'), 5)
+        self.assertEqual(text.count('class="traffic-rate">Requests / h'), 5)
 
     def test_a_pool_is_named_without_the_generator_prefix(self) -> None:
         text = self.page().text  # type: ignore[attr-defined]

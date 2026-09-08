@@ -96,7 +96,8 @@ class ShapesTheIconRuleReaches(unittest.TestCase):
 
     def test_the_page_range_switch_stays_below_the_sticky_header(self) -> None:
         stylesheet = self.stylesheet()
-        rule = stylesheet.split(".page-ranges {", 1)[1].split("}", 1)[0]
+        rule = stylesheet.split(".page-ranges-sticky {", 1)[1].split("}", 1)[0]
 
         self.assertIn("position: sticky", rule)
         self.assertIn("top: 97px", rule)
+        self.assertIn("padding: 6px 0", rule)

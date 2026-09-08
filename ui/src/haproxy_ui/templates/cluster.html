@@ -20,7 +20,7 @@
   One range control for the whole page, above every cluster. Two would let
   somebody compare one address's hour against another's week without noticing.
 #}
-<nav class="traffic-ranges page-ranges" aria-label="Time range">{% for entry in traffic_windows %}<a href="?traffic={{ entry.key }}"{% if entry.key == traffic_chosen %} class="is-current" aria-current="true"{% endif %} title="{{ entry.label }}">{{ entry.key }}</a>{% endfor %}</nav>
+<div class="page-ranges-sticky"><nav class="traffic-ranges page-ranges" aria-label="Time range">{% for entry in traffic_windows %}<a href="?traffic={{ entry.key }}"{% if entry.key == traffic_chosen %} class="is-current" aria-current="true"{% endif %} title="{{ entry.label }}">{{ entry.key }}</a>{% endfor %}</nav></div>
 
 <div class="cluster-list">
 {% for view in clusters %}
@@ -55,7 +55,7 @@
     #}
     <div class="traffic-head">
       <code class="traffic-backend">{{ named.vip }}</code>{% if named.known %} <span class="protocol-badge protocol-{{ named.protocol }}">{{ named.protocol | upper }}</span>{% endif %}
-      <span class="traffic-rate">Requests in each {{ traffic_bucket }} bucket</span>
+      <span class="traffic-rate">Requests / {{ traffic_rate_unit }}</span>
     </div>
     {#
       An address that was seen but that no node reported holding. Said rather

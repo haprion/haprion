@@ -139,6 +139,9 @@
     //
     if (!fresh.length || fresh.length !== here.length) throw new Error("shape");
     here.forEach((region, index) => region.replaceWith(fresh[index]));
+    const freshRanges = parsed.querySelector(".page-ranges-sticky");
+    const hereRanges = document.querySelector(".page-ranges-sticky");
+    if (freshRanges && hereRanges) hereRanges.replaceWith(freshRanges);
     if (push) history.pushState({ traffic: true }, "", href);
     wire(document);
   };
@@ -157,7 +160,7 @@
     if (event.button !== 0 || event.defaultPrevented) return;
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
 
-    const pick = event.target.closest(".traffic-pick, .traffic-clear");
+    const pick = event.target.closest(".traffic-pick, .traffic-clear, .page-ranges a");
     if (pick) {
       event.preventDefault();
       follow(address(pick));

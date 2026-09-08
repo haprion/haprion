@@ -1703,15 +1703,27 @@ class Window:
     # 10 minutes" instead of leaving a reader to work out what a sample is.
     #
     bucket_label: str
+    # Compact unit beside each graph's y-axis reading.
+    rate_unit: str
 
 
 WINDOWS: tuple[Window, ...] = (
-    Window("1h", "the last hour", timedelta(hours=1), timedelta(minutes=1), "%H:%M", "minute"),
     Window(
-        "24h", "the last 24 hours", timedelta(hours=24), timedelta(minutes=10), "%H:%M", "10 min"
+        "1h", "the last hour", timedelta(hours=1), timedelta(minutes=1), "%H:%M", "minute", "min"
     ),
-    Window("7d", "the last 7 days", timedelta(days=7), timedelta(hours=1), "%a %d", "hour"),
-    Window("30d", "the last 30 days", timedelta(days=30), timedelta(hours=6), "%d %b", "6 hours"),
+    Window(
+        "24h",
+        "the last 24 hours",
+        timedelta(hours=24),
+        timedelta(minutes=10),
+        "%H:%M",
+        "10 min",
+        "10 min",
+    ),
+    Window("7d", "the last 7 days", timedelta(days=7), timedelta(hours=1), "%a %d", "hour", "h"),
+    Window(
+        "30d", "the last 30 days", timedelta(days=30), timedelta(hours=6), "%d %b", "6 hours", "6 h"
+    ),
 )
 
 #

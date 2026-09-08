@@ -154,6 +154,22 @@ class TheChartInABrowser(ReadingACluster):
 
 
 class MarkingARange(TheChartInABrowser):
+    def test_changing_the_window_keeps_the_readers_scroll_position(self) -> None:
+        with self.signed_in() as page:
+            page.set_viewport_size({"width": 1000, "height": 420})
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            before = page.evaluate("window.scrollY")
+            self.assertGreater(before, 0)
+            self.stay(page)
+
+            page.evaluate(
+                "document.querySelector('.page-ranges a[title=\"the last 7 days\"]').click()"
+            )
+            page.wait_for_function("() => window.location.search.includes('traffic=7d')")
+
+            self.assertTrue(self.stayed(page), "changing the window reloaded the page")
+            self.assertAlmostEqual(page.evaluate("window.scrollY"), before, delta=1)
+
     def test_a_bucket_link_carries_a_readable_address(self) -> None:
         """The fault this suite exists for: `href` inside SVG is not a string."""
 

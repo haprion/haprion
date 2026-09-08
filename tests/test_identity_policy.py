@@ -34,6 +34,21 @@ class IdentityPolicyTests(unittest.TestCase):
         self.assertNotIn("m svc-web svc-mgmt", rendered)
         self.assertNotIn("m svc-poller svc-mgmt", rendered)
 
+    def test_optional_collector_is_distinct_and_gets_no_config_membership(self):
+        with tempfile.TemporaryDirectory() as raw:
+            path = self.write_policy(
+                Path(raw),
+                "schema_version: 1\naccount_prefix: svc-\nconfig_group: svc-mgmt\nroles:\n"
+                "  web: svc-web\n  worker: svc-worker\n  poller: svc-poller\n"
+                "  collector: svc-collector\n",
+            )
+            policy = load_identity_policy(path, require_secure=False)
+
+        self.assertEqual(policy.collector, "svc-collector")
+        rendered = render_sysusers(policy)
+        self.assertIn('u svc-collector - "HAProxy Manager traffic log collector"', rendered)
+        self.assertNotIn("m svc-collector", rendered)
+
     def test_unknown_role_lookup_is_rejected(self):
         policy = load_identity_policy(
             BASE / "examples" / "identity-policy.yaml", require_secure=False
@@ -56,6 +71,12 @@ class IdentityPolicyTests(unittest.TestCase):
             (
                 "schema_version: 1\naccount_prefix: svc-\nconfig_group: svc-mgmt\nroles:\n"
                 "  web: svc-app\n  worker: svc-app\n  poller: svc-poller\n",
+                "all be distinct",
+            ),
+            (
+                "schema_version: 1\naccount_prefix: svc-\nconfig_group: svc-mgmt\nroles:\n"
+                "  web: svc-web\n  worker: svc-worker\n  poller: svc-poller\n"
+                "  collector: svc-web\n",
                 "all be distinct",
             ),
             (

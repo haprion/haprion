@@ -20,6 +20,7 @@ class IdentityPolicy:
     web: str
     worker: str
     poller: str
+    collector: str | None = None
 
     def account(self, role: str) -> str:
         if role not in ROLES:
@@ -51,19 +52,29 @@ def load_identity_policy(path: Path, *, require_secure: bool = True) -> Identity
         raise ConfigError("identity policy.account_prefix is invalid")
     config_group = _account_name(data.get("config_group"), "identity policy.config_group")
     roles = _mapping(data.get("roles"), "identity policy.roles")
-    _only_keys(roles, set(ROLES), "identity policy.roles")
+    _only_keys(roles, {*ROLES, "collector"}, "identity policy.roles")
     missing = sorted(set(ROLES) - roles.keys())
     if missing:
         raise ConfigError(f"identity policy.roles is missing role(s): {', '.join(missing)}")
 
     accounts = {role: _account_name(roles[role], f"identity policy.roles.{role}") for role in ROLES}
-    all_names = [config_group, *accounts.values()]
+    collector = (
+        _account_name(roles["collector"], "identity policy.roles.collector")
+        if "collector" in roles
+        else None
+    )
+    all_names = [config_group, *accounts.values(), *(() if collector is None else (collector,))]
     if any(not name.startswith(account_prefix) for name in all_names):
         raise ConfigError("identity policy group and role accounts must use account_prefix")
     if len(set(all_names)) != len(all_names):
         raise ConfigError("identity policy group and role accounts must all be distinct")
 
-    return IdentityPolicy(account_prefix=account_prefix, config_group=config_group, **accounts)
+    return IdentityPolicy(
+        account_prefix=account_prefix,
+        config_group=config_group,
+        collector=collector,
+        **accounts,
+    )
 
 
 def render_sysusers(policy: IdentityPolicy) -> str:
@@ -81,7 +92,10 @@ def render_sysusers(policy: IdentityPolicy) -> str:
         f'u {policy.web} - "HAProxy Manager web service" - /usr/sbin/nologin',
         f'u {policy.worker} - "HAProxy Manager worker service" - /usr/sbin/nologin',
         f'u {policy.poller} - "HAProxy Manager poller service" - /usr/sbin/nologin',
-        f"m {policy.worker} {policy.config_group}",
-        "",
     ]
+    if policy.collector is not None:
+        lines.append(
+            f'u {policy.collector} - "HAProxy Manager traffic log collector" - /usr/sbin/nologin'
+        )
+    lines.extend((f"m {policy.worker} {policy.config_group}", ""))
     return "\n".join(lines)

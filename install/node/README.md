@@ -11,6 +11,7 @@
 | `haproxy-health-probe` | tries a health check against named servers, from this node, and reports whether they answered |
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
+| `haproxy-traffic-log-read` | returns bounded, whole JSONL records for one validated UTC day and cursor |
 
 ## Nothing environment-specific is compiled in
 
@@ -40,10 +41,15 @@ maintained as three separate copies that differed only in one line — the
 publication path — and each copy looked perfectly correct on its own. That is
 the kind of drift that survives for years.
 
-## Nothing is missing any more
+## Bundle inventory
 
 `haproxy-state-export` was the last one out. It carried a hardcoded list of local
 accounts — real operator names, which is why it could not be published — and that
 list is now `BACKUP_ACCOUNTS` in `node.conf`. The hardcoded version had a second
 problem the accounts hid: an account added after it was written was silently left
 out of every backup.
+
+The traffic-log reader is attested as part of the same bundle. Its account, read group and empty
+`authorized_keys` file are prepared by step 4. The later traffic-log installation step supplies
+the rsyslog route, retention policy and collector key; until then no structured traffic file is
+written and the empty account accepts no connection.

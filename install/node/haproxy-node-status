@@ -31,6 +31,7 @@ NODE_SCRIPTS = (
     "haproxy-health-probe",
     "haproxy-keepalived-state",
     "haproxy-state-export",
+    "haproxy-traffic-log-read",
 )
 
 #

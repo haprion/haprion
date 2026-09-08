@@ -810,7 +810,7 @@ hand.
 
 ### 2.2 Node accounts
 
-Three service accounts, identical on every node. They are system accounts with no password, a home
+Four service accounts, identical on every node. They are system accounts with no password, a home
 directory for `authorized_keys`, and — deliberately — a real login shell:
 
 | Account | Reached by | May run |
@@ -818,14 +818,15 @@ directory for `authorized_keys`, and — deliberately — a real login shell:
 | `svc-trigger` | the management host's deploy and cert-deploy keys | the pull scripts, through forced commands |
 | `svc-backup` | the management host's backup path | the state export |
 | `svc-status` | the management host's status key | the node status reporter, read-only |
+| `svc-logread` | the production collector's traffic-log key | the bounded traffic-log reader, read-only and without sudo |
 
 **The shell looks like a mistake and is not.** sshd runs a forced command through the account's
 login shell, so `nologin` here does not harden anything — it stops every forced command from
 working, and the only symptom is a nologin message where output was expected.
 
 What constrains these accounts is that each key carries `restrict` and its own forced command, so a
-session cannot run anything else, and that their sudo rules name exact absolute commands. Neither
-depends on the shell.
+session cannot run anything else. Where sudo is needed, its rules name exact absolute commands;
+`svc-logread` needs and receives no sudo rule. None of this depends on the shell.
 
 Each key in the account's `authorized_keys` carries its **own** forced command and the `restrict`
 option. One key, one command: a shared forced command would make the keys interchangeable and
@@ -844,9 +845,10 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
 | `haproxy-health-probe` | opens one connection per named target and reports the status line |
+| `haproxy-traffic-log-read` | returns whole records after a validated UTC day/cursor, capped at 8 MiB |
 
 Step 4 also writes `/etc/haproxy-manager/node-installation.json`. It records the
-node compatibility API and a SHA-256 digest for each of these seven scripts.
+node compatibility API and a SHA-256 digest for each of these eight scripts.
 `haproxy-node-status` recomputes the digests on every reading, so copied metadata
 cannot hide a script changed after installation. The report contains code
 digests only, never node configuration or key material.

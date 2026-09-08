@@ -21,8 +21,10 @@ from typing import Any
 
 from haproxy_mgmt.config import TLS_POLICY_NAMES, AbuseProtection, Vip
 from haproxy_mgmt.generate import (
+    HTTP_TRAFFIC_LOG_FORMAT,
     NODE_CERTIFICATE_DIR,
     TLS_POLICIES,
+    TRAFFIC_LOG_PROFILE,
     GeneratorError,
     generate,
 )
@@ -65,6 +67,21 @@ defaults
 
 
 class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
+    def test_traffic_log_stream_is_opt_in_and_does_not_replace_httplog(self) -> None:
+        case = GOLDEN / "minimal"
+        baseline = produced(case)["1000-frontends.cfg"]
+        enabled = generate(objects(case), **arguments(case), traffic_logging=True).configuration[
+            "1000-frontends.cfg"
+        ]
+
+        self.assertNotIn("log-profile", baseline)
+        self.assertNotIn("haproxy-traffic", baseline)
+        self.assertIn(f"log-profile {TRAFFIC_LOG_PROFILE}", enabled)
+        self.assertIn(f"on close format {HTTP_TRAFFIC_LOG_FORMAT}", enabled)
+        self.assertIn("option httplog", enabled)
+        self.assertIn("%(path)HP", enabled)
+        self.assertNotIn("capture request header", enabled)
+
     def test_a_server_named_by_hostname_is_kept_resolved(self) -> None:
         """The trap this repository would otherwise walk into.
 
@@ -165,6 +182,30 @@ class HaproxyAcceptsWhatWeGenerate(unittest.TestCase):
                 )
 
                 self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_opt_in_traffic_profile_validates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "conf.d").mkdir()
+            (root / "haproxy.cfg").write_text(CORE)
+            layer = generate(
+                objects(GOLDEN / "minimal"),
+                **arguments(GOLDEN / "minimal"),
+                traffic_logging=True,
+            )
+            for name, content in layer.configuration.items():
+                (root / "conf.d" / name).write_text(content)
+
+            binary = shutil.which("haproxy")
+            assert binary is not None
+            result = subprocess.run(
+                [binary, "-c", "-f", str(root / "haproxy.cfg"), "-f", str(root / "conf.d")],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
 
 
 def _generate(proxies: list[Proxy], **cluster: Any) -> dict[str, str]:

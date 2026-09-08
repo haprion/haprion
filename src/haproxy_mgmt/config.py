@@ -242,6 +242,7 @@ class Cluster:
     trusted_proxy_cidrs: tuple[str, ...]
     abuse_protection: AbuseProtection | None
     nodes: tuple[Node, ...]
+    traffic_logging: bool = False
 
     def network(self) -> Network:
         """This cluster's network description, from the repository if it has one.
@@ -817,6 +818,7 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
                 "default_certificate",
                 "certificate_ids",
                 "trusted_proxy_cidrs",
+                "traffic_logging",
                 "nodes",
             },
             location,
@@ -894,6 +896,10 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
         if len({node.name for node in nodes}) != 2 or len({node.mgmt_host for node in nodes}) != 2:
             raise ConfigError(f"{location}.nodes must have unique names and management hosts")
 
+        traffic_logging = raw.get("traffic_logging", False)
+        if not isinstance(traffic_logging, bool):
+            raise ConfigError(f"{location}.traffic_logging must be true or false")
+
         clusters[cluster_id] = Cluster(
             cluster_id=cluster_id,
             display_name=_required_string(raw, "display_name", location),
@@ -929,5 +935,6 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             certificate_ids=certificate_ids,
             trusted_proxy_cidrs=tuple(cidrs),
             nodes=tuple(nodes),
+            traffic_logging=traffic_logging,
         )
     return RuntimeConfig(schema_version=1, clusters=clusters)

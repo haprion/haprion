@@ -25,6 +25,23 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual([node.name for node in cluster.nodes], ["node-a", "node-b"])
         self.assertEqual(cluster.certificate_ids, ("example.com", "example.net"))
         self.assertEqual(cluster.trusted_proxy_cidrs, ("198.51.100.0/24",))
+        self.assertFalse(cluster.traffic_logging)
+
+    def test_traffic_logging_is_an_explicit_cluster_boolean(self):
+        def enabled(data):
+            data["clusters"]["alpha"]["traffic_logging"] = True
+
+        with self.temporary_runtime(enabled) as runtime:
+            self.assertTrue(runtime.cluster("alpha").traffic_logging)
+
+        def invalid(data):
+            data["clusters"]["alpha"]["traffic_logging"] = "yes"
+
+        with (
+            self.assertRaisesRegex(ConfigError, "must be true or false"),
+            self.temporary_runtime(invalid),
+        ):
+            pass
 
     def write_config(self, directory: Path, mutate=None):
         clusters = yaml.safe_load((BASE / "examples" / "clusters.yaml").read_text())

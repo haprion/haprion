@@ -140,6 +140,7 @@ def managed_files(
         unknown_host=cluster.unknown_host,
         trusted_proxies=cluster.trusted_proxy_cidrs,
         abuse_protection=cluster.abuse_protection,
+        traffic_logging=cluster.traffic_logging,
         reservations=load_reservations(base_files.get(RESERVATIONS_PATH, b"{}")),
         #
         # Read by the caller, which has the path policy, and passed in. This

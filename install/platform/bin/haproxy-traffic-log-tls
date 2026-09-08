@@ -7,7 +7,7 @@ CONF=/etc/haproxy-manager/traffic-log-tls.conf
 [[ -r "$CONF" ]] || { echo "ERROR: ${CONF} is missing" >&2; exit 78; }
 # shellcheck source=/dev/null
 source "$CONF"
-for name in CA_CERT CA_KEY SERVER_CERT SERVER_KEY SERVER_NAME PUBLISHED_CA PULL_USER; do
+for name in CA_CERT CA_KEY SERVER_CERT SERVER_KEY SERVER_NAME PUBLISHED_CA PULL_USER RSYSLOG_GROUP; do
     [[ -n "${!name:-}" ]] || { echo "ERROR: ${name} is not set in ${CONF}" >&2; exit 78; }
 done
 
@@ -34,8 +34,8 @@ activate_server() {
     local saved_cert="${SERVER_CERT}.rollback" saved_key="${SERVER_KEY}.rollback"
     [[ ! -f "$SERVER_CERT" ]] || cp -a "$SERVER_CERT" "$saved_cert"
     [[ ! -f "$SERVER_KEY" ]] || cp -a "$SERVER_KEY" "$saved_key"
-    install -o root -g root -m 600 "${SERVER_KEY}.new" "$SERVER_KEY"
-    install -o root -g root -m 644 "${SERVER_CERT}.new" "$SERVER_CERT"
+    install -o root -g "$RSYSLOG_GROUP" -m 640 "${SERVER_KEY}.new" "$SERVER_KEY"
+    install -o root -g "$RSYSLOG_GROUP" -m 640 "${SERVER_CERT}.new" "$SERVER_CERT"
     if rsyslogd -N1 && systemctl restart rsyslog && systemctl is-active --quiet rsyslog; then
         rm -f "$saved_cert" "$saved_key"
         return
@@ -48,8 +48,8 @@ activate_server() {
 }
 
 install_initial_server() {
-    install -o root -g root -m 600 "${SERVER_KEY}.new" "$SERVER_KEY"
-    install -o root -g root -m 644 "${SERVER_CERT}.new" "$SERVER_CERT"
+    install -o root -g "$RSYSLOG_GROUP" -m 640 "${SERVER_KEY}.new" "$SERVER_KEY"
+    install -o root -g "$RSYSLOG_GROUP" -m 640 "${SERVER_CERT}.new" "$SERVER_CERT"
 }
 
 case "${1:-}" in
@@ -86,5 +86,9 @@ case "${1:-}" in
     *) echo "usage: haproxy-traffic-log-tls {init|renew|show}" >&2; exit 64 ;;
 esac
 
+chown "root:${RSYSLOG_GROUP}" "$CA_CERT" "$SERVER_CERT" "$SERVER_KEY"
+chmod 640 "$CA_CERT" "$SERVER_CERT" "$SERVER_KEY"
+chown root:root "$CA_KEY"
+chmod 600 "$CA_KEY"
 install -o root -g "$PULL_USER" -m 640 "$CA_CERT" "$PUBLISHED_CA"
 openssl verify -CAfile "$CA_CERT" "$SERVER_CERT"

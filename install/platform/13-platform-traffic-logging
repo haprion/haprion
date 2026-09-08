@@ -19,6 +19,7 @@ fi
     || die "SERVER_NAME is not a valid certificate DNS name"
 command -v rsyslogd >/dev/null || die "rsyslog is not installed"
 command -v openssl >/dev/null || die "openssl is not installed"
+getent group syslog >/dev/null || die "the rsyslog service group 'syslog' is missing"
 find /usr/lib -name lmnsd_gtls.so -print -quit 2>/dev/null | grep -q . \
     || die "the rsyslog GnuTLS driver is missing; install rsyslog-gnutls"
 
@@ -53,7 +54,7 @@ published_ca="${published_dir}/traffic-log-ca.pem"
 
 step "TLS identity"
 ensure_dir /etc/haproxy-manager root:root 755
-ensure_dir "$tls" root:root 700
+ensure_dir "$tls" root:syslog 750
 ensure_dir "$published_dir" "root:${PULL_USER}" 750
 install_file /etc/haproxy-manager/traffic-log-tls.conf root:root 600 "$(cat <<EOF
 CA_CERT=${ca_cert}
@@ -63,6 +64,7 @@ SERVER_KEY=${server_key}
 SERVER_NAME=${SERVER_NAME}
 PUBLISHED_CA=${published_ca}
 PULL_USER=${PULL_USER}
+RSYSLOG_GROUP=syslog
 EOF
 )"
 install -o root -g root -m 755 bin/haproxy-traffic-log-tls /usr/local/sbin/haproxy-traffic-log-tls

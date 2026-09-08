@@ -157,6 +157,15 @@ class MarkingARange(TheChartInABrowser):
     def test_changing_the_window_keeps_the_readers_scroll_position(self) -> None:
         with self.signed_in() as page:
             page.set_viewport_size({"width": 1000, "height": 420})
+            widths = page.evaluate(
+                """() => ({
+                    row: document.querySelector('.page-ranges-sticky').getBoundingClientRect().width,
+                    page: document.querySelector('main.page').getBoundingClientRect().width,
+                    controls: document.querySelector('.page-ranges').getBoundingClientRect().width,
+                })"""
+            )
+            self.assertAlmostEqual(widths["row"], widths["page"], delta=1)
+            self.assertGreater(widths["row"], widths["controls"])
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             before = page.evaluate("window.scrollY")
             self.assertGreater(before, 0)

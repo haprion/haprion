@@ -1159,7 +1159,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   position: sticky;
   z-index: 10;
   top: 97px;
-  width: max-content;
+  width: 100%;
   padding: 6px 0;
   margin-bottom: 14px;
   background: var(--bg);

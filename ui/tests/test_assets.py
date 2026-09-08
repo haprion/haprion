@@ -100,4 +100,5 @@ class ShapesTheIconRuleReaches(unittest.TestCase):
 
         self.assertIn("position: sticky", rule)
         self.assertIn("top: 97px", rule)
+        self.assertIn("width: 100%", rule)
         self.assertIn("padding: 6px 0", rule)

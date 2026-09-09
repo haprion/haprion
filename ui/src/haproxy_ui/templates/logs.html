@@ -47,9 +47,9 @@
 
 <div class="table-scroll log-table-wrap">
   <table class="node-table log-table">
-    <thead><tr><th>Time</th><th>Cluster / node</th><th>Client</th><th>Request</th><th>Status</th><th>Backend / server</th><th>Timers (ms)</th><th>Bytes</th></tr></thead>
+    <thead><tr><th>Time ({{ time_zone }})</th><th>Cluster / node</th><th>Client</th><th>Request</th><th>Status</th><th>Backend / server</th><th>Timers (ms)</th><th>Bytes</th></tr></thead>
     <tbody>{% for entry in reading.entries %}<tr>
-      <td><time datetime="{{ entry.at.isoformat() }}">{{ entry.at.strftime('%y-%m-%d %H:%M:%S') }}</time></td>
+      <td><time datetime="{{ entry.at.isoformat() }}">{{ entry.at | shown_at }}</time></td>
       <td><strong>{{ entry.cluster }}</strong><small>{{ entry.node }}</small></td>
       <td><code>{{ entry.client }}</code></td>
       <td><strong title="{{ entry.method }} {{ entry.host }}">{{ entry.method }} {{ entry.host }}</strong><code class="log-path" title="{{ entry.path }}">{{ entry.path }}</code></td>

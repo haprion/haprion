@@ -145,6 +145,23 @@ def selected_theme(request: Request) -> str:
 TEMPLATES.env.filters["selected_theme"] = selected_theme
 
 
+def shown_at(moment: datetime) -> str:
+    """One stored moment, in the clock the person reading it is holding.
+
+    Times are stored and reasoned about in UTC everywhere, and the traffic card
+    already prints them in the host's zone for the reason written beside
+    `metrics.shown`: a page whose times cannot be lined up against `journalctl`
+    or a deploy sends people to the wrong minute. The traffic log is the page
+    most likely to be read beside a journal, so it uses the same clock and the
+    same format rather than a second one.
+    """
+
+    return metrics.shown(moment).strftime(metrics.TIMESTAMP)
+
+
+TEMPLATES.env.filters["shown_at"] = shown_at
+
+
 def _traffic_marks(request: Request, marked: metrics.Selection) -> dict[str, object]:
     """What a card needs to draw and extend the reader's marked range.
 
@@ -1491,6 +1508,9 @@ def build_router(config: Config) -> APIRouter:
                 "enabled": config.traffic_logs.enabled,
                 "reading": reading,
                 "freshness": [(node, node.stale_seconds(now=now)) for node in reading.nodes],
+                # Named, not implied. Moving off UTC without saying which clock
+                # replaced it would be worse than leaving it in UTC.
+                "time_zone": metrics.shown(now).tzname() or "local",
                 "clusters": config.clusters,
                 "selected_cluster": selected_cluster,
                 "selected_proxy": selected_proxy,

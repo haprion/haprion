@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
+import time
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -228,6 +230,26 @@ class TheTrafficLogPage(LoginTestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
 
+    def host_zone(self, name: str) -> None:
+        """Run this test as if the machine stood somewhere in particular.
+
+        Without it a runner already on UTC would compare UTC against UTC and
+        the assertion would pass while proving nothing.
+        """
+
+        previous = os.environ.get("TZ")
+        os.environ["TZ"] = name
+        time.tzset()
+
+        def restore() -> None:
+            if previous is None:
+                del os.environ["TZ"]
+            else:
+                os.environ["TZ"] = previous
+            time.tzset()
+
+        self.addCleanup(restore)
+
     def page(self, *, enabled: bool = True, clusters: tuple[str, ...] = ("alpha",)) -> str:
         config = replace(
             configuration(),
@@ -277,6 +299,26 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn("node-b", page)
         self.assertIn("never reached", page)
         self.assertIn("unreachable", page)
+
+    def test_a_record_is_timed_in_the_host_s_clock_and_the_zone_is_named(self) -> None:
+        """One clock across the interface, and the page says which one it is.
+
+        The card already prints the host's zone so its times line up against a
+        journal; a log page on UTC beside it would be two clocks in one product.
+        The machine-readable attribute stays UTC - that is what a later
+        per-reader zone would be rendered from.
+        """
+
+        self.host_zone("Europe/Stockholm")
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
+
+        page = self.page()
+
+        # The record is stored as 12:00 UTC and read on a host two hours ahead.
+        self.assertIn("26-09-08 14:00:00", page)
+        self.assertIn("Time (CEST)", page)
+        self.assertNotIn("26-09-08 12:00:00", page)
+        self.assertIn(f'datetime="{NOW.isoformat()}"', page)
 
     def test_disabled_says_so_instead_of_showing_an_empty_table(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(record(path="/hidden"))

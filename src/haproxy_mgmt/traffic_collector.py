@@ -475,6 +475,62 @@ def collect_node(
         raise
 
 
+def _retire(config: CollectorConfig, *, now: datetime) -> None:
+    """Let what a node left behind when it left inventory die of old age.
+
+    Nothing is deleted while it could still be worth reading. A mirror is
+    rewritten on every successful run, so its modification time is when the
+    manager last heard from that node; once that is a whole retention window
+    old, every record in the file is older than the node's own retention too -
+    the data no longer exists at the source and the copy is a museum piece.
+
+    Staging is left to `collect_node`, which prunes by the day in the name and
+    therefore drains a retired node's parts on the same window without needing
+    to know that the node is gone.
+    """
+
+    keep = set()
+    for target in config.nodes:
+        keep.add(f"{target.cluster}--{target.node}.jsonl")
+        keep.add(f"{target.cluster}--{target.node}.meta.json")
+    cutoff = (now - timedelta(days=RETENTION_DAYS)).timestamp()
+    for path in config.mirror.iterdir():
+        if path.name in keep or path.name.startswith("."):
+            continue
+        if not path.name.endswith((".jsonl", ".meta.json")):
+            continue
+        try:
+            metadata = path.lstat()
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_mtime >= cutoff:
+                continue
+            path.unlink()
+        except OSError as exc:
+            print(f"retired mirror {path.name}: {exc}", file=sys.stderr)
+
+
+def _retire_staging(config: CollectorConfig, *, now: datetime) -> None:
+    """The same window, applied to parts and markers no active node claims."""
+
+    keep = {f"{target.cluster}--{target.node}--" for target in config.nodes}
+    oldest = (now.date() - timedelta(days=RETENTION_DAYS - 1)).isoformat()
+    for path in config.staging.iterdir():
+        name = path.name
+        if name.startswith(".") or not name.endswith((".jsonl", ".done")):
+            continue
+        if any(name.startswith(prefix) for prefix in keep):
+            continue
+        day = name.rsplit("--", 1)[-1].rsplit(".", 1)[0]
+        if len(day) != 10 or day >= oldest:
+            continue
+        try:
+            metadata = path.lstat()
+            if not stat.S_ISREG(metadata.st_mode):
+                continue
+            path.unlink()
+        except OSError as exc:
+            print(f"retired part {name}: {exc}", file=sys.stderr)
+
+
 def collect(
     config: CollectorConfig, *, now: datetime | None = None, fetch: Fetch | None = None
 ) -> int:
@@ -500,6 +556,8 @@ def collect(
             except (CollectorError, OSError) as exc:
                 print(f"{target.cluster}/{target.node}: {exc}", file=sys.stderr)
                 failures += 1
+        _retire(config, now=attempted)
+        _retire_staging(config, now=attempted)
         return 1 if failures else 0
 
 

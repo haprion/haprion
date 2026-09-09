@@ -389,15 +389,7 @@ class AnInventoryThatChanged(ChainTestCase):
         # comes from the manager's inventory, so the new identity gets its own
         # cursor, its own part and its own mirror - locked requirement 4.
         #
-        replacement = NodeTarget("alpha", "node-b", self.chain.target.host)
-        self.chain.config = type(self.chain.config)(
-            user=self.chain.config.user,
-            key=self.chain.config.key,
-            known_hosts=self.chain.config.known_hosts,
-            mirror=self.chain.mirror,
-            staging=self.chain.staging,
-            nodes=(replacement,),
-        )
+        self.chain.config = self.retire(NodeTarget("alpha", "node-b", self.chain.target.host))
         self.chain.node.append(self.chain.today, 4)
         self.assertEqual(self.collect(), 0)
 
@@ -409,32 +401,44 @@ class AnInventoryThatChanged(ChainTestCase):
         reading = self.chain.ui()
         self.assertEqual(sorted(item.node for item in reading.nodes), ["node-a", "node-b"])
 
-    def test_a_node_out_of_inventory_leaves_its_mirror_behind(self) -> None:
-        """Recorded because it is the behaviour, not because it is the goal.
+    def test_a_node_out_of_inventory_dies_of_old_age_rather_than_at_once(self) -> None:
+        """R3's third finding, decided rather than left open.
 
-        Nothing removes the mirror, the metadata or the parts of a node that is
-        no longer in inventory. The page keeps listing it, correctly stale, for
-        ever. Deleting operational history the moment a node leaves inventory is
-        not obviously right either, so this is R3's finding to decide on, not a
-        bug to fix inside a test.
+        Nothing is deleted the moment a node leaves inventory - its last
+        fortnight is exactly what an operator may want to read afterwards. It is
+        deleted when a whole retention window has passed without a collection,
+        because by then every record in it is older than the node's own
+        retention and the data no longer exists at the source either.
         """
 
         self.chain.node.append(self.chain.today, 4)
         self.assertEqual(self.collect(), 0)
-        self.chain.config = type(self.chain.config)(
-            user=self.chain.config.user,
-            key=self.chain.config.key,
-            known_hosts=self.chain.config.known_hosts,
-            mirror=self.chain.mirror,
-            staging=self.chain.staging,
-            nodes=(NodeTarget("alpha", "node-b", "node-b.example.com"),),
-        )
-        self.assertEqual(self.collect(), 0)
+        self.chain.config = self.retire(NodeTarget("alpha", "node-b", "node-b.example.com"))
 
+        # Still inside the window: listed, readable, and visibly stale.
+        moment = self.advance(RETENTION_DAYS - 2)
+        quietly(lambda: self.collect(now=moment))
         self.assertTrue(self.chain.mirror_path().exists())
-        self.assertEqual(len(self.chain.ui().nodes), 2)
-        left = self.chain.staging / f"alpha--node-a--{self.chain.today.isoformat()}.jsonl"
-        self.assertTrue(left.exists(), "the retired node's part is still in staging")
+        reading = self.chain.ui()
+        self.assertEqual(len(reading.nodes), 2)
+        self.assertEqual(len(reading.entries), 4)
+
+        # A whole window later there is nothing left of it anywhere.
+        moment = self.advance(3)
+        quietly(lambda: self.collect(now=moment))
+        self.assertFalse(self.chain.mirror_path().exists())
+        self.assertEqual(list(self.chain.mirror.glob("alpha--node-a.*")), [])
+        self.assertEqual(list(self.chain.staging.glob("alpha--node-a--*")), [])
+        self.assertEqual([item.node for item in self.chain.ui().nodes], ["node-b"])
+
+    def test_an_active_node_is_never_swept_however_long_it_is_silent(self) -> None:
+        self.chain.node.append(self.chain.today, 4)
+        self.assertEqual(self.collect(), 0)
+        with self.chain.unreachable():
+            for step in (RETENTION_DAYS, RETENTION_DAYS):
+                moment = self.advance(step)
+                quietly(lambda moment=moment: self.assertEqual(self.collect(now=moment), 1))
+        self.assertEqual(len(self.chain.ui().entries), 4, "a silent node lost its last records")
 
 
 class APageReadDuringASnapshotSwap(ChainTestCase):

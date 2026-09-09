@@ -329,6 +329,7 @@ class ChainTestCase(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.chain = Chain(Path(temporary.name), today=self.TODAY)
+        self.offset = 0
 
     def collect(self, *, now: datetime | None = None) -> int:
         from haproxy_mgmt.traffic_collector import collect
@@ -336,10 +337,15 @@ class ChainTestCase(unittest.TestCase):
         return collect(self.chain.config, now=now or self.NOW, fetch=self.chain.fetch)
 
     def advance(self, days: int) -> datetime:
-        """Move both clocks the same number of days, as a real midnight would."""
+        """Move both clocks the same number of days, as a real midnight would.
 
-        self.chain.today += timedelta(days=days)
-        return self.NOW + timedelta(days=days)
+        Cumulative, so a scenario can step twice and the second step is not
+        secretly a step back.
+        """
+
+        self.offset += days
+        self.chain.today = self.TODAY + timedelta(days=self.offset)
+        return self.NOW + timedelta(days=self.offset)
 
     def settle(self, *, now: datetime | None = None) -> int:
         """Run until the backfill has claimed every closed day in the window.
@@ -359,6 +365,18 @@ class ChainTestCase(unittest.TestCase):
             if self.chain.measured.requests - before == 1:
                 return runs
             self.assertLessEqual(runs, RETENTION_DAYS + 1, "the backfill never finished")
+
+    def retire(self, *replacements: NodeTarget) -> CollectorConfig:
+        """The inventory the manager reads, with the node under test taken out."""
+
+        return CollectorConfig(
+            user=self.chain.config.user,
+            key=self.chain.config.key,
+            known_hosts=self.chain.config.known_hosts,
+            mirror=self.chain.mirror,
+            staging=self.chain.staging,
+            nodes=replacements,
+        )
 
     def assertClean(self) -> None:
         """No duplicate record, no missing counter, no half-written line."""

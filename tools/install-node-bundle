@@ -93,8 +93,9 @@ if [[ "$dry_run" == "yes" ]]; then
     exit 0
 fi
 
-[[ -x "$STATE_BACKUP" ]] || fail "state backup command is not executable: ${STATE_BACKUP}"
 sudo -v
+sudo test -x "$STATE_BACKUP" \
+    || fail "state backup command is not executable by root: ${STATE_BACKUP}"
 sudo "$STATE_BACKUP"
 
 remote_dir="$(ssh "${ssh_opts[@]}" "$node" 'mktemp -d /tmp/haproxy-node-bundle.XXXXXXXX')"

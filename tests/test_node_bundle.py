@@ -189,6 +189,7 @@ class NodeBundleTransportContractTests(unittest.TestCase):
         )
         self.assertLess(before, install)
         self.assertGreater(after, install)
+        self.assertIn('sudo test -x "$STATE_BACKUP"', self.script)
 
     def test_staging_has_a_narrow_shape_and_is_deleted(self) -> None:
         self.assertIn("^/tmp/haproxy-node-bundle\\.[A-Za-z0-9]+$", self.script)

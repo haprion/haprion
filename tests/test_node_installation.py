@@ -84,6 +84,9 @@ class NodeInstallationReadingTests(unittest.TestCase):
         self.assertNotRegex(installer, r"ensure_dir\s+/run/lock")
         self.assertIn('[[ -d /run/lock ]] || die "/run/lock is missing"', installer)
 
+    def test_release_root_denies_unprivileged_service_accounts(self) -> None:
+        self.assertIn("ensure_dir /etc/haproxy/releases root:root 750", INSTALLER.read_text())
+
     def test_a_changed_script_is_not_hidden_by_its_metadata(self) -> None:
         self.install()
         (self.sbin / "haproxy-node-status").write_bytes(b"changed\n")

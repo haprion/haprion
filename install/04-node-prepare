@@ -128,7 +128,10 @@ step "HAProxy release layout"
 # the paths systemd uses, and only then reloads. These symlinks are what make
 # that swap a single atomic operation instead of a file copy.
 #
-ensure_dir /etc/haproxy/releases root:root 755
+# HAProxy, deploy, status and backup read releases as root. Keeping this root
+# non-world-traversable prevents forced-command accounts from reading the live
+# configuration merely because files inside an immutable release are 0644.
+ensure_dir /etc/haproxy/releases root:root 750
 ensure_dir /etc/haproxy/certs    root:root 750
 # /run/lock is a distribution-owned shared directory, normally mode 1777.
 # The deploy helpers own their root-created lock files, not this directory.

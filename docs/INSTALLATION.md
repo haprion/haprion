@@ -885,6 +885,10 @@ release creation, the atomic symlink swap, the rollback on failure — is identi
 /run/lock/haproxy-deploy.lock
 ```
 
+The releases root is `root:root 0750`. HAProxy, deployment, status and backup operations read it as
+root; no forced-command service account needs to traverse it. Files inside an immutable release
+may remain `0644` without thereby exposing the active configuration to those accounts.
+
 A deploy never edits the running configuration. It builds a new immutable release directory, swaps
 the `current` symlink atomically, validates again through exactly the paths `systemd` uses, and only
 then reloads. If either validation or the reload fails, the symlink is swapped back.

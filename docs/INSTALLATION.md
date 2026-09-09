@@ -891,6 +891,10 @@ A deploy never edits the running configuration. It builds a new immutable releas
 the `current` symlink atomically, validates again through exactly the paths `systemd` uses, and only
 then reloads. If either validation or the reload fails, the symlink is swapped back.
 
+`/run/lock` itself belongs to the operating system and is commonly mode `1777`. The node installer
+requires it to exist but never changes its owner or permissions; HAProxy Manager owns only its
+root-created lock files inside the directory.
+
 ### 2.5 Installing and changing node scripts
 
 There is no automated path for this, by design. Every management identity is a forced command; none

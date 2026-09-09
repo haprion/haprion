@@ -130,7 +130,10 @@ step "HAProxy release layout"
 #
 ensure_dir /etc/haproxy/releases root:root 755
 ensure_dir /etc/haproxy/certs    root:root 750
-ensure_dir /run/lock             root:root 755
+# /run/lock is a distribution-owned shared directory, normally mode 1777.
+# The deploy helpers own their root-created lock files, not this directory.
+[[ -d /run/lock ]] || die "/run/lock is missing"
+log "  present  /run/lock  (system-owned; permissions left unchanged)"
 
 if [[ ! -e /etc/haproxy/current ]]; then
     empty="/etc/haproxy/releases/00000000-000000"

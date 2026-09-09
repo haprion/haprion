@@ -78,6 +78,12 @@ class NodeInstallationReadingTests(unittest.TestCase):
         installed = tuple(re.findall(r"^\s+(haproxy-[a-z0-9-]+)$", match.group(1), re.MULTILINE))
         self.assertEqual(installed, NODE_SCRIPTS)
 
+    def test_installer_does_not_repermission_the_system_lock_directory(self) -> None:
+        installer = INSTALLER.read_text()
+
+        self.assertNotRegex(installer, r"ensure_dir\s+/run/lock")
+        self.assertIn('[[ -d /run/lock ]] || die "/run/lock is missing"', installer)
+
     def test_a_changed_script_is_not_hidden_by_its_metadata(self) -> None:
         self.install()
         (self.sbin / "haproxy-node-status").write_bytes(b"changed\n")

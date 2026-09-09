@@ -173,6 +173,34 @@ class TrafficCollectorTests(unittest.TestCase):
             ):
                 _parse_response(raw, day, 0)
 
+    def test_every_temporary_file_is_renamed_within_one_directory(self) -> None:
+        """The first real run failed on exactly this; a unit test now holds it.
+
+        Not a style rule. `ProtectSystem=strict` with two `ReadWritePaths`
+        entries puts the mirror and staging in separate bind mounts, and
+        `rename` across two mounts is EXDEV even when one filesystem backs
+        both - so a temporary staged in the wrong directory cannot be published
+        at all.
+        """
+
+        renames: list[tuple[Path, Path]] = []
+        real = os.replace
+
+        def watched(source: object, destination: object) -> None:
+            renames.append((Path(str(source)).parent, Path(str(destination)).parent))
+            real(source, destination)  # type: ignore[arg-type]
+
+        def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            payload = b'{"schema":1,"path":"/"}\n' if wanted == NOW.date() and offset == 0 else b""
+            return self.response(wanted, offset, payload)
+
+        with patch("haproxy_mgmt.traffic_collector.os.replace", watched):
+            self.assertEqual(collect(self.config, now=NOW, fetch=fetch), 0)
+
+        self.assertTrue(renames, "nothing was published")
+        for source, destination in renames:
+            self.assertEqual(source, destination, "a rename crossed two ReadWritePaths entries")
+
     def test_failed_atomic_replace_preserves_destination_and_removes_temporary(self) -> None:
         destination = self.mirror / "state.json"
         destination.write_bytes(b"old\n")
@@ -288,7 +316,13 @@ class WhatTheInstallationStepWrites(unittest.TestCase):
         self.assertEqual(config.nodes[0].host, "lb-01")
 
     def test_the_mirror_and_staging_share_a_parent(self) -> None:
-        """Assembling a mirror renames out of staging, and rename needs one filesystem."""
+        """One place, one filesystem, one volume to size.
+
+        No longer what makes the rename safe - the unit gives systemd each
+        directory as its own `ReadWritePaths` entry, so a rename between them
+        is EXDEV whatever the disk says, and every temporary file is therefore
+        written in the directory it is renamed into.
+        """
 
         config = load_config(
             self.written(["alpha:node-a:node-a.example.com"]), require_secure=False

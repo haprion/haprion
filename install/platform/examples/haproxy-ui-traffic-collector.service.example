@@ -23,9 +23,12 @@ ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-ui-traffic-collector --config /e
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 ProtectSystem=strict
-# The mirror and the staging area, and nothing else on the machine. Both are
-# needed because assembling a node's mirror renames a staging file into the
-# mirror, and rename is only atomic within one filesystem.
+# The mirror and the staging area, and nothing else on the machine. Two entries
+# rather than their shared parent, because nothing else under it should be
+# writable - and note that this is why the collector never renames from one to
+# the other: systemd bind-mounts each ReadWritePaths entry separately, so a
+# rename between them is EXDEV even though one filesystem backs both. Every
+# temporary file is written in the directory it is renamed into.
 ReadWritePaths=PLATFORM_ROOT/logs/mirror PLATFORM_ROOT/logs/staging
 # tmpfs rather than yes: the key lives under /etc, not under a home directory,
 # so there is nothing to punch a hole for. This unit reads no home at all.

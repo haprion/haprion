@@ -393,7 +393,8 @@ class ChainTestCase(unittest.TestCase):
 
         litter = [
             item.name
-            for item in self.chain.staging.iterdir()
+            for directory in (self.chain.staging, self.chain.mirror)
+            for item in directory.iterdir()
             if item.name.startswith(".") and item.name != ".collector.lock"
         ]
         self.assertEqual(litter, [], "an interrupted run left a temporary file behind")

@@ -355,7 +355,18 @@ def _update_day(config: CollectorConfig, target: NodeTarget, wanted: date, fetch
 
 def _assemble(config: CollectorConfig, target: NodeTarget, days: tuple[date, ...]) -> None:
     destination = config.mirror / f"{target.cluster}--{target.node}.jsonl"
-    temporary = config.staging / f".{target.cluster}--{target.node}.mirror-{os.getpid()}"
+    #
+    # Beside the destination, never in staging. `rename` is atomic within one
+    # filesystem, and the two directories deliberately share a parent - but the
+    # unit hands each of them to systemd as its own `ReadWritePaths` entry, and
+    # systemd bind-mounts each entry separately. A rename between two bind
+    # mounts is EXDEV even when one filesystem backs both, which is exactly how
+    # this failed on the first real run: four nodes fetched, four mirrors
+    # refused with "Invalid cross-device link". Staging a temporary file in the
+    # directory it will be renamed into is the ordinary idiom anyway, and it is
+    # what `_replace` beside this already does.
+    #
+    temporary = config.mirror / f".{target.cluster}--{target.node}.mirror-{os.getpid()}"
     total = 0
     try:
         with temporary.open("xb") as output:

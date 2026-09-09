@@ -1,4 +1,4 @@
-"""Manager-initiated, bounded mirroring of node traffic logs."""
+"""UI-independent, manager-initiated mirroring of node traffic logs."""
 
 from __future__ import annotations
 
@@ -487,12 +487,19 @@ def collect(
 
 
 def _entry() -> None:
-    if len(sys.argv) != 3 or sys.argv[1] != "--config":
-        print("usage: haproxy-ui-traffic-collector --config <path>", file=sys.stderr)
+    if len(sys.argv) != 3 or sys.argv[1] not in {"--check-config", "--config"}:
+        print(
+            "usage: haproxy-ui-traffic-collector (--check-config|--config) <path>",
+            file=sys.stderr,
+        )
         raise SystemExit(64)
     try:
         config = load_config(Path(sys.argv[2]))
-        code = collect(config)
+        if sys.argv[1] == "--check-config":
+            print(f"parsed {len(config.nodes)} node(s) as {config.user}")
+            code = 0
+        else:
+            code = collect(config)
     except (CollectorError, OSError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(65) from exc

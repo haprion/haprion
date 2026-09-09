@@ -5,7 +5,10 @@ Description=Regular mirroring of HAProxy node traffic logs
 # Every minute, which is the interval B122 set as a starting value and R3 is to
 # measure. The cursor makes a run proportional to new data, so an idle minute
 # costs one SSH round trip per node and transfers nothing.
-OnBootSec=2min
+# Count from this activation, not from boot. OnBootSec has already elapsed on
+# an established manager and therefore starts the service immediately when the
+# timer is first enabled - before an operator can install the key on the nodes.
+OnActiveSec=2min
 OnUnitActiveSec=1min
 # Not Persistent: a manager that was off has nothing to catch up on. The nodes
 # keep fourteen days, and the next run asks for whatever the cursor missed.

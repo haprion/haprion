@@ -11,7 +11,7 @@ Type=oneshot
 User=COLLECTOR_USER
 Group=COLLECTOR_USER
 
-ExecStart=PLATFORM_ROOT/current/venv/bin/haproxy-ui-traffic-collector --config /etc/haproxy-manager/traffic-collector.json
+ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-ui-traffic-collector --config /etc/haproxy-manager/traffic-collector.json
 
 # A timer, not a daemon. A run that cannot reach a node exits non-zero and the
 # next run tries again; a long-lived process would have to reimplement that

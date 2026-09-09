@@ -198,14 +198,10 @@ install_file "$COLLECTOR_CONFIG" "root:${COLLECTOR_USER}" 640 "$config"
 # than absent: the timer would then fail every minute for a reason nothing here
 # reported.
 #
-"${PLATFORM_ROOT}/current/venv/bin/python" -c '
-import sys
-from pathlib import Path
-from haproxy_ui.traffic_collector import load_config
-
-config = load_config(Path(sys.argv[1]))
-print(f"  parsed   {len(config.nodes)} node(s) as {config.user}")
-' "$COLLECTOR_CONFIG" || die "the collector rejected the configuration this step wrote"
+/opt/haproxy-mgmt/current/bin/haproxy-ui-traffic-collector \
+    --check-config "$COLLECTOR_CONFIG" \
+    | sed 's/^/  /' \
+    || die "the collector rejected the configuration this step wrote"
 
 step "Timer"
 
@@ -278,7 +274,7 @@ allow "$COLLECTOR_USER" "read its own key" cat "$COLLECTOR_KEY"
 allow "$COLLECTOR_USER" "write into staging" \
     sh -c "touch '${STAGING}/.probe' && rm -f '${STAGING}/.probe'"
 
-if sudo -n -l -U "$COLLECTOR_USER" >/dev/null 2>&1; then
+if sudo -n -u "$COLLECTOR_USER" sudo -n -l >/dev/null 2>&1; then
     warn "  FAIL     ${COLLECTOR_USER} has at least one sudo rule"
     failed=1
 else

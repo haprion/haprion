@@ -56,6 +56,7 @@ haproxy-network = "haproxy_mgmt.cli.network:main"
 haproxy-network-helper = "haproxy_mgmt.cli.network_helper:main"
 haproxy-network-publish-helper = "haproxy_mgmt.cli.managed_network_publish:main"
 haproxy-objects-publish-helper = "haproxy_mgmt.cli.managed_objects_publish:main"
+haproxy-ui-traffic-collector = "haproxy_mgmt.traffic_collector:_entry"
 
 #
 # The marker that says this package is typed. Without it a consumer - the web

@@ -1537,6 +1537,12 @@ ${PLATFORM_ROOT}/logs/staging    the collector's alone
 /etc/haproxy-manager/traffic-collector.json
 ```
 
+The collector program itself is installed with the CLI engine under
+`/opt/haproxy-mgmt/current`, not inside the web release. This is a privilege boundary rather than
+packaging trivia: web releases are traversable only by the platform group, while the collector
+deliberately does not join that group and therefore cannot read `ui.toml`. The engine release is
+root-owned, immutable and executable without granting access to the platform configuration.
+
 **The direction is manager to node, and that is the whole design.** The first
 attempt had each node forward its log to the management host over TLS, and a DMZ
 node correctly could not open that connection. Nothing here asks for a new

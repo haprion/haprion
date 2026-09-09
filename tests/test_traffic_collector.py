@@ -9,15 +9,18 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import UTC, date, datetime
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from haproxy_ui.traffic_collector import (
+from haproxy_mgmt.traffic_collector import (
     CollectorConfig,
     CollectorError,
     NodeTarget,
     Response,
+    _entry,
     _parse_response,
     _replace,
     collect,
@@ -175,7 +178,7 @@ class TrafficCollectorTests(unittest.TestCase):
         destination.write_bytes(b"old\n")
 
         with (
-            patch("haproxy_ui.traffic_collector.os.replace", side_effect=OSError("full disk")),
+            patch("haproxy_mgmt.traffic_collector.os.replace", side_effect=OSError("full disk")),
             self.assertRaisesRegex(OSError, "full disk"),
         ):
             _replace(destination, b"new\n")
@@ -193,12 +196,28 @@ class TrafficCollectorTests(unittest.TestCase):
 
         self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o640)
 
+    def test_check_config_parses_without_contacting_a_node(self) -> None:
+        output = StringIO()
+        with (
+            patch.object(sys, "argv", ["collector", "--check-config", "/etc/config.json"]),
+            patch("haproxy_mgmt.traffic_collector.load_config", return_value=self.config) as loader,
+            patch("haproxy_mgmt.traffic_collector.collect") as collect_mock,
+            redirect_stdout(output),
+            self.assertRaises(SystemExit) as stopped,
+        ):
+            _entry()
+
+        self.assertEqual(stopped.exception.code, 0)
+        loader.assert_called_once_with(Path("/etc/config.json"))
+        collect_mock.assert_not_called()
+        self.assertEqual(output.getvalue(), "parsed 1 node(s) as svc-logread\n")
+
 
 if __name__ == "__main__":
     unittest.main()
 
 
-INSTALL = Path(__file__).resolve().parents[2] / "install" / "platform"
+INSTALL = Path(__file__).resolve().parents[1] / "install" / "platform"
 STEP = INSTALL / "13-platform-traffic-collector"
 RENDER = re.compile(r"^import json\nimport sys\n.*?^PY$", re.DOTALL | re.MULTILINE)
 
@@ -295,6 +314,11 @@ class TheCollectorUnits(unittest.TestCase):
         self.assertIn("User=haproxy-ui-collector", service)
         self.assertIn("NoNewPrivileges=yes", service)
         self.assertIn("CapabilityBoundingSet=\n", service)
+        self.assertIn(
+            "ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-ui-traffic-collector",
+            service,
+        )
+        self.assertNotIn("/apps/haproxy-manager/current/venv", service)
 
     def test_it_may_write_only_the_mirror_and_staging(self) -> None:
         self.assertIn(
@@ -308,7 +332,18 @@ class TheCollectorUnits(unittest.TestCase):
 
     def test_it_is_a_timer_rather_than_a_daemon(self) -> None:
         self.assertIn("Type=oneshot", self.rendered["service"])
+        self.assertIn("OnActiveSec=2min", self.rendered["timer"])
+        self.assertNotIn("OnBootSec=", self.rendered["timer"])
         self.assertIn("OnUnitActiveSec=1min", self.rendered["timer"])
+
+    def test_sudo_is_tested_as_the_collector_not_listed_by_root(self) -> None:
+        step = STEP.read_text()
+
+        self.assertIn(
+            'sudo -n -u "$COLLECTOR_USER" sudo -n -l',
+            step,
+        )
+        self.assertNotIn('sudo -n -l -U "$COLLECTOR_USER"', step)
 
     @unittest.skipUnless(shutil.which("systemd-analyze"), "systemd is not installed here")
     def test_real_systemd_accepts_both_units(self) -> None:

@@ -101,6 +101,11 @@ keepalived notify lines if the script asked for them.
 
 Repeat for every node.
 
+This direct directory-copy flow is for a first installation. Later node updates use the minimal,
+commit-bound bundle built by `tools/node-bundle.py` and installed one node at a time with
+`tools/install-node-bundle`; see `docs/INSTALLATION.md` section 2.5. Do not copy the complete
+`install/` tree for an update — it includes manager/platform material the node never uses.
+
 ## Step 5 — check
 
 Back on the management host, as yourself:

@@ -1,0 +1,130 @@
+#!/bin/bash
+# Install one verified node bundle through an operator's interactive SSH path.
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VERIFY="${SCRIPT_DIR}/node-bundle.py"
+STATE_BACKUP=/usr/local/sbin/haproxy-state-backup
+
+bundle=""
+expected_sha=""
+answers=""
+node=""
+cluster=""
+dry_run="no"
+
+fail() { echo "ERROR: $*" >&2; exit 1; }
+usage() {
+    echo "usage: $(basename "$0") --bundle <tar.gz> --sha256 <digest> --answers <file> --node <host> --cluster <id> [--dry-run]"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --bundle) bundle="${2:-}"; shift 2 ;;
+        --sha256) expected_sha="${2:-}"; shift 2 ;;
+        --answers) answers="${2:-}"; shift 2 ;;
+        --node) node="${2:-}"; shift 2 ;;
+        --cluster) cluster="${2:-}"; shift 2 ;;
+        --dry-run) dry_run="yes"; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) usage >&2; fail "unknown argument: $1" ;;
+    esac
+done
+
+[[ $EUID -ne 0 ]] || fail "run as yourself, not with sudo"
+[[ "$bundle" == /* && -f "$bundle" && ! -L "$bundle" ]] \
+    || fail "bundle must be an absolute regular non-symlink file"
+[[ "$answers" == /* && -f "$answers" && ! -L "$answers" ]] \
+    || fail "answers must be an absolute regular non-symlink file"
+[[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]] || fail "SHA-256 must be 64 lowercase hexadecimal characters"
+[[ "$node" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] || fail "invalid node hostname"
+[[ "$cluster" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]] || fail "invalid cluster id"
+bash -n "$answers" || fail "answers file is not valid shell"
+
+verification="$(/usr/bin/python3 "$VERIFY" verify --bundle "$bundle" --sha256 "$expected_sha")" \
+    || fail "node bundle verification failed"
+release_root="$(sed -n 's/^release: //p' <<<"$verification")"
+[[ "$release_root" =~ ^haproxy-manager-node-[0-9a-f]{12}$ ]] \
+    || fail "bundle verifier returned an invalid release root"
+printf '%s\n' "$verification"
+
+work_dir="$(mktemp -d)"
+chmod 700 "$work_dir"
+control_dir="${work_dir}/ssh"
+mkdir -m 700 "$control_dir"
+remote_dir=""
+ssh_opts=(
+    -o StrictHostKeyChecking=yes
+    -o ControlMaster=auto
+    -o "ControlPath=${control_dir}/%r@%h"
+    -o ControlPersist=180
+)
+
+cleanup() {
+    if [[ -n "$remote_dir" && "$remote_dir" =~ ^/tmp/haproxy-node-bundle\.[A-Za-z0-9]+$ ]]; then
+        # The path came from the node's constrained mktemp shape above.
+        # shellcheck disable=SC2029
+        ssh "${ssh_opts[@]}" "$node" "find '$remote_dir' -depth -delete" >/dev/null 2>&1 \
+            || echo "WARNING: could not remove node staging ${remote_dir}" >&2
+    fi
+    ssh -O exit -o "ControlPath=${control_dir}/%r@%h" "$node" >/dev/null 2>&1 || true
+    find "$work_dir" -depth -delete 2>/dev/null || true
+}
+trap cleanup EXIT
+
+preflight="
+    set -Eeuo pipefail
+    sudo -v
+    test -d /run/lock
+    getent passwd syslog >/dev/null
+    command -v rsyslogd >/dev/null
+    if sudo test -f /etc/haproxy-manager/node.conf; then
+        sudo grep -Fqx 'CLUSTER=\"${cluster}\"' /etc/haproxy-manager/node.conf \
+            || { echo 'ERROR: existing node belongs to another cluster' >&2; exit 1; }
+    fi
+    echo 'node preflight: PASS'
+"
+
+if [[ "$dry_run" == "yes" ]]; then
+    # Fixed, validated node and cluster values are intentionally sent to the node.
+    # shellcheck disable=SC2029
+    ssh -tt "${ssh_opts[@]}" "$node" "$preflight"
+    echo "dry run: no file or backup was written"
+    exit 0
+fi
+
+[[ -x "$STATE_BACKUP" ]] || fail "state backup command is not executable: ${STATE_BACKUP}"
+sudo -v
+sudo "$STATE_BACKUP"
+
+remote_dir="$(ssh "${ssh_opts[@]}" "$node" 'mktemp -d /tmp/haproxy-node-bundle.XXXXXXXX')"
+remote_dir="${remote_dir//$'\r'/}"
+[[ "$remote_dir" =~ ^/tmp/haproxy-node-bundle\.[A-Za-z0-9]+$ ]] \
+    || fail "node returned an unsafe staging path"
+# The path is returned by the node and shape-checked immediately above.
+# shellcheck disable=SC2029
+ssh "${ssh_opts[@]}" "$node" "chmod 700 '$remote_dir'"
+scp "${ssh_opts[@]}" "$bundle" "${node}:${remote_dir}/bundle.tar.gz" >/dev/null
+scp "${ssh_opts[@]}" "$answers" "${node}:${remote_dir}/answers.env" >/dev/null
+
+remote_install="
+    ${preflight}
+    cd '$remote_dir'
+    printf '%s  %s\n' '$expected_sha' bundle.tar.gz | sha256sum -c -
+    chmod 600 answers.env
+    tar -xzf bundle.tar.gz
+    cd '${release_root}/install'
+    sudo ./04-node-prepare '$remote_dir/answers.env' '$cluster'
+"
+
+# The archive root, staging path, node and cluster were all shape-checked above.
+# shellcheck disable=SC2029
+ssh -tt "${ssh_opts[@]}" "$node" "$remote_install"
+
+sudo "$STATE_BACKUP"
+if [[ -x /opt/haproxy-mgmt/current/bin/haproxy-status ]]; then
+    /opt/haproxy-mgmt/current/bin/haproxy-status -c "$cluster"
+else
+    echo "WARNING: haproxy-status is unavailable; run the installation check manually" >&2
+fi
+echo "node bundle installation: PASS (${node}, ${release_root})"

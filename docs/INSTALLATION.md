@@ -675,13 +675,11 @@ The scripts are in [`install/node/`](../install/node/) and are installed by
 [`04-node-prepare`](../install/04-node-prepare), which also creates the accounts, the release
 layout and the sudo rules.
 
-**It is also how a node script is updated later.** The step compares each file against what is
-already installed and leaves an identical one alone, so re-running it after pulling a new revision
-replaces exactly the scripts that changed and touches nothing else. Two things are worth knowing
-before doing that on a pair carrying traffic: it runs against one node at a time, so read the
-result on the first before starting the second, and a script is proved by running the command that
-uses it and reading the output — an installation that reports success has proved that a file was
-written, not that it works.
+Later updates use the versioned node bundle in section 2.5. The bundle runs the same idempotent
+step, but do not mistake that for a script-only copy: the step also reconciles service accounts,
+directory ownership and modes, `node.conf`, sudoers, the HAProxy baseline and the complete script
+attestation. Read every reported `created`, `fixed`, `written` and `installed` line on the pilot
+before another node is touched.
 
 This section explains what they do and why; run the script rather than following it by hand.
 
@@ -897,11 +895,108 @@ root-created lock files inside the directory.
 
 ### 2.5 Installing and changing node scripts
 
-There is no automated path for this, by design. Every management identity is a forced command; none
-of them can copy a file. Installing or changing a node script is a manual, interactive action over
-an administrator's own login, escalating with `sudo` on the node.
+There is no unattended management-identity path for this, by design. Every management identity is
+a forced command; none of them can copy a file. Installing or changing a node script crosses an
+administrator's own interactive SSH login and escalates with `sudo` on the node.
 
-Take a state backup before and after, in the same working session.
+The repository does automate everything around that interactive boundary. A node release is a
+minimal tar archive containing only `04-node-prepare`, `lib.sh`, the ten attested node scripts and
+an internal manifest. Platform installers, examples, caches and the source tree do not belong in
+it. Environment answers remain a separate root-owned input; putting them in the code artifact
+would make two installations of the same commit produce different releases.
+
+#### Build and verify the bundle
+
+Use a clean, committed source tree that has passed the complete repository gate. Build into a
+protected staging directory outside the repository:
+
+```bash
+commit="$(git rev-parse --short=12 HEAD)"
+bundle="/path/to/protected/staging/haproxy-manager-node-${commit}.tar.gz"
+
+tools/node-bundle.py build \
+  --source "$(pwd)" \
+  --output "$bundle"
+```
+
+The builder refuses a dirty tree, an existing output file, a missing payload file, a symlink and an
+unexpected Git file mode. It reads payload bytes and modes from the commit rather than the working
+tree, then prints the full source commit, release name and SHA-256. Record the digest beside the
+artifact; do not derive trust from a digest received with an untrusted copy.
+
+The archive is deterministic: building the same commit twice produces identical bytes. Its
+`MANIFEST.json` binds every path, mode and content digest to the full commit. Verify a retained or
+transferred copy without extracting it:
+
+```bash
+tools/node-bundle.py verify \
+  --bundle "$bundle" \
+  --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+Verification rejects an external digest mismatch, an unsafe or duplicate path, a symlink, a
+special file, an unmanifested member, changed bytes or modes, and files or archives over their hard
+size limits.
+
+#### Preflight and install one node
+
+Measure the pair immediately before an update and select the node that does not own the virtual
+address:
+
+```bash
+haproxy-status -c alpha
+```
+
+Run the transport as your administrator account, never as root. All paths must be absolute. The dry
+run verifies the bundle locally, opens the operator's normal host-key-checked SSH path, checks the
+node's cluster and prerequisites, and writes neither a backup nor a staging file:
+
+```bash
+tools/install-node-bundle --dry-run \
+  --bundle /path/to/protected/staging/haproxy-manager-node-0123456789ab.tar.gz \
+  --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --answers /path/to/answers.env \
+  --node node-b \
+  --cluster alpha
+```
+
+Remove `--dry-run` to install. The tool:
+
+1. verifies the external digest and complete internal manifest before contacting the node;
+2. takes a state backup before the first remote write;
+3. uses one multiplexed, strictly host-key-checked SSH session for staging and installation;
+4. copies only the bundle and the separate answers file to a random mode-700 directory under
+   `/tmp`, then verifies the bundle digest again on the node;
+5. runs the bundle's own `04-node-prepare` through the operator's interactive `sudo` path;
+6. takes another state backup and runs `haproxy-status` for the cluster; and
+7. removes its remote and local staging automatically. A cleanup failure is a visible warning that
+   names the exact directory; remove only that named directory after inspecting it.
+
+The SSH login and the node's sudo authentication are deliberately interactive. The shared SSH
+session means each is requested once per node, not once per file. The management identities remain
+forced commands and gain no file-copy ability.
+
+Stop after the first node and read both the install report and `haproxy-status`. A successful copy
+proves bytes, modes and ownership; run the command that uses a changed script before proceeding.
+Remeasure VIP ownership before every subsequent node — never assume it stayed where the previous
+status reading found it.
+
+#### Rollback
+
+Keep the previous node bundle and its recorded SHA-256. A code rollback is the same verified
+installation command with that retained bundle; there is no special path that bypasses manifest or
+hash checks. Re-run the functional command and `haproxy-status` afterwards.
+
+State backups are taken on both sides of every update so account, policy and configuration changes
+also have a recovery point. They are not restored automatically: an automatic whole-node restore
+after a partial failure could overwrite unrelated state that changed during the window. Stop on a
+failure, preserve the reported backup, note any cleanup warning and determine which reported
+operation completed before restoring state.
+
+Optional features have their own symmetric rollback. For traffic logging, disable the node route
+with `sudo haproxy-traffic-log-enable --disable`, remove only that collector key's forced-command
+line from `svc-logread` and disable the manager collector. Traffic files are deliberately retained;
+rollback never deletes evidence.
 
 ## Releasing a change
 

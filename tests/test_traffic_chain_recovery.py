@@ -528,14 +528,13 @@ class RotationRetentionAndReadingAtOnce(ChainTestCase):
         names = sorted(item.name for item in self.chain.staging.glob("*--*--*.jsonl"))
         self.assertEqual(len(names), RETENTION_DAYS)
 
-    def test_completion_markers_are_never_cleaned_up(self) -> None:
-        """R3 finding, recorded as it is: staging grows one marker per node-day.
+    def test_completion_markers_leave_the_window_with_their_day(self) -> None:
+        """R3 found staging growing one empty marker per node-day, for ever.
 
-        `collect_node` prunes parts outside the window by globbing `*.jsonl`,
-        which the `.done` markers are not. They are empty files, so this is not
-        a disk problem - it is a directory that grows without bound for as long
-        as the collector runs, and the fix belongs in the same pass as the
-        retired-node debris above.
+        The prune globbed `*.jsonl`, which the `.done` markers that record a
+        finished closed day are not. Nothing else ever removed them, so the
+        directory grew for as long as the collector ran. Both kinds of leftover
+        are pruned by the window now, and this is what holds that.
         """
 
         self.chain.node.append(self.chain.today, 1)
@@ -546,13 +545,32 @@ class RotationRetentionAndReadingAtOnce(ChainTestCase):
         moment = self.advance(RETENTION_DAYS + 2)
         self.chain.node.append(self.chain.today, 1)
         self.settle(now=moment)
+
         kept = sorted(item.name for item in self.chain.staging.glob("*.done"))
         self.assertEqual(
-            [name for name in markers if name in kept],
-            markers,
-            "markers outside the window are now cleaned up - update this test and the plan",
+            [name for name in markers if name in kept], [], "a marker outside the window survived"
         )
+        self.assertEqual(len(kept), RETENTION_DAYS - 1, "the new window lost its markers")
         self.assertEqual(len(list(self.chain.staging.glob("*--*--*.jsonl"))), 1)
+
+
+class WhatARunHoldsOpen(ChainTestCase):
+    """R3 found the transport leaking its pipes; this is what keeps them closed."""
+
+    def test_fetching_many_days_does_not_accumulate_open_files(self) -> None:
+        for age in reversed(range(RETENTION_DAYS)):
+            self.chain.node.append(self.chain.today - timedelta(days=age), 2)
+        self.assertEqual(self.collect(), 0)
+
+        held = len(os.listdir("/proc/self/fd"))
+        requests = self.chain.measured.requests
+        self.settle()
+        self.assertGreater(self.chain.measured.requests - requests, 4, "too few fetches to judge")
+        self.assertLessEqual(
+            len(os.listdir("/proc/self/fd")),
+            held + 2,
+            "the transport is leaving its pipes to the garbage collector",
+        )
 
 
 class WhatOneRunCosts(ChainTestCase):

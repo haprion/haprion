@@ -183,6 +183,16 @@ def _bounded_ssh(argv: list[str]) -> tuple[int, bytes, bytes]:
         raise
     finally:
         selector.close()
+        #
+        # `Popen` hands out two pipe objects and closes neither. The child is
+        # reaped by `wait`, but the descriptors live until the garbage collector
+        # gets to them, so a run that fetches many node-days holds far more open
+        # files than it needs. Found by R3, where the leak surfaced as a
+        # ResourceWarning on every fetch.
+        #
+        for pipe in (process.stdout, process.stderr):
+            if pipe is not None:
+                pipe.close()
 
 
 def _parse_response(raw: bytes, wanted: date, offset: int) -> Response:
@@ -425,11 +435,18 @@ def collect_node(
     days = tuple(today - timedelta(days=offset) for offset in reversed(range(RETENTION_DAYS)))
     keep = {item.isoformat() for item in days}
     prefix = f"{target.cluster}--{target.node}--"
-    for path in config.staging.glob(f"{prefix}*.jsonl"):
-        day = path.name[len(prefix) : -len(".jsonl")]
-        if day not in keep:
-            _regular(path, maximum=MAX_MIRROR_BYTES)
-            path.unlink()
+    #
+    # Both kinds of leftover, or staging grows for ever: the parts are the day
+    # data, and the markers are the empty files that say a closed day is
+    # complete. Pruning only the parts left one marker per node-day behind, and
+    # nothing ever removed them.
+    #
+    for suffix, maximum in ((".jsonl", MAX_MIRROR_BYTES), (".done", 1)):
+        for path in config.staging.glob(f"{prefix}*{suffix}"):
+            day = path.name[len(prefix) : -len(suffix)]
+            if day not in keep:
+                _regular(path, maximum=maximum)
+                path.unlink()
 
     try:
         current_complete = _update_day(config, target, today, fetch)

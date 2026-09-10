@@ -31,6 +31,8 @@ current foundation provides:
   other's work
 - a read-only web interface over that foundation, fed by a poller rather than by reads made while
   somebody is looking at a screen
+- an optional, manager-pulled traffic-log view; each cluster must explicitly set
+  `traffic_logging: true`, and the setting reaches its nodes with the next object publication
 - the job path management operations will run through: an immutable queue, an atomic claim held
   under a renewable lease, and a worker that records how every job ended — including recovering a
   job whose worker died, which is decided from readable evidence rather than retried on assumption

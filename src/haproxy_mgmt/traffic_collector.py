@@ -24,6 +24,12 @@ MAX_STDERR = 64 * 1024
 MAX_MIRROR_BYTES = 256 * 1024 * 1024
 RETENTION_DAYS = 14
 SSH_TIMEOUT_SECONDS = 30
+# A node names its day file from its own UTC clock.  During the first minutes
+# after the manager has crossed midnight, the node may therefore still append
+# to what the manager calls yesterday.  The one-minute timer gets several
+# independent reads before this expires; only after the grace may EOF make the
+# closed day immutable locally.
+CLOSED_DAY_GRACE = timedelta(minutes=5)
 ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 USER = re.compile(r"^[a-z_][a-z0-9_-]{0,30}$")
@@ -442,7 +448,8 @@ def collect_node(
     now: datetime,
     fetch: Fetch,
 ) -> None:
-    today = now.date()
+    utc_now = now.astimezone(UTC)
+    today = utc_now.date()
     days = tuple(today - timedelta(days=offset) for offset in reversed(range(RETENTION_DAYS)))
     keep = {item.isoformat() for item in days}
     prefix = f"{target.cluster}--{target.node}--"
@@ -470,7 +477,13 @@ def collect_node(
                 if marker.exists() or marker.is_symlink():
                     _regular(marker, maximum=1)
                     continue
-                if _update_day(config, target, wanted, fetch):
+                complete = _update_day(config, target, wanted, fetch)
+                yesterday_still_open = (
+                    wanted == today - timedelta(days=1)
+                    and utc_now - datetime.combine(today, datetime.min.time(), UTC)
+                    < CLOSED_DAY_GRACE
+                )
+                if complete and not yesterday_still_open:
                     _replace(marker, b"", 0o600)
                 break
         _assemble(config, target, days)

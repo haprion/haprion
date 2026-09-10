@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from haproxy_mgmt.traffic_collector import (
+    CLOSED_DAY_GRACE,
     CollectorConfig,
     CollectorError,
     NodeTarget,
@@ -24,6 +25,7 @@ from haproxy_mgmt.traffic_collector import (
     _parse_response,
     _replace,
     collect,
+    collect_node,
     load_config,
 )
 
@@ -87,6 +89,38 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual(collect(self.config, now=NOW, fetch=fetch), 0)
         self.assertEqual(collect(self.config, now=NOW, fetch=fetch), 0)
         self.assertEqual((self.mirror / "alpha--node-a.jsonl").read_bytes(), line)
+
+    def test_yesterday_is_read_again_until_the_midnight_grace_has_passed(self) -> None:
+        yesterday = NOW.date() - date.resolution
+        for age in range(2, 14):
+            marker = self.staging / f"alpha--node-a--{NOW.date() - age * date.resolution}.done"
+            marker.write_bytes(b"")
+        calls: list[tuple[date, int]] = []
+
+        def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            calls.append((wanted, offset))
+            return self.response(wanted, offset, b"")
+
+        shortly_after_midnight = datetime(2026, 9, 8, 0, 1, tzinfo=UTC)
+        collect_node(
+            self.config,
+            self.target,
+            now=shortly_after_midnight,
+            fetch=fetch,
+        )
+        self.assertIn((yesterday, 0), calls)
+        marker = self.staging / f"alpha--node-a--{yesterday}.done"
+        self.assertFalse(marker.exists())
+
+        calls.clear()
+        collect_node(
+            self.config,
+            self.target,
+            now=shortly_after_midnight + CLOSED_DAY_GRACE,
+            fetch=fetch,
+        )
+        self.assertIn((yesterday, 0), calls)
+        self.assertTrue(marker.exists())
 
     def test_failure_preserves_the_mirror_and_last_success(self) -> None:
         line = b'{"schema":1}\n'

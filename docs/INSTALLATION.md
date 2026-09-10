@@ -409,6 +409,11 @@ clusters:
     certificate_ids:
       - example.com
     default_certificate: example.com
+
+    # Opt in to the separate structured stream used by the traffic-log
+    # collector.  The setting reaches the nodes when an object is next
+    # published; changing this file alone does not deploy a configuration.
+    traffic_logging: true
 ```
 
 `node_path` is the subdirectory a node fetches from on the management host. It is the only
@@ -1680,6 +1685,18 @@ nodes, and giving it a key and an inventory would undo exactly that.
 The step fetches nothing on its own. It prints one `authorized_keys` line to add
 to `svc-logread` on each node, and each node also needs its own log route
 switched on with `sudo haproxy-traffic-log-enable`.
+
+The stream is also opt-in per cluster. Set `traffic_logging: true` in that
+cluster's entry in `clusters.yaml`, then publish an actual object change so the
+generator's log profile reaches the nodes. Rerun platform step 13 whenever a
+node is added to or removed from `clusters.yaml`; `check-compatibility` refuses
+a running traffic-log view while the collector's installed node list differs.
+
+Only the structured stream removes query strings, and only that stream is
+mirrored to the manager and shown in the interface. HAProxy's ordinary
+`haproxy.log` remains byte-for-byte unchanged and its traditional HTTP log line
+contains the complete request target, including any query string. Treat that
+local file accordingly when choosing retention, backup and access controls.
 
 The interface reads the mirror once `[traffic_logs]` is enabled in `ui.toml`. It
 reads files and never asks a node anything, so an unreachable node cannot make a

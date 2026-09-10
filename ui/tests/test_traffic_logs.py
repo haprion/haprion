@@ -637,6 +637,27 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertNotIn("data-export-backend", page)
         self.assertNotIn("data-export-timers", page)
 
+    def test_export_is_in_the_heading_and_filters_support_still_navigation(self) -> None:
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
+
+        page = self.page()
+
+        self.assertLess(page.index("Export selected (.csv)"), page.index("data-log-filters"))
+        self.assertIn("data-log-region", page)
+        self.assertIn("data-log-clear-filters", page)
+
+    def test_the_page_offers_compact_client_side_pagination(self) -> None:
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
+
+        page = self.page()
+
+        self.assertIn("data-log-page-size", page)
+        self.assertIn('<option value="25">25</option>', page)
+        self.assertIn('<option value="50" selected>50</option>', page)
+        self.assertIn('<option value="100">100</option>', page)
+        self.assertIn("data-log-page-previous disabled", page)
+        self.assertIn("data-log-page-next disabled", page)
+
     def test_disabled_says_so_instead_of_showing_an_empty_table(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(record(path="/hidden"))
 

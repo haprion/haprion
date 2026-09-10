@@ -1361,8 +1361,13 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .log-calendar-time b { color: var(--muted); font-weight: 700; }
 .log-calendar-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
 .log-calendar-actions .text-link { border: 0; background: transparent; cursor: pointer; }
-.log-export { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: 0 0 10px; }
+.log-export { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .log-export span { color: var(--muted); font-size: 12px; }
+.log-pagination { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 34px; margin-top: 12px; color: var(--muted); font-size: 12px; }
+.log-pagination label { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.log-pagination select { min-width: 66px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); font-variant-numeric: tabular-nums; }
+.log-pagination > span { font-variant-numeric: tabular-nums; }
+.log-pagination > div { display: inline-flex; gap: 7px; }
 .secondary-button:disabled { cursor: default; opacity: .45; }
 /*
    .node-table is table-layout:fixed with column widths written for a table of a
@@ -1408,3 +1413,4 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   .log-table td::before { content: none; }
 }
 @media (max-width: 1000px) { .log-filters { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 680px) { .log-pagination { flex-wrap: wrap; } }

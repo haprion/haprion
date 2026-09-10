@@ -1,6 +1,7 @@
 (() => {
   "use strict";
 
+  const REGION = "[data-log-region]";
   const two = (value) => String(value).padStart(2, "0");
   const parsed = (value) => {
     const match = /^(\d{2})-(\d{2})-(\d{2}) ([01]\d|2[0-3]):([0-5]\d)$/.exec(value);
@@ -91,32 +92,73 @@
     return `"${safe.replace(/"/g, '""')}"`;
   };
 
-  const buildExport = () => {
-    const rows = Array.from(document.querySelectorAll("[data-log-row]"));
-    const all = document.querySelector("[data-log-select-all]");
-    const button = document.querySelector("[data-log-export]");
-    const count = document.querySelector("[data-log-selected-count]");
+  const buildTableControls = (root) => {
+    const rows = Array.from(root.querySelectorAll("[data-log-row]"));
+    const all = root.querySelector("[data-log-select-all]");
+    const button = root.querySelector("[data-log-export]");
+    const count = root.querySelector("[data-log-selected-count]");
+    const size = root.querySelector("[data-log-page-size]");
+    const range = root.querySelector("[data-log-page-range]");
+    const previous = root.querySelector("[data-log-page-previous]");
+    const next = root.querySelector("[data-log-page-next]");
     if (!all) return;
+    let page = 0;
 
     const selectedRows = () =>
       rows.filter((row) => row.querySelector("[data-log-select]")?.checked);
-    const update = () => {
+    const visibleRows = () => rows.filter((row) => !row.hidden);
+    const updateSelection = () => {
       const selected = selectedRows().length;
-      all.checked = rows.length > 0 && selected === rows.length;
-      all.indeterminate = selected > 0 && selected < rows.length;
-      all.disabled = rows.length === 0;
+      const shown = visibleRows();
+      const selectedShown = shown.filter(
+        (row) => row.querySelector("[data-log-select]")?.checked
+      ).length;
+      all.checked = shown.length > 0 && selectedShown === shown.length;
+      all.indeterminate = selectedShown > 0 && selectedShown < shown.length;
+      all.disabled = shown.length === 0;
       if (button) button.disabled = selected === 0;
       if (count) count.textContent = selected === 0 ? "No rows selected" : `${selected} selected`;
     };
 
+    const showPage = () => {
+      const pageSize = size ? Number(size.value) : Math.max(rows.length, 1);
+      const pages = Math.max(Math.ceil(rows.length / pageSize), 1);
+      page = Math.min(page, pages - 1);
+      const start = page * pageSize;
+      const end = Math.min(start + pageSize, rows.length);
+      rows.forEach((row, index) => {
+        row.hidden = index < start || index >= end;
+      });
+      if (range) {
+        range.textContent = rows.length === 0 ? "0 of 0" : `${start + 1}–${end} of ${rows.length}`;
+      }
+      if (previous) previous.disabled = page === 0;
+      if (next) next.disabled = page >= pages - 1;
+      updateSelection();
+    };
+
     all.addEventListener("change", () => {
-      rows.forEach((row) => {
+      visibleRows().forEach((row) => {
         const checkbox = row.querySelector("[data-log-select]");
         if (checkbox) checkbox.checked = all.checked;
       });
-      update();
+      updateSelection();
     });
-    rows.forEach((row) => row.querySelector("[data-log-select]")?.addEventListener("change", update));
+    rows.forEach((row) =>
+      row.querySelector("[data-log-select]")?.addEventListener("change", updateSelection)
+    );
+    size?.addEventListener("change", () => {
+      page = 0;
+      showPage();
+    });
+    previous?.addEventListener("click", () => {
+      page -= 1;
+      showPage();
+    });
+    next?.addEventListener("click", () => {
+      page += 1;
+      showPage();
+    });
     button?.addEventListener("click", () => {
       const headings = [
         "Time",
@@ -158,16 +200,57 @@
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(link.href), 0);
     });
-    update();
+    showPage();
+  };
+
+  const wire = (root) => {
+    root.querySelectorAll("[data-log-date-picker]").forEach(buildPicker);
+    buildTableControls(root);
+  };
+
+  const swap = async (href, push) => {
+    const here = document.querySelector(REGION);
+    if (!here) throw new Error("missing log region");
+    here.setAttribute("aria-busy", "true");
+    const answer = await fetch(href, { credentials: "same-origin" });
+    if (!answer.ok) throw new Error(String(answer.status));
+    const parsedPage = new DOMParser().parseFromString(await answer.text(), "text/html");
+    const fresh = parsedPage.querySelector(REGION);
+    if (!fresh) throw new Error("unexpected response");
+    here.replaceWith(fresh);
+    if (push) history.pushState({ logs: true }, "", href);
+    wire(fresh);
+  };
+
+  const follow = (href) => {
+    swap(href, true).catch(() => window.location.assign(href));
   };
 
   const start = () => {
-    document.querySelectorAll("[data-log-date-picker]").forEach(buildPicker);
+    wire(document);
     document.addEventListener("click", () => closePickers(null));
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") closePickers(null);
     });
-    buildExport();
+    document.addEventListener("submit", (event) => {
+      const form = event.target.closest?.("[data-log-filters]");
+      if (!form) return;
+      event.preventDefault();
+      const href = new URL(form.action, window.location.href);
+      href.search = new URLSearchParams(new FormData(form)).toString();
+      follow(href.href);
+    });
+    document.addEventListener("click", (event) => {
+      if (event.button !== 0 || event.defaultPrevented) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const clear = event.target.closest?.("[data-log-clear-filters]");
+      if (!clear) return;
+      event.preventDefault();
+      follow(clear.href);
+    });
+    window.addEventListener("popstate", () => {
+      swap(window.location.href, false).catch(() => window.location.reload());
+    });
   };
 
   if (document.readyState === "loading") window.addEventListener("DOMContentLoaded", start);

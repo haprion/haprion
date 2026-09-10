@@ -99,6 +99,96 @@ class LogControlsInABrowser(unittest.TestCase):
         self.assertNotIn("/not-selected", content)
         self.assertEqual(len(content.splitlines()), 2)
 
+    def test_filter_and_clear_replace_only_the_log_region_and_update_the_address(self) -> None:
+        def markup(value: str) -> str:
+            return f"""
+            <html><body><nav data-site-navigation>Navigation stays</nav>
+              <div data-log-region>
+                <form action="/logs" data-log-filters>
+                  <input name="q" value=""><button type="submit">Filter</button>
+                  <a href="/logs" data-log-clear-filters>Clear</a>
+                </form>
+                <p data-result>{value}</p>
+              </div>
+            </body></html>
+            """
+
+        def answer(route: Any) -> None:
+            value = "Filtered" if "q=needle" in route.request.url else "All rows"
+            route.fulfill(status=200, content_type="text/html", body=markup(value))
+
+        self.page.route("https://example.test/**", answer)
+        self.page.goto("https://example.test/logs")
+        self.page.locator("[data-site-navigation]").evaluate("node => { node.heldByTest = true; }")
+        self.page.add_script_tag(path=str(STATIC_DIRECTORY / "logs.js"))
+
+        self.page.fill("input[name=q]", "needle")
+        self.page.click("button[type=submit]")
+        self.page.wait_for_function(
+            "document.querySelector('[data-result]')?.textContent === 'Filtered'"
+        )
+        self.assertEqual(self.page.locator("[data-result]").inner_text(), "Filtered")
+        self.assertIn("q=needle", self.page.url)
+        self.assertTrue(
+            self.page.locator("[data-site-navigation]").evaluate("node => node.heldByTest === true")
+        )
+
+        self.page.click("[data-log-clear-filters]")
+        self.page.wait_for_function(
+            "document.querySelector('[data-result]')?.textContent === 'All rows'"
+        )
+        self.assertEqual(self.page.locator("[data-result]").inner_text(), "All rows")
+        self.assertEqual(self.page.url, "https://example.test/logs")
+
+    def test_pagination_keeps_cross_page_selection_and_selects_only_the_visible_page(self) -> None:
+        rows = "".join(
+            f'<tr data-log-row data-row="{number}"><td><input type="checkbox" data-log-select></td></tr>'
+            for number in range(120)
+        )
+        self.load(
+            f"""
+            <div data-log-region>
+              <button type="button" data-log-export disabled>Export selected (.csv)</button>
+              <span data-log-selected-count></span>
+              <input type="checkbox" data-log-select-all>
+              <table><tbody>{rows}</tbody></table>
+              <select data-log-page-size>
+                <option value="25">25</option><option value="50" selected>50</option><option value="100">100</option>
+              </select>
+              <span data-log-page-range></span>
+              <button type="button" data-log-page-previous>Previous</button>
+              <button type="button" data-log-page-next>Next</button>
+            </div>
+            """
+        )
+
+        visible = self.page.locator("[data-log-row]:visible")
+        self.assertEqual(visible.count(), 50)
+        self.assertEqual(self.page.locator("[data-log-page-range]").inner_text(), "1–50 of 120")
+        self.page.locator('[data-row="0"] [data-log-select]').check()
+
+        self.page.click("[data-log-page-next]")
+        self.assertEqual(visible.count(), 50)
+        self.assertEqual(visible.first.get_attribute("data-row"), "50")
+        self.assertEqual(self.page.locator("[data-log-page-range]").inner_text(), "51–100 of 120")
+        self.assertEqual(self.page.locator("[data-log-selected-count]").inner_text(), "1 selected")
+        self.assertFalse(self.page.locator("[data-log-select-all]").is_checked())
+
+        self.page.locator("[data-log-select-all]").check()
+        self.assertEqual(self.page.locator("[data-log-selected-count]").inner_text(), "51 selected")
+        self.page.click("[data-log-page-next]")
+        self.assertEqual(visible.count(), 20)
+        self.assertEqual(visible.first.get_attribute("data-row"), "100")
+        self.assertFalse(self.page.locator("[data-log-select-all]").is_checked())
+
+        self.page.select_option("[data-log-page-size]", "100")
+        self.assertEqual(visible.count(), 100)
+        self.assertEqual(visible.first.get_attribute("data-row"), "0")
+        self.assertEqual(self.page.locator("[data-log-page-range]").inner_text(), "1–100 of 120")
+        self.assertTrue(
+            self.page.locator("[data-log-select-all]").evaluate("node => node.indeterminate")
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

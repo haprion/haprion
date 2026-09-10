@@ -15,10 +15,12 @@
   </div>
 </div>
 {% endmacro %}
+<div data-log-region>
 <section class="page-heading">
   <div class="heading-title"><h1>Traffic logs</h1><p class="page-lede">Recent HTTP requests, mirrored from each node.</p></div>
-  {% if enabled and (reading.unavailable or freshness_warnings or not reading.nodes) %}
   <div class="heading-badges">
+    {% if enabled and reading.entries %}<div class="log-export"><button class="secondary-button" type="button" data-log-export disabled>Export selected (.csv)</button><span data-log-selected-count>No rows selected</span></div>{% endif %}
+    {% if enabled and (reading.unavailable or freshness_warnings or not reading.nodes) %}
     <details class="log-warning">
       <summary><span class="status-dot status-warning"></span>Log warning</summary>
       <div class="log-warning-popover">
@@ -45,24 +47,22 @@
         {% endfor %}
       </div>
     </details>
+    {% endif %}
   </div>
-  {% endif %}
 </section>
 
 {% if enabled %}
-<form class="log-filters" method="get" action="/logs">
+<form class="log-filters" method="get" action="/logs" data-log-filters>
   <label>Cluster<select name="cluster"><option value="">All clusters</option>{% for cluster in clusters %}<option value="{{ cluster }}"{% if cluster == selected_cluster %} selected{% endif %}>{{ cluster }}</option>{% endfor %}</select></label>
   <label>Status<select name="status"><option value="">All</option>{% for code in ['2xx', '3xx', '4xx', '5xx'] %}<option value="{{ code }}"{% if code == selected_status %} selected{% endif %}>{{ code }}</option>{% endfor %}</select></label>
   <label>Search<input name="q" value="{{ selected_query }}" maxlength="200" placeholder="host AND NOT /health" title="Use AND, OR, NOT, parentheses and quoted phrases. Operators are case-insensitive."></label>
   {{ date_time_picker('from', 'From', selected_from, time_min) }}
   {{ date_time_picker('to', 'To', selected_to, time_max) }}
-  <button class="secondary-button" type="submit">Filter</button><a class="text-link" href="/logs">Clear</a>
+  <button class="secondary-button" type="submit">Filter</button><a class="text-link" href="/logs" data-log-clear-filters>Clear</a>
 </form>
 
 {% if reading.filter_error %}<p class="notice notice-warning">{{ reading.filter_error }}</p>{% endif %}
 {% if reading.truncated %}<p class="notice notice-warning">Filters searched only the newest {{ scan_mib_per_node }} MiB per node, within a {{ scan_mib_total }} MiB page-wide window. Older records were not searched.</p>{% endif %}
-{% if reading.entries %}<div class="log-export"><button class="secondary-button" type="button" data-log-export disabled>Export selected (.csv)</button><span data-log-selected-count>No rows selected</span></div>{% endif %}
-
 <div class="table-scroll log-table-wrap">
   <table class="node-table log-table">
     <thead><tr><th class="log-select"><input type="checkbox" data-log-select-all aria-label="Select all visible requests"></th><th>Time</th><th>Cluster / node</th><th>Client</th><th>Request</th><th>Status</th><th>Destination</th><th>Bytes</th></tr></thead>
@@ -78,7 +78,13 @@
     </tr>{% else %}<tr><td colspan="8"><div class="empty-state"><div><strong>No matching requests</strong><span>The view shows at most the {{ max_lines }} newest mirrored records.</span></div></div></td></tr>{% endfor %}</tbody>
   </table>
 </div>
+{% if reading.entries %}<nav class="log-pagination" aria-label="Traffic log pages">
+  <label>Rows per page <select data-log-page-size><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
+  <span data-log-page-range aria-live="polite">1–{{ [reading.entries | length, 50] | min }} of {{ reading.entries | length }}</span>
+  <div><button class="secondary-button" type="button" data-log-page-previous disabled>Previous</button><button class="secondary-button" type="button" data-log-page-next{% if reading.entries | length <= 50 %} disabled{% endif %}>Next</button></div>
+</nav>{% endif %}
 {% else %}
 <div class="empty-page"><h2>Traffic logging is disabled</h2><p>Run platform step 13, switch each node's route on with <code>haproxy-traffic-log-enable</code>, and enable <code>[traffic_logs]</code> in the platform configuration.</p></div>
 {% endif %}
+</div>
 {% endblock %}

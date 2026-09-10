@@ -155,8 +155,18 @@ RETRIES = 3
 
 # A second, opt-in stream. The ordinary `option httplog` output is deliberately
 # untouched: this profile applies only to the additional per-frontend log
-# target. `%HP` is the path without its query string. HAProxy owns JSON quoting
-# for every string value through `+json`.
+# target. `%HPO` is the path alone: no query string, and no scheme or host
+# either. `%HP` also drops the query, but under HTTP/2 it is the absolute
+# URI - measured on 3.4.4: `http://host/h2path` for an h2 request, `/h1path`
+# for the same request over HTTP/1.1. HAProxy owns JSON quoting for every
+# string value through `+json`.
+#
+# `format local` is HAProxy's default, RFC3164 without the hostname field, and
+# it is what the ordinary `option httplog` stream already speaks. Naming
+# `rfc3164` instead makes HAProxy insert a hostname before the tag, and
+# rsyslog's local-socket reader does not parse hostnames: it took `localhost`
+# as the program name, matched no rule, and the record fell through into
+# /var/log/syslog. Measured on a node and against a real rsyslogd.
 #
 # `%rt` is not decoration. rsyslog ships with `$RepeatedMsgReduction on`, which
 # silently collapses consecutive byte-identical messages into one - measured on
@@ -168,7 +178,7 @@ RETRIES = 3
 TRAFFIC_LOG_PROFILE = f"{PREFIX}-traffic-json"
 HTTP_TRAFFIC_LOG_FORMAT = (
     '"%{+json}o %(schema)[int(1)] %(at)Ts %(request)rt %(client)ci %(method)HM '
-    "%(host)[var(txn.traffic_host)] %(path)HP %(frontend)f %(backend)b "
+    "%(host)[var(txn.traffic_host)] %(path)HPO %(frontend)f %(backend)b "
     "%(server)s %(status)ST %(request_time)TR %(queue_time)Tw "
     '%(connect_time)Tc %(response_time)Tr %(total_time)Ta %(bytes)B"'
 )
@@ -732,8 +742,7 @@ def _frontend_file(
             "    option httplog",
             *(
                 (
-                    f"    log /dev/log len 2048 format rfc3164 profile "
-                    f"{TRAFFIC_LOG_PROFILE} local2",
+                    f"    log /dev/log len 2048 format local profile {TRAFFIC_LOG_PROFILE} local2",
                     "    http-request set-var(txn.traffic_host) "
                     "req.hdr(host),cut_crlf,bytes(0,253)",
                 )

@@ -79,8 +79,26 @@ class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
         self.assertIn(f"log-profile {TRAFFIC_LOG_PROFILE}", enabled)
         self.assertIn(f"on close format {HTTP_TRAFFIC_LOG_FORMAT}", enabled)
         self.assertIn("option httplog", enabled)
-        self.assertIn("%(path)HP", enabled)
+        self.assertIn("%(path)HPO ", enabled)
+        self.assertNotIn("%(path)HP ", enabled)
         self.assertNotIn("capture request header", enabled)
+
+    def test_the_extra_log_target_speaks_the_format_rsyslog_can_tag(self) -> None:
+        """`format rfc3164` makes HAProxy write a hostname before the tag.
+
+        rsyslog's local-socket reader takes the first word after the timestamp
+        as the tag, so that record was filed under `localhost` and reached no
+        rule. `local` is the same format without the hostname - what the
+        ordinary httplog stream already uses. Measured against a real rsyslogd.
+        """
+
+        case = GOLDEN / "minimal"
+        enabled = generate(objects(case), **arguments(case), traffic_logging=True).configuration[
+            "1000-frontends.cfg"
+        ]
+
+        self.assertIn(f"format local profile {TRAFFIC_LOG_PROFILE} local2", enabled)
+        self.assertNotIn("format rfc3164", enabled)
 
     def test_every_traffic_record_carries_a_field_that_differs_per_request(self) -> None:
         """rsyslog collapses consecutive identical lines, so records must differ.

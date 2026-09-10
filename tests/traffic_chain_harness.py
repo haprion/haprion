@@ -35,6 +35,7 @@ them, and `main()` is three lines this harness deliberately does not run.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -332,9 +333,26 @@ class ChainTestCase(unittest.TestCase):
         self.offset = 0
 
     def collect(self, *, now: datetime | None = None) -> int:
+        """One collector run on the scenario's clock, mirror timestamps included.
+
+        The collector reads a mirror's modification time as when the manager
+        last heard from that node, and the retirement sweep measures that
+        against `now`. The files here are written by the wall clock, so a
+        scenario that advances weeks would otherwise depend on the time of
+        day the suite happens to run. Whatever a run writes is stamped with
+        the run's own moment; what it leaves alone keeps its earlier stamp.
+        """
+
         from haproxy_mgmt.traffic_collector import collect
 
-        return collect(self.chain.config, now=now or self.NOW, fetch=self.chain.fetch)
+        moment = now or self.NOW
+        before = {path: path.stat().st_mtime_ns for path in self.chain.mirror.iterdir()}
+        result = collect(self.chain.config, now=moment, fetch=self.chain.fetch)
+        stamp = int(moment.timestamp() * 1_000_000_000)
+        for path in self.chain.mirror.iterdir():
+            if before.get(path) != path.stat().st_mtime_ns:
+                os.utime(path, ns=(stamp, stamp))
+        return result
 
     def advance(self, days: int) -> datetime:
         """Move both clocks the same number of days, as a real midnight would.

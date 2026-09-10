@@ -1520,6 +1520,15 @@ def build_router(config: Config) -> APIRouter:
                 )
             reading = traffic_logs.resolve_server_addresses(reading, addresses)
         now = datetime.now(UTC)
+        freshness = tuple(
+            (node, node.stale_seconds(now=now), node.attempt_seconds(now=now))
+            for node in reading.nodes
+        )
+        freshness_warnings = tuple(
+            item
+            for item in freshness
+            if item[0].latest_attempt_failed() or item[1] is None or item[1] > 300
+        )
         return TEMPLATES.TemplateResponse(
             request,
             "logs.html",
@@ -1531,10 +1540,7 @@ def build_router(config: Config) -> APIRouter:
                 "management_writes": config.management_writes,
                 "enabled": config.traffic_logs.enabled,
                 "reading": reading,
-                "freshness": [
-                    (node, node.stale_seconds(now=now), node.attempt_seconds(now=now))
-                    for node in reading.nodes
-                ],
+                "freshness_warnings": freshness_warnings,
                 "scan_mib_per_node": traffic_logs.MAX_SCAN_BYTES // (1024 * 1024),
                 "scan_mib_total": traffic_logs.MAX_TOTAL_SCAN_BYTES // (1024 * 1024),
                 # Named, not implied. Moving off UTC without saying which clock

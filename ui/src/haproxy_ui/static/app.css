@@ -1332,14 +1332,13 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .traffic-ranges a:hover { background: var(--hover-surface); color: var(--text-strong); }
 .traffic-ranges a.is-current { background: var(--hover-surface); color: var(--text-strong); font-weight: 660; }
 
-.log-freshness { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0 0 16px; padding: 0; }
-.log-freshness-item { display: flex; align-items: baseline; gap: 8px; padding: 6px 11px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); font-size: 12px; white-space: nowrap; }
-.log-freshness-node { color: var(--text-strong); font-weight: 620; }
-.log-freshness-age { color: var(--muted); }
-.log-freshness-item.is-stale { border-color: var(--warning); background: var(--warning-soft); }
-.log-freshness-item.is-stale .log-freshness-age { color: var(--text); }
-.log-freshness-item.is-silent { border-color: var(--critical); background: var(--critical-soft); }
-.log-freshness-item.is-silent .log-freshness-age { color: var(--text); }
+.log-warning { position: relative; }
+.log-warning summary { display: inline-flex; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid var(--warning); border-radius: 999px; background: var(--warning-soft); color: var(--text-strong); font-size: 12px; font-weight: 650; list-style: none; white-space: nowrap; cursor: pointer; }
+.log-warning summary::-webkit-details-marker { display: none; }
+.log-warning-popover { position: absolute; z-index: 20; top: calc(100% + 8px); right: 0; width: min(420px, calc(100vw - 32px)); padding: 13px 15px; border: 1px solid var(--warning); border-radius: var(--radius); background: var(--panel-raised); box-shadow: var(--shadow-menu); }
+.log-warning-popover > strong { color: var(--text-strong); font-size: 12px; }
+.log-warning-popover p { display: grid; gap: 2px; margin: 9px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.log-warning-popover b { color: var(--text-strong); font-weight: 650; }
 .log-filters { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(180px, 1fr) minmax(100px, .5fr) minmax(220px, 1.4fr) auto auto; gap: 12px; align-items: end; margin: 0 0 18px; }
 .log-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
 .log-filters input, .log-filters select { min-width: 0; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); }
@@ -1349,25 +1348,36 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    text paints over the status badge beside it. Every column is therefore stated
    here, and the request column is the one left to take the slack.
 */
-.log-table { min-width: 1180px; }
+.log-table { min-width: 1120px; }
 .log-table th:nth-child(1), .log-table td:nth-child(1) { width: 150px; }
-.log-table th:nth-child(2), .log-table td:nth-child(2) { width: 130px; }
+.log-table th:nth-child(2), .log-table td:nth-child(2) { width: 190px; }
 .log-table th:nth-child(3), .log-table td:nth-child(3) { width: 132px; }
 .log-table th:nth-child(4), .log-table td:nth-child(4) { width: auto; }
 .log-table th:nth-child(5), .log-table td:nth-child(5) { width: 84px; }
-.log-table th:nth-child(6), .log-table td:nth-child(6) { width: 150px; }
-.log-table th:nth-child(7), .log-table td:nth-child(7) { width: 174px; }
-.log-table th:nth-child(8), .log-table td:nth-child(8) { width: 104px; }
-.log-table td { vertical-align: top; }
+.log-table th:nth-child(6), .log-table td:nth-child(6) { width: 240px; }
+.log-table th:nth-child(7), .log-table td:nth-child(7) { width: 88px; }
+.log-table td { vertical-align: middle; }
 /*
    One line each, and an ellipsis where a value is longer than its column. A
    path that wraps to four lines breaks the row rhythm of every other table
    here and makes a page of requests unscannable; the full value stays in the
    title attribute, and the Contains filter is how you find one.
 */
-.log-table td strong, .log-table td small, .log-table td code {
-  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+.log-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-table td strong, .log-table td code {
+  display: inline; overflow: visible; color: inherit; font-size: inherit; white-space: nowrap;
 }
-.log-table td small, .log-table td .log-path { margin-top: 3px; }
-.log-path { color: var(--muted); font-size: 12px; }
+.log-table td strong { color: var(--text-strong); }
+.log-request { min-width: 0; }
+.log-request .log-path { margin-left: 8px; color: var(--muted); font-size: 12px; }
+@media (max-width: 680px) {
+  .log-warning-popover { right: auto; left: 0; }
+  .log-table, .log-table tbody { display: table; width: 100%; }
+  .log-table thead { display: table-header-group; }
+  .log-table tr { display: table-row; width: auto; padding: 0; border: 0; }
+  .log-table td, .log-table td:first-child, .log-table td:last-child { display: table-cell; position: static; width: auto; padding: 13px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .log-table td:first-child { padding-left: 20px; }
+  .log-table td:last-child { padding-right: 20px; }
+  .log-table td::before { content: none; }
+}
 @media (max-width: 1000px) { .log-filters { grid-template-columns: 1fr 1fr; } }

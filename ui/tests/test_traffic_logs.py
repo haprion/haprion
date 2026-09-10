@@ -370,6 +370,21 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertEqual(response.status_code, 200)
         return response.text
 
+    def healthy_meta(self, node: str = "node-a") -> None:
+        now = datetime.now(UTC)
+        (self.root / f"alpha--{node}.meta.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "cluster": "alpha",
+                    "node": node,
+                    "last_attempt": now.isoformat(),
+                    "last_success": now.isoformat(),
+                    "outcome": "ok",
+                }
+            )
+        )
+
     def test_a_hostile_path_reaches_the_browser_as_text(self) -> None:
         hostile = "/<script>alert(1)</script>"
         (self.root / "alpha--node-a.jsonl").write_bytes(record(path=hostile))
@@ -388,6 +403,34 @@ class TheTrafficLogPage(LoginTestCase):
 
         self.assertIn("app-three.example.net:8080", page)
         self.assertNotIn(">s3<", page)
+
+    def test_the_normal_page_has_no_live_badge_or_node_status_strip(self) -> None:
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
+        self.healthy_meta()
+
+        page = self.page()
+
+        self.assertNotIn("Log warning", page)
+        self.assertNotIn(">Live<", page)
+        self.assertNotIn("log-freshness", page)
+
+    def test_only_the_short_log_description_is_shown(self) -> None:
+        page = self.page()
+
+        self.assertIn("Recent HTTP requests, mirrored from each node.", page)
+        self.assertNotIn("Query strings are removed", page)
+
+    def test_each_request_is_one_row_without_backend_or_timers(self) -> None:
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
+
+        page = self.page()
+
+        self.assertNotIn("Backend / server", page)
+        self.assertNotIn("Timers (ms)", page)
+        self.assertNotIn("be-app", page)
+        self.assertNotIn("1/0/0/2/3", page)
+        self.assertIn("<th>Destination</th>", page)
+        self.assertIn('<td class="log-request"', page)
 
     def test_a_hostile_host_header_reaches_the_browser_as_text(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(record(host='x"><img src=x onerror=1>'))

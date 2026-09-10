@@ -583,8 +583,12 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertNotIn("Time (CEST)", page)
         self.assertNotIn("26-09-08 12:00:00", page)
         self.assertIn(f'datetime="{NOW.isoformat()}"', page)
-        self.assertIn('type="datetime-local" name="from"', page)
-        self.assertIn('type="datetime-local" name="to"', page)
+        self.assertIn('name="from" value="" maxlength="14"', page)
+        self.assertIn('name="to" value="" maxlength="14"', page)
+        self.assertIn('placeholder="yy-mm-dd HH:mm"', page)
+        self.assertNotIn('type="datetime-local"', page)
+        self.assertLess(page.index("<span>Mon</span>"), page.index("<span>Sun</span>"))
+        self.assertIn("logs.js", page)
 
     def test_malformed_records_are_silently_discarded_from_the_page(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(b"not json\n" + record())
@@ -598,18 +602,40 @@ class TheTrafficLogPage(LoginTestCase):
         self.host_zone("Europe/Stockholm")
         (self.root / "alpha--node-a.jsonl").write_bytes(record())
 
-        page = self.page(query="?from=2026-09-08T13:59:59&to=2026-09-08T14:00:01")
+        page = self.page(query="?from=26-09-08%2013:59&to=26-09-08%2014:00")
 
         self.assertIn("app.example.com", page)
-        self.assertIn('value="2026-09-08T13:59:59"', page)
+        self.assertIn('value="26-09-08 13:59"', page)
+
+    def test_to_includes_the_complete_selected_minute(self) -> None:
+        self.host_zone("Europe/Stockholm")
+        stamp = NOW + timedelta(seconds=45)
+        (self.root / "alpha--node-a.jsonl").write_bytes(record(at=int(stamp.timestamp())))
+
+        page = self.page(query="?to=26-09-08%2014:00")
+
+        self.assertIn("app.example.com", page)
 
     def test_a_reversed_time_range_is_explained_instead_of_showing_all_records(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(record())
 
-        page = self.page(query="?from=2026-09-09T12:00:00&to=2026-09-08T12:00:00")
+        page = self.page(query="?from=26-09-09%2012:00&to=26-09-08%2012:00")
 
         self.assertIn("From must be earlier than To.", page)
         self.assertNotIn("app.example.com</strong>", page)
+
+    def test_rows_offer_one_selection_checkbox_and_complete_csv_fields(self) -> None:
+        long_path = "/" + "part/" * 80
+        (self.root / "alpha--node-a.jsonl").write_bytes(record(path=long_path))
+
+        page = self.page()
+
+        self.assertIn("Export selected (.csv)", page)
+        self.assertIn("data-log-select-all", page)
+        self.assertEqual(page.count("data-log-select aria-label="), 1)
+        self.assertIn(f'data-export-path="{long_path}"', page)
+        self.assertNotIn("data-export-backend", page)
+        self.assertNotIn("data-export-timers", page)
 
     def test_disabled_says_so_instead_of_showing_an_empty_table(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(record(path="/hidden"))

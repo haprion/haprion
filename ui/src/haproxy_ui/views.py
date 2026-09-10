@@ -162,17 +162,17 @@ def shown_at(moment: datetime) -> str:
 TEMPLATES.env.filters["shown_at"] = shown_at
 
 
-def _log_time_filter(value: str, *, earliest: datetime, latest: datetime) -> datetime | None:
+def _log_time_filter(
+    value: str, *, earliest: datetime, latest: datetime, end_of_minute: bool = False
+) -> datetime | None:
     """Turn a browser-local date and time into the UTC used by log records."""
 
     if not value:
         return None
-    formats = {16: "%Y-%m-%dT%H:%M", 19: "%Y-%m-%dT%H:%M:%S"}
-    date_format = formats.get(len(value))
-    if date_format is None:
+    if len(value) != 14:
         raise ValueError("Choose a date and time within the available 14 days.")
     try:
-        local = datetime.strptime(value, date_format)
+        local = datetime.strptime(value, "%y-%m-%d %H:%M")
     except ValueError as exc:
         raise ValueError("Choose a valid date and time.") from exc
     if local.tzinfo is not None:
@@ -180,6 +180,8 @@ def _log_time_filter(value: str, *, earliest: datetime, latest: datetime) -> dat
     result = local.astimezone(UTC)
     if result < earliest or result > latest:
         raise ValueError("Choose a date and time within the available 14 days.")
+    if end_of_minute:
+        result = min(result + timedelta(minutes=1, microseconds=-1), latest)
     return result
 
 
@@ -1496,8 +1498,8 @@ def build_router(config: Config) -> APIRouter:
         selected_cluster = request.query_params.get("cluster", "")[:32]
         selected_status = request.query_params.get("status", "")[:3]
         selected_query = request.query_params.get("q", "")[:200]
-        selected_from = request.query_params.get("from", "")[:19]
-        selected_to = request.query_params.get("to", "")[:19]
+        selected_from = request.query_params.get("from", "")[:14]
+        selected_to = request.query_params.get("to", "")[:14]
         now = datetime.now(UTC)
         local_now = metrics.shown(now)
         local_earliest = datetime.combine(
@@ -1507,7 +1509,7 @@ def build_router(config: Config) -> APIRouter:
         time_filter_error: str | None
         try:
             from_at = _log_time_filter(selected_from, earliest=earliest, latest=now)
-            to_at = _log_time_filter(selected_to, earliest=earliest, latest=now)
+            to_at = _log_time_filter(selected_to, earliest=earliest, latest=now, end_of_minute=True)
             if from_at is not None and to_at is not None and from_at > to_at:
                 raise ValueError("From must be earlier than To.")
         except ValueError as exc:
@@ -1571,6 +1573,18 @@ def build_router(config: Config) -> APIRouter:
             for item in freshness
             if item[0].latest_attempt_failed() or item[1] is None or item[1] > 300
         )
+        calendar_start = local_earliest.date() - timedelta(days=local_earliest.weekday())
+        calendar_end = local_now.date() + timedelta(days=6 - local_now.weekday())
+        calendar_days = tuple(
+            {
+                "value": day.strftime("%y-%m-%d"),
+                "number": day.day,
+                "enabled": local_earliest.date() <= day <= local_now.date(),
+                "today": day == local_now.date(),
+            }
+            for offset in range((calendar_end - calendar_start).days + 1)
+            for day in (calendar_start + timedelta(days=offset),)
+        )
         return TEMPLATES.TemplateResponse(
             request,
             "logs.html",
@@ -1591,8 +1605,9 @@ def build_router(config: Config) -> APIRouter:
                 "selected_query": selected_query,
                 "selected_from": selected_from,
                 "selected_to": selected_to,
-                "time_min": local_earliest.strftime("%Y-%m-%dT%H:%M:%S"),
-                "time_max": local_now.strftime("%Y-%m-%dT%H:%M:%S"),
+                "time_min": local_earliest.strftime("%y-%m-%d %H:%M"),
+                "time_max": local_now.strftime("%y-%m-%d %H:%M"),
+                "calendar_days": calendar_days,
                 "max_lines": config.traffic_logs.max_lines,
             },
         )

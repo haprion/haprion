@@ -391,6 +391,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
  * use, so the next one does not have to remember.
  */
 a.secondary-button { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 /* Deploying is not the same kind of act as the buttons it sits beside.
    Publishing records a version; deploying reaches the nodes, and on a page
    where every other button publishes, the two must not look interchangeable.
@@ -1342,26 +1343,50 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .log-filters { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(100px, .45fr) minmax(240px, 1.35fr) minmax(185px, .8fr) minmax(185px, .8fr) auto auto; gap: 12px; align-items: end; margin: 0 0 18px; }
 .log-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
 .log-filters input, .log-filters select { min-width: 0; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); }
+.log-date-field { position: relative; display: grid; gap: 5px; min-width: 0; }
+.log-date-field > label { color: var(--muted); font-size: 12px; }
+.log-calendar { position: absolute; z-index: 25; top: calc(100% + 7px); right: 0; width: 294px; padding: 13px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel-raised); box-shadow: var(--shadow-menu); }
+.log-calendar > strong { display: block; margin-bottom: 10px; color: var(--text-strong); font-size: 12px; text-align: center; }
+.log-calendar-weekdays, .log-calendar-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.log-calendar-weekdays span { padding: 3px 0; color: var(--muted); font-size: 10px; font-weight: 700; text-align: center; text-transform: uppercase; }
+.log-calendar-days button { min-width: 0; height: 30px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text); cursor: pointer; font-variant-numeric: tabular-nums; }
+.log-calendar-days button:hover:not(:disabled) { border-color: var(--line-strong); background: var(--hover-surface); }
+.log-calendar-days button:disabled { color: var(--muted); cursor: default; opacity: .35; }
+.log-calendar-days button.is-today { border-color: var(--line-strong); }
+.log-calendar-days button[aria-pressed="true"] { background: var(--text-strong); color: var(--panel); font-weight: 700; }
+.log-calendar-time { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 11px; }
+.log-calendar-time > span { margin-right: 5px; color: var(--muted); font-size: 11px; }
+.log-calendar-time label { display: block; }
+.log-calendar-time select { width: 58px; padding: 6px; font-variant-numeric: tabular-nums; }
+.log-calendar-time b { color: var(--muted); font-weight: 700; }
+.log-calendar-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
+.log-calendar-actions .text-link { border: 0; background: transparent; cursor: pointer; }
+.log-export { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin: 0 0 10px; }
+.log-export span { color: var(--muted); font-size: 12px; }
+.secondary-button:disabled { cursor: default; opacity: .45; }
 /*
    .node-table is table-layout:fixed with column widths written for a table of a
    different shape, so without these the request column inherits 120px and its
    text paints over the status badge beside it. Every column is therefore stated
    here, and the request column is the one left to take the slack.
 */
-.log-table { min-width: 1120px; }
-.log-table th:nth-child(1), .log-table td:nth-child(1) { width: 150px; }
-.log-table th:nth-child(2), .log-table td:nth-child(2) { width: 190px; }
-.log-table th:nth-child(3), .log-table td:nth-child(3) { width: 132px; }
-.log-table th:nth-child(4), .log-table td:nth-child(4) { width: auto; }
-.log-table th:nth-child(5), .log-table td:nth-child(5) { width: 84px; }
-.log-table th:nth-child(6), .log-table td:nth-child(6) { width: 240px; }
-.log-table th:nth-child(7), .log-table td:nth-child(7) { width: 88px; }
+.log-table { min-width: 1164px; }
+.log-table th:nth-child(1), .log-table td:nth-child(1) { width: 44px; }
+.log-table th:nth-child(2), .log-table td:nth-child(2) { width: 150px; }
+.log-table th:nth-child(3), .log-table td:nth-child(3) { width: 190px; }
+.log-table th:nth-child(4), .log-table td:nth-child(4) { width: 132px; }
+.log-table th:nth-child(5), .log-table td:nth-child(5) { width: auto; }
+.log-table th:nth-child(6), .log-table td:nth-child(6) { width: 84px; }
+.log-table th:nth-child(7), .log-table td:nth-child(7) { width: 240px; }
+.log-table th:nth-child(8), .log-table td:nth-child(8) { width: 88px; }
 .log-table td { vertical-align: middle; }
+.log-table th.log-select, .log-table td.log-select { padding-right: 4px; padding-left: 10px; text-align: center; }
+.log-table .log-select input { width: 15px; height: 15px; margin: 0; accent-color: var(--text-strong); }
 /*
    One line each, and an ellipsis where a value is longer than its column. A
    path that wraps to four lines breaks the row rhythm of every other table
    here and makes a page of requests unscannable; the full value stays in the
-   title attribute, and the Contains filter is how you find one.
+   title attribute, and the Search filter is how you find one.
 */
 .log-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-table td strong, .log-table td code {
@@ -1378,6 +1403,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   .log-table tr { display: table-row; width: auto; padding: 0; border: 0; }
   .log-table td, .log-table td:first-child, .log-table td:last-child { display: table-cell; position: static; width: auto; padding: 13px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   .log-table td:first-child { padding-left: 20px; }
+  .log-table td.log-select { padding-left: 10px; }
   .log-table td:last-child { padding-right: 20px; }
   .log-table td::before { content: none; }
 }

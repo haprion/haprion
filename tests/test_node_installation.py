@@ -87,6 +87,24 @@ class NodeInstallationReadingTests(unittest.TestCase):
     def test_release_root_denies_unprivileged_service_accounts(self) -> None:
         self.assertIn("ensure_dir /etc/haproxy/releases root:root 750", INSTALLER.read_text())
 
+    def test_the_service_accounts_own_nothing_in_their_homes(self) -> None:
+        """B131: a key file or dotfile the account could write is its way out of the forced command."""
+
+        installer = INSTALLER.read_text()
+        account = installer[
+            installer.index("ensure_account() {") : installer.index(
+                'ensure_account "$TRIGGER_USER"'
+            )
+        ]
+
+        self.assertIn('ensure_dir "$home" root:root 755', account)
+        self.assertIn('ensure_dir "${home}/.ssh" root:root 755', account)
+        self.assertIn("install -o root -g root -m 644 /dev/null", account)
+        self.assertIn('chown root:root "$keys"', account)
+        self.assertIn("! -name .ssh ! -user root -print0", account)
+        self.assertNotIn("--create-home", account)
+        self.assertNotIn('-o "$user"', account)
+
     def test_a_changed_script_is_not_hidden_by_its_metadata(self) -> None:
         self.install()
         (self.sbin / "haproxy-node-status").write_bytes(b"changed\n")

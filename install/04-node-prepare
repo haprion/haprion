@@ -79,23 +79,39 @@ step "Service accounts"
 # Where sudo is needed, its rules name exact absolute commands; the traffic-log
 # reader needs and receives no sudo rule. None of the accounts has a password.
 #
+# The account owns nothing in its own home. sshd accepts an authorized_keys
+# owned by root as readily as one owned by the account, and a file the account
+# cannot write is the difference between a forced command and a suggestion.
+# The same goes for the home directory itself - an account that owns it could
+# replace .ssh wholesale - and for the shell's dotfiles: Debian's bash sources
+# ~/.bashrc for a command it runs on behalf of sshd, so a .bashrc the account
+# could write would run before the forced command does. No dotfiles are created,
+# and any left by an earlier installation become root's.
+#
 ensure_account() {
     local user="$1"
+    local home="/home/${user}"
     if id -u "$user" >/dev/null 2>&1; then
         log "  ok       ${user}"
     else
-        useradd --system --create-home --shell /bin/bash "$user"
+        useradd --system --home-dir "$home" --shell /bin/bash "$user"
         passwd --lock "$user" >/dev/null
         log "  created  ${user}"
     fi
-    ensure_dir "/home/${user}/.ssh" "${user}:${user}" 700
-    local keys="/home/${user}/.ssh/authorized_keys"
+    ensure_dir "$home" root:root 755
+    local entry
+    while IFS= read -r -d '' entry; do
+        chown root:root "$entry"
+        log "  claimed  ${entry}  (now root's; the account owns nothing in its home)"
+    done < <(find "$home" -mindepth 1 -maxdepth 1 ! -name .ssh ! -user root -print0)
+    ensure_dir "${home}/.ssh" root:root 755
+    local keys="${home}/.ssh/authorized_keys"
     if [[ ! -f "$keys" ]]; then
-        install -o "$user" -g "$user" -m 600 /dev/null "$keys"
+        install -o root -g root -m 644 /dev/null "$keys"
         log "  created  ${keys}  (empty - paste the lines from step 3)"
     else
-        chown "${user}:${user}" "$keys"
-        chmod 600 "$keys"
+        chown root:root "$keys"
+        chmod 644 "$keys"
         log "  ok       ${keys}"
     fi
 }
@@ -420,7 +436,8 @@ cat <<INTRO
 
 Two things left, both by hand, both on machines this node cannot write to.
 
-1. On THIS node: paste the authorized_keys lines printed by step 3.
+1. On THIS node: paste the authorized_keys lines printed by step 3. The file is
+   root's, as is the whole home; edit it with sudo.
 
 2. On the MANAGEMENT host: add the lines below. rrsync is what limits each key
    to reading one tree - without it the forced command is a full rsync, which is

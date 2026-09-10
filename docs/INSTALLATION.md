@@ -835,6 +835,14 @@ Each key in the account's `authorized_keys` carries its **own** forced command a
 option. One key, one command: a shared forced command would make the keys interchangeable and
 defeat the separation.
 
+**The account owns nothing in its own home.** `/home/<account>`, `.ssh/` and `authorized_keys`
+are `root:root` (`755`, `755`, `644`); sshd accepts a root-owned key file as readily as one owned
+by the account. A key file the account could write would let a session rewrite its own forced
+command, and a home directory it owned would let it replace `.ssh` wholesale. The shell's dotfiles
+are covered by the same rule: Debian's bash sources `~/.bashrc` for a command it runs on behalf of
+sshd, before the forced command, so no dotfiles are created and any left by an earlier installation
+are made root's on the next run of step 4. Edit `authorized_keys` with `sudo`.
+
 ### 2.3 Node scripts
 
 All root-owned under `/usr/local/sbin`, not group-writable:

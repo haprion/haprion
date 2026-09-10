@@ -57,6 +57,15 @@ class PreparedReleaseTests(unittest.TestCase):
         self.assertIn("--runtime-policy /etc/haproxy-manager/runtime-policy.yaml", wrapper)
         self.assertIn("--collector-config /etc/haproxy-manager/traffic-collector.json", wrapper)
 
+    def test_the_inventory_check_is_asked_of_the_checked_release(self) -> None:
+        # The wrapper runs from a checkout that moves on; the release it checks
+        # may predate the flag. The release answers, the checkout never assumes.
+        wrapper = (ROOT / "install/platform/check-compatibility").read_text()
+
+        self.assertIn("-m haproxy_ui.compatibility --help", wrapper)
+        self.assertIn("grep -q -- '--collector-config'", wrapper)
+        self.assertIn("predates the traffic collector inventory check", wrapper)
+
 
 class CoordinatedUpdateTests(unittest.TestCase):
     update: str

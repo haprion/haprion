@@ -34,7 +34,7 @@ from haproxy_mgmt.proxy_model import ModelError, read_document
 #
 CHECK_PHRASES = {
     "L7OK": "answered",
-    "L7OKC": "answered, held out of the pool",
+    "L7OKC": "answered, held out of the backend",
     "L7STS": "answered",
     "L7RSP": "the answer was not valid",
     "L7TOUT": "no answer in time",

@@ -171,12 +171,12 @@ def _versions(top: int) -> list[dict[str, Any]]:
     """Five saved versions in the frozen `list` shape, newest first."""
 
     comments = {
-        26: "Raise the API pool to four members",
+        26: "Raise the API backend to four members",
         25: "Add a maintenance page backend",
         24: "Shorten the health check interval",
         23: "Move the metrics listener off the shared port",
         22: "Split the internal and public frontends",
-        21: "Add the staging backend pool",
+        21: "Add the staging backend",
         20: "Initial managed configuration",
     }
     return [

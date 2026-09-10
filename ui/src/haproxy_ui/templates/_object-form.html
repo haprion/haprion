@@ -22,7 +22,7 @@
 <script defer src="{{ url_for('static', path='/object-form.js') }}?v={{ asset_token }}"></script>
 
   <section class="cluster-card cluster-accent-{{ accent }}">
-    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>The site</h3><p>What visitors ask for</p></div></div></header>
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Frontend</h3></div></div></header>
     <div class="form-grid">
       <label>Name<input name="name" value="{{ form.name }}" maxlength="40" pattern="[a-z][a-z0-9_-]*" title="Lowercase letters, digits, hyphens and underscores, starting with a letter" required><small>This object's identity, unique per cluster. Lowercase letters, digits, hyphens and underscores — no dots, and it starts with a letter.</small></label>
       <label>Hostnames<input name="hostnames" value="{{ form.hostnames }}" placeholder="app.example.com, www.example.com"><small>Separate several names with commas.</small></label>
@@ -145,9 +145,9 @@
   </section>
 
   <section class="cluster-card cluster-accent-{{ accent }}">
-    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>The pool</h3><p>Where the traffic goes</p></div></div></header>
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Backend</h3></div></div></header>
     <div class="form-grid">
-      <label>Pool name<input name="backend" value="{{ form.backend }}" placeholder="web"><small>What you call the backend.</small></label>
+      <label>Backend name<input name="backend" value="{{ form.backend }}" placeholder="web"><small>What you call the backend.</small></label>
       <label>Servers<textarea name="servers" rows="3" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small>One <code>address</code> or <code>hostname:port</code> per line. Add <code>backup</code> after one to make it a standby.</small></label>
       <label>Balancing
         <select name="balance">
@@ -173,7 +173,7 @@
           <option value="system"{% if form.backend_tls == 'system' %} selected{% endif %}>HTTPS, verify the certificate</option>
           <option value="none"{% if form.backend_tls == 'none' %} selected{% endif %}>HTTPS, do not verify</option>
         </select>
-        <small>Verified pools need DNS names, not addresses, in the Servers section.</small>
+        <small>Verified backends need DNS names, not addresses, in the Servers section.</small>
       </label>
       {#
         A different question from the one above it. That one is whether the
@@ -184,13 +184,13 @@
         to anything - the same `disabled` the TCP port and the balancing key
         use, so the form has one way of saying "not for this shape".
       #}
-      <label class="tls-only" data-backend-tls="1">Specific TLS for this pool only
+      <label class="tls-only" data-backend-tls="1">Specific TLS for this backend only
         <select name="backend_tls_policy"{% if not form.backend_tls %} disabled{% endif %}>
           <option value=""{% if not form.backend_tls_policy %} selected{% endif %}>Use default settings (TLS 1.2 and 1.3)</option>
           <option value="modern"{% if form.backend_tls_policy == 'modern' %} selected{% endif %}>TLS 1.3 only</option>
           <option value="legacy"{% if form.backend_tls_policy == 'legacy' %} selected{% endif %}>TLS 1.1 and up — for old equipment</option>
         </select>
-        <small>What this pool uses to reach the backend.</small>
+        <small>How the servers in this backend are reached.</small>
       </label>
       <label><span class="field-title">Session cookie <span class="optional">(optional)</span></span><input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Case-sensitive, empty means no persistence.</small></label>
       <label><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>Connections one server takes at once; the rest queue for 5 s.</small></label>
@@ -228,7 +228,7 @@
             </select>
           </label>
         </div>
-        <small>Answered with a redirect instead of reaching the pool; the URL replaces the whole address. Exact matches one path, prefix also everything under it.</small><small>301 and 302 may turn a POST into a GET; 307 and 308 do not.</small>
+        <small>Answered with a redirect instead of reaching the backend; the URL replaces the whole address. Exact matches one path, prefix also everything under it.</small><small>301 and 302 may turn a POST into a GET; 307 and 308 do not.</small>
       </div>
     </div>
     {#
@@ -248,7 +248,7 @@
 
   <section class="cluster-card cluster-accent-{{ accent }}">
     <header class="cluster-header">
-      <div class="cluster-identity"><div class="section-title"><h3>The health check</h3><p>How a server is decided to be usable <span class="optional">(optional)</span></p></div></div>
+      <div class="cluster-identity"><div class="section-title"><h3>Health check <span class="optional">(optional)</span></h3></div></div>
       {#
         The button asks the nodes, and nothing here reaches one: it wakes the
         poller, which already holds the identity and already asks both nodes.
@@ -387,7 +387,7 @@
       {% if not pool_health.nodes %}
       <p class="node-health-note">No node has been read yet.</p>
       {% elif not pool_health.known %}
-      <p class="node-health-note">The nodes know nothing about this pool. It is checked once it has been deployed.</p>
+      <p class="node-health-note">The nodes know nothing about this backend. It is checked once it has been deployed.</p>
       {% else %}
       <table class="node-health-table">
         <colgroup><col style="width: 22%"><col style="width: 34%"><col style="width: 14%"><col style="width: 30%"></colgroup>

@@ -229,7 +229,7 @@ def caveats_for(checks: Sequence[EffectiveCheck]) -> tuple[str, ...]:
     if any(check.encrypted for check in checks):
         notes.append(
             "This sends the server name in the TLS handshake as SNI, and HAProxy's own check "
-            "does not. The Host header is a different name and is sent by both. A pool that "
+            "does not. The Host header is a different name and is sent by both. A backend that "
             "needs SNI can pass here and still be marked down on the nodes."
         )
     return tuple(notes)
@@ -373,7 +373,7 @@ def run(
     targets = targets_from(checks)
     if not targets:
         return ProbeReport(
-            ran=False, source="", nodes=(), problem="This pool names no server to check."
+            ran=False, source="", nodes=(), problem="This backend names no server to check."
         )
 
     request = build_request(

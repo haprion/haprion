@@ -108,7 +108,7 @@
       cannot answer - and the cluster view answers both. Carries the chosen
       window, so following it does not silently restart the reading at 24h.
     #}
-    <div class="cluster-identity"><div><h3>Traffic</h3><p><a href="/clusters/{{ object.cluster }}/traffic?traffic={{ traffic_chosen }}">Compare every listener and pool in {{ object.cluster }}</a></p></div></div>
+    <div class="cluster-identity"><div><h3>Traffic</h3><p><a href="/clusters/{{ object.cluster }}/traffic?traffic={{ traffic_chosen }}">Compare every frontend and backend in {{ object.cluster }}</a></p></div></div>
     {#
       The ranges as links rather than a control that needs script: the page is
       rendered per request anyway, and a link is what survives being opened in

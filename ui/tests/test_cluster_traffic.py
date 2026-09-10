@@ -143,8 +143,8 @@ class WhatThePageSays(ReadingACluster):
     def test_both_halves_are_drawn(self) -> None:
         text = self.page().text  # type: ignore[attr-defined]
 
-        self.assertIn("Addresses", text)
-        self.assertIn("Pools", text)
+        self.assertIn("Frontends", text)
+        self.assertIn("Backends", text)
 
     def test_an_address_is_named_the_way_the_network_page_names_it(self) -> None:
         """`mgd-vip-int-http` is the VIP `vip-int` serving `http`."""
@@ -162,7 +162,7 @@ class WhatThePageSays(ReadingACluster):
 
     def test_an_http_address_shows_3xx_where_the_other_addresses_show_2xx(self) -> None:
         text = self.page().text  # type: ignore[attr-defined]
-        addresses = text.split("Addresses", 1)[1].split("Pools", 1)[0]
+        addresses = text.split("Frontends", 1)[1].split("Backends", 1)[0]
         https_card = addresses.split('protocol-https">', 1)[1]
         https = https_card[
             https_card.index('<dl class="traffic-figures">') : https_card.index("</dl>")
@@ -216,7 +216,7 @@ class WhatThePageSays(ReadingACluster):
         """It has no servers, and it would size every real pool against it."""
 
         text = self.page().text  # type: ignore[attr-defined]
-        pools = text.split("Pools", 1)[1].split("Redirect answers", 1)[0]
+        pools = text.split("Backends", 1)[1].split("Redirect answers", 1)[0]
 
         self.assertNotIn("redirect-eee20480", pools)
         self.assertIn("Redirect answers", text)
@@ -241,7 +241,7 @@ class WhatThePageSays(ReadingACluster):
 
     def test_a_regular_pool_keeps_2xx_and_does_not_gain_3xx(self) -> None:
         text = self.page().text  # type: ignore[attr-defined]
-        pool_card = text.split("Pools", 1)[1].split("Redirect answers", 1)[0]
+        pool_card = text.split("Backends", 1)[1].split("Redirect answers", 1)[0]
         pools = pool_card[
             pool_card.index('<dl class="traffic-figures">') : pool_card.index("</dl>")
         ]
@@ -272,7 +272,7 @@ class WhatThePageSays(ReadingACluster):
         text = self.page().text  # type: ignore[attr-defined]
 
         self.assertIn("No address samples in this window", text)
-        self.assertIn("No pool samples in this window", text)
+        self.assertIn("No backend samples in this window", text)
 
 
 class OneScalePerSection(ReadingACluster):

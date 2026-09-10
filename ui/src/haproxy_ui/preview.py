@@ -609,8 +609,8 @@ def _routes(
     #
     if path == routes[0]["path"] and match != "exact":
         raise ValueError(
-            "the redirect and the pool are both on this path; set the redirect's match to "
-            "exact so it answers that one address and the pool keeps the rest"
+            "the redirect and the backend are both on this path; set the redirect's match to "
+            "exact so it answers that one address and the backend keeps the rest"
         )
     redirect: dict[str, object] = {"path": path}
     if match == "exact":

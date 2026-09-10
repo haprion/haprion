@@ -139,6 +139,13 @@ class TrafficLogRsyslogRuleTests(unittest.TestCase):
 
         self.assertIn('RSYSLOG_RULE="/etc/rsyslog.d/48-haproxy-manager-traffic.conf"', script)
 
+    def test_the_restart_loss_window_is_reported_for_enable_and_disable(self) -> None:
+        script = (BASE / "install" / "node" / "haproxy-traffic-log-enable").read_text()
+
+        message = "HAProxy cannot buffer log lines during that brief window"
+        self.assertEqual(script.count(message), 2)
+        self.assertIn("systemctl restart rsyslog", script)
+
     def test_it_matches_the_traffic_tag_exactly_and_stops(self) -> None:
         self.assertIn('$programname == "haproxy-traffic"', self.rule)
         self.assertNotIn("$programname startswith", self.rule)

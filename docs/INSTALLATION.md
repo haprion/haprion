@@ -990,6 +990,13 @@ proves bytes, modes and ownership; run the command that uses a changed script be
 Remeasure VIP ownership before every subsequent node — never assume it stayed where the previous
 status reading found it.
 
+`haproxy-traffic-log-enable` and its `--disable` path restart rsyslog because rsyslog does not load
+a changed rule on HUP. HAProxy does not buffer while its local log socket is unavailable, so a
+request during that sub-second restart can be absent from both the structured day file and the
+classic log. Run the command on the node that does not own the VIP first, remeasure ownership, and
+then run it on the owner. The command repeats this loss window in its final output; a successful
+restart cannot recover a line emitted while rsyslog was down.
+
 #### Rollback
 
 Keep the previous node bundle and its recorded SHA-256. A code rollback is the same verified
@@ -1685,6 +1692,12 @@ nodes, and giving it a key and an inventory would undo exactly that.
 The step fetches nothing on its own. It prints one `authorized_keys` line to add
 to `svc-logread` on each node, and each node also needs its own log route
 switched on with `sudo haproxy-traffic-log-enable`.
+
+Enabling or disabling that node route restarts rsyslog; a reload does not apply
+the rule. HAProxy does not buffer log lines during the brief restart, so apply
+the change to the node that does not own the VIP first, verify it, remeasure VIP
+ownership and only then change the owner. A request landing in the restart
+window can be absent from both the structured and classic local logs.
 
 The stream is also opt-in per cluster. Set `traffic_logging: true` in that
 cluster's entry in `clusters.yaml`, then publish an actual object change so the

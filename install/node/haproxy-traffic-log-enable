@@ -221,6 +221,7 @@ if [[ "${1:-}" == "--disable" ]]; then
     restart_or_restore
     rm -f "$restore"
     log "traffic logging disabled; ${LOG_ROOT} is left in place and no longer pruned"
+    log "  rsyslog was restarted; HAProxy cannot buffer log lines during that brief window"
     exit 0
 fi
 
@@ -279,3 +280,4 @@ log "  installed ${RSYSLOG_RULE}"
 log "traffic logging active; records appear in ${LOG_ROOT} once a published"
 log "  configuration enables the second log stream for this cluster"
 log "  day files are deleted whole after 14 days, never renamed"
+log "  rsyslog was restarted; HAProxy cannot buffer log lines during that brief window"

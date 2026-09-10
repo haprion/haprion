@@ -11,6 +11,7 @@ and sudoers output remain private deployment data.
 | web | no | none | none | validate requests and insert allowlisted jobs only |
 | worker | yes, read-only | exact mutation/completion helpers | none | claim, lease, state, result, audit |
 | poller | no | exact read-only metadata helpers | none | poll/cache/metrics only |
+| traffic collector | no | none | one node-log forced-command key | none |
 | human operator | deployment policy | explicit wrappers and `sudoedit` policy | none directly | not used by app |
 
 No app identity owns or can read SSH private keys, certificate private keys, validation dummy-key
@@ -41,6 +42,9 @@ operator membership belong to deployment, not application runtime.
 - The worker may receive group read/traverse only where candidate construction or completion proof
   requires it. Web and poller do not join that group.
 - Certificate distribution and raw backup trees are never made group-readable to an app identity.
+- Traffic-log staging and the collector's SSH identity are private to the collector. Completed
+  mirrors and their freshness metadata are collector-owned and group-readable by web, never
+  group-writable; web reads those bounded files and cannot alter them.
 - Dev identities have no production config group membership and no read access to private
   production trees.
 - Git uses explicit repository-specific `safe.directory` entries. Wildcard trust is forbidden.

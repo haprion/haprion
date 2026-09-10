@@ -10,11 +10,65 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from haproxy_mgmt.proxy_model import load_proxy
+
 from haproxy_ui.config import TrafficLogs
-from haproxy_ui.traffic_logs import MAX_RECORD_BYTES, Reading, parse, read
+from haproxy_ui.db import ClusterObjects
+from haproxy_ui.traffic_logs import (
+    MAX_RECORD_BYTES,
+    Reading,
+    configured_server_addresses,
+    parse,
+    read,
+    resolve_server_addresses,
+)
 from tests.test_login import LoginTestCase, configuration
 
 NOW = datetime(2026, 9, 8, 12, 0, 0, tzinfo=UTC)
+
+PROXY = """schema: 1
+name: sample-proxy
+hostnames:
+- service.example.com
+listen:
+  protocol: http
+routes:
+- path: /
+  backend: primary-pool
+backends:
+  primary-pool:
+    balance: roundrobin
+    servers:
+    - host: app-one.example.net
+      port: 8080
+    - host: app-two.example.net
+      port: 8080
+    - host: app-three.example.net
+      port: 8080
+"""
+
+
+def object_reading() -> ClusterObjects:
+    return ClusterObjects(
+        cluster="alpha",
+        observed_at=NOW,
+        outcome="done",
+        result={
+            "commit": "a" * 40,
+            "objects": [
+                {
+                    "name": "sample-proxy",
+                    "document": PROXY,
+                    "readable": True,
+                    "protocol": "http",
+                    "hostnames": ["service.example.com"],
+                }
+            ],
+        },
+        warnings=[],
+        error=None,
+        poll_error=None,
+    )
 
 
 def record(**overrides: object) -> bytes:
@@ -74,6 +128,40 @@ class TrafficLogReadingTests(unittest.TestCase):
 
         self.assertEqual([entry.path for entry in reading.entries], ["/new", "/old"])
         self.assertEqual(reading.malformed, 0)
+
+    def test_generated_server_positions_resolve_to_configured_destinations(self) -> None:
+        parsed = load_proxy("sample-proxy", PROXY.encode())
+        addresses = configured_server_addresses("alpha", (parsed,))
+        reading = Reading(
+            entries=(
+                parse(
+                    record(backend="mgd-sample-proxy-primary-pool", server="s3"),
+                    "alpha",
+                    "node-a",
+                ),
+            ),
+            nodes=(),
+            malformed=0,
+            unavailable=False,
+            truncated=False,
+        )
+
+        resolved = resolve_server_addresses(reading, addresses)
+
+        self.assertEqual(resolved.entries[0].server, "app-three.example.net:8080")
+
+    def test_an_unresolved_generated_alias_is_not_presented_as_a_destination(self) -> None:
+        reading = Reading(
+            entries=(parse(record(server="s2"), "alpha", "node-a"),),
+            nodes=(),
+            malformed=0,
+            unavailable=False,
+            truncated=False,
+        )
+
+        resolved = resolve_server_addresses(reading, {})
+
+        self.assertEqual(resolved.entries[0].server, "")
 
     def test_one_busy_second_is_ordered_by_the_request_counter(self) -> None:
         """The accept time is whole seconds, so it cannot order a busy second."""
@@ -262,7 +350,13 @@ class TheTrafficLogPage(LoginTestCase):
 
         self.addCleanup(restore)
 
-    def page(self, *, enabled: bool = True, clusters: tuple[str, ...] = ("alpha",)) -> str:
+    def page(
+        self,
+        *,
+        enabled: bool = True,
+        clusters: tuple[str, ...] = ("alpha",),
+        objects: tuple[ClusterObjects, ...] = (),
+    ) -> str:
         config = replace(
             configuration(),
             clusters=clusters,
@@ -270,7 +364,8 @@ class TheTrafficLogPage(LoginTestCase):
         )
         client = self.client(config)
         self.sign_in(client)
-        response = client.get("/logs")
+        with patch("haproxy_ui.db.cluster_objects", return_value=list(objects)):
+            response = client.get("/logs")
 
         self.assertEqual(response.status_code, 200)
         return response.text
@@ -283,6 +378,16 @@ class TheTrafficLogPage(LoginTestCase):
 
         self.assertNotIn("<script>alert(1)</script>", page)
         self.assertIn("&lt;script&gt;", page)
+
+    def test_the_page_shows_the_configured_destination_instead_of_s3(self) -> None:
+        (self.root / "alpha--node-a.jsonl").write_bytes(
+            record(backend="mgd-sample-proxy-primary-pool", server="s3")
+        )
+
+        page = self.page(objects=(object_reading(),))
+
+        self.assertIn("app-three.example.net:8080", page)
+        self.assertNotIn(">s3<", page)
 
     def test_a_hostile_host_header_reaches_the_browser_as_text(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(record(host='x"><img src=x onerror=1>'))

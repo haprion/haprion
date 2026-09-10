@@ -10,10 +10,14 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from haproxy_mgmt.generate import PREFIX
+from haproxy_mgmt.proxy_model import Proxy
 
 NODE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 MAX_RECORD_BYTES = 16 * 1024
@@ -25,6 +29,7 @@ MAX_NODES = 64
 MAX_META_BYTES = 4096
 MIRROR_SUFFIX = ".jsonl"
 META_SUFFIX = ".meta.json"
+POSITIONAL_SERVER = re.compile(r"^s[1-9][0-9]*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +94,49 @@ class Reading:
     malformed: int
     unavailable: bool
     truncated: bool
+
+
+def configured_server_addresses(
+    cluster: str, proxies: Iterable[Proxy]
+) -> dict[tuple[str, str, str], str]:
+    """Configured destination behind each generated HAProxy server name.
+
+    Generated pool members are positional: the first configured server is
+    called ``s1``, the second ``s2``, and so on.  Keep the complete runtime
+    backend in the key instead of trying to split it; object and pool names may
+    themselves contain hyphens.
+    """
+
+    result: dict[tuple[str, str, str], str] = {}
+    for proxy in proxies:
+        for pool_name, backend in proxy.backends.items():
+            runtime_backend = f"{PREFIX}-{proxy.name}-{pool_name}"
+            for index, server in enumerate(backend.servers, start=1):
+                result[(cluster, runtime_backend, f"s{index}")] = f"{server.host}:{server.port}"
+    return result
+
+
+def resolve_server_addresses(
+    reading: Reading, addresses: Mapping[tuple[str, str, str], str]
+) -> Reading:
+    """Replace generated ``sN`` aliases with their configured destinations.
+
+    A named server from unmanaged HAProxy configuration remains useful and is
+    left alone.  An unresolved generated alias is omitted: ``s3`` without the
+    configuration that gave it meaning is not a destination and must not be
+    presented as one.
+    """
+
+    entries = tuple(
+        replace(
+            entry,
+            server=addresses.get((entry.cluster, entry.backend, entry.server), ""),
+        )
+        if POSITIONAL_SERVER.fullmatch(entry.server)
+        else entry
+        for entry in reading.entries
+    )
+    return replace(reading, entries=entries)
 
 
 def _text(value: Any, *, maximum: int) -> str:

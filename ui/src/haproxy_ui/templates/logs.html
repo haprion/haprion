@@ -61,7 +61,7 @@
       <td><code>{{ entry.client }}</code></td>
       <td><strong title="{{ entry.method }} {{ entry.host }}">{{ entry.method }} {{ entry.host }}</strong><code class="log-path" title="{{ entry.path }}">{{ entry.path }}</code></td>
       <td><span class="status-badge status-badge-{{ 'healthy' if entry.status < 400 else 'warning' if entry.status < 500 else 'critical' }}">{{ entry.status }}</span></td>
-      <td><strong>{{ entry.backend }}</strong><small>{{ entry.server }}</small></td>
+      <td><strong>{{ entry.backend }}</strong><small>{{ entry.server or 'Destination unavailable' }}</small></td>
       <td><code>{{ entry.request_time }}/{{ entry.queue_time }}/{{ entry.connect_time }}/{{ entry.response_time }}/{{ entry.total_time }}</code></td>
       <td>{{ entry.bytes }}</td>
     </tr>{% else %}<tr><td colspan="8"><div class="empty-state"><div><strong>No matching requests</strong><span>The view shows at most the {{ max_lines }} newest mirrored records.</span></div></div></td></tr>{% endfor %}</tbody>

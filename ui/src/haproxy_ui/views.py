@@ -1494,6 +1494,31 @@ def build_router(config: Config) -> APIRouter:
             if config.traffic_logs.enabled
             else traffic_logs.Reading((), (), 0, False, False)
         )
+        #
+        # HAProxy knows generated pool members only as s1, s2, ... .  Those
+        # names describe a position, not a machine.  Resolve that position
+        # through the same current proxy model that generated the backend so
+        # the log names the configured destination people actually recognise.
+        # This intentionally follows the current document: after a pool is
+        # edited, old records follow the new ordering rather than pretending
+        # the mirror preserved historical configuration that it never stored.
+        #
+        if config.traffic_logs.enabled:
+            _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
+            addresses: dict[tuple[str, str, str], str] = {}
+            for object_row in object_rows:
+                parsed = []
+                for obj in objects.cluster_object_views(object_row):
+                    if not obj.readable:
+                        continue
+                    try:
+                        parsed.append(load_proxy(obj.name, obj.document.encode()))
+                    except (ModelError, UnicodeError):
+                        continue
+                addresses.update(
+                    traffic_logs.configured_server_addresses(object_row.cluster, parsed)
+                )
+            reading = traffic_logs.resolve_server_addresses(reading, addresses)
         now = datetime.now(UTC)
         return TEMPLATES.TemplateResponse(
             request,

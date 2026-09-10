@@ -215,6 +215,33 @@ class NodeCompatibilityTests(unittest.TestCase):
         )
 
 
+class TrafficCollectorInventoryTests(unittest.TestCase):
+    def test_the_collector_must_name_exactly_the_runtime_nodes_and_hosts(self) -> None:
+        expected = (
+            ("alpha", "node-a", "node-a.example.com"),
+            ("alpha", "node-b", "node-b.example.com"),
+        )
+        actual = (
+            ("alpha", "node-a", "replacement.example.com"),
+            ("beta", "node-c", "node-c.example.com"),
+        )
+
+        self.assertEqual(
+            compatibility._inventory_differences(expected, actual),
+            (("alpha/node-b",), ("beta/node-c",), ("alpha/node-a",)),
+        )
+
+    def test_order_does_not_create_false_inventory_drift(self) -> None:
+        expected = (
+            ("alpha", "node-a", "node-a.example.com"),
+            ("alpha", "node-b", "node-b.example.com"),
+        )
+        self.assertEqual(
+            compatibility._inventory_differences(expected, reversed(expected)),
+            ((), (), ()),
+        )
+
+
 class FrozenSchemaTests(unittest.TestCase):
     def test_node_installation_metadata_is_documented_in_the_status_contract(self) -> None:
         schema = json.loads((ROOT / "schemas/v1/haproxy-status.schema.json").read_text())

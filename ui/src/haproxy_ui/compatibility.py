@@ -16,10 +16,15 @@ import stat
 import subprocess  # noqa: S404 - fixed diagnostic commands are the boundary here
 import sys
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from haproxy_mgmt.config import ConfigError as EngineConfigError
+from haproxy_mgmt.config import load_policy, load_runtime_config
+from haproxy_mgmt.traffic_collector import CollectorError
+from haproxy_mgmt.traffic_collector import load_config as load_collector_config
 
 PSQL = "/usr/bin/psql"
 SYSTEMCTL = "/usr/bin/systemctl"
@@ -320,6 +325,54 @@ def check_cluster_nodes(report: Report, *, cluster: str, helper: Path, required_
             report.pass_(subject, f"node API {api}, script digests current")
 
 
+def _inventory_differences(
+    expected: Iterable[tuple[str, str, str]], actual: Iterable[tuple[str, str, str]]
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    expected_by_name = {(cluster, node): host for cluster, node, host in expected}
+    actual_by_name = {(cluster, node): host for cluster, node, host in actual}
+    missing = tuple(
+        f"{cluster}/{node}" for cluster, node in sorted(expected_by_name.keys() - actual_by_name)
+    )
+    extra = tuple(
+        f"{cluster}/{node}" for cluster, node in sorted(actual_by_name.keys() - expected_by_name)
+    )
+    changed = tuple(
+        f"{cluster}/{node}"
+        for cluster, node in sorted(expected_by_name.keys() & actual_by_name)
+        if expected_by_name[(cluster, node)] != actual_by_name[(cluster, node)]
+    )
+    return missing, extra, changed
+
+
+def check_traffic_collector(report: Report, *, policy: Path, collector_config: Path) -> None:
+    """Hold the collector's installed copy against the engine's live inventory."""
+
+    try:
+        runtime = load_runtime_config(load_policy(policy))
+        collector = load_collector_config(collector_config)
+    except (EngineConfigError, CollectorError, OSError) as exc:
+        report.fail("traffic collector inventory", str(exc))
+        return
+    expected = (
+        (cluster.cluster_id, node.name, node.mgmt_host)
+        for cluster in runtime.clusters.values()
+        for node in cluster.nodes
+    )
+    actual = ((node.cluster, node.node, node.host) for node in collector.nodes)
+    missing, extra, changed = _inventory_differences(expected, actual)
+    if not (missing or extra or changed):
+        report.pass_("traffic collector inventory", f"{len(collector.nodes)} node(s) current")
+        return
+    details = []
+    if missing:
+        details.append(f"missing {', '.join(missing)}")
+    if extra:
+        details.append(f"retired {', '.join(extra)}")
+    if changed:
+        details.append(f"management host changed for {', '.join(changed)}")
+    report.fail("traffic collector inventory", "; ".join(details) + "; rerun platform step 13")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check all installed HAProxy Manager components")
     parser.add_argument("--platform-root", required=True, type=Path)
@@ -330,6 +383,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--worker-user", required=True)
     parser.add_argument("--poller-user", required=True)
     parser.add_argument("--clusters", required=True, nargs="*")
+    parser.add_argument("--runtime-policy", type=Path)
+    parser.add_argument("--collector-config", type=Path)
     parser.add_argument("--environment", default="prod")
     parser.add_argument("--sudoers-root", type=Path, default=Path("/etc/sudoers.d"))
     parser.add_argument("--ui-release")
@@ -345,6 +400,12 @@ def main(argv: list[str] | None = None) -> int:
         print("ERROR: run this with sudo", file=sys.stderr)
         return 1
     report = Report()
+    if (args.runtime_policy is None) != (args.collector_config is None):
+        print(
+            "ERROR: --runtime-policy and --collector-config must be supplied together",
+            file=sys.stderr,
+        )
+        return 1
     try:
         ui_release = (
             named_release(args.platform_root, args.ui_release, "UI")
@@ -485,6 +546,12 @@ def main(argv: list[str] | None = None) -> int:
         report.pass_("web sudoers", "no rule file")
 
     print("\n== Nodes")
+    if args.runtime_policy is not None and args.collector_config is not None:
+        check_traffic_collector(
+            report,
+            policy=args.runtime_policy,
+            collector_config=args.collector_config,
+        )
     if cli_release is not None:
         helper = cli_release / "bin/haproxy-status-helper"
         for cluster in args.clusters:

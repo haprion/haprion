@@ -50,6 +50,13 @@ class PreparedReleaseTests(unittest.TestCase):
         self.assertIn('extra_args+=(--environment "$environment")', wrapper)
         self.assertNotIn("contains no clusters", wrapper)
 
+    def test_enabled_traffic_logs_add_the_collector_inventory_check(self) -> None:
+        wrapper = (ROOT / "install/platform/check-compatibility").read_text()
+
+        self.assertIn("config.traffic_logs.enabled", wrapper)
+        self.assertIn("--runtime-policy /etc/haproxy-manager/runtime-policy.yaml", wrapper)
+        self.assertIn("--collector-config /etc/haproxy-manager/traffic-collector.json", wrapper)
+
 
 class CoordinatedUpdateTests(unittest.TestCase):
     update: str

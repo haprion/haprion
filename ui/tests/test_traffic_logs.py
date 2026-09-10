@@ -297,8 +297,81 @@ class TrafficLogReadingTests(unittest.TestCase):
         self.assertEqual(len(read(self.root, ("alpha",), status="5xx").entries), 1)
         self.assertEqual(len(read(self.root, ("alpha",), status="503").entries), 1)
         self.assertEqual(len(read(self.root, ("alpha",), status="99").entries), 0)
-        self.assertEqual(len(read(self.root, ("alpha",), proxy="be-other").entries), 1)
+        self.assertEqual(len(read(self.root, ("alpha",), substring="be-other").entries), 1)
         self.assertEqual(len(read(self.root, ("alpha",), substring="/OK").entries), 1)
+
+    def test_search_combines_terms_with_case_insensitive_boolean_operators(self) -> None:
+        self.mirror(
+            "alpha",
+            "node-a",
+            record(path="/api/orders", backend="be-orders"),
+            record(path="/api/health", backend="be-orders"),
+            record(path="/login", backend="be-login"),
+        )
+
+        reading = read(
+            self.root,
+            ("alpha",),
+            substring="be-orders aNd (/orders OR /missing) AND not /health",
+        )
+
+        self.assertEqual([entry.path for entry in reading.entries], ["/api/orders"])
+
+    def test_adjacent_search_terms_are_an_implicit_and_and_quotes_keep_a_phrase(self) -> None:
+        self.mirror(
+            "alpha",
+            "node-a",
+            record(host="first.example.com", path="/rock and roll"),
+            record(host="second.example.com", path="/rock"),
+        )
+
+        implicit = read(self.root, ("alpha",), substring="first rock")
+        phrase = read(self.root, ("alpha",), substring='"rock and roll"')
+
+        self.assertEqual([entry.host for entry in implicit.entries], ["first.example.com"])
+        self.assertEqual([entry.host for entry in phrase.entries], ["first.example.com"])
+
+    def test_an_invalid_search_is_explained_and_never_silently_shows_everything(self) -> None:
+        self.mirror("alpha", "node-a", record())
+
+        reading = read(self.root, ("alpha",), substring="api AND")
+
+        self.assertEqual(reading.entries, ())
+        self.assertEqual(reading.filter_error, "The search expression ends with an operator.")
+
+    def test_search_uses_the_resolved_destination_and_the_hidden_backend(self) -> None:
+        backend = "mgd-sample-proxy-primary-pool"
+        self.mirror("alpha", "node-a", record(backend=backend, server="s3"))
+        addresses = {("alpha", backend, "s3"): "app-three.example.net:8080"}
+
+        by_destination = read(
+            self.root,
+            ("alpha",),
+            substring="app-three.example.net:8080",
+            server_addresses=addresses,
+        )
+        by_backend = read(
+            self.root,
+            ("alpha",),
+            substring="sample-proxy-primary",
+            server_addresses=addresses,
+        )
+
+        self.assertEqual(by_destination.entries[0].server, "app-three.example.net:8080")
+        self.assertEqual(len(by_backend.entries), 1)
+
+    def test_time_bounds_are_inclusive(self) -> None:
+        self.mirror(
+            "alpha",
+            "node-a",
+            record(at=int(NOW.timestamp()) - 60, path="/before"),
+            record(path="/inside"),
+            record(at=int(NOW.timestamp()) + 60, path="/after"),
+        )
+
+        reading = read(self.root, ("alpha",), from_at=NOW, to_at=NOW)
+
+        self.assertEqual([entry.path for entry in reading.entries], ["/inside"])
 
     def test_the_limit_is_the_deployment_s_and_not_the_file_s(self) -> None:
         self.mirror("alpha", "node-a", *(record(request=n) for n in range(50)))
@@ -356,6 +429,7 @@ class TheTrafficLogPage(LoginTestCase):
         enabled: bool = True,
         clusters: tuple[str, ...] = ("alpha",),
         objects: tuple[ClusterObjects, ...] = (),
+        query: str = "",
     ) -> str:
         config = replace(
             configuration(),
@@ -365,7 +439,7 @@ class TheTrafficLogPage(LoginTestCase):
         client = self.client(config)
         self.sign_in(client)
         with patch("haproxy_ui.db.cluster_objects", return_value=list(objects)):
-            response = client.get("/logs")
+            response = client.get(f"/logs{query}")
 
         self.assertEqual(response.status_code, 200)
         return response.text
@@ -489,7 +563,7 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn("Filters searched only the newest 16 MiB per node", page)
         self.assertIn("Older records were not searched", page)
 
-    def test_a_record_is_timed_in_the_host_s_clock_and_the_zone_is_named(self) -> None:
+    def test_a_record_and_time_pickers_use_the_host_s_clock_without_a_zone_label(self) -> None:
         """One clock across the interface, and the page says which one it is.
 
         The card already prints the host's zone so its times line up against a
@@ -505,9 +579,37 @@ class TheTrafficLogPage(LoginTestCase):
 
         # The record is stored as 12:00 UTC and read on a host two hours ahead.
         self.assertIn("26-09-08 14:00:00", page)
-        self.assertIn("Time (CEST)", page)
+        self.assertIn("<th>Time</th>", page)
+        self.assertNotIn("Time (CEST)", page)
         self.assertNotIn("26-09-08 12:00:00", page)
         self.assertIn(f'datetime="{NOW.isoformat()}"', page)
+        self.assertIn('type="datetime-local" name="from"', page)
+        self.assertIn('type="datetime-local" name="to"', page)
+
+    def test_malformed_records_are_silently_discarded_from_the_page(self) -> None:
+        (self.root / "alpha--node-a.jsonl").write_bytes(b"not json\n" + record())
+
+        page = self.page()
+
+        self.assertNotIn("Ignored 1 malformed record", page)
+        self.assertIn("app.example.com", page)
+
+    def test_local_from_and_to_values_filter_utc_records(self) -> None:
+        self.host_zone("Europe/Stockholm")
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
+
+        page = self.page(query="?from=2026-09-08T13:59:59&to=2026-09-08T14:00:01")
+
+        self.assertIn("app.example.com", page)
+        self.assertIn('value="2026-09-08T13:59:59"', page)
+
+    def test_a_reversed_time_range_is_explained_instead_of_showing_all_records(self) -> None:
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
+
+        page = self.page(query="?from=2026-09-09T12:00:00&to=2026-09-08T12:00:00")
+
+        self.assertIn("From must be earlier than To.", page)
+        self.assertNotIn("app.example.com</strong>", page)
 
     def test_disabled_says_so_instead_of_showing_an_empty_table(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(record(path="/hidden"))

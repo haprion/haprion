@@ -22,7 +22,7 @@ import hashlib
 import ipaddress
 import json
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -41,6 +41,7 @@ from haproxy_mgmt.proxy_model import (
     ModelError,
     load_proxy,
 )
+from haproxy_mgmt.traffic_collector import RETENTION_DAYS
 
 from haproxy_ui import (
     auth,
@@ -159,6 +160,27 @@ def shown_at(moment: datetime) -> str:
 
 
 TEMPLATES.env.filters["shown_at"] = shown_at
+
+
+def _log_time_filter(value: str, *, earliest: datetime, latest: datetime) -> datetime | None:
+    """Turn a browser-local date and time into the UTC used by log records."""
+
+    if not value:
+        return None
+    formats = {16: "%Y-%m-%dT%H:%M", 19: "%Y-%m-%dT%H:%M:%S"}
+    date_format = formats.get(len(value))
+    if date_format is None:
+        raise ValueError("Choose a date and time within the available 14 days.")
+    try:
+        local = datetime.strptime(value, date_format)
+    except ValueError as exc:
+        raise ValueError("Choose a valid date and time.") from exc
+    if local.tzinfo is not None:
+        raise ValueError("Choose a local date and time.")
+    result = local.astimezone(UTC)
+    if result < earliest or result > latest:
+        raise ValueError("Choose a date and time within the available 14 days.")
+    return result
 
 
 def _traffic_marks(request: Request, marked: metrics.Selection) -> dict[str, object]:
@@ -1472,40 +1494,39 @@ def build_router(config: Config) -> APIRouter:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         selected_cluster = request.query_params.get("cluster", "")[:32]
-        selected_proxy = request.query_params.get("proxy", "")[:128]
         selected_status = request.query_params.get("status", "")[:3]
         selected_query = request.query_params.get("q", "")[:200]
+        selected_from = request.query_params.get("from", "")[:19]
+        selected_to = request.query_params.get("to", "")[:19]
+        now = datetime.now(UTC)
+        local_now = metrics.shown(now)
+        local_earliest = datetime.combine(
+            local_now.date() - timedelta(days=RETENTION_DAYS - 1), datetime.min.time()
+        ).astimezone()
+        earliest = local_earliest.astimezone(UTC)
+        time_filter_error: str | None
+        try:
+            from_at = _log_time_filter(selected_from, earliest=earliest, latest=now)
+            to_at = _log_time_filter(selected_to, earliest=earliest, latest=now)
+            if from_at is not None and to_at is not None and from_at > to_at:
+                raise ValueError("From must be earlier than To.")
+        except ValueError as exc:
+            from_at = None
+            to_at = None
+            time_filter_error = str(exc)
+        else:
+            time_filter_error = None
         #
-        # Reading files, never asking a node. The collector already fetched
-        # these, so a node that is slow, unreachable or hostile cannot make this
-        # request hang - it can only make its own mirror old, which is exactly
-        # what the freshness strip reports.
-        #
-        reading = (
-            traffic_logs.read(
-                config.traffic_logs.directory,
-                config.clusters,
-                limit=config.traffic_logs.max_lines,
-                cluster=selected_cluster,
-                proxy=selected_proxy,
-                status=selected_status,
-                substring=selected_query,
-            )
-            if config.traffic_logs.enabled
-            else traffic_logs.Reading((), (), 0, False, False)
-        )
-        #
-        # HAProxy knows generated pool members only as s1, s2, ... .  Those
-        # names describe a position, not a machine.  Resolve that position
-        # through the same current proxy model that generated the backend so
-        # the log names the configured destination people actually recognise.
+        # HAProxy knows generated pool members only as s1, s2, ... . Resolve
+        # those positions before filtering so the one shared search field can
+        # find the configured destination as well as the hidden backend name.
         # This intentionally follows the current document: after a pool is
         # edited, old records follow the new ordering rather than pretending
         # the mirror preserved historical configuration that it never stored.
         #
+        addresses: dict[tuple[str, str, str], str] = {}
         if config.traffic_logs.enabled:
             _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
-            addresses: dict[tuple[str, str, str], str] = {}
             for object_row in object_rows:
                 parsed = []
                 for obj in objects.cluster_object_views(object_row):
@@ -1518,8 +1539,29 @@ def build_router(config: Config) -> APIRouter:
                 addresses.update(
                     traffic_logs.configured_server_addresses(object_row.cluster, parsed)
                 )
-            reading = traffic_logs.resolve_server_addresses(reading, addresses)
-        now = datetime.now(UTC)
+        #
+        # Reading files, never asking a node. The collector already fetched
+        # these, so a node that is slow, unreachable or hostile cannot make this
+        # request hang - it can only make its own mirror old, which is exactly
+        # what the compact warning reports.
+        #
+        reading = (
+            traffic_logs.read(
+                config.traffic_logs.directory,
+                config.clusters,
+                limit=config.traffic_logs.max_lines,
+                cluster=selected_cluster,
+                status=selected_status,
+                substring=selected_query,
+                from_at=from_at,
+                to_at=to_at,
+                server_addresses=addresses,
+            )
+            if config.traffic_logs.enabled
+            else traffic_logs.Reading((), (), 0, False, False)
+        )
+        if time_filter_error is not None:
+            reading = replace(reading, entries=(), filter_error=time_filter_error)
         freshness = tuple(
             (node, node.stale_seconds(now=now), node.attempt_seconds(now=now))
             for node in reading.nodes
@@ -1543,14 +1585,14 @@ def build_router(config: Config) -> APIRouter:
                 "freshness_warnings": freshness_warnings,
                 "scan_mib_per_node": traffic_logs.MAX_SCAN_BYTES // (1024 * 1024),
                 "scan_mib_total": traffic_logs.MAX_TOTAL_SCAN_BYTES // (1024 * 1024),
-                # Named, not implied. Moving off UTC without saying which clock
-                # replaced it would be worse than leaving it in UTC.
-                "time_zone": metrics.shown(now).tzname() or "local",
                 "clusters": config.clusters,
                 "selected_cluster": selected_cluster,
-                "selected_proxy": selected_proxy,
                 "selected_status": selected_status,
                 "selected_query": selected_query,
+                "selected_from": selected_from,
+                "selected_to": selected_to,
+                "time_min": local_earliest.strftime("%Y-%m-%dT%H:%M:%S"),
+                "time_max": local_now.strftime("%Y-%m-%dT%H:%M:%S"),
                 "max_lines": config.traffic_logs.max_lines,
             },
         )

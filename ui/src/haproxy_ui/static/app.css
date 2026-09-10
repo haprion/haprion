@@ -1339,7 +1339,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .log-warning-popover > strong { color: var(--text-strong); font-size: 12px; }
 .log-warning-popover p { display: grid; gap: 2px; margin: 9px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
 .log-warning-popover b { color: var(--text-strong); font-weight: 650; }
-.log-filters { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(180px, 1fr) minmax(100px, .5fr) minmax(220px, 1.4fr) auto auto; gap: 12px; align-items: end; margin: 0 0 18px; }
+.log-filters { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(100px, .45fr) minmax(240px, 1.35fr) minmax(185px, .8fr) minmax(185px, .8fr) auto auto; gap: 12px; align-items: end; margin: 0 0 18px; }
 .log-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
 .log-filters input, .log-filters select { min-width: 0; padding: 7px 9px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); }
 /*
@@ -1369,6 +1369,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 }
 .log-table td strong { color: var(--text-strong); }
 .log-request { min-width: 0; }
+.log-request-content { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-request .log-path { margin-left: 8px; color: var(--muted); font-size: 12px; }
 @media (max-width: 680px) {
   .log-warning-popover { right: auto; left: 0; }

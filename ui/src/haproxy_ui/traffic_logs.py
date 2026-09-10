@@ -14,7 +14,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from haproxy_mgmt.generate import PREFIX
 from haproxy_mgmt.proxy_model import Proxy
@@ -27,6 +27,8 @@ MAX_SCAN_BYTES = 16 * 1024 * 1024
 MAX_TOTAL_SCAN_BYTES = 64 * 1024 * 1024
 MAX_NODES = 64
 MAX_META_BYTES = 4096
+MAX_SEARCH_TOKENS = 64
+MAX_SEARCH_DEPTH = 12
 MIRROR_SUFFIX = ".jsonl"
 META_SUFFIX = ".meta.json"
 POSITIONAL_SERVER = re.compile(r"^s[1-9][0-9]*$")
@@ -94,6 +96,155 @@ class Reading:
     malformed: int
     unavailable: bool
     truncated: bool
+    filter_error: str | None = None
+
+
+class SearchSyntaxError(ValueError):
+    """A bounded search expression that cannot be interpreted."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Token:
+    kind: Literal["term", "and", "or", "not", "left", "right"]
+    value: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class _Term:
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class _Not:
+    value: _Expression
+
+
+@dataclass(frozen=True, slots=True)
+class _And:
+    left: _Expression
+    right: _Expression
+
+
+@dataclass(frozen=True, slots=True)
+class _Or:
+    left: _Expression
+    right: _Expression
+
+
+type _Expression = _Term | _Not | _And | _Or
+
+
+def _tokens(query: str) -> tuple[_Token, ...]:
+    result: list[_Token] = []
+    position = 0
+    while position < len(query):
+        if query[position].isspace():
+            position += 1
+            continue
+        if query[position] in "()":
+            result.append(_Token("left" if query[position] == "(" else "right"))
+            position += 1
+        elif query[position] == '"':
+            position += 1
+            phrase: list[str] = []
+            while position < len(query) and query[position] != '"':
+                if query[position] == "\\" and position + 1 < len(query):
+                    position += 1
+                phrase.append(query[position])
+                position += 1
+            if position == len(query):
+                raise SearchSyntaxError("The search has an unterminated quoted phrase.")
+            position += 1
+            if not phrase:
+                raise SearchSyntaxError("A quoted search phrase cannot be empty.")
+            result.append(_Token("term", "".join(phrase).casefold()))
+        else:
+            end = position
+            while end < len(query) and not query[end].isspace() and query[end] not in "()":
+                end += 1
+            word = query[position:end]
+            operator = word.casefold()
+            if operator in {"and", "or", "not"}:
+                kind = cast(Literal["and", "or", "not"], operator)
+                result.append(_Token(kind))
+            else:
+                result.append(_Token("term", operator))
+            position = end
+        if len(result) > MAX_SEARCH_TOKENS:
+            raise SearchSyntaxError("The search expression has too many parts.")
+    return tuple(result)
+
+
+class _Parser:
+    def __init__(self, tokens: tuple[_Token, ...]) -> None:
+        self.tokens = tokens
+        self.position = 0
+        self.depth = 0
+
+    def parse(self) -> _Expression:
+        if not self.tokens:
+            return _Term("")
+        expression = self._or()
+        if self.position != len(self.tokens):
+            raise SearchSyntaxError("The search expression has an unexpected closing parenthesis.")
+        return expression
+
+    def _peek(self, *kinds: str) -> bool:
+        return self.position < len(self.tokens) and self.tokens[self.position].kind in kinds
+
+    def _take(self) -> _Token:
+        token = self.tokens[self.position]
+        self.position += 1
+        return token
+
+    def _or(self) -> _Expression:
+        expression = self._and()
+        while self._peek("or"):
+            self._take()
+            expression = _Or(expression, self._and())
+        return expression
+
+    def _and(self) -> _Expression:
+        expression = self._not()
+        while self._peek("and", "term", "not", "left"):
+            if self._peek("and"):
+                self._take()
+            expression = _And(expression, self._not())
+        return expression
+
+    def _not(self) -> _Expression:
+        if self._peek("not"):
+            self._take()
+            return _Not(self._not())
+        return self._atom()
+
+    def _atom(self) -> _Expression:
+        if self._peek("term"):
+            return _Term(self._take().value)
+        if self._peek("left"):
+            self._take()
+            self.depth += 1
+            if self.depth > MAX_SEARCH_DEPTH:
+                raise SearchSyntaxError("The search expression is nested too deeply.")
+            if self._peek("right"):
+                raise SearchSyntaxError("A parenthesized search expression cannot be empty.")
+            expression = self._or()
+            if not self._peek("right"):
+                raise SearchSyntaxError("The search expression is missing a closing parenthesis.")
+            self._take()
+            self.depth -= 1
+            return expression
+        raise SearchSyntaxError("The search expression ends with an operator.")
+
+
+def _matches(expression: _Expression, text: str) -> bool:
+    if isinstance(expression, _Term):
+        return expression.value in text
+    if isinstance(expression, _Not):
+        return not _matches(expression.value, text)
+    if isinstance(expression, _And):
+        return _matches(expression.left, text) and _matches(expression.right, text)
+    return _matches(expression.left, text) or _matches(expression.right, text)
 
 
 def configured_server_addresses(
@@ -137,6 +288,12 @@ def resolve_server_addresses(
         for entry in reading.entries
     )
     return replace(reading, entries=entries)
+
+
+def _resolved_server(entry: Entry, addresses: Mapping[tuple[str, str, str], str]) -> Entry:
+    if not POSITIONAL_SERVER.fullmatch(entry.server):
+        return entry
+    return replace(entry, server=addresses.get((entry.cluster, entry.backend, entry.server), ""))
 
 
 def _text(value: Any, *, maximum: int) -> str:
@@ -284,9 +441,11 @@ def read(
     *,
     limit: int = 500,
     cluster: str = "",
-    proxy: str = "",
     status: str = "",
     substring: str = "",
+    from_at: datetime | None = None,
+    to_at: datetime | None = None,
+    server_addresses: Mapping[tuple[str, str, str], str] | None = None,
 ) -> Reading:
     wanted = (cluster,) if cluster else clusters
     if cluster and cluster not in clusters:
@@ -297,8 +456,15 @@ def read(
     )
     if status and status_code is None and status_class is None:
         return Reading((), (), 0, False, False)
-    needle = substring.casefold()[:200]
-    proxy_needle = proxy.casefold()[:128]
+    filter_error: str | None
+    try:
+        expression = _Parser(_tokens(substring[:200])).parse()
+    except SearchSyntaxError as exc:
+        expression = None
+        filter_error = str(exc)
+    else:
+        filter_error = None
+    addresses = server_addresses or {}
 
     targets, unavailable = _targets(directory, tuple(wanted))
     entries: list[Entry] = []
@@ -333,17 +499,20 @@ def read(
             except (OSError, UnicodeError, ValueError, OverflowError):
                 malformed += 1
                 continue
+            entry = _resolved_server(entry, addresses)
+            if from_at is not None and entry.at < from_at:
+                continue
+            if to_at is not None and entry.at > to_at:
+                continue
             if status_code is not None and entry.status != status_code:
                 continue
             if status_class is not None and entry.status // 100 != status_class:
                 continue
-            if proxy_needle not in f"{entry.frontend} {entry.backend}".casefold():
-                continue
             searchable = (
-                f"{entry.client} {entry.method} {entry.host} {entry.path} "
-                f"{entry.frontend} {entry.backend} {entry.server} {entry.status}"
+                f"{entry.cluster} {entry.node} {entry.client} {entry.method} {entry.host} {entry.path} "
+                f"{entry.frontend} {entry.backend} {entry.server} {entry.status} {entry.bytes}"
             ).casefold()
-            if needle not in searchable:
+            if expression is None or not _matches(expression, searchable):
                 continue
             entries.append(entry)
 
@@ -354,4 +523,11 @@ def read(
     # anything - it restarts with the process, and two nodes never share one.
     #
     entries.sort(key=lambda item: (item.at, item.node, item.request), reverse=True)
-    return Reading(tuple(entries[:limit]), tuple(nodes), malformed, unavailable, any_truncated)
+    return Reading(
+        tuple(entries[:limit]),
+        tuple(nodes),
+        malformed,
+        unavailable,
+        any_truncated,
+        filter_error,
+    )

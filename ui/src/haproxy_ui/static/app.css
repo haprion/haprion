@@ -186,14 +186,6 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .nav-item { cursor: default; opacity: 0.85; }
 
 .activity-note { margin: -10px 0 18px; color: var(--text-secondary); font-size: 14px; }
-.activity-list { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
-.activity-entry { display: grid; grid-template-columns: 15px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 7px 18px; border-bottom: 1px solid var(--line); }
-.activity-entry:last-child { border-bottom: 0; }
-.activity-entry .status-orb { width: 11px; height: 11px; margin: 0; }
-.activity-copy { display: grid; grid-template-columns: 120px minmax(150px, 0.5fr) minmax(200px, 1fr); gap: 16px; align-items: baseline; }
-.activity-copy strong { color: var(--text-primary); font-size: 13px; font-weight: var(--font-weight-regular); }
-.activity-copy small, .activity-cluster { color: var(--text-secondary); font-size: 13px; }
-.activity-entry time { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
 
 .header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .icon-button {
@@ -284,7 +276,10 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
    it is not a smaller card, it is a broken one. These two size to their text
    instead, with an upper bound so a stat does not stretch across half a
    screen. */
-.certificate-summary, .backup-summary, .activity-summary { grid-template-columns: repeat(2, minmax(320px, 480px)); }
+/* Two cards share a bounded row, equal in width on every page that has them.
+   Capped per card at 480px they cut the job summary's own label; the row is
+   bounded instead, so a card is as wide as three of the dashboard's four. */
+.certificate-summary, .backup-summary, .activity-summary { grid-template-columns: repeat(2, minmax(320px, 1fr)); max-width: 1240px; }
 .metric-card {
   display: flex;
   align-items: center;
@@ -336,7 +331,6 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
    the rule's containing block - so a rule that stops at bottom: 0 is cut into
    segments once per row. It reaches one pixel further instead, and the column
    runs unbroken down the list. */
-.activity-entry::before { bottom: -1px; }
 .cluster-accent-0::before { background: var(--accent-0); }
 .cluster-accent-1::before { background: var(--accent-1); }
 .cluster-accent-2::before { background: var(--accent-2); }
@@ -491,6 +485,11 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .version-table { table-layout: fixed; }
 .version-table th:nth-child(1), .version-table td:nth-child(1) { width: 168px; }
 .version-table th:nth-child(2), .version-table td:nth-child(2) { width: 168px; }
+/* Stated, not inherited: .node-table gives the third column 120px, and with
+   every column fixed the browser shares the slack out proportionally instead
+   of giving it to the comment. Measured 2026-09-10 - the comment column was
+   297px wide in a 1500px table. */
+.version-table th:nth-child(3), .version-table td:nth-child(3) { width: auto; }
 .version-table th:nth-child(4), .version-table td:nth-child(4) { width: 150px; }
 .version-table th:nth-child(5), .version-table td:nth-child(5) { width: 170px; }
 .version-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
@@ -499,7 +498,10 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .version-table td:first-child strong { display: inline-block; margin-right: 8px; font-variant-numeric: tabular-nums; }
 .history-cluster-card .cluster-header { padding: 11px 20px; }
 .version-published td { background: var(--panel-soft); }
-.version-comment { display: block; max-width: 460px; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
+/* The comment takes what the fixed columns leave, which on a normal screen is
+   most of the row; it is cut only where the cell itself ends. A cap of 460px
+   used to cut it at the first few words with a metre of empty row beside it. */
+.version-comment { display: block; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .version-table code { color: var(--muted); font-size: 11px; }
 /* The published version has no button. Publishing it again is the repair of an
    interrupted publish - a real path, exercised on 2026-08-31 - but it is a
@@ -684,12 +686,21 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    the expiry column says how long it has - two facts an operator weighs
    together, because "three weeks left" means something different for a
    certbot lineage than for one somebody renews by hand. */
-.certificate-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
+/* Its own column widths. The node-table defaults were measured for the node
+   table's cells; here the renewal cell holds a badge and an issuer, the expiry
+   cell a date and a badge, and at 120px each they were written across each
+   other. Names takes the remaining width. A cell that still overflows is cut
+   at its own edge rather than drawn over the next column. */
+.certificate-table th:nth-child(1), .certificate-table td:nth-child(1) { width: 240px; }
+.certificate-table th:nth-child(3), .certificate-table td:nth-child(3) { width: 320px; }
+.certificate-table th:nth-child(4), .certificate-table td:nth-child(4) { width: 220px; }
+.certificate-table th:nth-child(5), .certificate-table td:nth-child(5) { width: 130px; }
+.certificate-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
 .certificate-table td:first-child strong { display: block; color: var(--text-strong); }
 .certificate-issuer, .certificate-date { color: var(--muted); font-size: 11px; }
 .certificate-date { margin-right: 8px; font-variant-numeric: tabular-nums; }
 .certificate-issuer { margin-left: 8px; }
-.certificate-sans { display: block; max-width: 420px; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
+.certificate-sans { display: block; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
 .lifecycle-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; letter-spacing: 0.025em; color: var(--text-primary); background: var(--unknown-soft); }
 .lifecycle-acme { color: var(--info); background: var(--info-soft); }
 /* Rows for certificates this cluster does not serve are held back rather than

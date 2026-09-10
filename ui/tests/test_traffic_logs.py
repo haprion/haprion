@@ -333,13 +333,9 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn("last success 10 min ago", page)
 
     def test_a_truncated_search_window_is_stated_on_the_page(self) -> None:
-        (self.root / "alpha--node-a.jsonl").write_bytes(
-            record(path="/old") + record(path="/new")
-        )
+        (self.root / "alpha--node-a.jsonl").write_bytes(record(path="/old") + record(path="/new"))
 
-        with patch(
-            "haproxy_ui.traffic_logs._tail", return_value=(record(path="/new"), True)
-        ):
+        with patch("haproxy_ui.traffic_logs._tail", return_value=(record(path="/new"), True)):
             page = self.page()
 
         self.assertIn("Filters searched only the newest 16 MiB per node", page)

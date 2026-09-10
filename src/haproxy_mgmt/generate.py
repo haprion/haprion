@@ -716,6 +716,15 @@ def _frontend_file(
                 "",
                 f"log-profile {TRAFFIC_LOG_PROFILE}",
                 '    log-tag "haproxy-traffic"',
+                #
+                # A connection that dies before a request - an SSL handshake
+                # failure, a malformed request - is logged at the error step
+                # with the plain-text error format, on every log target the
+                # frontend has, including this one. Measured on a node: it
+                # landed in the JSONL file as text. The classic stream keeps
+                # it through the global target; this stream is transactions.
+                #
+                "    on error drop",
                 f"    on close format {HTTP_TRAFFIC_LOG_FORMAT}",
             )
         )

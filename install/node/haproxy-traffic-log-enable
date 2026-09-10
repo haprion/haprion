@@ -69,13 +69,24 @@ template(name="haproxy-manager-traffic-file" type="string"
 template(name="haproxy-manager-traffic-line" type="string"
          string="%msg:2:$:drop-last-lf%\n")
 
+# Only a JSON record reaches the day file. HAProxy sends more than transaction
+# logs to a frontend's log target: a connection that dies before a request -
+# an SSL handshake failure, a malformed request - is logged in plain text, and
+# "Proxy ... stopped" arrives once per frontend at every reload and is governed
+# by no log-profile step at all. Measured on a node: both landed in the JSONL
+# file as text and were counted as malformed by the reader. Every such line is
+# also written to the classic log through the global target under the tag
+# "haproxy", so on this tag it is a duplicate, and dropping it loses nothing.
+# The leading space is the RFC3164 separator the template above skips.
 if ($programname == "haproxy-traffic") then {
-    action(type="omfile"
-           dynaFile="haproxy-manager-traffic-file"
-           template="haproxy-manager-traffic-line"
-           fileCreateMode="0640"
-           dirCreateMode="0750"
-           createDirs="off")
+    if ($msg startswith " {") then {
+        action(type="omfile"
+               dynaFile="haproxy-manager-traffic-file"
+               template="haproxy-manager-traffic-line"
+               fileCreateMode="0640"
+               dirCreateMode="0750"
+               createDirs="off")
+    }
     stop
 }
 CONF

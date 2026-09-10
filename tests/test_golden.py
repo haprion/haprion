@@ -100,6 +100,23 @@ class EveryCaseMatchesItsGoldenFiles(unittest.TestCase):
         self.assertIn(f"format local profile {TRAFFIC_LOG_PROFILE} local2", enabled)
         self.assertNotIn("format rfc3164", enabled)
 
+    def test_the_profile_drops_the_error_step(self) -> None:
+        """An SSL handshake failure is logged at the error step, in plain text.
+
+        Every log target of the frontend receives it, so without this line it
+        lands in the structured file as a record nothing can parse. The
+        classic log still carries it through the global target.
+        """
+
+        case = GOLDEN / "minimal"
+        enabled = generate(objects(case), **arguments(case), traffic_logging=True).configuration[
+            "1000-frontends.cfg"
+        ]
+
+        profile = enabled[enabled.index("log-profile ") :].split("\n\n", 1)[0]
+        self.assertIn("    on error drop", profile)
+        self.assertLess(profile.index("on error drop"), profile.index("on close format"))
+
     def test_every_traffic_record_carries_a_field_that_differs_per_request(self) -> None:
         """rsyslog collapses consecutive identical lines, so records must differ.
 

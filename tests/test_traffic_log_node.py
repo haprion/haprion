@@ -141,8 +141,28 @@ class TrafficLogRsyslogRuleTests(unittest.TestCase):
 
     def test_it_matches_the_traffic_tag_exactly_and_stops(self) -> None:
         self.assertIn('$programname == "haproxy-traffic"', self.rule)
-        self.assertNotIn("startswith", self.rule)
+        self.assertNotIn("$programname startswith", self.rule)
+        self.assertNotIn(":programname, startswith", self.rule)
         self.assertIn("stop", self.rule)
+
+    def test_only_a_json_record_reaches_the_day_file(self) -> None:
+        """Measured on a node: HAProxy sends more than transactions on this tag.
+
+        An SSL handshake failure and "Proxy ... stopped" both arrived as plain
+        text and were counted as malformed by the reader. Both are duplicates
+        of what the classic log already holds, so the tag's other lines are
+        dropped rather than filed. The guard sits inside the tag match and
+        before the stop, so nothing on the tag falls through to Ubuntu's rule.
+        """
+
+        self.assertIn('if ($msg startswith " {") then {', self.rule)
+        tag = self.rule.index('$programname == "haproxy-traffic"')
+        guard = self.rule.index('$msg startswith " {"')
+        action = self.rule.index('action(type="omfile"')
+        stop = self.rule.index("\n    stop\n")
+        self.assertLess(tag, guard)
+        self.assertLess(guard, action)
+        self.assertLess(action, stop)
 
     def test_the_day_file_is_named_from_the_current_utc_date(self) -> None:
         self.assertIn("/var/log/haproxy-manager/traffic-%$now-utc%.jsonl", self.rule)

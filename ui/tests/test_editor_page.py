@@ -752,9 +752,43 @@ class SaveAndPublish(EditorTestCase):
         self.queued.append(values)
         return SimpleNamespace(id=1, request_id=uuid4())
 
-    def publish(self) -> Any:
+    def publish(self, **fields: Any) -> Any:
+        #
+        # With a change in it. The fixture's stored object never moves, so a
+        # form submitted as opened is identical to what is stored - and that
+        # is exactly what the editor now refuses to publish.
+        #
         client = self.editor()
-        return self.submit(client, "/proxies/alpha/shop/edit", action="publish")
+        fields.setdefault("servers", "192.0.2.11:8080")
+        return self.submit(client, "/proxies/alpha/shop/edit", action="publish", **fields)
+
+    def test_an_identical_document_is_not_published(self) -> None:
+        """A publish is a version, and a version says what changed.
+
+        The helper would take it and answer with a verified no-op - its own
+        contract, kept for the repair of an interrupted run. From the editor
+        the same request was the way a cluster-level change got pushed out on
+        the back of an object that had not moved, with a history row naming
+        an object nobody had touched.
+        """
+
+        client = self.editor()
+        answer = self.submit(client, "/proxies/alpha/shop/edit", action="publish")
+
+        self.assertEqual(answer.status_code, 400)
+        self.assertIn("Nothing to publish", answer.text)
+        self.assertIn("identical to what is already stored", answer.text)
+        self.assertEqual(self.saved, [])
+        self.assertEqual(self.queued, [])
+
+    def test_an_identical_document_may_still_be_saved(self) -> None:
+        """The refusal is about publishing. Saving is the person's own business."""
+
+        client = self.editor()
+        answer = self.submit(client, "/proxies/alpha/shop/edit", action="save")
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(len(self.saved), 1)
 
     def test_it_saves_the_draft_and_queues_the_publish(self) -> None:
         answer = self.publish()
@@ -772,6 +806,7 @@ class SaveAndPublish(EditorTestCase):
 
         self.assertEqual(list(payload["objects"]), ["shop"])
         self.assertIn("name: shop", payload["objects"]["shop"])
+        self.assertIn("192.0.2.11", payload["objects"]["shop"])
         self.assertTrue(payload["comment"])
 
     def test_a_rename_publishes_the_new_name_and_the_removal_together(self) -> None:
@@ -813,11 +848,16 @@ class SaveAndPublish(EditorTestCase):
         """
 
         client = self.editor()
-        self.submit(client, "/proxies/alpha/shop/edit", action="publish")
+        changed = {"servers": "192.0.2.11:8080"}
+        self.submit(client, "/proxies/alpha/shop/edit", action="publish", **changed)
         self.submit(
-            client, "/proxies/alpha/shop/edit", action="publish", hostnames="other.example.com"
+            client,
+            "/proxies/alpha/shop/edit",
+            action="publish",
+            hostnames="other.example.com",
+            **changed,
         )
-        self.submit(client, "/proxies/alpha/shop/edit", action="publish")
+        self.submit(client, "/proxies/alpha/shop/edit", action="publish", **changed)
 
         keys = [entry["idempotency_key"] for entry in self.queued]
         self.assertEqual(len(keys), 3)

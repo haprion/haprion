@@ -2571,6 +2571,30 @@ def _editor_submit(
             request, config, cluster, name, form, draft_revision=form.expected_revision
         )
 
+    #
+    # A publish carries a change, or it is not a publish. The helper would
+    # take an identical document and answer with a verified no-op - that is
+    # its contract, and the repair an interrupted run relies on - but from
+    # here the same request is a person asking for a version that says
+    # nothing, and once it was used as the way to push a cluster-level change
+    # out on the back of an object that had not moved. The history row that
+    # makes is false at exactly the moment it needs to be exact. A change on
+    # the cluster level gets its own action; until then the answer is no.
+    #
+    # A rename is a change by definition, whatever the document says.
+    #
+    if form.action == "publish" and not renaming:
+        stored = next((view for view in state.stored if view.name == object_id), None)
+        if stored is not None and editor_module.unchanged(result.document, stored.document):
+            return _refusal_page(
+                request,
+                config,
+                f"Nothing to publish: {object_id} is identical to what is already stored. "
+                "Change something first - a publish is a version, and a version says "
+                "what changed.",
+                back=_proxy_path(cluster, object_id, "edit"),
+            )
+
     with request.app.state.pool.connection() as connection:
         try:
             if renamed_from:

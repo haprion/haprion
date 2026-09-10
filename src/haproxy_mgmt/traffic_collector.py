@@ -40,6 +40,14 @@ class CollectorError(ValueError):
     pass
 
 
+class SSHError(CollectorError):
+    pass
+
+
+class ProtocolError(CollectorError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class NodeTarget:
     cluster: str
@@ -158,7 +166,7 @@ def _bounded_ssh(argv: list[str]) -> tuple[int, bytes, bytes]:
     process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # noqa: S603
     if process.stdout is None or process.stderr is None:  # pragma: no cover - PIPE guarantees it
         process.kill()
-        raise CollectorError("cannot open SSH output pipes")
+        raise SSHError("cannot open SSH output pipes")
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ, "stdout")
     selector.register(process.stderr, selectors.EVENT_READ, "stderr")
@@ -168,10 +176,10 @@ def _bounded_ssh(argv: list[str]) -> tuple[int, bytes, bytes]:
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise CollectorError("SSH request timed out")
+                raise SSHError("SSH request timed out")
             ready = selector.select(remaining)
             if not ready:
-                raise CollectorError("SSH request timed out")
+                raise SSHError("SSH request timed out")
             for key, _ in ready:
                 chunk = os.read(key.fd, 64 * 1024)
                 if not chunk:
@@ -181,7 +189,7 @@ def _bounded_ssh(argv: list[str]) -> tuple[int, bytes, bytes]:
                 bucket.extend(chunk)
                 limit = MAX_HEADER_BYTES + MAX_SEND if key.data == "stdout" else MAX_STDERR
                 if len(bucket) > limit:
-                    raise CollectorError(f"SSH {key.data} exceeds its size limit")
+                    raise SSHError(f"SSH {key.data} exceeds its size limit")
         return process.wait(), bytes(held["stdout"]), bytes(held["stderr"])
     except BaseException:
         process.kill()
@@ -205,28 +213,28 @@ def _parse_response(raw: bytes, wanted: date, offset: int) -> Response:
     try:
         header_line, payload = raw.split(b"\n", 1)
     except ValueError as exc:
-        raise CollectorError("node response has no header") from exc
+        raise ProtocolError("node response has no header") from exc
     if len(header_line) > MAX_HEADER_BYTES:
-        raise CollectorError("node response header is too large")
+        raise ProtocolError("node response header is too large")
     try:
         header = json.loads(header_line)
     except (UnicodeError, json.JSONDecodeError) as exc:
-        raise CollectorError("node response header is not JSON") from exc
+        raise ProtocolError("node response header is not JSON") from exc
     expected = {"file", "size", "offset", "sent", "eof", "reset", "skipped_bytes"}
     if not isinstance(header, dict) or set(header) != expected:
-        raise CollectorError("node response header has unexpected or missing fields")
+        raise ProtocolError("node response header has unexpected or missing fields")
     if header["file"] != wanted.isoformat() or header["offset"] != offset:
-        raise CollectorError("node response does not match the request")
+        raise ProtocolError("node response does not match the request")
     for field in ("size", "offset", "sent", "skipped_bytes"):
         value = header[field]
         if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 2**63 - 1:
-            raise CollectorError(f"node response {field} is invalid")
+            raise ProtocolError(f"node response {field} is invalid")
     if not isinstance(header["eof"], bool) or not isinstance(header["reset"], bool):
-        raise CollectorError("node response flags are invalid")
+        raise ProtocolError("node response flags are invalid")
     if header["sent"] != len(payload) or len(payload) > MAX_SEND:
-        raise CollectorError("node response payload length is invalid")
+        raise ProtocolError("node response payload length is invalid")
     if payload and not payload.endswith(b"\n"):
-        raise CollectorError("node response ends in a partial record")
+        raise ProtocolError("node response ends in a partial record")
     advanced = offset + header["skipped_bytes"] + len(payload)
     if header["reset"]:
         if (
@@ -236,11 +244,11 @@ def _parse_response(raw: bytes, wanted: date, offset: int) -> Response:
             or not header["eof"]
             or header["size"] >= offset
         ):
-            raise CollectorError("node reset response is inconsistent")
+            raise ProtocolError("node reset response is inconsistent")
     elif advanced > header["size"]:
-        raise CollectorError("node response advances beyond its file size")
+        raise ProtocolError("node response advances beyond its file size")
     elif header["eof"] != (advanced == header["size"]):
-        raise CollectorError("node response eof flag is inconsistent")
+        raise ProtocolError("node response eof flag is inconsistent")
     return Response(
         size=header["size"],
         offset=header["offset"],
@@ -276,9 +284,12 @@ def ssh_fetch(config: CollectorConfig, target: NodeTarget, wanted: date, offset:
         target.host,
         f"{wanted.isoformat()} {offset}",
     ]
-    code, stdout, _stderr = _bounded_ssh(argv)
+    try:
+        code, stdout, _stderr = _bounded_ssh(argv)
+    except OSError as exc:
+        raise SSHError(f"cannot run SSH request: {exc}") from exc
     if code != 0:
-        raise CollectorError(f"SSH request failed with exit {code}")
+        raise SSHError(f"SSH request failed with exit {code}")
     return _parse_response(stdout, wanted, offset)
 
 
@@ -441,6 +452,14 @@ def _write_meta(
     _replace(path, content + b"\n")
 
 
+def _failure_outcome(exc: CollectorError | OSError) -> str:
+    if isinstance(exc, SSHError):
+        return "ssh"
+    if isinstance(exc, ProtocolError):
+        return "protocol"
+    return "disk"
+
+
 def collect_node(
     config: CollectorConfig,
     target: NodeTarget,
@@ -493,7 +512,7 @@ def collect_node(
             config,
             target,
             attempted=now,
-            outcome=type(exc).__name__.lower(),
+            outcome=_failure_outcome(exc),
             success=False,
         )
         raise

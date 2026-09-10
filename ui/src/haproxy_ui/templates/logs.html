@@ -14,11 +14,17 @@
   records are, not after them.
 #}
 <ul class="log-freshness">
-  {% for node, stale in freshness %}
-  <li class="log-freshness-item{% if stale is none %} is-silent{% elif stale > 300 %} is-stale{% endif %}">
+  {% for node, stale, attempted in freshness %}
+  <li class="log-freshness-item{% if node.latest_attempt_failed() %} is-silent{% elif stale is none %} is-silent{% elif stale > 300 %} is-stale{% endif %}">
     <span class="log-freshness-node">{{ node.cluster }} / {{ node.node }}</span>
     <span class="log-freshness-age">
-      {%- if stale is none -%}
+      {%- if stale is not none and node.latest_attempt_failed() -%}
+        last try {{ attempted | round | int }} s ago — failed ({{ node.outcome }}); last success
+        {%- if stale < 90 %} {{ stale | round | int }} s ago
+        {%- elif stale < 5400 %} {{ (stale / 60) | round | int }} min ago
+        {%- else %} {{ (stale / 3600) | round(1) }} h ago
+        {%- endif -%}
+      {%- elif stale is none -%}
         never reached{% if node.outcome != 'unknown' %} — {{ node.outcome }}{% endif %}
       {%- elif stale < 90 -%}
         {{ stale | round | int }} s ago
@@ -44,6 +50,7 @@
 
 {% if reading.unavailable %}<p class="notice notice-warning">One or more mirrors changed or could not be read. Reload to read the current files.</p>{% endif %}
 {% if reading.malformed %}<p class="activity-note">Ignored {{ reading.malformed }} malformed record{{ '' if reading.malformed == 1 else 's' }}.</p>{% endif %}
+{% if reading.truncated %}<p class="notice notice-warning">Filters searched only the newest {{ scan_mib_per_node }} MiB per node, within a {{ scan_mib_total }} MiB page-wide window. Older records were not searched.</p>{% endif %}
 
 <div class="table-scroll log-table-wrap">
   <table class="node-table log-table">

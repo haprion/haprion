@@ -1493,7 +1493,7 @@ def build_router(config: Config) -> APIRouter:
                 substring=selected_query,
             )
             if config.traffic_logs.enabled
-            else traffic_logs.Reading((), (), 0, False)
+            else traffic_logs.Reading((), (), 0, False, False)
         )
         now = datetime.now(UTC)
         return TEMPLATES.TemplateResponse(
@@ -1507,7 +1507,12 @@ def build_router(config: Config) -> APIRouter:
                 "management_writes": config.management_writes,
                 "enabled": config.traffic_logs.enabled,
                 "reading": reading,
-                "freshness": [(node, node.stale_seconds(now=now)) for node in reading.nodes],
+                "freshness": [
+                    (node, node.stale_seconds(now=now), node.attempt_seconds(now=now))
+                    for node in reading.nodes
+                ],
+                "scan_mib_per_node": traffic_logs.MAX_SCAN_BYTES // (1024 * 1024),
+                "scan_mib_total": traffic_logs.MAX_TOTAL_SCAN_BYTES // (1024 * 1024),
                 # Named, not implied. Moving off UTC without saying which clock
                 # replaced it would be worse than leaving it in UTC.
                 "time_zone": metrics.shown(now).tzname() or "local",

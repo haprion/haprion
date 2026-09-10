@@ -20,8 +20,11 @@ from haproxy_mgmt.traffic_collector import (
     CollectorConfig,
     CollectorError,
     NodeTarget,
+    ProtocolError,
     Response,
+    SSHError,
     _entry,
+    _failure_outcome,
     _parse_response,
     _replace,
     collect,
@@ -133,7 +136,7 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual(collect(self.config, now=NOW, fetch=good), 0)
 
         def failed(_target: NodeTarget, _wanted: date, _offset: int) -> Response:
-            raise CollectorError("unreachable")
+            raise SSHError("unreachable")
 
         later = datetime(2026, 9, 8, 12, 1, tzinfo=UTC)
         self.assertEqual(collect(self.config, now=later, fetch=failed), 1)
@@ -141,6 +144,7 @@ class TrafficCollectorTests(unittest.TestCase):
         meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
         self.assertEqual(meta["last_success"], NOW.isoformat())
         self.assertEqual(meta["last_attempt"], later.isoformat())
+        self.assertEqual(meta["outcome"], "ssh")
 
     def test_remote_reset_discards_the_local_day_without_advancing_a_cursor(self) -> None:
         part = self.staging / "alpha--node-a--2026-09-08.jsonl"
@@ -206,6 +210,11 @@ class TrafficCollectorTests(unittest.TestCase):
                 self.assertRaisesRegex(CollectorError, "inconsistent"),
             ):
                 _parse_response(raw, day, 0)
+
+    def test_metadata_failure_categories_are_stable_and_operator_facing(self) -> None:
+        self.assertEqual(_failure_outcome(SSHError("down")), "ssh")
+        self.assertEqual(_failure_outcome(ProtocolError("bad header")), "protocol")
+        self.assertEqual(_failure_outcome(OSError("full disk")), "disk")
 
     def test_every_temporary_file_is_renamed_within_one_directory(self) -> None:
         """The first real run failed on exactly this; a unit test now holds it.

@@ -8,6 +8,7 @@ import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from haproxy_ui.config import TrafficLogs
 from haproxy_ui.traffic_logs import MAX_RECORD_BYTES, Reading, parse, read
@@ -171,8 +172,10 @@ class TrafficLogReadingTests(unittest.TestCase):
 
         self.mirror("beta", "node-c", record())
 
-        self.assertEqual(read(self.root, ("alpha",)), Reading((), (), 0, False))
-        self.assertEqual(read(self.root, ("alpha",), cluster="beta"), Reading((), (), 0, False))
+        self.assertEqual(read(self.root, ("alpha",)), Reading((), (), 0, False, False))
+        self.assertEqual(
+            read(self.root, ("alpha",), cluster="beta"), Reading((), (), 0, False, False)
+        )
 
     def test_a_file_name_that_is_not_a_node_is_ignored(self) -> None:
         for name in ("alpha--.jsonl", "alpha--../escape.jsonl", "alpha--a b.jsonl"):
@@ -213,6 +216,15 @@ class TrafficLogReadingTests(unittest.TestCase):
         self.mirror("alpha", "node-a", *(record(request=n) for n in range(50)))
 
         self.assertEqual(len(read(self.root, ("alpha",), limit=10).entries), 10)
+
+    def test_a_bounded_tail_reports_that_older_records_were_not_searched(self) -> None:
+        self.mirror("alpha", "node-a", record(path="/old"), record(path="/new"))
+
+        with patch("haproxy_ui.traffic_logs.MAX_SCAN_BYTES", len(record()) + 1):
+            reading = read(self.root, ("alpha",))
+
+        self.assertTrue(reading.truncated)
+        self.assertEqual([entry.path for entry in reading.entries], ["/new"])
 
 
 class TheTrafficLogPage(LoginTestCase):
@@ -299,6 +311,39 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn("node-b", page)
         self.assertIn("never reached", page)
         self.assertIn("unreachable", page)
+
+    def test_a_failed_attempt_after_success_is_not_hidden_by_the_success_age(self) -> None:
+        now = datetime.now(UTC)
+        (self.root / "alpha--node-a.meta.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "cluster": "alpha",
+                    "node": "node-a",
+                    "last_attempt": now.isoformat(),
+                    "last_success": (now - timedelta(minutes=10)).isoformat(),
+                    "outcome": "ssh",
+                }
+            )
+        )
+
+        page = self.page()
+
+        self.assertIn("last try 0 s ago — failed (ssh)", page)
+        self.assertIn("last success 10 min ago", page)
+
+    def test_a_truncated_search_window_is_stated_on_the_page(self) -> None:
+        (self.root / "alpha--node-a.jsonl").write_bytes(
+            record(path="/old") + record(path="/new")
+        )
+
+        with patch(
+            "haproxy_ui.traffic_logs._tail", return_value=(record(path="/new"), True)
+        ):
+            page = self.page()
+
+        self.assertIn("Filters searched only the newest 16 MiB per node", page)
+        self.assertIn("Older records were not searched", page)
 
     def test_a_record_is_timed_in_the_host_s_clock_and_the_zone_is_named(self) -> None:
         """One clock across the interface, and the page says which one it is.

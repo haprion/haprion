@@ -69,6 +69,18 @@ class Freshness:
             return None
         return max(0.0, (now - self.last_success).total_seconds())
 
+    def attempt_seconds(self, *, now: datetime) -> float | None:
+        if self.last_attempt is None:
+            return None
+        return max(0.0, (now - self.last_attempt).total_seconds())
+
+    def latest_attempt_failed(self) -> bool:
+        return (
+            self.outcome not in {"ok", "unknown"}
+            and self.last_attempt is not None
+            and (self.last_success is None or self.last_attempt > self.last_success)
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class Reading:
@@ -76,6 +88,7 @@ class Reading:
     nodes: tuple[Freshness, ...]
     malformed: int
     unavailable: bool
+    truncated: bool
 
 
 def _text(value: Any, *, maximum: int) -> str:
@@ -229,13 +242,13 @@ def read(
 ) -> Reading:
     wanted = (cluster,) if cluster else clusters
     if cluster and cluster not in clusters:
-        return Reading((), (), 0, False)
+        return Reading((), (), 0, False, False)
     status_code = int(status) if status.isdigit() and len(status) == 3 else None
     status_class = (
         int(status[0]) if len(status) == 3 and status[1:] == "xx" and status[0].isdigit() else None
     )
     if status and status_code is None and status_class is None:
-        return Reading((), (), 0, False)
+        return Reading((), (), 0, False, False)
     needle = substring.casefold()[:200]
     proxy_needle = proxy.casefold()[:128]
 
@@ -243,6 +256,7 @@ def read(
     entries: list[Entry] = []
     nodes: list[Freshness] = []
     malformed = 0
+    any_truncated = False
     budget = MAX_TOTAL_SCAN_BYTES
 
     for cluster_id, node in targets:
@@ -256,6 +270,7 @@ def read(
             unavailable = True
             continue
         budget -= len(data)
+        any_truncated = any_truncated or truncated
         lines = data.splitlines()
         #
         # The first line of a truncated window is a record cut in half. Dropping
@@ -291,4 +306,4 @@ def read(
     # anything - it restarts with the process, and two nodes never share one.
     #
     entries.sort(key=lambda item: (item.at, item.node, item.request), reverse=True)
-    return Reading(tuple(entries[:limit]), tuple(nodes), malformed, unavailable)
+    return Reading(tuple(entries[:limit]), tuple(nodes), malformed, unavailable, any_truncated)

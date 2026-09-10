@@ -167,7 +167,7 @@ class ThePublishedVersionHasNoButton(LoginTestCase):
         self.assertIn('name="version" value="11"', page.text)
 
 
-PAGES = ("/", "/proxies", "/certificates", "/history", "/backups", "/jobs", "/activity")
+PAGES = ("/", "/proxies", "/certificates", "/history", "/backups", "/jobs")
 
 
 class TheModeBadgeAppearsOnlyWhenWritesAreOff(LoginTestCase):

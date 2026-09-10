@@ -19,7 +19,7 @@ from tests.test_login import LoginTestCase, configuration
 
 ONLY = demo.CLUSTERS[0]
 OTHER = demo.CLUSTERS[1]
-PAGES = ("/", "/proxies", "/certificates", "/history", "/backups", "/activity")
+PAGES = ("/", "/proxies", "/certificates", "/history", "/backups")
 
 
 def only_first(rows: tuple[Any, ...]) -> list[Any]:

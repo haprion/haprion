@@ -43,7 +43,6 @@ from haproxy_mgmt.proxy_model import (
 )
 
 from haproxy_ui import (
-    activity,
     auth,
     backups,
     certificates,
@@ -1646,43 +1645,6 @@ def build_router(config: Config) -> APIRouter:
                 "in_flight": running,
                 "management_writes": config.management_writes,
                 "section": "history",
-                "demo_fixture": config.demo_fixture,
-                "production_snapshot": config.production_snapshot,
-                "snapshot_age": snapshot_age(captured_at),
-            },
-        )
-
-    @router.get("/activity", response_class=HTMLResponse)
-    def latest_activity(request: Request) -> Response:
-        session = current_session(request)
-        if session is None:
-            return RedirectResponse("/login", status_code=303)
-        token = request.cookies.get(auth.SESSION_COOKIE, "")
-        clusters, status_rows, captured_at = read_source(request, config, STATUS_SOURCE)
-        current = dashboard.build_dashboard(
-            clusters,
-            status_rows,
-            now=captured_at,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            #
-            # The snapshot's readings describe the instant it was taken, so
-            # the freshness line says that rather than claiming the wall
-            # clock. Staleness is still judged the same way.
-            #
-            captured=captured_at is not None,
-        )
-        entries = activity.build_activity(current)
-        return TEMPLATES.TemplateResponse(
-            request,
-            "activity.html",
-            {
-                "username": session.username,
-                "role": session.role,
-                "csrf_token": auth.csrf_token(token),
-                "activity": entries,
-                "summary": activity.summarise_activity(entries),
-                "section": "activity",
-                "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
                 "snapshot_age": snapshot_age(captured_at),

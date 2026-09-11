@@ -20,6 +20,7 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haproxy-deploy` | `deploy` | `done`, `partial`, `failed`, `blocked` | Config reconcile per node |
 | `haproxy-revert` | `revert` | `done`, `failed`, `blocked` | New release built from an older version |
 | `haproxy-cert-deploy` | `cert_deploy` | `done`, `partial`, `failed`, `blocked` | Certificate reconcile per node |
+| `haproxy-cert-publish` | `cert_publish` | `done`, `partial`, `failed`, `blocked` | Registry-wide publication to clusters and receivers; `cluster` is always null |
 
 `blocked` means that no mutation started. `failed` means the request failed or a started operation
 could not verify any successful target state. `partial` means at least one target was verified but
@@ -30,7 +31,8 @@ the cluster did not converge. `done` includes a verified no-op.
 - `ok` is true only for `outcome=done`.
 - `partial` has at least one structured warning and a null top-level error.
 - `failed` and `blocked` have a structured top-level error.
-- `cluster` is null only when input failed before a valid cluster could be resolved.
+- `cluster` is null only when input failed before a valid cluster could be resolved, or for an
+  operation that spans clusters by definition (`cert_publish`), whose result names them instead.
 - `request_id` is UUID formatted and is returned on every path.
 - Messages are for humans. Callers branch only on `operation`, `outcome`, stable codes, and typed
   result fields.

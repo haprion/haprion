@@ -1,0 +1,22 @@
+#!/bin/bash
+#
+# certbot deploy hook: publish every registered certificate and roll out the
+# clusters that received a new version.
+#
+# Install as /etc/letsencrypt/renewal-hooks/deploy/50-haproxy-manager, mode
+# 755, root-owned. certbot runs every file in that directory after every
+# successful renewal, whichever lineage renewed.
+#
+# It does not look at RENEWED_LINEAGE. The publisher reads the registry and
+# writes only what changed, so running it for the whole registry after any
+# renewal costs a few file comparisons and needs no per-lineage logic here -
+# the place a hook that filtered by lineage used to go stale was exactly
+# this file.
+#
+# The release's own bin directory, not PATH: certbot's environment is not the
+# operator's, and the release this command comes from is the one whose
+# haproxy-cert-deploy it should use.
+#
+set -Eeuo pipefail
+
+exec /opt/haproxy-mgmt/current/bin/haproxy-cert-publish --deploy

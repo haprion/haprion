@@ -656,6 +656,64 @@ named before that convention - renaming a lineage moves certbot's archive, and i
 certificate published before the registry existed looks like, and it is listed so it can be
 registered rather than hidden.
 
+### 1.4.2 Publishing certificates
+
+`haproxy-cert-publish` is the one path from a certificate's source to every place it is read.
+It runs as root, takes no file, directory or account on its command line, and reads the registry
+for all three: which certificates exist, where each comes from, and where each goes.
+
+| Source | Read from |
+|---|---|
+| `acme` | `/etc/letsencrypt/live/<lineage>/` - `fullchain.pem` and `privkey.pem` |
+| `import` | `/etc/haproxy-manager/certificates/<id>/` - the same two files, written by the import helper |
+
+| Target | Written as | Owner and mode |
+|---|---|---|
+| a cluster | `<certificate_root>/<id>.pem`, the private key followed by the full chain - HAProxy's own format | `root`, the group that owns `certificate_root`, `640` |
+| a receiver | `<path>/fullchain.pem` and `<path>/privkey.pem` | the receiver's `owner`, `600` |
+
+Every certificate is checked before its first file is written - it parses, its private key
+belongs to it, and it has at least seven days left - and all of its targets are resolved first, so
+a certificate that cannot be published leaves nothing half-done. Each file is written as a
+temporary in its own directory, fsynced and renamed over the previous version: a reader sees the
+old file or the new one, never a partial one. A file whose bytes already match is not touched,
+which is what lets the command run after every renewal, or by hand at any time, without cost.
+The run holds one lock and waits for a concurrent run rather than refusing: the publisher is
+idempotent, so the second run does exactly the right thing after the first.
+
+An `import` entry whose directory does not exist yet is reported as skipped, not failed, and its
+published copy is left as it is. That is what a certificate published by hand before the import
+store existed looks like.
+
+With `--deploy`, every cluster that received a new version is rolled out afterwards with
+`haproxy-cert-deploy`, once each, after every file is written. Two clusters that carry the same
+certificate read the same file; it is written once and both are rolled out.
+
+```bash
+haproxy-cert-publish                 # publish what changed, report per certificate
+haproxy-cert-publish --json          # the same, as a result envelope
+haproxy-cert-publish --deploy        # ... and roll out the clusters that changed
+haproxy-cert-publish --certificate example.com   # one registered certificate only
+```
+
+**The certbot hook** is one file, [`../install/certbot-deploy-hook`](../install/certbot-deploy-hook),
+installed as `/etc/letsencrypt/renewal-hooks/deploy/50-haproxy-manager`:
+
+```bash
+sudo install -o root -g root -m 755 install/certbot-deploy-hook \
+  /etc/letsencrypt/renewal-hooks/deploy/50-haproxy-manager
+sudo certbot renew --dry-run --run-deploy-hooks
+```
+
+It runs `haproxy-cert-publish --deploy` and nothing else. certbot runs every hook in that directory
+after every successful renewal, whichever lineage renewed, and the publisher finds the changed one
+by comparing bytes - so there is no per-lineage logic in the hook to go stale when a certificate is
+added. A hook that filtered on a hardcoded lineage, and a second one that walked a list file, are
+what this replaces; remove them when this one is installed, or every renewal publishes twice.
+
+Nothing here renews anything. certbot stays authoritative for renewal, on its own timer; the
+publisher is what runs after it has.
+
 ### 1.5 Validation certificate
 
 Candidate validation runs a real `haproxy -c` against the candidate. Any configuration that

@@ -1,0 +1,47 @@
+# The certificate registry: which certificates exist, where each comes from,
+# and where it is published. Root-owned, beside clusters.yaml, and named by
+# `certificate_registry` in the runtime policy.
+#
+# Once the policy names this file, the per-cluster `certificate_ids` list in
+# clusters.yaml is refused: a cluster's certificates are the ones that name it
+# here, so there is one answer rather than two that can drift apart.
+#
+# Root decides which receivers exist - an account, a key and a directory are
+# what let anyone fetch key material at all. Which certificate goes to which
+# already-registered receiver is what the interface may change, through a
+# helper that accepts only targets registered here.
+schema_version: 1
+
+# Places other than clusters that certificates are published to. Each is a
+# directory under the distribution root and the account whose fetch key is
+# locked to that directory. Clusters are not listed here; clusters.yaml
+# describes them and they are only named below.
+receivers:
+  lb-01.example.net:
+    path: /srv/certificates/receivers/lb-01.example.net
+    owner: svc-app
+
+certificates:
+  # An ACME certificate whose certbot lineage was named before the ID
+  # convention existed. Issued from the interface, a certificate's lineage is
+  # its ID and the line is left out.
+  example.com:
+    source:
+      kind: acme
+      lineage: example.com-wildcard
+    clusters:
+      - alpha
+
+  example.net:
+    source:
+      kind: acme
+    clusters:
+      - alpha
+
+  # Issued by a private CA and imported. Published to a receiver only; no
+  # cluster carries it.
+  lb-01.example.net:
+    source:
+      kind: import
+    receivers:
+      - lb-01.example.net

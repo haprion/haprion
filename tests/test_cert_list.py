@@ -202,6 +202,63 @@ class ResultTests(unittest.TestCase):
             [True, True, False],
         )
 
+    def test_the_registry_says_where_a_certificate_comes_from_and_goes(self) -> None:
+        """With a registry (B135) every entry it names carries source and targets.
+
+        A file the registry does not name is still listed, with both null:
+        that is what a certificate published before the registry existed
+        looks like, and hiding it would hide exactly the ones to register.
+        """
+
+        from haproxy_mgmt import config
+
+        registry = config.Registry(
+            receivers={
+                "lb-01": config.Receiver(receiver_id="lb-01", path=Path("/x"), owner="svc-app")
+            },
+            certificates={
+                "alpha": config.RegisteredCertificate(
+                    certificate_id="alpha",
+                    source=config.CertificateSource(kind="acme", lineage="alpha-wildcard"),
+                    clusters=("alpha", "beta"),
+                    receivers=("lb-01",),
+                ),
+            },
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ("alpha", "bravo"):
+                (Path(directory) / f"{name}.pem").write_text(_pem(f"{name}.test"), encoding="ascii")
+            result = self._result(directory, ("alpha",), registry=registry)
+            document_result = cert_inventory.cert_list_result(
+                Path(directory),
+                _cluster(("alpha",)),
+                letsencrypt_root=Path(directory) / "none",
+                registry=registry,
+            )
+
+        by_id = {entry["id"]: entry for entry in result["certificates"]}
+        self.assertEqual(by_id["alpha"]["source"], {"kind": "acme", "lineage": "alpha-wildcard"})
+        self.assertEqual(
+            by_id["alpha"]["targets"], {"clusters": ["alpha", "beta"], "receivers": ["lb-01"]}
+        )
+        self.assertIsNone(by_id["bravo"]["source"])
+        self.assertIsNone(by_id["bravo"]["targets"])
+
+        from haproxy_mgmt.envelope import envelope
+
+        assert_contract(
+            "haproxy-cert-list",
+            json.dumps(
+                envelope(
+                    operation="cert_list",
+                    outcome="done",
+                    cluster="alpha",
+                    request_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    result=document_result,
+                )
+            ),
+        )
+
     def test_a_referenced_certificate_that_is_missing_is_listed_as_unusable(self) -> None:
         #
         # This is the case the listing is most needed for: cert-deploy refuses
@@ -377,6 +434,8 @@ class HelperTests(unittest.TestCase):
                     if cluster_id != "alpha":
                         raise ConfigError(f"unknown cluster '{cluster_id}'", exit_code=64)
                     return _cluster(("example.com",))
+
+                registry = None
 
             original_policy = cert_list_helper.load_policy
             original_config = cert_list_helper.load_runtime_config

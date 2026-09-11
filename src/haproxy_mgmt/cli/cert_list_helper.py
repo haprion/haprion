@@ -71,9 +71,8 @@ def main(
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
-        cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
-            request.cluster
-        )
+        runtime = load_runtime_config(policy, require_secure=require_secure)
+        cluster = runtime.cluster(request.cluster)
     except ConfigError as exc:
         errors.write(f"ERROR: {exc}\n")
         return write_failure(
@@ -98,7 +97,7 @@ def main(
         )
 
     try:
-        result = cert_list_result(policy.certificate_root, cluster)
+        result = cert_list_result(policy.certificate_root, cluster, registry=runtime.registry)
     except CertInventoryError as exc:
         return write_failure(
             writer,

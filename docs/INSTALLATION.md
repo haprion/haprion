@@ -604,6 +604,58 @@ resolvers cluster-dns
     hold valid 10s
 ```
 
+### 1.4.1 The certificate registry
+
+`certificate_ids` above is the allowlist form: the cluster names the certificates it may carry,
+by hand, in a root-owned file. It is what an installation starts with, and it is being replaced by
+a registry - one root-owned file beside `clusters.yaml` that says, for every certificate, where it
+comes from and where it goes:
+
+```yaml
+schema_version: 1
+
+receivers:
+  lb-01.example.net:
+    path: /srv/certificates/receivers/lb-01.example.net
+    owner: svc-app
+
+certificates:
+  example.com:
+    source:
+      kind: acme
+      lineage: example.com-wildcard
+    clusters:
+      - alpha
+  lb-01.example.net:
+    source:
+      kind: import
+    receivers:
+      - lb-01.example.net
+```
+
+Name it in the runtime policy as `certificate_registry`. From that moment a cluster's certificates
+are the ones that name it under `clusters`, and a `certificate_ids` list left in `clusters.yaml` is
+refused - the two would otherwise be two answers to one question, free to drift apart without
+anything noticing. Declaring the registry and moving the lists out of `clusters.yaml` is therefore
+one edit. `default_certificate` stays in `clusters.yaml` and must still be one the cluster carries.
+
+A **receiver** is somewhere other than a cluster that certificates are published to: a directory
+under the distribution root and the account whose fetch key is locked to it. Receivers are
+registered here by whoever administers the host, because an account, a key and a directory are what
+let anyone fetch key material at all. Which certificate goes to which already-registered receiver
+is the part the interface is allowed to change, and it does so through a helper that accepts only
+targets registered in this file.
+
+`source.kind` is `acme` for a certificate certbot renews and `import` for one signed elsewhere. An
+ACME certificate's `lineage` is its certbot lineage name; left out, it is the certificate ID, which
+is what a certificate issued from the interface gets. State it only where an existing lineage was
+named before that convention - renaming a lineage moves certbot's archive, and is not worth it.
+
+`haproxy-cert-list` reports `source` and `targets` for every certificate the registry names, and
+`null` for both on a file in the distribution directory that no entry names: that is what a
+certificate published before the registry existed looks like, and it is listed so it can be
+registered rather than hidden.
+
 ### 1.5 Validation certificate
 
 Candidate validation runs a real `haproxy -c` against the candidate. Any configuration that

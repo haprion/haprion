@@ -34,7 +34,37 @@
           "properties": {
             "referenced_by_cluster": { "type": "boolean" },
             "deployable": { "type": "boolean" },
-            "validation_error": { "type": ["string", "null"], "maxLength": 2048 }
+            "validation_error": { "type": ["string", "null"], "maxLength": 2048 },
+            "source": {
+              "description": "Where the certificate comes from, from the certificate registry. Null where the installation has no registry or no entry names this certificate.",
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "required": ["kind", "lineage"],
+                  "properties": {
+                    "kind": { "enum": ["acme", "import"] },
+                    "lineage": { "type": ["string", "null"], "maxLength": 255 }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "targets": {
+              "description": "Which clusters and receivers the certificate is published to, from the certificate registry. Null where source is null.",
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "required": ["clusters", "receivers"],
+                  "properties": {
+                    "clusters": { "type": "array", "items": { "type": "string", "maxLength": 63 } },
+                    "receivers": { "type": "array", "items": { "type": "string", "maxLength": 63 } }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            }
           }
         }
       ]

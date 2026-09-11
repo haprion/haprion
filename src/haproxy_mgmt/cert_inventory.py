@@ -41,7 +41,7 @@ from haproxy_mgmt.certificates import (
     leaf_block,
     leaf_fingerprint,
 )
-from haproxy_mgmt.config import Cluster
+from haproxy_mgmt.config import Cluster, RegisteredCertificate, Registry
 
 OPENSSL = "/usr/bin/openssl"
 LETSENCRYPT_ROOT = Path("/etc/letsencrypt")
@@ -152,8 +152,31 @@ def renewed_fingerprints(root: Path = LETSENCRYPT_ROOT) -> frozenset[str]:
     return frozenset(found)
 
 
+def _registered(entry: RegisteredCertificate | None) -> dict[str, Any]:
+    """What the registry says about a certificate: where from, and where to.
+
+    `None` for both when the installation has no registry, or the certificate
+    is a file in the distribution directory that no registry entry names -
+    which is a fact worth showing, not an error: it is what a certificate
+    published before the registry existed looks like.
+    """
+
+    if entry is None:
+        return {"source": None, "targets": None}
+    return {
+        "source": {"kind": entry.source.kind, "lineage": entry.source.lineage},
+        "targets": {"clusters": list(entry.clusters), "receivers": list(entry.receivers)},
+    }
+
+
 def _one(
-    root: Path, identifier: str, *, referenced: bool, renewed: frozenset[str], now: datetime
+    root: Path,
+    identifier: str,
+    *,
+    referenced: bool,
+    renewed: frozenset[str],
+    now: datetime,
+    registered: RegisteredCertificate | None = None,
 ) -> dict[str, Any]:
     #
     # A certificate that cannot be read still gets an entry: `deployable` and
@@ -180,6 +203,7 @@ def _one(
         "issuer": "unknown",
         "lifecycle": "static",
         "valid": False,
+        **_registered(registered),
     }
     try:
         path = certificate_path(root, identifier)
@@ -260,12 +284,18 @@ def cert_list_result(
     *,
     letsencrypt_root: Path = LETSENCRYPT_ROOT,
     now: datetime | None = None,
+    registry: Registry | None = None,
 ) -> dict[str, Any]:
     """The cluster's referenced certificates, then the rest of the directory.
 
     Both, because the two answer different questions. The referenced ones are
     what a rollout would send; the others are what could be chosen next, and a
     picker that could only see what is already configured would be no picker.
+
+    With a registry, each entry also says where the certificate comes from and
+    which clusters and receivers it goes to. A certificate published to a
+    receiver only is not in this directory and so not in this listing - it is
+    a per-cluster answer, and that certificate is nobody's here.
     """
 
     if not root.is_dir():
@@ -280,9 +310,17 @@ def cert_list_result(
         raise CertInventoryError(f"the certificate root {root} could not be read: {exc}") from exc
 
     order = list(referenced) + [name for name in present if name not in referenced]
+    entries = registry.certificates if registry is not None else {}
     return {
         "certificates": [
-            _one(root, name, referenced=name in referenced, renewed=renewed, now=clock)
+            _one(
+                root,
+                name,
+                referenced=name in referenced,
+                renewed=renewed,
+                now=clock,
+                registered=entries.get(name),
+            )
             for name in order
         ]
     }

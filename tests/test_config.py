@@ -544,3 +544,133 @@ class TheBrakeOnAbusiveTraffic(unittest.TestCase):
             self.protection({"window": "soon", "max_requests": 10})
 
         self.assertIn("duration", str(raised.exception))
+
+
+class TheCertificateRegistry(unittest.TestCase):
+    """B135: one root-owned file says where every certificate comes from and goes.
+
+    Declared in the runtime policy, and once declared it replaces the
+    per-cluster allowlist rather than sitting beside it.
+    """
+
+    def setup(self, root: Path, mutate_registry=None, mutate_clusters=None) -> Path:
+        registry = yaml.safe_load((BASE / "examples" / "certificates.yaml").read_text())
+        if mutate_registry is not None:
+            mutate_registry(registry)
+        registry_file = root / "certificates.yaml"
+        registry_file.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+
+        clusters = yaml.safe_load((BASE / "examples" / "clusters.yaml").read_text())
+        del clusters["clusters"]["alpha"]["certificate_ids"]
+        if mutate_clusters is not None:
+            mutate_clusters(clusters)
+        cluster_file = root / "clusters.yaml"
+        cluster_file.write_text(yaml.safe_dump(clusters, sort_keys=False), encoding="utf-8")
+
+        policy = yaml.safe_load((BASE / "examples" / "runtime-policy.yaml").read_text())
+        policy["cluster_file"] = str(cluster_file)
+        policy["certificate_registry"] = str(registry_file)
+        policy_file = root / "runtime-policy.yaml"
+        policy_file.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+        return policy_file
+
+    def load(self, mutate_registry=None, mutate_clusters=None):
+        with tempfile.TemporaryDirectory() as raw:
+            policy_file = self.setup(Path(raw), mutate_registry, mutate_clusters)
+            policy = load_policy(policy_file, require_secure=False)
+            return load_runtime_config(policy, require_secure=False)
+
+    def test_the_example_registry_loads_and_derives_the_cluster_list(self) -> None:
+        runtime = self.load()
+        assert runtime.registry is not None
+        self.assertEqual(runtime.cluster("alpha").certificate_ids, ("example.com", "example.net"))
+        self.assertEqual(sorted(runtime.registry.receivers), ["lb-01.example.net"])
+        entry = runtime.registry.certificates["lb-01.example.net"]
+        self.assertEqual(entry.source.kind, "import")
+        self.assertIsNone(entry.source.lineage)
+        self.assertEqual(entry.clusters, ())
+        self.assertEqual(entry.receivers, ("lb-01.example.net",))
+
+    def test_an_acme_lineage_defaults_to_the_certificate_id(self) -> None:
+        registry = self.load().registry
+        assert registry is not None
+        self.assertEqual(registry.certificates["example.net"].source.lineage, "example.net")
+        self.assertEqual(
+            registry.certificates["example.com"].source.lineage, "example.com-wildcard"
+        )
+
+    def test_the_allowlist_in_clusters_yaml_is_refused_once_the_registry_exists(self) -> None:
+        """One answer, not two that can drift apart."""
+
+        def keep_the_list(data):
+            data["clusters"]["alpha"]["certificate_ids"] = ["example.com"]
+
+        with self.assertRaisesRegex(ConfigError, "has moved to the certificate registry"):
+            self.load(mutate_clusters=keep_the_list)
+
+    def test_a_cluster_no_certificate_names_is_refused(self) -> None:
+        def nobody_names_alpha(data):
+            for entry in data["certificates"].values():
+                entry.pop("clusters", None)
+
+        with self.assertRaisesRegex(ConfigError, "no certificate in the registry names cluster"):
+            self.load(mutate_registry=nobody_names_alpha)
+
+    def test_the_default_certificate_must_still_be_one_the_cluster_carries(self) -> None:
+        def only_net(data):
+            data["certificates"]["example.com"]["clusters"] = []
+
+        with self.assertRaisesRegex(ConfigError, "default_certificate is not allowlisted"):
+            self.load(mutate_registry=only_net)
+
+    def test_a_certificate_naming_an_unknown_cluster_is_refused(self) -> None:
+        def typo(data):
+            data["certificates"]["example.net"]["clusters"] = ["alpha", "alhpa"]
+
+        with self.assertRaisesRegex(ConfigError, "names unknown cluster\\(s\\): alhpa"):
+            self.load(mutate_registry=typo)
+
+    def test_a_certificate_naming_an_unregistered_receiver_is_refused(self) -> None:
+        def typo(data):
+            data["certificates"]["lb-01.example.net"]["receivers"] = ["lb-02.example.net"]
+
+        with self.assertRaisesRegex(ConfigError, "unregistered receiver"):
+            self.load(mutate_registry=typo)
+
+    def test_a_lineage_on_an_imported_certificate_is_refused(self) -> None:
+        def contradiction(data):
+            data["certificates"]["lb-01.example.net"]["source"]["lineage"] = "x"
+
+        with self.assertRaisesRegex(ConfigError, "belongs to an acme source only"):
+            self.load(mutate_registry=contradiction)
+
+    def test_a_receiver_path_must_be_absolute_and_its_owner_an_account(self) -> None:
+        def relative(data):
+            data["receivers"]["lb-01.example.net"]["path"] = "receivers/lb-01"
+
+        with self.assertRaisesRegex(ConfigError, "must be absolute"):
+            self.load(mutate_registry=relative)
+
+        def bad_owner(data):
+            data["receivers"]["lb-01.example.net"]["owner"] = "Not An Account"
+
+        with self.assertRaisesRegex(ConfigError, "not a valid account name"):
+            self.load(mutate_registry=bad_owner)
+
+    def test_unknown_fields_are_refused_everywhere(self) -> None:
+        for where in (
+            lambda d: d.__setitem__("extra", 1),
+            lambda d: d["receivers"]["lb-01.example.net"].__setitem__("extra", 1),
+            lambda d: d["certificates"]["example.net"].__setitem__("extra", 1),
+            lambda d: d["certificates"]["example.net"]["source"].__setitem__("extra", 1),
+        ):
+            with self.assertRaisesRegex(ConfigError, "unknown field"):
+                self.load(mutate_registry=where)
+
+    def test_without_a_registry_the_allowlist_is_read_as_before(self) -> None:
+        policy = load_policy(BASE / "examples" / "runtime-policy.yaml", require_secure=False)
+        self.assertIsNone(policy.certificate_registry)
+        policy = replace(policy, cluster_file=BASE / "examples" / "clusters.yaml")
+        runtime = load_runtime_config(policy, require_secure=False)
+        self.assertIsNone(runtime.registry)
+        self.assertEqual(runtime.cluster("alpha").certificate_ids, ("example.com", "example.net"))

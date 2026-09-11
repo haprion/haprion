@@ -104,6 +104,14 @@ class PathPolicy:
     #
     backup_timer: str | None = None
 
+    #
+    # The certificate registry (B135): which certificates exist, where each
+    # comes from, and which clusters and receivers it goes to. Optional during
+    # the transition - an installation without one keeps its allowlist in
+    # `clusters.yaml` - and once declared, the allowlist must have moved.
+    #
+    certificate_registry: Path | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class DeployIdentity:
@@ -264,10 +272,75 @@ class Cluster:
         )
 
 
+#
+# The certificate registry, B135. One file, root-owned, beside `clusters.yaml`.
+#
+# A certificate is a source, an ID and a set of targets. A receiver is a
+# registered place certificates are published to, other than a cluster: a
+# directory under the distribution root and the account whose key fetches it.
+# Clusters are targets too, but they are described in `clusters.yaml` and only
+# named here.
+#
+# The registry replaces the per-cluster `certificate_ids` allowlist rather than
+# sitting beside it: with a registry, a cluster's list is derived from the
+# certificates that name it, and the allowlist in `clusters.yaml` is refused so
+# there is one answer to "which certificates does this cluster carry".
+#
+# What root decides is which receivers exist - an account, a key and a
+# directory are what let anyone fetch key material at all. Which certificate
+# goes to which already-trusted receiver is what the interface may change,
+# through a helper that accepts only registered targets.
+#
+SOURCE_KINDS = frozenset({"acme", "import"})
+RECEIVER_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
+
+
+@dataclass(frozen=True, slots=True)
+class CertificateSource:
+    kind: str
+    #
+    # The certbot lineage for `acme`. Defaults to the certificate ID, which is
+    # what a certificate issued from the interface gets; stated explicitly
+    # where an existing lineage was named before the ID convention existed.
+    #
+    lineage: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class Receiver:
+    receiver_id: str
+    path: Path
+    owner: str
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredCertificate:
+    certificate_id: str
+    source: CertificateSource
+    clusters: tuple[str, ...]
+    receivers: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Registry:
+    receivers: Mapping[str, Receiver]
+    certificates: Mapping[str, RegisteredCertificate]
+
+    def for_cluster(self, cluster_id: str) -> tuple[str, ...]:
+        """The certificate IDs that name this cluster, in registry order."""
+
+        return tuple(
+            entry.certificate_id
+            for entry in self.certificates.values()
+            if cluster_id in entry.clusters
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeConfig:
     schema_version: int
     clusters: Mapping[str, Cluster]
+    registry: Registry | None = None
 
     def cluster(self, cluster_id: str) -> Cluster:
         if not CLUSTER_ID.fullmatch(cluster_id):
@@ -513,9 +586,13 @@ def _networks(raw: Mapping[str, Any], location: str) -> Mapping[str, tuple[str, 
 # where the application already writes: `managed/`, under review, versioning
 # and revert. What stays behind in `clusters.yaml` is what describes the
 # machine rather than what is published on it - paths, identities, keys, the
-# resolvers section, the certificate allowlist, and the `vip` line `deploy`
-# checks ownership against. A control the interface can rewrite is not a
-# control, which is the whole reason that one line does not move.
+# resolvers section, and the `vip` line `deploy` checks ownership against. A
+# control the interface can rewrite is not a control, which is the whole
+# reason that one line does not move.
+#
+# The certificate allowlist used to be on that list. It moved to the
+# certificate registry (B135) with the control one step up: root registers
+# receivers, the interface chooses among them.
 #
 NETWORK_FILE = Path("managed/network.yaml")
 NETWORK_KEYS = {"vips", "default_vip", "sources", "networks"}
@@ -751,6 +828,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             "probe_identity",
             "backup_root",
             "backup_timer",
+            "certificate_registry",
         },
         "runtime policy",
     )
@@ -778,10 +856,99 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
         probe_identity=_deploy_identity(data, "probe_identity"),
         backup_root=_optional_root(data, "backup_root"),
         backup_timer=_optional_timer(data, "backup_timer"),
+        certificate_registry=_optional_root(data, "certificate_registry"),
     )
 
 
+def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
+    """The certificate registry, checked the way the cluster file is.
+
+    Cross-references to clusters are checked by `load_runtime_config`, which
+    is the only place both files are known.
+    """
+
+    data = _secure_yaml(path, require_secure=require_secure)
+    _only_keys(data, {"schema_version", "receivers", "certificates"}, "certificate registry")
+    schema_version = data.get("schema_version")
+    if type(schema_version) is not int or schema_version != 1:
+        raise ConfigError("certificate registry schema_version must be 1")
+
+    receivers: dict[str, Receiver] = {}
+    for receiver_id, raw_value in _mapping(data.get("receivers", {}), "receivers").items():
+        if not RECEIVER_ID.fullmatch(receiver_id):
+            raise ConfigError(f"invalid receiver ID in certificate registry: {receiver_id!r}")
+        location = f"receivers.{receiver_id}"
+        raw = _mapping(raw_value, location)
+        _only_keys(raw, {"path", "owner"}, location)
+        owner = _required_string(raw, "owner", location)
+        if not USERNAME.fullmatch(owner):
+            raise ConfigError(f"{location}.owner is not a valid account name")
+        receivers[receiver_id] = Receiver(
+            receiver_id=receiver_id,
+            path=_absolute_path(_required_string(raw, "path", location), f"{location}.path"),
+            owner=owner,
+        )
+
+    certificates: dict[str, RegisteredCertificate] = {}
+    for certificate_id, raw_value in _mapping(data.get("certificates", {}), "certificates").items():
+        if not CERTIFICATE_ID.fullmatch(certificate_id):
+            raise ConfigError(f"invalid certificate ID in certificate registry: {certificate_id!r}")
+        location = f"certificates.{certificate_id}"
+        raw = _mapping(raw_value, location)
+        _only_keys(raw, {"source", "clusters", "receivers"}, location)
+
+        raw_source = _mapping(raw.get("source"), f"{location}.source")
+        _only_keys(raw_source, {"kind", "lineage"}, f"{location}.source")
+        kind = _required_string(raw_source, "kind", f"{location}.source")
+        if kind not in SOURCE_KINDS:
+            raise ConfigError(
+                f"{location}.source.kind must be one of: {', '.join(sorted(SOURCE_KINDS))}"
+            )
+        lineage: str | None = None
+        if kind == "acme":
+            lineage = certificate_id
+            if raw_source.get("lineage") is not None:
+                lineage = _required_string(raw_source, "lineage", f"{location}.source")
+                if not CERTIFICATE_ID.fullmatch(lineage):
+                    raise ConfigError(f"{location}.source.lineage is not a lineage name")
+        elif raw_source.get("lineage") is not None:
+            raise ConfigError(f"{location}.source.lineage belongs to an acme source only")
+
+        clusters = _id_list(raw, "clusters", location, CLUSTER_ID)
+        named = _id_list(raw, "receivers", location, RECEIVER_ID)
+        unknown = sorted(set(named) - set(receivers))
+        if unknown:
+            raise ConfigError(
+                f"{location}.receivers names unregistered receiver(s): {', '.join(unknown)}"
+            )
+        certificates[certificate_id] = RegisteredCertificate(
+            certificate_id=certificate_id,
+            source=CertificateSource(kind=kind, lineage=lineage),
+            clusters=clusters,
+            receivers=named,
+        )
+    return Registry(receivers=receivers, certificates=certificates)
+
+
+def _id_list(
+    raw: Mapping[str, Any], key: str, location: str, rule: re.Pattern[str]
+) -> tuple[str, ...]:
+    """An optional list of identifiers; absent means none, and none is allowed."""
+
+    value = raw.get(key, [])
+    if not isinstance(value, list):
+        raise ConfigError(f"{location}.{key} must be a list")
+    if any(not isinstance(item, str) or not rule.fullmatch(item) for item in value):
+        raise ConfigError(f"{location}.{key} contains an invalid ID")
+    if len(set(value)) != len(value):
+        raise ConfigError(f"{location}.{key} contains duplicates")
+    return tuple(value)
+
+
 def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> RuntimeConfig:
+    registry: Registry | None = None
+    if policy.certificate_registry is not None:
+        registry = load_registry(policy.certificate_registry, require_secure=require_secure)
     data = _secure_yaml(policy.cluster_file, require_secure=require_secure)
     _only_keys(data, {"schema_version", "clusters"}, "cluster configuration")
     schema_version = data.get("schema_version")
@@ -839,17 +1006,33 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
         if not NODE_PATH.fullmatch(node_path):
             raise ConfigError(f"{location}.node_path is invalid")
 
-        raw_certificates = raw.get("certificate_ids")
-        if not isinstance(raw_certificates, list) or not raw_certificates:
-            raise ConfigError(f"{location}.certificate_ids must be a non-empty list")
-        certificate_ids = tuple(raw_certificates)
-        if any(
-            not isinstance(item, str) or not CERTIFICATE_ID.fullmatch(item)
-            for item in certificate_ids
-        ):
-            raise ConfigError(f"{location}.certificate_ids contains an invalid ID")
-        if len(set(certificate_ids)) != len(certificate_ids):
-            raise ConfigError(f"{location}.certificate_ids contains duplicates")
+        if registry is not None:
+            #
+            # One answer, not two. The registry names the clusters each
+            # certificate goes to, so a list here would either agree with it
+            # (and be redundant) or disagree (and be wrong in a way nothing
+            # would notice). Refused, so declaring the registry is the same
+            # edit as moving the lists out of this file.
+            #
+            if "certificate_ids" in raw:
+                raise ConfigError(
+                    f"{location}.certificate_ids has moved to the certificate registry"
+                )
+            certificate_ids = registry.for_cluster(cluster_id)
+            if not certificate_ids:
+                raise ConfigError(f"no certificate in the registry names cluster {cluster_id!r}")
+        else:
+            raw_certificates = raw.get("certificate_ids")
+            if not isinstance(raw_certificates, list) or not raw_certificates:
+                raise ConfigError(f"{location}.certificate_ids must be a non-empty list")
+            certificate_ids = tuple(raw_certificates)
+            if any(
+                not isinstance(item, str) or not CERTIFICATE_ID.fullmatch(item)
+                for item in certificate_ids
+            ):
+                raise ConfigError(f"{location}.certificate_ids contains an invalid ID")
+            if len(set(certificate_ids)) != len(certificate_ids):
+                raise ConfigError(f"{location}.certificate_ids contains duplicates")
         default_certificate = _required_string(raw, "default_certificate", location)
         if default_certificate not in certificate_ids:
             raise ConfigError(f"{location}.default_certificate is not allowlisted")
@@ -937,4 +1120,18 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             nodes=tuple(nodes),
             traffic_logging=traffic_logging,
         )
-    return RuntimeConfig(schema_version=1, clusters=clusters)
+    if registry is not None:
+        #
+        # A certificate naming a cluster that does not exist is the one
+        # cross-reference only this function can check. Refused rather than
+        # ignored: a typo here would silently stop a certificate reaching the
+        # cluster the operator meant.
+        #
+        for entry in registry.certificates.values():
+            unknown = sorted(set(entry.clusters) - set(clusters))
+            if unknown:
+                raise ConfigError(
+                    f"certificates.{entry.certificate_id}.clusters names unknown "
+                    f"cluster(s): {', '.join(unknown)}"
+                )
+    return RuntimeConfig(schema_version=1, clusters=clusters, registry=registry)

@@ -61,7 +61,7 @@ psql_as() { psql -U "$DB_MIGRATION_ROLE" -d "$DB_NAME" -qtAX -v ON_ERROR_STOP=1 
 
 if [[ "$clear_only" -eq 1 ]]; then
     removed="$(psql_as -c "with gone as (
-                               delete from metric_pool_member
+                               delete from metric_backend_member
                                 where cluster = '${cluster}' and backend = '${backend}'
                                returning 1
                            ) select count(*) from gone")"
@@ -75,7 +75,7 @@ step "Partitions"
 # horizon ahead of today and drops what is behind. Backfilling needs the days
 # the rows belong in to exist first.
 #
-psql_as -c "select metric_partition('metric_pool_member', day::date)
+psql_as -c "select metric_partition('metric_backend_member', day::date)
               from generate_series(current_date - 31, current_date, interval '1 day') as day" \
         >/dev/null
 log "  created  32 day(s) of partitions, back to $(date -d '31 days ago' +%F)"
@@ -100,7 +100,7 @@ step "Samples"
 # node could produce.
 #
 psql_as <<SQL
-insert into metric_pool_member
+insert into metric_backend_member
     (cluster, node, backend, member, observed_at, uptime_sec, status,
      check_status, check_code, req_tot, stot, hrsp_2xx, hrsp_4xx, hrsp_5xx,
      econ, wretr, scur, bin, bout)
@@ -144,7 +144,7 @@ from (
 window w as (partition by restarted order by at);
 SQL
 
-written="$(psql_as -c "select count(*) from metric_pool_member
+written="$(psql_as -c "select count(*) from metric_backend_member
                         where cluster = '${cluster}' and backend = '${backend}'")"
 log "  wrote    ${written} synthetic sample(s) for ${backend}"
 log "  remove   them with: $(basename "$0") --clear ${answers} ${cluster} ${object} ${pool}"

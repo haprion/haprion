@@ -171,7 +171,7 @@ class WhenTheSampleCannotBeWritten(unittest.TestCase):
 
     class FailingPool:
         def connection(self) -> Any:
-            raise RuntimeError("no partition of metric_listener for 2026-11-05")
+            raise RuntimeError("no partition of metric_frontend for 2026-11-05")
 
     def test_the_pass_survives_a_write_that_failed(self) -> None:
         source = poller.Source(

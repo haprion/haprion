@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import unittest
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 import psycopg
 
@@ -22,7 +25,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0022",))
+            self.assertEqual(cursor.fetchone(), ("0023",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -61,13 +64,13 @@ class ARealDatabase(unittest.TestCase):
     def test_poller_can_write_metrics_but_cannot_read_jobs(self) -> None:
         now = datetime.now(UTC)
         with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("select metric_partition('metric_listener', %s::date)", (now.date(),))
+            cursor.execute("select metric_partition('metric_frontend', %s::date)", (now.date(),))
         with (
             self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection,
             connection.cursor() as cursor,
         ):
             cursor.execute(
-                "insert into metric_listener "
+                "insert into metric_frontend "
                 "(cluster, node, frontend, owns_vip, uptime_sec, req_tot) "
                 "values ('alpha', 'node-a', 'mgd-main-http', true, 60, 1)"
             )
@@ -78,12 +81,12 @@ class ARealDatabase(unittest.TestCase):
         ):
             cursor.execute("select id from job limit 0")
 
-    def test_listener_buckets_never_mix_two_nodes_uptime(self) -> None:
+    def test_frontend_buckets_never_mix_two_nodes_uptime(self) -> None:
         start = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(minutes=20)
         with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("select metric_partition('metric_listener', %s::date)", (start.date(),))
+            cursor.execute("select metric_partition('metric_frontend', %s::date)", (start.date(),))
             cursor.executemany(
-                "insert into metric_listener "
+                "insert into metric_frontend "
                 "(cluster, node, frontend, observed_at, owns_vip, uptime_sec, req_tot) "
                 "values (%s, %s, %s, %s, true, %s, %s)",
                 [
@@ -100,7 +103,7 @@ class ARealDatabase(unittest.TestCase):
                 ],
             )
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
-            samples = db.read_listener_samples(
+            samples = db.read_frontend_samples(
                 connection,
                 cluster="alpha",
                 frontend="mgd-main-http",
@@ -112,3 +115,133 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual(set(by_node), {"node-a", "node-b"})
         self.assertEqual(by_node["node-a"].floor_uptime_sec, 5000)
         self.assertEqual(by_node["node-b"].floor_uptime_sec, 10)
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheMetricTablesUnderTheirNewNames(unittest.TestCase):
+    """Migration 0023 renamed the metric tables and left the old names as views.
+
+    The views are what let the UI release before the rename accept this
+    revision: it reads and writes `metric_listener` during the minutes between
+    migration and activation, and again if the rename is rolled back. So the
+    old names must carry exactly the old grants, and a row written through one
+    name must be the row read through the other.
+    """
+
+    MIGRATION = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "versions"
+        / "0023_metric_table_names.py"
+    )
+
+    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def test_the_old_names_are_views_over_the_new_tables(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select relname, relkind from pg_class where relname in "
+                "('metric_frontend', 'metric_backend_member', 'metric_backend_hour', "
+                " 'metric_listener', 'metric_pool_member', 'metric_pool_hour') order by 1"
+            )
+            self.assertEqual(
+                cursor.fetchall(),
+                [
+                    ("metric_backend_hour", "p"),
+                    ("metric_backend_member", "p"),
+                    ("metric_frontend", "p"),
+                    ("metric_listener", "v"),
+                    ("metric_pool_hour", "v"),
+                    ("metric_pool_member", "v"),
+                ],
+            )
+
+    def test_the_poller_writes_the_old_name_and_the_web_reads_the_new(self) -> None:
+        day = datetime.now(UTC).date()
+        with self.connect() as connection, connection.cursor() as cursor:
+            #
+            # Asked for under the old name, as the retention command installed
+            # beside the previous release still does; made under the new one.
+            #
+            cursor.execute("select metric_partition('metric_listener', %s::date)", (day,))
+            self.assertEqual(cursor.fetchone(), (f"metric_frontend_{day:%Y%m%d}",))
+        with (
+            self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
+                "insert into metric_listener "
+                "(cluster, node, frontend, owns_vip, uptime_sec, req_tot) "
+                "values ('bridge', 'node-a', 'mgd-old-name', true, 60, 7)"
+            )
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select req_tot, observed_at is not null from metric_frontend "
+                "where cluster = 'bridge' and frontend = 'mgd-old-name'"
+            )
+            self.assertEqual(cursor.fetchall(), [(7, True)])
+
+    def test_the_rollup_boundary_moved_with_the_table(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+            cursor.execute("select rollup_name from metric_rollup_state order by 1")
+            self.assertEqual(cursor.fetchall(), [("backend_hour",)])
+
+    def test_partitions_and_their_indexes_are_renamed_with_the_parent(self) -> None:
+        """The rename loop, exercised against a partition it has to carry along.
+
+        The harness migrates an empty database, so no partition existed when
+        0023 ran. This makes one, runs the migration's own downgrade and upgrade
+        through the same statements alembic would, and checks the partition, its
+        primary key, the read index and the check constraint changed prefix each
+        way - because the retention command finds partitions by prefix, and one
+        left behind would never be dropped.
+        """
+
+        day = datetime.now(UTC).date() + timedelta(days=200)
+        suffix = f"{day:%Y%m%d}"
+        migration = self.load_migration()
+
+        def names(cursor: psycopg.Cursor, prefix: str) -> set[str]:
+            cursor.execute(
+                "select relname from pg_class where relname like %s "
+                "union select conname from pg_constraint where conname like %s",
+                (prefix + "%", prefix + "%"),
+            )
+            return {row[0] for row in cursor.fetchall()}
+
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select metric_partition('metric_frontend', %s::date)", (day,))
+            migration.op = _Executes(cursor)
+            migration.downgrade()
+            old = names(cursor, "metric_listener")
+            self.assertIn(f"metric_listener_{suffix}", old)
+            self.assertIn(f"metric_listener_{suffix}_pkey", old)
+            self.assertIn("metric_listener_read", old)
+            self.assertIn("metric_listener_cluster_shape", old)
+            self.assertFalse(names(cursor, "metric_frontend"))
+            migration.upgrade()
+            new = names(cursor, "metric_frontend")
+            self.assertIn(f"metric_frontend_{suffix}", new)
+            self.assertIn(f"metric_frontend_{suffix}_pkey", new)
+            self.assertIn("metric_frontend_read", new)
+            self.assertIn("metric_frontend_cluster_shape", new)
+            self.assertEqual(names(cursor, "metric_listener"), {"metric_listener"})
+
+    def load_migration(self) -> Any:
+        spec = importlib.util.spec_from_file_location("migration_0023", self.MIGRATION)
+        if spec is None or spec.loader is None:
+            self.fail(f"cannot load {self.MIGRATION}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+
+class _Executes:
+    """What the migration needs of alembic's `op`: `execute`, on our cursor."""
+
+    def __init__(self, cursor: psycopg.Cursor) -> None:
+        self.cursor = cursor
+
+    def execute(self, sql: str) -> None:
+        self.cursor.execute(sql)

@@ -29,6 +29,7 @@ RETENTION = ROOT / "install" / "platform" / "bin" / "haproxy-ui-retention"
 NODE_SCRIPT = ROOT / "install" / "node" / "haproxy-node-status"
 ROLLUP = ROOT / "ui" / "migrations" / "versions" / "0020_metric_pool_hour.py"
 ROLLUP_STATE = ROOT / "ui" / "migrations" / "versions" / "0021_metric_rollup_state.py"
+RENAME = ROOT / "ui" / "migrations" / "versions" / "0023_metric_table_names.py"
 
 
 class BackendTotalConnection:
@@ -104,8 +105,8 @@ class ThePoolFiguresQuery(unittest.TestCase):
             until=at,
         )
 
-        self.assertIn("metric_pool_member", connection.statement)
-        self.assertIn("metric_pool_hour", connection.statement)
+        self.assertIn("metric_backend_member", connection.statement)
+        self.assertIn("metric_backend_hour", connection.statement)
         self.assertNotIn("date_bin", connection.statement)
         self.assertNotIn("width", connection.arguments)
         self.assertEqual(connection.arguments["raw_from"], at - timedelta(days=7))
@@ -282,10 +283,13 @@ class TheMetricTables(unittest.TestCase):
         self.assertNotIn("cluster_status", SAMPLE_INSTANT.read_text())
 
     def test_the_partition_function_refuses_a_table_it_does_not_know(self) -> None:
+        """Asked of 0023, which replaced the function when the tables were renamed."""
+
+        current = RENAME.read_text()
         self.assertIn(
-            "if table_name not in ('metric_listener', 'metric_pool_member') then", self.sql
+            "if table_name not in ('metric_frontend', 'metric_backend_member') then", current
         )
-        self.assertIn("raise exception 'not a metric table: %', table_name;", self.sql)
+        self.assertIn("raise exception 'not a metric table: %', table_name;", current)
 
 
 class WhatTheRollupPromises(unittest.TestCase):
@@ -341,7 +345,7 @@ class WhatTheRollupPromises(unittest.TestCase):
     def test_backend_raw_data_is_gated_by_completion_and_a_safety_day(self) -> None:
         predicate = self.script.split("metric_partitions_expired() {", 1)[1].split("\n}", 1)[0]
         self.assertIn(
-            'if [[ "$table" == "metric_pool_member" ]] && rollup_state_present', predicate
+            'if [[ "$table" == "metric_backend_member" ]] && rollup_state_present', predicate
         )
         self.assertIn("complete_before - make_interval", predicate)
         self.assertIn("METRIC_ROLLUP_SAFETY_DAYS", predicate)
@@ -393,7 +397,7 @@ class WhatTheRetentionCommandKeeps(unittest.TestCase):
     def test_the_partitions_are_this_command_s_work_and_not_the_poller_s(self) -> None:
         """B93: no application role holds `create` on the schema."""
 
-        self.assertIn("METRIC_TABLES=(metric_listener metric_pool_member)", self.script)
+        self.assertIn("METRIC_TABLES=(metric_frontend metric_backend_member)", self.script)
         self.assertIn("metric_partition(", self.script)
 
     def test_the_horizon_is_long_enough_that_a_missed_run_is_harmless(self) -> None:
@@ -441,7 +445,7 @@ class WhatTheRetentionCommandKeeps(unittest.TestCase):
         retention silently stops.
         """
 
-        self.assertIn("to_regclass('public.metric_listener') is not null", self.script)
+        self.assertIn("to_regclass('public.metric_frontend') is not null", self.script)
         for function in ("metrics_report() {", "metric_partitions_prepare() {"):
             body = self.script.split(function, 1)[1].split("\n}", 1)[0]
             with self.subTest(function=function):
@@ -496,8 +500,8 @@ class TheListenerQueriesReadWhatTheyClaimTo(unittest.TestCase):
             until=self.AT,
         )
 
-        self.assertIn("metric_listener", connection.statement)
-        self.assertNotIn("metric_pool_hour", connection.statement)
+        self.assertIn("metric_frontend", connection.statement)
+        self.assertNotIn("metric_backend_hour", connection.statement)
         self.assertNotIn("raw_from", connection.arguments)
 
     def test_the_figures_are_the_holding_node_s(self) -> None:

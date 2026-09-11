@@ -46,7 +46,7 @@ KEEP_MINIMUM=20
 # the partition it writes them into. This command is already the one privileged,
 # scheduled hand on this database, so it is where the horizon is kept. See B93.
 #
-METRIC_TABLES=(metric_listener metric_pool_member)
+METRIC_TABLES=(metric_frontend metric_backend_member)
 
 #
 # Raw samples are kept for a week, which is what the phase decided, and one
@@ -68,8 +68,8 @@ METRIC_AHEAD_DAYS=60
 # The hourly rollup, and how long it is kept. A year, which is what the phase
 # decided, in monthly partitions.
 #
-METRIC_ROLLUP_TABLE=metric_pool_hour
-METRIC_ROLLUP_NAME=pool_hour
+METRIC_ROLLUP_TABLE=metric_backend_hour
+METRIC_ROLLUP_NAME=backend_hour
 METRIC_ROLLUP_KEEP_DAYS=365
 METRIC_ROLLUP_SAFETY_DAYS=1
 
@@ -111,7 +111,7 @@ usage() {
 metric_partitions_expired() {
     local table="$1"
     local completed=""
-    if [[ "$table" == "metric_pool_member" ]] && rollup_state_present; then
+    if [[ "$table" == "metric_backend_member" ]] && rollup_state_present; then
         #
         # Age alone is not proof that the derived copy exists. Keep the whole
         # partition unless the rollup's continuous boundary is at least one
@@ -154,7 +154,7 @@ SQL
 # a single job row.
 #
 metrics_present() {
-    [[ "$(psql_as -c "select to_regclass('public.metric_listener') is not null")" == "t" ]]
+    [[ "$(psql_as -c "select to_regclass('public.metric_frontend') is not null")" == "t" ]]
 }
 
 rollup_state_present() {
@@ -234,7 +234,7 @@ with boundary as (
                partition by cluster, node, backend, member, date_trunc('hour', observed_at)
            ) as floor_uptime_sec,
            ${METRIC_COUNTERS}
-      from metric_pool_member
+      from metric_backend_member
      where observed_at < (select complete_before from boundary)
      order by cluster, node, backend, member, bucket, observed_at desc
 ), added as (
@@ -280,7 +280,7 @@ with hours as (
                partition by cluster, node, backend, member, date_trunc('hour', observed_at)
            ) as floor_uptime_sec,
            ${METRIC_COUNTERS}
-      from metric_pool_member
+      from metric_backend_member
      where observed_at < date_trunc('hour', statement_timestamp())
                          - make_interval(days => ${METRIC_ROLLUP_LAG_DAYS})
      order by cluster, node, backend, member, bucket, observed_at desc

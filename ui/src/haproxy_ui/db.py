@@ -1534,7 +1534,7 @@ def record_metric_samples(
     with connection.cursor() as cursor:
         if frontends:
             cursor.executemany(
-                _sample_insert("metric_listener", ("node", "frontend", "owns_vip")),
+                _sample_insert("metric_frontend", ("node", "frontend", "owns_vip")),
                 [
                     {
                         "cluster": cluster,
@@ -1551,7 +1551,7 @@ def record_metric_samples(
         if members:
             cursor.executemany(
                 _sample_insert(
-                    "metric_pool_member",
+                    "metric_backend_member",
                     ("node", "backend", "member", "check_status", "check_code"),
                 ),
                 [
@@ -1636,7 +1636,7 @@ def _bucketed_raw(width: timedelta) -> sql.Composed:
         "                  partition by node, "
         "                               date_bin(%(width)s, observed_at, timestamptz '2000-01-01') "
         "              ) as floor_uptime_sec "
-        "         from metric_pool_member "
+        "         from metric_backend_member "
         "        where cluster = %(cluster)s and backend = %(backend)s "
         "          and member = %(member)s and observed_at >= %(since)s "
         "          and observed_at >= %(raw_from)s "
@@ -1658,7 +1658,7 @@ def _rolled_up() -> sql.Composed:
     columns = sql.SQL(", ").join(sql.Identifier(name) for name in metrics.METRIC_COUNTERS)
     return sql.SQL(
         "select bucket_at as at, observed_at, uptime_sec, floor_uptime_sec, node, {columns} "
-        "  from metric_pool_hour "
+        "  from metric_backend_hour "
         " where cluster = %(cluster)s and backend = %(backend)s "
         "   and member = %(member)s and bucket_at >= date_trunc('hour', %(since)s) "
         "   and bucket_at < %(raw_from)s and observed_at >= %(since)s "
@@ -1684,7 +1684,7 @@ def _backend_history_boundary(
         return retained_from
     with connection.cursor() as cursor:
         cursor.execute(
-            "select complete_before from metric_rollup_state where rollup_name = 'pool_hour'"
+            "select complete_before from metric_rollup_state where rollup_name = 'backend_hour'"
         )
         row = cursor.fetchone()
     if row is None or not isinstance(row[0], datetime):
@@ -1761,7 +1761,7 @@ def read_backend_samples(
 def _bucketed_frontend(width: timedelta) -> sql.Composed:
     """One frontend's raw readings on one node, reduced to one per bucket.
 
-    The same reduction the backend query makes, against `metric_listener` and
+    The same reduction the backend query makes, against `metric_frontend` and
     without a rollup half: frontends have no rollup, and their raw rows are
     kept for a fixed seven days. A window reaching further back is answered by
     the part of it that still exists, which the card's own coverage states.
@@ -1805,7 +1805,7 @@ def _bucketed_frontend(width: timedelta) -> sql.Composed:
         "                               date_bin("
         "                                   %(width)s, observed_at, timestamptz '2000-01-01')"
         "              ) as floor_uptime_sec "
-        "         from metric_listener "
+        "         from metric_frontend "
         "        where cluster = %(cluster)s and frontend = %(frontend)s "
         "          and owns_vip and observed_at >= %(since)s "
         "          and observed_at <= %(until)s "
@@ -1881,7 +1881,7 @@ def read_cluster_frontends(
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "select frontend, coalesce(bool_or(owns_vip), false) from metric_listener "
+            "select frontend, coalesce(bool_or(owns_vip), false) from metric_frontend "
             " where cluster = %(cluster)s "
             "   and observed_at >= %(since)s and observed_at <= %(until)s "
             " group by frontend order by frontend",
@@ -1902,7 +1902,7 @@ def read_cluster_backends(
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "select distinct backend from metric_pool_member "
+            "select distinct backend from metric_backend_member "
             " where cluster = %(cluster)s and member = 'BACKEND' "
             "   and observed_at >= %(since)s and observed_at <= %(until)s "
             " order by backend",
@@ -1953,13 +1953,13 @@ def _backend_totals() -> sql.Composed:
     return sql.SQL(
         "with readings as ("
         "    select observed_at, uptime_sec, uptime_sec as floor_uptime_sec, node, {columns} "
-        "      from metric_pool_member "
+        "      from metric_backend_member "
         "     where cluster = %(cluster)s and backend = %(backend)s "
         "       and member = %(member)s and observed_at >= %(since)s "
         "       and observed_at >= %(raw_from)s and observed_at <= %(until)s "
         "    union all "
         "    select observed_at, uptime_sec, floor_uptime_sec, node, {columns} "
-        "      from metric_pool_hour "
+        "      from metric_backend_hour "
         "     where cluster = %(cluster)s and backend = %(backend)s "
         "       and member = %(member)s "
         "       and bucket_at >= date_trunc('hour', %(since)s) "
@@ -2036,7 +2036,7 @@ def _frontend_totals() -> sql.Composed:
     return sql.SQL(
         "with readings as ("
         "    select observed_at, uptime_sec, uptime_sec as floor_uptime_sec, node, {columns} "
-        "      from metric_listener "
+        "      from metric_frontend "
         "     where cluster = %(cluster)s and frontend = %(frontend)s "
         "       and owns_vip and observed_at >= %(since)s "
         "       and observed_at <= %(until)s"

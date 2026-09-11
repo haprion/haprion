@@ -22,6 +22,9 @@ from uuid import UUID
 
 from haproxy_mgmt.cli import (
     cert_deploy,
+    cert_issue_helper,
+    cert_publish_helper,
+    cert_target_helper,
     deploy,
     managed_network_publish,
     managed_objects_publish,
@@ -86,15 +89,142 @@ def _only(payload: Mapping[str, Any], *allowed: str) -> None:
         raise BadPayload(f"unexpected parameters: {', '.join(unexpected)}")
 
 
+def _targets(payload: Mapping[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The two target lists, checked here as well as in the helper.
+
+    Both ends check them for the reason this module's docstring gives: a payload
+    has been sitting in a table since a form built it. This end refuses with a
+    sentence the page can show; the helper's own refusal would arrive as a failed
+    job instead, after the operation had been queued and claimed.
+    """
+
+    lists = []
+    for name in ("clusters", "receivers"):
+        value = payload.get(name, [])
+        if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+            raise BadPayload(f"{name} must be a list of identifiers")
+        lists.append(tuple(value))
+    if not lists[0] and not lists[1]:
+        raise BadPayload("at least one target (cluster or receiver) is required")
+    return lists[0], lists[1]
+
+
+CERTIFICATE_OPERATIONS = frozenset({"cert_issue", "cert_publish", "cert_target"})
+
+
+def _certificate_operation(
+    *, operation: str, request_id: UUID, payload: Mapping[str, Any]
+) -> Prepared:
+    """The three operations scoped by certificate rather than by cluster.
+
+    Split out so `prepare` can return here before it requires a cluster, which
+    is what lets the rest of it treat one as present rather than checking for it
+    in every branch.
+
+    None of the three takes a lifeline. The worker holds stdin open for helpers
+    that can be stopped at a checkpoint, and these three have no such point: a
+    certbot run is one external call, and abandoning a publish halfway would
+    leave a target holding a file the registry says came from a run that did not
+    finish. They are short - C3 measured the whole of an issue at 21 seconds -
+    so the lease outlives them.
+    """
+
+    if operation == "cert_issue":
+        _only(payload, "domain", "method", "clusters", "receivers")
+        domain = payload.get("domain")
+        if not isinstance(domain, str) or not domain:
+            raise BadPayload("domain must be a non-empty string")
+        method = payload.get("method")
+        #
+        # Named here rather than passed through, so an unknown method is a
+        # sentence on the form rather than a certbot invocation that fails.
+        # The helper checks it again against the engine's own list.
+        #
+        if method not in {"dns-01", "http-01"}:
+            raise BadPayload("method must be dns-01 or http-01")
+        clusters, receivers = _targets(payload)
+        return Prepared(
+            argv=(cert_issue_helper.SUDO, *SUDO_FLAGS, cert_issue_helper.HELPER),
+            request=cert_issue_helper.build_request(
+                str(request_id),
+                domain=domain,
+                method=method,
+                clusters=clusters,
+                receivers=receivers,
+            ),
+        )
+
+    if operation == "cert_publish":
+        _only(payload, "certificates", "deploy")
+        certificates = payload.get("certificates", [])
+        if not isinstance(certificates, list) or not all(
+            isinstance(item, str) and item for item in certificates
+        ):
+            raise BadPayload("certificates must be a list of certificate IDs")
+        return Prepared(
+            argv=(cert_publish_helper.SUDO, *SUDO_FLAGS, cert_publish_helper.HELPER),
+            request=cert_publish_helper.build_request(
+                str(request_id),
+                certificates=tuple(certificates),
+                deploy=_flag(payload, "deploy", default=True),
+            ),
+        )
+
+    if operation == "cert_target":
+        _only(payload, "certificate", "clusters", "receivers", "deploy")
+        certificate = payload.get("certificate")
+        if not isinstance(certificate, str) or not certificate:
+            raise BadPayload("certificate must be a non-empty string")
+        clusters, receivers = _targets(payload)
+        return Prepared(
+            argv=(cert_target_helper.SUDO, *SUDO_FLAGS, cert_target_helper.HELPER),
+            request=cert_target_helper.build_request(
+                str(request_id),
+                certificate=certificate,
+                clusters=clusters,
+                receivers=receivers,
+                deploy=_flag(payload, "deploy", default=True),
+            ),
+        )
+
+    raise UnknownOperation(operation)
+
+
 def prepare(
-    *, operation: str, cluster: str, request_id: UUID, payload: Mapping[str, Any]
+    *, operation: str, cluster: str | None, request_id: UUID, payload: Mapping[str, Any]
 ) -> Prepared:
     """Build the command for one job, or refuse it.
 
     `json_mode` is always true here. The command line renders progress for a
     person; the worker has to store a result, and a machine-readable envelope is
     the only form it can honestly parse into one.
+
+    `cluster` is optional because the certificate operations have none: a
+    certificate is scoped by the registry, where the wildcard names two clusters
+    and the PVE certificates name none. The queue says the same thing in
+    migration 0024, and the three helpers below take a null cluster in their
+    requests. Every other operation still requires one, and is given one by the
+    check at the end of this function rather than by trusting its caller.
     """
+
+    if operation in CERTIFICATE_OPERATIONS:
+        #
+        # Refused rather than ignored. A certificate job that arrived carrying a
+        # cluster was built by something that disagrees with the queue about what
+        # this operation is, and running it would mean acting on the half of that
+        # disagreement this process happens to hold.
+        #
+        if cluster is not None:
+            raise BadPayload(f"{operation} names no cluster; this job carries {cluster!r}")
+        return _certificate_operation(operation=operation, request_id=request_id, payload=payload)
+
+    #
+    # Everything below acts on one cluster, and from here it has one: the
+    # database's own constraint says so, and this says it again for a caller
+    # that reached `prepare` without going through the queue.
+    #
+    if cluster is None:
+        raise BadPayload(f"{operation} acts on a cluster and this job names none")
 
     if operation == "deploy":
         _only(payload, "allow_vip_unknown")

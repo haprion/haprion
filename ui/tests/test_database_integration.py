@@ -8,6 +8,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import psycopg
 
@@ -25,7 +26,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0023",))
+            self.assertEqual(cursor.fetchone(), ("0024",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -245,3 +246,88 @@ class _Executes:
 
     def execute(self, sql: str) -> None:
         self.cursor.execute(sql)
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheQueueCarriesCertificateJobs(unittest.TestCase):
+    """Migration 0024: a job whose scope is a certificate rather than a cluster.
+
+    The constraints are the point. A cluster operation without a cluster and a
+    certificate operation with one are both refused by the database, so a
+    process that has been talked into queueing a job whose cluster column means
+    nothing fails before a worker ever claims the row.
+    """
+
+    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        role = os.environ[role_variable]
+        return psycopg.connect(f"{DSN} user={role}")
+
+    def setUp(self) -> None:
+        self.connection = self.connect()
+        self.addCleanup(self.connection.close)
+        with self.connection.cursor() as cursor:
+            cursor.execute("delete from job")
+        self.connection.commit()
+
+    def queue(self, operation: str, cluster: str | None, **payload: Any) -> db.Job:
+        return db.queue_job(
+            self.connection,
+            operation=operation,
+            cluster=cluster,
+            payload=payload,
+            idempotency_key=uuid4(),
+        )
+
+    def test_a_certificate_job_is_queued_with_no_cluster(self) -> None:
+        job = self.queue("cert_publish", None, certificates=["example.com"])
+
+        self.assertIsNone(job.cluster)
+        self.assertEqual(job.operation, "cert_publish")
+
+    def test_a_certificate_job_carrying_a_cluster_is_refused(self) -> None:
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.queue("cert_publish", "alpha")
+
+    def test_a_cluster_job_without_a_cluster_is_refused(self) -> None:
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.queue("deploy", None)
+
+    def test_only_one_certificate_job_may_be_in_flight_at_a_time(self) -> None:
+        """The queue agreeing with the publisher, which takes one lock for all of them."""
+
+        self.queue("cert_publish", None, certificates=["example.com"])
+
+        with self.assertRaises(db.CertificateBusy):
+            self.queue("cert_issue", None, domain="new.example")
+
+    def test_a_certificate_job_does_not_make_a_cluster_busy(self) -> None:
+        """It holds no cluster's slot, so a deploy may still be queued beside it."""
+
+        self.queue("cert_publish", None, certificates=["example.com"])
+
+        job = self.queue("deploy", "alpha")
+
+        self.assertEqual(job.cluster, "alpha")
+
+    def test_a_retry_of_a_certificate_job_is_the_job_it_already_queued(self) -> None:
+        """`null = null` is null, so the retry lookup has to compare the absence too."""
+
+        key = uuid4()
+        payload = {"certificates": ["example.com"]}
+        first = db.queue_job(
+            self.connection,
+            operation="cert_publish",
+            cluster=None,
+            payload=payload,
+            idempotency_key=key,
+        )
+
+        second = db.queue_job(
+            self.connection,
+            operation="cert_publish",
+            cluster=None,
+            payload=payload,
+            idempotency_key=key,
+        )
+
+        self.assertEqual(second.id, first.id)

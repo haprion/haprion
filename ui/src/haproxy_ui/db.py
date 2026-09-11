@@ -166,7 +166,7 @@ class Job:
     id: int
     request_id: UUID
     operation: str
-    cluster: str
+    cluster: str | None
     payload: dict[str, Any]
     state: str
     created_at: datetime
@@ -194,7 +194,7 @@ class AbandonedJob:
     id: int
     request_id: UUID
     operation: str
-    cluster: str
+    cluster: str | None
     state: str
     attempts: int
     lease_until: datetime
@@ -301,7 +301,7 @@ class ClaimedJob:
     id: int
     request_id: UUID
     operation: str
-    cluster: str
+    cluster: str | None
     payload: dict[str, Any]
     state: str
     created_at: datetime
@@ -369,6 +369,21 @@ class ClusterBusy(Exception):
     """
 
 
+class CertificateBusy(Exception):
+    """A certificate job is already pending or running.
+
+    The same kind of answer as `ClusterBusy` and told apart from it for the same
+    reason: worth retrying shortly, and not a fault in what was asked. Separate
+    because the sentence a person needs differs - no cluster is busy, and naming
+    one would send them to look at a cluster that is fine.
+
+    There is one of these at a time for every certificate rather than one per
+    certificate, which is the queue agreeing with the publisher: it takes a
+    single lock across all certificate material, so two certificate jobs admitted
+    at once would meet inside it with one holding a lease while it waited.
+    """
+
+
 class RequestConflict(Exception):
     """The same idempotency key, asking for something else.
 
@@ -408,7 +423,7 @@ def queue_job(
     connection: Connection[Any],
     *,
     operation: str,
-    cluster: str,
+    cluster: str | None,
     payload: Mapping[str, Any],
     idempotency_key: UUID,
 ) -> Job:
@@ -484,7 +499,11 @@ def queue_job(
         # executor is free to report either one first, so the cluster constraint
         # cannot mean "busy" until the key lookup below has ruled out the retry.
         #
-        if constraint not in {"job_one_active_per_cluster", "job_idempotency_key"}:
+        if constraint not in {
+            "job_one_active_per_cluster",
+            "job_one_active_certificate",
+            "job_idempotency_key",
+        }:
             # pragma: no cover - no other unique index
             raise
     #
@@ -500,17 +519,25 @@ def queue_job(
             "  from job "
             " where idempotency_key = %(key)s "
             "   and operation = %(operation)s "
-            "   and cluster = %(cluster)s "
+            #
+            # `is not distinct from`, because a certificate job has no cluster
+            # and `null = null` is null: a plain equality would never recognise
+            # a certificate retry as the request it already queued, and the
+            # refresh of a page would be reported as a key collision.
+            #
+            "   and cluster is not distinct from %(cluster)s "
             "   and payload_hash = sha256(convert_to(%(payload)s::jsonb::text, 'UTF8'))",
             parameters,
         )
         existing = cursor.fetchone()
     if existing is None:
-        if constraint == "job_one_active_per_cluster":
+        if constraint in {"job_one_active_per_cluster", "job_one_active_certificate"}:
             if conflict is None:  # pragma: no cover - the lookup only follows that violation
                 raise psycopg.OperationalError(
                     "the cluster conflict was lost before classification"
                 )
+            if constraint == "job_one_active_certificate":
+                raise CertificateBusy() from conflict
             raise ClusterBusy(cluster) from conflict
         raise RequestConflict(str(idempotency_key))
     return existing

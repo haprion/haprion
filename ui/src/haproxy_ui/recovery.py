@@ -192,7 +192,17 @@ def adjudicate(connection: Any, *, worker: str) -> int:
 
     moved = 0
     for job in db.expired_leases(connection):
-        history = db.cluster_history(connection, job.cluster) if job.operation in RECORDED else None
+        #
+        # `job.cluster is not None` as well as the operation check, because the
+        # two say different things and only one of them is about types: no
+        # certificate operation is in `RECORDED`, and a cluster history is not a
+        # question that can be asked about a job that has no cluster.
+        #
+        history = (
+            db.cluster_history(connection, job.cluster)
+            if job.operation in RECORDED and job.cluster is not None
+            else None
+        )
         judgement = judge(job, history)
 
         if judgement.verdict == "wait":

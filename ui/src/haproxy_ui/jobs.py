@@ -221,7 +221,12 @@ def _view(
     return JobView(
         id=job.id,
         operation=_operation(job.operation),
-        cluster=job.cluster,
+        #
+        # The same dash the other unknown cells use. A certificate job has no
+        # cluster - its scope is the registry - and the column has to say that
+        # rather than borrow a cluster name from somewhere to fill itself.
+        #
+        cluster=job.cluster or NO_CLUSTER,
         state=job.state,
         state_label=label,
         tone=tone,
@@ -295,6 +300,15 @@ def _unresolved(rows: list[Job]) -> int:
 
     latest: dict[str, str] = {}
     for job in rows:
+        #
+        # Skipped, not counted under a placeholder. This and the two summaries
+        # below answer questions about clusters - what is busy, what last failed,
+        # how many want attention - and a job with no cluster has no answer to
+        # contribute. Letting one in would file it under a cluster that does not
+        # exist, which is the shape of a warning nobody can act on.
+        #
+        if job.cluster is None:
+            continue
         if job.cluster not in latest and job.state not in {"pending", "running"}:
             latest[job.cluster] = job.state
     return sum(state in ATTENTION for state in latest.values())
@@ -330,9 +344,16 @@ def build_job_overview(
     views = []
     for job in rows:
         owes, command = _owes_deployment(job)
-        show = owes and job.cluster in awaiting and job.cluster not in captioned
-        if show:
-            captioned.add(job.cluster)
+        #
+        # The follow-up line names a cluster somebody has to deploy, so a job
+        # without one can never carry it. Stated rather than left to the
+        # membership test below, which would be false anyway but for a reason a
+        # reader would have to work out.
+        #
+        cluster = job.cluster
+        show = owes and cluster is not None and cluster in awaiting and cluster not in captioned
+        if show and cluster is not None:
+            captioned.add(cluster)
         views.append(
             _view(
                 job,
@@ -362,12 +383,18 @@ def build_job_overview(
 # than in the template so the dashboard, the listing and anything built later
 # say the same word for the same job.
 #
+# What the cluster column shows for an operation that has no cluster.
+NO_CLUSTER = "—"
+
 RUNNING_LABELS = {
     "deploy": "Deploying",
     "cert_deploy": "Deploying certificates",
     "revert": "Reverting",
     "network_publish": "Publishing addresses",
     "objects_publish": "Publishing",
+    "cert_issue": "Issuing certificate",
+    "cert_publish": "Distributing certificates",
+    "cert_target": "Changing certificate targets",
 }
 
 
@@ -383,6 +410,9 @@ FAILURE_LABELS = {
     "revert": "Revert failed",
     "network_publish": "Publish failed",
     "objects_publish": "Publish failed",
+    "cert_issue": "Certificate issue failed",
+    "cert_publish": "Certificate distribution failed",
+    "cert_target": "Certificate target change failed",
 }
 
 
@@ -410,7 +440,7 @@ def last_failure(jobs: Iterable[Job]) -> dict[str, Failure]:
 
     verdicts: dict[str, Failure] = {}
     for job in jobs:
-        if job.cluster in verdicts or job.state in {"pending", "running"}:
+        if job.cluster is None or job.cluster in verdicts or job.state in {"pending", "running"}:
             continue
         verdicts[job.cluster] = (
             Failure(
@@ -437,6 +467,14 @@ def in_flight(jobs: Iterable[Job]) -> dict[str, str]:
 
     busy: dict[str, str] = {}
     for job in jobs:
+        if job.cluster is None:
+            #
+            # A certificate job does not make a cluster busy, and the queue
+            # agrees: it holds no cluster's active-job slot, so a deploy for any
+            # cluster may still be queued beside it. Marking one busy here would
+            # grey out a button the queue would have accepted.
+            #
+            continue
         if job.state not in {"pending", "running"} or job.cluster in busy:
             continue
         busy[job.cluster] = RUNNING_LABELS.get(job.operation, job.operation)

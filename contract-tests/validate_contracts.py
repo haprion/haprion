@@ -384,6 +384,91 @@ def check_reconcile_semantics(document: dict[str, object], path: Path) -> None:
         raise AssertionError(f"{path}: converged requires every node verified current")
 
 
+def check_cert_publish_semantics(document: dict[str, object], path: Path) -> None:
+    """Publishing is what every certificate operation ends with, so this is shared.
+
+    The invariant the phase gate names in its own words - "exactly the targets
+    chosen, and no others" - cannot be measured from an envelope, because the
+    envelope does not carry the registry. What can be measured is that the
+    report does not contradict itself, and that a failure is never dressed up as
+    a run that worked.
+    """
+
+    result = document["result"]
+    if result is None:
+        return
+    certificates = result["certificates"]
+    named = [entry["id"] for entry in certificates]
+    if len(named) != len(set(named)):
+        raise AssertionError(f"{path}: a certificate is reported twice")
+
+    for entry in certificates:
+        if entry["status"] in ("skipped", "failed") and entry["error"] is None:
+            raise AssertionError(f"{path}: {entry['id']} is {entry['status']} without a reason")
+        if entry["status"] in ("published", "unchanged") and entry["error"] is not None:
+            raise AssertionError(f"{path}: {entry['id']} both succeeded and carries an error")
+        # Nothing published means nothing to have changed on a target.
+        if entry["status"] == "unchanged" and any(t["changed"] for t in entry["targets"]):
+            raise AssertionError(f"{path}: {entry['id']} is unchanged but a target changed")
+
+    # A cluster is only listed as changed if some certificate changed on it.
+    changed_targets = {
+        target["name"]
+        for entry in certificates
+        for target in entry["targets"]
+        if target["changed"] and target["kind"] == "cluster"
+    }
+    for cluster in result["changed_clusters"]:
+        if cluster not in changed_targets:
+            raise AssertionError(f"{path}: {cluster} is listed as changed by nothing")
+
+    # A rollout that failed cannot be reported by a done envelope.
+    if document["outcome"] == "done":
+        if any(entry["status"] == "failed" for entry in certificates):
+            raise AssertionError(f"{path}: done envelope carries a failed certificate")
+        if any(item["exit_code"] != 0 for item in result["deployments"]):
+            raise AssertionError(f"{path}: done envelope carries a failed deployment")
+
+
+def check_cert_issue_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        return
+    if not result["targets"]["clusters"] and not result["targets"]["receivers"]:
+        raise AssertionError(f"{path}: an issued certificate goes somewhere")
+    # A wildcard cannot be proved over HTTP-01; certbot refuses it and so does
+    # the form, so an envelope claiming otherwise did not come from this engine.
+    if any(name.startswith("*.") for name in result["domains"]) and result["method"] != "dns-01":
+        raise AssertionError(f"{path}: a wildcard needs DNS-01")
+    if result["certbot_seconds"] > result["total_seconds"]:
+        raise AssertionError(f"{path}: certbot cannot take longer than the whole run")
+    # The publish half is the same report, held to the same rules.
+    check_cert_publish_semantics(
+        {"outcome": document["outcome"], "result": result["publish"]}, path
+    )
+
+
+def check_cert_target_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        return
+    registry = result["registry"]
+    targets = set(registry["targets"]["clusters"]) | set(registry["targets"]["receivers"])
+    added = set(registry["added"])
+    abandoned = set(registry["abandoned"])
+    # Added targets are in the new set; abandoned ones are not. A name in both
+    # lists would describe a change that did not happen.
+    if not added <= targets:
+        raise AssertionError(f"{path}: a target was added and is not in the new set")
+    if abandoned & targets:
+        raise AssertionError(f"{path}: a target is both abandoned and current")
+    if registry["changed"] != bool(added or abandoned):
+        raise AssertionError(f"{path}: the change flag disagrees with what moved")
+    check_cert_publish_semantics(
+        {"outcome": document["outcome"], "result": result["publish"]}, path
+    )
+
+
 SEMANTIC_CHECKS = {
     "status": check_status_semantics,
     "list": check_list_semantics,
@@ -398,6 +483,9 @@ SEMANTIC_CHECKS = {
     "objects_publish": check_objects_publish_semantics,
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
+    "cert_issue": check_cert_issue_semantics,
+    "cert_publish": check_cert_publish_semantics,
+    "cert_target": check_cert_target_semantics,
 }
 
 
@@ -432,6 +520,13 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["converged"] = True
     elif operation == "cert_deploy":
         result["converged"] = False
+    elif operation == "cert_publish":
+        result["changed_clusters"] = ["a-cluster-nothing-changed-on"]
+    elif operation == "cert_issue":
+        result["method"] = "http-01"
+        result["domains"] = ["*." + str(result["id"])]
+    elif operation == "cert_target":
+        result["registry"]["abandoned"] = list(result["registry"]["targets"]["clusters"])
     else:
         raise AssertionError(f"no semantic mutation defined for {operation}")
 

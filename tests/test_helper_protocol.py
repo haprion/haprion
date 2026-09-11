@@ -290,3 +290,72 @@ class TakingTheLifelineOffStandardInput(unittest.TestCase):
 
         self.assertEqual(os.waitstatus_to_exitcode(status), 0)
         self.assertEqual(answer, b"1", "stdin was not emptied, or the lifeline did not survive")
+
+
+class TheRequestWithNoCluster(unittest.TestCase):
+    """The second request shape, for operations whose scope is not a cluster.
+
+    Kept apart from `read_helper_request` rather than expressed as an optional
+    field on it, and these tests are where that separation is measured: the
+    cluster reader must still refuse a null, and the clusterless reader must
+    still refuse a cluster. Either one accepting both would make the absence
+    something a caller could introduce by leaving a field out.
+    """
+
+    def request(self, **overrides: object) -> io.BytesIO:
+        document = {
+            "schema_version": 1,
+            "operation": "cert_publish",
+            "cluster": None,
+            "request_id": "8f1d4d3e-0e3e-4f67-8a0b-5d0a5b6a7c8d",
+            "parameters": {"deploy": False},
+        }
+        document.update(overrides)
+        return io.BytesIO(json.dumps(document).encode("utf-8") + b"\n")
+
+    def read(self, stream: io.BytesIO) -> helper_protocol.ClusterlessRequest:
+        return helper_protocol.read_clusterless_request(
+            stream,
+            expected_operation="cert_publish",
+            allowed_parameter_keys=frozenset({"deploy", "certificates"}),
+        )
+
+    def test_an_explicit_null_cluster_is_accepted(self) -> None:
+        request = self.read(self.request())
+
+        self.assertIsNone(request.cluster)
+        self.assertEqual(request.operation, "cert_publish")
+        self.assertEqual(request.parameters, {"deploy": False})
+
+    def test_a_named_cluster_is_refused(self) -> None:
+        with self.assertRaises(helper_protocol.HelperProtocolError) as caught:
+            self.read(self.request(cluster="alpha"))
+
+        self.assertIn("acts on no cluster", str(caught.exception))
+
+    def test_the_field_may_not_simply_be_left_out(self) -> None:
+        """Stating the absence is a decision; omitting the field is forgetting."""
+
+        document = json.loads(self.request().getvalue())
+        del document["cluster"]
+
+        with self.assertRaises(helper_protocol.HelperProtocolError) as caught:
+            self.read(io.BytesIO(json.dumps(document).encode("utf-8") + b"\n"))
+
+        self.assertIn("missing field(s): cluster", str(caught.exception))
+
+    def test_a_cluster_helper_still_refuses_a_null(self) -> None:
+        with self.assertRaises(helper_protocol.HelperProtocolError):
+            helper_protocol.read_helper_request(
+                self.request(operation="deploy"),
+                expected_operation="deploy",
+                allowed_parameter_keys=frozenset({"deploy"}),
+            )
+
+    def test_no_lifeline_is_offered(self) -> None:
+        """These three have no checkpoint to notice a released caller at."""
+
+        with self.assertRaises(helper_protocol.HelperProtocolError) as caught:
+            self.read(self.request(lifeline=True))
+
+        self.assertIn("does not support a lifeline", str(caught.exception))

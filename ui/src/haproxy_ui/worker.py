@@ -95,6 +95,20 @@ _OPERATION_OUTCOMES = {
     "revert": frozenset({"done", "failed", "blocked"}),
     "network_publish": frozenset({"done", "failed", "blocked"}),
     "objects_publish": frozenset({"done", "failed", "blocked"}),
+    #
+    # `cert_publish` and `cert_target` can end `partial`, and the reason is one
+    # real registry entry rather than a theory: a certificate whose source is an
+    # import whose material has not arrived yet is skipped with a warning instead
+    # of failing the run, and a registry holding one reaches this on every run.
+    #
+    # `cert_issue` cannot. It publishes exactly the certificate it has just
+    # obtained, and that one is never skipped for missing material - so the
+    # narrower set is the true one, and a `partial` from that helper would mean
+    # something nobody has thought about.
+    #
+    "cert_issue": frozenset({"done", "failed", "blocked"}),
+    "cert_publish": frozenset({"done", "partial", "failed", "blocked"}),
+    "cert_target": frozenset({"done", "partial", "failed", "blocked"}),
 }
 
 

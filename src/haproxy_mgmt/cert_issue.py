@@ -37,11 +37,8 @@ created" is what the operator needs to read, not "exit status 1".
 
 from __future__ import annotations
 
-import contextlib
-import os
 import re
 import subprocess
-import tempfile
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -49,8 +46,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml
-
+from haproxy_mgmt import cert_registry
 from haproxy_mgmt.cert_publish import (
     DEFAULT_LOCK_PATH,
     IMPORT_STORE,
@@ -64,10 +60,8 @@ from haproxy_mgmt.config import (
     CERTIFICATE_ID,
     CLUSTER_ID,
     RECEIVER_ID,
-    ConfigError,
     PathPolicy,
     RuntimeConfig,
-    load_registry,
     load_runtime_config,
 )
 
@@ -87,12 +81,6 @@ METHODS: tuple[Method, ...] = ("dns-01", "http-01")
 HOSTNAME = re.compile(
     r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
 )
-
-REGISTRY_HEADER = """\
-# The certificate registry (B135). Maintained by haproxy-cert-issue and the
-# registry helper; hand edits are kept but comments are not, since the file is
-# rewritten as a whole. See INSTALLATION.md 1.4.1 for the fields.
-"""
 
 
 class IssueError(Exception):
@@ -280,64 +268,31 @@ def run_certbot(arguments: Sequence[str]) -> CertbotResult:
 def add_to_registry(
     path: Path, request: IssueRequest, runtime: RuntimeConfig, *, require_secure: bool = True
 ) -> None:
-    """Add the entry, rewriting the file atomically with its ownership and mode kept.
+    """Add the entry through the one writer the registry has.
 
-    The result is loaded back through the same reader every command uses,
-    before the rename, so a file the engine would refuse is never put in
-    place. Comments do not survive: the file is data, and a machine-written
-    registry that tried to keep a person's comments in the right places would
-    be a second YAML implementation.
+    The atomic rewrite, the load-back and the cluster cross-check all live in
+    `cert_registry`, which the registry helper uses too. This function is the
+    shape of an issued entry and nothing else.
     """
 
     try:
-        metadata = path.stat()
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        raise IssueError(
-            "dependency_unavailable", f"cannot read the registry: {exc}", exit_code=78
-        ) from exc
-    if not isinstance(loaded, dict):
-        raise IssueError("dependency_unavailable", "the registry is not a mapping", exit_code=78)
-
-    certificates = dict(loaded.get("certificates") or {})
-    entry: dict[str, Any] = {"source": {"kind": "acme"}}
-    if request.clusters:
-        entry["clusters"] = list(request.clusters)
-    if request.receivers:
-        entry["receivers"] = list(request.receivers)
-    certificates[request.certificate_id] = entry
-    document = {
-        "schema_version": 1,
-        "receivers": loaded.get("receivers") or {},
-        "certificates": certificates,
-    }
-    text = REGISTRY_HEADER + yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
-
-    handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        os.fchown(handle, metadata.st_uid, metadata.st_gid)
-        os.fchmod(handle, metadata.st_mode & 0o777)
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            stream.write(text)
-            stream.flush()
-            os.fsync(stream.fileno())
-        #
-        # Loaded back as the engine loads it, cross-checked against the
-        # clusters the way load_runtime_config does, before it replaces
-        # anything.
-        #
-        candidate = load_registry(Path(temporary), require_secure=require_secure)
-        for certificate in candidate.certificates.values():
-            unknown = sorted(set(certificate.clusters) - set(runtime.clusters))
-            if unknown:
-                raise ConfigError(f"unknown cluster(s): {', '.join(unknown)}")
-        os.replace(temporary, path)
-    except (OSError, ConfigError) as exc:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary)
-        raise IssueError(
-            "dependency_unavailable", f"the registry could not be updated: {exc}", exit_code=78
-        ) from exc
+        document = cert_registry.read_document(path)
+        certificates = dict(document.get("certificates") or {})
+        entry: dict[str, Any] = {"source": {"kind": "acme"}}
+        if request.clusters:
+            entry["clusters"] = list(request.clusters)
+        if request.receivers:
+            entry["receivers"] = list(request.receivers)
+        certificates[request.certificate_id] = entry
+        cert_registry.write(
+            path,
+            document=document,
+            certificates=certificates,
+            runtime=runtime,
+            require_secure=require_secure,
+        )
+    except cert_registry.RegistryError as exc:
+        raise IssueError(exc.code, str(exc), exit_code=exc.exit_code) from exc
 
 
 #

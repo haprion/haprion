@@ -364,6 +364,9 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
         for name, path in (
             ("network_publish", "haproxy-network-publish.schema.json"),
             ("objects_publish", "haproxy-objects-publish.schema.json"),
+            ("cert_issue", "haproxy-cert-issue.schema.json"),
+            ("cert_publish", "haproxy-cert-publish.schema.json"),
+            ("cert_target", "haproxy-cert-target.schema.json"),
         ):
             with self.subTest(operation=name):
                 document = json.loads((schemas / path).read_text(encoding="utf-8"))

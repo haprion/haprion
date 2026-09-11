@@ -15,7 +15,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from haproxy_mgmt.cert_issue import Certbot, IssueError, IssueResult, issue, run_certbot
 from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, IMPORT_STORE, LETSENCRYPT_LIVE, Deployer
@@ -103,6 +103,49 @@ def _summary(result: IssueResult, writer: TextIO) -> None:
     writer.write(f"total {result.total_seconds:.0f}s\n")
 
 
+def result_envelope(result: IssueResult, *, request_id: str) -> tuple[dict[str, Any], int]:
+    """One issue result, turned into the one envelope and exit code it means.
+
+    Shared with the helper rather than written twice. The certificate exists and
+    is registered by the time this is reached - certbot succeeded and the
+    registry was written - so a failure here is always the narrower sentence
+    "issued and registered but not fully published", never "it did not work".
+
+    No `partial`: the run publishes exactly the certificate it just issued, and
+    that one cannot be skipped for missing material.
+    """
+
+    failed_publish = result.publish.failed
+    failed_deploy = [d.cluster for d in result.publish.deployments if d.exit_code != 0]
+    if not failed_publish and not failed_deploy:
+        return (
+            envelope(
+                operation=OPERATION,
+                outcome="done",
+                cluster=None,
+                result=result.as_dict(),
+                request_id=request_id,
+            ),
+            0,
+        )
+    parts = []
+    if failed_publish:
+        parts.append("not published: " + "; ".join(e.error[1] for e in failed_publish if e.error))
+    if failed_deploy:
+        parts.append("not deployed: " + ", ".join(failed_deploy))
+    return (
+        envelope(
+            operation=OPERATION,
+            outcome="failed",
+            cluster=None,
+            result=result.as_dict(),
+            request_id=request_id,
+            error=Message(code="publish_failed", message="; ".join(parts)),
+        ),
+        1,
+    )
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -172,35 +215,9 @@ def main(
     except IssueError as exc:
         return refuse(exc.code, str(exc), exc.exit_code)
 
-    failed_publish = result.publish.failed
-    failed_deploy = [d.cluster for d in result.publish.deployments if d.exit_code != 0]
-    exit_code = 1 if failed_publish or failed_deploy else 0
+    document, exit_code = result_envelope(result, request_id=request_id)
 
     if json_mode:
-        if exit_code == 0:
-            document = envelope(
-                operation=OPERATION,
-                outcome="done",
-                cluster=None,
-                result=result.as_dict(),
-                request_id=request_id,
-            )
-        else:
-            parts = []
-            if failed_publish:
-                parts.append(
-                    "not published: " + "; ".join(e.error[1] for e in failed_publish if e.error)
-                )
-            if failed_deploy:
-                parts.append("not deployed: " + ", ".join(failed_deploy))
-            document = envelope(
-                operation=OPERATION,
-                outcome="failed",
-                cluster=None,
-                result=result.as_dict(),
-                request_id=request_id,
-                error=Message(code="publish_failed", message="; ".join(parts)),
-            )
         writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
     else:
         _summary(result, writer)

@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "partial",
+  "operation": "cert_publish",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "certificates": [
+      {
+        "id": "example.com",
+        "status": "published",
+        "fingerprint_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "not_after": "2027-01-01T00:00:00Z",
+        "targets": [
+          { "kind": "cluster", "name": "alpha", "changed": true },
+          { "kind": "receiver", "name": "lb-01", "changed": true }
+        ],
+        "error": null
+      },
+      {
+        "id": "example.net",
+        "status": "unchanged",
+        "fingerprint_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "not_after": "2027-02-01T00:00:00Z",
+        "targets": [{ "kind": "cluster", "name": "beta", "changed": false }],
+        "error": null
+      },
+      {
+        "id": "imported.example",
+        "status": "skipped",
+        "fingerprint_sha256": null,
+        "not_after": null,
+        "targets": [],
+        "error": {
+          "code": "source_missing",
+          "message": "no imported material; the published copy is left as it is"
+        }
+      }
+    ],
+    "changed_clusters": ["alpha"],
+    "deployments": [{ "cluster": "alpha", "exit_code": 0 }]
+  },
+  "warnings": [
+    {
+      "code": "source_missing",
+      "message": "no imported material; the published copy is left as it is",
+      "node": "imported.example",
+      "details": null
+    }
+  ],
+  "error": null
+}

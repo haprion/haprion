@@ -142,7 +142,11 @@ def awaiting_deploy(jobs: Iterable[Job]) -> frozenset[str]:
     waiting: set[str] = set()
     deployed: set[str] = set()
     for job in jobs:
-        if job.state != "done" or job.cluster in deployed:
+        #
+        # A certificate job has no cluster and owes no cluster a deploy; it is
+        # neither of the two operations below, so this only says so earlier.
+        #
+        if job.cluster is None or job.state != "done" or job.cluster in deployed:
             continue
         if job.operation == "deploy":
             deployed.add(job.cluster)

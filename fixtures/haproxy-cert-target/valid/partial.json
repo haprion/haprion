@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "partial",
+  "operation": "cert_target",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "registry": {
+      "id": "example.com",
+      "targets": { "clusters": ["beta"], "receivers": ["lb-01"] },
+      "added": ["beta", "lb-01"],
+      "abandoned": ["alpha"],
+      "changed": true
+    },
+    "publish": {
+      "certificates": [
+        {
+          "id": "example.com",
+          "status": "published",
+          "fingerprint_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "not_after": "2027-01-01T00:00:00Z",
+          "targets": [
+            { "kind": "cluster", "name": "beta", "changed": true },
+            { "kind": "receiver", "name": "lb-01", "changed": true }
+          ],
+          "error": null
+        }
+      ],
+      "changed_clusters": ["beta"],
+      "deployments": [{ "cluster": "beta", "exit_code": 0 }]
+    }
+  },
+  "warnings": [
+    {
+      "code": "target_abandoned",
+      "message": "no longer published to: alpha. The copy already there was left in place.",
+      "node": null,
+      "details": { "targets": ["alpha"] }
+    }
+  ],
+  "error": null
+}

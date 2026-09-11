@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haproxy-cert-target.schema.json",
+  "title": "haproxy-cert-target JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "cert_target" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "partial", "failed", "blocked"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/target_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/target_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "target_result": {
+      "type": "object",
+      "required": ["registry", "publish"],
+      "properties": {
+        "registry": { "$ref": "#/$defs/registry_change" },
+        "publish": { "$ref": "haproxy-cert-publish.schema.json#/$defs/publish_result" }
+      },
+      "additionalProperties": true
+    },
+    "registry_change": {
+      "type": "object",
+      "required": ["id", "targets", "added", "abandoned", "changed"],
+      "properties": {
+        "id": { "$ref": "haproxy-cert-publish.schema.json#/$defs/certificate_id" },
+        "targets": { "$ref": "haproxy-cert-issue.schema.json#/$defs/targets" },
+        "added": { "$ref": "#/$defs/target_names" },
+        "abandoned": { "$ref": "#/$defs/target_names" },
+        "changed": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "target_names": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "type": "string", "minLength": 1, "maxLength": 255 }
+    }
+  }
+}

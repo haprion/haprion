@@ -49,6 +49,30 @@ class HelperRequest:
     lifeline: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class ClusterlessRequest:
+    """A request for an operation that acts on no particular cluster.
+
+    A separate type rather than an optional field on `HelperRequest`, and the
+    reason is the same one `ClaimedJob` gives for not being an optional `Job`:
+    the difference is real, not a convenience. Every cluster helper reads
+    `request.cluster` and hands it to something that needs a cluster - seventeen
+    files of them - and widening that one field to `str | None` would push the
+    absence into all of them so that three helpers could express it.
+
+    The three that need it are the certificate operations, whose scope is the
+    registry: the wildcard names two clusters and the PVE certificates name
+    none. `cluster` is kept here, always null, because the envelope they answer
+    with still has the field and reads better beside the request that produced
+    it.
+    """
+
+    operation: str
+    request_id: str
+    parameters: Mapping[str, JsonValue]
+    cluster: None = None
+
+
 class Lifeline:
     """The caller's stdin, watched for the moment the caller lets go.
 
@@ -220,7 +244,18 @@ def _required_string(document: Mapping[str, JsonValue], field: str) -> str:
     return value
 
 
-def read_helper_request(
+@dataclass(frozen=True, slots=True)
+class _Common:
+    """What every request has, before the two kinds differ over the cluster."""
+
+    operation: str
+    request_id: str
+    parameters: Mapping[str, JsonValue]
+    lifeline: bool
+    document: Mapping[str, JsonValue]
+
+
+def _read_common(
     stream: BinaryIO,
     *,
     expected_operation: str,
@@ -228,7 +263,7 @@ def read_helper_request(
     validate_parameters: ParameterValidator | None = None,
     max_bytes: int = MAX_REQUEST_BYTES,
     lifeline: bool = False,
-) -> HelperRequest:
+) -> _Common:
     """Read and validate exactly one request for an exact privileged helper.
 
     Two separate questions decide what stdin is for afterwards, and keeping them
@@ -271,10 +306,6 @@ def read_helper_request(
     if operation != expected_operation:
         raise HelperProtocolError("operation is not allowed by this helper")
 
-    cluster = _required_string(document, "cluster")
-    if not CLUSTER_ID.fullmatch(cluster):
-        raise HelperProtocolError("cluster is not a valid cluster ID")
-
     request_id = _required_string(document, "request_id")
     try:
         parsed_request_id = uuid.UUID(request_id)
@@ -313,12 +344,80 @@ def read_helper_request(
     if validate_parameters is not None:
         validate_parameters(parameters)
 
-    return HelperRequest(
+    return _Common(
         operation=operation,
-        cluster=cluster,
         request_id=request_id,
         parameters=parameters,
         lifeline=requested_lifeline,
+        document=document,
+    )
+
+
+def read_helper_request(
+    stream: BinaryIO,
+    *,
+    expected_operation: str,
+    allowed_parameter_keys: frozenset[str] = frozenset(),
+    validate_parameters: ParameterValidator | None = None,
+    max_bytes: int = MAX_REQUEST_BYTES,
+    lifeline: bool = False,
+) -> HelperRequest:
+    """One request for a helper that acts on one cluster, which is most of them."""
+
+    common = _read_common(
+        stream,
+        expected_operation=expected_operation,
+        allowed_parameter_keys=allowed_parameter_keys,
+        validate_parameters=validate_parameters,
+        max_bytes=max_bytes,
+        lifeline=lifeline,
+    )
+    cluster = _required_string(common.document, "cluster")
+    if not CLUSTER_ID.fullmatch(cluster):
+        raise HelperProtocolError("cluster is not a valid cluster ID")
+    return HelperRequest(
+        operation=common.operation,
+        cluster=cluster,
+        request_id=common.request_id,
+        parameters=common.parameters,
+        lifeline=common.lifeline,
+    )
+
+
+def read_clusterless_request(
+    stream: BinaryIO,
+    *,
+    expected_operation: str,
+    allowed_parameter_keys: frozenset[str] = frozenset(),
+    validate_parameters: ParameterValidator | None = None,
+    max_bytes: int = MAX_REQUEST_BYTES,
+) -> ClusterlessRequest:
+    """One request for an operation with no cluster, which is the certificate three.
+
+    The `cluster` field is still required and must be explicitly null. A caller
+    that states the absence has decided; one that omits the field has forgotten,
+    and only the first is accepted - the same reason every other field here is
+    required rather than defaulted.
+
+    No lifeline. These helpers have no checkpoint to notice a released caller
+    at: a certbot run is one external call, and a publish abandoned halfway
+    would leave a target holding a file from a run that did not finish.
+    """
+
+    common = _read_common(
+        stream,
+        expected_operation=expected_operation,
+        allowed_parameter_keys=allowed_parameter_keys,
+        validate_parameters=validate_parameters,
+        max_bytes=max_bytes,
+        lifeline=False,
+    )
+    if common.document["cluster"] is not None:
+        raise HelperProtocolError("this operation acts on no cluster; cluster must be null")
+    return ClusterlessRequest(
+        operation=common.operation,
+        request_id=common.request_id,
+        parameters=common.parameters,
     )
 
 

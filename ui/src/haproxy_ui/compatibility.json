@@ -3,7 +3,8 @@
   "requires": {
     "database_head": "0023",
     "database_revisions": [
-      "0023"
+      "0023",
+      "0024"
     ],
     "engine_api": 1,
     "node_api": 1,
@@ -21,7 +22,10 @@
       "haproxy-cert-deploy-helper",
       "haproxy-revert-helper",
       "haproxy-network-publish-helper",
-      "haproxy-objects-publish-helper"
+      "haproxy-objects-publish-helper",
+      "haproxy-cert-issue-helper",
+      "haproxy-cert-publish-helper",
+      "haproxy-cert-target-helper"
     ]
   }
 }

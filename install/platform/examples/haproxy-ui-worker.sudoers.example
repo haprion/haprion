@@ -9,12 +9,25 @@
 # makes an exact rule possible - PRIVILEGE.md forbids wildcards in argument
 # matching, and a rule naming a cluster would need one.
 #
-# These five write. That is the point of them, and it is why the list is this
+# These eight write. That is the point of them, and it is why the list is this
 # short: deploy brings nodes onto the published version, cert-deploy distributes
 # certificates, revert moves the cluster back to an earlier one, and the two
 # publish helpers write the network description and the objects into the cluster
 # repository. Everything else the worker might plausibly want - config edits,
 # history reset - is absent on purpose.
+#
+# The last three are Phase 11's, and they are the ones to read twice, because
+# they are the only rules here that reach private key material. What limits them
+# is not this file but their own shape: issue obtains a certificate for a domain
+# with certbot parameters fixed in the engine, publish distributes what the
+# registry already lists, and target changes which registered targets a
+# registered certificate goes to. None of the three can name a path, an account
+# or a directory, and none can register a receiver - that is an installation
+# step, deliberately kept out of reach of anything a request can ask for.
+#
+# What no rule here grants, and no rule ever should: reading a private key. The
+# helpers write key material to targets and never return it, which is why the
+# caller-matrix test asserts the absence rather than trusting this comment.
 #
 # Publishing was on that absent list until 2026-09-02, on the reasoning that it
 # was an operator's decision made at a terminal. What changed is that the
@@ -42,3 +55,6 @@ WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-depl
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-revert-helper ""
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-publish-helper ""
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-publish-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-publish-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-target-helper ""

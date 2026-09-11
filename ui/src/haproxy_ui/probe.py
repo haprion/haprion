@@ -1,6 +1,6 @@
 """Running the object's health check by hand, before the object is saved.
 
-This is not a second opinion about the pool. It is the check on the screen,
+This is not a second opinion about the backend. It is the check on the screen,
 triggered once from the node that would run it, so somebody configuring a check
 can see the answer before pressing Save rather than after a publish. Every
 divergence from what HAProxy would do is therefore a defect, not a feature -
@@ -46,7 +46,7 @@ from haproxy_mgmt.proxy_model import (
 from haproxy_ui.preview import build_document
 
 #
-# The same bound the helper and the node hold. Named here so a pool with more
+# The same bound the helper and the node hold. Named here so a backend with more
 # servers than this is refused with a sentence instead of by whichever of the
 # three happens to see it first.
 #
@@ -119,7 +119,7 @@ class ProbeReport:
 
         It exists because the reading is what matters. A green row saying `UP`
         beside the nodes' own `UP` reads as the same verdict, and it is not one
-        - the pool may answer this and still be marked down for a body, a tcp
+        - the backend may answer this and still be marked down for a body, a tcp
         exchange, or a name it was never asked for. The row says which of the
         two it is now, and the sentences below say what was left out.
         """
@@ -151,7 +151,7 @@ def targets_from(checks: Sequence[EffectiveCheck]) -> list[dict[str, Any]]:
     """The request, from the object's effective checks.
 
     Nothing is decided here any more. What the check does - its port, whether
-    it speaks TLS, what the pool's certificate is held to - is decided once in
+    it speaks TLS, what the backend's certificate is held to - is decided once in
     `check_policy` and read by the generator from the same call, so the run and
     the configuration cannot disagree about what was asked for. This turns that
     answer into the field names the node's script expects, and does no more.
@@ -326,7 +326,7 @@ def run(
 
     A socket nothing is listening on, an account not in its group, a policy
     without a probe identity: all of them have to read as "the probe did not
-    run" rather than as a pool that failed. The two look the same to a reader
+    run" rather than as a backend that failed. The two look the same to a reader
     who is only shown a red mark, so each says which it was.
     """
 
@@ -344,7 +344,7 @@ def run(
         )
     except (ValueError, ModelError) as refusal:
         #
-        # Not a pool that failed. An object this version cannot read has no
+        # Not a backend that failed. An object this version cannot read has no
         # check to run, and probing an approximation of it would answer for a
         # connection HAProxy will never make.
         #
@@ -359,7 +359,7 @@ def run(
     #
     # Nothing to trigger. The button runs the object's check early, and an
     # object without one has no check to run - probing anyway would answer for
-    # a connection HAProxy will never make, and read as a healthy pool that is
+    # a connection HAProxy will never make, and read as a healthy backend that is
     # in fact unchecked.
     #
     if not any(check.runs for check in checks):

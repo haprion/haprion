@@ -290,7 +290,7 @@ class ObjectForm(BaseModel):
     """
 
     backend_tls_policy: Annotated[str, StringConstraints(max_length=16)] = ""
-    """How old a handshake to this pool may be. Empty means the default.
+    """How old a handshake to this backend may be. Empty means the default.
 
     Empty rather than the name itself, so a form that has never been touched
     and an object that never named one write the same document. What "the

@@ -26,13 +26,13 @@
   };
 
   //
-  // How old a handshake to the pool may be is only a question when there is a
+  // How old a handshake to the backend may be is only a question when there is a
   // handshake. Greyed out for the reason the port and the balancing key are:
   // the field stays where it is and says the choice above decided it.
   //
   // The engine agrees, so the browser is again a convenience and not the
   // control - `build_document` writes no `tls` block at all for a plain HTTP
-  // pool, and a policy re-enabled by hand has nothing to attach to.
+  // backend, and a policy re-enabled by hand has nothing to attach to.
   //
   //
   // The site's own terms are a question only where there is a handshake to

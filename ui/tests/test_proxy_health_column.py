@@ -99,7 +99,7 @@ class TheHealthColumn(LoginTestCase):
         ):
             return client.get("/proxies")
 
-    def test_the_column_is_there_and_a_checked_pool_that_is_up_is_green(self) -> None:
+    def test_the_column_is_there_and_a_checked_backend_that_is_up_is_green(self) -> None:
         page = self.page(CHECKED, status(("a", "UP"), ("b", "UP")))
 
         self.assertEqual(page.status_code, 200)

@@ -44,7 +44,7 @@ class VipView:
     source: str | None
     is_default: bool
     tls_policy: str | None
-    """Which TLS versions and ciphers listeners on this address accept.
+    """Which TLS versions and ciphers frontends on this address accept.
 
     Empty means the cluster's `core/` decides, which is what every VIP written
     before this column existed says. Named here rather than defaulted, because
@@ -430,7 +430,7 @@ class NetworkForm:
     #
     # Which TLS policy each VIP row named, empty where it named none. Required
     # rather than defaulted: a caller that forgets it would publish a network
-    # with every listener's policy silently cleared, and the type checker
+    # with every frontend's policy silently cleared, and the type checker
     # naming the caller is cheaper than finding that out from a bind line.
     #
     vip_tls: tuple[str, ...]

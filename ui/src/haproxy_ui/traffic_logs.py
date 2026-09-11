@@ -252,16 +252,16 @@ def configured_server_addresses(
 ) -> dict[tuple[str, str, str], str]:
     """Configured destination behind each generated HAProxy server name.
 
-    Generated pool members are positional: the first configured server is
+    Generated backend members are positional: the first configured server is
     called ``s1``, the second ``s2``, and so on.  Keep the complete runtime
-    backend in the key instead of trying to split it; object and pool names may
+    backend in the key instead of trying to split it; object and backend names may
     themselves contain hyphens.
     """
 
     result: dict[tuple[str, str, str], str] = {}
     for proxy in proxies:
-        for pool_name, backend in proxy.backends.items():
-            runtime_backend = f"{PREFIX}-{proxy.name}-{pool_name}"
+        for backend_name, backend in proxy.backends.items():
+            runtime_backend = f"{PREFIX}-{proxy.name}-{backend_name}"
             for index, server in enumerate(backend.servers, start=1):
                 result[(cluster, runtime_backend, f"s{index}")] = f"{server.host}:{server.port}"
     return result

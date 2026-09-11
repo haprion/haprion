@@ -1,14 +1,14 @@
-"""The page that compares a cluster's listeners and pools.
+"""The page that compares a cluster's frontends and backends.
 
-The object page's card can only draw the pools of a proxy somebody has already
-opened, so two questions stay unanswerable there: which pool carries the
+The object page's card can only draw the backends of a proxy somebody has already
+opened, so two questions stay unanswerable there: which backend carries the
 traffic, and whether the request reached the cluster at all. The second is the
 one this phase began in - a site returning 503 with every server green - and
-listener counters belong to the cluster and its nodes rather than to an object
+frontend counters belong to the cluster and its nodes rather than to an object
 (B94), so this page is the only place they can be read.
 
 What is worth pinning here is the boundary and the two claims the page makes:
-the role that may see every listener and pool a cluster carries, and that the
+the role that may see every frontend and backend a cluster carries, and that the
 cards within a section share one scale so their sizes can be compared.
 """
 
@@ -60,9 +60,9 @@ def samples(*values: int, node: str = "node-a", frontend: str = "https-in") -> l
     return found
 
 
-def measurement(intervals: int = 2) -> metrics.PoolMeasurement:
+def measurement(intervals: int = 2) -> metrics.BackendMeasurement:
     now = datetime.now(UTC)
-    return metrics.PoolMeasurement(
+    return metrics.BackendMeasurement(
         intervals=intervals,
         started_at=now - timedelta(minutes=intervals),
         ended_at=now,
@@ -79,28 +79,28 @@ def measurement(intervals: int = 2) -> metrics.PoolMeasurement:
 class ReadingACluster(LoginTestCase):
     """Every database call the page makes, answered with a known shape."""
 
-    listeners: list[tuple[str, bool]] = [("mgd-vip-int-https", True), ("mgd-vip-int-http", True)]
-    pools: list[str] = ["mgd-shop-web", "mgd-shop-api", "mgd-shop-redirect-eee20480"]
+    frontends: list[tuple[str, bool]] = [("mgd-vip-int-https", True), ("mgd-vip-int-http", True)]
+    backends: list[str] = ["mgd-shop-web", "mgd-shop-api", "mgd-shop-redirect-eee20480"]
 
     def setUp(self) -> None:
         super().setUp()
         for name, value in (
-            ("read_cluster_listeners", lambda *_a, **_k: self.listeners),
-            ("read_cluster_pools", lambda *_a, **_k: self.pools),
-            ("read_listener_samples", self._listener_samples),
-            ("read_pool_samples", self._pool_samples),
-            ("read_listener_totals", lambda *_a, **_k: measurement()),
-            ("read_pool_totals", lambda *_a, **_k: measurement()),
+            ("read_cluster_frontends", lambda *_a, **_k: self.frontends),
+            ("read_cluster_backends", lambda *_a, **_k: self.backends),
+            ("read_frontend_samples", self._frontend_samples),
+            ("read_backend_samples", self._backend_samples),
+            ("read_frontend_totals", lambda *_a, **_k: measurement()),
+            ("read_backend_totals", lambda *_a, **_k: measurement()),
         ):
             patch = mock.patch(f"haproxy_ui.db.{name}", side_effect=value)
             patch.start()
             self.addCleanup(patch.stop)
 
-    def _listener_samples(self, *_args: object, **kwargs: object) -> list[metrics.Sample]:
+    def _frontend_samples(self, *_args: object, **kwargs: object) -> list[metrics.Sample]:
         busy = str(kwargs.get("frontend")).endswith("-https")
         return samples(400, 400) if busy else samples(3, 3)
 
-    def _pool_samples(self, *_args: object, **kwargs: object) -> list[metrics.Sample]:
+    def _backend_samples(self, *_args: object, **kwargs: object) -> list[metrics.Sample]:
         busy = str(kwargs.get("backend")) == "mgd-shop-web"
         return samples(400, 400) if busy else samples(1, 1)
 
@@ -125,7 +125,7 @@ class WhoMayCompare(ReadingACluster):
         self.assertEqual(answer.headers["location"], "/login")
 
     def test_an_operator_is_refused(self) -> None:
-        """It names every listener and pool, which the overview will not show."""
+        """It names every frontend and backend, which the overview will not show."""
 
         self.account = replace(self.account, role="operator")
         client = self.client(replace(configuration(), demo_fixture=True))
@@ -178,11 +178,11 @@ class WhatThePageSays(ReadingACluster):
     def test_a_name_that_does_not_fit_the_rule_is_kept_whole(self) -> None:
         """The generator's rule could change; renaming on a guess would be worse."""
 
-        self.listeners = [("something-handwritten", True)]
+        self.frontends = [("something-handwritten", True)]
 
         self.assertIn("something-handwritten", self.page().text)  # type: ignore[attr-defined]
 
-    def test_every_pool_the_cluster_has_is_there(self) -> None:
+    def test_every_backend_the_cluster_has_is_there(self) -> None:
         """Not only the one somebody already guessed right about."""
 
         text = self.page().text  # type: ignore[attr-defined]
@@ -200,7 +200,7 @@ class WhatThePageSays(ReadingACluster):
 
         self.assertEqual(text.count('class="traffic-rate">Requests / h'), 5)
 
-    def test_a_pool_is_named_without_the_generator_prefix(self) -> None:
+    def test_a_backend_is_named_without_the_generator_prefix(self) -> None:
         text = self.page().text  # type: ignore[attr-defined]
 
         self.assertNotIn("mgd-shop-web", text)
@@ -208,17 +208,17 @@ class WhatThePageSays(ReadingACluster):
     def test_a_redirect_no_document_accounts_for_keeps_its_stored_name(self) -> None:
         """Inventing a name would be worse than showing an opaque one."""
 
-        self.pools = ["mgd-gone-redirect-aaaaaaaa"]
+        self.backends = ["mgd-gone-redirect-aaaaaaaa"]
 
         self.assertIn("gone-redirect-aaaaaaaa", self.page().text)  # type: ignore[attr-defined]
 
-    def test_a_redirect_answer_is_kept_out_of_the_pools(self) -> None:
-        """It has no servers, and it would size every real pool against it."""
+    def test_a_redirect_answer_is_kept_out_of_the_backends(self) -> None:
+        """It has no servers, and it would size every real backend against it."""
 
         text = self.page().text  # type: ignore[attr-defined]
-        pools = text.split("Backends", 1)[1].split("Redirect answers", 1)[0]
+        backends = text.split("Backends", 1)[1].split("Redirect answers", 1)[0]
 
-        self.assertNotIn("redirect-eee20480", pools)
+        self.assertNotIn("redirect-eee20480", backends)
         self.assertIn("Redirect answers", text)
         self.assertIn("shop-redirect-eee20480", text)
 
@@ -239,15 +239,15 @@ class WhatThePageSays(ReadingACluster):
         self.assertIn("Retries", redirect)
         self.assertNotIn("2xx", redirect)
 
-    def test_a_regular_pool_keeps_2xx_and_does_not_gain_3xx(self) -> None:
+    def test_a_regular_backend_keeps_2xx_and_does_not_gain_3xx(self) -> None:
         text = self.page().text  # type: ignore[attr-defined]
-        pool_card = text.split("Backends", 1)[1].split("Redirect answers", 1)[0]
-        pools = pool_card[
-            pool_card.index('<dl class="traffic-figures">') : pool_card.index("</dl>")
+        backend_card = text.split("Backends", 1)[1].split("Redirect answers", 1)[0]
+        backends = backend_card[
+            backend_card.index('<dl class="traffic-figures">') : backend_card.index("</dl>")
         ]
 
-        self.assertIn("2xx", pools)
-        self.assertNotIn("3xx", pools)
+        self.assertIn("2xx", backends)
+        self.assertNotIn("3xx", backends)
 
     def test_the_cluster_carries_its_own_accent(self) -> None:
         """Without it a card reads as belonging to whatever came above it."""
@@ -266,8 +266,8 @@ class WhatThePageSays(ReadingACluster):
         self.assertIn("the last 24 hours", answer.text)  # type: ignore[attr-defined]
 
     def test_a_cluster_with_no_samples_says_so_rather_than_drawing_nothing(self) -> None:
-        self.listeners = []
-        self.pools = []
+        self.frontends = []
+        self.backends = []
 
         text = self.page().text  # type: ignore[attr-defined]
 
@@ -318,7 +318,7 @@ class MarkingARangeOnThePage(ReadingACluster):
 
     def test_the_figures_are_counted_over_the_marked_range(self) -> None:
         with mock.patch(
-            "haproxy_ui.db.read_pool_totals", side_effect=lambda *_a, **_k: measurement()
+            "haproxy_ui.db.read_backend_totals", side_effect=lambda *_a, **_k: measurement()
         ) as totals:
             self.page(self.marks(50, 40))
 
@@ -330,7 +330,7 @@ class MarkingARangeOnThePage(ReadingACluster):
 
     def test_an_unmarked_page_counts_the_whole_window(self) -> None:
         with mock.patch(
-            "haproxy_ui.db.read_pool_totals", side_effect=lambda *_a, **_k: measurement()
+            "haproxy_ui.db.read_backend_totals", side_effect=lambda *_a, **_k: measurement()
         ) as totals:
             self.page()
 
@@ -393,7 +393,7 @@ class TheWayBackAndForth(ReadingACluster):
         self.assertNotIn("/clusters/edge-demo/traffic", page.text)
 
     def test_an_object_with_traffic_offers_the_comparison_it_cannot_make(self) -> None:
-        """The card can only draw the pool somebody already guessed right."""
+        """The card can only draw the backend somebody already guessed right."""
 
         source = (
             Path(__file__).resolve().parents[1] / "src" / "haproxy_ui" / "templates" / "object.html"
@@ -458,7 +458,7 @@ backends:
         self.assertIn("/old", described)
         self.assertIn("https://shop.example.com/new", described)
 
-    def test_a_route_that_sends_to_a_pool_is_not_one(self) -> None:
+    def test_a_route_that_sends_to_a_backend_is_not_one(self) -> None:
         self.assertEqual(len(self.targets()), 1)
 
 
@@ -471,7 +471,7 @@ class AnAddressNobodyReportedHolding(ReadingACluster):
     """
 
     def test_the_address_is_still_listed(self) -> None:
-        self.listeners = [("mgd-vip-int-https", False)]
+        self.frontends = [("mgd-vip-int-https", False)]
 
         text = self.page().text  # type: ignore[attr-defined]
 
@@ -479,14 +479,14 @@ class AnAddressNobodyReportedHolding(ReadingACluster):
         self.assertNotIn("No address samples in this window", text)
 
     def test_it_says_what_is_missing_rather_than_drawing_a_line(self) -> None:
-        self.listeners = [("mgd-vip-int-https", False)]
+        self.frontends = [("mgd-vip-int-https", False)]
 
         text = self.page().text  # type: ignore[attr-defined]
 
         self.assertIn("No node reported holding this address", text)
 
     def test_an_address_that_was_held_is_drawn_as_before(self) -> None:
-        self.listeners = [("mgd-vip-int-https", True)]
+        self.frontends = [("mgd-vip-int-https", True)]
 
         self.assertIn("traffic-spark", self.page().text)  # type: ignore[attr-defined]
 

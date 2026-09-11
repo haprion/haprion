@@ -613,11 +613,11 @@ def build_router(config: Config) -> APIRouter:
         # And the cluster's addresses, because they decide which node may
         # answer. An object leaving from a source address is answerable only
         # from the node that carries it; the other binds an address it does not
-        # have and reports the pool down.
+        # have and reports the backend down.
         #
         _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
         networks = {reading.cluster: reading for reading in network_rows}
-        pool_lamps = {
+        backend_lamps = {
             view.cluster: {
                 obj.name: health.object_health(
                     health_rows,
@@ -728,7 +728,7 @@ def build_router(config: Config) -> APIRouter:
             "proxies": overview,
             "listed": listed,
             "counts": counts,
-            "health": pool_lamps,
+            "health": backend_lamps,
             "unmanaged": unmanaged,
             #
             # A reader has no drafts to see: a draft is somebody's unfinished
@@ -1096,12 +1096,12 @@ def build_router(config: Config) -> APIRouter:
         if detail.stored is None and detail.published is None and detail.available and not draft:
             raise HTTPException(status_code=404)
         #
-        # What has actually gone through this object's pools lately. Read from
+        # What has actually gone through this object's backends lately. Read from
         # the samples the poller stores rather than from the nodes, so opening
         # the page reaches nothing: it is history, and history is the one thing
         # a node cannot be asked for.
         #
-        # Which pools this page can ask about, from both places a name can come
+        # Which backends this page can ask about, from both places a name can come
         # from - and it needs both.
         #
         # The inventory knows proxies by the name the runtime serves them under,
@@ -1115,10 +1115,10 @@ def build_router(config: Config) -> APIRouter:
         # naming rule the generator uses. Read with the engine's own reader, so
         # nothing here holds a second opinion about what the file says.
         #
-        traffic: list[metrics.PoolTraffic] = []
+        traffic: list[metrics.BackendTraffic] = []
         chosen = metrics.window(request.query_params.get("traffic"))
         #
-        # One moment for every pool on the page, so the cards share an axis and
+        # One moment for every backend on the page, so the cards share an axis and
         # can be compared against each other rather than each against the
         # instant its own query ran. Taken before the marked range is read,
         # because a range only means anything inside the window it was marked
@@ -1149,16 +1149,16 @@ def build_router(config: Config) -> APIRouter:
                 proxy = None
             if proxy is not None:
                 served.extend(
-                    health.backend_name(name, pool)
-                    for pool in proxy.backends
-                    if health.backend_name(name, pool) not in served
+                    health.backend_name(name, backend)
+                    for backend in proxy.backends
+                    if health.backend_name(name, backend) not in served
                 )
         if served:
             with request.app.state.pool.connection() as connection:
                 traffic = [
-                    metrics.pool_traffic(
+                    metrics.backend_traffic(
                         backend,
-                        db.read_pool_samples(
+                        db.read_backend_samples(
                             connection,
                             cluster=cluster,
                             backend=backend,
@@ -1171,7 +1171,7 @@ def build_router(config: Config) -> APIRouter:
                         end=now,
                         bucket=chosen.bucket,
                         chosen=marked,
-                        measurement=db.read_pool_totals(
+                        measurement=db.read_backend_totals(
                             connection,
                             cluster=cluster,
                             backend=backend,
@@ -1213,7 +1213,7 @@ def build_router(config: Config) -> APIRouter:
                 #
                 "traffic_truncated": chosen.span > metrics.RAW_RETENTION,
                 #
-                # More than one pool is the only case where naming them helps.
+                # More than one backend is the only case where naming them helps.
                 # With one, the name is the object's own backend written twice
                 # in a row and answers nothing the page has not said.
                 #
@@ -1250,13 +1250,13 @@ def build_router(config: Config) -> APIRouter:
         """Traffic for every cluster, or for one of them.
 
         Cluster-level from end to end, which is why it is its own page rather
-        than something reached from a proxy: a listener belongs to the address
-        and to the cluster and never to an object (B94), and "which pool
-        carries this" cannot be asked from inside the pool somebody already
+        than something reached from a proxy: a frontend belongs to the address
+        and to the cluster and never to an object (B94), and "which backend
+        carries this" cannot be asked from inside the backend somebody already
         picked.
 
         Admin only, for the same reason as the object page: naming every
-        listener and pool a cluster carries describes the shape of what is
+        frontend and backend a cluster carries describes the shape of what is
         published, which the overview deliberately does not.
         """
 
@@ -1303,9 +1303,9 @@ def build_router(config: Config) -> APIRouter:
         def section(
             named: Sequence[str],
             read: Callable[[str], list[metrics.Sample]],
-            total: Callable[[str], metrics.PoolMeasurement],
+            total: Callable[[str], metrics.BackendMeasurement],
             label: Callable[[str], str],
-        ) -> list[metrics.PoolTraffic]:
+        ) -> list[metrics.BackendTraffic]:
             """One section: read every series, then draw them against one scale.
 
             The ceiling has to be known before any card is drawn, so this is
@@ -1321,7 +1321,7 @@ def build_router(config: Config) -> APIRouter:
                 bucket=chosen.bucket,
             )
             return [
-                metrics.pool_traffic(
+                metrics.backend_traffic(
                     label(name),
                     samples,
                     tick_format=chosen.tick,
@@ -1345,8 +1345,8 @@ def build_router(config: Config) -> APIRouter:
                 # inline - and neither the type checker nor a person could
                 # follow which cluster each one had closed over.
                 #
-                def listener_samples(name: str, cluster: str = cluster) -> list[metrics.Sample]:
-                    return db.read_listener_samples(
+                def frontend_samples(name: str, cluster: str = cluster) -> list[metrics.Sample]:
+                    return db.read_frontend_samples(
                         connection,
                         cluster=cluster,
                         frontend=name,
@@ -1355,8 +1355,10 @@ def build_router(config: Config) -> APIRouter:
                         width=chosen.bucket,
                     )
 
-                def listener_totals(name: str, cluster: str = cluster) -> metrics.PoolMeasurement:
-                    return db.read_listener_totals(
+                def frontend_totals(
+                    name: str, cluster: str = cluster
+                ) -> metrics.BackendMeasurement:
+                    return db.read_frontend_totals(
                         connection,
                         cluster=cluster,
                         frontend=name,
@@ -1364,8 +1366,8 @@ def build_router(config: Config) -> APIRouter:
                         until=counted_until,
                     )
 
-                def pool_samples(name: str, cluster: str = cluster) -> list[metrics.Sample]:
-                    return db.read_pool_samples(
+                def backend_samples(name: str, cluster: str = cluster) -> list[metrics.Sample]:
+                    return db.read_backend_samples(
                         connection,
                         cluster=cluster,
                         backend=name,
@@ -1374,8 +1376,8 @@ def build_router(config: Config) -> APIRouter:
                         width=chosen.bucket,
                     )
 
-                def pool_totals(name: str, cluster: str = cluster) -> metrics.PoolMeasurement:
-                    return db.read_pool_totals(
+                def backend_totals(name: str, cluster: str = cluster) -> metrics.BackendMeasurement:
+                    return db.read_backend_totals(
                         connection,
                         cluster=cluster,
                         backend=name,
@@ -1394,7 +1396,7 @@ def build_router(config: Config) -> APIRouter:
 
                     return targets.get(name, metrics.without_prefix(name))
 
-                backends = db.read_cluster_pools(
+                backends = db.read_cluster_backends(
                     connection, cluster=cluster, since=since, until=now
                 )
                 #
@@ -1402,15 +1404,15 @@ def build_router(config: Config) -> APIRouter:
                 # is still an address this cluster saw, and it says so on its
                 # own card rather than being left off the page.
                 #
-                seen = db.read_cluster_listeners(
+                seen = db.read_cluster_frontends(
                     connection, cluster=cluster, since=since, until=now
                 )
-                listeners = [frontend for frontend, _owned in seen]
+                frontends = [frontend for frontend, _owned in seen]
                 drawn.append(
                     {
                         "cluster": cluster,
                         "accent": accent_index(cluster),
-                        "listeners": [
+                        "frontends": [
                             (
                                 metrics.listening(name),
                                 owned,
@@ -1420,31 +1422,31 @@ def build_router(config: Config) -> APIRouter:
                             for (name, owned), card in zip(
                                 seen,
                                 section(
-                                    listeners,
-                                    listener_samples,
-                                    listener_totals,
+                                    frontends,
+                                    frontend_samples,
+                                    frontend_totals,
                                     lambda name: metrics.listening(name).vip,
                                 ),
                                 strict=True,
                             )
                         ],
                         #
-                        # Pools and redirect answers are drawn apart and scaled
+                        # Backends and redirect answers are drawn apart and scaled
                         # apart. A redirect has no servers and answers 3xx
                         # itself, so letting it into the comparison would size
-                        # every real pool against traffic that never reached
+                        # every real backend against traffic that never reached
                         # one.
                         #
-                        "pools": section(
+                        "backends": section(
                             [name for name in backends if not metrics.is_redirect(name)],
-                            pool_samples,
-                            pool_totals,
+                            backend_samples,
+                            backend_totals,
                             metrics.without_prefix,
                         ),
                         "redirects": section(
                             [name for name in backends if metrics.is_redirect(name)],
-                            pool_samples,
-                            pool_totals,
+                            backend_samples,
+                            backend_totals,
                             redirect_label,
                         ),
                     }
@@ -1519,10 +1521,10 @@ def build_router(config: Config) -> APIRouter:
         else:
             time_filter_error = None
         #
-        # HAProxy knows generated pool members only as s1, s2, ... . Resolve
+        # HAProxy knows generated backend members only as s1, s2, ... . Resolve
         # those positions before filtering so the one shared search field can
         # find the configured destination as well as the hidden backend name.
-        # This intentionally follows the current document: after a pool is
+        # This intentionally follows the current document: after a backend is
         # edited, old records follow the new ordering rather than pretending
         # the mirror preserved historical configuration that it never stored.
         #
@@ -2241,7 +2243,7 @@ def _editor_page(
     # indistinguishable.
     #
     # "Test health" is a submission too, and it is not that question: it asks
-    # the nodes about the pool, and a page that answered it with a verdict on
+    # the nodes about the backend, and a page that answered it with a verdict on
     # the document would be reporting on work the person did not ask about.
     #
     submitted = form is not None and form.action != "recheck"
@@ -2266,19 +2268,19 @@ def _editor_page(
 
     fields = form.fields()
     #
-    # What the nodes say about this object's pool right now. Read for the page
+    # What the nodes say about this object's backend right now. Read for the page
     # rather than for the check: it is an observation, not a verdict on the
     # document, and an object that has never been deployed simply has none.
     #
     _, status_rows, _ = read_source(request, config, STATUS_SOURCE)
-    pool = health.pool_health(
+    backend = health.backend_health(
         status_rows,
         cluster=cluster,
         obj=str(fields.get("name", "")).strip() or name,
-        pool=str(fields.get("backend", "")).strip() or "web",
+        backend=str(fields.get("backend", "")).strip() or "web",
         #
         # The same address the probe binds, and read the same way. With one set,
-        # only the node that carries it can answer for this pool - the other
+        # only the node that carries it can answer for this backend - the other
         # runs the same check against an address it does not have.
         #
         source=probe_module.source_address(fields, editor_module.choices(state.choices)),
@@ -2343,7 +2345,7 @@ def _editor_page(
             "draft_revision": draft_revision,
             "unexpressible": unexpressible,
             "submitted": submitted,
-            "pool_health": pool,
+            "backend_health": backend,
             "probe": report,
             "notice": notice,
             "action": action,
@@ -2431,7 +2433,7 @@ def _editor_submit(
     #
     # Asking the nodes to try the check the form describes, right now, against
     # the object as it is written on screen - published or not. The poller is
-    # woken as well, because what it reports about a deployed pool is the other
+    # woken as well, because what it reports about a deployed backend is the other
     # half of the same question and it costs one notification.
     #
     if form.action == "recheck":

@@ -228,7 +228,7 @@ class TheOverviewOrdering(LoginTestCase):
         self.assertNotIn("Inactive", hosts)
 
     def test_the_listing_does_not_count_backends_at_all(self) -> None:
-        """It counted pools, which the form writes exactly one of.
+        """It counted backends, which the form writes exactly one of.
 
         So the column was a column of ones, under a heading that reads as the
         servers behind a site - and the health cell beside it already says how
@@ -703,9 +703,9 @@ class WhichPoolsTheTrafficCardAsksAbout(unittest.TestCase):
         source = (
             Path(__file__).resolve().parents[1] / "src" / "haproxy_ui" / "views.py"
         ).read_text()
-        block = source.split("# Which pools this page can ask about", 1)[1].split("if served:", 1)[
-            0
-        ]
+        block = source.split("# Which backends this page can ask about", 1)[1].split(
+            "if served:", 1
+        )[0]
         self.assertIn("detail.published.backends", block)
-        self.assertIn("health.backend_name(name, pool)", block)
+        self.assertIn("health.backend_name(name, backend)", block)
         self.assertIn("not in served", block)

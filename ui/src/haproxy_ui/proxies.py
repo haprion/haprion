@@ -29,7 +29,7 @@ class ProxyView:
     ports: tuple[int, ...]
     backend_count: int
     #
-    # The pool names the runtime knows, empty where the manager reporting this
+    # The backend names the runtime knows, empty where the manager reporting this
     # is older than the field. Empty is "not told", not "has none" - the count
     # beside it is what says how many there are.
     #

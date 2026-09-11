@@ -263,7 +263,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .status-critical { background-color: var(--critical); box-shadow: 0 0 0 3px var(--critical-soft); }
 .status-info { background-color: var(--info); box-shadow: 0 0 0 3px var(--info-soft); }
 .status-unknown { background-color: var(--unknown); box-shadow: 0 0 0 3px var(--unknown-soft); }
-.pool-health { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; color: var(--muted-strong); }
+.backend-health { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; color: var(--muted-strong); }
 /* The form's default button: what Enter does. Taken out of the layout without
    being taken out of the document, because a button that is not rendered is not
    the default button either. */
@@ -461,8 +461,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    read as a badge; running past it, it drew over the column beside it and made
    the row look like a rendering fault rather than a message. */
 .proxy-table td:nth-child(2) { overflow: hidden; }
-/* Five columns since the backend count left. It counted pools rather than
-   servers - the form writes one pool per object, so it was a column of ones -
+/* Five columns since the backend count left. It counted backends rather than
+   servers - the form writes one backend per object, so it was a column of ones -
    and the health cell beside it already says how many servers there are and
    how many are up. The width it held goes to hosts / ports. */
 .proxy-table th:nth-child(5), .proxy-table td:nth-child(5) { width: 12%; }
@@ -1152,8 +1152,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * The card supplies no padding of its own - the header has its own and the
  * tables pad their first and last cells - so a block placed here has to.
  */
-.traffic-pool { padding: 16px 20px; border-top: 1px solid var(--line); }
-.traffic-pool:first-of-type { border-top: 0; }
+.traffic-card { padding: 16px 20px; border-top: 1px solid var(--line); }
+.traffic-card:first-of-type { border-top: 0; }
 .traffic-head { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin: 16px 20px 0; }
 /*
   A section heading inside a cluster card. The card already carries the

@@ -1527,12 +1527,12 @@ def record_metric_samples(
     key includes the timestamp precisely so both survive.
     """
 
-    listeners, members = metrics.samples(result)
-    if not listeners and not members:
+    frontends, members = metrics.samples(result)
+    if not frontends and not members:
         return 0
 
     with connection.cursor() as cursor:
-        if listeners:
+        if frontends:
             cursor.executemany(
                 _sample_insert("metric_listener", ("node", "frontend", "owns_vip")),
                 [
@@ -1545,7 +1545,7 @@ def record_metric_samples(
                         "status": sample.status,
                         **_counter_values(sample.counters),
                     }
-                    for sample in listeners
+                    for sample in frontends
                 ],
             )
         if members:
@@ -1570,7 +1570,7 @@ def record_metric_samples(
                 ],
             )
 
-    return len(listeners) + len(members)
+    return len(frontends) + len(members)
 
 
 def _sample_insert(table: str, identifying: tuple[str, ...]) -> sql.Composed:
@@ -1617,7 +1617,7 @@ def _bucketed_raw(width: timedelta) -> sql.Composed:
     readings, and that interval would then be reported as a quiet stretch - so
     the lowest uptime anywhere inside the bucket travels with the reading.
 
-    **Every bucket is per node.** Pool members are recorded only from the node
+    **Every bucket is per node.** Backend members are recorded only from the node
     holding the VIP, so a failover leaves one series written by two machines,
     and a bucket that kept whichever row happened to be last would hand the
     reader two processes' cumulative counters as one. The node is in the
@@ -1667,10 +1667,10 @@ def _rolled_up() -> sql.Composed:
     ).format(columns=columns)
 
 
-def _pool_history_boundary(
+def _backend_history_boundary(
     connection: Connection[Any], *, since: datetime, until: datetime
 ) -> datetime:
-    """Where a pool history changes from completed rollup to retained raw rows.
+    """Where a backend history changes from completed rollup to retained raw rows.
 
     Seven days remains the normal boundary and keeps recent views at raw
     resolution. If maintenance has fallen behind, its continuous completion
@@ -1692,7 +1692,7 @@ def _pool_history_boundary(
     return max(since, min(retained_from, row[0]))
 
 
-def read_pool_samples(
+def read_backend_samples(
     connection: Connection[Any],
     *,
     cluster: str,
@@ -1702,9 +1702,9 @@ def read_pool_samples(
     width: timedelta,
     member: str = "BACKEND",
 ) -> list[metrics.Sample]:
-    """One pool's readings since a moment, one per bucket, oldest first.
+    """One backend's readings since a moment, one per bucket, oldest first.
 
-    `BACKEND` by default, which is HAProxy's own aggregate row for the pool -
+    `BACKEND` by default, which is HAProxy's own aggregate row for the backend -
     the sum across its servers, counted by the thing doing the balancing rather
     than added up here. A caller that wants one server names it.
 
@@ -1718,7 +1718,7 @@ def read_pool_samples(
     case costs one query and the long one costs two.
     """
 
-    raw_from = _pool_history_boundary(connection, since=since, until=until)
+    raw_from = _backend_history_boundary(connection, since=since, until=until)
     arguments = {
         "cluster": cluster,
         "backend": backend,
@@ -1758,11 +1758,11 @@ def read_pool_samples(
     return found
 
 
-def _bucketed_listener(width: timedelta) -> sql.Composed:
-    """One listener's raw readings on one node, reduced to one per bucket.
+def _bucketed_frontend(width: timedelta) -> sql.Composed:
+    """One frontend's raw readings on one node, reduced to one per bucket.
 
-    The same reduction the pool query makes, against `metric_listener` and
-    without a rollup half: listeners have no rollup, and their raw rows are
+    The same reduction the backend query makes, against `metric_listener` and
+    without a rollup half: frontends have no rollup, and their raw rows are
     kept for a fixed seven days. A window reaching further back is answered by
     the part of it that still exists, which the card's own coverage states.
 
@@ -1773,7 +1773,7 @@ def _bucketed_listener(width: timedelta) -> sql.Composed:
     asks: what a standby did not serve.
 
     So the readings are those of whichever node held the address, which is the
-    same rule pool members are already recorded under (B94) and makes the two
+    same rule backend members are already recorded under (B94) and makes the two
     halves of the page one model. Both nodes' rows are kept per bucket, and
     `intervals` differences each node against itself - the standby's flat
     series adds nothing, and a failover is the active series ending where the
@@ -1782,7 +1782,7 @@ def _bucketed_listener(width: timedelta) -> sql.Composed:
     carried a star and a coverage of 0 % while nothing was wrong with them
     (B97, measured 2026-09-07).
 
-    **Every bucket is per node**, exactly as the pool query's is, and that is
+    **Every bucket is per node**, exactly as the backend query's is, and that is
     load-bearing rather than symmetry for its own sake. Collapsing to one row
     per bucket looked safe while only the owner is read - and is not. An
     address that moves away and back inside one bucket leaves the *other*
@@ -1814,7 +1814,7 @@ def _bucketed_listener(width: timedelta) -> sql.Composed:
     ).format(columns=columns)
 
 
-def read_listener_samples(
+def read_frontend_samples(
     connection: Connection[Any],
     *,
     cluster: str,
@@ -1823,11 +1823,11 @@ def read_listener_samples(
     until: datetime,
     width: timedelta,
 ) -> list[metrics.Sample]:
-    """One VIP listener's readings, one per bucket, oldest first."""
+    """One VIP frontend's readings, one per bucket, oldest first."""
 
     with connection.cursor() as cursor:
         cursor.execute(
-            _bucketed_listener(width),
+            _bucketed_frontend(width),
             {
                 "cluster": cluster,
                 "frontend": frontend,
@@ -1851,13 +1851,13 @@ def read_listener_samples(
     ]
 
 
-def read_cluster_listeners(
+def read_cluster_frontends(
     connection: Connection[Any], *, cluster: str, since: datetime, until: datetime
 ) -> list[tuple[str, bool]]:
     """Which VIP frontends this cluster saw, and whether any node held each.
 
     Asked of the samples rather than of the configuration, because the card is
-    history: a listener removed yesterday still has a window worth reading, and
+    history: a frontend removed yesterday still has a window worth reading, and
     one added this morning has nothing to show whatever the document says.
 
     **Existing and being held are two questions, and asking them as one hid
@@ -1890,14 +1890,14 @@ def read_cluster_listeners(
         return [(row[0], bool(row[1])) for row in cursor.fetchall()]
 
 
-def read_cluster_pools(
+def read_cluster_backends(
     connection: Connection[Any], *, cluster: str, since: datetime, until: datetime
 ) -> list[str]:
-    """Which pools this cluster has readings for, by the runtime's own names.
+    """Which backends this cluster has readings for, by the runtime's own names.
 
-    `BACKEND` only - HAProxy's aggregate row for each pool, which is what the
+    `BACKEND` only - HAProxy's aggregate row for each backend, which is what the
     comparison is between. A per-server breakdown is a different question and
-    belongs on the pool it is asked about, not on a page comparing pools.
+    belongs on the backend it is asked about, not on a page comparing backends.
     """
 
     with connection.cursor() as cursor:
@@ -1911,7 +1911,7 @@ def read_cluster_pools(
         return [row[0] for row in cursor.fetchall()]
 
 
-def _pool_totals() -> sql.Composed:
+def _backend_totals() -> sql.Composed:
     """Aggregate cumulative counters before drawing resolution can touch them.
 
     The recent or not-yet-rolled-up half reads every raw sample. The completed
@@ -1992,11 +1992,11 @@ def _pool_totals() -> sql.Composed:
     ).format(columns=columns, previous=previous, deltas=deltas, aggregates=aggregates)
 
 
-def _listener_totals() -> sql.Composed:
-    """One listener's figures, differenced at stored resolution.
+def _frontend_totals() -> sql.Composed:
+    """One frontend's figures, differenced at stored resolution.
 
-    The same arithmetic `_pool_totals` performs, over one raw table instead of
-    a raw and a rolled-up half: there is no listener rollup to meet at a
+    The same arithmetic `_backend_totals` performs, over one raw table instead of
+    a raw and a rolled-up half: there is no frontend rollup to meet at a
     boundary, so there is no boundary to get wrong. The pairing is partitioned
     by node here as well, so `handed_over` cannot arise; the expression is kept
     identical rather than simplified away, so the two readers cannot drift into
@@ -2067,7 +2067,7 @@ def _listener_totals() -> sql.Composed:
     ).format(columns=columns, previous=previous, deltas=deltas, aggregates=aggregates)
 
 
-def _measurement(row: Any) -> metrics.PoolMeasurement:
+def _measurement(row: Any) -> metrics.BackendMeasurement:
     """One aggregate row, in the shape both totals readers return.
 
     Written once because the two queries deliberately produce the same columns
@@ -2086,7 +2086,7 @@ def _measurement(row: Any) -> metrics.PoolMeasurement:
         )
         for index, (_name, label) in enumerate(metrics.CARD_COUNTERS)
     )
-    return metrics.PoolMeasurement(
+    return metrics.BackendMeasurement(
         intervals=int(row[0]),
         started_at=row[1],
         ended_at=row[2],
@@ -2097,19 +2097,19 @@ def _measurement(row: Any) -> metrics.PoolMeasurement:
     )
 
 
-def read_listener_totals(
+def read_frontend_totals(
     connection: Connection[Any],
     *,
     cluster: str,
     frontend: str,
     since: datetime,
     until: datetime,
-) -> metrics.PoolMeasurement:
-    """One VIP listener's figures at stored resolution, apart from its graph."""
+) -> metrics.BackendMeasurement:
+    """One VIP frontend's figures at stored resolution, apart from its graph."""
 
     with connection.cursor() as cursor:
         cursor.execute(
-            _listener_totals(),
+            _frontend_totals(),
             {
                 "cluster": cluster,
                 "frontend": frontend,
@@ -2120,11 +2120,11 @@ def read_listener_totals(
         row = cursor.fetchone()
 
     if row is None:
-        raise RuntimeError("the listener totals aggregate returned no row")
+        raise RuntimeError("the frontend totals aggregate returned no row")
     return _measurement(row)
 
 
-def read_pool_totals(
+def read_backend_totals(
     connection: Connection[Any],
     *,
     cluster: str,
@@ -2132,21 +2132,21 @@ def read_pool_totals(
     since: datetime,
     until: datetime,
     member: str = "BACKEND",
-) -> metrics.PoolMeasurement:
-    """One pool's figures at stored resolution, independent of its graph."""
+) -> metrics.BackendMeasurement:
+    """One backend's figures at stored resolution, independent of its graph."""
 
     arguments = {
         "cluster": cluster,
         "backend": backend,
         "member": member,
         "since": since,
-        "raw_from": _pool_history_boundary(connection, since=since, until=until),
+        "raw_from": _backend_history_boundary(connection, since=since, until=until),
         "until": until,
     }
     with connection.cursor() as cursor:
-        cursor.execute(_pool_totals(), arguments)
+        cursor.execute(_backend_totals(), arguments)
         row = cursor.fetchone()
 
     if row is None:
-        raise RuntimeError("the pool totals aggregate returned no row")
+        raise RuntimeError("the backend totals aggregate returned no row")
     return _measurement(row)

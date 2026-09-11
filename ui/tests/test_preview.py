@@ -380,7 +380,7 @@ class ARouteMayRedirect(unittest.TestCase):
 
         An application whose front page is somewhere other than `/` - the entry
         point is `/web/admin/login`, and `/` answers with a redirect to it -
-        while every other address still reaches the pool. It only works as an
+        while every other address still reaches the backend. It only works as an
         exact match: as a prefix, the redirect on `/` would cover the address
         it points at and the browser would follow it forever.
         """
@@ -452,7 +452,7 @@ class ARouteMayRedirect(unittest.TestCase):
 class ARawPortIsPreviewedToo(unittest.TestCase):
     """One form, two shapes: the fields that mean nothing are left out."""
 
-    def test_a_tcp_object_becomes_a_port_and_one_pool(self) -> None:
+    def test_a_tcp_object_becomes_a_port_and_one_backend(self) -> None:
         result = preview(form(protocol="tcp", tcp_port="5432", hostnames=""), PREVIEW_CLUSTER)
 
         self.assertIsNone(result.problem)
@@ -577,7 +577,7 @@ class EverythingTheModelAllowsInOneRouteAndOnePool(unittest.TestCase):
         form.update(fields)
         return yaml.safe_load(build_document(form))
 
-    def test_a_check_may_speak_tls_where_the_pool_does_not(self) -> None:
+    def test_a_check_may_speak_tls_where_the_backend_does_not(self) -> None:
         document = self.document(health_type="https", health_port="9443")
         health = document["backends"]["web"]["health"]
 
@@ -585,7 +585,7 @@ class EverythingTheModelAllowsInOneRouteAndOnePool(unittest.TestCase):
         self.assertEqual(health["tls"], True)
         self.assertEqual(health["port"], 9443)
 
-    def test_a_check_may_be_plaintext_on_a_pool_that_is_not(self) -> None:
+    def test_a_check_may_be_plaintext_on_a_backend_that_is_not(self) -> None:
         """The combination that could not be written before. `no-check-ssl`."""
 
         document = self.document(
@@ -597,8 +597,8 @@ class EverythingTheModelAllowsInOneRouteAndOnePool(unittest.TestCase):
 
         self.assertEqual(document["backends"]["web"]["health"]["tls"], False)
 
-    def test_a_check_that_says_what_the_pool_says_writes_nothing(self) -> None:
-        """The pool already decides it, and a repeated word is a line in every diff."""
+    def test_a_check_that_says_what_the_backend_says_writes_nothing(self) -> None:
+        """The backend already decides it, and a repeated word is a line in every diff."""
 
         plain = self.document(health_type="http", health_port="9443")
         self.assertNotIn("tls", plain["backends"]["web"]["health"])
@@ -609,7 +609,7 @@ class EverythingTheModelAllowsInOneRouteAndOnePool(unittest.TestCase):
         self.assertNotIn("tls", secure["backends"]["web"]["health"])
 
     def test_a_tcp_check_may_ask_for_the_handshake_itself(self) -> None:
-        """`option ssl-hello-chk` is a check the pool's own TLS does not imply."""
+        """`option ssl-hello-chk` is a check the backend's own TLS does not imply."""
 
         document = self.document(health_type="tcp-tls")
         health = document["backends"]["web"]["health"]
@@ -674,7 +674,7 @@ class EverythingTheModelAllowsInOneRouteAndOnePool(unittest.TestCase):
         self.assertEqual(servers[0], {"host": "198.51.100.10", "port": 8080})
         self.assertEqual(servers[1], {"host": "198.51.100.11", "port": 8080, "backup": True})
 
-    def test_a_pool_of_nothing_but_standbys_is_refused(self) -> None:
+    def test_a_backend_of_nothing_but_standbys_is_refused(self) -> None:
         #
         # HAProxy would take it. The person writing it meant something else.
         #
@@ -702,7 +702,7 @@ class WhereTheFormStops(unittest.TestCase):
     """One route and one backend, and the boundary is deliberate.
 
     Everything inside it the form can now say. Beyond it - a second path going
-    somewhere else, a second pool - is a repeating group, which is a different
+    somewhere else, a second backend - is a repeating group, which is a different
     form rather than more fields on this one, and it is refused with the field
     named rather than opened with the extra routes silently dropped.
 

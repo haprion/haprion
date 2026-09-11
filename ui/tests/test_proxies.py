@@ -100,9 +100,11 @@ class WhatThePoolsAreCalled(unittest.TestCase):
         )
 
     def test_the_names_are_carried_as_reported(self) -> None:
-        self.assertEqual(self.view(backends=["a_pool", "b_pool"]).backends, ("a_pool", "b_pool"))
+        self.assertEqual(
+            self.view(backends=["a_backend", "b_backend"]).backends, ("a_backend", "b_backend")
+        )
 
-    def test_a_manager_too_old_to_report_them_is_not_a_proxy_without_pools(self) -> None:
+    def test_a_manager_too_old_to_report_them_is_not_a_proxy_without_backends(self) -> None:
         """Empty is "not told"; the count beside it says how many there are."""
 
         older = self.view()
@@ -110,7 +112,7 @@ class WhatThePoolsAreCalled(unittest.TestCase):
         self.assertEqual(older.backend_count, 2)
 
     def test_anything_that_is_not_a_name_is_left_out(self) -> None:
-        self.assertEqual(self.view(backends=["a_pool", "", 7, None]).backends, ("a_pool",))
+        self.assertEqual(self.view(backends=["a_backend", "", 7, None]).backends, ("a_backend",))
 
 
 if __name__ == "__main__":

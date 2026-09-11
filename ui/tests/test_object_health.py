@@ -38,31 +38,31 @@ class TheCardNamesWhatTheAuthorWrote(unittest.TestCase):
     by the person who wrote the address it stands for.
     """
 
-    def pool(self, *addresses: str) -> health.PoolHealth:
-        return health.PoolHealth(
+    def backend(self, *addresses: str) -> health.BackendHealth:
+        return health.BackendHealth(
             backend="mgd-shop-web", nodes=(), observed_at=None, addresses=addresses
         )
 
     def test_a_runtime_name_resolves_to_the_address_in_that_position(self) -> None:
-        pool = self.pool("198.51.100.10:8080", "198.51.100.11:8080")
+        backend = self.backend("198.51.100.10:8080", "198.51.100.11:8080")
 
-        self.assertEqual(pool.address("s1"), "198.51.100.10:8080")
-        self.assertEqual(pool.address("s2"), "198.51.100.11:8080")
+        self.assertEqual(backend.address("s1"), "198.51.100.10:8080")
+        self.assertEqual(backend.address("s2"), "198.51.100.11:8080")
 
-    def test_a_name_beyond_the_pool_resolves_to_nothing(self) -> None:
+    def test_a_name_beyond_the_backend_resolves_to_nothing(self) -> None:
         #
-        # A pool edited since the deploy has more names than addresses, and a
+        # A backend edited since the deploy has more names than addresses, and a
         # guess there would put one member's address beside another.
         #
-        pool = self.pool("198.51.100.10:8080")
+        backend = self.backend("198.51.100.10:8080")
 
-        self.assertEqual(pool.address("s2"), "")
-        self.assertEqual(pool.address("BACKEND"), "")
-        self.assertEqual(pool.address("sx"), "")
+        self.assertEqual(backend.address("s2"), "")
+        self.assertEqual(backend.address("BACKEND"), "")
+        self.assertEqual(backend.address("sx"), "")
 
 
 class TheLampInTheListing(unittest.TestCase):
-    """One object's pools, rolled up to what a row can show.
+    """One object's backends, rolled up to what a row can show.
 
     The states are five and not two, and the two quiet ones carry most of the
     care: an object with no health check is unlit, and a check nothing has
@@ -85,7 +85,7 @@ class TheLampInTheListing(unittest.TestCase):
         rows = reading(node("n1", ("mgd-shop-web", "a", "DOWN")))
         self.assertEqual(health.object_health(rows, cluster="alpha", obj="shop").tone, "critical")
 
-    def test_the_pools_own_summary_row_is_not_a_server(self) -> None:
+    def test_the_backends_own_summary_row_is_not_a_server(self) -> None:
         #
         # `show stat` emits a BACKEND pseudo-row per proxy and the node reports
         # it beside the real ones. Counted, it made one server behind a
@@ -113,7 +113,7 @@ class TheLampInTheListing(unittest.TestCase):
         self.assertEqual(lamp.tone, "warning")
         #
         # One server, so the count stays 1 - and amber rather than red, because
-        # the pool is still serving from the node that can reach it. The node
+        # the backend is still serving from the node that can reach it. The node
         # that cannot is named, since that is where somebody would start.
         #
         self.assertEqual(lamp.label, "0/1 up")
@@ -152,11 +152,11 @@ class TheLampInTheListing(unittest.TestCase):
 
     def test_a_longer_object_name_keeps_its_own_servers(self) -> None:
         #
-        # `mgd-shop-web` is object `shop` pool `web`, and equally what object
+        # `mgd-shop-web` is object `shop` backend `web`, and equally what object
         # `shop-web` would be called. A prefix test alone lends one object's
         # members to the other.
         #
-        rows = reading(node("n1", ("mgd-shop-web-pool", "a", "DOWN")))
+        rows = reading(node("n1", ("mgd-shop-web-backend", "a", "DOWN")))
         mine = health.object_health(rows, cluster="alpha", obj="shop", others=("shop", "shop-web"))
         theirs = health.object_health(
             rows, cluster="alpha", obj="shop-web", others=("shop", "shop-web")
@@ -174,12 +174,12 @@ if __name__ == "__main__":
 
 
 class OnlyTheNodeThatCarriesTheAddressAnswers(unittest.TestCase):
-    """A pool that leaves from a source address has one node that can say.
+    """A backend that leaves from a source address has one node that can say.
 
     Both nodes run the same configuration and both run the check. The one that
     does not carry the address binds it anyway - the kernel allows it - fails
-    to route, and reports the pool down. That is HAProxy telling the truth
-    about the binding and a lie about the pool, and it turned one healthy
+    to route, and reports the backend down. That is HAProxy telling the truth
+    about the binding and a lie about the backend, and it turned one healthy
     server into `0/1 up`.
     """
 
@@ -262,7 +262,7 @@ class AnUncheckedServerIsNotADownOne(unittest.TestCase):
 
     Measured against 3.4.4 on this machine, not assumed. Counting it as "not
     up" turned a check that exists in the document but not yet on the nodes -
-    added and not deployed - into a red lamp saying the pool was down.
+    added and not deployed - into a red lamp saying the backend was down.
     """
 
     def test_it_is_skipped_rather_than_counted_either_way(self) -> None:

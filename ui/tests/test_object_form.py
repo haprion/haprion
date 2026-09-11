@@ -172,8 +172,8 @@ hostnames: [shop.example.com]
         )
 
         #
-        # Which path the refusal names is not pinned. The form reads one pool,
-        # so the round trip fails at whichever key first disagrees - the pool
+        # Which path the refusal names is not pinned. The form reads one backend,
+        # so the round trip fails at whichever key first disagrees - the backend
         # it did not read, or the route pointing at it. What matters is that it
         # fails rather than opening with one of the two silently gone.
         #
@@ -236,7 +236,7 @@ class ASiteMayNameItsOwnTlsPolicy(unittest.TestCase):
 
     Several sites answer on one VIP through SNI and share its bind line, so the
     VIP's policy is the default for all of them. HAProxy will still hold one
-    certificate on that listener to different terms than the next, which is
+    certificate on that frontend to different terms than the next, which is
     what this writes.
     """
 
@@ -245,7 +245,7 @@ class ASiteMayNameItsOwnTlsPolicy(unittest.TestCase):
         form.update({"protocol": "https", "certificate": "shop", **fields})
         return yaml.safe_load(build_document(form))
 
-    def test_a_named_policy_reaches_the_listener(self) -> None:
+    def test_a_named_policy_reaches_the_frontend(self) -> None:
         self.assertEqual(self.document(listen_tls_policy="modern")["listen"]["tls"], "modern")
 
     def test_a_site_that_names_none_writes_no_key(self) -> None:

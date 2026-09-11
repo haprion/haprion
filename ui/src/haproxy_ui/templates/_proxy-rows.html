@@ -26,7 +26,7 @@
 {#
   Then what a finished removal took out of the repository and the nodes have
   not stopped serving. The object is gone, so there is nothing to link to and
-  nothing to say about its pools - but the site is still answering, and a
+  nothing to say about its backends - but the site is still answering, and a
   listing that dropped the row would say it was gone while it was up.
 
   Not "waiting for deploy", which is what the rows above it say: that reads as
@@ -116,7 +116,7 @@
           there would claim a reachability nothing measured. Which of the two
           it is sits in the title, not in the column.
         #}
-        <td data-label="Health">{% set lamp = lamps.get(object.name) if lamps else none %}{% if lamp %}<span class="pool-health" title="{{ lamp.detail }}"><span class="status-dot status-{{ lamp.tone }}" aria-hidden="true"></span>{% if lamp.label %} {{ lamp.label }}{% endif %}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        <td data-label="Health">{% set lamp = lamps.get(object.name) if lamps else none %}{% if lamp %}<span class="backend-health" title="{{ lamp.detail }}"><span class="status-dot status-{{ lamp.tone }}" aria-hidden="true"></span>{% if lamp.label %} {{ lamp.label }}{% endif %}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
         <td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td>
       </tr>
 {% endfor %}

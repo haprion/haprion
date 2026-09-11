@@ -174,7 +174,7 @@ def _versions(top: int) -> list[dict[str, Any]]:
         26: "Raise the API backend to four members",
         25: "Add a maintenance page backend",
         24: "Shorten the health check interval",
-        23: "Move the metrics listener off the shared port",
+        23: "Move the metrics frontend off the shared port",
         22: "Split the internal and public frontends",
         21: "Add the staging backend",
         20: "Initial managed configuration",

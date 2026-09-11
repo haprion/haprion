@@ -1,19 +1,19 @@
 {#
   One traffic card, drawn for whatever series the caller is looping over.
 
-  Shared by the object page, where the series is a pool of one proxy, and the
-  cluster view, where it is a listener or a pool being compared against its
+  Shared by the object page, where the series is a backend of one proxy, and the
+  cluster view, where it is a frontend or a backend being compared against its
   peers. The two pages ask different questions and the drawing answers both
   the same way, so a second copy of this markup would only be two places for
   a scale, a hover target or a contrast token to drift apart.
 
-  Expects `pool` in context, plus `traffic_named`, `spark_width`,
+  Expects `backend` in context, plus `traffic_named`, `spark_width`,
   `spark_height`, `traffic_bucket`, `traffic_window`, and the marked range:
   `traffic_marked`, `traffic_range`, `traffic_link` and `traffic_clear`.
 #}
-{% if traffic_named %}<div class="traffic-head"><code class="traffic-backend">{{ pool.series }}</code><span class="traffic-rate">Requests / {{ traffic_rate_unit }}</span></div>{% endif %}
-<div class="traffic-pool">
-  {% if pool.measured %}
+{% if traffic_named %}<div class="traffic-head"><code class="traffic-backend">{{ backend.series }}</code><span class="traffic-rate">Requests / {{ traffic_rate_unit }}</span></div>{% endif %}
+<div class="traffic-card">
+  {% if backend.measured %}
   <div class="traffic-body">
     {#
       The shape first and the figures after it, in reading order: the line
@@ -26,8 +26,8 @@
         it: the SVG is stretched to the card's width, so text placed in it
         would be stretched with it.
       #}
-      {% if pool.levels %}
-      <div class="traffic-levels" aria-hidden="true">{% for level in pool.levels %}<span style="top: {{ level.share }}%">{{ level.label }}</span>{% endfor %}</div>
+      {% if backend.levels %}
+      <div class="traffic-levels" aria-hidden="true">{% for level in backend.levels %}<span style="top: {{ level.share }}%">{{ level.label }}</span>{% endfor %}</div>
       {% endif %}
       <div class="traffic-plot">
       {#
@@ -35,7 +35,7 @@
         with it - otherwise a wide card draws a thick line rather than a
         long one.
       #}
-      <svg viewBox="0 0 {{ spark_width }} {{ spark_height }}" preserveAspectRatio="none" role="img" aria-label="Requests per {{ traffic_bucket }} over {{ traffic_window }}, against a scale of {{ pool.levels[0].label if pool.levels else 0 }}, peaking at {{ pool.peak }}">
+      <svg viewBox="0 0 {{ spark_width }} {{ spark_height }}" preserveAspectRatio="none" role="img" aria-label="Requests per {{ traffic_bucket }} over {{ traffic_window }}, against a scale of {{ backend.levels[0].label if backend.levels else 0 }}, peaking at {{ backend.peak }}">
         {#
           The guides first, so the line and its hover targets sit above them.
           Stroke named on the element because the base `svg` rule would
@@ -49,8 +49,8 @@
           was clicked and a single rectangle would have to re-derive their
           edges to land on them.
         #}
-        {% for point in pool.points %}{% if point.selected %}<rect class="traffic-marked" x="{{ '%.1f'|format(point.x - pool.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(pool.hit_width) }}" height="{{ spark_height }}"></rect>{% endif %}{% endfor %}
-        {% for level in pool.levels %}<line class="traffic-level" x1="0" y1="{{ level.y }}" x2="{{ spark_width }}" y2="{{ level.y }}" stroke="var(--line-strong)" stroke-width="1" vector-effect="non-scaling-stroke"></line>{% endfor %}
+        {% for point in backend.points %}{% if point.selected %}<rect class="traffic-marked" x="{{ '%.1f'|format(point.x - backend.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(backend.hit_width) }}" height="{{ spark_height }}"></rect>{% endif %}{% endfor %}
+        {% for level in backend.levels %}<line class="traffic-level" x1="0" y1="{{ level.y }}" x2="{{ spark_width }}" y2="{{ level.y }}" stroke="var(--line-strong)" stroke-width="1" vector-effect="non-scaling-stroke"></line>{% endfor %}
         {#
           A faint band behind the buckets that could only be measured over part
           of themselves - a reload, a failover, a poll that never arrived. The
@@ -59,8 +59,8 @@
           band is how the reader is told which buckets that was, and the hover
           says over how much of each.
         #}
-        {% for point in pool.points %}{% if point.partial %}<rect class="traffic-part" x="{{ '%.1f'|format(point.x - pool.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(pool.hit_width) }}" height="{{ spark_height }}"></rect>{% endif %}{% endfor %}
-        {% for path in pool.paths %}<path d="{{ path }}" fill="none" stroke="var(--info)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>{% endfor %}
+        {% for point in backend.points %}{% if point.partial %}<rect class="traffic-part" x="{{ '%.1f'|format(point.x - backend.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(backend.hit_width) }}" height="{{ spark_height }}"></rect>{% endif %}{% endfor %}
+        {% for path in backend.paths %}<path d="{{ path }}" fill="none" stroke="var(--info)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>{% endfor %}
         {#
           One hover target per reading, as wide as the bucket it stands for
           and the full height of the drawing, so the pointer finds it by the
@@ -74,15 +74,15 @@
           back. The figures a hover shows are carried on the element rather
           than parsed back out of the title sentence.
         #}
-        {% for point in pool.points %}<a class="traffic-pick" href="{{ traffic_link(point.stamp) }}"{% if point.selected %} data-selected="1"{% endif %} data-when="{{ point.moment }}" data-note="{{ point.note }}" data-figures='{{ point.figures|tojson }}'><rect class="traffic-hit" x="{{ '%.1f'|format(point.x - pool.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(pool.hit_width) }}" height="{{ spark_height }}"><title>{{ point.reading }}</title></rect></a>{% endfor %}
+        {% for point in backend.points %}<a class="traffic-pick" href="{{ traffic_link(point.stamp) }}"{% if point.selected %} data-selected="1"{% endif %} data-when="{{ point.moment }}" data-note="{{ point.note }}" data-figures='{{ point.figures|tojson }}'><rect class="traffic-hit" x="{{ '%.1f'|format(point.x - backend.hit_width / 2) }}" y="0" width="{{ '%.1f'|format(backend.hit_width) }}" height="{{ spark_height }}"><title>{{ point.reading }}</title></rect></a>{% endfor %}
       </svg>
       {#
         The labels are what make the shape locatable. Placed as percentages
         because the drawing is stretched, and the first and last are pulled
         inside their ends so neither hangs off the card.
       #}
-      {% if pool.ticks %}
-      <div class="traffic-axis" aria-hidden="true">{% for at, label in pool.ticks %}<span style="left: {{ at }}%">{{ label }}</span>{% endfor %}</div>
+      {% if backend.ticks %}
+      <div class="traffic-axis" aria-hidden="true">{% for at, label in backend.ticks %}<span style="left: {{ at }}%">{{ label }}</span>{% endfor %}</div>
       {% endif %}
       </div>
     </div>
@@ -106,7 +106,7 @@
         {% if traffic_clear %}<a class="traffic-clear" href="{{ traffic_clear }}">clear</a>{% endif %}
       </p>
       <dl class="traffic-figures">
-        {% for total in pool.totals %}
+        {% for total in backend.totals %}
         {% if (traffic_redirect and total.label != '2xx') or (not traffic_redirect and total.label != '3xx') %}
         <div><dt>{{ total.label }}</dt><dd>{% if total.known %}<span class="traffic-value"{% if total.shortened %} data-note="{{ total.label }}: {{ '{:,}'.format(total.value).replace(',', ' ') }} exactly."{% endif %}>{{ total.shown }}</span>{% else %}&mdash;{% endif %}{% if total.known and not total.whole %}<span class="traffic-partial" data-note="Measured over {{ total.coverage }}% of this window. The rest was time nobody counted - a restart, or the address moving - so it is missing from this figure rather than counted as nothing.">*</span>{% endif %}</dd></div>
         {% endif %}

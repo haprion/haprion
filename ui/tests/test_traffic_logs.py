@@ -34,9 +34,9 @@ listen:
   protocol: http
 routes:
 - path: /
-  backend: primary-pool
+  backend: primary-backend
 backends:
-  primary-pool:
+  primary-backend:
     balance: roundrobin
     servers:
     - host: app-one.example.net
@@ -135,7 +135,7 @@ class TrafficLogReadingTests(unittest.TestCase):
         reading = Reading(
             entries=(
                 parse(
-                    record(backend="mgd-sample-proxy-primary-pool", server="s3"),
+                    record(backend="mgd-sample-proxy-primary-backend", server="s3"),
                     "alpha",
                     "node-a",
                 ),
@@ -340,7 +340,7 @@ class TrafficLogReadingTests(unittest.TestCase):
         self.assertEqual(reading.filter_error, "The search expression ends with an operator.")
 
     def test_search_uses_the_resolved_destination_and_the_hidden_backend(self) -> None:
-        backend = "mgd-sample-proxy-primary-pool"
+        backend = "mgd-sample-proxy-primary-backend"
         self.mirror("alpha", "node-a", record(backend=backend, server="s3"))
         addresses = {("alpha", backend, "s3"): "app-three.example.net:8080"}
 
@@ -470,7 +470,7 @@ class TheTrafficLogPage(LoginTestCase):
 
     def test_the_page_shows_the_configured_destination_instead_of_s3(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(
-            record(backend="mgd-sample-proxy-primary-pool", server="s3")
+            record(backend="mgd-sample-proxy-primary-backend", server="s3")
         )
 
         page = self.page(objects=(object_reading(),))

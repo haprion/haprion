@@ -23,7 +23,7 @@
   const REGION = "[data-traffic-region]";
 
   const wire = (root) => {
-    for (const card of root.querySelectorAll(".traffic-pool")) {
+    for (const card of root.querySelectorAll(".traffic-card")) {
       const svg = card.querySelector("svg");
       const row = card.querySelector(".traffic-figures");
       const label = card.querySelector(".traffic-scope-label");
@@ -110,7 +110,7 @@
   //
   // So the click is answered by fetching the very same address and swapping
   // in the traffic regions the server rendered for it. The server still does
-  // every sum: the figures come from `read_pool_totals` exactly as they do on
+  // every sum: the figures come from `read_backend_totals` exactly as they do on
   // a full load, and nothing here recomputes them - a second implementation of
   // that arithmetic in the browser is a second answer that can drift.
   //

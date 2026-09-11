@@ -16,7 +16,7 @@ fault is is worse than no test.
 
 The server is the application itself, on a loopback port, with the same
 database substitutions the rest of the suite uses. Nothing about the page is
-mocked: the figures are computed by `read_pool_totals` exactly as they are in
+mocked: the figures are computed by `read_backend_totals` exactly as they are in
 production, which is the point - the script must not be able to answer a
 question the server has not answered.
 """
@@ -139,7 +139,7 @@ class TheChartInABrowser(ReadingACluster):
         cards are wrapped in per-section markup, so `:first-of-type` picks the
         first within each wrapper rather than the first on the page."""
 
-        return page.query_selector(".traffic-pool")
+        return page.query_selector(".traffic-card")
 
     @classmethod
     def figures(cls, page: Any) -> list[str]:
@@ -236,7 +236,7 @@ class WhatAHoverAnswers(TheChartInABrowser):
             window = self.scope(page)
             self.card(page).query_selector_all(".traffic-pick")[3].hover()
             page.wait_for_function(
-                "label => document.querySelector('.traffic-pool .traffic-scope-label')"
+                "label => document.querySelector('.traffic-card .traffic-scope-label')"
                 ".textContent.trim() !== label",
                 arg=window,
             )

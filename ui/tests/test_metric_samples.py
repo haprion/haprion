@@ -4,7 +4,7 @@ Neither of these can be proved by running them here - the migration needs a
 database and the retention command needs root - so what is checked is the text
 that will be run. That is worth doing for exactly two things: the grants, which
 decide what a compromised process can do, and the distinctions the phase rests
-on. B93 says the poller cannot create a partition; B94 says a standby's pool
+on. B93 says the poller cannot create a partition; B94 says a standby's backend
 verdict is not a measurement. Both are promises made in SQL and in a shell
 script, and both are the kind of promise that is quietly broken by an edit that
 looks harmless.
@@ -31,12 +31,12 @@ ROLLUP = ROOT / "ui" / "migrations" / "versions" / "0020_metric_pool_hour.py"
 ROLLUP_STATE = ROOT / "ui" / "migrations" / "versions" / "0021_metric_rollup_state.py"
 
 
-class PoolTotalConnection:
+class BackendTotalConnection:
     class Cursor:
-        def __init__(self, owner: PoolTotalConnection) -> None:
+        def __init__(self, owner: BackendTotalConnection) -> None:
             self.owner = owner
 
-        def __enter__(self) -> PoolTotalConnection.Cursor:
+        def __enter__(self) -> BackendTotalConnection.Cursor:
             return self
 
         def __exit__(self, *_: object) -> None:
@@ -79,7 +79,7 @@ class PoolTotalConnection:
         self.statements: list[str] = []
         self.arguments: dict[str, object] = {}
 
-    def cursor(self) -> PoolTotalConnection.Cursor:
+    def cursor(self) -> BackendTotalConnection.Cursor:
         return self.Cursor(self)
 
 
@@ -91,12 +91,12 @@ class ThePoolFiguresQuery(unittest.TestCase):
         pairs: list[object] = []
         for index, _counter in enumerate(CARD_COUNTERS, start=1):
             pairs.extend((index * 100, 60.0))
-        connection = PoolTotalConnection(
+        connection = BackendTotalConnection(
             (3, at - timedelta(minutes=1), at, False, False, 60.0, 60.0, *pairs),
             complete_before=at - timedelta(days=1),
         )
 
-        measured = db.read_pool_totals(
+        measured = db.read_backend_totals(
             connection,  # type: ignore[arg-type]
             cluster="alpha",
             backend="mgd-site-web",
@@ -117,12 +117,12 @@ class ThePoolFiguresQuery(unittest.TestCase):
         at = datetime(2026, 9, 6, 12, tzinfo=UTC)
         complete_before = at - timedelta(days=10)
         pairs = [value for _counter in CARD_COUNTERS for value in (0, 0.0)]
-        connection = PoolTotalConnection(
+        connection = BackendTotalConnection(
             (0, None, None, False, False, 0.0, 0.0, *pairs),
             complete_before=complete_before,
         )
 
-        db.read_pool_totals(
+        db.read_backend_totals(
             connection,  # type: ignore[arg-type]
             cluster="alpha",
             backend="mgd-site-web",
@@ -137,9 +137,9 @@ class ThePoolFiguresQuery(unittest.TestCase):
         at = datetime(2026, 9, 6, 12, tzinfo=UTC)
         since = at - timedelta(days=30)
         pairs = [value for _counter in CARD_COUNTERS for value in (0, 0.0)]
-        connection = PoolTotalConnection((0, None, None, False, False, 0.0, 0.0, *pairs))
+        connection = BackendTotalConnection((0, None, None, False, False, 0.0, 0.0, *pairs))
 
-        db.read_pool_totals(
+        db.read_backend_totals(
             connection,  # type: ignore[arg-type]
             cluster="alpha",
             backend="mgd-site-web",
@@ -154,11 +154,11 @@ class ThePoolFiguresQuery(unittest.TestCase):
         pairs: list[object] = []
         for index, _counter in enumerate(CARD_COUNTERS, start=1):
             pairs.extend((index, 40.0 if index == 1 else 20.0))
-        connection = PoolTotalConnection(
+        connection = BackendTotalConnection(
             (4, at - timedelta(seconds=60), at, True, False, 50.0, 60.0, *pairs)
         )
 
-        measured = db.read_pool_totals(
+        measured = db.read_backend_totals(
             connection,  # type: ignore[arg-type]
             cluster="alpha",
             backend="mgd-site-web",
@@ -245,7 +245,7 @@ class TheMetricTables(unittest.TestCase):
         """Null is "not applicable"; zero is a measurement. See the node script.
 
         A counter declared `not null default 0` would turn a column HAProxy
-        does not fill into a listener that received nothing, which is the one
+        does not fill into a frontend that received nothing, which is the one
         confusion these tables exist to avoid.
         """
 
@@ -338,7 +338,7 @@ class WhatTheRollupPromises(unittest.TestCase):
         self.assertIn("insert into ${METRIC_ROLLUP_TABLE}", statement)
         self.assertIn("insert into metric_rollup_state", statement)
 
-    def test_pool_raw_data_is_gated_by_completion_and_a_safety_day(self) -> None:
+    def test_backend_raw_data_is_gated_by_completion_and_a_safety_day(self) -> None:
         predicate = self.script.split("metric_partitions_expired() {", 1)[1].split("\n}", 1)[0]
         self.assertIn(
             'if [[ "$table" == "metric_pool_member" ]] && rollup_state_present', predicate
@@ -467,28 +467,28 @@ if __name__ == "__main__":
 class TheListenerQueriesReadWhatTheyClaimTo(unittest.TestCase):
     """The newest reader in the phase, and the one nothing executed.
 
-    Its pool counterpart has had this since the raw chain was built; this half
+    Its backend counterpart has had this since the raw chain was built; this half
     was mocked wherever it appeared, so a difference between the two reached
     production as a number on a page. The 2026-09-07 review found exactly that:
-    the listener query collapsed its buckets across nodes where the pool query
+    the frontend query collapsed its buckets across nodes where the backend query
     does not, and an address moving inside one bucket then reported a node's
     lifetime counter as that bucket's traffic.
     """
 
     AT = datetime(2026, 9, 7, 12, tzinfo=UTC)
 
-    def figures(self) -> PoolTotalConnection:
+    def figures(self) -> BackendTotalConnection:
         pairs: list[object] = []
         for index, _counter in enumerate(CARD_COUNTERS, start=1):
             pairs.extend((index * 10, 60.0))
-        return PoolTotalConnection((2, self.AT, self.AT, False, False, 60.0, 60.0, *pairs))
+        return BackendTotalConnection((2, self.AT, self.AT, False, False, 60.0, 60.0, *pairs))
 
     def test_the_figures_read_one_raw_table_and_no_rollup(self) -> None:
-        """Listeners have none, so there is no boundary to meet wrongly."""
+        """Frontends have none, so there is no boundary to meet wrongly."""
 
         connection = self.figures()
 
-        db.read_listener_totals(
+        db.read_frontend_totals(
             connection,  # type: ignore[arg-type]
             cluster="alpha",
             frontend="mgd-vip-int-https",
@@ -503,7 +503,7 @@ class TheListenerQueriesReadWhatTheyClaimTo(unittest.TestCase):
     def test_the_figures_are_the_holding_node_s(self) -> None:
         connection = self.figures()
 
-        db.read_listener_totals(
+        db.read_frontend_totals(
             connection,  # type: ignore[arg-type]
             cluster="alpha",
             frontend="mgd-vip-int-https",
@@ -513,7 +513,7 @@ class TheListenerQueriesReadWhatTheyClaimTo(unittest.TestCase):
 
         self.assertIn("owns_vip", connection.statement)
 
-    def test_every_bucket_is_per_node_exactly_as_the_pool_query_is(self) -> None:
+    def test_every_bucket_is_per_node_exactly_as_the_backend_query_is(self) -> None:
         """The 2026-09-07 finding: collapsing across nodes invents a restart.
 
         An address that moves away and back inside one bucket leaves the other
@@ -522,9 +522,9 @@ class TheListenerQueriesReadWhatTheyClaimTo(unittest.TestCase):
         with that node's cumulative counter.
         """
 
-        connection = PoolTotalConnection(())
+        connection = BackendTotalConnection(())
 
-        db.read_listener_samples(
+        db.read_frontend_samples(
             connection,  # type: ignore[arg-type]
             cluster="alpha",
             frontend="mgd-vip-int-https",
@@ -544,9 +544,9 @@ class TheListenerQueriesReadWhatTheyClaimTo(unittest.TestCase):
         page exists to diagnose.
         """
 
-        connection = PoolTotalConnection(())
+        connection = BackendTotalConnection(())
 
-        db.read_cluster_listeners(
+        db.read_cluster_frontends(
             connection,  # type: ignore[arg-type]
             cluster="alpha",
             since=self.AT - timedelta(days=1),
@@ -565,13 +565,13 @@ class TheListenerQueriesReadWhatTheyClaimTo(unittest.TestCase):
         that fails. This is.
         """
 
-        pool = str(db._pool_totals())
-        listener = str(db._listener_totals())
+        backend = str(db._backend_totals())
+        frontend = str(db._frontend_totals())
         tail = "select count(*)::bigint, min(started_at), max(ended_at), "
 
-        self.assertIn(tail, pool)
-        self.assertIn(tail, listener)
+        self.assertIn(tail, backend)
+        self.assertIn(tail, frontend)
         self.assertEqual(
-            pool.split(tail, 1)[1].split(" from differences", 1)[0],
-            listener.split(tail, 1)[1].split(" from differences", 1)[0],
+            backend.split(tail, 1)[1].split(" from differences", 1)[0],
+            frontend.split(tail, 1)[1].split(" from differences", 1)[0],
         )

@@ -291,7 +291,7 @@ class SavingADraft(EditorTestCase):
         Left disabled, a form where somebody filled in a redirect but the
         script had not run would post no match mode at all and fall back to
         `prefix` - the one answer that makes a redirect on the site root
-        collide with the pool. The cue must not change what gets saved.
+        collide with the backend. The cue must not change what gets saved.
         """
 
         page = self.editor().get("/proxies/alpha/new").text
@@ -637,7 +637,7 @@ class TheHealthCardOnThePage(EditorTestCase):
     def test_a_run_that_reproduced_only_part_of_it_does_not_say_up(self) -> None:
         """The word the nodes use for having run all of it is not this run's.
 
-        A pool that answers here can still be marked down there - for a body,
+        A backend that answers here can still be marked down there - for a body,
         a tcp exchange, or a name this run sent and the check never does - so
         the cell that is read first must not say the same thing.
         """
@@ -882,8 +882,8 @@ class WhichNodeReportsOnThePool(EditorTestCase):
 
     An object that leaves from a source address can only be checked from the
     node carrying it. The other runs the same check, binds an address it does
-    not have, and reports the pool down - HAProxy telling the truth about the
-    binding and a lie about the pool.
+    not have, and reports the backend down - HAProxy telling the truth about the
+    binding and a lie about the backend.
     """
 
     def node(self, name: str, *, owner: bool | None, up: bool) -> dict[str, Any]:
@@ -891,7 +891,7 @@ class WhichNodeReportsOnThePool(EditorTestCase):
             "name": name,
             "status": {
                 "vip": {"owner": owner},
-                "pool_members": [
+                "backend_members": [
                     {
                         "backend": "mgd-shop-web",
                         "server": "s1",
@@ -904,7 +904,9 @@ class WhichNodeReportsOnThePool(EditorTestCase):
 
     def card(self, nodes: list[dict[str, Any]], source: str):
         row = SimpleNamespace(cluster="alpha", result={"nodes": nodes}, observed_at=OBSERVED)
-        return health.pool_health([row], cluster="alpha", obj="shop", pool="web", source=source)
+        return health.backend_health(
+            [row], cluster="alpha", obj="shop", backend="web", source=source
+        )
 
     def test_a_node_without_the_address_is_left_off(self) -> None:
         card = self.card(
@@ -998,7 +1000,7 @@ class WhatEnterDoes(EditorTestCase):
     """A browser submits with the first submit button in tree order.
 
     That was "Test health check", which is inside the form because it asks about the
-    pool being edited - so Enter in any field ran a live probe against a node
+    backend being edited - so Enter in any field ran a live probe against a node
     instead of validating what had been typed. The form now names its own
     default, so the answer does not depend on where a button happens to sit.
     """

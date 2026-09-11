@@ -167,11 +167,11 @@ class WhatHappenedInBetween(unittest.TestCase):
         """The card keeps the 100 it saw, and the handover costs its own time.
 
         The stretch between the two nodes' readings is missing from the figure;
-        node-b's own 100 is not, and an operator asking whether the pool went
+        node-b's own 100 is not, and an operator asking whether the backend went
         quiet after a failover is asking about exactly that.
         """
 
-        card = metrics.pool_traffic(
+        card = metrics.backend_traffic(
             "be_alpha",
             [
                 sample(0, uptime=100, node="node-a", req_tot=1000),
@@ -242,7 +242,7 @@ class TotallingAWindow(unittest.TestCase):
         figure that covered half the window.
         """
 
-        card = metrics.pool_traffic(
+        card = metrics.backend_traffic(
             "be_alpha",
             [
                 sample(0, uptime=100, node="node-a", req_tot=10),
@@ -781,8 +781,8 @@ class TheScaleBesideTheLine(unittest.TestCase):
 
 
 class WhetherTheWindowSaysAnything(unittest.TestCase):
-    def traffic(self, *samples: metrics.Sample) -> metrics.PoolTraffic:
-        return metrics.pool_traffic(
+    def traffic(self, *samples: metrics.Sample) -> metrics.BackendTraffic:
+        return metrics.backend_traffic(
             "mgd-site-web",
             list(samples),
             start=START,
@@ -831,7 +831,7 @@ class TheFiguresAreNotTheDrawing(unittest.TestCase):
             sample(0, uptime=100, req_tot=10),
             sample(20, uptime=120, req_tot=17),
         ]
-        measured = metrics.PoolMeasurement(
+        measured = metrics.BackendMeasurement(
             intervals=3269,
             started_at=START,
             ended_at=START + timedelta(hours=24),
@@ -844,7 +844,7 @@ class TheFiguresAreNotTheDrawing(unittest.TestCase):
             coverage=99,
         )
 
-        card = metrics.pool_traffic(
+        card = metrics.backend_traffic(
             "mgd-site-web",
             drawing,
             start=START,
@@ -1006,9 +1006,9 @@ class OneScaleAcrossSeveralCards(unittest.TestCase):
     """The comparison view's claim: two cards can be held against each other.
 
     That is only true while they are drawn against the same ceiling. Against
-    its own maximum every line touches the top of its card, so a pool serving
+    its own maximum every line touches the top of its card, so a backend serving
     three requests and one serving three thousand draw the same picture - which
-    is exactly what a page comparing pools must not do.
+    is exactly what a page comparing backends must not do.
     """
 
     WINDOW = timedelta(seconds=40)
@@ -1032,15 +1032,15 @@ class OneScaleAcrossSeveralCards(unittest.TestCase):
             bucket=timedelta(seconds=10),
         )
 
-    def card(self, values: list[int | None], *, ceiling: int | None) -> metrics.PoolTraffic:
-        return metrics.pool_traffic(
-            "pool",
+    def card(self, values: list[int | None], *, ceiling: int | None) -> metrics.BackendTraffic:
+        return metrics.backend_traffic(
+            "backend",
             [],
             start=START,
             end=START + self.WINDOW,
             bucket=timedelta(seconds=10),
             ceiling=ceiling,
-            measurement=metrics.PoolMeasurement(
+            measurement=metrics.BackendMeasurement(
                 intervals=len(values),
                 started_at=START,
                 ended_at=START + self.WINDOW,

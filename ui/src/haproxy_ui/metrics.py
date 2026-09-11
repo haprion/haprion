@@ -6,7 +6,7 @@ hold what was true then and are never updated. So the poller writes both from
 one reading rather than asking the nodes twice.
 
 Read out of the stored status document rather than through `parse_status`, for
-the reason `health.pool_health` gives: a poll that reached one node of two
+the reason `health.backend_health` gives: a poll that reached one node of two
 still carries the node that answered, and `parse_status` refuses an envelope it
 cannot fully believe. A pass that recorded nothing whenever one node was
 unreachable would lose the half of the cluster that is fine, on exactly the
@@ -55,7 +55,7 @@ METRIC_COUNTERS: tuple[str, ...] = (
 
 
 @dataclass(frozen=True, slots=True)
-class ListenerSample:
+class FrontendSample:
     node: str
     frontend: str
     owns_vip: bool | None
@@ -109,15 +109,15 @@ def _entries(value: object) -> Sequence[Any]:
     return ()
 
 
-def samples(result: Mapping[str, Any]) -> tuple[list[ListenerSample], list[MemberSample]]:
+def samples(result: Mapping[str, Any]) -> tuple[list[FrontendSample], list[MemberSample]]:
     """What one status reading is worth keeping, split the way B94 splits it.
 
-    **Listeners come from every node.** A standby's `req_tot` of zero is a real
-    measurement and the expected one; a standby whose listener counted anything
+    **Frontends come from every node.** A standby's `req_tot` of zero is a real
+    measurement and the expected one; a standby whose frontend counted anything
     at all is traffic arriving at a node that does not hold the address, which
     is worth being able to see afterwards.
 
-    **Pool members come only from the node that holds the VIP.** The generated
+    **Backend members come only from the node that holds the VIP.** The generated
     backend carries `source <the VIP's address>`, that address is held by the
     keepalived master, and the standby's health check is answered to whoever
     holds it. Its `DOWN` is not a measurement of the backend, so storing it
@@ -128,7 +128,7 @@ def samples(result: Mapping[str, Any]) -> tuple[list[ListenerSample], list[Membe
     means anything, and a row that cannot be attributed is worse than no row.
     """
 
-    listeners: list[ListenerSample] = []
+    frontends: list[FrontendSample] = []
     members: list[MemberSample] = []
 
     for entry in _entries(result.get("nodes")):
@@ -154,8 +154,8 @@ def samples(result: Mapping[str, Any]) -> tuple[list[ListenerSample], list[Membe
             frontend = _text(row.get("frontend"))
             if frontend is None:
                 continue
-            listeners.append(
-                ListenerSample(
+            frontends.append(
+                FrontendSample(
                     node=node,
                     frontend=frontend,
                     owns_vip=owns_vip,
@@ -188,7 +188,7 @@ def samples(result: Mapping[str, Any]) -> tuple[list[ListenerSample], list[Membe
                 )
             )
 
-    return listeners, members
+    return frontends, members
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,7 +209,7 @@ class Sample:
     counters: Mapping[str, int | None]
     floor_uptime_sec: int | None = None
     #
-    # Which node counted it. Pool members are stored only from the node holding
+    # Which node counted it. Backend members are stored only from the node holding
     # the VIP, so the series changes author at a failover and the two halves
     # are different processes' cumulative counters. Without this the reader
     # cannot tell that apart from one process that kept counting.
@@ -277,7 +277,7 @@ def intervals(samples: Sequence[Sample]) -> list[Interval]:
     that was measured is no longer discarded with it.
 
     **A difference is only ever taken between two readings by the same node.**
-    Pool members are recorded from the node holding the VIP, so a failover
+    Backend members are recorded from the node holding the VIP, so a failover
     hands the series to a machine that has been up longer than the one it
     replaced - higher uptime and higher counters, which is exactly what a
     healthy interval looks like. Subtracting across it would report the
@@ -555,9 +555,9 @@ def totalled(found: Sequence[Interval], name: str, label: str = "") -> Total:
 # gridline is a whole number too - `40` above `80` reads at a glance where
 # `37` above `74` reads as a measurement of something.
 #
-# 1 is here so that a peak already on a round number keeps it - a pool topping
+# 1 is here so that a peak already on a round number keeps it - a backend topping
 # out at exactly 10 should be drawn against 10, not against 20 with a third of
-# the card left empty. `MIN_CEILING` is what stops that from also giving a pool
+# the card left empty. `MIN_CEILING` is what stops that from also giving a backend
 # that peaked at one request a midpoint of half a request.
 #
 CEILING_STEPS: tuple[int, ...] = (1, 2, 3, 4, 5, 6, 8, 10)
@@ -568,7 +568,7 @@ def ceiling_for(peak: int) -> int:
     """The round number a line is drawn against, at or above its peak.
 
     **Not the peak itself, which is what it used to be.** A line scaled to its
-    own maximum touches the top of the card whatever it measures, so a pool
+    own maximum touches the top of the card whatever it measures, so a backend
     serving three requests a minute and one serving three thousand drew the
     same picture - and switching windows silently changed what "high" meant.
     Against a fixed round ceiling the height of the line is information.
@@ -1073,13 +1073,13 @@ def spark(
     **Scaled to a round ceiling at or above its peak**, so the height of the
     line means something. Drawn against its own maximum it touched the top of
     the card whatever it measured, which made every window look equally busy
-    and every pool look alike. A window with no traffic has no ceiling and is
+    and every backend look alike. A window with no traffic has no ceiling and is
     drawn flat on the baseline, which is the truth: nothing happened.
 
     **A caller may supply that ceiling instead**, which is how several lines
-    come to share one scale. A page comparing pools is asking which of them
+    come to share one scale. A page comparing backends is asking which of them
     carries the traffic, and that question cannot be answered from cards that
-    each rescale to their own maximum: the quiet pool and the busy one draw the
+    each rescale to their own maximum: the quiet backend and the busy one draw the
     same picture. The peak returned is still this line's own, so a caller can
     tell a flat line from a flat card.
     """
@@ -1259,7 +1259,7 @@ def reading_at(at: datetime, totals: Mapping[str, int | None], covered: float = 
 #
 # What the object page shows, and why these and not the other fourteen. Each
 # answers a question somebody actually arrives with: did anything reach this
-# pool, did it answer, did it refuse, could it be reached at all, and did it
+# backend, did it answer, did it refuse, could it be reached at all, and did it
 # have to try twice. The rest are kept in the table for the day a question
 # needs them - a card that shows everything answers nothing.
 #
@@ -1275,7 +1275,7 @@ CARD_COUNTERS: tuple[tuple[str, str], ...] = (
 
 
 @dataclass(frozen=True, slots=True)
-class PoolMeasurement:
+class BackendMeasurement:
     """One window measured independently of how its line is drawn.
 
     A line needs tens of buckets; a cumulative counter needs every retained
@@ -1319,11 +1319,11 @@ SPARK_TICKS = 5
 
 
 @dataclass(frozen=True, slots=True)
-class PoolTraffic:
+class BackendTraffic:
     """One series' window, ready to draw.
 
     Named by the runtime's own name for it, which is the only name that exists
-    for a proxy nobody wrote here. A pool and a listener are drawn by the same
+    for a proxy nobody wrote here. A backend and a frontend are drawn by the same
     arithmetic against the same axis, so they are one type: the difference
     between them is which table the readings came out of, and that difference
     is spent by the time a card exists.
@@ -1390,7 +1390,7 @@ class PoolTraffic:
 
     #
     # There was a `quiet` property here, and the sentence it turned on -
-    # "nothing reached this pool in the last hour" - was removed on the
+    # "nothing reached this backend in the last hour" - was removed on the
     # maintainer's call. A row of zeros beside a flat line already says it, and
     # saying it a third time in prose is what made the card wordy. The figures
     # and the line are the reading; `measured` still separates a window that
@@ -1400,7 +1400,7 @@ class PoolTraffic:
     def measured(self) -> bool:
         """Whether there is a window at all, as opposed to one that is empty.
 
-        A pool with no samples has not been observed; a pool with samples and
+        A backend with no samples has not been observed; a backend with samples and
         no traffic has. The page says different things about them, and the
         difference is the one this whole table exists to keep.
 
@@ -1480,7 +1480,7 @@ GENERATED_PREFIX = f"{PREFIX}-"
 LISTENER_PROTOCOLS = ("https", "http")
 
 #
-# A generated redirect answer, which is a backend to HAProxy and not a pool.
+# A generated redirect answer, which is a backend to HAProxy but has no servers.
 # `redirect_name` derives eight hex characters from what the route redirects,
 # so this is the shape those names always take.
 #
@@ -1499,7 +1499,7 @@ class Listening:
 
     A name that does not fit the rule is kept whole and its protocol left
     empty. The rule is the generator's and could change; guessing at a name
-    that does not match it would rename somebody's listener on screen.
+    that does not match it would rename somebody's frontend on screen.
     """
 
     vip: str
@@ -1521,11 +1521,11 @@ def listening(frontend: str) -> Listening:
 
 
 def is_redirect(backend: str) -> bool:
-    """Whether this generated backend is a redirect answer rather than a pool.
+    """Whether this generated backend is a redirect answer rather than one with servers.
 
     It carries counters like any backend and belongs on the page, but not in a
-    comparison of pools: it has no servers, it answers 301 itself, and letting
-    it into the shared scale would size every real pool against traffic that
+    comparison of backends: it has no servers, it answers 301 itself, and letting
+    it into the shared scale would size every real backend against traffic that
     never reached one.
     """
 
@@ -1565,7 +1565,7 @@ def without_prefix(name: str) -> str:
 
     Only the prefix comes off. `mgd-<object>-<backend>` cannot be split any
     further without knowing which hyphen the operator's own names contain, and
-    a page that guessed would relabel a pool whenever somebody used a hyphen.
+    a page that guessed would relabel a backend whenever somebody used a hyphen.
     """
 
     return name.removeprefix(GENERATED_PREFIX)
@@ -1587,9 +1587,9 @@ def shared_ceiling(
     the drawing ever shows, and scaling to it would leave every line sitting
     in the bottom third of its card for no visible reason.
 
-    The cost is stated rather than hidden. A cluster with one busy pool and
+    The cost is stated rather than hidden. A cluster with one busy backend and
     several quiet ones draws the quiet ones nearly flat - which is the honest
-    picture, and the one a per-card ceiling was concealing by giving a pool
+    picture, and the one a per-card ceiling was concealing by giving a backend
     serving three requests the same shape as one serving three thousand.
     """
 
@@ -1606,7 +1606,7 @@ def shared_ceiling(
     return ceiling_for(peak)
 
 
-def pool_traffic(
+def backend_traffic(
     series: str,
     samples: Sequence[Sample],
     *,
@@ -1614,21 +1614,21 @@ def pool_traffic(
     start: datetime,
     end: datetime,
     bucket: timedelta,
-    measurement: PoolMeasurement | None = None,
+    measurement: BackendMeasurement | None = None,
     ceiling: int | None = None,
     chosen: Selection | None = None,
-) -> PoolTraffic:
+) -> BackendTraffic:
     """One series' card, drawn across the window that was asked for.
 
     The window is given rather than derived from the samples. What the card
     shows is "the last 30 days", and a view that quietly redrew itself as "the
     last day, stretched" would answer a question nobody asked - and would make
-    two windows of the same pool incomparable, which is the whole use of them.
+    two windows of the same backend incomparable, which is the whole use of them.
     """
 
     found = intervals(samples)
     if measurement is None:
-        measurement = PoolMeasurement(
+        measurement = BackendMeasurement(
             intervals=len(found),
             started_at=found[0].started_at if found else None,
             ended_at=found[-1].ended_at if found else None,
@@ -1649,7 +1649,7 @@ def pool_traffic(
     )
     buckets = max((end - start) / bucket, 1) if bucket else 1
     drawn = peak if ceiling is None else ceiling
-    return PoolTraffic(
+    return BackendTraffic(
         series=series,
         intervals=measurement.intervals,
         #
@@ -1660,7 +1660,7 @@ def pool_traffic(
         # over a stretch nobody sampled has no intervals at all, and reading
         # emptiness from it replaced every card on the page with "No samples
         # yet.", drawing and scale and dates included, leaving the reader to
-        # guess that the marks rather than the pool had gone quiet.
+        # guess that the marks rather than the backend had gone quiet.
         #
         drawn_intervals=len(found),
         started_at=measurement.started_at,

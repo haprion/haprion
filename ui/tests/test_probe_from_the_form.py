@@ -5,7 +5,7 @@ dozen fields, and each one changes what a node should try - so the request is
 built once, from the form, and these tests are what say it was built right.
 
 The other half is what happens when the probe cannot run at all. A socket
-nothing answers on and a pool that is down must not look the same on the page,
+nothing answers on and a backend that is down must not look the same on the page,
 so they are kept apart here first.
 """
 
@@ -93,7 +93,7 @@ def answered(nodes: list[dict[str, object]], error: object = None) -> str:
 
 
 class WhatTheNodesAreAskedToTry(unittest.TestCase):
-    def test_one_target_per_server_in_the_pool(self) -> None:
+    def test_one_target_per_server_in_the_backend(self) -> None:
         targets = targets_from(checks())
         self.assertEqual([entry["host"] for entry in targets], ["198.51.100.10", "198.51.100.11"])
         self.assertEqual([entry["port"] for entry in targets], [8080, 8080])
@@ -105,16 +105,16 @@ class WhatTheNodesAreAskedToTry(unittest.TestCase):
             [entry["port"] for entry in targets_from(checks(health_port="9443"))], [9443, 9443]
         )
 
-    def test_a_tls_check_is_verified_the_way_the_pool_is(self) -> None:
-        """The box says the check speaks TLS; the pool says whose certificate is trusted.
+    def test_a_tls_check_is_verified_the_way_the_backend_is(self) -> None:
+        """The box says the check speaks TLS; the backend says whose certificate is trusted.
 
-        Named servers, because a verified pool refuses addressed ones - the
+        Named servers, because a verified backend refuses addressed ones - the
         name is what the certificate is checked against. The old derivation
         built a request for that combination anyway, which is a probe of a
         configuration that cannot exist.
         """
 
-        named = "pool-a.example.net:8080\npool-b.example.net:8080"
+        named = "backend-a.example.net:8080\npool-b.example.net:8080"
         system = targets_from(checks(health_type="https", backend_tls="system", servers=named))[0]
         self.assertTrue(system["tls"])
         self.assertTrue(system["verify"])
@@ -131,7 +131,7 @@ class WhatTheNodesAreAskedToTry(unittest.TestCase):
         secure = targets_from(checks(health_type="https"))[0]
         self.assertEqual((secure["type"], secure["tls"]), ("http", True))
 
-        named = "pool-a.example.net:8080"
+        named = "backend-a.example.net:8080"
         plain = targets_from(checks(health_type="http", backend_tls="system", servers=named))[0]
         self.assertEqual((plain["type"], plain["tls"]), ("http", False))
 
@@ -144,7 +144,7 @@ class WhatTheNodesAreAskedToTry(unittest.TestCase):
         """The model decides this now, and it refuses rather than dropping one.
 
         Skipping was this module's own leniency, and it meant a probe could
-        report a whole pool green while quietly leaving a member out of it. The
+        report a whole backend green while quietly leaving a member out of it. The
         engine reads the same line and says what is wrong with it, which is the
         answer the editor gives everywhere else.
         """
@@ -152,7 +152,7 @@ class WhatTheNodesAreAskedToTry(unittest.TestCase):
         with self.assertRaises((ValueError, ModelError)):
             checks(servers="198.51.100.10:8080\nnot-a-server\n\n")
 
-    def test_a_pool_larger_than_the_bound_is_cut_rather_than_refused_by_the_node(self) -> None:
+    def test_a_backend_larger_than_the_bound_is_cut_rather_than_refused_by_the_node(self) -> None:
         many = "\n".join(f"198.51.100.10:{port}" for port in range(9000, 9000 + MAX_TARGETS + 5))
         self.assertEqual(len(targets_from(checks(servers=many))), MAX_TARGETS)
 
@@ -352,7 +352,7 @@ class WhatThePageIsToldAfterwards(unittest.TestCase):
         self.assertEqual(report.failing, 1)
         self.assertFalse(report.nodes[1].reachable)
 
-    def test_a_service_that_is_not_there_is_not_a_pool_that_failed(self) -> None:
+    def test_a_service_that_is_not_there_is_not_a_backend_that_failed(self) -> None:
         """The distinction the page depends on: nothing was tried."""
 
         def refuse(*_args: object, **_fields: object) -> str:
@@ -378,12 +378,12 @@ class WhatThePageIsToldAfterwards(unittest.TestCase):
         self.assertFalse(report.ran)
         self.assertIn("probe identity", str(report.problem))
 
-    def test_a_pool_with_no_servers_is_said_rather_than_asked_about(self) -> None:
+    def test_a_backend_with_no_servers_is_said_rather_than_asked_about(self) -> None:
         """In the engine's words, which is the point of reading the object.
 
-        A pool with no members is refused wherever it is read, and a second
+        A backend with no members is refused wherever it is read, and a second
         sentence written here would be a second rule to keep in step with the
-        first. What the reader needs is that this is not a pool that failed.
+        first. What the reader needs is that this is not a backend that failed.
         """
 
         report = run("alpha", form(servers=""), CHOICES, call=lambda *a, **k: answered([]))
@@ -399,7 +399,7 @@ class WhichNodeCouldAnswer(unittest.TestCase):
     """A node that does not hold the source address probed nothing.
 
     It has to arrive at the page as its own thing. Folded into "failed" it
-    becomes a red row about a healthy pool; dropped entirely it becomes a
+    becomes a red row about a healthy backend; dropped entirely it becomes a
     cluster that appears to have one node.
     """
 

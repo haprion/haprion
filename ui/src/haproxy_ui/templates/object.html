@@ -103,7 +103,7 @@
   <header class="cluster-header">
     {#
       The link out is what makes this card honest about its own limits. It can
-      only draw the pools of the object somebody already opened, so "which pool
+      only draw the backends of the object somebody already opened, so "which backend
       carries this" and "did the request arrive at all" are both questions it
       cannot answer - and the cluster view answers both. Carries the chosen
       window, so following it does not silently restart the reading at 24h.
@@ -116,7 +116,7 @@
     #}
     <div class="cluster-state"><nav class="traffic-ranges" aria-label="Time range">{% for entry in traffic_windows %}<a href="?traffic={{ entry.key }}"{% if entry.key == traffic_chosen %} class="is-current" aria-current="true"{% endif %} title="{{ entry.label }}">{{ entry.key }}</a>{% endfor %}</nav></div>
   </header>
-  {% for pool in traffic %}
+  {% for backend in traffic %}
   {% include "_traffic-card.html" %}
   {% endfor %}
   {% if traffic_truncated %}

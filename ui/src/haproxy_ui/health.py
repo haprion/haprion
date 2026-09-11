@@ -1,4 +1,4 @@
-"""What the nodes report about one object's pool members.
+"""What the nodes report about one object's backend members.
 
 The question a person authoring an object actually has is "does my health check
 work", and the only place with a real answer is the node: HAProxy there has been
@@ -66,19 +66,19 @@ def check_phrase(status: str, code: str = "") -> str:
     return f"{phrase} {code}".strip() if code else phrase
 
 
-def backend_name(obj: str, pool: str) -> str:
-    """What this object's pool is called in the generated configuration.
+def backend_name(obj: str, backend: str) -> str:
+    """What this object's backend is called in the generated configuration.
 
     The same rule the generator uses, and the reason a member can be found at
     all: the runtime knows nothing about objects, only about backends.
     """
 
-    return f"{PREFIX}-{obj}-{pool}"
+    return f"{PREFIX}-{obj}-{backend}"
 
 
 @dataclass(frozen=True, slots=True)
 class NodeMembers:
-    """One node's verdict on the members of one pool."""
+    """One node's verdict on the members of one backend."""
 
     node: str
     members: tuple[ServerHealth, ...]
@@ -96,15 +96,15 @@ class NodeMembers:
 
 
 @dataclass(frozen=True, slots=True)
-class PoolHealth:
-    """Every node's answer about one pool, and when it was taken."""
+class BackendHealth:
+    """Every node's answer about one backend, and when it was taken."""
 
     backend: str
     nodes: tuple[NodeMembers, ...]
     observed_at: datetime | None
     #
     # The addresses the author wrote, in the order they wrote them. The runtime
-    # knows a pool member as `s1`, which is the generator's own name for the
+    # knows a backend member as `s1`, which is the generator's own name for the
     # position - deliberately not the address, since that is a column of its
     # own in `show stat`. On this card it is the wrong way round: the person
     # reading wrote `198.51.100.10:8080` and has never seen `s1`.
@@ -114,8 +114,8 @@ class PoolHealth:
     def address(self, server: str) -> str:
         """The address behind a runtime server name, where one can be named.
 
-        Empty for anything that is not `s<n>` within the pool as it now stands.
-        A pool edited since the deploy can have more names than addresses, and
+        Empty for anything that is not `s<n>` within the backend as it now stands.
+        A backend edited since the deploy can have more names than addresses, and
         guessing there would put somebody else's address beside a member.
         """
 
@@ -137,7 +137,7 @@ class PoolHealth:
 
     @property
     def known(self) -> bool:
-        """Whether any node reported members for this pool at all."""
+        """Whether any node reported members for this backend at all."""
 
         return any(node.members for node in self.nodes)
 
@@ -162,7 +162,7 @@ def _members(status: Any) -> tuple[bool, list[dict[str, Any]]]:
 #
 # It is not a verdict, so it must not be counted as one. Counting it as "not up"
 # turned an object whose check exists in the document but not yet on the nodes -
-# a check added and not deployed - into a red lamp saying the pool was down.
+# a check added and not deployed - into a red lamp saying the backend was down.
 #
 UNCHECKED = "no check"
 
@@ -189,16 +189,16 @@ def _count(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def pool_health(
+def backend_health(
     rows: Iterable[Any],
     *,
     cluster: str,
     obj: str,
-    pool: str,
+    backend: str,
     source: str = "",
     addresses: Iterable[str] = (),
-) -> PoolHealth:
-    """The nodes' verdict on one object's pool, from the poller's newest reading.
+) -> BackendHealth:
+    """The nodes' verdict on one object's backend, from the poller's newest reading.
 
     Read out of the stored status document rather than through `parse_status`,
     because a poll that failed still carries the nodes that answered - and a
@@ -206,11 +206,11 @@ def pool_health(
     the half of the cluster that is fine.
     """
 
-    name = backend_name(obj, pool)
+    name = backend_name(obj, backend)
     written = tuple(address.strip() for address in addresses if address.strip())
     reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
     if reading is None:
-        return PoolHealth(backend=name, nodes=(), observed_at=None, addresses=written)
+        return BackendHealth(backend=name, nodes=(), observed_at=None, addresses=written)
 
     result = reading.result if isinstance(reading.result, dict) else {}
     entries = result.get("nodes")
@@ -247,8 +247,8 @@ def pool_health(
     #
     # An object that leaves from a source address can only be checked from the
     # node that carries it. The other one runs the same check, binds an address
-    # it does not have, and reports the pool down - which is HAProxy telling the
-    # truth about the binding and a lie about the pool.
+    # it does not have, and reports the backend down - which is HAProxy telling the
+    # truth about the binding and a lie about the backend.
     #
     # A node that did not say whether it owns the VIP is kept. Hiding a node on
     # a fact nobody stated is worse than one row too many.
@@ -256,7 +256,7 @@ def pool_health(
     if source:
         nodes = [node for node in nodes if node.vip_owner is not False]
 
-    return PoolHealth(
+    return BackendHealth(
         backend=name,
         nodes=tuple(nodes),
         observed_at=getattr(reading, "observed_at", None),
@@ -266,7 +266,7 @@ def pool_health(
 
 @dataclass(frozen=True, slots=True)
 class ObjectHealth:
-    """One object's pools rolled up to the one thing a listing can show.
+    """One object's backends rolled up to the one thing a listing can show.
 
     The listing cannot probe. A probe is an SSH operation against a node, and a
     page that ran one per row on every load would turn opening a list into a
@@ -291,9 +291,9 @@ class ObjectHealth:
 def _attributed(backend: str, obj: str, others: Iterable[str]) -> bool:
     """Whether a generated backend name belongs to this object.
 
-    The generator names a backend `mgd-<object>-<pool>`, and both halves may
-    contain a hyphen - so `mgd-shop-web` is what object `shop` with pool `web`
-    is called, and equally what object `shop-web` with a pool called nothing
+    The generator names a backend `mgd-<object>-<backend>`, and both halves may
+    contain a hyphen - so `mgd-shop-web` is what object `shop` with backend `web`
+    is called, and equally what object `shop-web` with a backend called nothing
     would be. A prefix test alone would lend one object's servers to another
     whose name happens to be shorter.
 
@@ -311,7 +311,7 @@ def _attributed(backend: str, obj: str, others: Iterable[str]) -> bool:
 
 
 def has_health_check(document: str) -> bool | None:
-    """Whether any of this object's pools is checked at all.
+    """Whether any of this object's backends is checked at all.
 
     `None` is a document that could not be read, which is not the same answer:
     an object nobody can parse has an unknown check, not a missing one.
@@ -335,10 +335,10 @@ def has_health_check(document: str) -> bool | None:
     # whether something is checking, not whether the key is present.
     #
     return any(
-        isinstance(pool, dict)
-        and isinstance(pool.get("health"), dict)
-        and pool["health"].get("type") not in (None, "disabled")
-        for pool in backends.values()
+        isinstance(backend, dict)
+        and isinstance(backend.get("health"), dict)
+        and backend["health"].get("type") not in (None, "disabled")
+        for backend in backends.values()
     )
 
 
@@ -349,10 +349,10 @@ def leaves_from_source(document: str, *, default_vip: str, vip_sources: Mapping[
     one - which is the usual case here, since the address lives in keepalived
     and follows the VIP. What an ADC calls the SNIP.
 
-    It decides which nodes may answer for the pool. Only the node holding the
+    It decides which nodes may answer for the backend. Only the node holding the
     VIP can bind the address; the other binds an address it does not have,
-    fails, and reports the pool down - HAProxy telling the truth about the
-    binding and a lie about the pool.
+    fails, and reports the backend down - HAProxy telling the truth about the
+    binding and a lie about the backend.
     """
 
     try:
@@ -480,10 +480,10 @@ def object_health(
     checked: bool | None = True,
     sourced: bool = False,
 ) -> ObjectHealth:
-    """Every node's verdict on every pool behind one object, as one lamp.
+    """Every node's verdict on every backend behind one object, as one lamp.
 
     Counted in servers, because that is what somebody wrote down. Both nodes
-    run the same configuration and report the same pool, so counting readings
+    run the same configuration and report the same backend, so counting readings
     made one server behind a two-node cluster read as `2/2` - and a person who
     had written one server and one check had no way to reach that number.
 
@@ -509,13 +509,13 @@ def object_health(
     entries = result.get("nodes")
 
     #
-    # Keyed by pool and server, because two pools behind one object may name a
+    # Keyed by backend and server, because two backends behind one object may name a
     # server the same and they are not the same server.
     #
     healthy: dict[tuple[str, str], bool] = {}
     #
     # And whether any node at all could reach it. A server down on one node and
-    # up on the other is a partial fault, not a dead pool, and the two must not
+    # up on the other is a partial fault, not a dead backend, and the two must not
     # come out as the same colour.
     #
     reachable: dict[tuple[str, str], bool] = {}
@@ -538,7 +538,7 @@ def object_health(
         # The same rule the editor's card applies, and for the same reason: an
         # object that leaves from a source address can only be answered for by
         # the node that carries it. A node that says it does not is not a
-        # verdict on the pool. One that says nothing is kept - hiding a node on
+        # verdict on the backend. One that says nothing is kept - hiding a node on
         # a fact nobody stated is worse than one row too many.
         #
         status = entry.get("status")
@@ -588,7 +588,7 @@ def object_health(
     #
     reported = f" · reported down by {', '.join(sorted(complaining))}" if complaining else ""
     #
-    # Red is reserved for a pool no node can reach. Anything else - one member
+    # Red is reserved for a backend no node can reach. Anything else - one member
     # of three, or one node of two - is amber: it is still serving, and calling
     # that an outage teaches somebody to disbelieve the colour.
     #

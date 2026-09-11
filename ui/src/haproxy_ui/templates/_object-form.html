@@ -159,11 +159,11 @@
         "the system CAs" was HAProxy's own word for it - `@system-ca` - and it
         asked the reader to translate. There is no private-CA option to tell it
         apart from, so naming the store said nothing anybody could act on. What
-        the choice is actually between is whether the pool's certificate has to
+        the choice is actually between is whether the backend's certificate has to
         be trusted, and that is what the options now say.
 
         The help text is about the one thing the choice demands of the rest of
-        the form: verification needs a name to send, so a pool named by address
+        the form: verification needs a name to send, so a backend named by address
         cannot be verified. Said here rather than only in the refusal, because
         by the time the refusal arrives the servers have already been typed.
       #}
@@ -177,10 +177,10 @@
       </label>
       {#
         A different question from the one above it. That one is whether the
-        pool's certificate has to be trusted; this is how old the handshake may
+        backend's certificate has to be trusted; this is how old the handshake may
         be, and a device can need a lax answer to one and not the other.
 
-        Off when the pool is plain HTTP, because there is no handshake to hold
+        Off when the backend is plain HTTP, because there is no handshake to hold
         to anything - the same `disabled` the TCP port and the balancing key
         use, so the form has one way of saying "not for this shape".
       #}
@@ -235,8 +235,8 @@
       What is done to the traffic on the way through. Not about choosing a
       server, which is what everything above this rule decides.
 
-      How the pool is *reached* used to be down here beside the headers. It is
-      a property of the pool rather than of the traffic passing through it, so
+      How the backend is *reached* used to be down here beside the headers. It is
+      a property of the backend rather than of the traffic passing through it, so
       it sits with the servers it describes - and beside the health check it is
       read against, which is the question it is most often confused with.
     #}
@@ -255,15 +255,15 @@
         Only on the editor - the preview page writes to no cluster and has no
         nodes to ask.
       #}
-      {% if pool_health is defined %}<button type="submit" name="action" value="recheck" class="secondary-button">Test health check</button>{% endif %}
+      {% if backend_health is defined %}<button type="submit" name="action" value="recheck" class="secondary-button">Test health check</button>{% endif %}
     </header>
     <div class="form-grid">
       {#
         One box for what the check is. `https` is an http check that speaks
-        TLS, which is how the pool above says the same thing - and a second box
+        TLS, which is how the backend above says the same thing - and a second box
         beside it asked one question twice.
 
-        No help text. The words are the pool's own and mean what they say
+        No help text. The words are the backend's own and mean what they say
         there; a sentence under them would be the form explaining its own
         vocabulary to itself.
       #}
@@ -280,11 +280,11 @@
       What counts as a good answer, and whether the check does its own TLS.
 
       The TLS box is not the backend's - they are different layers, and the
-      question "does the check follow the pool" has a footnote. HAProxy sends
-      checks in SSL automatically for a pool reached over SSL, but only while
+      question "does the check follow the backend" has a footnote. HAProxy sends
+      checks in SSL automatically for a backend reached over SSL, but only while
       the check goes to the traffic port; a check port breaks the inheritance,
       which is what the generator writes `check-ssl` for. This box is the other
-      case: a plain pool whose health endpoint speaks TLS, or a tcp pool to be
+      case: a plain backend whose health endpoint speaks TLS, or a tcp backend to be
       checked by handshake.
 
       Left empty, a check passes on any 2xx or 3xx - which is HAProxy's rule
@@ -314,7 +314,7 @@
       <label><span class="field-title">Checks to fall <span class="optional">(optional)</span></span><input name="health_fall" value="{{ form.health_fall }}" size="10" placeholder="{{ check_fall }}"><small>Failures in a row before a server is taken out. Too low, and one slow answer does it.</small></label>
     </div>
     {#
-      HAProxy's own verdict, from the nodes, on the pool this object names. It
+      HAProxy's own verdict, from the nodes, on the backend this object names. It
       is an observation and not a test run from here: the checks have been
       running on the nodes, against the servers those nodes were told about,
       from the address they use. Anything probed from the manager would answer
@@ -340,7 +340,7 @@
         With one deliberate exception. Where this run could not reproduce every
         condition of the check, its state must not be the word the nodes use
         for having run all of it: `UP` beside `UP` is read as the same verdict,
-        and a pool that answers here can still be marked down on the nodes for
+        and a backend that answers here can still be marked down on the nodes for
         a body, a tcp exchange or a name this run never asked for. So a partial
         run says so in the cell somebody actually looks at, and the sentences
         under the table say which conditions were left out. They were there
@@ -354,7 +354,7 @@
           {#
             Only the nodes that could answer. A node that does not carry the
             source address tried nothing, and a row saying so is a row about
-            this cluster's failover rather than about the pool being edited -
+            this cluster's failover rather than about the backend being edited -
             the heading names which node holds the address, which is the part
             that is worth knowing.
           #}
@@ -381,28 +381,28 @@
       {% endif %}
     </div>
     {% endif %}
-    {% if pool_health is defined %}
+    {% if backend_health is defined %}
     <div class="node-health">
-      <h4><span class="subsection-title">What the nodes report <span class="optional">{{ pool_health.backend }}{% if pool_health.held_by %}, held by {{ pool_health.held_by|join(' and ') }}{% endif %}</span></span></h4>
-      {% if not pool_health.nodes %}
+      <h4><span class="subsection-title">What the nodes report <span class="optional">{{ backend_health.backend }}{% if backend_health.held_by %}, held by {{ backend_health.held_by|join(' and ') }}{% endif %}</span></span></h4>
+      {% if not backend_health.nodes %}
       <p class="node-health-note">No node has been read yet.</p>
-      {% elif not pool_health.known %}
+      {% elif not backend_health.known %}
       <p class="node-health-note">The nodes know nothing about this backend. It is checked once it has been deployed.</p>
       {% else %}
       <table class="node-health-table">
         <colgroup><col style="width: 22%"><col style="width: 34%"><col style="width: 14%"><col style="width: 30%"></colgroup>
         <thead><tr><th>Node</th><th>Server</th><th>State</th><th>Last check</th></tr></thead>
         <tbody>
-          {% for node in pool_health.nodes %}{% for member in node.members %}
+          {% for node in backend_health.nodes %}{% for member in node.members %}
           <tr>
             <td>{{ node.node }}</td>
             {#
               The server as it was written. `s1` is the generator's name for a
-              position in the pool and means nothing to the person who typed
+              position in the backend and means nothing to the person who typed
               the address it stands for; it is shown only where this version
               cannot say which address a name belongs to.
             #}
-            <td>{{ pool_health.address(member.server) or member.server }}</td>
+            <td>{{ backend_health.address(member.server) or member.server }}</td>
             <td><span class="status-dot {{ 'status-healthy' if member.up else 'status-critical' }}"></span>{{ member.status or 'unknown' }}</td>
             {#
               HAProxy's own code kept as the cell's title. The sentence is for
@@ -415,7 +415,7 @@
         </tbody>
       </table>
       {% endif %}
-      <p class="node-health-note">{% if pool_health.observed_at %}Read {{ pool_health.observed_at.strftime('%H:%M:%S') }}.{% endif %}</p>
+      <p class="node-health-note">{% if backend_health.observed_at %}Read {{ backend_health.observed_at.strftime('%H:%M:%S') }}.{% endif %}</p>
     </div>
     {% endif %}
   </section>

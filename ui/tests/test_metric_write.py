@@ -1,7 +1,7 @@
 """What one status reading becomes, and what a failed write must not cost.
 
 Three promises are checked here, and each has a reason outside this file.
-B94 says a standby's pool verdict is not a measurement, so it is not stored as
+B94 says a standby's backend verdict is not a measurement, so it is not stored as
 one. The phase gate says missing stats data must not affect reachability, so a
 sample that cannot be written is a log line and not a failed pass. And the
 counters' null-versus-zero distinction, which the node script and the reader
@@ -50,19 +50,19 @@ class WhatOneReadingIsWorthKeeping(unittest.TestCase):
     def samples(self, *nodes: dict) -> tuple[list, list]:
         return metrics.samples({"nodes": list(nodes)})
 
-    def test_every_node_contributes_its_listeners(self) -> None:
+    def test_every_node_contributes_its_frontends(self) -> None:
         """A standby's zero is a measurement, and the expected one."""
 
-        listeners, _ = self.samples(
+        frontends, _ = self.samples(
             node("a", owner=True, frontends=[LISTENER]),
             node("b", owner=False, frontends=[{**LISTENER, "counters": {"req_tot": 0}}]),
         )
-        self.assertEqual([entry.node for entry in listeners], ["a", "b"])
-        self.assertEqual(listeners[0].counters["req_tot"], 41)
-        self.assertEqual(listeners[1].counters["req_tot"], 0)
-        self.assertIs(listeners[1].owns_vip, False)
+        self.assertEqual([entry.node for entry in frontends], ["a", "b"])
+        self.assertEqual(frontends[0].counters["req_tot"], 41)
+        self.assertEqual(frontends[1].counters["req_tot"], 0)
+        self.assertIs(frontends[1].owns_vip, False)
 
-    def test_only_the_vip_owner_contributes_pool_members(self) -> None:
+    def test_only_the_vip_owner_contributes_backend_members(self) -> None:
         """B94: the standby's check is answered to whoever holds the address."""
 
         _, members = self.samples(
@@ -79,24 +79,24 @@ class WhatOneReadingIsWorthKeeping(unittest.TestCase):
         self.assertEqual(members, [])
 
     def test_a_counter_that_is_not_a_number_is_left_out_rather_than_zeroed(self) -> None:
-        listeners, _ = self.samples(node("a", owner=True, frontends=[LISTENER]))
-        self.assertEqual(listeners[0].counters, {"req_tot": 41})
-        self.assertNotIn("econ", listeners[0].counters)
+        frontends, _ = self.samples(node("a", owner=True, frontends=[LISTENER]))
+        self.assertEqual(frontends[0].counters, {"req_tot": 41})
+        self.assertNotIn("econ", frontends[0].counters)
 
     def test_the_runtime_uptime_rides_along_so_a_reload_can_be_told_apart(self) -> None:
         """A reload resets the counters and the uptime in the same instant."""
 
-        listeners, members = self.samples(
+        frontends, members = self.samples(
             node("a", owner=True, frontends=[LISTENER], servers=[MEMBER])
         )
-        self.assertEqual(listeners[0].uptime_sec, 900)
+        self.assertEqual(frontends[0].uptime_sec, 900)
         self.assertEqual(members[0].uptime_sec, 900)
 
-    def test_a_node_that_reported_no_listeners_is_not_an_error(self) -> None:
+    def test_a_node_that_reported_no_frontends_is_not_an_error(self) -> None:
         """An older status script says nothing, and that is not a zero either."""
 
-        listeners, members = self.samples(node("a", owner=True))
-        self.assertEqual((listeners, members), ([], []))
+        frontends, members = self.samples(node("a", owner=True))
+        self.assertEqual((frontends, members), ([], []))
 
 
 class WhatIsWritten(unittest.TestCase):

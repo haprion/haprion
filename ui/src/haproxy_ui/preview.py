@@ -158,7 +158,7 @@ DEFAULTS = {
 
 #
 # What the check's Type box offers, and the whole of it. `Type` and a separate
-# TLS box were two questions about one thing - the pool above says `Plain HTTP`
+# TLS box were two questions about one thing - the backend above says `Plain HTTP`
 # or `HTTPS` in one box, and the check has no business needing two.
 #
 # The document keeps the two fields it always had: HAProxy has a check *type*
@@ -185,36 +185,36 @@ def check_kind(chosen: str) -> str:
 
 
 def check_tls(chosen: str, backend_tls: str) -> bool | None:
-    """The document's `health.tls`, written only where it differs from the pool.
+    """The document's `health.tls`, written only where it differs from the backend.
 
-    `None` means the document says nothing, which is HAProxy following the pool
-    - and it is deliberately what a plain check on a plain pool and a TLS check
-    on a TLS pool both produce. An object that already says nothing keeps
+    `None` means the document says nothing, which is HAProxy following the backend
+    - and it is deliberately what a plain check on a plain backend and a TLS check
+    on a TLS backend both produce. An object that already says nothing keeps
     saying nothing when it is loaded and saved, so the generated file does not
     gain a line for a change nobody made.
 
     `tcp, TLS handshake` is the exception and always written. `option
-    ssl-hello-chk` is a check the pool's own TLS does not imply - inheritance
+    ssl-hello-chk` is a check the backend's own TLS does not imply - inheritance
     opens a TLS connection, this asks whether the handshake itself succeeds -
     so it is a request, not a consequence.
     """
 
-    pool_is_tls = bool(backend_tls)
+    backend_is_tls = bool(backend_tls)
     if chosen == "tcp-tls":
         return True
     if chosen in ("https",):
-        return None if pool_is_tls else True
+        return None if backend_is_tls else True
     if chosen in ("http", "tcp"):
-        return False if pool_is_tls else None
+        return False if backend_is_tls else None
     return None
 
 
 def check_type_of(health: Mapping[str, Any], backend_tls: str) -> str:
     """What the box says for a document that has already been written.
 
-    The value shown is what the check will actually do, which is why the pool
+    The value shown is what the check will actually do, which is why the backend
     is read here too: a document that says nothing about a check's protocol on
-    a pool reached over TLS describes a TLS check, and a box reading `http`
+    a backend reached over TLS describes a TLS check, and a box reading `http`
     would be the form telling somebody something untrue.
     """
 
@@ -298,8 +298,8 @@ def _servers(raw: str) -> list[dict[str, object]]:
     reader of that file should not have to know a form convention to understand
     it.
 
-    `backup` is the model's whole remaining server field, so a pool written here
-    can say everything a pool may say. It was the last thing that made an
+    `backup` is the model's whole remaining server field, so a backend written here
+    can say everything a backend may say. It was the last thing that made an
     otherwise ordinary object impossible to open.
     """
 
@@ -328,7 +328,7 @@ def _servers(raw: str) -> list[dict[str, object]]:
     if not servers:
         raise ValueError("a backend needs at least one server")
     #
-    # Every member a standby is a pool with nothing serving it. HAProxy would
+    # Every member a standby is a backend with nothing serving it. HAProxy would
     # accept it; the person writing it meant something else.
     #
     if all(server.get("backup") for server in servers):
@@ -469,7 +469,7 @@ def build_document(form: dict[str, object]) -> str:
     if text("cookie"):
         backend["cookie"] = text("cookie")
     if text("backend_tls"):
-        pool_tls: dict[str, str] = {"verify": text("backend_tls")}
+        backend_tls_box: dict[str, str] = {"verify": text("backend_tls")}
         #
         # Written only when it is not the default, so turning the field on and
         # off again leaves the document it started from. A published object that
@@ -478,8 +478,8 @@ def build_document(form: dict[str, object]) -> str:
         #
         policy = text("backend_tls_policy")
         if policy and policy != DEFAULT_BACKEND_POLICY:
-            pool_tls["policy"] = policy
-        backend["tls"] = pool_tls
+            backend_tls_box["policy"] = policy
+        backend["tls"] = backend_tls_box
     if text("max_connections"):
         limit = text("max_connections")
         if not limit.isdigit():
@@ -490,17 +490,17 @@ def build_document(form: dict[str, object]) -> str:
 
     hostnames = [name.strip() for name in text("hostnames").replace(",", "\n").splitlines()]
     #
-    # The pool's name is carried rather than fixed. Objects written by hand
-    # name their pool after what it serves, and a form that could only produce
+    # The backend's name is carried rather than fixed. Objects written by hand
+    # name their backend after what it serves, and a form that could only produce
     # `web` would rename somebody's `console` the first time they opened it -
     # which reads in a diff as a backend removed and another added.
     #
-    pool = text("backend") or "web"
+    backend_name = text("backend") or "web"
     document: dict[str, object] = {"schema": 1, "name": text("name")}
     written = [name for name in hostnames if name]
     if protocol == "tcp":
         #
-        # A tcp object is an address, a port and one pool. The page keeps one
+        # A tcp object is an address, a port and one backend. The page keeps one
         # form for both shapes, so the fields the shape has no use for carry no
         # document of their own - but anything a person actually typed is sent
         # along and refused by the engine, in the engine's words. Dropping it
@@ -510,7 +510,7 @@ def build_document(form: dict[str, object]) -> str:
         # that misleads.
         #
         document["listen"] = listen
-        document["backend"] = pool
+        document["backend"] = backend_name
         if written:
             document["hostnames"] = written
         if text("redirect_path") or text("redirect_location"):
@@ -519,7 +519,7 @@ def build_document(form: dict[str, object]) -> str:
                 text("redirect_match"),
                 text("redirect_location"),
                 text("redirect_status"),
-                pool,
+                backend_name,
             )
     else:
         document["hostnames"] = written
@@ -529,9 +529,9 @@ def build_document(form: dict[str, object]) -> str:
             text("redirect_match"),
             text("redirect_location"),
             text("redirect_status"),
-            pool,
+            backend_name,
         )
-    document["backends"] = {pool: backend}
+    document["backends"] = {backend_name: backend}
     selected = form.get("allow_from", ())
     allowed = (
         [str(name) for name in selected if str(name).strip()]
@@ -568,18 +568,18 @@ def build_document(form: dict[str, object]) -> str:
 
 
 def _routes(
-    path: str, match: str, location: str, status: str, pool: str
+    path: str, match: str, location: str, status: str, backend_name: str
 ) -> list[dict[str, object]]:
-    """The object's routes: the pool, plus one redirect where the form asks.
+    """The object's routes: the backend, plus one redirect where the form asks.
 
-    The preview builds one pool and one route, which is what the page is for -
+    The preview builds one backend and one route, which is what the page is for -
     seeing what a shape produces. A redirect is the second route rather than a
     replacement for the first, because a redirect that took the whole object
     would be a site with nowhere to send anything.
 
     The redirect carries its own match mode, and that is not a detail. The
     field was first written for a path that had moved - `/old` sends you to
-    `/new`, and the pool keeps everything else - where a prefix match is the
+    `/new`, and the backend keeps everything else - where a prefix match is the
     obvious reading. The other shape is at least as common: the site root
     answers with a redirect to the entry point the application actually uses,
     and the rest of the site proxies as normal. That one needs `exact`, because
@@ -587,12 +587,12 @@ def _routes(
     because two prefix routes on `/` are the same route twice - which the
     engine refuses, in its own words, rather than guessing which was meant.
 
-    The pool's own route stays a prefix on `/`: it is the catch-all the object
+    The backend's own route stays a prefix on `/`: it is the catch-all the object
     is built around, and a redirect sorts ahead of it by `order_routes` when it
     is exact.
     """
 
-    routes: list[dict[str, object]] = [{"path": "/", "backend": pool}]
+    routes: list[dict[str, object]] = [{"path": "/", "backend": backend_name}]
     if not path and not location:
         return routes
     if not (path and location):
@@ -757,13 +757,13 @@ class Unexpressible(Exception):
     """This object says something the form has no field for.
 
     Raised rather than opened with the extra parts quietly dropped. An editor
-    that showed nine of an object's ten pools and then wrote back what it
+    that showed nine of an object's ten backends and then wrote back what it
     showed would delete the tenth on the first save, and every screen in the
     process would have looked correct.
     """
 
 
-def _server_lines(servers: Any, pool: str) -> str:
+def _server_lines(servers: Any, backend_name: str) -> str:
     """One `host:port` line per server, with `backup` where it stands.
 
     Written out rather than dropped: a form that showed a standby as an
@@ -773,11 +773,11 @@ def _server_lines(servers: Any, pool: str) -> str:
     """
 
     if not isinstance(servers, list):
-        raise Unexpressible(f"backends.{pool}.servers")
+        raise Unexpressible(f"backends.{backend_name}.servers")
     lines = []
     for server in servers:
         if not isinstance(server, Mapping):
-            raise Unexpressible(f"backends.{pool}.servers")
+            raise Unexpressible(f"backends.{backend_name}.servers")
         line = f"{server.get('host', '')}:{server.get('port', '')}"
         lines.append(f"{line} backup" if server.get("backup") is True else line)
     return "\n".join(lines)
@@ -861,12 +861,12 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
     listen = _sub(data, "listen")
     backends = _sub(data, "backends")
     #
-    # Whatever the object's one pool is called. Reading `web` unconditionally
-    # would refuse every object whose pool is named after what it serves, and
+    # Whatever the object's one backend is called. Reading `web` unconditionally
+    # would refuse every object whose backend is named after what it serves, and
     # would refuse it while pointing at a path the file does not contain.
     #
-    pool = next(iter(backends), "web")
-    backend = _sub(backends, pool)
+    backend_name = next(iter(backends), "web")
+    backend = _sub(backends, backend_name)
     health = _sub(backend, "health")
     hsts = _sub(listen, "hsts")
     headers = _sub(data, "headers")
@@ -881,7 +881,7 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
     ranges = [entry for entry in allowed if entry not in set(networks)]
 
     #
-    # The second route is the form's redirect. The first is the pool, which the
+    # The second route is the form's redirect. The first is the backend, which the
     # form does not show because it has no choice to offer about it - every
     # object the form can express sends everything else to `web`.
     #
@@ -911,11 +911,11 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "balance": str(backend.get("balance", "") or ""),
         "balance_key": str(backend.get("balance_key", "") or ""),
         "cookie": str(backend.get("cookie", "") or ""),
-        "backend": pool,
-        "servers": _server_lines(backend.get("servers"), pool),
+        "backend": backend_name,
+        "servers": _server_lines(backend.get("servers"), backend_name),
         #
-        # The pool is read with it: a document that says nothing about the
-        # check's protocol on a pool reached over TLS describes a TLS check,
+        # The backend is read with it: a document that says nothing about the
+        # check's protocol on a backend reached over TLS describes a TLS check,
         # and the box has to say so rather than read `http`.
         #
         "health_type": check_type_of(health, str(backend.get("tls", {}).get("verify", "") or "")),
@@ -956,23 +956,23 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
 
 
 def _without_a_redundant_check_protocol(data: Any) -> Any:
-    """The stored object with a check protocol that only repeats the pool removed.
+    """The stored object with a check protocol that only repeats the backend removed.
 
     The document has three states for `health.tls` and the form's Type box has
     two answers per kind, which cannot round-trip on its own: `tls: true` on a
-    pool already reached over TLS and no `tls` at all are the same check, said
+    backend already reached over TLS and no `tls` at all are the same check, said
     twice.
 
     They are the same *configuration* too, which is why this is a normalisation
     and not a loss. Measured on 3.4.4, 2026-09-05: a server line carrying `ssl`
     and a backend carrying `http-check connect ssl` answers `L7OK 200`, and so
-    does the same backend without the line - the pool's own TLS is what the
+    does the same backend without the line - the backend's own TLS is what the
     check inherits either way. So the redundant word is dropped on the next
     save, and the object means exactly what it meant.
 
-    Only the redundant direction. `tls: false` on a TLS pool is `no-check-ssl`
-    and says something the pool does not, and `tls: true` on a plain pool is
-    the check speaking TLS where the pool does not - both are kept.
+    Only the redundant direction. `tls: false` on a TLS backend is `no-check-ssl`
+    and says something the backend does not, and `tls: true` on a plain backend is
+    the check speaking TLS where the backend does not - both are kept.
     """
 
     if not isinstance(data, Mapping):
@@ -981,16 +981,16 @@ def _without_a_redundant_check_protocol(data: Any) -> Any:
     if not isinstance(backends, Mapping):
         return data
     cleaned = dict(data)
-    pools = {}
+    cleaned_backends = {}
     for name, backend in backends.items():
         health = _sub(backend, "health")
-        pool_is_tls = bool(_sub(backend, "tls"))
-        if pool_is_tls and health.get("tls") is True and health.get("type") == "http":
+        backend_is_tls = bool(_sub(backend, "tls"))
+        if backend_is_tls and health.get("tls") is True and health.get("type") == "http":
             trimmed = {key: value for key, value in health.items() if key != "tls"}
-            pools[name] = {**backend, "health": trimmed}
+            cleaned_backends[name] = {**backend, "health": trimmed}
         else:
-            pools[name] = backend
-    cleaned["backends"] = pools
+            cleaned_backends[name] = backend
+    cleaned["backends"] = cleaned_backends
     return cleaned
 
 

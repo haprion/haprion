@@ -670,7 +670,7 @@ for all three: which certificates exist, where each comes from, and where each g
 | Target | Written as | Owner and mode |
 |---|---|---|
 | a cluster | `<certificate_root>/<id>.pem`, the private key followed by the full chain - HAProxy's own format | `root`, the group that owns `certificate_root`, `640` |
-| a receiver | `<path>/fullchain.pem` and `<path>/privkey.pem` | the receiver's `owner`, `600` |
+| a receiver | `<path>/fullchain.pem` and `<path>/privkey.pem` | the receiver's `owner`, `600`; the directory itself belongs to root or to the owner and is writable by nobody else |
 
 Every certificate is checked before its first file is written - it parses, its private key
 belongs to it, and it has at least seven days left - and all of its targets are resolved first, so

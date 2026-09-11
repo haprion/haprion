@@ -378,12 +378,25 @@ def receiver_target(receiver: Receiver) -> Target:
             "target_missing",
             f"receiver {receiver.receiver_id}: {receiver.path} is not a directory",
         )
-    if metadata.st_uid != uid:
+    #
+    # The directory may belong to root or to the account; the files in it
+    # belong to the account. Root-owned is the better of the two - the fetch
+    # account can read what is published to it and cannot replace it - and it
+    # is what a directory made by hand as root looks like. What is refused is
+    # a directory anyone else could write into, which would let a third party
+    # put key material where a receiver fetches from.
+    #
+    if metadata.st_uid not in (0, uid):
         owner = _owner_name(metadata.st_uid)
         raise PublishError(
             "target_missing",
             f"receiver {receiver.receiver_id}: {receiver.path} is owned by {owner}, "
-            f"not by {receiver.owner}",
+            f"not by root or {receiver.owner}",
+        )
+    if stat.S_IMODE(metadata.st_mode) & 0o022:
+        raise PublishError(
+            "target_missing",
+            f"receiver {receiver.receiver_id}: {receiver.path} is group- or world-writable",
         )
     return Target(
         kind="receiver",

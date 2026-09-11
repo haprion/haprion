@@ -25,6 +25,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import yaml
@@ -84,11 +85,13 @@ class Fixture(unittest.TestCase):
         self.lock = self.root / "cert-publish.lock"
         for directory in (self.live, self.store, self.dist, self.receiver_dir):
             directory.mkdir(parents=True)
+        # As registration makes it: writable by nobody but its owner.
+        self.receiver_dir.chmod(0o700)
         patcher = mock.patch.object(cert_publish, "ROOT_UID", os.getuid())
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def write_config(self, certificates: dict[str, dict[str, object]]) -> Path:
+    def write_config(self, certificates: dict[str, dict[str, Any]]) -> Path:
         config_root = self.root / "config"
         publish_root = self.root / "published"
         validation = self.root / "validation"
@@ -108,7 +111,7 @@ class Fixture(unittest.TestCase):
             carried = [
                 certificate_id
                 for certificate_id, raw in certificates.items()
-                if cluster_id in (raw.get("clusters") or [])  # type: ignore[union-attr]
+                if cluster_id in (raw.get("clusters") or [])
             ]
             if not carried:
                 continue
@@ -361,6 +364,27 @@ class NothingHalfWritten(Fixture):
         self.assertEqual(report.certificates[0].error[0], "target_missing")  # type: ignore[index]
         self.assertEqual(list(self.dist.iterdir()), [])
 
+    def test_a_receiver_directory_anyone_can_write_to_is_refused(self) -> None:
+        #
+        # Root-owned or account-owned are both fine (the machine's real
+        # receiver directories are root-owned); writable by others is not.
+        #
+        issue(self.live / "lb-01.example.org", "lb-01.example.org")
+        issue(self.live / "example.com", "example.com")
+        policy = self.write_config(
+            {
+                "example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]},
+                "lb-01.example.org": {"source": {"kind": "acme"}, "receivers": ["lb-01"]},
+            }
+        )
+        self.receiver_dir.chmod(0o777)
+
+        report = self.run_publish(policy)
+
+        self.assertEqual(report.certificates[1].status, "failed")
+        self.assertIn("world-writable", report.certificates[1].error[1])  # type: ignore[index]
+        self.assertEqual(list(self.receiver_dir.iterdir()), [])
+
     def test_one_failure_does_not_stop_the_next_certificate(self) -> None:
         issue(self.live / "example.net", "example.net")
         policy = self.write_config(
@@ -543,11 +567,13 @@ class TheCommand(Fixture):
         self.assertEqual(code, 64)
         self.assertIn("Usage:", out)
 
-        out, err = io.StringIO(), io.StringIO()
+        stdout, stderr = io.StringIO(), io.StringIO()
         with mock.patch.object(os, "geteuid", return_value=1000):
-            code = command.main(["--json"], policy_path=policy, output_stream=out, error_stream=err)
+            code = command.main(
+                ["--json"], policy_path=policy, output_stream=stdout, error_stream=stderr
+            )
         self.assertEqual(code, 77)
-        self.assertEqual(json.loads(out.getvalue())["error"]["code"], "not_root")
+        self.assertEqual(json.loads(stdout.getvalue())["error"]["code"], "not_root")
 
 
 if __name__ == "__main__":

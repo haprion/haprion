@@ -1,0 +1,413 @@
+"""Issuing an ACME certificate: certbot with fixed parameters, then the registry, then publish.
+
+Phase 11's gate is stated in minutes: a form, a button, and a usable
+certificate on the chosen targets in under five. This module is the whole of
+that path below the button, and it times itself so the gate is measured by
+the code rather than by someone with a watch.
+
+What the caller may say, and what it may not
+--------------------------------------------
+A domain, a challenge method, and targets that the registry already knows.
+Nothing else reaches certbot. The credential file and the webroot come from
+the runtime policy; the account, the key type and the lineage name are fixed
+here. A caller that could pass an argument to certbot could pass
+`--config-dir` and point every later renewal somewhere else, which is why the
+argument list is assembled from validated pieces and never from the caller's
+words.
+
+The lineage is the certificate ID. `example.com` and `*.example.com` both
+become the ID `example.com`; the wildcard form also covers the bare name, the
+way the installation's existing wildcard does, and requires DNS-01 because no
+CA issues a wildcard against an HTTP challenge (B36).
+
+Order, and why
+--------------
+certbot first, the registry second, publish third. A registry entry for a
+lineage that does not exist would make every later publish fail on that
+entry; a lineage without an entry is invisible and harmless - `cert-list`
+reports it as unregistered so it can be registered by hand. certbot's own
+directory hooks are turned off for this one run: the renewal hook would
+publish the whole registry before this entry is in it, and the publish that
+follows here does that work once, with the entry present.
+
+certbot's failure is the operator's failure message. Its output is captured
+and returned verbatim in the error, because "the DNS record could not be
+created" is what the operator needs to read, not "exit status 1".
+"""
+
+from __future__ import annotations
+
+import contextlib
+import os
+import re
+import subprocess
+import tempfile
+import time
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Literal
+
+import yaml
+
+from haproxy_mgmt.cert_publish import (
+    DEFAULT_LOCK_PATH,
+    IMPORT_STORE,
+    LETSENCRYPT_LIVE,
+    Deployer,
+    PublishError,
+    Report,
+    publish,
+)
+from haproxy_mgmt.config import (
+    CERTIFICATE_ID,
+    CLUSTER_ID,
+    RECEIVER_ID,
+    ConfigError,
+    PathPolicy,
+    RuntimeConfig,
+    load_registry,
+    load_runtime_config,
+)
+
+CERTBOT = "/usr/bin/certbot"
+CERTBOT_TIMEOUT = 600
+KEY_TYPE = "ecdsa"
+
+type Method = Literal["dns-01", "http-01"]
+METHODS: tuple[Method, ...] = ("dns-01", "http-01")
+
+#
+# A DNS label sequence, lowercase, no trailing dot. Deliberately narrower
+# than what DNS allows: this name becomes a certbot lineage name, a file
+# name under the distribution root and a registry key, and all three are
+# happier without anything outside this class.
+#
+HOSTNAME = re.compile(
+    r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
+)
+
+REGISTRY_HEADER = """\
+# The certificate registry (B135). Maintained by haproxy-cert-issue and the
+# registry helper; hand edits are kept but comments are not, since the file is
+# rewritten as a whole. See INSTALLATION.md 1.4.1 for the fields.
+"""
+
+
+class IssueError(Exception):
+    def __init__(self, code: str, message: str, *, exit_code: int = 64):
+        super().__init__(message)
+        self.code = code
+        self.exit_code = exit_code
+
+
+@dataclass(frozen=True, slots=True)
+class IssueRequest:
+    certificate_id: str
+    domains: tuple[str, ...]
+    wildcard: bool
+    method: Method
+    clusters: tuple[str, ...]
+    receivers: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CertbotResult:
+    returncode: int
+    output: str
+
+
+type Certbot = Callable[[Sequence[str]], CertbotResult]
+
+
+@dataclass(frozen=True, slots=True)
+class IssueResult:
+    request: IssueRequest
+    certbot_seconds: float
+    total_seconds: float
+    publish: Report
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.request.certificate_id,
+            "lineage": self.request.certificate_id,
+            "domains": list(self.request.domains),
+            "method": self.request.method,
+            "targets": {
+                "clusters": list(self.request.clusters),
+                "receivers": list(self.request.receivers),
+            },
+            "certbot_seconds": round(self.certbot_seconds, 1),
+            "total_seconds": round(self.total_seconds, 1),
+            "publish": self.publish.as_dict(),
+        }
+
+
+#
+# The request
+#
+
+
+def parse_domain(text: str) -> tuple[str, tuple[str, ...], bool]:
+    """The certificate ID and the names the certificate must cover."""
+
+    wildcard = text.startswith("*.")
+    name = text[2:] if wildcard else text
+    if not HOSTNAME.fullmatch(name) or not CERTIFICATE_ID.fullmatch(name):
+        raise IssueError("bad_input", f"not a domain name: {text!r}")
+    domains = (f"*.{name}", name) if wildcard else (name,)
+    return name, domains, wildcard
+
+
+def build_request(
+    *,
+    domain: str,
+    method: str,
+    clusters: Sequence[str],
+    receivers: Sequence[str],
+    runtime: RuntimeConfig,
+) -> IssueRequest:
+    certificate_id, domains, wildcard = parse_domain(domain)
+    if method not in METHODS:
+        raise IssueError("bad_input", f"method must be one of: {', '.join(METHODS)}")
+    if wildcard and method != "dns-01":
+        raise IssueError(
+            "bad_input", "a wildcard certificate needs DNS-01; HTTP-01 cannot prove a wildcard"
+        )
+    if not clusters and not receivers:
+        raise IssueError("bad_input", "at least one target (cluster or receiver) is required")
+
+    registry = runtime.registry
+    if registry is None:
+        raise IssueError(
+            "dependency_unavailable",
+            "no certificate registry is configured. Add certificate_registry to the "
+            "runtime policy.",
+            exit_code=78,
+        )
+    for cluster_id in clusters:
+        if not CLUSTER_ID.fullmatch(cluster_id):
+            raise IssueError("bad_input", f"invalid cluster ID: {cluster_id!r}")
+        if cluster_id not in runtime.clusters:
+            raise IssueError("bad_input", f"unknown cluster: {cluster_id!r}")
+    for receiver_id in receivers:
+        if not RECEIVER_ID.fullmatch(receiver_id):
+            raise IssueError("bad_input", f"invalid receiver ID: {receiver_id!r}")
+        if receiver_id not in registry.receivers:
+            raise IssueError("bad_input", f"unregistered receiver: {receiver_id!r}")
+    if certificate_id in registry.certificates:
+        raise IssueError(
+            "already_exists", f"certificate {certificate_id!r} is already in the registry"
+        )
+    return IssueRequest(
+        certificate_id=certificate_id,
+        domains=domains,
+        wildcard=wildcard,
+        method=method,
+        clusters=tuple(dict.fromkeys(clusters)),
+        receivers=tuple(dict.fromkeys(receivers)),
+    )
+
+
+#
+# certbot
+#
+
+
+def certbot_arguments(request: IssueRequest, policy: PathPolicy) -> list[str]:
+    """The certonly command, every part fixed here or read from the policy."""
+
+    acme = policy.acme
+    if request.method == "dns-01":
+        if acme is None or acme.dns_cloudflare_credentials is None:
+            raise IssueError(
+                "dependency_unavailable",
+                "DNS-01 needs acme.dns_cloudflare_credentials in the runtime policy",
+                exit_code=78,
+            )
+        authenticator = [
+            "--dns-cloudflare",
+            "--dns-cloudflare-credentials",
+            str(acme.dns_cloudflare_credentials),
+        ]
+    else:
+        if acme is None or acme.webroot is None:
+            raise IssueError(
+                "dependency_unavailable",
+                "HTTP-01 needs acme.webroot in the runtime policy",
+                exit_code=78,
+            )
+        authenticator = ["--webroot", "-w", str(acme.webroot)]
+
+    arguments = [
+        "certonly",
+        "--non-interactive",
+        "--no-directory-hooks",
+        "--cert-name",
+        request.certificate_id,
+        "--key-type",
+        KEY_TYPE,
+        *authenticator,
+    ]
+    for domain in request.domains:
+        arguments.extend(["-d", domain])
+    return arguments
+
+
+def run_certbot(arguments: Sequence[str]) -> CertbotResult:
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed path, arguments assembled above
+            [CERTBOT, *arguments],
+            capture_output=True,
+            text=True,
+            timeout=CERTBOT_TIMEOUT,
+            check=False,
+        )
+    except OSError as exc:
+        return CertbotResult(127, f"certbot could not be started: {exc}")
+    except subprocess.TimeoutExpired:
+        return CertbotResult(124, f"certbot did not finish within {CERTBOT_TIMEOUT} seconds")
+    output = (completed.stdout or "") + (completed.stderr or "")
+    return CertbotResult(completed.returncode, output.strip())
+
+
+#
+# The registry
+#
+
+
+def add_to_registry(
+    path: Path, request: IssueRequest, runtime: RuntimeConfig, *, require_secure: bool = True
+) -> None:
+    """Add the entry, rewriting the file atomically with its ownership and mode kept.
+
+    The result is loaded back through the same reader every command uses,
+    before the rename, so a file the engine would refuse is never put in
+    place. Comments do not survive: the file is data, and a machine-written
+    registry that tried to keep a person's comments in the right places would
+    be a second YAML implementation.
+    """
+
+    try:
+        metadata = path.stat()
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise IssueError(
+            "dependency_unavailable", f"cannot read the registry: {exc}", exit_code=78
+        ) from exc
+    if not isinstance(loaded, dict):
+        raise IssueError("dependency_unavailable", "the registry is not a mapping", exit_code=78)
+
+    certificates = dict(loaded.get("certificates") or {})
+    entry: dict[str, Any] = {"source": {"kind": "acme"}}
+    if request.clusters:
+        entry["clusters"] = list(request.clusters)
+    if request.receivers:
+        entry["receivers"] = list(request.receivers)
+    certificates[request.certificate_id] = entry
+    document = {
+        "schema_version": 1,
+        "receivers": loaded.get("receivers") or {},
+        "certificates": certificates,
+    }
+    text = REGISTRY_HEADER + yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
+
+    handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        os.fchown(handle, metadata.st_uid, metadata.st_gid)
+        os.fchmod(handle, metadata.st_mode & 0o777)
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        #
+        # Loaded back as the engine loads it, cross-checked against the
+        # clusters the way load_runtime_config does, before it replaces
+        # anything.
+        #
+        candidate = load_registry(Path(temporary), require_secure=require_secure)
+        for certificate in candidate.certificates.values():
+            unknown = sorted(set(certificate.clusters) - set(runtime.clusters))
+            if unknown:
+                raise ConfigError(f"unknown cluster(s): {', '.join(unknown)}")
+        os.replace(temporary, path)
+    except (OSError, ConfigError) as exc:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        raise IssueError(
+            "dependency_unavailable", f"the registry could not be updated: {exc}", exit_code=78
+        ) from exc
+
+
+#
+# The run
+#
+
+
+def issue(
+    *,
+    domain: str,
+    method: str,
+    clusters: Sequence[str],
+    receivers: Sequence[str],
+    policy: PathPolicy,
+    runtime: RuntimeConfig,
+    certbot: Certbot = run_certbot,
+    deployer: Deployer | None = None,
+    live: Path = LETSENCRYPT_LIVE,
+    store: Path = IMPORT_STORE,
+    lock_path: Path = DEFAULT_LOCK_PATH,
+    require_secure: bool = True,
+    now: datetime | None = None,
+) -> IssueResult:
+    started = time.monotonic()
+    request = build_request(
+        domain=domain, method=method, clusters=clusters, receivers=receivers, runtime=runtime
+    )
+    if (live / request.certificate_id).exists():
+        raise IssueError(
+            "already_exists",
+            f"certbot already has a lineage named {request.certificate_id!r}; register it "
+            "in the registry instead of issuing it again",
+        )
+    arguments = certbot_arguments(request, policy)
+
+    certbot_started = time.monotonic()
+    result = certbot(arguments)
+    certbot_seconds = time.monotonic() - certbot_started
+    if result.returncode != 0:
+        raise IssueError(
+            "certbot_failed",
+            f"certbot exited {result.returncode} after {certbot_seconds:.0f}s:\n{result.output}",
+            exit_code=1,
+        )
+
+    assert policy.certificate_registry is not None  # noqa: S101 - build_request checked it
+    add_to_registry(policy.certificate_registry, request, runtime, require_secure=require_secure)
+    #
+    # Re-read rather than patched in memory: the publisher must see exactly
+    # what the next renewal's hook will see.
+    #
+    refreshed = load_runtime_config(policy, require_secure=require_secure)
+
+    try:
+        report = publish(
+            refreshed,
+            policy,
+            only=[request.certificate_id],
+            live=live,
+            store=store,
+            lock_path=lock_path,
+            deployer=deployer,
+            now=now or datetime.now(UTC),
+        )
+    except PublishError as exc:
+        raise IssueError(exc.code, str(exc), exit_code=78) from exc
+
+    return IssueResult(
+        request=request,
+        certbot_seconds=certbot_seconds,
+        total_seconds=time.monotonic() - started,
+        publish=report,
+    )

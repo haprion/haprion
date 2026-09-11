@@ -714,6 +714,47 @@ what this replaces; remove them when this one is installed, or every renewal pub
 Nothing here renews anything. certbot stays authoritative for renewal, on its own timer; the
 publisher is what runs after it has.
 
+### 1.4.3 Issuing a certificate
+
+`haproxy-cert-issue` obtains one ACME certificate and takes it all the way to its targets: certbot,
+then the registry entry, then the publish and the rollout of the clusters named. Root only. The
+whole run is timed and the time is part of its result, because the point of the command is the
+number: a certificate on its targets in minutes, from one line.
+
+```bash
+sudo haproxy-cert-issue --domain www.example.com --method dns-01 --cluster alpha
+sudo haproxy-cert-issue --domain '*.example.net' --method dns-01 --cluster alpha --receiver lb-01.example.net
+```
+
+What the caller supplies is a domain, a method and target names the registry already knows.
+Everything certbot is told beyond that is fixed - `certonly`, the lineage name (which is the
+certificate ID), `--key-type ecdsa`, non-interactive, directory hooks off for this one run - or read
+from the runtime policy:
+
+```yaml
+acme:
+  dns_cloudflare_credentials: /etc/letsencrypt/cloudflare/example.ini
+  webroot: /var/www/acme
+```
+
+| Method | certbot | What the installation is responsible for |
+|---|---|---|
+| `dns-01` | `--dns-cloudflare` with the credential file above | the token may edit that zone |
+| `http-01` | `--webroot -w <webroot>` | `http://<name>/.well-known/acme-challenge/` reaches that directory |
+
+A method whose setting is missing is refused by name before certbot runs. A wildcard
+(`*.example.net`, which also covers `example.net`) needs `dns-01` and is refused with `http-01`.
+The command does not create routes, touch the published configuration or check that the name
+resolves: certbot's own failure, verbatim, is the error message when it does not.
+
+The account is the one certbot already has on this host; the command registers none. The
+certificate becomes an ordinary certbot lineage, renewed by certbot's timer and published by the
+hook in 1.4.2 like every other.
+
+The registry is rewritten as a whole, with its ownership and mode kept and the result loaded back
+through the engine before it replaces the previous file. Comments in it do not survive the first
+machine write; the file's header says so.
+
 ### 1.5 Validation certificate
 
 Candidate validation runs a real `haproxy -c` against the candidate. Any configuration that

@@ -112,6 +112,20 @@ class PathPolicy:
     #
     certificate_registry: Path | None = None
 
+    #
+    # How this installation answers ACME challenges (Phase 11, C3). Each
+    # method needs one installation-specific thing that the issue helper must
+    # never take from its caller: the credential file for DNS-01, the webroot
+    # for HTTP-01. A method whose setting is absent is refused by name.
+    #
+    acme: AcmePolicy | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AcmePolicy:
+    dns_cloudflare_credentials: Path | None
+    webroot: Path | None
+
 
 @dataclass(frozen=True, slots=True)
 class DeployIdentity:
@@ -829,6 +843,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             "backup_root",
             "backup_timer",
             "certificate_registry",
+            "acme",
         },
         "runtime policy",
     )
@@ -857,6 +872,20 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
         backup_root=_optional_root(data, "backup_root"),
         backup_timer=_optional_timer(data, "backup_timer"),
         certificate_registry=_optional_root(data, "certificate_registry"),
+        acme=_acme_policy(data),
+    )
+
+
+def _acme_policy(data: Mapping[str, Any]) -> AcmePolicy | None:
+    raw = data.get("acme")
+    if raw is None:
+        return None
+    location = "runtime policy.acme"
+    entry = _mapping(raw, location)
+    _only_keys(entry, {"dns_cloudflare_credentials", "webroot"}, location)
+    return AcmePolicy(
+        dns_cloudflare_credentials=_optional_root(entry, "dns_cloudflare_credentials"),
+        webroot=_optional_root(entry, "webroot"),
     )
 
 

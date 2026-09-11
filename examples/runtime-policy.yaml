@@ -14,3 +14,11 @@ deploy_identity:
 # cluster's certificates are the `certificate_ids` list in clusters.yaml. Once
 # named, that list must have moved here.
 # certificate_registry: /srv/haproxy-manager/config/certificates.yaml
+
+# How haproxy-cert-issue answers ACME challenges. Each method needs one
+# installation-specific path that the caller must never supply: the
+# credential file for DNS-01, the webroot for HTTP-01. Leave a method out and
+# issuing with it is refused by name.
+# acme:
+#   dns_cloudflare_credentials: /etc/letsencrypt/cloudflare/example.ini
+#   webroot: /var/www/acme

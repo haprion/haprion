@@ -599,6 +599,29 @@ class TheCertificateRegistry(unittest.TestCase):
             registry.certificates["example.com"].source.lineage, "example.com-wildcard"
         )
 
+    def test_the_acme_block_is_read_and_held_to_its_two_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_file = self.setup(Path(raw), None, None)
+            document = yaml.safe_load(policy_file.read_text())
+            document["acme"] = {"dns_cloudflare_credentials": "/etc/example/cloudflare.ini"}
+            policy_file.write_text(yaml.safe_dump(document))
+            policy = load_policy(policy_file, require_secure=False)
+            assert policy.acme is not None
+            self.assertEqual(
+                policy.acme.dns_cloudflare_credentials, Path("/etc/example/cloudflare.ini")
+            )
+            self.assertIsNone(policy.acme.webroot)
+
+            document["acme"]["email"] = "admin@example.com"
+            policy_file.write_text(yaml.safe_dump(document))
+            with self.assertRaises(ConfigError):
+                load_policy(policy_file, require_secure=False)
+
+            document["acme"] = {"webroot": "relative/path"}
+            policy_file.write_text(yaml.safe_dump(document))
+            with self.assertRaises(ConfigError):
+                load_policy(policy_file, require_secure=False)
+
     def test_the_allowlist_in_clusters_yaml_is_refused_once_the_registry_exists(self) -> None:
         """One answer, not two that can drift apart."""
 

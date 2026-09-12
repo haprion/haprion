@@ -58,7 +58,7 @@
       <tr{% if open %} class="registry-open"{% endif %}>
         <td data-label="Certificate"><a class="proxy-link" href="?view=registry{% if not open %}&amp;open={{ certificate.identifier }}{% endif %}" aria-expanded="{{ 'true' if open else 'false' }}"><strong>{{ certificate.identifier }}</strong></a></td>
         <td data-label="Names">{% if certificate.sans %}<span class="certificate-sans">{{ certificate.sans | join(', ') }}</span>{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}—{% endif %}</td>
-        <td data-label="Source"><span class="lifecycle-badge lifecycle-{{ 'acme' if certificate.source_label == 'Certbot' else 'static' }}">{{ certificate.source_label }}</span>{% if certificate.issuer != '—' %}<span class="certificate-issuer">{{ certificate.issuer }}</span>{% endif %}</td>
+        <td data-label="Source"><span class="lifecycle-badge lifecycle-{{ 'acme' if certificate.source_label == 'Certbot' else 'static' }}">{{ certificate.source_label }}</span>{% if certificate.issuer != '—' %}<span class="certificate-issuer" title="{{ certificate.issuer }}">{{ certificate.issuer }}</span>{% endif %}</td>
         <td data-label="Used by">{% if certificate.targets %}<span class="certificate-sans">{% for target in certificate.targets %}{% if not loop.first %}, {% endif %}{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span>{% endif %}{% endfor %}</span>{% else %}<span class="warning-text">Nowhere</span>{% endif %}</td>
         <td data-label="Valid from"><span class="certificate-date">{{ certificate.valid_from }}</span></td>
         <td data-label="Expires">{% if certificate.expires != '—' %}<span class="certificate-date">{{ certificate.expires }}</span>{% endif %}<span class="status-badge status-badge-{{ certificate.tone }}">{{ certificate.expiry_label }}</span></td>
@@ -120,7 +120,7 @@
       <tr>
         <td data-label="Certificate"><strong>{{ certificate.identifier }}</strong></td>
         <td data-label="Names">{% if certificate.sans %}<span class="certificate-sans">{{ certificate.sans | join(', ') }}</span>{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}—{% endif %}</td>
-        <td data-label="Source"><span class="lifecycle-badge lifecycle-{{ certificate.lifecycle }}">{{ certificate.lifecycle_label }}</span>{% if certificate.issuer != '—' %}<span class="certificate-issuer">{{ certificate.issuer }}</span>{% endif %}</td>
+        <td data-label="Source"><span class="lifecycle-badge lifecycle-{{ certificate.lifecycle }}">{{ certificate.lifecycle_label }}</span>{% if certificate.issuer != '—' %}<span class="certificate-issuer" title="{{ certificate.issuer }}">{{ certificate.issuer }}</span>{% endif %}</td>
         <td data-label="Used by"><span class="certificate-sans">{% for target in certificate.targets %}{% if not loop.first %}, {% endif %}{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span>{% endif %}{% endfor %}</span></td>
         <td data-label="Valid from"><span class="certificate-date">{{ certificate.valid_from }}</span></td>
         <td data-label="Expires">{% if certificate.expires != '—' %}<span class="certificate-date">{{ certificate.expires }}</span>{% endif %}<span class="status-badge status-badge-{{ certificate.tone }}">{{ certificate.expiry_label }}</span></td>

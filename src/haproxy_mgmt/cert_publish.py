@@ -61,7 +61,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from haproxy_mgmt.cert_inventory import OPENSSL, OPENSSL_TIMEOUT, Facts, describe
+from haproxy_mgmt.cert_inventory import (
+    FULLCHAIN,
+    IMPORT_STORE,
+    LETSENCRYPT_LIVE,
+    OPENSSL,
+    OPENSSL_TIMEOUT,
+    PRIVKEY,
+    Facts,
+    describe,
+    source_directory,
+)
 from haproxy_mgmt.certificates import (
     MAX_CERTIFICATE_BYTES,
     CertificateError,
@@ -76,13 +86,6 @@ from haproxy_mgmt.config import (
     RuntimeConfig,
 )
 
-LETSENCRYPT_LIVE = Path("/etc/letsencrypt/live")
-#
-# Where imported material lives on the manager: one directory per certificate
-# ID with the same two files certbot's live directory has. Root-only. The
-# import helper (C6) is the only writer; this module only reads.
-#
-IMPORT_STORE = Path("/etc/haproxy-manager/certificates")
 DEFAULT_LOCK_PATH = Path("/run/haproxy-mgmt/locks/cert-publish.lock")
 LOCK_WAIT_SECONDS = 120
 
@@ -94,8 +97,6 @@ LOCK_WAIT_SECONDS = 120
 #
 MIN_REMAINING = timedelta(days=7)
 
-FULLCHAIN = "fullchain.pem"
-PRIVKEY = "privkey.pem"
 #
 # The cluster PEM's owner. A name rather than a literal so a test that cannot
 # become root can publish as itself and still exercise every other check.
@@ -265,13 +266,6 @@ def key_matches(fullchain: bytes, privkey: bytes) -> bool:
     )
     key_der = _public_key_digest([OPENSSL, "pkey", "-pubout", "-outform", "DER"], privkey, "key")
     return certificate_der == key_der
-
-
-def source_directory(entry: RegisteredCertificate, *, live: Path, store: Path) -> Path:
-    if entry.source.kind == "acme":
-        assert entry.source.lineage is not None  # noqa: S101 - the loader sets it for acme
-        return live / entry.source.lineage
-    return store / entry.certificate_id
 
 
 def read_material(

@@ -196,6 +196,37 @@ def check_cert_list_semantics(document: dict[str, object], path: Path) -> None:
         if certificate["deployable"] and certificate["validation_error"] is not None:
             raise AssertionError(f"{path}: a deployable certificate cannot have a validation error")
 
+    registry = result.get("registry")
+    if registry is None:
+        return
+    entries = registry["certificates"]
+    registered = [entry["id"] for entry in entries]
+    if len(registered) != len(set(registered)):
+        raise AssertionError(f"{path}: a registered certificate is reported twice")
+
+    for entry in entries:
+        # Readable means measured. The inert fields exist so an unreadable
+        # certificate is still listed, and nothing may read them without
+        # checking this flag first.
+        if entry["readable"] != (entry["fingerprint_sha256"] is not None):
+            raise AssertionError(f"{path}: {entry['id']} is readable without a fingerprint")
+        if entry["readable"] and entry["validation_error"] is not None:
+            raise AssertionError(f"{path}: {entry['id']} was read and carries a reason it was not")
+        if not entry["readable"] and entry["validation_error"] is None:
+            raise AssertionError(f"{path}: {entry['id']} could not be read for no stated reason")
+        # The shared cluster copy is reported where a cluster reads it, and the
+        # question does not apply where none does.
+        if bool(entry["targets"]["clusters"]) != (entry["distribution"] is not None):
+            raise AssertionError(f"{path}: {entry['id']} reports a copy no cluster reads")
+        for receiver in entry["targets"]["receivers"]:
+            if receiver["id"] not in registry["receivers"]:
+                raise AssertionError(f"{path}: {entry['id']} names unregistered {receiver['id']}")
+            # Nothing published cannot be the current version of anything.
+            if receiver["published_at"] is None and receiver["current"]:
+                raise AssertionError(
+                    f"{path}: {entry['id']} is current on an empty {receiver['id']}"
+                )
+
 
 def check_network_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
@@ -533,6 +564,47 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
     return invalid
 
 
+class NotApplicable(Exception):
+    """This mutation has nothing to change in this particular fixture.
+
+    Raised rather than returning quietly, because a mutation that silently did
+    nothing would be indistinguishable from one that is broken. The run tracks
+    which mutations fired at least once and fails if any never did, so an
+    optional block can have its own fixture without weakening the guarantee
+    that every rule here is actually exercised.
+    """
+
+
+def claim_current_on_an_empty_receiver(document: dict[str, object]) -> None:
+    """The lie the C5 listing must not be able to tell.
+
+    `published_at` is the manager's own write and `current` compares it with the
+    source. A target nothing was ever written to cannot be carrying the current
+    certificate, and a document saying so did not come from this engine.
+    """
+
+    result = document["result"]
+    assert isinstance(result, dict)
+    for entry in result.get("registry", {}).get("certificates", ()):
+        for receiver in entry["targets"]["receivers"]:
+            receiver["published_at"] = None
+            receiver["current"] = True
+            return
+    raise NotApplicable
+
+
+def drop_the_shared_distribution_copy(document: dict[str, object]) -> None:
+    """A certificate a cluster reads always has a shared copy to report on."""
+
+    result = document["result"]
+    assert isinstance(result, dict)
+    for entry in result.get("registry", {}).get("certificates", ()):
+        if entry["targets"]["clusters"]:
+            entry["distribution"] = None
+            return
+    raise NotApplicable
+
+
 def flip_release_state(document: dict[str, object]) -> None:
     result = document["result"]
     assert isinstance(result, dict)
@@ -556,6 +628,7 @@ def flip_node_current(document: dict[str, object]) -> None:
 #
 EXTRA_MUTATIONS: dict[str, tuple[Callable[[dict[str, object]], None], ...]] = {
     "status": (flip_release_state, flip_node_current),
+    "cert_list": (claim_current_on_an_empty_receiver, drop_the_shared_distribution_copy),
 }
 
 
@@ -573,6 +646,7 @@ def main() -> int:
     invalid_count = 0
     generated_count = 0
     contract_count = 0
+    exercised: set[str] = set()
 
     for schema_id, schema in sorted(schemas.items()):
         if schema_id.endswith("/common.schema.json"):
@@ -616,7 +690,11 @@ def main() -> int:
 
             for mutate in EXTRA_MUTATIONS.get(str(operation), ()) if document["result"] else ():
                 mutated = deepcopy(document)
-                mutate(mutated)
+                try:
+                    mutate(mutated)
+                except NotApplicable:
+                    continue
+                exercised.add(mutate.__name__)
                 if mutated == document:
                     raise AssertionError(f"{path}: {mutate.__name__} changed nothing")
                 try:
@@ -678,6 +756,20 @@ def main() -> int:
 
     if contract_count == 0 or valid_count == 0 or invalid_count == 0:
         raise AssertionError("schemas plus valid and invalid coverage are required")
+
+    #
+    # A mutation that never applied to any fixture proves nothing, and looks
+    # exactly like one that is quietly broken. Either the rule needs a fixture
+    # shaped for it or the mutation does not belong here.
+    #
+    never = sorted(
+        mutate.__name__
+        for mutations in EXTRA_MUTATIONS.values()
+        for mutate in mutations
+        if mutate.__name__ not in exercised
+    )
+    if never:
+        raise AssertionError(f"extra mutations never applied to any fixture: {', '.join(never)}")
 
     print(
         "contracts: OK "

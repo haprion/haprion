@@ -88,12 +88,66 @@ class CertificateClusterView:
 
 
 @dataclass(frozen=True, slots=True)
+class TargetView:
+    """One place a certificate goes, and what is known about the copy there.
+
+    A cluster and a receiver are not the same kind of destination and the page
+    must not let them read as one list: this manager rolls a cluster out and can
+    then see, node by node, whether the certificate arrived. A receiver fetches
+    on its own schedule with its own key and reports nothing back, so the most
+    that can be said about one is when the file was written for it.
+    """
+
+    name: str
+    kind: str
+    published_at: datetime | None
+    published_label: str
+    current: bool | None
+
+
+@dataclass(frozen=True, slots=True)
+class RegistryCertificateView:
+    identifier: str
+    source_label: str
+    lifecycle: str
+    wildcard: bool
+    common_name: str
+    sans: tuple[str, ...]
+    issuer: str
+    fingerprint: str
+    readable: bool
+    problem: str | None
+    targets: tuple[TargetView, ...]
+    expires: str
+    expiry_label: str
+    tone: Tone
+    state_label: str
+    state_detail: str
+    state_tone: Tone
+
+
+@dataclass(frozen=True, slots=True)
+class RegistryView:
+    certificates: tuple[RegistryCertificateView, ...]
+    receivers: tuple[str, ...]
+    certificate_count: int
+    acme_count: int
+    attention_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class CertificateOverview:
     clusters: tuple[CertificateClusterView, ...]
     cluster_count: int
     certificate_count: int
     acme_count: int
     attention_count: int
+    #
+    # None where the installation declares no certificate registry. The page
+    # then shows the cluster cards alone, exactly as it did before C5, rather
+    # than an empty view that looks like a fault.
+    #
+    registry: RegistryView | None = None
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -352,12 +406,320 @@ def _cluster_view(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class NodeCarriage:
+    """What one cluster's nodes report carrying, by certificate ID.
+
+    Read from the node status rather than from anything the manager published,
+    because the question the state column answers is whether the certificate is
+    where it has to be to serve traffic. A node reports a fingerprint for every
+    certificate it holds (`carried_certificate`), so this is a measurement and
+    not an assumption about what a rollout did.
+
+    `reporting` counts only nodes that answered with a certificate list at all.
+    A node that could not be reached is left out of the denominator rather than
+    counted as missing the certificate: "one of two nodes" would otherwise mean
+    both "one node is behind" and "one node is down", which are different
+    problems with different answers.
+    """
+
+    reporting: int
+    holders: Mapping[str, int]
+    fingerprints: Mapping[str, frozenset[str]]
+
+
+def _carriage(readings: Iterable[Any]) -> dict[str, NodeCarriage]:
+    carriage: dict[str, NodeCarriage] = {}
+    for reading in readings:
+        nodes = _mapping(reading.result).get("nodes")
+        if not isinstance(nodes, list):
+            continue
+        reporting = 0
+        holders: dict[str, int] = {}
+        fingerprints: dict[str, set[str]] = {}
+        for value in nodes:
+            entries = _mapping(value).get("certificates")
+            if not isinstance(entries, list):
+                continue
+            reporting += 1
+            for item in entries:
+                entry = _mapping(item)
+                identifier = _text(entry.get("id"), "")
+                fingerprint = _text(entry.get("fingerprint_sha256"), "")
+                if not identifier or not fingerprint:
+                    continue
+                holders[identifier] = holders.get(identifier, 0) + 1
+                fingerprints.setdefault(identifier, set()).add(fingerprint)
+        carriage[reading.cluster] = NodeCarriage(
+            reporting=reporting,
+            holders=holders,
+            fingerprints={key: frozenset(value) for key, value in fingerprints.items()},
+        )
+    return carriage
+
+
+def _published_label(published_at: datetime | None) -> str:
+    """When the manager wrote this copy, and deliberately nothing more.
+
+    Not "delivered", not "installed". The word has to survive a reader who
+    skims: publication is a fact about this host, and everything past it
+    belongs to whoever fetches.
+    """
+
+    if published_at is None:
+        return "Not published"
+    return f"Published {published_at.astimezone(UTC).strftime('%Y-%m-%d')}"
+
+
+def _target_views(entry: Mapping[str, Any]) -> tuple[TargetView, ...]:
+    targets = _mapping(entry.get("targets"))
+    views: list[TargetView] = []
+    for name in targets.get("clusters", []) if isinstance(targets.get("clusters"), list) else []:
+        if isinstance(name, str) and name:
+            views.append(
+                TargetView(
+                    name=name,
+                    kind="cluster",
+                    published_at=None,
+                    published_label="",
+                    current=None,
+                )
+            )
+    receivers = targets.get("receivers")
+    for value in receivers if isinstance(receivers, list) else []:
+        receiver = _mapping(value)
+        name = _text(receiver.get("id"), "")
+        if not name:
+            continue
+        published_at = _expiry(receiver.get("published_at"))
+        current = receiver.get("current")
+        views.append(
+            TargetView(
+                name=name,
+                kind="receiver",
+                published_at=published_at,
+                published_label=_published_label(published_at),
+                current=current if isinstance(current, bool) else None,
+            )
+        )
+    return tuple(views)
+
+
+def _registry_state(
+    entry: Mapping[str, Any],
+    targets: tuple[TargetView, ...],
+    *,
+    identifier: str,
+    fingerprint: str,
+    carriage: Mapping[str, NodeCarriage],
+) -> tuple[str, str, Tone]:
+    """What is true about this certificate's copies, said without overreaching.
+
+    Two kinds of target, two kinds of certainty, and the column says whichever
+    it actually has. For clusters the nodes report what they carry, so this can
+    state deployment. For receivers it can state publication and stops there.
+    """
+
+    if entry.get("readable") is not True:
+        return "Unreadable", _text(entry.get("validation_error"), "Could not be read"), "critical"
+
+    clusters = tuple(target.name for target in targets if target.kind == "cluster")
+    receivers = tuple(target for target in targets if target.kind == "receiver")
+    if not clusters and not receivers:
+        return "No targets", "Registered, but published nowhere", "warning"
+
+    if clusters:
+        distribution = _mapping(entry.get("distribution"))
+        if distribution.get("published_at") is None:
+            return (
+                "Not published",
+                "No copy in the distribution directory the nodes read",
+                "warning",
+            )
+        if distribution.get("current") is False:
+            return (
+                "Older version published",
+                "The distribution directory holds an earlier certificate than the source",
+                "warning",
+            )
+        on, total = 0, 0
+        wrong = False
+        for cluster in clusters:
+            nodes = carriage.get(cluster)
+            if nodes is None:
+                continue
+            held = nodes.fingerprints.get(identifier, frozenset())
+            if fingerprint and held and fingerprint not in held:
+                wrong = True
+            on += nodes.holders.get(identifier, 0)
+            total += nodes.reporting
+        if total == 0:
+            return (
+                "Published",
+                "No node has reported yet, so deployment is unknown",
+                "unknown",
+            )
+        if wrong:
+            return (
+                "Nodes hold an older copy",
+                "A node carries this certificate ID with different bytes",
+                "warning",
+            )
+        if on == 0:
+            return "Not on the nodes", "Published, but no node carries it yet", "warning"
+        if on < total:
+            return f"On {on} of {total} nodes", "A node is behind on this certificate", "warning"
+        label = f"On all {total} nodes" if total > 1 else "On the node"
+        if receivers:
+            return label, f"and published to {len(receivers)} receiver(s)", "healthy"
+        return label, "Every reporting node carries this certificate", "healthy"
+
+    unpublished = tuple(target for target in receivers if target.published_at is None)
+    if unpublished:
+        return (
+            "Not published",
+            f"{len(unpublished)} of {len(receivers)} receiver(s) have no copy yet",
+            "warning",
+        )
+    newest = max(target.published_at for target in receivers if target.published_at is not None)
+    return (
+        _published_label(newest),
+        "Whether the receiver fetched it is not reported back here",
+        "healthy",
+    )
+
+
+def _registry_certificate(
+    value: Any,
+    *,
+    now: datetime,
+    carriage: Mapping[str, NodeCarriage],
+) -> RegistryCertificateView | None:
+    entry = _mapping(value)
+    identifier = _text(entry.get("id"), "")
+    if not identifier:
+        return None
+
+    source = _mapping(entry.get("source"))
+    kind = _text(source.get("kind"), "unknown")
+    lifecycle = _text(entry.get("lifecycle"), "unknown")
+    readable = entry.get("readable") is True
+    sans = _sans(entry.get("sans"))
+    fingerprint = _text(entry.get("fingerprint_sha256"), "")
+    targets = _target_views(entry)
+
+    if readable:
+        expires, expiry_label, tone = _expiry_state(
+            _expiry(entry.get("not_after")), lifecycle=lifecycle, now=now
+        )
+    else:
+        #
+        # Schema v1 fills the measured fields of an unreadable entry with inert
+        # values, so they must never be rendered as measurements.
+        #
+        expires, expiry_label, tone = "—", "Unknown", "unknown"
+
+    state_label, state_detail, state_tone = _registry_state(
+        entry,
+        targets,
+        identifier=identifier,
+        fingerprint=fingerprint,
+        carriage=carriage,
+    )
+    return RegistryCertificateView(
+        identifier=identifier,
+        source_label="Certbot" if kind == "acme" else "Imported",
+        lifecycle=lifecycle if readable else "unknown",
+        wildcard=any(name.startswith("*.") for name in sans),
+        common_name=_text(entry.get("common_name"), identifier),
+        sans=sans,
+        issuer=_text(entry.get("issuer")),
+        fingerprint=fingerprint,
+        readable=readable,
+        problem=None if readable else _text(entry.get("validation_error"), "Could not be read"),
+        targets=targets,
+        expires=expires,
+        expiry_label=expiry_label,
+        tone=tone,
+        state_label=state_label,
+        state_detail=state_detail,
+        state_tone=state_tone,
+    )
+
+
+def _registry_view(
+    readings: Iterable[ClusterCertificates],
+    status_readings: Iterable[Any],
+    *,
+    now: datetime,
+) -> RegistryView | None:
+    """The registry as one list, read from the freshest cluster that carried it.
+
+    Every cluster's listing carries the same block, because it is the same file
+    read the same way inside the same helper. Taking the newest rather than
+    merging them means a registry rewritten between two clusters' polls is
+    shown whole rather than half from each.
+    """
+
+    newest: ClusterCertificates | None = None
+    for reading in readings:
+        if not isinstance(_mapping(reading.result).get("registry"), Mapping):
+            continue
+        if newest is None or reading.observed_at > newest.observed_at:
+            newest = reading
+    if newest is None:
+        return None
+
+    block = _mapping(_mapping(newest.result).get("registry"))
+    carriage = _carriage(status_readings)
+
+    entries = block.get("certificates")
+    parsed: list[RegistryCertificateView] = []
+    if isinstance(entries, list):
+        for value in entries:
+            certificate = _registry_certificate(value, now=now, carriage=carriage)
+            if certificate is not None:
+                parsed.append(certificate)
+
+    severity = {"critical": 0, "warning": 1, "unknown": 2, "healthy": 3}
+    certificates = tuple(
+        sorted(
+            parsed,
+            key=lambda entry: (
+                min(severity[entry.tone], severity[entry.state_tone]),
+                entry.identifier,
+            ),
+        )
+    )
+    receivers = block.get("receivers")
+    return RegistryView(
+        certificates=certificates,
+        receivers=tuple(name for name in receivers if isinstance(name, str))
+        if isinstance(receivers, list)
+        else (),
+        certificate_count=len(certificates),
+        acme_count=sum(entry.source_label == "Certbot" for entry in certificates),
+        attention_count=sum(
+            entry.tone in {"critical", "warning"} or entry.state_tone in {"critical", "warning"}
+            for entry in certificates
+        ),
+    )
+
+
 def build_certificate_overview(
     configured_clusters: Iterable[str],
     readings: Iterable[ClusterCertificates],
     *,
     now: datetime | None = None,
     stale_after: timedelta,
+    #
+    # The node status, for the one thing the certificate listing cannot answer:
+    # whether the nodes are actually carrying what the manager published. Empty
+    # by default so a caller that has no status - the snapshot fixtures, and
+    # every existing test - gets the page it had before, with deployment
+    # reported as unknown rather than as a failure.
+    #
+    status_readings: Iterable[Any] = (),
     #
     # True only in snapshot mode, where the readings describe a moment that has
     # passed and `now` is that moment rather than the wall clock. It changes
@@ -376,6 +738,7 @@ def build_certificate_overview(
     """
 
     now = now or datetime.now(UTC)
+    readings = tuple(readings)
     rows = {reading.cluster: reading for reading in readings}
     clusters: list[CertificateClusterView] = []
     for cluster in tuple(configured_clusters):
@@ -405,10 +768,23 @@ def build_certificate_overview(
             key = certificate.fingerprint or f"id:{certificate.identifier}"
             distinct.setdefault(key, certificate)
 
+    registry = _registry_view(readings, status_readings, now=now)
     return CertificateOverview(
         clusters=tuple(clusters),
         cluster_count=len(clusters),
-        certificate_count=len(distinct),
-        acme_count=sum(entry.lifecycle == "acme" for entry in distinct.values()),
-        attention_count=sum(entry.tone in {"critical", "warning"} for entry in distinct.values()),
+        #
+        # The registry counts the material the manager looks after; the
+        # per-cluster tally counts what the clusters can be given. Where a
+        # registry exists it is the one that answers "how many certificates do
+        # I have" - a receiver-only certificate is in no cluster's listing and
+        # was counted by nothing before C5.
+        #
+        certificate_count=registry.certificate_count if registry else len(distinct),
+        acme_count=registry.acme_count
+        if registry
+        else sum(entry.lifecycle == "acme" for entry in distinct.values()),
+        attention_count=registry.attention_count
+        if registry
+        else sum(entry.tone in {"critical", "warning"} for entry in distinct.values()),
+        registry=registry,
     )

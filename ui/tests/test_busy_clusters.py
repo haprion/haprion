@@ -30,7 +30,6 @@ class EveryPageThatDeploysSaysTheClusterIsBusy(LoginTestCase):
     PAGES = (
         ("/", "haproxy_ui.db.cluster_statuses", "Deploy configuration"),
         ("/history", "haproxy_ui.db.cluster_histories", "Deploy configuration"),
-        ("/certificates", "haproxy_ui.db.cluster_certificates", "Deploy certificates"),
     )
 
     def reading_for(self, source: str) -> list:

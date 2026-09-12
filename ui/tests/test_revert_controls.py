@@ -91,21 +91,20 @@ class DeployingFromThePageThatPublishes(LoginTestCase):
         self.assertNotIn('name="operation" value="deploy"', client.get("/history").text)
 
 
-class DeployingCertificatesFromTheCertificatePage(LoginTestCase):
-    """The same argument as the versions page, one tab over.
+class TheCertificatePageNoLongerDeploys(LoginTestCase):
+    """B138's companion decision: the standing button is gone from this page.
 
-    Someone looking at which certificates a cluster carries is exactly the
-    person who wants to roll new ones out, and sending them to the dashboard to
-    do it is a step that exists only because of how the pages were split.
+    It was put here because someone reading which certificates a cluster
+    carries is the person who wants to roll new ones out. What that missed is
+    that a rollout is only needed when a certificate is not where the
+    configuration says it should be, and config-deploy's preflight already
+    blocks and says so. A button offered at all times invites a rollout of key
+    material as a routine click, and the page's own state column now says when
+    one is actually wanted. The operation itself is unchanged.
     """
 
     def setUp(self) -> None:
         super().setUp()
-        #
-        # A real polled reading rather than the demo fixture: the fixture is
-        # only allowed with writes disabled, so testing the button against it
-        # would prove the button in a state production cannot be in.
-        #
         rows = mock.patch(
             "haproxy_ui.db.cluster_certificates", return_value=[certificate_reading()]
         )
@@ -117,21 +116,11 @@ class DeployingCertificatesFromTheCertificatePage(LoginTestCase):
         self.sign_in(client)
         return client.get("/certificates")
 
-    def test_an_admin_with_writes_can_deploy_certificates_here(self) -> None:
+    def test_not_even_an_admin_with_writes_is_offered_one_here(self) -> None:
         page = self.page(management_writes=True)
 
         self.assertEqual(page.status_code, 200)
-        self.assertIn('name="operation" value="cert_deploy"', page.text)
-
-    def test_read_only_mode_shows_no_such_button(self) -> None:
-        self.assertNotIn('name="operation" value="cert_deploy"', self.page().text)
-
-    def test_a_reader_gets_no_such_button(self) -> None:
-        self.account = replace(self.account, role="reader")
-
-        self.assertNotIn(
-            'name="operation" value="cert_deploy"', self.page(management_writes=True).text
-        )
+        self.assertNotIn('name="operation" value="cert_deploy"', page.text)
 
 
 class ThePublishedVersionHasNoButton(LoginTestCase):

@@ -17,8 +17,9 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_issue import Certbot, IssueError, issue, run_certbot
-from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, IMPORT_STORE, LETSENCRYPT_LIVE, Deployer
+from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
 from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.cli.cert_issue import result_envelope
 from haproxy_mgmt.cli.cert_publish import default_deployer

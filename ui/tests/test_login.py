@@ -245,13 +245,17 @@ class SigningIn(LoginTestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("Certbot", page.text)
         self.assertIn("Manual", page.text)
+        self.assertIn("referenced by this cluster", page.text)
         #
-        # A certificate the cluster does not serve is listed rather than
-        # hidden: it is what a later phase picks from, and an operator looking
-        # for one that is missing needs to see that it exists.
+        # Only what the cluster references, and therefore no Use column either:
+        # every cluster reads the same shared distribution directory, so listing
+        # what merely sits there put one cluster's certificates under another's
+        # name, and once those rows left, the column said "Referenced" on every
+        # remaining row. The registry view answers "what else exists" properly,
+        # for the whole manager rather than per cluster.
         #
-        self.assertIn("Available", page.text)
-        self.assertIn("Referenced", page.text)
+        self.assertNotIn("Available", page.text)
+        self.assertNotIn("Referenced", page.text)
 
     def test_the_certificate_page_requires_a_session(self) -> None:
         page = self.client().get("/certificates", follow_redirects=False)

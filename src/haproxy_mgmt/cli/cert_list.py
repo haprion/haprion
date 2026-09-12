@@ -22,7 +22,7 @@ OPERATION = "cert_list"
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-list-helper"
 SUDO = "/usr/bin/sudo"
 EXIT_UNAVAILABLE = 68
-USAGE = "Usage:\n  haproxy-cert-list -c <cluster> [--json]\n"
+USAGE = "Usage:\n  haproxy-cert-list -c <cluster> [--registry] [--json]\n"
 
 type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
 
@@ -46,12 +46,20 @@ def run_cert_list_helper(cluster_id: str, request_id: str) -> subprocess.Complet
     )
 
 
-def _parse(argv: list[str]) -> tuple[str, bool]:
-    if len(argv) not in (2, 3) or argv[0] not in ("-c", "--cluster"):
+def _parse(argv: list[str]) -> tuple[str, bool, bool]:
+    #
+    # `--registry` still names a cluster, and that is not decoration: the
+    # registry travels in the cluster listing's answer rather than in a helper
+    # of its own, so `-c` says whose answer is being read. A clusterless listing
+    # would need a helper, a wrapper and a sudoers rule of its own; the
+    # implementation plan's C5 gate count says why that was not worth it.
+    #
+    if not argv or argv[0] not in ("-c", "--cluster") or len(argv) < 2:
         usage(USAGE)
-    if len(argv) == 3 and argv[2] != "--json":
+    flags = argv[2:]
+    if any(flag not in ("--json", "--registry") for flag in flags) or len(set(flags)) != len(flags):
         usage(USAGE)
-    return argv[1], len(argv) == 3
+    return argv[1], "--json" in flags, "--registry" in flags
 
 
 class HelperFailure(ValueError):
@@ -79,6 +87,72 @@ def _expiry(not_after: str, now: datetime) -> str:
         return "unknown"
     days = (moment - now).days
     return f"{days}d" if days >= 0 else f"expired {-days}d ago"
+
+
+def _targets(entry: Mapping[str, Any]) -> str:
+    """Where one certificate goes, clusters and receivers in one column.
+
+    Receivers are marked so the two kinds are not read as one list: a cluster
+    is rolled out by this manager, and a receiver fetches on its own.
+    """
+
+    targets = entry.get("targets")
+    if not isinstance(targets, Mapping):
+        return "-"
+    clusters = [str(name) for name in targets.get("clusters", []) if isinstance(name, str)]
+    receivers = [
+        f"{item.get('id')} (receiver)"
+        for item in targets.get("receivers", [])
+        if isinstance(item, Mapping)
+    ]
+    return ", ".join(clusters + receivers) or "nowhere"
+
+
+def _render_registry(document: Mapping[str, Any], writer: TextIO) -> None:
+    """Every certificate the manager holds, not one cluster's deployable set.
+
+    Measured at each certificate's source, so a certificate that goes only to
+    receivers - and therefore has no file in the distribution directory at all -
+    is listed with real dates rather than missing.
+    """
+
+    registry = _result(document).get("registry")
+    if not isinstance(registry, Mapping):
+        raise ValueError(
+            "this installation declares no certificate_registry, so there is nothing to list"
+        )
+    entries = registry.get("certificates")
+    if not isinstance(entries, list):
+        raise ValueError("the certificate helper returned an invalid registry")
+
+    writer.write("The certificate registry\n\n")
+    if not entries:
+        writer.write("No certificates are registered.\n")
+        return
+
+    now = datetime.now(UTC)
+    writer.write(f"{'ID':<26}{'SOURCE':<10}{'EXPIRES':<16}USED BY\n")
+    writer.write(f"{'-' * 24:<26}{'-' * 8:<10}{'-' * 14:<16}{'-' * 30}\n")
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            raise ValueError("the certificate helper returned an invalid registry entry")
+        source = entry.get("source")
+        kind = str(source.get("kind")) if isinstance(source, Mapping) else "unknown"
+        if not entry.get("readable"):
+            writer.write(
+                f"{str(entry.get('id', '')):<26}{kind:<10}UNREADABLE      "
+                f"{entry.get('validation_error', '')}\n"
+            )
+            continue
+        expires = _expiry(str(entry.get("not_after", "")), now)
+        if not entry.get("valid"):
+            expires = f"{expires} !"
+        writer.write(f"{str(entry.get('id', '')):<26}{kind:<10}{expires:<16}{_targets(entry)}\n")
+    writer.write(
+        "\nUSED BY is where the certificate is published. For a receiver that means\n"
+        "the manager wrote the file; whether the receiver fetched it is not knowable\n"
+        "here, because a receiver pulls on its own schedule and reports nothing back.\n"
+    )
 
 
 def _render(document: Mapping[str, Any], writer: TextIO) -> None:
@@ -129,7 +203,7 @@ def main(
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = stream_out or sys.stdout
     errors: TextIO = stream_err or sys.stderr
-    cluster_id, json_mode = _parse(argv)
+    cluster_id, json_mode, registry_mode = _parse(argv)
     completed = run_helper(cluster_id, new_request_id())
 
     try:
@@ -143,7 +217,7 @@ def main(
         write_document(writer, document)
         return completed.returncode
     try:
-        _render(document, writer)
+        _render_registry(document, writer) if registry_mode else _render(document, writer)
     except ValueError as exc:
         errors.write(f"ERROR: {exc}\n")
         return completed.returncode or EXIT_UNAVAILABLE

@@ -1625,9 +1625,18 @@ def build_router(config: Config) -> APIRouter:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         clusters, certificate_rows, captured_at = read_source(request, config, CERTIFICATE_SOURCE)
+        #
+        # The node status too, for the one question the certificate listing
+        # cannot answer: whether the nodes are carrying what was published. The
+        # listing reads the manager's own directory, the nodes report their own
+        # fingerprints, and the registry view needs both to say anything
+        # truthful about a cluster target.
+        #
+        _, status_rows, _ = read_source(request, config, STATUS_SOURCE)
         overview = certificates.build_certificate_overview(
             clusters,
             certificate_rows,
+            status_readings=status_rows,
             now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
             #
@@ -1639,6 +1648,16 @@ def build_router(config: Config) -> APIRouter:
         )
         with request.app.state.pool.connection() as connection:
             running = jobs.in_flight(db.recent_jobs(connection))
+        #
+        # Which view and which expanded row, in the query string rather than in
+        # script: the page is read-only, the two views are two renderings of
+        # cached readings, and a link is something an operator can send to
+        # somebody else. The cluster cards stay the default because that is the
+        # page anyone who already uses this URL is expecting.
+        #
+        chosen = "registry" if request.query_params.get("view") == "registry" else "clusters"
+        if overview.registry is None:
+            chosen = "clusters"
         return TEMPLATES.TemplateResponse(
             request,
             "certificates.html",
@@ -1647,6 +1666,8 @@ def build_router(config: Config) -> APIRouter:
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
                 "certificates": overview,
+                "chosen_view": chosen,
+                "opened": request.query_params.get("open", ""),
                 #
                 # What this cluster is busy with, read the same way the
                 # dashboard reads it. One job per cluster, so the buttons

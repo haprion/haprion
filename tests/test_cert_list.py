@@ -296,6 +296,214 @@ class ResultTests(unittest.TestCase):
         self.assertFalse(entry["valid"])
 
 
+class RegistryListingTests(unittest.TestCase):
+    """The central listing (C5): every certificate the manager holds, not one cluster's.
+
+    The per-cluster listing reads the distribution directory, so a certificate
+    that goes only to receivers is absent from it entirely. These cover the
+    other half - measured at the source, which is what a renewal writes first.
+    """
+
+    def _registry(self, root: Path, **kwargs):
+        from haproxy_mgmt import config
+
+        receivers = {
+            name: config.Receiver(receiver_id=name, path=root / "receivers" / name, owner="svc-app")
+            for name in kwargs.pop("receiver_names", ())
+        }
+        return config.Registry(receivers=receivers, certificates=kwargs["certificates"])
+
+    def _entry(self, identifier: str, *, kind="acme", lineage=None, clusters=(), receivers=()):
+        from haproxy_mgmt import config
+
+        return config.RegisteredCertificate(
+            certificate_id=identifier,
+            source=config.CertificateSource(kind=kind, lineage=lineage),
+            clusters=clusters,
+            receivers=receivers,
+        )
+
+    def _run(self, root: Path, registry, now: datetime | None = None) -> dict:
+        return cert_inventory.registry_result(
+            registry,
+            certificate_root=root / "certdist",
+            renewed=frozenset(),
+            now=now or datetime.now(UTC),
+            live=root / "live",
+            store=root / "import",
+        )
+
+    def test_a_receiver_only_certificate_is_measured_at_its_source(self) -> None:
+        #
+        # The case the per-cluster listing cannot answer at all: nothing for
+        # this certificate exists in the distribution directory, so its subject,
+        # SAN and expiry can only come from where certbot writes it.
+        #
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "live" / "lb-01-lineage"
+            source.mkdir(parents=True)
+            (source / "fullchain.pem").write_text(
+                _pem("lb-01.example.net", sans=("lb-01.example.net",)), encoding="ascii"
+            )
+            registry = self._registry(
+                root,
+                receiver_names=("lb-01",),
+                certificates={
+                    "lb-01.example.net": self._entry(
+                        "lb-01.example.net", lineage="lb-01-lineage", receivers=("lb-01",)
+                    )
+                },
+            )
+            result = self._run(root, registry)
+
+        entry = result["certificates"][0]
+        self.assertTrue(entry["readable"])
+        self.assertEqual(entry["common_name"], "lb-01.example.net")
+        self.assertEqual(entry["sans"], ["lb-01.example.net"])
+        self.assertEqual(result["receivers"], ["lb-01"])
+        #
+        # No clusters, so there is no shared distribution copy to report on -
+        # null rather than a made-up "not published", which would read as a
+        # problem rather than as an inapplicable question.
+        #
+        self.assertIsNone(entry["distribution"])
+
+    def test_a_receiver_says_when_it_was_published_and_never_whether_it_arrived(self) -> None:
+        """`published_at` is the manager's own write, and there is no third field.
+
+        What the receiver did with the file is unknowable here by design: it
+        pulls on its own schedule with its own key and reports nothing back.
+        A field claiming arrival would be the interface's most confident lie.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "live" / "lineage"
+            source.mkdir(parents=True)
+            material = _pem("one.example.net")
+            (source / "fullchain.pem").write_text(material, encoding="ascii")
+
+            published = root / "receivers" / "current"
+            published.mkdir(parents=True)
+            (published / "fullchain.pem").write_text(material, encoding="ascii")
+
+            stale = root / "receivers" / "stale"
+            stale.mkdir(parents=True)
+            (stale / "fullchain.pem").write_text(_pem("one.example.net"), encoding="ascii")
+
+            registry = self._registry(
+                root,
+                receiver_names=("current", "stale", "never"),
+                certificates={
+                    "one": self._entry(
+                        "one", lineage="lineage", receivers=("current", "stale", "never")
+                    )
+                },
+            )
+            result = self._run(root, registry)
+
+        by_id = {r["id"]: r for r in result["certificates"][0]["targets"]["receivers"]}
+        self.assertEqual(set(by_id), {"current", "stale", "never"})
+        self.assertTrue(by_id["current"]["current"])
+        self.assertIsNotNone(by_id["current"]["published_at"])
+        self.assertFalse(by_id["stale"]["current"])
+        self.assertIsNone(by_id["never"]["published_at"])
+        self.assertEqual(set(by_id["current"]), {"id", "published_at", "current"})
+
+    def test_an_unreadable_source_leaves_current_unknown_rather_than_false(self) -> None:
+        #
+        # An out-of-date target and a target nothing could be compared against
+        # are different facts. Reporting the second as the first would send an
+        # operator to republish a certificate that is already correct.
+        #
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            published = root / "receivers" / "lb-01"
+            published.mkdir(parents=True)
+            (published / "fullchain.pem").write_text(_pem("one.example.net"), encoding="ascii")
+            registry = self._registry(
+                root,
+                receiver_names=("lb-01",),
+                certificates={"one": self._entry("one", lineage="absent", receivers=("lb-01",))},
+            )
+            result = self._run(root, registry)
+
+        entry = result["certificates"][0]
+        self.assertFalse(entry["readable"])
+        self.assertIsNone(entry["targets"]["receivers"][0]["current"])
+
+    def test_an_import_with_nothing_in_the_store_is_listed_with_the_reason(self) -> None:
+        #
+        # What an imported certificate looks like until C6 builds the import
+        # store. The publisher calls it skipped and leaves the published copy
+        # alone, so the listing says the same rather than calling it broken.
+        #
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            registry = self._registry(
+                root,
+                certificates={
+                    "internal": self._entry("internal", kind="import", clusters=("beta",))
+                },
+            )
+            result = self._run(root, registry)
+
+        entry = result["certificates"][0]
+        self.assertFalse(entry["readable"])
+        self.assertIn("no material at its source", entry["validation_error"])
+        self.assertIsNone(entry["fingerprint_sha256"])
+
+    def test_the_shared_distribution_copy_is_one_fact_not_one_per_cluster(self) -> None:
+        #
+        # Every cluster reads the same file out of the same directory, so a
+        # per-cluster answer here would be the same answer twice. Which nodes
+        # are carrying it is a different measurement and lives in node status.
+        #
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "live" / "lineage"
+            source.mkdir(parents=True)
+            material = _pem("shared.example.net")
+            (source / "fullchain.pem").write_text(material, encoding="ascii")
+            (root / "certdist").mkdir()
+            (root / "certdist" / "shared.pem").write_text(material, encoding="ascii")
+
+            registry = self._registry(
+                root,
+                certificates={
+                    "shared": self._entry("shared", lineage="lineage", clusters=("alpha", "beta"))
+                },
+            )
+            result = self._run(root, registry)
+
+        entry = result["certificates"][0]
+        self.assertEqual(entry["targets"]["clusters"], ["alpha", "beta"])
+        self.assertTrue(entry["distribution"]["current"])
+        self.assertIsNotNone(entry["distribution"]["published_at"])
+
+    def test_the_private_key_never_reaches_the_listing(self) -> None:
+        #
+        # The source directory holds `privkey.pem` beside the chain, and this
+        # reads only the chain. Asserted on the rendered document rather than
+        # on the call, because what must not leak is what a caller receives.
+        #
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "live" / "lineage"
+            source.mkdir(parents=True)
+            combined = _pem("one.example.net")
+            (source / "fullchain.pem").write_text(combined, encoding="ascii")
+            (source / "privkey.pem").write_text(combined, encoding="ascii")
+            registry = self._registry(
+                root, certificates={"one": self._entry("one", lineage="lineage")}
+            )
+            rendered = json.dumps(self._run(root, registry))
+
+        self.assertNotIn("PRIVATE KEY", rendered)
+        self.assertNotIn("privkey", rendered)
+
+
 class EnvelopeTests(unittest.TestCase):
     def test_a_listing_matches_the_frozen_schema(self) -> None:
         from haproxy_mgmt.envelope import envelope
@@ -395,6 +603,148 @@ class CommandTests(unittest.TestCase):
 
         self.assertIn("certificate_metadata_unavailable", err)
         self.assertNotIn("invalid result", err)
+
+
+class RegistryCommandTests(unittest.TestCase):
+    """`haproxy-cert-list -c <cluster> --registry`, the CLI half of the C5 view.
+
+    The parity rule: the interface must not be able to show something the
+    command line cannot. `-c` is still required because the registry travels in
+    the cluster listing's answer rather than in a helper of its own.
+    """
+
+    def _document(self, registry: dict | None) -> dict:
+        result: dict = {"certificates": []}
+        if registry is not None:
+            result["registry"] = registry
+        return {
+            "schema_version": 1,
+            "ok": True,
+            "outcome": "done",
+            "operation": "cert_list",
+            "cluster": "alpha",
+            "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "result": result,
+            "warnings": [],
+            "error": None,
+        }
+
+    def _entry(self, **overrides) -> dict:
+        entry = {
+            "id": "example.com",
+            "source": {"kind": "acme", "lineage": "example.com-wildcard"},
+            "targets": {"clusters": ["alpha"], "receivers": []},
+            "distribution": {"published_at": "2026-08-01T00:00:00Z", "current": True},
+            "readable": True,
+            "validation_error": None,
+            "fingerprint_sha256": "c" * 64,
+            "common_name": "*.example.com",
+            "sans": ["*.example.com"],
+            "not_before": "2026-08-01T00:00:00Z",
+            "not_after": "2099-11-01T00:00:00Z",
+            "issuer": "CN=Test CA",
+            "lifecycle": "acme",
+            "valid": True,
+        }
+        entry.update(overrides)
+        return entry
+
+    def _run(self, argv: list[str], document: dict) -> tuple[str, str, int]:
+        out, err = io.StringIO(), io.StringIO()
+
+        def run_helper(cluster: str, request_id: str):
+            return type(
+                "Completed", (), {"stdout": json.dumps(document), "stderr": "", "returncode": 0}
+            )
+
+        code = cert_list.main(argv, stream_out=out, stream_err=err, run_helper=run_helper)
+        return out.getvalue(), err.getvalue(), code
+
+    def test_it_lists_every_registered_certificate_and_where_each_goes(self) -> None:
+        document = self._document(
+            {
+                "certificates": [
+                    self._entry(),
+                    self._entry(
+                        id="lb-01.example.net",
+                        targets={
+                            "clusters": [],
+                            "receivers": [
+                                {
+                                    "id": "lb-01",
+                                    "published_at": "2026-08-01T00:00:00Z",
+                                    "current": True,
+                                }
+                            ],
+                        },
+                        distribution=None,
+                    ),
+                ],
+                "receivers": ["lb-01"],
+            }
+        )
+        rendered, _, code = self._run(["-c", "alpha", "--registry"], document)
+
+        self.assertEqual(code, 0)
+        self.assertIn("example.com", rendered)
+        self.assertIn("lb-01 (receiver)", rendered)
+        #
+        # The receiver-only certificate is the one the per-cluster listing
+        # cannot show at all, so its presence here is the point of the mode.
+        #
+        self.assertIn("lb-01.example.net", rendered)
+
+    def test_it_never_claims_a_receiver_installed_anything(self) -> None:
+        document = self._document({"certificates": [self._entry()], "receivers": []})
+        rendered, _, _ = self._run(["-c", "alpha", "--registry"], document)
+
+        self.assertIn("reports nothing back", rendered)
+        for claim in ("installed", "deployed", "arrived", "on all targets"):
+            self.assertNotIn(claim, rendered.lower())
+
+    def test_an_unreadable_certificate_says_why_instead_of_its_placeholders(self) -> None:
+        #
+        # Same rule as the per-cluster listing: the measured fields of an entry
+        # that could not be read are inert, and printing them as measurements
+        # would be the listing's worst possible failure.
+        #
+        document = self._document(
+            {
+                "certificates": [
+                    self._entry(
+                        readable=False,
+                        validation_error="no material at its source yet",
+                        fingerprint_sha256=None,
+                        not_after="2026-08-01T00:00:00Z",
+                        valid=False,
+                    )
+                ],
+                "receivers": [],
+            }
+        )
+        rendered, _, _ = self._run(["-c", "alpha", "--registry"], document)
+
+        self.assertIn("UNREADABLE", rendered)
+        self.assertIn("no material at its source yet", rendered)
+
+    def test_an_installation_without_a_registry_says_so_rather_than_printing_nothing(self) -> None:
+        _, errors, code = self._run(["-c", "alpha", "--registry"], self._document(None))
+
+        self.assertNotEqual(code, 0)
+        self.assertIn("certificate_registry", errors)
+
+    def test_the_flags_may_be_given_in_either_order_and_not_twice(self) -> None:
+        document = self._document({"certificates": [], "receivers": []})
+        for argv in (
+            ["-c", "alpha", "--registry", "--json"],
+            ["-c", "alpha", "--json", "--registry"],
+        ):
+            rendered, _, code = self._run(argv, document)
+            self.assertEqual(code, 0)
+            self.assertIn('"registry"', rendered)
+
+        with self.assertRaises(SystemExit):
+            self._run(["-c", "alpha", "--registry", "--registry"], document)
 
 
 class HelperTests(unittest.TestCase):

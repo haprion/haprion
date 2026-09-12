@@ -83,7 +83,17 @@ class ARealDatabase(unittest.TestCase):
             cursor.execute("select id from job limit 0")
 
     def test_frontend_buckets_never_mix_two_nodes_uptime(self) -> None:
-        start = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(minutes=20)
+        #
+        # Pinned to the start of a ten-minute bucket rather than placed relative
+        # to now. `date_bin` bins against a fixed origin, so rows laid out at
+        # `now - 20 min` and `+2 min` straddled a bucket boundary whenever that
+        # minute ended in 8 or 9 - the test then failed about one run in five
+        # while describing nothing but the clock.
+        #
+        now = datetime.now(UTC)
+        start = now.replace(minute=now.minute // 10 * 10, second=0, microsecond=0) - timedelta(
+            minutes=20
+        )
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select metric_partition('metric_frontend', %s::date)", (start.date(),))
             cursor.executemany(

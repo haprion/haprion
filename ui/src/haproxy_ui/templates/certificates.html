@@ -7,52 +7,110 @@
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
 </section>
 
+{#
+  Two renderings of the same cached readings, switched with the segmented
+  control Traffic already uses - at a larger size here, because at Traffic's
+  size it reads as a caption rather than as something to press. Only drawn
+  where a registry exists: without one there is a single view, and a switch
+  offering one choice is furniture.
+#}
+{% if certificates.registry %}
+<nav class="traffic-ranges certificate-views" aria-label="Certificate views">
+  <a href="?view=registry"{% if chosen_view == 'registry' %} class="is-current" aria-current="true"{% endif %}>All certificates <b>{{ certificates.registry.certificate_count }}</b></a>
+  <a href="?view=clusters"{% if chosen_view == 'clusters' %} class="is-current" aria-current="true"{% endif %}>Clusters <b>{{ certificates.cluster_count }}</b></a>
+</nav>
+{% endif %}
+
 <section class="metric-grid certificate-summary" aria-label="Certificate summary">
   <article class="metric-card"><span class="metric-icon metric-icon-cluster" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M8 10h8M8 14h5"></path></svg></span><div><strong>{{ certificates.certificate_count }}</strong><span>Certificates</span><small>{{ certificates.acme_count }} renewed by certbot</small></div></article>
   <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4l9 16H3z"></path><path d="M12 10v4M12 17h.01"></path></svg></span><div><strong>{{ certificates.attention_count }}</strong><span>Need attention</span><small>Expiring or unreadable</small></div></article>
 </section>
 
+{% if chosen_view == 'registry' %}
+<article class="cluster-card certificate-cluster-card cluster-accent-1">
+  <header class="cluster-header">
+    <div class="cluster-identity"><span class="status-orb status-healthy" aria-hidden="true"></span><div><h3>Certificate registry</h3></div></div>
+  </header>
+  {% if certificates.registry.certificates %}
+  {#
+    Its own column widths, because `.node-table` is `table-layout: fixed` and a
+    table that states none inherits the node table's - the bug the design pass
+    found on 2026-09-10, and found again in the C5 mockup with the state badge
+    clipped at 130px where it needed 225.
+  #}
+  <div class="table-scroll"><table class="node-table certificate-table registry-table">
+    <thead><tr><th>Certificate</th><th>Source</th><th>Used by</th><th>Expires</th><th>State</th></tr></thead>
+    <tbody>
+      {% for certificate in certificates.registry.certificates %}
+      {% set open = certificate.identifier == opened %}
+      <tr{% if open %} class="registry-open"{% endif %}>
+        <td data-label="Certificate"><a class="proxy-link" href="?view=registry{% if not open %}&amp;open={{ certificate.identifier }}{% endif %}" aria-expanded="{{ 'true' if open else 'false' }}"><strong>{{ certificate.identifier }}</strong></a></td>
+        <td data-label="Source"><span class="lifecycle-badge lifecycle-{{ 'acme' if certificate.source_label == 'Certbot' else 'static' }}">{{ certificate.source_label }}</span>{% if certificate.wildcard %}<span class="certificate-issuer">wildcard</span>{% endif %}</td>
+        <td data-label="Used by">{% if certificate.targets %}<span class="certificate-sans">{% for target in certificate.targets %}{% if not loop.first %}, {% endif %}{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span>{% endif %}{% endfor %}</span>{% else %}<span class="warning-text">Nowhere</span>{% endif %}</td>
+        <td data-label="Expires">{% if certificate.expires != '—' %}<span class="certificate-date">{{ certificate.expires }}</span>{% endif %}<span class="status-badge status-badge-{{ certificate.tone }}">{{ certificate.expiry_label }}</span></td>
+        <td data-label="State"><span class="status-badge status-badge-{{ certificate.state_tone }}">{{ certificate.state_label }}</span></td>
+      </tr>
+      {% if open %}
+      <tr class="registry-detail"><td colspan="5">
+        <div class="registry-detail-grid">
+          <div><strong>Covers</strong><span>{% if certificate.sans %}{{ certificate.sans | join(', ') }}{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}{{ certificate.common_name }}{% endif %}</span></div>
+          <div><strong>Issuer</strong><span>{{ certificate.issuer }}</span></div>
+          <div><strong>State</strong><span>{{ certificate.state_detail }}</span></div>
+          {#
+            Per target, because the two kinds are knowable to different depths.
+            A cluster's nodes report what they carry; a receiver fetches on its
+            own schedule with its own key and reports nothing back, so the most
+            that can be said of one is when the file was written for it.
+          #}
+          <div class="registry-detail-targets"><strong>Published to</strong>
+            {% for target in certificate.targets %}
+            <span>{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span> · {{ target.published_label }}{% if target.current is false %} <span class="warning-text">(older version)</span>{% endif %}{% else %} <span class="target-kind">cluster</span>{% endif %}</span>
+            {% else %}
+            <span class="warning-text">No target is registered for this certificate.</span>
+            {% endfor %}
+          </div>
+        </div>
+      </td></tr>
+      {% endif %}
+      {% endfor %}
+    </tbody></table></div>
+  {% else %}
+  <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>No certificates registered</strong><span>The registry is readable and holds no entries</span></div></div>
+  {% endif %}
+</article>
+{% else %}
+
 <div class="cluster-list certificate-cluster-list">
 {% for cluster in certificates.clusters %}
+  {#
+    Only what this cluster references. Every cluster reads the same shared
+    distribution directory, so listing what is merely present there showed one
+    cluster's certificates under another's name - noise here, and answered
+    properly by the registry view.
+  #}
+  {% set referenced = cluster.certificates | selectattr('referenced') | list %}
   <article class="cluster-card certificate-cluster-card cluster-accent-{{ cluster.accent }}" data-observed="{{ cluster.observed_iso or '' }}">
     <header class="cluster-header">
       <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
       <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
-    {% if cluster.certificates %}
-    <div class="table-scroll"><table class="node-table certificate-table"><thead><tr><th>Certificate</th><th>Names</th><th>Renewal</th><th>Expires</th><th>Use</th></tr></thead><tbody>
-      {% for certificate in cluster.certificates %}
-      <tr{% if not certificate.referenced %} class="certificate-available"{% endif %}>
+    {% if referenced %}
+    {#
+      No Use column any more. It read "Referenced" on every row the moment the
+      merely-available ones left, and a column with one value in it is a column
+      that teaches the reader to stop looking at columns.
+    #}
+    <div class="table-scroll"><table class="node-table certificate-table cluster-certificate-table"><thead><tr><th>Certificate</th><th>Names</th><th>Renewal</th><th>Expires</th></tr></thead><tbody>
+      {% for certificate in referenced %}
+      <tr>
         <td data-label="Certificate"><strong>{{ certificate.identifier }}</strong></td>
         <td data-label="Names">{% if certificate.sans %}<span class="certificate-sans">{{ certificate.sans | join(', ') }}</span>{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}—{% endif %}</td>
         <td data-label="Renewal"><span class="lifecycle-badge lifecycle-{{ certificate.lifecycle }}">{{ certificate.lifecycle_label }}</span>{% if certificate.issuer != '—' %}<span class="certificate-issuer">{{ certificate.issuer }}</span>{% endif %}</td>
         <td data-label="Expires">{% if certificate.expires != '—' %}<span class="certificate-date">{{ certificate.expires }}</span>{% endif %}<span class="status-badge status-badge-{{ certificate.tone }}">{{ certificate.expiry_label }}</span></td>
-        <td data-label="Use">{% if certificate.referenced %}<span class="ownership-badge ownership-managed">Referenced</span>{% else %}<span class="ownership-badge ownership-unmanaged">Available</span>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody></table></div>
-    <p class="table-note">{{ cluster.referenced_count }} referenced by this cluster{% if cluster.available_count %}, {{ cluster.available_count }} available in the distribution directory{% endif %}.</p>
-    {% if management_writes and role == 'admin' and cluster.configured %}
-    <footer class="cluster-actions" aria-label="{{ cluster.cluster }} certificate operations">
-      <div><strong>Deploy</strong><span>Sends the referenced certificates to the nodes and reloads them.</span></div>
-      {#
-        One job per cluster at a time, so this is one state and not two: while
-        something is running here the button is gone and the operation that is
-        running says so. Leaving it drawn would offer an action the queue
-        refuses, and the refusal would arrive as a 409 somebody has to read.
-        The same state the dashboard draws, drawn the same way.
-      #}
-      {% set running = in_flight.get(cluster.cluster) if in_flight else none %}
-      {% if running %}
-      <div class="action-buttons" data-busy="{{ cluster.cluster }}">
-        <span class="status-badge status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>{{ running }}</span>
-        <a class="secondary-button" href="/jobs">Follow it</a>
-      </div>
-      {% else %}
-      <div class="action-buttons"><form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="cert_deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="certificates"><button class="secondary-button" type="submit">Deploy certificates</button></form></div>
-      {% endif %}
-    </footer>
-    {% endif %}
+    <p class="table-note">{{ cluster.referenced_count }} referenced by this cluster.</p>
     {% else %}
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>
     {% endif %}
@@ -61,4 +119,5 @@
   <div class="empty-page"><h2>No clusters configured</h2><p>Add a cluster to the platform configuration before starting the poller.</p></div>
 {% endfor %}
 </div>
+{% endif %}
 {% endblock %}

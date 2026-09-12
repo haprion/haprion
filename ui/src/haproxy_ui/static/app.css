@@ -708,6 +708,39 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    hidden: they are what a later phase picks from, and an operator looking for
    one that is missing needs to see that it exists. */
 .certificate-available td { color: var(--muted); }
+/* Four columns, not five: the cluster table lists only what the cluster
+   references, so the issuer gets the width the Use badge used to hold. */
+.cluster-certificate-table th:nth-child(3), .cluster-certificate-table td:nth-child(3) { width: 420px; }
+.cluster-certificate-table th:nth-child(4), .cluster-certificate-table td:nth-child(4) { width: 220px; }
+.cluster-certificate-table th:nth-child(5), .cluster-certificate-table td:nth-child(5) { width: auto; }
+
+/* The view switch. Traffic's segmented control at Traffic's size reads as a
+   caption above a page rather than as two things to press, and on this page it
+   is the primary navigation between two quite different answers - so it is
+   sized to be pressed. */
+.certificate-views { margin: 0 0 18px; }
+.certificate-views a { padding: 7px 15px; font-size: 13.5px; }
+.certificate-views b { margin-left: 7px; font-variant-numeric: tabular-nums; }
+
+/* The registry table's own widths, measured against the rendered page rather
+   than guessed. State holds the longest phrase this page can produce and was
+   clipped at the node table's inherited 130px. Used by takes what is left. */
+.registry-table th:nth-child(1), .registry-table td:nth-child(1) { width: 260px; }
+.registry-table th:nth-child(2), .registry-table td:nth-child(2) { width: 150px; }
+.registry-table th:nth-child(3), .registry-table td:nth-child(3) { width: auto; }
+.registry-table th:nth-child(4), .registry-table td:nth-child(4) { width: 230px; }
+.registry-table th:nth-child(5), .registry-table td:nth-child(5) { width: 260px; }
+.registry-table tbody tr.registry-open { background: var(--panel-soft); }
+.registry-table tbody tr.registry-detail:hover { background: transparent; }
+.registry-detail td { padding: 4px 0 14px; }
+.registry-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 28px; padding: 2px 2px 0; }
+.registry-detail-grid > div { display: grid; gap: 3px; min-width: 0; }
+.registry-detail-grid strong { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
+.registry-detail-grid span { color: var(--text-primary); font-size: 12px; overflow-wrap: anywhere; }
+.registry-detail-targets { grid-column: 1 / -1; }
+/* A cluster and a receiver are different kinds of destination, and the word
+   says which rather than a separator the reader has to learn. */
+.target-kind { display: inline-block; padding: 1px 6px; border-radius: 999px; background: var(--unknown-soft); color: var(--muted-strong); font-size: 10px; font-weight: 650; letter-spacing: 0.03em; text-transform: uppercase; }
 .certificate-cluster-card .cluster-header { padding: 11px 20px; }
 
 .empty-state { display: flex; align-items: center; justify-content: center; gap: 13px; min-height: 124px; padding: 24px; color: var(--muted); }

@@ -23,10 +23,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
+from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_publish import (
     DEFAULT_LOCK_PATH,
-    IMPORT_STORE,
-    LETSENCRYPT_LIVE,
     Deployer,
     PublishError,
     Report,

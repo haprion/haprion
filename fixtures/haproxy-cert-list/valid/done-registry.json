@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cert_list",
+  "cluster": "alpha",
+  "request_id": "99999999-9999-4999-8999-999999999998",
+  "result": {
+    "certificates": [
+      {
+        "id": "example.com",
+        "fingerprint_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "common_name": "*.example.com",
+        "sans": [
+          "*.example.com",
+          "example.com"
+        ],
+        "not_before": "2026-08-01T00:00:00Z",
+        "not_after": "2026-11-01T00:00:00Z",
+        "issuer": "Example Test CA",
+        "lifecycle": "acme",
+        "valid": true,
+        "referenced_by_cluster": true,
+        "deployable": true,
+        "validation_error": null,
+        "source": {
+          "kind": "acme",
+          "lineage": "example.com-wildcard"
+        },
+        "targets": {
+          "clusters": [
+            "alpha"
+          ],
+          "receivers": []
+        }
+      }
+    ],
+    "registry": {
+      "certificates": [
+        {
+          "id": "example.com",
+          "source": {
+            "kind": "acme",
+            "lineage": "example.com-wildcard"
+          },
+          "targets": {
+            "clusters": [
+              "alpha"
+            ],
+            "receivers": []
+          },
+          "distribution": {
+            "published_at": "2026-08-01T04:12:00Z",
+            "current": true
+          },
+          "readable": true,
+          "validation_error": null,
+          "fingerprint_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "common_name": "*.example.com",
+          "sans": [
+            "*.example.com",
+            "example.com"
+          ],
+          "not_before": "2026-08-01T00:00:00Z",
+          "not_after": "2026-11-01T00:00:00Z",
+          "issuer": "Example Test CA",
+          "lifecycle": "acme",
+          "valid": true
+        },
+        {
+          "id": "lb-01.example.net",
+          "source": {
+            "kind": "acme",
+            "lineage": null
+          },
+          "targets": {
+            "clusters": [],
+            "receivers": [
+              {
+                "id": "lb-01",
+                "published_at": "2026-08-01T04:12:01Z",
+                "current": true
+              }
+            ]
+          },
+          "distribution": null,
+          "readable": true,
+          "validation_error": null,
+          "fingerprint_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "common_name": "lb-01.example.net",
+          "sans": [
+            "lb-01.example.net"
+          ],
+          "not_before": "2026-08-01T00:00:00Z",
+          "not_after": "2026-11-01T00:00:00Z",
+          "issuer": "Example Test CA",
+          "lifecycle": "acme",
+          "valid": true
+        },
+        {
+          "id": "internal.example.org",
+          "source": {
+            "kind": "import",
+            "lineage": null
+          },
+          "targets": {
+            "clusters": [
+              "beta"
+            ],
+            "receivers": []
+          },
+          "distribution": {
+            "published_at": "2026-07-02T09:30:00Z",
+            "current": null
+          },
+          "readable": false,
+          "validation_error": "no material at its source yet",
+          "fingerprint_sha256": null,
+          "common_name": null,
+          "sans": [],
+          "not_before": "2026-08-01T00:00:00Z",
+          "not_after": "2026-08-01T00:00:00Z",
+          "issuer": "unknown",
+          "lifecycle": "static",
+          "valid": false
+        }
+      ],
+      "receivers": [
+        "lb-01"
+      ]
+    }
+  },
+  "warnings": [],
+  "error": null
+}

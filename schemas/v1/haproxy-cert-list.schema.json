@@ -69,6 +69,78 @@
         }
       ]
     },
+    "published_copy": {
+      "description": "Whether one target holds this certificate, and since when. published_at is when the manager last wrote the file and says nothing about whether anything fetched it: a receiver pulls on its own schedule with its own key and reports nothing back. current is null where it could not be decided, which is a different fact from being out of date.",
+      "type": "object",
+      "required": ["published_at", "current"],
+      "properties": {
+        "published_at": { "type": ["string", "null"], "format": "date-time" },
+        "current": { "type": ["boolean", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "published_receiver": {
+      "description": "One receiver target and the state of its copy. Spelled out rather than composed with published_copy, because additionalProperties only sees the properties of the schema it sits in and a composed id would be rejected as unexpected.",
+      "type": "object",
+      "required": ["id", "published_at", "current"],
+      "properties": {
+        "id": { "type": "string", "maxLength": 63 },
+        "published_at": { "type": ["string", "null"], "format": "date-time" },
+        "current": { "type": ["boolean", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "registered_certificate": {
+      "description": "One certificate the manager holds, measured at its source rather than at a target. The source is what a renewal writes first, so a target that has not been published yet would otherwise report the previous certificate.",
+      "type": "object",
+      "required": [
+        "id", "source", "targets", "distribution", "readable", "validation_error",
+        "fingerprint_sha256", "common_name", "sans", "not_before", "not_after",
+        "issuer", "lifecycle", "valid"
+      ],
+      "properties": {
+        "id": { "type": "string", "maxLength": 255 },
+        "source": {
+          "type": "object",
+          "required": ["kind", "lineage"],
+          "properties": {
+            "kind": { "enum": ["acme", "import"] },
+            "lineage": { "type": ["string", "null"], "maxLength": 255 }
+          },
+          "additionalProperties": false
+        },
+        "targets": {
+          "type": "object",
+          "required": ["clusters", "receivers"],
+          "properties": {
+            "clusters": { "type": "array", "items": { "type": "string", "maxLength": 63 } },
+            "receivers": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/published_receiver" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "distribution": {
+          "description": "The shared cluster copy under certificate_root. One fact and not one per cluster, because every cluster reads the same file; null where no cluster names this certificate. Which nodes are carrying it is a different measurement and lives in the node status.",
+          "oneOf": [
+            { "$ref": "#/$defs/published_copy" },
+            { "type": "null" }
+          ]
+        },
+        "readable": { "type": "boolean" },
+        "validation_error": { "type": ["string", "null"], "maxLength": 2048 },
+        "fingerprint_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "common_name": { "type": ["string", "null"], "maxLength": 255 },
+        "sans": { "type": "array", "items": { "type": "string", "maxLength": 255 } },
+        "not_before": { "type": "string", "format": "date-time" },
+        "not_after": { "type": "string", "format": "date-time" },
+        "issuer": { "type": "string", "maxLength": 1024 },
+        "lifecycle": { "enum": ["acme", "static"] },
+        "valid": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "cert_list_result": {
       "type": "object",
       "required": ["certificates"],
@@ -76,6 +148,19 @@
         "certificates": {
           "type": "array",
           "items": { "$ref": "#/$defs/deployable_certificate" }
+        },
+        "registry": {
+          "description": "Every certificate the registry names, regardless of cluster, plus the registered receivers that may be chosen as targets. Absent where the installation declares no certificate_registry. Carried in this per-cluster answer rather than by a helper of its own, because the poller is indexed by cluster in every one of its cache tables.",
+          "type": "object",
+          "required": ["certificates", "receivers"],
+          "properties": {
+            "certificates": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/registered_certificate" }
+            },
+            "receivers": { "type": "array", "items": { "type": "string", "maxLength": 63 } }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": true

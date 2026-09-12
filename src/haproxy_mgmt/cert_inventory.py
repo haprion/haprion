@@ -45,6 +45,15 @@ from haproxy_mgmt.config import Cluster, RegisteredCertificate, Registry
 
 OPENSSL = "/usr/bin/openssl"
 LETSENCRYPT_ROOT = Path("/etc/letsencrypt")
+LETSENCRYPT_LIVE = LETSENCRYPT_ROOT / "live"
+#
+# Where imported material lives on the manager: one directory per certificate
+# ID with the same two files certbot's live directory has. Root-only. The
+# import helper (C6) is the only writer; everything here only reads.
+#
+IMPORT_STORE = Path("/etc/haproxy-manager/certificates")
+FULLCHAIN = "fullchain.pem"
+PRIVKEY = "privkey.pem"
 SAN_DNS = re.compile(r"DNS:([^,\s]+)")
 OPENSSL_TIMEOUT = 10
 
@@ -152,6 +161,22 @@ def renewed_fingerprints(root: Path = LETSENCRYPT_ROOT) -> frozenset[str]:
     return frozenset(found)
 
 
+def source_directory(entry: RegisteredCertificate, *, live: Path, store: Path) -> Path:
+    """Where a registered certificate's own material lives.
+
+    Here rather than in the publisher because the listing needs the same answer.
+    A certificate that goes only to receivers has no file in the distribution
+    directory at all, so the only place to read its subject, SAN and expiry from
+    is its source - and a second implementation of "where is that" would be a
+    second thing to keep in step with the publisher.
+    """
+
+    if entry.source.kind == "acme":
+        assert entry.source.lineage is not None  # noqa: S101 - the loader sets it for acme
+        return live / entry.source.lineage
+    return store / entry.certificate_id
+
+
 def _registered(entry: RegisteredCertificate | None) -> dict[str, Any]:
     """What the registry says about a certificate: where from, and where to.
 
@@ -206,12 +231,7 @@ def _one(
         **_registered(registered),
     }
     try:
-        path = certificate_path(root, identifier)
-        if path.stat().st_size > MAX_CERTIFICATE_BYTES:
-            raise CertificateError("the file is implausibly large")
-        pem = path.read_text(encoding="ascii", errors="strict")
-        fingerprint = leaf_fingerprint(pem)
-        facts = describe(leaf_block(pem))
+        fingerprint, facts = _measure(certificate_path(root, identifier))
     except FileNotFoundError:
         #
         # A referenced certificate that is not in the distribution directory is
@@ -237,6 +257,155 @@ def _one(
         valid=facts.not_before <= now <= facts.not_after,
     )
     return entry
+
+
+#
+# The inert values a v1 entry must carry when nothing could be measured. Same
+# rule as `_one`: nothing may read them without checking the error field first,
+# and a v2 schema should make them nullable instead.
+#
+def _unmeasured(now: datetime) -> dict[str, Any]:
+    return {
+        "fingerprint_sha256": None,
+        "common_name": None,
+        "sans": [],
+        "not_before": _timestamp(now),
+        "not_after": _timestamp(now),
+        "issuer": "unknown",
+        "lifecycle": "static",
+        "valid": False,
+    }
+
+
+def _measure(path: Path) -> tuple[str, Facts]:
+    """One certificate file's fingerprint and facts, from its leaf block alone.
+
+    The private key is never opened. This reads `fullchain.pem`, and what
+    reaches the parser is `leaf_block`, so "no key material leaves here" is a
+    property of what is passed rather than a rule to remember.
+    """
+
+    if path.stat().st_size > MAX_CERTIFICATE_BYTES:
+        raise CertificateError("the file is implausibly large")
+    pem = path.read_text(encoding="ascii", errors="strict")
+    return leaf_fingerprint(pem), describe(leaf_block(pem))
+
+
+def _published(path: Path, source_fingerprint: str | None) -> dict[str, Any]:
+    """Whether one target holds this certificate, and since when.
+
+    Two facts and no third. `published_at` is the file's own timestamp, which
+    says when the manager last wrote it - not when anything fetched it. A
+    receiver pulls on its own schedule with its own key, reports nothing back,
+    and by §14.1 what it does with the certificate is its own business. So this
+    reports publication, and the interface must not translate it into arrival.
+
+    `current` is null rather than false where it could not be decided: an
+    unreadable source and an out-of-date target are different facts, and the
+    one thing worse than not knowing is saying the wrong one confidently.
+    """
+
+    try:
+        stat = path.stat()
+    except OSError:
+        return {"published_at": None, "current": None if source_fingerprint is None else False}
+    try:
+        fingerprint, _ = _measure(path)
+    except (OSError, UnicodeDecodeError, CertificateError):
+        fingerprint = None
+    current = None
+    if source_fingerprint is not None and fingerprint is not None:
+        current = fingerprint == source_fingerprint
+    return {
+        "published_at": _timestamp(datetime.fromtimestamp(stat.st_mtime, UTC)),
+        "current": current,
+    }
+
+
+def registry_result(
+    registry: Registry,
+    *,
+    certificate_root: Path,
+    renewed: frozenset[str],
+    now: datetime,
+    live: Path = LETSENCRYPT_LIVE,
+    store: Path = IMPORT_STORE,
+) -> dict[str, Any]:
+    """Every certificate the manager holds, measured at its source.
+
+    The per-cluster listing answers "what can this cluster be given", and a
+    certificate that goes only to receivers is nobody's there - it has no file
+    in the distribution directory at all. This answers the other question, the
+    one the central view asks: what exists, where does each come from, and
+    where does each go.
+
+    Measured at the source rather than at a target because the source is what a
+    renewal writes first. A target that has not been published yet would
+    otherwise report the previous certificate's expiry, or none at all.
+    """
+
+    entries: list[dict[str, Any]] = []
+    for entry in registry.certificates.values():
+        row: dict[str, Any] = {
+            "id": entry.certificate_id,
+            "source": {"kind": entry.source.kind, "lineage": entry.source.lineage},
+            "readable": False,
+            "validation_error": None,
+            **_unmeasured(now),
+        }
+        fingerprint: str | None = None
+        try:
+            fingerprint, facts = _measure(
+                source_directory(entry, live=live, store=store) / FULLCHAIN
+            )
+        except FileNotFoundError:
+            #
+            # What an imported certificate looks like before the import helper
+            # exists: registered, with nothing in the import store yet. The
+            # publisher calls that skipped and leaves the published copy alone,
+            # so the listing says the same rather than calling it broken.
+            #
+            row["validation_error"] = "no material at its source yet"
+        except (OSError, UnicodeDecodeError, CertificateError) as exc:
+            row["validation_error"] = str(exc)
+        else:
+            row.update(
+                readable=True,
+                fingerprint_sha256=fingerprint,
+                common_name=facts.common_name,
+                sans=list(facts.sans),
+                not_before=_timestamp(facts.not_before),
+                not_after=_timestamp(facts.not_after),
+                issuer=facts.issuer,
+                lifecycle="acme" if fingerprint in renewed else "static",
+                valid=facts.not_before <= now <= facts.not_after,
+            )
+
+        row["targets"] = {
+            "clusters": list(entry.clusters),
+            "receivers": [
+                {
+                    "id": receiver_id,
+                    **_published(registry.receivers[receiver_id].path / FULLCHAIN, fingerprint),
+                }
+                for receiver_id in entry.receivers
+                if receiver_id in registry.receivers
+            ],
+        }
+        #
+        # One fact, not one per cluster: every cluster reads the same file out
+        # of the same shared distribution directory. Which nodes are actually
+        # carrying it is a different measurement, and it is already in the node
+        # status - it does not belong to this helper.
+        #
+        row["distribution"] = (
+            _published(certificate_path(certificate_root, entry.certificate_id), fingerprint)
+            if entry.clusters
+            else None
+        )
+        entries.append(row)
+
+    return {"certificates": entries, "receivers": sorted(registry.receivers)}
 
 
 def coverage(root: Path, cluster: Cluster) -> dict[str, tuple[str, ...]]:
@@ -285,6 +454,7 @@ def cert_list_result(
     letsencrypt_root: Path = LETSENCRYPT_ROOT,
     now: datetime | None = None,
     registry: Registry | None = None,
+    import_store: Path = IMPORT_STORE,
 ) -> dict[str, Any]:
     """The cluster's referenced certificates, then the rest of the directory.
 
@@ -311,7 +481,7 @@ def cert_list_result(
 
     order = list(referenced) + [name for name in present if name not in referenced]
     entries = registry.certificates if registry is not None else {}
-    return {
+    result: dict[str, Any] = {
         "certificates": [
             _one(
                 root,
@@ -324,3 +494,22 @@ def cert_list_result(
             for name in order
         ]
     }
+    #
+    # The same block in every cluster's answer, because it is the same file
+    # read the same way. Carried here rather than by a helper of its own: the
+    # poller is indexed by cluster in every one of its cache tables, so a
+    # clusterless source would have cost a new table, a migration and the two
+    # releases that a schema revision drags with it. The interface reads this
+    # from the freshest cluster row, so a registry written between two clusters'
+    # polls is never shown half.
+    #
+    if registry is not None:
+        result["registry"] = registry_result(
+            registry,
+            certificate_root=root,
+            renewed=renewed,
+            now=clock,
+            live=letsencrypt_root / "live",
+            store=import_store,
+        )
+    return result

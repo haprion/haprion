@@ -95,7 +95,7 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             self.assertNotIn("Certificate registry", page.content())
 
             page.click(".certificate-views a[href='?view=registry']")
-            page.wait_for_selector(".registry-table")
+            page.wait_for_selector("text=Certificate registry")
 
             self.assertTrue(page.evaluate("window.__stayed === true"))
             self.assertTrue(page.url.endswith("/certificates?view=registry"))

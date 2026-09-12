@@ -19,8 +19,9 @@ threshold would either shout about the first or stay quiet about the second.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -51,23 +52,6 @@ ACME_WARNING = timedelta(days=25)
 # expired certificate is an outage on every hostname it serves.
 #
 CRITICAL_WINDOW = timedelta(days=7)
-
-
-@dataclass(frozen=True, slots=True)
-class CertificateView:
-    identifier: str
-    common_name: str
-    sans: tuple[str, ...]
-    issuer: str
-    lifecycle: str
-    lifecycle_label: str
-    fingerprint: str
-    referenced: bool
-    usable: bool
-    problem: str | None
-    expires: str
-    expiry_label: str
-    tone: Tone
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +90,34 @@ class TargetView:
 
 
 @dataclass(frozen=True, slots=True)
+class CertificateView:
+    identifier: str
+    common_name: str
+    sans: tuple[str, ...]
+    issuer: str
+    lifecycle: str
+    lifecycle_label: str
+    fingerprint: str
+    referenced: bool
+    usable: bool
+    problem: str | None
+    expires: str
+    expiry_label: str
+    tone: Tone
+    #
+    # The registry's columns, so the two views read the same way (asked for
+    # on 2026-09-12: "same names on both"). Where the certificate goes comes
+    # from the registry block; what the nodes carry from this cluster's own
+    # status, so the state here is this cluster's and not every cluster's.
+    #
+    valid_from: str = "—"
+    targets: tuple[TargetView, ...] = ()
+    state_label: str = "Unknown"
+    state_detail: str = ""
+    state_tone: Tone = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
 class RegistryCertificateView:
     identifier: str
     source_label: str
@@ -133,10 +145,15 @@ class RegistryCertificateView:
     # None on an older engine that does not report it, and for a source read.
     #
     material_note: str | None = None
+    valid_from: str = "—"
 
 
 @dataclass(frozen=True, slots=True)
 class RegistryView:
+    #
+    # Where each certificate goes, by ID, for the cluster rows to share.
+    #
+    targets: Mapping[str, tuple[TargetView, ...]]
     certificates: tuple[RegistryCertificateView, ...]
     receivers: tuple[str, ...]
     certificate_count: int
@@ -171,6 +188,28 @@ def _sans(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list):
         return ()
     return tuple(name for name in value if isinstance(name, str) and name)
+
+
+def short_issuer(issuer: str) -> str:
+    """The issuer as a person says it: its CN and O, nothing else.
+
+    openssl prints the name in RFC 2253 form - `CN=R3,O=Let's Encrypt,C=US`,
+    or `CN=ca,DC=example,DC=com` for a directory-issued one - and the country
+    and directory components say nothing a reader is looking for. Kept in the
+    order written; an escaped comma inside a value is not a separator. A name
+    with neither component is left as it is rather than emptied.
+    """
+
+    parts = re.split(r"(?<!\\),", issuer)
+    kept = [part for part in parts if re.match(r"\s*(CN|O)=", part)]
+    return ",".join(kept) if kept else issuer
+
+
+def _date(value: Any) -> str:
+    """A measured timestamp as a date, or the dash the other unknown cells use."""
+
+    moment = _expiry(value)
+    return "—" if moment is None else moment.astimezone(UTC).date().isoformat()
 
 
 def _expiry(value: Any) -> datetime | None:
@@ -259,7 +298,7 @@ def _certificate_view(value: Any, *, now: datetime) -> CertificateView | None:
         identifier=identifier,
         common_name=_text(entry.get("common_name"), identifier),
         sans=_sans(entry.get("sans")),
-        issuer=_text(entry.get("issuer")),
+        issuer=short_issuer(_text(entry.get("issuer"))),
         lifecycle=lifecycle,
         lifecycle_label=_lifecycle_label(lifecycle),
         fingerprint=_text(entry.get("fingerprint_sha256"), ""),
@@ -269,6 +308,7 @@ def _certificate_view(value: Any, *, now: datetime) -> CertificateView | None:
         expires=expires,
         expiry_label=expiry_label,
         tone=tone,
+        valid_from=_date(entry.get("not_before")),
     )
 
 
@@ -282,7 +322,12 @@ def _lifecycle_label(lifecycle: str) -> str:
     if lifecycle == "acme":
         return "Certbot"
     if lifecycle == "static":
-        return "Manual"
+        #
+        # The registry's word for the same thing. The two views share their
+        # columns, so a badge that said Manual on one and Imported on the
+        # other would read as two kinds of certificate where there is one.
+        #
+        return "Imported"
     return "Unknown"
 
 
@@ -385,6 +430,8 @@ def _cluster_view(
     # `dashboard.observation_label`.
     #
     captured: bool = False,
+    targets: Mapping[str, tuple[TargetView, ...]] | None = None,
+    carriage: NodeCarriage | None = None,
 ) -> CertificateClusterView:
     result = _mapping(reading.result)
     entries = result.get("certificates")
@@ -393,7 +440,7 @@ def _cluster_view(
         for entry in entries:
             certificate = _certificate_view(entry, now=now)
             if certificate is not None:
-                parsed.append(certificate)
+                parsed.append(_placed(certificate, reading.cluster, targets, carriage))
     certificates = tuple(sorted(parsed, key=_order))
     stale = now - reading.observed_at > stale_after
     label, tone, detail = _state(reading, stale=stale, certificates=certificates)
@@ -413,6 +460,78 @@ def _cluster_view(
         available_count=sum(not entry.referenced for entry in certificates),
         certificates=certificates,
     )
+
+
+def _placed(
+    certificate: CertificateView,
+    cluster: str,
+    targets: Mapping[str, tuple[TargetView, ...]] | None,
+    carriage: NodeCarriage | None,
+) -> CertificateView:
+    """One cluster's row with the registry's columns filled in.
+
+    Used by comes from the registry; without one the cluster itself is the
+    only known target, which is true rather than a guess. State is measured
+    against this cluster's nodes only, with the same reading the registry
+    uses - `_node_state` - so the two views cannot disagree about a node.
+    """
+
+    if targets is not None and certificate.identifier in targets:
+        placed = targets[certificate.identifier]
+    else:
+        placed = (
+            TargetView(
+                name=cluster, kind="cluster", published_at=None, published_label="", current=None
+            ),
+        )
+    label: str
+    detail: str
+    tone: Tone
+    if not certificate.usable:
+        label, detail, tone = "Unreadable", certificate.problem or "Could not be read", "critical"
+    else:
+        label, detail, tone = _node_state(
+            certificate.identifier, certificate.fingerprint, [carriage] if carriage else []
+        )
+    return replace(
+        certificate, targets=placed, state_label=label, state_detail=detail, state_tone=tone
+    )
+
+
+def _node_state(
+    identifier: str, fingerprint: str, carriages: Iterable[NodeCarriage | None]
+) -> tuple[str, str, Tone]:
+    """What the given clusters' nodes report carrying, said without overreaching.
+
+    Shared by the registry row, which asks about every cluster a certificate
+    goes to, and the cluster row, which asks about one. `None` in the list is
+    a cluster nobody has read yet and counts towards nothing.
+    """
+
+    on, total = 0, 0
+    wrong = False
+    for nodes in carriages:
+        if nodes is None:
+            continue
+        held = nodes.fingerprints.get(identifier, frozenset())
+        if fingerprint and held and fingerprint not in held:
+            wrong = True
+        on += nodes.holders.get(identifier, 0)
+        total += nodes.reporting
+    if total == 0:
+        return "Published", "No node has reported yet, so deployment is unknown", "unknown"
+    if wrong:
+        return (
+            "Nodes hold an older copy",
+            "A node carries this certificate ID with different bytes",
+            "warning",
+        )
+    if on == 0:
+        return "Not on the nodes", "Published, but no node carries it yet", "warning"
+    if on < total:
+        return f"On {on} of {total} nodes", "A node is behind on this certificate", "warning"
+    label = f"On all {total} nodes" if total > 1 else "On the node"
+    return label, "Every reporting node carries this certificate", "healthy"
 
 
 @dataclass(frozen=True, slots=True)
@@ -551,37 +670,12 @@ def _registry_state(
                 "The distribution directory holds an earlier certificate than the source",
                 "warning",
             )
-        on, total = 0, 0
-        wrong = False
-        for cluster in clusters:
-            nodes = carriage.get(cluster)
-            if nodes is None:
-                continue
-            held = nodes.fingerprints.get(identifier, frozenset())
-            if fingerprint and held and fingerprint not in held:
-                wrong = True
-            on += nodes.holders.get(identifier, 0)
-            total += nodes.reporting
-        if total == 0:
-            return (
-                "Published",
-                "No node has reported yet, so deployment is unknown",
-                "unknown",
-            )
-        if wrong:
-            return (
-                "Nodes hold an older copy",
-                "A node carries this certificate ID with different bytes",
-                "warning",
-            )
-        if on == 0:
-            return "Not on the nodes", "Published, but no node carries it yet", "warning"
-        if on < total:
-            return f"On {on} of {total} nodes", "A node is behind on this certificate", "warning"
-        label = f"On all {total} nodes" if total > 1 else "On the node"
-        if receivers:
-            return label, f"and published to {len(receivers)} receiver(s)", "healthy"
-        return label, "Every reporting node carries this certificate", "healthy"
+        label, detail, tone = _node_state(
+            identifier, fingerprint, (carriage.get(cluster) for cluster in clusters)
+        )
+        if receivers and tone == "healthy":
+            return label, f"and published to {len(receivers)} receiver(s)", tone
+        return label, detail, tone
 
     unpublished = tuple(target for target in receivers if target.published_at is None)
     if unpublished:
@@ -642,7 +736,7 @@ def _registry_certificate(
         wildcard=any(name.startswith("*.") for name in sans),
         common_name=_text(entry.get("common_name"), identifier),
         sans=sans,
-        issuer=_text(entry.get("issuer")),
+        issuer=short_issuer(_text(entry.get("issuer"))) if readable else "—",
         fingerprint=fingerprint,
         readable=readable,
         problem=None if readable else _text(entry.get("validation_error"), "Could not be read"),
@@ -658,6 +752,7 @@ def _registry_certificate(
             if readable and entry.get("measured_at") == "distribution"
             else None
         ),
+        valid_from=_date(entry.get("not_before")) if readable else "—",
     )
 
 
@@ -707,6 +802,7 @@ def _registry_view(
     )
     receivers = block.get("receivers")
     return RegistryView(
+        targets={entry.identifier: entry.targets for entry in certificates},
         certificates=certificates,
         receivers=tuple(name for name in receivers if isinstance(name, str))
         if isinstance(receivers, list)
@@ -753,6 +849,14 @@ def build_certificate_overview(
 
     now = now or datetime.now(UTC)
     readings = tuple(readings)
+    status_readings = tuple(status_readings)
+    #
+    # The registry and the node status first: the cluster rows carry the
+    # registry's columns, and their state is read from the same carriage.
+    #
+    registry = _registry_view(readings, status_readings, now=now)
+    carriage = _carriage(status_readings)
+    targets = registry.targets if registry is not None else None
     rows = {reading.cluster: reading for reading in readings}
     clusters: list[CertificateClusterView] = []
     for cluster in tuple(configured_clusters):
@@ -761,13 +865,25 @@ def build_certificate_overview(
             _empty(cluster, configured=True)
             if reading is None
             else _cluster_view(
-                reading, configured=True, now=now, stale_after=stale_after, captured=captured
+                reading,
+                configured=True,
+                now=now,
+                stale_after=stale_after,
+                captured=captured,
+                targets=targets,
+                carriage=carriage.get(cluster),
             )
         )
     for cluster in sorted(rows):
         clusters.append(
             _cluster_view(
-                rows[cluster], configured=False, now=now, stale_after=stale_after, captured=captured
+                rows[cluster],
+                configured=False,
+                now=now,
+                stale_after=stale_after,
+                captured=captured,
+                targets=targets,
+                carriage=carriage.get(cluster),
             )
         )
 
@@ -782,7 +898,6 @@ def build_certificate_overview(
             key = certificate.fingerprint or f"id:{certificate.identifier}"
             distinct.setdefault(key, certificate)
 
-    registry = _registry_view(readings, status_readings, now=now)
     return CertificateOverview(
         clusters=tuple(clusters),
         cluster_count=len(clusters),

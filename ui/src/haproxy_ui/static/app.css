@@ -709,11 +709,6 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    hidden: they are what a later phase picks from, and an operator looking for
    one that is missing needs to see that it exists. */
 .certificate-available td { color: var(--muted); }
-/* Four columns, not five: the cluster table lists only what the cluster
-   references, so the issuer gets the width the Use badge used to hold. */
-.cluster-certificate-table th:nth-child(3), .cluster-certificate-table td:nth-child(3) { width: 420px; }
-.cluster-certificate-table th:nth-child(4), .cluster-certificate-table td:nth-child(4) { width: 220px; }
-.cluster-certificate-table th:nth-child(5), .cluster-certificate-table td:nth-child(5) { width: auto; }
 
 /* The view switch. Traffic's segmented control at Traffic's size reads as a
    caption above a page rather than as two things to press, and on this page it
@@ -724,14 +719,19 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .certificate-views a { padding: 7px 15px; font-size: 13.5px; }
 .certificate-views b { margin-left: 7px; font-variant-numeric: tabular-nums; }
 
-/* The registry table's own widths, measured against the rendered page rather
-   than guessed. State holds the longest phrase this page can produce and was
-   clipped at the node table's inherited 130px. Used by takes what is left. */
-.registry-table th:nth-child(1), .registry-table td:nth-child(1) { width: 260px; }
-.registry-table th:nth-child(2), .registry-table td:nth-child(2) { width: 150px; }
-.registry-table th:nth-child(3), .registry-table td:nth-child(3) { width: auto; }
-.registry-table th:nth-child(4), .registry-table td:nth-child(4) { width: 230px; }
-.registry-table th:nth-child(5), .registry-table td:nth-child(5) { width: 260px; }
+/* One table for both views since 2026-09-12 - the registry and each cluster's
+   card draw the same seven columns - so one set of widths, measured against
+   the rendered page rather than guessed. State holds the longest phrase this
+   page can produce and was clipped at the node table's inherited 130px; the
+   issuer is cut to its CN and O so Source stays one line. Names takes what
+   is left. */
+.registry-table th:nth-child(1), .registry-table td:nth-child(1) { width: 180px; }
+.registry-table th:nth-child(2), .registry-table td:nth-child(2) { width: auto; }
+.registry-table th:nth-child(3), .registry-table td:nth-child(3) { width: 320px; }
+.registry-table th:nth-child(4), .registry-table td:nth-child(4) { width: 170px; }
+.registry-table th:nth-child(5), .registry-table td:nth-child(5) { width: 105px; }
+.registry-table th:nth-child(6), .registry-table td:nth-child(6) { width: 205px; }
+.registry-table th:nth-child(7), .registry-table td:nth-child(7) { width: 205px; }
 .registry-table tbody tr.registry-open { background: var(--panel-soft); }
 .registry-table tbody tr.registry-detail:hover { background: transparent; }
 .registry-detail td { padding: 4px 0 14px; }

@@ -12,7 +12,7 @@ import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
-from haproxy_ui.certificates import RegistryView, build_certificate_overview
+from haproxy_ui.certificates import RegistryView, build_certificate_overview, short_issuer
 from haproxy_ui.db import ClusterCertificates, ClusterStatus
 
 NOW = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
@@ -20,7 +20,7 @@ STALE_AFTER = timedelta(minutes=2)
 
 
 def certificate(
-    identifier: str = "example.com.pem",
+    identifier: str = "example.com",
     *,
     days_left: int = 60,
     lifecycle: str = "acme",
@@ -384,9 +384,13 @@ class OrderAndCountTests(unittest.TestCase):
 
 class LifecycleLabelTests(unittest.TestCase):
     def test_the_label_names_what_actually_renews_the_certificate(self) -> None:
+        #
+        # The registry's word for a certificate certbot does not renew, so the
+        # badge reads the same in both views.
+        #
         labels = {
             "acme": "Certbot",
-            "static": "Manual",
+            "static": "Imported",
             "something-else": "Unknown",
         }
         for lifecycle, expected in labels.items():
@@ -566,3 +570,93 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
 
         self.assertIsNone(view.registry)
         self.assertEqual(view.certificate_count, 1)
+
+
+class TheTwoViewsShareTheirColumns(unittest.TestCase):
+    """Asked for on 2026-09-12: the same seven columns, the same words, on both.
+
+    The cluster row gets the registry's columns filled from the same readings
+    the registry uses - Used by from the registry block, State from the
+    cluster's own node status - so the two tables cannot answer differently
+    about one certificate.
+    """
+
+    def test_a_cluster_row_carries_where_the_certificate_goes(self) -> None:
+        entry = registered(
+            receivers=({"id": "lb-01", "published_at": "2026-08-01T00:00:00Z", "current": True},)
+        )
+        view = overview(with_registry(reading(), entry, receivers=("lb-01",)))
+
+        row = view.clusters[0].certificates[0]
+        self.assertEqual(
+            [(t.name, t.kind) for t in row.targets], [("alpha", "cluster"), ("lb-01", "receiver")]
+        )
+
+    def test_without_a_registry_the_cluster_itself_is_the_only_known_target(self) -> None:
+        row = overview(reading()).clusters[0].certificates[0]
+
+        self.assertEqual([(t.name, t.kind) for t in row.targets], [("alpha", "cluster")])
+
+    def test_the_state_is_measured_against_this_clusters_nodes_only(self) -> None:
+        #
+        # Two clusters reference the same certificate; only alpha's nodes
+        # carry it. The registry says "1 of 2"; alpha's card says all, beta's
+        # says none. Each card answers for itself.
+        #
+        fingerprint = "c" * 64
+        entry = registered(clusters=("alpha", "beta"), fingerprint=fingerprint)
+        readings = [
+            with_registry(reading(), entry),
+            with_registry(reading(cluster="beta"), entry),
+        ]
+        view = overview(
+            *readings,
+            clusters=("alpha", "beta"),
+            status=(
+                status(node(("example.com", fingerprint)), cluster="alpha"),
+                status(node(), cluster="beta"),
+            ),
+        )
+
+        by_cluster = {c.cluster: c.certificates[0] for c in view.clusters}
+        self.assertEqual(by_cluster["alpha"].state_label, "On the node")
+        self.assertEqual(by_cluster["beta"].state_label, "Not on the nodes")
+        self.assertEqual(registry_of(view).certificates[0].state_label, "On 1 of 2 nodes")
+
+    def test_valid_from_is_the_measured_start_on_both_views(self) -> None:
+        view = overview(with_registry(reading(), registered()))
+
+        self.assertNotEqual(view.clusters[0].certificates[0].valid_from, "—")
+        self.assertRegex(view.clusters[0].certificates[0].valid_from, r"^\d{4}-\d{2}-\d{2}$")
+        self.assertRegex(registry_of(view).certificates[0].valid_from, r"^\d{4}-\d{2}-\d{2}$")
+
+    def test_an_unreadable_row_has_no_start_date(self) -> None:
+        entry = registered(readable=False, validation_error="no material at its source yet")
+        view = overview(with_registry(reading(), entry))
+
+        self.assertEqual(registry_of(view).certificates[0].valid_from, "—")
+
+
+class TheIssuerIsCutToWhatAPersonSays(unittest.TestCase):
+    def test_only_cn_and_o_are_kept(self) -> None:
+        cases = {
+            "CN=R3,O=Let's Encrypt,C=US": "CN=R3,O=Let's Encrypt",
+            "CN=ca,DC=example,DC=com": "CN=ca",
+            "C=US,O=Example Inc,CN=Example CA": "O=Example Inc,CN=Example CA",
+            "CN=a\\,b,O=Comma\\, Inc,C=US": "CN=a\\,b,O=Comma\\, Inc",
+            "Example Test CA": "Example Test CA",
+            "unknown": "unknown",
+        }
+        for issuer, expected in cases.items():
+            with self.subTest(issuer=issuer):
+                self.assertEqual(short_issuer(issuer), expected)
+
+    def test_both_views_show_the_short_form(self) -> None:
+        entry = registered()
+        entry["issuer"] = "CN=R3,O=Let's Encrypt,C=US"
+        row = reading(certificates=[certificate()])
+        row.result["certificates"][0]["issuer"] = "CN=R3,O=Let's Encrypt,C=US"
+        view = overview(with_registry(row, entry))
+
+        self.assertEqual(view.clusters[0].certificates[0].issuer, "CN=R3,O=Let's Encrypt")
+        self.assertEqual(registry_of(view).certificates[0].issuer, "CN=R3,O=Let's Encrypt")

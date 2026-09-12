@@ -244,7 +244,7 @@ class SigningIn(LoginTestCase):
         page = client.get("/certificates")
         self.assertEqual(page.status_code, 200)
         self.assertIn("Certbot", page.text)
-        self.assertIn("Manual", page.text)
+        self.assertIn("Imported", page.text)
         self.assertIn("referenced by this cluster", page.text)
         #
         # Only what the cluster references, and therefore no Use column either:

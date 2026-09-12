@@ -1,0 +1,96 @@
+{% extends "layout.html" %}
+{% block title %}New certificate — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  Phase 11's gate, drawn: one form, one button. What it asks for is exactly
+  what `haproxy-cert-issue` takes - a name, a challenge method, targets the
+  registry already has - and the helper checks every answer again against a
+  policy this page cannot read. So the page explains, and the engine decides.
+
+  A refusal is drawn on this page with the typed values in place, rather than
+  on a page of its own that says "go back". The one form in the interface
+  whose purpose is to be filled in should not lose what was filled in.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>New certificate</h1><p class="page-lede">Asks the ACME account this manager already has for a certificate, registers it, publishes it to the chosen targets and rolls it out to the chosen clusters — as one job.</p></div>
+  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+{% if certificate_job %}
+<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> The queue runs one certificate job at a time; this form can be sent once it has finished. Follow it on the <a href="/jobs">Jobs</a> page.</p>
+{% endif %}
+
+<form method="post" action="/certificates/new" class="preview-form certificate-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+
+  <section class="cluster-card cluster-accent-1">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Certificate</h3></div></div></header>
+    <div class="form-grid">
+      <label>Domain<input name="domain" value="{{ form.domain }}" maxlength="255" placeholder="app.example.com or *.example.com" autocomplete="off" spellcheck="false" required autofocus><small>Becomes the certificate's name. <code>*.example.com</code> also covers <code>example.com</code>, the way the existing wildcard does.</small></label>
+      {#
+        Two radios, not a select: the choice has two answers and one of them
+        rules the wildcard out, and a reader should see both at once to see
+        why. DNS-01 first and preset because it is the one the manager's
+        policy is set up for; HTTP-01 needs a webroot the policy names, and
+        the job says so if it does not.
+      #}
+      <div class="field">
+        <span class="field-title">Challenge</span>
+        <div class="method-choices">
+          <label class="check"><input type="radio" name="method" value="dns-01"{% if form.method != 'http-01' %} checked{% endif %}> DNS-01 <span class="optional">— a TXT record in the zone; the only method for a wildcard</span></label>
+          <label class="check"><input type="radio" name="method" value="http-01"{% if form.method == 'http-01' %} checked{% endif %}> HTTP-01 <span class="optional">— a file under the policy's webroot; single names only</span></label>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="cluster-card cluster-accent-2">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published. At least one.</p></div></div></header>
+    <div class="form-grid form-grid-pair">
+      <div class="field">
+        <span class="field-title">Clusters</span>
+        {#
+          Every configured cluster, whether or not it carries anything yet.
+          A cluster that gets this certificate has it deployed to its nodes as
+          the last step of the job.
+        #}
+        <div class="form-checks form-checks-stacked">
+          {% for name in choices.clusters %}
+          <label class="check"><input type="checkbox" name="cluster" value="{{ name }}"{% if name in form.clusters %} checked{% endif %}> {{ name }}</label>
+          {% else %}
+          <span class="warning-text">No cluster is configured.</span>
+          {% endfor %}
+        </div>
+        <small>Published to the cluster's distribution directory and rolled out to its nodes.</small>
+      </div>
+      <div class="field">
+        <span class="field-title">Receivers <span class="optional">(optional)</span></span>
+        {#
+          Chosen, never typed. A receiver is a directory, an account and a key
+          locked to that directory, registered on the manager by whoever
+          administers it (B135, B141). A name typed here could not fetch
+          anything, so the page offers the ones that exist and says where a
+          missing one is made.
+        #}
+        <div class="form-checks form-checks-stacked">
+          {% for name in choices.receivers %}
+          <label class="check"><input type="checkbox" name="receiver" value="{{ name }}"{% if name in form.receivers %} checked{% endif %}> {{ name }}</label>
+          {% else %}
+          <span class="optional">No receiver is registered.</span>
+          {% endfor %}
+        </div>
+        <small>A host outside the clusters that fetches the certificate with its own key. Missing one? It is registered on the manager, not here — see the installation guide, 1.4.1.</small>
+      </div>
+    </div>
+    <div class="editor-actions editor-submit">
+      <p class="table-note">The job takes a minute or two. Its outcome — and certbot's own words if it fails — is on the Jobs page.</p>
+      <button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Request the certificate</button>
+    </div>
+  </section>
+</form>
+{% endblock %}

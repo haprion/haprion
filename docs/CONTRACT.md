@@ -68,9 +68,15 @@ Command-specific stable codes:
 | `cert_deploy` | `split_brain`, `vip_unknown`, `certificate_missing`, `fingerprint_mismatch`, `node_cert_deploy_failed` |
 | `network_publish` | `dirty_worktree`, `candidate_invalid`, `publish_incomplete` |
 | `objects_publish` | `dirty_worktree`, `network_missing`, `objects_invalid`, `candidate_invalid`, `publish_incomplete` |
+| `cert_issue` | `already_exists`, `certbot_failed`, `publish_failed` |
 
 New codes may be added in schema v1 only when an older caller can safely show them as a generic
 failure or warning. Removing or changing the meaning of a code requires a new schema version.
+
+A `certbot_failed` error carries certbot's captured output whole under `error.details.diagnostics`
+(with `certbot_exit_code` and `certbot_seconds` beside it); `error.message` states only the exit and
+the elapsed time. The message is capped at 2048 bytes, and a failed challenge's account is what the
+operator needs to read.
 
 ## Reconcile invariants
 

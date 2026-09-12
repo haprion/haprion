@@ -222,7 +222,16 @@ class WhenCertbotFails(IssueFixture):
         document = json.loads(out)
         self.assertEqual(document["outcome"], "failed")
         self.assertEqual(document["error"]["code"], "certbot_failed")
-        self.assertIn("the token does not have permission", document["error"]["message"])
+        #
+        # The output is evidence, not the sentence: it lives whole under
+        # `diagnostics`, where the interface reads a compiler's answer from,
+        # and the message says only what certbot's exit was.
+        #
+        self.assertEqual(document["error"]["message"], "certbot exited 1 after 0s")
+        details = document["error"]["details"]
+        self.assertIn("the token does not have permission", details["diagnostics"])
+        self.assertEqual(details["certbot_exit_code"], 1)
+        self.assertIn("the token does not have permission", err)
         self.assertEqual(self.registry_path.read_bytes(), before)
         self.assertEqual(deployed, [])
         self.assertEqual(list(self.dist.iterdir()), [])

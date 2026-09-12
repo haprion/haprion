@@ -248,7 +248,7 @@ class WhatIssuingAnswers(HelperFixture):
         self.assertEqual(code, 1)
         assert document is not None
         self.assertEqual(document["error"]["code"], "certbot_failed")
-        self.assertIn("NXDOMAIN", document["error"]["message"])
+        self.assertIn("NXDOMAIN", document["error"]["details"]["diagnostics"])
 
 
 class WhatRetargetingAnswers(HelperFixture):

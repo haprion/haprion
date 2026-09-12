@@ -141,7 +141,7 @@ def main(
             require_secure=require_secure,
         )
     except IssueError as exc:
-        return refuse(exc.code, str(exc), exc.exit_code)
+        return refuse(exc.code, str(exc), exc.exit_code, exc.details)
 
     document, exit_code = result_envelope(result, request_id=request.request_id)
     write_document(writer, document)

@@ -171,8 +171,19 @@ def main(
     except SystemExit as exc:
         return int(exc.code or 0)
 
-    def refuse(code: str, message: str, exit_code: int) -> int:
+    def refuse(
+        code: str, message: str, exit_code: int, details: dict[str, Any] | None = None
+    ) -> int:
         errors.write(f"ERROR: [{code}] {message}\n")
+        #
+        # certbot's own words, after the sentence that names the code. In JSON
+        # mode they are in the document; at a terminal they would otherwise be
+        # nowhere, and the operator holding the terminal is the person who
+        # needs them.
+        #
+        diagnostics = (details or {}).get("diagnostics")
+        if isinstance(diagnostics, str) and diagnostics.strip():
+            errors.write(diagnostics.rstrip("\n") + "\n")
         if json_mode:
             document = failure(
                 operation=OPERATION,
@@ -181,6 +192,7 @@ def main(
                 code=code,
                 message=message,
                 exit_code=exit_code,
+                details=details,
             )
             writer.write(json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n")
         return exit_code
@@ -214,7 +226,7 @@ def main(
             certbot=certbot or run_certbot,
         )
     except IssueError as exc:
-        return refuse(exc.code, str(exc), exc.exit_code)
+        return refuse(exc.code, str(exc), exc.exit_code, exc.details)
 
     document, exit_code = result_envelope(result, request_id=request_id)
 

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest import mock
 from uuid import uuid4
 
 from haproxy_ui import db, jobs
 from tests.test_login import LoginTestCase, configuration
+
+FIXTURES = Path(__file__).parents[2] / "fixtures"
 
 
 def job(
@@ -744,3 +748,47 @@ class TheBlockReachesThePages(LoginTestCase):
         self.assertNotIn("Deploy blocked", body)
         self.assertNotIn('name="operation" value="cert_deploy"', body)
         self.assertEqual(body.count('action="/operations"'), 1)
+
+
+class AFailedCertificateIssue(LoginTestCase):
+    """certbot's own words reach the page that reports the job.
+
+    The contract fixture is the source: `certbot_failed` carries the captured
+    output under `error.details.diagnostics`, and the message says only what
+    the exit was. The interface reads that key already - it is the one
+    `candidate_invalid` uses for the compiler's answer - so a failed challenge
+    arrives as the sentence the operator needs and not as an exit status.
+    """
+
+    def failed_issue(self) -> db.Job:
+        document = json.loads(
+            (FIXTURES / "haproxy-cert-issue" / "valid" / "certbot-failed.json").read_text()
+        )
+        return job(
+            state="failed",
+            outcome="failed",
+            operation="cert_issue",
+            cluster=None,
+            exit_code=1,
+            result=document,
+        )
+
+    def test_an_admin_reads_certbot_s_reason_not_only_the_exit(self) -> None:
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[self.failed_issue()]):
+            client = self.client()
+            self.sign_in(client)
+            page = client.get("/jobs").text
+
+        self.assertIn("certbot_failed", page)
+        self.assertIn("Invalid request headers", page)
+        self.assertIn("valid Cloudflare API credentials", page)
+
+    def test_a_reader_gets_the_code_and_not_the_output(self) -> None:
+        self.account = replace(self.account, role="reader")
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[self.failed_issue()]):
+            client = self.client()
+            self.sign_in(client)
+            page = client.get("/jobs").text
+
+        self.assertIn("certbot_failed", page)
+        self.assertNotIn("Cloudflare", page)

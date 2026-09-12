@@ -83,10 +83,27 @@ HOSTNAME = re.compile(
 
 
 class IssueError(Exception):
-    def __init__(self, code: str, message: str, *, exit_code: int = 64):
+    """A refusal or failure, with the code it is reported under.
+
+    `details` is the envelope's `error.details`: evidence that does not fit a
+    sentence. certbot's output goes there, under `diagnostics`, the same key
+    `haproxy-publish` puts the compiler's answer under - the interface already
+    reads that key, and a message is capped at 2048 bytes while certbot's
+    account of a failed DNS challenge is routinely longer.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        exit_code: int = 64,
+        details: dict[str, Any] | None = None,
+    ):
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code
+        self.details = details
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,10 +348,22 @@ def issue(
     result = certbot(arguments)
     certbot_seconds = time.monotonic() - certbot_started
     if result.returncode != 0:
+        #
+        # The exit status is the sentence; the output is the evidence. The
+        # operator needs to read "the DNS record could not be created", and
+        # the envelope caps a message at 2048 bytes, so the output travels
+        # whole under `details.diagnostics` rather than cut off mid-line in
+        # the message.
+        #
         raise IssueError(
             "certbot_failed",
-            f"certbot exited {result.returncode} after {certbot_seconds:.0f}s:\n{result.output}",
+            f"certbot exited {result.returncode} after {certbot_seconds:.0f}s",
             exit_code=1,
+            details={
+                "diagnostics": result.output,
+                "certbot_exit_code": result.returncode,
+                "certbot_seconds": round(certbot_seconds, 1),
+            },
         )
 
     assert policy.certificate_registry is not None  # noqa: S101 - build_request checked it

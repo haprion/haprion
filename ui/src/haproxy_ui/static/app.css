@@ -993,6 +993,26 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .check-note { margin: 0; max-width: 68ch; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
 
 .preview-form .warning-text { margin: 12px 20px 0; }
+
+/*
+ * The certificate form (C5). Its target boxes stack, one per line, because
+ * each one is a name a reader checks against a list they hold in their head,
+ * and a row of names that wraps wherever the width says reads as prose. Both
+ * lists sit inside a field, so the field's own padding is theirs and the
+ * flex row's is not.
+ */
+.certificate-form .form-checks-stacked { flex-direction: column; align-items: flex-start; gap: 8px; padding: 4px 0 0; }
+.certificate-form .method-choices { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+/* Row, said explicitly: `.form-grid label` stacks its contents, and a box
+ * above its own name is a box nobody can read. */
+.certificate-form .method-choices .check, .certificate-form .form-checks-stacked .check { display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
+.certificate-form .method-choices .optional { font-weight: var(--font-weight-regular); }
+.certificate-form .field > .field-title { color: var(--text-secondary); font-weight: 620; }
+.certificate-form .field > small { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.certificate-form .warning-text { margin: 0; }
+/* A refusal on the form it refused: the critical hue, where the notice above
+ * the form is otherwise informational. */
+.form-problem { display: flex; align-items: center; gap: 10px; border-left-color: var(--critical); background: var(--critical-soft); }
 /*
  * One row of buttons of one size. `.primary-button` is full width because the
  * login form has a single button and nothing to sit beside; here that made it

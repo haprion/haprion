@@ -745,7 +745,15 @@ acme:
 A method whose setting is missing is refused by name before certbot runs. A wildcard
 (`*.example.net`, which also covers `example.net`) needs `dns-01` and is refused with `http-01`.
 The command does not create routes, touch the published configuration or check that the name
-resolves: certbot's own failure, verbatim, is the error message when it does not.
+resolves. When certbot fails, its output is printed after the error line at a terminal and carried
+whole under `error.details.diagnostics` in the JSON envelope, so the account of a failed challenge
+reaches whoever asked, in certbot's own words.
+
+The web interface asks for the same thing from **Certificates → New certificate**: a domain, a
+method, and boxes for the clusters and the registered receivers. It queues one `cert_issue` job
+through `haproxy-cert-issue-helper` (§4.4) and reports on the Jobs page, certbot's output included.
+The form cannot register a receiver - one is a directory, an account and a key, made on the host as
+in 1.4.1 - and it refuses a wildcard over `http-01` before the job is queued.
 
 The account is the one certbot already has on this host; the command registers none. The
 certificate becomes an ordinary certbot lineage, renewed by certbot's timer and published by the
@@ -2047,7 +2055,7 @@ rollback rather than a pause.
 
 #### What the worker may run
 
-Five helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
+Eight helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 
 ```
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-helper ""
@@ -2055,7 +2063,13 @@ Five helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-revert-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-publish-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-publish-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-publish-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-target-helper ""
 ```
+
+The last three are the certificate jobs (1.4.3): they belong to no cluster, and the queue runs one
+of them at a time.
 
 Publishing was deliberately absent from that list until the editor existed, on the reasoning that
 it was an operator's decision made at a terminal. What changed is that the interface became where

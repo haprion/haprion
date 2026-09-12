@@ -669,6 +669,21 @@ def last_failure(jobs: Iterable[Job]) -> dict[str, Failure]:
     return {cluster: verdict for cluster, verdict in verdicts.items() if verdict.label}
 
 
+def certificate_in_flight(jobs: Iterable[Job]) -> str | None:
+    """What the one certificate slot is busy with, if anything.
+
+    The counterpart of `in_flight` for jobs that belong to no cluster. The
+    queue holds one active certificate job at a time, so this is a single
+    label or nothing - and the form that would queue another can say so
+    before the queue refuses it.
+    """
+
+    for job in jobs:
+        if job.cluster is None and job.state in {"pending", "running"}:
+            return RUNNING_LABELS.get(job.operation, job.operation)
+    return None
+
+
 def in_flight(jobs: Iterable[Job]) -> dict[str, str]:
     """What each cluster is busy with, by cluster.
 

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "failed",
+  "operation": "cert_issue",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": null,
+  "error": {
+    "code": "certbot_failed",
+    "message": "certbot exited 1 after 34s",
+    "details": {
+      "diagnostics": "Saving debug log to /var/log/letsencrypt/letsencrypt.log\nRequesting a certificate for *.example.com and example.com\nError determining zone_id: 6003 Invalid request headers. Confirm that you have supplied valid Cloudflare API credentials.",
+      "certbot_exit_code": 1,
+      "certbot_seconds": 34.2
+    }
+  },
+  "warnings": []
+}

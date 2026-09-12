@@ -464,6 +464,18 @@ def check_cert_publish_semantics(document: dict[str, object], path: Path) -> Non
 def check_cert_issue_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
+        # A run that did not issue anything has nothing to report, and one
+        # that says "done" with nothing to show for it did not come from this
+        # engine. certbot's failure keeps its evidence under `diagnostics`,
+        # never as a message cut off at the envelope's cap.
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done cert_issue carries a result")
+        error = document["error"]
+        assert isinstance(error, dict)
+        if error["code"] == "certbot_failed":
+            details = error["details"]
+            if not isinstance(details, dict) or not details.get("diagnostics"):
+                raise AssertionError(f"{path}: certbot_failed carries certbot's output")
         return
     if not result["targets"]["clusters"] and not result["targets"]["receivers"]:
         raise AssertionError(f"{path}: an issued certificate goes somewhere")

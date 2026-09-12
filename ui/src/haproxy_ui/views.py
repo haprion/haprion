@@ -46,6 +46,7 @@ from haproxy_mgmt.traffic_collector import RETENTION_DAYS
 from haproxy_ui import (
     auth,
     backups,
+    certificate_form,
     certificates,
     dashboard,
     db,
@@ -1687,6 +1688,163 @@ def build_router(config: Config) -> APIRouter:
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
                 "snapshot_age": snapshot_age(captured_at),
+            },
+        )
+
+    #
+    # Phase 11's gate, as a page: a form, a button, a certificate. The page is
+    # its own address rather than a panel on the listing for the reason the
+    # object editor is - a refused submission has somewhere to be re-drawn
+    # with what was typed still in place.
+    #
+    @router.get("/certificates/new", response_class=HTMLResponse)
+    def new_certificate_form(request: Request) -> Response:
+        return _certificate_form_page(request, config, certificate_form.EMPTY_FORM)
+
+    @router.post("/certificates/new", response_class=HTMLResponse)
+    def new_certificate_submit(
+        request: Request,
+        domain: str = Form(default="", max_length=255),
+        method: str = Form(default="", max_length=16),
+        cluster: Sequence[str] = Form(default=()),
+        receiver: Sequence[str] = Form(default=()),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue one `cert_issue` job, or draw the form again saying why not.
+
+        The same four refusals `/operations` makes, in the same order, and
+        then the form's own. Not routed through `/operations`: that route
+        answers a refusal with a bare 400, and the one page in the interface
+        whose whole purpose is to be filled in deserves to be re-drawn with
+        the sentence on it.
+        """
+
+        form = certificate_form.IssueForm(
+            domain=domain, method=method, clusters=tuple(cluster), receivers=tuple(receiver)
+        )
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if not config.management_writes:
+            return PlainTextResponse("Not found", status_code=404)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        if session.role != "admin":
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+
+        choices = _certificate_choices(request, config)
+        try:
+            payload = certificate_form.payload_from_form(form, choices)
+        except certificate_form.FormProblem as problem:
+            return _certificate_form_page(request, config, form, problem=str(problem))
+
+        try:
+            operations.prepare(
+                operation="cert_issue", cluster=None, request_id=uuid4(), payload=payload
+            )
+        except operations.BadPayload:
+            return PlainTextResponse("Invalid operation parameters", status_code=400)
+
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="cert_issue",
+                    cluster=None,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.CertificateBusy:
+                connection.rollback()
+                return _certificate_form_page(
+                    request,
+                    config,
+                    form,
+                    problem="A certificate job is already running. Wait for it to "
+                    "finish on the Jobs page, then ask again.",
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=session.username,
+                action="queue_job",
+                cluster=None,
+                request_id=job.request_id,
+                detail={"operation": "cert_issue", "job": job.id},
+            )
+            connection.commit()
+        #
+        # To the jobs page, not back to the listing. The listing cannot show
+        # a job that belongs to no cluster, and the jobs page is where
+        # certbot's answer arrives - the thing the person pressed the button
+        # to find out.
+        #
+        return RedirectResponse("/jobs", status_code=303)
+
+    def _certificate_choices(request: Request, config: Config) -> certificate_form.IssueChoices:
+        """The targets the form may offer, read the way the listing reads them."""
+
+        clusters, certificate_rows, captured_at = read_source(request, config, CERTIFICATE_SOURCE)
+        overview = certificates.build_certificate_overview(
+            clusters,
+            certificate_rows,
+            now=captured_at,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            captured=captured_at is not None,
+        )
+        return certificate_form.IssueChoices(
+            clusters=tuple(clusters),
+            receivers=overview.registry.receivers if overview.registry else (),
+        )
+
+    def _certificate_form_page(
+        request: Request,
+        config: Config,
+        form: certificate_form.IssueForm,
+        *,
+        problem: str = "",
+    ) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if not config.management_writes:
+            #
+            # 404 and not 403, for the reason `/operations` gives: an
+            # installation that does not do management writes has no such
+            # form, and saying "forbidden" would announce one waiting to be
+            # switched on.
+            #
+            return PlainTextResponse("Not found", status_code=404)
+        if session.role != "admin":
+            return PlainTextResponse("Refused", status_code=403)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        choices = _certificate_choices(request, config)
+        with request.app.state.pool.connection() as connection:
+            recent = db.recent_jobs(connection)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "certificate-new.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "form": certificate_form.normalise(form),
+                "choices": choices,
+                "problem": problem,
+                "certificate_job": jobs.certificate_in_flight(recent),
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
             },
         )
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run HAProxy Manager certbot renewal twice daily
+
+# The distribution's schedule, kept: twice a day with up to twelve hours of
+# random delay, and a missed run made up after downtime.
+[Timer]
+OnCalendar=*-*-* 00,12:00:00
+RandomizedDelaySec=43200
+Persistent=true
+
+[Install]
+WantedBy=timers.target

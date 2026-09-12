@@ -118,6 +118,11 @@ class PathPolicy:
     # never take from its caller: the credential file for DNS-01, the webroot
     # for HTTP-01. A method whose setting is absent is refused by name.
     #
+    # `certbot` is the binary itself (P1): the locked environment's
+    # `/opt/haproxy-certbot/current/venv/bin/certbot` once that is installed,
+    # the distribution's `/usr/bin/certbot` until then. Left out, the helper
+    # uses the distribution's; it never takes the path from its caller.
+    #
     acme: AcmePolicy | None = None
 
 
@@ -125,6 +130,7 @@ class PathPolicy:
 class AcmePolicy:
     dns_cloudflare_credentials: Path | None
     webroot: Path | None
+    certbot: Path | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -882,10 +888,11 @@ def _acme_policy(data: Mapping[str, Any]) -> AcmePolicy | None:
         return None
     location = "runtime policy.acme"
     entry = _mapping(raw, location)
-    _only_keys(entry, {"dns_cloudflare_credentials", "webroot"}, location)
+    _only_keys(entry, {"dns_cloudflare_credentials", "webroot", "certbot"}, location)
     return AcmePolicy(
         dns_cloudflare_credentials=_optional_root(entry, "dns_cloudflare_credentials"),
         webroot=_optional_root(entry, "webroot"),
+        certbot=_optional_root(entry, "certbot"),
     )
 
 

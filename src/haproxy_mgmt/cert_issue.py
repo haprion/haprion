@@ -219,8 +219,18 @@ def build_request(
 #
 
 
+def certbot_binary(policy: PathPolicy) -> str:
+    """The certbot this installation runs: the locked environment's when the
+    policy names it, the distribution's until then. Never the caller's."""
+
+    if policy.acme is not None and policy.acme.certbot is not None:
+        return str(policy.acme.certbot)
+    return CERTBOT
+
+
 def certbot_arguments(request: IssueRequest, policy: PathPolicy) -> list[str]:
-    """The certonly command, every part fixed here or read from the policy."""
+    """The certonly command, binary first, every part fixed here or read from
+    the policy."""
 
     acme = policy.acme
     if request.method == "dns-01":
@@ -245,6 +255,7 @@ def certbot_arguments(request: IssueRequest, policy: PathPolicy) -> list[str]:
         authenticator = ["--webroot", "-w", str(acme.webroot)]
 
     arguments = [
+        certbot_binary(policy),
         "certonly",
         "--non-interactive",
         "--no-directory-hooks",
@@ -259,10 +270,10 @@ def certbot_arguments(request: IssueRequest, policy: PathPolicy) -> list[str]:
     return arguments
 
 
-def run_certbot(arguments: Sequence[str]) -> CertbotResult:
+def run_certbot(command: Sequence[str]) -> CertbotResult:
     try:
-        completed = subprocess.run(  # noqa: S603 - fixed path, arguments assembled above
-            [CERTBOT, *arguments],
+        completed = subprocess.run(  # noqa: S603 - binary from the policy, arguments assembled above
+            list(command),
             capture_output=True,
             text=True,
             timeout=CERTBOT_TIMEOUT,

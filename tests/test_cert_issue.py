@@ -118,6 +118,7 @@ class WhatReachesCertbot(IssueFixture):
         self.assertEqual(
             arguments,
             [
+                "/usr/bin/certbot",
                 "certonly",
                 "--non-interactive",
                 "--no-directory-hooks",
@@ -143,6 +144,26 @@ class WhatReachesCertbot(IssueFixture):
         )
         self.assertIn("--webroot", certbot_arguments(http, policy))
         self.assertIn(str(self.root / "webroot"), certbot_arguments(http, policy))
+
+    def test_the_binary_comes_from_the_policy_and_leads_the_command(self) -> None:
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        document = yaml.safe_load(policy_path.read_text())
+        document["acme"]["certbot"] = "/opt/haproxy-certbot/current/venv/bin/certbot"
+        policy_path.write_text(yaml.safe_dump(document))
+        policy = load_policy(policy_path, require_secure=False)
+        runtime = load_runtime_config(policy, require_secure=False)
+        request = cert_issue.build_request(
+            domain="www.example.com",
+            method="http-01",
+            clusters=["alpha"],
+            receivers=[],
+            runtime=runtime,
+        )
+        arguments = certbot_arguments(request, policy)
+        self.assertEqual(arguments[0], "/opt/haproxy-certbot/current/venv/bin/certbot")
+        self.assertEqual(arguments[1], "certonly")
 
     def test_a_method_without_its_setting_is_refused_by_name(self) -> None:
         policy_path = self.write_config(

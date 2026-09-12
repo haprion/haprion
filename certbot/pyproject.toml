@@ -1,0 +1,112 @@
+#
+# The certbot environment: certbot itself and every DNS plugin the product
+# offers, resolved together and locked with hashes in uv.lock. The catalogue
+# the web interface shows is a subset of this file, never a superset - a plugin
+# that is not here cannot be chosen, and nothing installs anything at runtime.
+#
+# Built into an immutable release by tools/install-certbot-env.py. Bumped a few
+# times a year, in staging, with `certbot renew --dry-run --run-deploy-hooks`
+# as the gate; see docs/INSTALLATION.md 1.4.4.
+#
+# Two tiers, and the order below is that grouping. `core` is certbot's own
+# plugins, pinned to the same version as certbot because they are released
+# together. `community` is third-party packages from PyPI with their own
+# release cadence - the range operator (~=) lets a lock refresh pick up their
+# patch releases; the lock file is what pins.
+#
+[project]
+name = "haproxy-manager-certbot-env"
+version = "0"
+description = "certbot and its DNS plugins for HAProxy Manager, locked as one set"
+requires-python = ">=3.12"
+dependencies = [
+    # core - certbot and its own plugins, one version
+    "certbot==5.8.0",
+    "certbot-dns-cloudflare==5.8.0",
+    "certbot-dns-digitalocean==5.8.0",
+    "certbot-dns-dnsimple==5.8.0",
+    "certbot-dns-dnsmadeeasy==5.8.0",
+    "certbot-dns-google==5.8.0",
+    "certbot-dns-linode==5.8.0",
+    "certbot-dns-luadns==5.8.0",
+    "certbot-dns-nsone==5.8.0",
+    "certbot-dns-ovh==5.8.0",
+    "certbot-dns-rfc2136==5.8.0",
+    "certbot-dns-route53==5.8.0",
+    # community
+    "certbot-dns-acmedns~=0.1.0",
+    "certbot-dns-active24~=2.0.0",
+    "certbot-dns-aliyun~=2.0.0",
+    "certbot-dns-arvan>=0.1.0",
+    "certbot-dns-baidu~=0.1.1",
+    "certbot-beget-plugin~=1.0.0.dev9",
+    "certbot-dns-bunny~=0.0.9",
+    "certbot-dns-cdmon~=0.4.1",
+    "certbot-dns-cloudns~=0.7.0",
+    "certbot-dns-cloudxns~=1.32.0",
+    "certbot-dns-constellix~=0.2.1",
+    "certbot-dns-corenetworks~=0.1.4",
+    "certbot-dns-cpanel~=0.4.0",
+    "certbot-dns-ddnss~=1.1.0",
+    "certbot-dns-desec~=1.3.2",
+    "certbot-dns-directadmin~=0.0.23",
+    "certbot-dns-multi~=4.9",
+    "certbot-dns-dnspod~=0.1.0",
+    "certbot-dns-domainoffensive~=2.0.0",
+    "certbot-dns-domeneshop~=0.2.8",
+    "certbot-dns-duckdns~=1.0",
+    "certbot-dns-dynu~=0.0.1",
+    "certbot-dns-easydns~=0.1.2",
+    "certbot-plugin-edgedns~=0.1.0",
+    "certbot-dns-eurodns~=1.8.2",
+    "certbot-dns-firstdomains>=1.0",
+    "certbot-dns-freedns~=0.1.0",
+    "certbot-dns-gandi~=1.6.1",
+    "certbot-dns-gcore~=0.1.8",
+    "certbot-dns-glesys~=2.1.0",
+    "certbot-dns-godaddy==2.8.0",
+    "certbot-dns-google-domains~=0.1.5",
+    "certbot-dns-he~=1.0.0",
+    "certbot-dns-he-ddns~=0.1.0",
+    "certbot-dns-hetzner~=1.0.4",
+    "certbot-dns-hetzner-cloud~=1.0.4",
+    "certbot-dns-hostinger~=0.1.3",
+    "certbot-dns-hostingnl~=0.1.5",
+    "certbot-dns-hover~=1.2.1",
+    "certbot-dns-hosterby~=0.1.0",
+    "certbot-dns-infomaniak~=0.2.2",
+    "certbot-dns-inwx~=2.1.2",
+    "certbot-dns-ionos==2022.11.24",
+    "certbot-dns-ispconfig~=0.2.0",
+    "certbot-dns-isset~=0.0.3",
+    "certbot-dns-joker~=1.1.0",
+    "certbot-dns-kas~=0.1.1",
+    "certbot-dns-leaseweb~=1.0.3",
+    "certbot-dns-loopia~=1.0.0",
+    "certbot-dns-mijn-host~=0.0.4",
+    "certbot-dns-namecheap~=1.0.0",
+    "certbot-dns-namecom~=1.0.0",
+    "certbot-dns-netcup~=1.0.0",
+    "certbot-dns-nicru~=1.0.3",
+    "certbot-dns-njalla~=1.0.0",
+    "certbot-dns-plesk~=0.3.0",
+    "certbot-dns-porkbun~=0.11.0",
+    "certbot-regru~=1.0.2",
+    "certbot-dns-rockenstein~=1.0.0",
+    "certbot-dns-selectel-api-v2~=0.3.0",
+    "certbot-dns-simply~=0.1.2",
+    "certbot-dns-spaceship~=1.0.4",
+    "certbot-dns-strato~=0.2.2",
+    "certbot-dns-tencentcloud~=2.1.1",
+    "certbot-dns-timeweb~=2.0.0",
+    "certbot-dns-transip~=0.5.2",
+    "certbot-dns-vultr~=1.1.0",
+    "certbot-dns-websupport~=5.0.0",
+    "certbot-dns-wedos~=2.2",
+    "certbot-dns-zoneedit~=0.3.2",
+    "certbot-dns-rcode0~=0.0.0.2",
+    "certbot-dns-lws~=1.0.0",
+]
+
+[tool.uv]
+package = false

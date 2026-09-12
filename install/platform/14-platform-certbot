@@ -1,0 +1,122 @@
+#!/bin/bash
+#
+# Platform step 14 - the locked certbot environment and its renewal timer.
+#
+#     sudo UV_BIN=/path/to/uv ./14-platform-certbot <answers-file> <source-tree>
+#
+# Builds certbot and every DNS plugin the product offers, from the source
+# tree's certbot/uv.lock, into an immutable release under /opt/haproxy-certbot;
+# proves it against this host's lineages with a dry-run renewal; and moves
+# renewal from the distribution's timer to one that runs the release. Rerun it
+# with a newer lock to upgrade: the same gate, and the previous release is
+# restored if it fails.
+#
+# One certbot owns /etc/letsencrypt. `renew` walks every lineage and fails on
+# one whose plugin it cannot load, so a lineage issued through a plugin only the
+# release carries cannot be renewed by the distribution's certbot - which is why
+# that timer is masked here, not merely left disabled.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars WORKER_USER
+source_tree="${2:-}"
+[[ -n "$source_tree" && -d "$source_tree" ]] || die "usage: $0 <answers-file> <source-tree>"
+source_tree="$(cd "$source_tree" && pwd)"
+uv="${UV_BIN:-}"
+[[ -n "$uv" && -x "$uv" ]] || die "set UV_BIN to the uv executable"
+
+TARGET="/opt/haproxy-certbot"
+CERTBOT="${TARGET}/current/venv/bin/certbot"
+POLICY="/etc/haproxy-manager/runtime-policy.yaml"
+UNIT="haproxy-certbot-renew"
+
+[[ -f "${source_tree}/certbot/uv.lock" ]] \
+    || die "${source_tree}/certbot/uv.lock is missing; this is not a source tree with the certbot environment"
+[[ -f "${source_tree}/tools/install-certbot-env.py" ]] \
+    || die "${source_tree}/tools/install-certbot-env.py is missing"
+
+step "The worker's sandbox"
+#
+# The issue helper runs certbot inside the worker's mount namespace, and the
+# unit opens certbot's three directories and the publisher's target for it.
+# Checked before anything is built: a unit without them makes every issuance
+# fail on certbot's log lock, and step 07 is what installs the unit.
+#
+worker_unit="/etc/systemd/system/${WORKER_USER}.service"
+[[ -f "$worker_unit" ]] || die "${worker_unit} is missing; run 07-platform-services first"
+for path in /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist; do
+    grep -Eq "^ReadWritePaths=(.* )?${path}( .*)?$" "$worker_unit" \
+        || die "${worker_unit} does not open ${path}; rerun 07-platform-services with this source tree"
+done
+log "  ok       ${worker_unit} opens certbot's directories"
+
+step "Building the environment"
+previous="$(readlink "${TARGET}/current" 2>/dev/null || true)"
+/usr/bin/python3 "${source_tree}/tools/install-certbot-env.py" \
+    --project "${source_tree}/certbot" --uv "$uv" --target "$TARGET"
+release="$(readlink "${TARGET}/current")"
+
+restore_previous() {
+    if [[ -z "$previous" || "$previous" == "$release" ]]; then
+        warn "no previous certbot environment to restore"
+        return 0
+    fi
+    warn "restoring certbot environment ${previous##*/}"
+    ln -sfn "$previous" "${TARGET}/.current.$$"
+    mv -T "${TARGET}/.current.$$" "${TARGET}/current"
+}
+
+step "Proving it against this host's lineages"
+#
+# A dry run renews every lineage against Let's Encrypt's staging server with
+# the release's certbot and plugins, and runs the deploy hook - which publishes
+# nothing, because no certificate changed. The one gate a certbot upgrade has.
+#
+if ! "$CERTBOT" renew --dry-run --run-deploy-hooks; then
+    restore_previous
+    die "the dry-run renewal failed with ${release##*/}; the previous environment is current again"
+fi
+log "  ok       renew --dry-run --run-deploy-hooks with ${release##*/}"
+
+step "Renewal timer"
+install_file "/etc/systemd/system/${UNIT}.service" root:root 644 \
+    "$(cat "examples/${UNIT}.service.example")"
+install_file "/etc/systemd/system/${UNIT}.timer" root:root 644 \
+    "$(cat "examples/${UNIT}.timer.example")"
+systemctl daemon-reload
+if systemctl list-unit-files certbot.timer --no-legend 2>/dev/null | grep -q .; then
+    if [[ "$(systemctl is-enabled certbot.timer 2>/dev/null || true)" != "masked" ]]; then
+        systemctl disable --now --quiet certbot.timer 2>/dev/null || true
+        systemctl mask --quiet certbot.timer
+        log "  masked   certbot.timer (the distribution's)"
+    else
+        log "  ok       certbot.timer is masked"
+    fi
+fi
+systemctl enable --now --quiet "${UNIT}.timer"
+systemctl is-active --quiet "${UNIT}.timer" || die "${UNIT}.timer is not active"
+log "  active   ${UNIT}.timer"
+
+step "The runtime policy"
+#
+# Not edited here: the policy is the operator's file. Until it names this
+# certbot, the issue helper keeps using the distribution's - which works, and
+# offers the distribution's plugins and nothing more.
+#
+if grep -Eq "^\s*certbot:\s*${CERTBOT}\s*$" "$POLICY" 2>/dev/null; then
+    log "  ok       ${POLICY} names ${CERTBOT}"
+else
+    warn "${POLICY} does not name the release's certbot. Add, under acme:"
+    warn "    certbot: ${CERTBOT}"
+fi
+
+echo
+log "certbot environment ${release##*/} is current"
+[[ -n "$previous" && "$previous" != "$release" ]] \
+    && log "  rollback  ln -sfn ${previous} ${TARGET}/current  (then rerun the dry run)"
+log "  plugins   $(python3 -c "import json;print(len(json.load(open('${TARGET}/current/INSTALLATION.json'))['plugins']))")"

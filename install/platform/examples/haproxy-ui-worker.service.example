@@ -66,12 +66,22 @@ ProtectHome=read-only
 #   /configs/haproxy-published  the immutable release the commit is swapped into
 #   /configs/haproxy-validation a revert validates before it publishes
 #
-# These are root-owned drwxr-x--- with no group write, so opening the mount
+# And what issuing a certificate writes (Phase 11), because the issue helper
+# runs certbot inside this namespace too. Found the same way: the first
+# issuance from the web interface failed on certbot's log lock with "Read-only
+# file system".
+#
+#   /etc/letsencrypt            certbot's lineages, account and renewal configs
+#   /var/lib/letsencrypt        certbot's working directory
+#   /var/log/letsencrypt        certbot's log, and the lock it takes first
+#   /srv/certdist               where the publisher writes what certbot made
+#
+# All of these are root-owned and writable by root alone, so opening the mount
 # namespace does not let the worker account itself write to them - the helper
 # writes as root, and file permissions stay the real boundary. This list is the
 # second layer, not the only one.
 ProtectSystem=strict
-ReadWritePaths=/run/haproxy-mgmt /configs/haproxy /configs/haproxy-published /configs/haproxy-validation
+ReadWritePaths=/run/haproxy-mgmt /configs/haproxy /configs/haproxy-published /configs/haproxy-validation /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist
 
 # Unchanged, and none of them stand in the helper's way. Kept so that opening
 # the four above is a decision about four things and not about the whole file.

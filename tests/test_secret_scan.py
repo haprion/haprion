@@ -67,13 +67,22 @@ class SecretScanTests(unittest.TestCase):
 
         127.0.0.0/8 means "this machine" wherever it is read, so it identifies
         no environment - and refusing it forced examples to be wrong, since the
-        web service really does bind loopback. A private address is still an
-        address out of somebody's network, so RFC 1918 stays refused.
+        web service really does bind loopback, and 0.0.0.0/8 because it is
+        never an address at all - what it matches is version numbers in lock
+        files. A private address is still an address out of somebody's
+        network, so RFC 1918 stays refused.
         """
 
         is_forbidden_ip = self.scanner().is_forbidden_ip
 
-        for allowed in ("127.0.0.1", "127.0.0.53", "192.0.2.10", "203.0.113.7"):
+        for allowed in (
+            "127.0.0.1",
+            "127.0.0.53",
+            "192.0.2.10",
+            "203.0.113.7",
+            "0.0.0.2",
+            "0.4.9.6",
+        ):
             with self.subTest(address=allowed):
                 self.assertFalse(is_forbidden_ip(allowed))
 

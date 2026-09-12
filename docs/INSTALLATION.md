@@ -735,7 +735,11 @@ from the runtime policy:
 acme:
   dns_cloudflare_credentials: /etc/letsencrypt/cloudflare/example.ini
   webroot: /var/www/acme
+  certbot: /opt/haproxy-certbot/current/venv/bin/certbot
 ```
+
+`certbot` names the binary the helper runs: the locked environment's, once 1.4.4 has installed it.
+Left out, the helper runs the distribution's `/usr/bin/certbot`, with the distribution's plugins.
 
 | Method | certbot | What the installation is responsible for |
 |---|---|---|
@@ -745,7 +749,27 @@ acme:
 A method whose setting is missing is refused by name before certbot runs. A wildcard
 (`*.example.net`, which also covers `example.net`) needs `dns-01` and is refused with `http-01`.
 The command does not create routes, touch the published configuration or check that the name
-resolves. When certbot fails, its output is printed after the error line at a terminal and carried
+resolves.
+
+`http-01` needs more than the webroot setting, because port 80 for a proxied name terminates at the
+cluster VIP, not at the manager. Three things have to be in place, all of them the installation's
+to make: the webroot directory named in the policy; something on the manager serving that directory
+over plain HTTP - a port-80 `server` block in nginx that exposes only `/.well-known/acme-challenge/`
+from the webroot; and a rule in each cluster that sends that path to the manager, written once into
+`core/` or `manual/`, never generated:
+
+```text
+# core/ or manual/ - hand the ACME HTTP-01 challenge to the manager
+backend acme_challenge
+    server mgr 192.0.2.10:80
+
+# in the HTTP frontend, before any host routing
+acl acme_challenge path_beg /.well-known/acme-challenge/
+use_backend acme_challenge if acme_challenge
+```
+
+Without all three, an `http-01` request fails at the challenge with certbot's own account of it.
+A wildcard cannot use `http-01` at all. When certbot fails, its output is printed after the error line at a terminal and carried
 whole under `error.details.diagnostics` in the JSON envelope, so the account of a failed challenge
 reaches whoever asked, in certbot's own words.
 
@@ -762,6 +786,46 @@ hook in 1.4.2 like every other.
 The registry is rewritten as a whole, with its ownership and mode kept and the result loaded back
 through the engine before it replaces the previous file. Comments in it do not survive the first
 machine write; the file's header says so.
+
+### 1.4.4 The certbot environment
+
+The distribution's certbot runs on the system Python, which accepts no packages beyond the
+distribution's own - and the DNS plugins the distribution packages are a dozen. The product
+offers many more, so it carries its own certbot: [`../certbot/pyproject.toml`](../certbot/pyproject.toml)
+names certbot and every DNS plugin the web interface can offer, and `certbot/uv.lock` pins the
+whole set, with hashes, as resolved together. What the interface can offer is what that lock
+resolved. Nothing installs a plugin at runtime.
+
+Platform step 14 builds it:
+
+```bash
+sudo UV_BIN=/path/to/uv ./install/platform/14-platform-certbot answers.env /path/to/source-tree
+```
+
+The step hands the lock to [`../tools/install-certbot-env.py`](../tools/install-certbot-env.py),
+which lets uv install exactly the locked set into `/opt/haproxy-certbot/releases/<certbot
+version>-<lock hash>/venv`, proves that every plugin in it loads, freezes the tree root-owned and
+read-only, and points `/opt/haproxy-certbot/current` at it. Then the step runs
+`certbot renew --dry-run --run-deploy-hooks` from the release against every lineage on the host: the
+one gate a certbot upgrade has, and a failure puts the previous release back before the step
+stops. Only after that does renewal move: the distribution's `certbot.timer` is masked and
+`haproxy-certbot-renew.timer` - the same schedule, the release's binary, the same
+`/etc/letsencrypt` - takes over. One certbot owns the lineages; `renew` walks all of them and fails
+on one whose plugin it cannot load, which is why the distribution's timer is masked rather than
+left disabled.
+
+The step also checks that the worker's unit opens certbot's directories (`/etc/letsencrypt`,
+`/var/lib/letsencrypt`, `/var/log/letsencrypt`) and the publisher's target (`/srv/certdist`): the
+issue helper runs certbot inside the worker's sandbox, and without them every issuance from the
+web interface fails on certbot's log lock. Step 07 installs the unit; rerun it with a source tree
+that has them before running step 14.
+
+Point the runtime policy at the release afterwards - `acme.certbot` in 1.4.3 - and the issue
+helper runs it too. Upgrading is the same step with a newer lock, a few times a year: bump
+`certbot/uv.lock` in the source tree (`uv lock --upgrade` in `certbot/`), run the step, read its
+gate. A plugin that no longer resolves against the newer certbot falls out of the lock, and so out
+of what the interface offers; a release that fails the dry run is never made current. Rolling back
+by hand is one symlink, which the step prints, followed by the same dry run.
 
 ### 1.5 Validation certificate
 

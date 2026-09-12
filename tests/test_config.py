@@ -599,7 +599,7 @@ class TheCertificateRegistry(unittest.TestCase):
             registry.certificates["example.com"].source.lineage, "example.com-wildcard"
         )
 
-    def test_the_acme_block_is_read_and_held_to_its_two_keys(self) -> None:
+    def test_the_acme_block_is_read_and_held_to_its_three_keys(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_file = self.setup(Path(raw), None, None)
             document = yaml.safe_load(policy_file.read_text())
@@ -611,6 +611,15 @@ class TheCertificateRegistry(unittest.TestCase):
                 policy.acme.dns_cloudflare_credentials, Path("/etc/example/cloudflare.ini")
             )
             self.assertIsNone(policy.acme.webroot)
+            self.assertIsNone(policy.acme.certbot)
+
+            document["acme"]["certbot"] = "/opt/haproxy-certbot/current/venv/bin/certbot"
+            policy_file.write_text(yaml.safe_dump(document))
+            policy = load_policy(policy_file, require_secure=False)
+            assert policy.acme is not None
+            self.assertEqual(
+                policy.acme.certbot, Path("/opt/haproxy-certbot/current/venv/bin/certbot")
+            )
 
             document["acme"]["email"] = "admin@example.com"
             policy_file.write_text(yaml.safe_dump(document))

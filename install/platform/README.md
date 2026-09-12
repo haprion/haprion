@@ -20,11 +20,12 @@ sudo ./05-platform-nginx ../answers.env
 sudo ./check-compatibility ../answers.env
 ```
 
-Steps 11 and 13 are optional and come after them:
+Steps 11, 13 and 14 are optional and come after them:
 
 ```bash
 sudo ./11-platform-retention ../answers.env
 sudo ./13-platform-traffic-collector ../answers.env
+sudo UV_BIN=/path/to/uv ./14-platform-certbot ../answers.env /path/to/source-tree
 ```
 
 Step 11 keeps the job table bounded. Separate from the backup step because it is
@@ -33,6 +34,11 @@ itself: it reports what the first run would remove and leaves that to the timer.
 
 Step 13 mirrors each node's structured traffic log onto this host. Production
 only, and it fetches nothing until each node has accepted the key it prints.
+
+Step 14 builds the locked certbot environment - certbot and every DNS plugin
+the web interface offers - under `/opt/haproxy-certbot`, proves it with a
+dry-run renewal, and moves renewal onto it. Rerun with a newer lock to upgrade;
+the previous release is restored if the dry run fails.
 
 For an isolated dev platform the normal path stops at step 4, though step 11 is
 worth running there too. If developers

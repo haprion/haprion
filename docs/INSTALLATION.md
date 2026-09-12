@@ -815,7 +815,8 @@ on one whose plugin it cannot load, which is why the distribution's timer is mas
 left disabled.
 
 The step also checks that the worker's unit opens certbot's directories (`/etc/letsencrypt`,
-`/var/lib/letsencrypt`, `/var/log/letsencrypt`) and the publisher's target (`/srv/certdist`): the
+`/var/lib/letsencrypt`, `/var/log/letsencrypt`), the publisher's target (`/srv/certdist`) and the
+registry's directory (`/configs/haproxy-mgmt`): the
 issue helper runs certbot inside the worker's sandbox, and without them every issuance from the
 web interface fails on certbot's log lock. Step 07 installs the unit; rerun it with a source tree
 that has them before running step 14.

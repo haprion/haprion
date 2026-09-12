@@ -319,7 +319,19 @@ def add_to_registry(
             require_secure=require_secure,
         )
     except cert_registry.RegistryError as exc:
-        raise IssueError(exc.code, str(exc), exit_code=exc.exit_code) from exc
+        #
+        # The one failure that leaves something behind: certbot has issued the
+        # certificate by now, and the lineage exists whether or not the
+        # registry took the entry. Said in the message, because a second
+        # attempt is refused on the lineage and the operator needs to know what
+        # to do instead.
+        #
+        raise IssueError(
+            exc.code,
+            f"certbot issued {request.certificate_id!r} but the registry did not take it: "
+            f"{exc} Register the lineage by hand, then publish it.",
+            exit_code=exc.exit_code,
+        ) from exc
 
 
 #

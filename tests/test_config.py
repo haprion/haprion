@@ -613,13 +613,11 @@ class TheCertificateRegistry(unittest.TestCase):
             self.assertIsNone(policy.acme.webroot)
             self.assertIsNone(policy.acme.certbot)
 
-            document["acme"]["certbot"] = "/opt/haproxy-certbot/current/venv/bin/certbot"
+            document["acme"]["certbot"] = "/opt/example-certbot/venv/bin/certbot"
             policy_file.write_text(yaml.safe_dump(document))
             policy = load_policy(policy_file, require_secure=False)
             assert policy.acme is not None
-            self.assertEqual(
-                policy.acme.certbot, Path("/opt/haproxy-certbot/current/venv/bin/certbot")
-            )
+            self.assertEqual(policy.acme.certbot, Path("/opt/example-certbot/venv/bin/certbot"))
 
             document["acme"]["email"] = "admin@example.com"
             policy_file.write_text(yaml.safe_dump(document))

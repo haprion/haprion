@@ -16,6 +16,7 @@ import io
 import json
 import os
 import stat
+import tempfile
 import unittest
 from collections.abc import Sequence
 from pathlib import Path
@@ -150,7 +151,7 @@ class WhatReachesCertbot(IssueFixture):
             {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
         )
         document = yaml.safe_load(policy_path.read_text())
-        document["acme"]["certbot"] = "/opt/haproxy-certbot/current/venv/bin/certbot"
+        document["acme"]["certbot"] = "/opt/example-certbot/venv/bin/certbot"
         policy_path.write_text(yaml.safe_dump(document))
         policy = load_policy(policy_path, require_secure=False)
         runtime = load_runtime_config(policy, require_secure=False)
@@ -162,7 +163,7 @@ class WhatReachesCertbot(IssueFixture):
             runtime=runtime,
         )
         arguments = certbot_arguments(request, policy)
-        self.assertEqual(arguments[0], "/opt/haproxy-certbot/current/venv/bin/certbot")
+        self.assertEqual(arguments[0], "/opt/example-certbot/venv/bin/certbot")
         self.assertEqual(arguments[1], "certonly")
 
     def test_a_method_without_its_setting_is_refused_by_name(self) -> None:
@@ -318,6 +319,47 @@ class WhenCertbotSucceeds(IssueFixture):
             load_policy(policy_path, require_secure=False), require_secure=False
         )
         self.assertEqual(runtime.clusters["alpha"].certificate_ids, ("example.net", "example.com"))
+
+    def test_a_registry_that_cannot_take_the_entry_says_certbot_already_issued(self) -> None:
+        """The one failure that leaves something behind. Seen in production as
+        a sandbox that opened the registry file but not its directory, so the
+        temporary beside it could not be created - and as a raw traceback."""
+
+        issue(self.live / "example.net", "example.net")
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        self.registry_path.chmod(0o640)
+        certbot = FakeCertbot(self.live)
+        real_mkstemp = tempfile.mkstemp
+
+        def refused(*args: object, **kwargs: object) -> tuple[int, str]:
+            if str(kwargs.get("dir")) == str(self.registry_path.parent):
+                raise OSError(30, "Read-only file system")
+            return real_mkstemp(*args, **kwargs)  # type: ignore[arg-type]
+
+        with mock.patch.object(tempfile, "mkstemp", refused):
+            code, out, err, deployed = self.run_issue(
+                policy_path,
+                "--domain",
+                "www.example.com",
+                "--method",
+                "dns-01",
+                "--cluster",
+                "alpha",
+                "--json",
+                certbot=certbot,
+            )
+
+        self.assertEqual(code, 78, err)
+        document = json.loads(out)
+        self.assertEqual(document["outcome"], "failed")
+        self.assertEqual(document["error"]["code"], "dependency_unavailable")
+        self.assertIn("certbot issued 'www.example.com'", document["error"]["message"])
+        self.assertIn("Register the lineage by hand", document["error"]["message"])
+        self.assertTrue((self.live / "www.example.com").exists())
+        self.assertNotIn("www.example.com", self.registry_path.read_text())
+        self.assertEqual(deployed, [])
 
     def test_an_existing_lineage_is_not_issued_again(self) -> None:
         issue(self.live / "example.com", "example.com")

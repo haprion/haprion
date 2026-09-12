@@ -75,13 +75,14 @@ ProtectHome=read-only
 #   /var/lib/letsencrypt        certbot's working directory
 #   /var/log/letsencrypt        certbot's log, and the lock it takes first
 #   /srv/certdist               where the publisher writes what certbot made
+#   /configs/haproxy-mgmt       the registry the new certificate is entered in
 #
 # All of these are root-owned and writable by root alone, so opening the mount
 # namespace does not let the worker account itself write to them - the helper
 # writes as root, and file permissions stay the real boundary. This list is the
 # second layer, not the only one.
 ProtectSystem=strict
-ReadWritePaths=/run/haproxy-mgmt /configs/haproxy /configs/haproxy-published /configs/haproxy-validation /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist
+ReadWritePaths=/run/haproxy-mgmt /configs/haproxy /configs/haproxy-published /configs/haproxy-validation /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist /configs/haproxy-mgmt
 
 # Unchanged, and none of them stand in the helper's way. Kept so that opening
 # the four above is a decision about four things and not about the whole file.

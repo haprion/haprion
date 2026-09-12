@@ -43,13 +43,14 @@ UNIT="haproxy-certbot-renew"
 step "The worker's sandbox"
 #
 # The issue helper runs certbot inside the worker's mount namespace, and the
-# unit opens certbot's three directories and the publisher's target for it.
+# unit opens certbot's three directories, the publisher's target and the
+# registry's directory for it.
 # Checked before anything is built: a unit without them makes every issuance
 # fail on certbot's log lock, and step 07 is what installs the unit.
 #
 worker_unit="/etc/systemd/system/${WORKER_USER}.service"
 [[ -f "$worker_unit" ]] || die "${worker_unit} is missing; run 07-platform-services first"
-for path in /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist; do
+for path in /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist /configs/haproxy-mgmt; do
     grep -Eq "^ReadWritePaths=(.* )?${path}( .*)?$" "$worker_unit" \
         || die "${worker_unit} does not open ${path}; rerun 07-platform-services with this source tree"
 done

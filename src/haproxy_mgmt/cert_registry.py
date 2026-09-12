@@ -121,7 +121,14 @@ def write(
         allow_unicode=True,
     )
 
-    handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    except OSError as exc:
+        # Seen as a traceback once: a sandbox that opened the registry file's
+        # readers but not its directory, which is where the temporary goes.
+        raise RegistryError(
+            "dependency_unavailable", f"the registry could not be updated: {exc}", exit_code=78
+        ) from exc
     try:
         os.fchown(handle, metadata.st_uid, metadata.st_gid)
         os.fchmod(handle, metadata.st_mode & 0o777)

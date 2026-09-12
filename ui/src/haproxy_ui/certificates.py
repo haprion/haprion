@@ -165,6 +165,13 @@ class RegistryView:
 class CertificateOverview:
     clusters: tuple[CertificateClusterView, ...]
     cluster_count: int
+    #
+    # Distinct certificates some cluster references - what the "on clusters"
+    # view lists, counted once however many clusters share one. The switch
+    # said the number of clusters until 2026-09-12, under a label that says
+    # certificates.
+    #
+    on_clusters_count: int
     certificate_count: int
     acme_count: int
     attention_count: int
@@ -331,16 +338,16 @@ def _lifecycle_label(lifecycle: str) -> str:
     return "Unknown"
 
 
-def _order(certificate: CertificateView) -> tuple[int, int, str]:
-    """Referenced certificates first, then the soonest problem in each group.
+def _order(certificate: CertificateView) -> tuple[int, str]:
+    """Referenced certificates first, alphabetical by ID within each group.
 
-    The helper already lists referenced ones first; this keeps that order while
-    sorting within each group by how much attention the certificate wants,
-    because the page is read to find the one that needs doing something about.
+    Alphabetical rather than by urgency since 2026-09-12: a row that moves
+    when its expiry crosses a threshold is a row the reader has to find again,
+    and the expiry column already carries the colour that says which ones
+    want attention. The registry view sorts the same way for the same reason.
     """
 
-    severity = {"critical": 0, "warning": 1, "unknown": 2, "healthy": 3}
-    return (0 if certificate.referenced else 1, severity[certificate.tone], certificate.identifier)
+    return (0 if certificate.referenced else 1, certificate.identifier)
 
 
 def _empty(cluster: str, *, configured: bool) -> CertificateClusterView:
@@ -790,16 +797,7 @@ def _registry_view(
             if certificate is not None:
                 parsed.append(certificate)
 
-    severity = {"critical": 0, "warning": 1, "unknown": 2, "healthy": 3}
-    certificates = tuple(
-        sorted(
-            parsed,
-            key=lambda entry: (
-                min(severity[entry.tone], severity[entry.state_tone]),
-                entry.identifier,
-            ),
-        )
-    )
+    certificates = tuple(sorted(parsed, key=lambda entry: entry.identifier))
     receivers = block.get("receivers")
     return RegistryView(
         targets={entry.identifier: entry.targets for entry in certificates},
@@ -901,6 +899,7 @@ def build_certificate_overview(
     return CertificateOverview(
         clusters=tuple(clusters),
         cluster_count=len(clusters),
+        on_clusters_count=sum(entry.referenced for entry in distinct.values()),
         #
         # The registry counts the material the manager looks after; the
         # per-cluster tally counts what the clusters can be given. Where a

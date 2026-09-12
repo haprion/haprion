@@ -116,6 +116,12 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         page = self.page("?view=registry")
 
         self.assertIn("Certificates on clusters", page)
+        #
+        # The count is certificates on clusters, not clusters: one cluster is
+        # configured and it references one certificate, so both would read 1
+        # here - the model test tells them apart.
+        #
+        self.assertIn("Certificates on clusters <b>1</b>", page)
         self.assertNotIn(">Clusters <b>", page)
         self.assertIn(
             '<div class="page-ranges-sticky"><nav class="traffic-ranges page-ranges certificate-views"',

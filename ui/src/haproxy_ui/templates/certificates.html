@@ -22,7 +22,7 @@
 {% if certificates.registry %}
 <div class="page-ranges-sticky"><nav class="traffic-ranges page-ranges certificate-views" aria-label="Certificate views">
   <a href="?view=registry"{% if chosen_view == 'registry' %} class="is-current" aria-current="true"{% endif %}><span>All certificates <b>{{ certificates.registry.certificate_count }}</b></span><span class="segment-reserve" aria-hidden="true">All certificates <b>{{ certificates.registry.certificate_count }}</b></span></a>
-  <a href="?view=clusters"{% if chosen_view == 'clusters' %} class="is-current" aria-current="true"{% endif %}><span>Certificates on clusters <b>{{ certificates.cluster_count }}</b></span><span class="segment-reserve" aria-hidden="true">Certificates on clusters <b>{{ certificates.cluster_count }}</b></span></a>
+  <a href="?view=clusters"{% if chosen_view == 'clusters' %} class="is-current" aria-current="true"{% endif %}><span>Certificates on clusters <b>{{ certificates.on_clusters_count }}</b></span><span class="segment-reserve" aria-hidden="true">Certificates on clusters <b>{{ certificates.on_clusters_count }}</b></span></a>
 </nav></div>
 {% endif %}
 

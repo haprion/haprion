@@ -660,3 +660,65 @@ class TheIssuerIsCutToWhatAPersonSays(unittest.TestCase):
 
         self.assertEqual(view.clusters[0].certificates[0].issuer, "CN=R3,O=Let's Encrypt")
         self.assertEqual(registry_of(view).certificates[0].issuer, "CN=R3,O=Let's Encrypt")
+
+
+class TheRowsAreAlphabetical(unittest.TestCase):
+    """Asked for on 2026-09-12: both views in order of the Certificate column.
+
+    Urgency is in the expiry column's colour, not in the row order, so a row
+    does not move when its expiry crosses a threshold.
+    """
+
+    def test_a_cluster_lists_what_it_references_by_name_not_by_urgency(self) -> None:
+        view = overview(
+            reading(
+                certificates=[
+                    certificate("zulu.example.com", days_left=2),
+                    certificate("alpha.example.com", days_left=90),
+                ]
+            )
+        )
+
+        self.assertEqual(
+            [entry.identifier for entry in view.clusters[0].certificates],
+            ["alpha.example.com", "zulu.example.com"],
+        )
+
+    def test_the_registry_lists_by_name_not_by_state(self) -> None:
+        view = overview(
+            with_registry(
+                reading(),
+                registered("zulu.example.com", days_left=90),
+                registered("alpha.example.com", readable=False, validation_error="broken"),
+            )
+        )
+
+        self.assertEqual(
+            [entry.identifier for entry in registry_of(view).certificates],
+            ["alpha.example.com", "zulu.example.com"],
+        )
+
+
+class WhatTheSwitchCounts(unittest.TestCase):
+    def test_on_clusters_counts_distinct_referenced_certificates_not_clusters(self) -> None:
+        #
+        # Two clusters, three certificates on them, one shared: the label says
+        # certificates, so the number is three - not two clusters, and not
+        # four rows.
+        #
+        shared = certificate("shared.example.com", fingerprint="a" * 64)
+        view = overview(
+            reading(certificates=[shared, certificate("one.example.com", fingerprint="b" * 64)]),
+            reading(
+                cluster="beta",
+                certificates=[
+                    shared,
+                    certificate("two.example.com", fingerprint="c" * 64),
+                    certificate("spare.example.com", fingerprint="d" * 64, referenced=False),
+                ],
+            ),
+            clusters=("alpha", "beta"),
+        )
+
+        self.assertEqual(view.cluster_count, 2)
+        self.assertEqual(view.on_clusters_count, 3)

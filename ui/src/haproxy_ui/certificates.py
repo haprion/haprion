@@ -573,7 +573,15 @@ def _carriage(readings: Iterable[Any]) -> dict[str, NodeCarriage]:
         holders: dict[str, int] = {}
         fingerprints: dict[str, set[str]] = {}
         for value in nodes:
-            entries = _mapping(value).get("certificates")
+            #
+            # Under the node's own status document, where the status contract
+            # puts it (`node_status.certificates`), and not beside `name` and
+            # `reachable`. Read at the wrong level until 2026-09-12, so no node
+            # ever "reported" and every cluster certificate stood as merely
+            # Published - the maintainer saw it on the page. The rig's status
+            # fixture had the same wrong shape, which is why the rig agreed.
+            #
+            entries = _mapping(_mapping(value).get("status")).get("certificates")
             if not isinstance(entries, list):
                 continue
             reporting += 1

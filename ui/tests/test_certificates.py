@@ -8,9 +8,11 @@ to argue with a failing test rather than with a comment.
 
 from __future__ import annotations
 
+import json
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from haproxy_ui.certificates import RegistryView, build_certificate_overview, short_issuer
 from haproxy_ui.db import ClusterCertificates, ClusterStatus
@@ -125,14 +127,26 @@ def with_registry(
 
 
 def node(*carried: tuple[str, str], reachable: bool = True) -> dict[str, object]:
-    """One node as the status helper reports it, carrying these certificates."""
+    """One node as the status helper reports it, carrying these certificates.
 
-    entry: dict[str, object] = {"node": "node-a"}
-    if reachable:
-        entry["certificates"] = [
-            {"id": identifier, "fingerprint_sha256": fingerprint, "valid": True}
-            for identifier, fingerprint in carried
-        ]
+    The shape is the status contract's - `fixtures/haproxy-status/valid/` -
+    with the certificate list inside the node's `status` document. The first
+    version of this helper put it beside `name`, the page read it there too,
+    and the two agreed with each other and not with the machine: every
+    cluster certificate stood as merely Published in production.
+    """
+
+    entry: dict[str, object] = {"name": "node-a", "reachable": reachable, "status_ok": reachable}
+    entry["status"] = (
+        {
+            "certificates": [
+                {"id": identifier, "fingerprint_sha256": fingerprint, "valid": True}
+                for identifier, fingerprint in carried
+            ]
+        }
+        if reachable
+        else None
+    )
     return entry
 
 
@@ -722,3 +736,39 @@ class WhatTheSwitchCounts(unittest.TestCase):
 
         self.assertEqual(view.cluster_count, 2)
         self.assertEqual(view.on_clusters_count, 3)
+
+
+class TheStateIsReadFromTheContractsShape(unittest.TestCase):
+    """The frozen status fixture, not a hand-written node, decides the shape.
+
+    The page and its own test helper agreed on a node shape that was not the
+    status helper's, and every cluster certificate stood as merely Published
+    in production. A fixture the contract gate validates cannot drift like
+    that, so the carriage is proven against one.
+    """
+
+    def test_a_contract_status_fixture_counts_as_nodes_reporting(self) -> None:
+        fixture = Path(__file__).parents[2] / "fixtures" / "haproxy-status" / "valid"
+        document = json.loads((fixture / "done-single-owner.json").read_text())
+        held = ClusterStatus(
+            cluster="alpha",
+            observed_at=NOW - timedelta(seconds=15),
+            outcome="done",
+            result=document["result"],
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        fingerprint = document["result"]["nodes"][0]["status"]["certificates"][0][
+            "fingerprint_sha256"
+        ]
+        view = overview(
+            with_registry(
+                reading(certificates=[certificate(fingerprint=fingerprint)]),
+                registered(fingerprint=fingerprint),
+            ),
+            status=(held,),
+        )
+
+        self.assertEqual(registry_of(view).certificates[0].state_label, "On all 2 nodes")
+        self.assertEqual(view.clusters[0].certificates[0].state_label, "On all 2 nodes")

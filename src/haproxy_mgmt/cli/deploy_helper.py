@@ -36,6 +36,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO, cast
 
+from haproxy_mgmt.certificates import CertificateError, target_for
 from haproxy_mgmt.cluster_lock import DEFAULT_LOCK_ROOT, LockBusy, hold
 from haproxy_mgmt.cluster_status import ClusterStatus, NodeStatus, parse_status
 from haproxy_mgmt.config import (
@@ -47,7 +48,7 @@ from haproxy_mgmt.config import (
     load_runtime_config,
 )
 from haproxy_mgmt.deploy_run import OPERATION as DEPLOY_OPERATION
-from haproxy_mgmt.deploy_run import ReadStatus, TriggerNode, run
+from haproxy_mgmt.deploy_run import CertificatePreflight, ReadStatus, TriggerNode, run
 from haproxy_mgmt.envelope import failure, new_request_id
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
@@ -89,6 +90,13 @@ SSH_OPTIONS = (
 SSH_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
 
 EXIT_NOT_ROOT = 68
+
+#
+# The value `cert-deploy` exits with when a referenced certificate is not in
+# the distribution directory. The same fault gets the same code and the same
+# error string from both commands, so a wrapper reading either sees one event.
+#
+EXIT_CERTIFICATE_MISSING = 68
 
 #
 # EX_CONFIG: the installation is incomplete, which is neither the caller's
@@ -254,6 +262,37 @@ def main(
         )
 
     #
+    # The certificates the release references, resolved before the lock is
+    # taken and before any node is read. This is what §6.4 calls the deploy
+    # preflight: the loop compares each readable node against these bytes and
+    # blocks, naming `cert-deploy`, when a node is behind. The comparison uses
+    # the same reader `cert-deploy` reconciles with, so the two commands cannot
+    # disagree about what a node should carry.
+    #
+    # A certificate the manager itself does not have is refused here with the
+    # code `cert-deploy` uses for the same fault, because that command would
+    # fail identically and sending somebody to it would be a loop.
+    #
+    # Without a certificate root the check cannot be made and is not made,
+    # which matches the publish-time coverage check - but unlike that one it
+    # says so, in the rollout text and in the result's warnings.
+    #
+    preflight: CertificatePreflight | None = None
+    if cluster.certificate_ids:
+        try:
+            preflight = CertificatePreflight(
+                target=(
+                    None
+                    if policy.certificate_root is None
+                    else target_for(cluster, policy.certificate_root)
+                ),
+                referenced=tuple(cluster.certificate_ids),
+                next_command=f"haproxy-cert-deploy -c {request.cluster}",
+            )
+        except CertificateError as exc:
+            return refuse("certificate_missing", str(exc), EXIT_CERTIFICATE_MISSING)
+
+    #
     # In JSON mode the human-readable stream is collected and thrown away rather
     # than interleaved with the result: a reader parsing stdout must not have to
     # skip past progress lines to find the document.
@@ -303,6 +342,7 @@ def main(
                 target=read_target(Path(cluster.publish_path), cluster.node_path),
                 allow_vip_unknown=allow_vip_unknown,
                 lifeline=lifeline,
+                preflight=preflight,
             )
     except LockBusy as exc:
         return refuse("operation_locked", str(exc), exc.exit_code)

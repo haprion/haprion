@@ -444,7 +444,8 @@ def build_router(config: Config) -> APIRouter:
             captured=captured_at is not None,
         )
         with request.app.state.pool.connection() as connection:
-            running = jobs.in_flight(db.recent_jobs(connection))
+            recent = db.recent_jobs(connection)
+        running = jobs.in_flight(recent)
         return TEMPLATES.TemplateResponse(
             request,
             "index.html",
@@ -460,6 +461,12 @@ def build_router(config: Config) -> APIRouter:
                 # offer an action the queue would refuse with a 409.
                 #
                 "in_flight": running,
+                #
+                # Clusters whose last deploy was refused for a certificate a
+                # node lacks. The card then offers the certificate deploy the
+                # engine asked for, beside the deploy button.
+                #
+                "certificate_blocks": jobs.certificate_blocks(recent),
                 "section": "dashboard",
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,

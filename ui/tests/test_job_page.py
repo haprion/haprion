@@ -538,3 +538,209 @@ class TheErrorCodeReachesThePage(LoginTestCase):
 
                 self.assertIn("Failed", body)
                 self.assertNotIn("Reason:", body)
+
+
+def certificate_refusal(
+    nodes: list[dict] | None = None, *, next_command: str | None = "haproxy-cert-deploy -c alpha"
+) -> dict:
+    """What `haproxy-deploy` answers when its preflight finds a node behind."""
+
+    details: dict = {
+        "nodes": [{"node": "node-b", "missing": ["example-net"], "stale": []}]
+        if nodes is None
+        else nodes
+    }
+    if next_command is not None:
+        details["next_command"] = next_command
+    return {
+        "outcome": "blocked",
+        "error": {
+            "code": "certificates_not_deployed",
+            "message": "referenced certificates are not on every node",
+            "details": details,
+        },
+    }
+
+
+def blocked_deploy(job_id: int = 19, **changes: object) -> db.Job:
+    return replace(
+        job(state="blocked", outcome="blocked", exit_code=65, result=certificate_refusal()),
+        id=job_id,
+        **changes,  # type: ignore[arg-type]
+    )
+
+
+def block_of(row: db.Job) -> jobs.CertificateBlock:
+    block = jobs.certificate_block(row)
+    if block is None:
+        raise AssertionError("expected a certificate block")
+    return block
+
+
+class ADeployBlockedOnCertificates(unittest.TestCase):
+    """§6.4's preflight, read back: the one refusal a button can fix.
+
+    The engine blocks a configuration deploy when a readable node lacks a
+    certificate the release references, and names `cert-deploy`. The standing
+    "deploy certificates" button went away with C5; this is where the offer
+    lives now - on the job that was refused, and on the cluster's card, for
+    as long as that refusal is the newest thing known about the cluster.
+    """
+
+    def test_the_refusal_is_read_into_a_block_naming_nodes_and_certificates(self) -> None:
+        block = block_of(blocked_deploy())
+
+        self.assertEqual(block.cluster, "alpha")
+        self.assertEqual(block.job_id, 19)
+        self.assertEqual(block.gaps, (jobs.NodeGap("node-b", ("example-net",), ()),))
+        self.assertEqual(block.next_command, "haproxy-cert-deploy -c alpha")
+        self.assertEqual(block.headline, "Deploy blocked: node-b is missing example-net")
+        self.assertEqual(
+            block.sentence,
+            "Deploy blocked: node-b is missing example-net. "
+            "Deploy the certificates first, then deploy the configuration again.",
+        )
+
+    def test_several_nodes_are_described_each_on_their_own(self) -> None:
+        #
+        # Not merged into one list of nodes and one of certificates: that
+        # would say node-b carries an older example-com, which the engine did
+        # not say.
+        #
+        refusal = certificate_refusal(
+            [
+                {"node": "node-a", "missing": ["example-net"], "stale": ["example-com"]},
+                {"node": "node-b", "missing": ["example-net"], "stale": []},
+            ]
+        )
+        block = block_of(job(state="blocked", outcome="blocked", result=refusal))
+
+        self.assertEqual(
+            block.headline,
+            "Deploy blocked: node-a is missing example-net and carries an older example-com; "
+            "node-b is missing example-net",
+        )
+
+    def test_any_other_ending_is_not_a_block(self) -> None:
+        other_code = {"error": {"code": "deploy_blocked", "message": "split brain"}}
+        for row in (
+            job(state="blocked", outcome="blocked", result=other_code),
+            job(state="failed", outcome="failed", result=certificate_refusal()),
+            job(
+                state="blocked",
+                outcome="blocked",
+                operation="cert_deploy",
+                result=certificate_refusal(),
+            ),
+            job(state="blocked", outcome="blocked", cluster=None, result=certificate_refusal()),  # type: ignore[arg-type]
+            job(state="done", outcome="done"),
+        ):
+            with self.subTest(job=(row.operation, row.state, row.cluster, row.result)):
+                self.assertIsNone(jobs.certificate_block(row))
+
+    def test_malformed_details_cost_the_sentence_not_the_offer(self) -> None:
+        #
+        # The code alone is the engine's verdict; the details are what it
+        # said about it. A helper that wrote the code and garbled the details
+        # still refused the deploy, so the button is still the right offer.
+        #
+        for details in (None, "text", {"nodes": "text"}, {"nodes": [7, {"node": 3}]}, {}):
+            with self.subTest(details=details):
+                refusal = certificate_refusal()
+                refusal["error"]["details"] = details
+                block = block_of(job(state="blocked", outcome="blocked", result=refusal))
+
+                self.assertEqual(block.gaps, ())
+                self.assertEqual(block.next_command, "haproxy-cert-deploy -c alpha")
+                self.assertIn("a node does not carry every certificate", block.headline)
+
+    def test_only_the_newest_finished_job_carries_the_block(self) -> None:
+        #
+        # Rows arrive newest first. The block on job 20 stands while it is the
+        # last word on alpha; a certificate deploy that finished after it is
+        # the last word instead, and a block that is history is not offered.
+        #
+        older, newer = blocked_deploy(19), blocked_deploy(20)
+        cleared = replace(job(state="done", outcome="done", operation="cert_deploy"), id=21)
+        running = replace(job(state="running"), id=22)
+
+        self.assertEqual(set(jobs.certificate_blocks([newer, older])), {"alpha"})
+        self.assertEqual(jobs.certificate_blocks([newer, older])["alpha"].job_id, 20)
+        self.assertEqual(jobs.certificate_blocks([cleared, newer, older]), {})
+        #
+        # A job in flight decides nothing yet: what is known about alpha is
+        # still that the last finished attempt was refused.
+        #
+        self.assertEqual(jobs.certificate_blocks([running, newer, older])["alpha"].job_id, 20)
+
+    def test_the_block_is_captioned_on_its_job_with_the_certificate_deploy_button(self) -> None:
+        overview = jobs.build_job_overview([blocked_deploy(20), blocked_deploy(19)])
+
+        newest, older = overview.jobs
+        self.assertEqual(newest.follow_up_operation, "cert_deploy")
+        self.assertEqual(newest.follow_up_label, "Deploy certificates to alpha")
+        self.assertEqual(newest.next_command, "haproxy-cert-deploy -c alpha")
+        self.assertIn("Deploy blocked: node-b is missing example-net", newest.follow_up or "")
+        self.assertEqual(newest.error_code, "certificates_not_deployed")
+        self.assertIsNone(older.follow_up)
+        self.assertIsNone(older.follow_up_operation)
+
+    def test_a_finished_certificate_deploy_owes_the_configuration_deploy(self) -> None:
+        #
+        # The plan's order is cert-deploy "followed by a new deploy", and
+        # nothing chains the second on. So once the certificates are there and
+        # the cluster is still behind, the button for the second step is
+        # offered on the job that finished the first.
+        #
+        rows = [replace(job(state="done", outcome="done", operation="cert_deploy"), id=21)]
+
+        captioned = jobs.build_job_overview(rows, awaiting=frozenset({"alpha"})).jobs[0]
+        self.assertEqual(captioned.follow_up_operation, "deploy")
+        self.assertEqual(captioned.follow_up_label, "Deploy alpha")
+        self.assertEqual(captioned.next_command, "haproxy-deploy -c alpha")
+        self.assertIn("Certificates deployed, configuration not", captioned.follow_up or "")
+
+        converged = jobs.build_job_overview(rows).jobs[0]
+        self.assertIsNone(converged.follow_up)
+
+
+class TheBlockReachesThePages(LoginTestCase):
+    def page(self, path: str, rows: list[db.Job], *, writes: bool = True) -> str:
+        client = self.client(
+            replace(configuration(), management_writes=writes, clusters=("alpha",))
+        )
+        self.sign_in(client)
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=rows):
+            return client.get(path).text
+
+    def test_the_jobs_page_offers_the_certificate_deploy_on_the_refused_job(self) -> None:
+        body = self.page("/jobs", [blocked_deploy()])
+
+        self.assertIn("Deploy blocked: node-b is missing example-net.", body)
+        self.assertIn('name="operation" value="cert_deploy"', body)
+        self.assertIn("Deploy certificates to alpha", body)
+        self.assertIn("certificates_not_deployed", body)
+        self.assertNotIn("haproxy-cert-deploy -c", body)
+
+    def test_where_nobody_may_press_it_the_command_is_named(self) -> None:
+        body = self.page("/jobs", [blocked_deploy()], writes=False)
+
+        self.assertNotIn('name="operation" value="cert_deploy"', body)
+        self.assertIn("haproxy-cert-deploy -c alpha", body)
+
+    def test_the_dashboard_offers_it_on_the_cluster_card_while_the_block_stands(self) -> None:
+        body = self.page("/", [blocked_deploy()])
+
+        self.assertIn("Deploy blocked: node-b is missing example-net", body)
+        self.assertIn('name="operation" value="cert_deploy"', body)
+        self.assertIn('name="operation" value="deploy"', body)
+        self.assertEqual(body.count('action="/operations"'), 2)
+
+    def test_the_dashboard_stops_offering_it_once_a_newer_job_has_finished(self) -> None:
+        cleared = replace(job(state="done", outcome="done", operation="cert_deploy"), id=21)
+
+        body = self.page("/", [cleared, blocked_deploy()])
+
+        self.assertNotIn("Deploy blocked", body)
+        self.assertNotIn('name="operation" value="cert_deploy"', body)
+        self.assertEqual(body.count('action="/operations"'), 1)

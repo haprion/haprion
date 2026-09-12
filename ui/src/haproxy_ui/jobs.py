@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
+from haproxy_mgmt.deploy_run import CERTIFICATES_NOT_DEPLOYED
+
 from haproxy_ui.dashboard import relative_age
 from haproxy_ui.db import ClusterStatus, Job
 
@@ -57,6 +59,14 @@ class JobView:
     #
     follow_up: str | None = None
     next_command: str | None = None
+    #
+    # Which operation the follow-up button queues, and what it says. A revert
+    # owes a deploy; a deploy the preflight blocked owes a certificate deploy.
+    # The button is the same form either way, so the template is told which
+    # rather than growing a copy of it per operation.
+    #
+    follow_up_operation: str | None = None
+    follow_up_label: str | None = None
     #
     # Verbatim, never translated. A table mapping codes to friendlier sentences
     # would be a second place that has to stay in step with the contract - the
@@ -133,7 +143,16 @@ def _owes_deployment(job: Job) -> tuple[bool, str | None]:
 
     Read defensively. The document is written by a privileged helper and stored
     as it arrived, so this asks it questions rather than assuming its shape.
+
+    A certificate deploy that finished owes one too, by the plan's own order:
+    the preflight sends somebody to `cert-deploy` "followed by a new deploy",
+    and nothing chains the second step on. Its envelope does not say so - the
+    reconcile result has no `deployment_required` - so the answer is given
+    here, and the caller still checks that the cluster is actually behind.
     """
+
+    if job.operation == "cert_deploy" and job.state == "done" and job.cluster:
+        return True, f"haproxy-deploy -c {job.cluster}"
 
     envelope = job.result
     if not isinstance(envelope, dict):
@@ -144,6 +163,166 @@ def _owes_deployment(job: Job) -> tuple[bool, str | None]:
 
     command = body.get("next_command")
     return True, command if isinstance(command, str) and command else None
+
+
+def _owed_sentence(job: Job) -> str:
+    if job.operation == "cert_deploy":
+        return (
+            f"Certificates deployed, configuration not. The nodes still run the previous "
+            f"configuration until {job.cluster} is deployed."
+        )
+    return (
+        f"Published, not deployed. The nodes still run the previous version "
+        f"until {job.cluster} is deployed."
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class NodeGap:
+    """One node the engine named, and the certificate IDs it is behind on."""
+
+    node: str
+    missing: tuple[str, ...]
+    stale: tuple[str, ...]
+
+    def describe(self) -> str:
+        parts = []
+        if self.missing:
+            parts.append(f"is missing {', '.join(self.missing)}")
+        if self.stale:
+            parts.append(f"carries an older {', '.join(self.stale)}")
+        return f"{self.node} {' and '.join(parts)}"
+
+
+@dataclass(frozen=True, slots=True)
+class CertificateBlock:
+    """A configuration deploy the engine refused because a node lacks a certificate.
+
+    This is the one refusal the interface can offer to fix with a button: the
+    engine's preflight names `cert-deploy`, and `cert-deploy` is an operation
+    the queue already takes. So the standing "deploy certificates" button went
+    away and this took its place - offered where the block happened and only
+    while it is the newest thing known about the cluster.
+    """
+
+    cluster: str
+    job_id: int
+    #
+    # The nodes as the engine reported them, in its order, each with what it
+    # lacks. Empty when the details were not the expected shape: the code
+    # alone is enough to offer the button, and a malformed detail block should
+    # cost the sentence, not the offer.
+    #
+    gaps: tuple[NodeGap, ...]
+    next_command: str
+
+    @property
+    def headline(self) -> str:
+        """What is wrong, node by node, in one line.
+
+        Node by node rather than as one merged list, because a merged list
+        would say things the engine did not: two nodes missing different
+        certificates would read as both missing both.
+        """
+
+        if not self.gaps:
+            return "Deploy blocked: a node does not carry every certificate the release references"
+        return "Deploy blocked: " + "; ".join(gap.describe() for gap in self.gaps)
+
+    @property
+    def sentence(self) -> str:
+        """The headline and what to do about it, for the jobs page."""
+
+        return (
+            f"{self.headline}. Deploy the certificates first, then deploy the configuration again."
+        )
+
+
+def _ids(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, str) and item)
+
+
+def _gaps(value: object) -> tuple[NodeGap, ...]:
+    """The engine's per-node detail, with anything half-described left out."""
+
+    gaps = []
+    if isinstance(value, list):
+        for entry in value:
+            if not isinstance(entry, dict):
+                continue
+            node = entry.get("node")
+            gap = NodeGap(
+                node=node if isinstance(node, str) else "",
+                missing=_ids(entry.get("missing")),
+                stale=_ids(entry.get("stale")),
+            )
+            if gap.node and (gap.missing or gap.stale):
+                gaps.append(gap)
+    return tuple(gaps)
+
+
+def certificate_block(job: Job) -> CertificateBlock | None:
+    """The certificate block this job ended in, or nothing.
+
+    Read defensively for the same reason `error_code` is: the document was
+    written by a privileged helper and stored as it arrived.
+    """
+
+    if job.operation != "deploy" or job.state != "blocked" or not job.cluster:
+        return None
+    if error_code(job) != CERTIFICATES_NOT_DEPLOYED:
+        return None
+
+    details: object = None
+    if isinstance(job.result, dict):
+        error = job.result.get("error")
+        if isinstance(error, dict):
+            details = error.get("details")
+    nodes: object = details.get("nodes") if isinstance(details, dict) else None
+    command = details.get("next_command") if isinstance(details, dict) else None
+    return CertificateBlock(
+        cluster=job.cluster,
+        job_id=job.id,
+        gaps=_gaps(nodes),
+        next_command=(
+            command
+            if isinstance(command, str) and command
+            else f"haproxy-cert-deploy -c {job.cluster}"
+        ),
+    )
+
+
+def _newest_finished(rows: Iterable[Job]) -> dict[str, int]:
+    """The id of each cluster's newest finished job. Rows arrive newest first."""
+
+    newest: dict[str, int] = {}
+    for job in rows:
+        if job.cluster is None or job.cluster in newest or job.state in {"pending", "running"}:
+            continue
+        newest[job.cluster] = job.id
+    return newest
+
+
+def certificate_blocks(rows: list[Job]) -> dict[str, CertificateBlock]:
+    """Clusters whose newest finished job is a deploy the preflight blocked.
+
+    Newest, for the same reason `last_failure` reads only the newest: a block
+    that a later certificate deploy cleared is history, and offering to fix it
+    again would send somebody after a problem that is already gone. The next
+    attempt - whichever way it ends - replaces the verdict.
+    """
+
+    newest = _newest_finished(rows)
+    blocks: dict[str, CertificateBlock] = {}
+    for job in rows:
+        if job.cluster is None or newest.get(job.cluster) != job.id:
+            continue
+        block = certificate_block(job)
+        if block is not None:
+            blocks[job.cluster] = block
+    return blocks
 
 
 #
@@ -214,6 +393,7 @@ def _view(
     *,
     follow_up: str | None,
     next_command: str | None,
+    follow_up_operation: str | None = None,
     diagnostics: bool,
 ) -> JobView:
     label, tone = _state(job.state)
@@ -239,6 +419,12 @@ def _view(
         exit_meaning=_exit_meaning(job.exit_code),
         follow_up=follow_up,
         next_command=next_command,
+        follow_up_operation=follow_up_operation,
+        follow_up_label=(
+            None
+            if follow_up_operation is None
+            else FOLLOW_UP_LABELS[follow_up_operation].format(cluster=job.cluster)
+        ),
         error_code=error_code(job) if ended_badly else None,
         #
         # Only for a job that ended badly. A successful operation's stderr is
@@ -341,6 +527,7 @@ def build_job_overview(
 
     current = now or datetime.now(UTC)
     captioned: set[str] = set()
+    blocks = certificate_blocks(rows)
     views = []
     for job in rows:
         owes, command = _owes_deployment(job)
@@ -354,17 +541,36 @@ def build_job_overview(
         show = owes and cluster is not None and cluster in awaiting and cluster not in captioned
         if show and cluster is not None:
             captioned.add(cluster)
+        #
+        # A deploy the preflight refused is captioned on its own terms: the
+        # cluster need not be behind its target for the block to be real, and
+        # the button it gets queues the other operation. Only the job that is
+        # the cluster's newest verdict carries it, which `certificate_blocks`
+        # already decided.
+        #
+        block = blocks.get(cluster) if cluster is not None else None
+        blocked = block is not None and block.job_id == job.id
+        if blocked and cluster is not None:
+            captioned.add(cluster)
         views.append(
             _view(
                 job,
                 current,
                 follow_up=(
-                    f"Published, not deployed. The nodes still run the previous version "
-                    f"until {job.cluster} is deployed."
+                    block.sentence
+                    if blocked and block is not None
+                    else _owed_sentence(job)
                     if show
                     else None
                 ),
-                next_command=command if show else None,
+                next_command=(
+                    block.next_command
+                    if blocked and block is not None
+                    else command
+                    if show
+                    else None
+                ),
+                follow_up_operation="cert_deploy" if blocked else "deploy" if show else None,
                 diagnostics=diagnostics,
             )
         )
@@ -395,6 +601,16 @@ RUNNING_LABELS = {
     "cert_issue": "Issuing certificate",
     "cert_publish": "Distributing certificates",
     "cert_target": "Changing certificate targets",
+}
+
+
+#
+# What the follow-up button says, by the operation it queues. `{cluster}` is
+# the cluster the job belongs to.
+#
+FOLLOW_UP_LABELS = {
+    "deploy": "Deploy {cluster}",
+    "cert_deploy": "Deploy certificates to {cluster}",
 }
 
 

@@ -12,6 +12,8 @@ inside the boundary.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import io
 import json
 import tempfile
@@ -42,6 +44,30 @@ def request(cluster: str = "alpha", **parameters: bool) -> bytes:
     ).encode()
 
 
+DELIMITER = "-" * 5
+
+
+def fingerprint(identifier: str) -> str:
+    """What a node has to answer with to be current on this test certificate."""
+
+    return hashlib.sha256(identifier.encode("ascii")).hexdigest()
+
+
+def pem(identifier: str) -> str:
+    """A PEM whose leaf is the ID itself, so its fingerprint is `fingerprint(id)`."""
+
+    body = base64.b64encode(identifier.encode("ascii")).decode("ascii")
+    return (
+        f"{DELIMITER}BEGIN CERTIFICATE{DELIMITER}\n{body}\n{DELIMITER}END CERTIFICATE{DELIMITER}\n"
+    )
+
+
+#
+# What examples/clusters.yaml has alpha referencing.
+#
+REFERENCED = ("example.com", "example.net")
+
+
 class HelperFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
@@ -50,14 +76,29 @@ class HelperFixture(unittest.TestCase):
         self.cluster = pair()
         self.triggered: list[str] = []
 
-    def runtime(self, *, published_hash: str | None = TARGET_HASH) -> Path:
+    def runtime(
+        self,
+        *,
+        published_hash: str | None = TARGET_HASH,
+        distributed: tuple[str, ...] | None = None,
+    ) -> Path:
+        """The policy, and with `distributed` a certificate root holding those IDs.
+
+        Without it the policy names no certificate root, which is the shape
+        every case before the preflight existed ran against, and which the
+        preflight has to let through with a warning rather than refuse.
+        """
+
         config_root = self.root / "config"
         publish_root = self.root / "published"
         cert_root = self.root / "certs"
-        for directory in (config_root, publish_root, cert_root):
+        dist_root = self.root / "certdist"
+        for directory in (config_root, publish_root, cert_root, dist_root):
             directory.mkdir(parents=True, exist_ok=True)
         (cert_root / "validation.pem").write_text("dummy PEM\n", encoding="utf-8")
         (config_root / "alpha").mkdir(exist_ok=True)
+        for identifier in distributed or ():
+            (dist_root / f"{identifier}.pem").write_text(pem(identifier), encoding="ascii")
 
         clusters = yaml.safe_load((BASE / "examples/clusters.yaml").read_text())
         entry = clusters["clusters"]["alpha"]
@@ -75,19 +116,17 @@ class HelperFixture(unittest.TestCase):
                 encoding="utf-8",
             )
 
+        policy = {
+            "schema_version": 1,
+            "cluster_file": str(self.root / "clusters.yaml"),
+            "config_root": str(config_root),
+            "publish_root": str(publish_root),
+            "validation_certs_root": str(cert_root),
+        }
+        if distributed is not None:
+            policy["certificate_root"] = str(dist_root)
         policy_path = self.root / "runtime-policy.yaml"
-        policy_path.write_text(
-            yaml.safe_dump(
-                {
-                    "schema_version": 1,
-                    "cluster_file": str(self.root / "clusters.yaml"),
-                    "config_root": str(config_root),
-                    "publish_root": str(publish_root),
-                    "validation_certs_root": str(cert_root),
-                }
-            ),
-            encoding="utf-8",
-        )
+        policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
         return policy_path
 
     def run_helper(
@@ -265,6 +304,109 @@ class HelperBehaviourTests(HelperFixture):
 
         self.assertEqual(allowed, 0)
         self.assertIn("explicit CLI override accepted", shown)
+
+
+class CertificatePreflightTests(HelperFixture):
+    """The preflight resolves inside the boundary, from the distribution root.
+
+    The loop's own behaviour is covered in test_deploy_run. What is tested here
+    is the seam: the referenced certificates come from the policy's certificate
+    root and the cluster's registry, never from the request, and every way the
+    check can end is a frozen envelope the worker can file.
+    """
+
+    def carry(self, *identifiers: str) -> None:
+        for node in self.cluster.nodes:
+            node.certificates = tuple((i, fingerprint(i)) for i in identifiers)
+
+    def test_a_node_behind_on_a_certificate_blocks_in_the_frozen_envelope(self) -> None:
+        self.carry("example.com")
+
+        code, out, err = self.run_helper(
+            request(json=True), policy_path=self.runtime(distributed=REFERENCED)
+        )
+
+        self.assertEqual(code, 65)
+        self.assertEqual(self.triggered, [])
+        document = assert_contract("haproxy-deploy", out)
+        self.assertEqual(document["outcome"], "blocked")
+        self.assertEqual(document["error"]["code"], "certificates_not_deployed")
+        self.assertEqual(
+            document["error"]["details"]["next_command"], "haproxy-cert-deploy -c alpha"
+        )
+        self.assertEqual(
+            document["error"]["details"]["nodes"],
+            [
+                {"node": "node-a", "missing": ["example.net"], "stale": []},
+                {"node": "node-b", "missing": ["example.net"], "stale": []},
+            ],
+        )
+        #
+        # Nothing was deployed, and the result says so node by node rather
+        # than being dropped: a blocked deploy still has a target and a
+        # cluster picture worth recording.
+        #
+        self.assertFalse(document["result"]["converged"])
+        self.assertTrue(
+            all(node["outcome"] == "not_attempted" for node in document["result"]["nodes"])
+        )
+
+    def test_nodes_carrying_the_published_bytes_are_deployed(self) -> None:
+        self.carry(*REFERENCED)
+
+        code, out, _ = self.run_helper(
+            request(json=True), policy_path=self.runtime(distributed=REFERENCED)
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(self.triggered, ["node-b", "node-a"])
+        document = assert_contract("haproxy-deploy", out)
+        self.assertEqual(document["outcome"], "done")
+        self.assertEqual(document["warnings"], [])
+
+    def test_a_certificate_the_manager_itself_lacks_is_refused_with_cert_deploys_code(
+        self,
+    ) -> None:
+        #
+        # `cert-deploy` would fail on the same missing file with the same
+        # code; a refusal that sent somebody to it would be a loop.
+        #
+        self.carry(*REFERENCED)
+
+        code, out, err = self.run_helper(
+            request(json=True), policy_path=self.runtime(distributed=("example.com",))
+        )
+
+        self.assertEqual(code, deploy_helper.EXIT_CERTIFICATE_MISSING)
+        self.assertEqual(self.triggered, [])
+        self.assertIn("[certificate_missing]", err)
+        self.assertIn("example.net", err)
+        document = assert_contract("haproxy-deploy", out)
+        self.assertEqual(document["error"]["code"], "certificate_missing")
+        self.assertIsNone(document["result"])
+
+    def test_without_a_certificate_root_the_deploy_runs_and_the_envelope_says_unchecked(
+        self,
+    ) -> None:
+        code, out, _ = self.run_helper(request(json=True))
+
+        self.assertEqual(code, 0)
+        self.assertEqual(self.triggered, ["node-b", "node-a"])
+        document = assert_contract("haproxy-deploy", out)
+        self.assertEqual(document["outcome"], "done")
+        self.assertEqual(
+            [warning["code"] for warning in document["warnings"]], ["certificates_unchecked"]
+        )
+        self.assertIn("example.com, example.net", document["warnings"][0]["message"])
+
+    def test_the_human_mode_names_the_command_to_run_next(self) -> None:
+        self.carry("example.com")
+
+        code, out, _ = self.run_helper(request(), policy_path=self.runtime(distributed=REFERENCED))
+
+        self.assertEqual(code, 65)
+        self.assertIn("ERROR: [certificates_not_deployed]", out)
+        self.assertIn("Run haproxy-cert-deploy -c alpha first, then deploy again", out)
 
 
 class CallerTests(unittest.TestCase):

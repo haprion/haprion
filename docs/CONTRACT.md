@@ -63,7 +63,7 @@ Command-specific stable codes:
 | `list_backups` | `backup_metadata_unavailable`, `backup_directory_missing` |
 | `cert_list` | `certificate_metadata_unavailable`, `certificate_invalid` |
 | `publish` | `candidate_invalid`, `base_version_changed`, `publish_incomplete` |
-| `deploy` | `split_brain`, `vip_unknown`, `node_deploy_failed`, `status_unavailable` |
+| `deploy` | `split_brain`, `vip_unknown`, `node_deploy_failed`, `status_unavailable`, `certificates_not_deployed`, `certificate_missing` |
 | `revert` | `dirty_worktree`, `version_not_found`, `candidate_invalid`, `publish_incomplete` |
 | `cert_deploy` | `split_brain`, `vip_unknown`, `certificate_missing`, `fingerprint_mismatch`, `node_cert_deploy_failed` |
 | `network_publish` | `dirty_worktree`, `candidate_invalid`, `publish_incomplete` |
@@ -85,6 +85,16 @@ These rules are shared by config deploy and certificate deploy:
   `outcome=not_attempted`.
 - The target version/hash or certificate fingerprints are returned even on partial results.
 - Initial and final VIP summaries use the same shape as `haproxy-status`.
+- A config deploy checks the certificates the release references against what each readable node
+  reports before it touches any node. A node that lacks one, or carries other bytes, ends the run
+  as `blocked` with `certificates_not_deployed`; `error.details.nodes` lists each such node with
+  its `missing` and `stale` certificate IDs and `error.details.next_command` names the
+  `haproxy-cert-deploy` invocation to run first. Nothing chains the two: the certificate deploy is
+  always asked for by name, and a new `haproxy-deploy` follows it. A node that did not report
+  certificates is let through with a `certificates_unverified` warning; a manager without a
+  `certificate_root` skips the check with a `certificates_unchecked` warning. A referenced
+  certificate the manager itself does not hold is refused as `certificate_missing`, the code
+  `cert_deploy` uses for the same fault.
 
 ## Publish and revert invariants
 

@@ -229,6 +229,75 @@ class CertificateTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class CertificateGap:
+    """One readable node whose referenced certificates are not the published bytes.
+
+    `missing` names certificates the node does not carry at all; `stale` names
+    the ones it carries as different bytes than the manager published. Both are
+    IDs in the cluster's configured order, and both are told apart because they
+    are read differently by the person who has to act: a missing file is a
+    certificate that never reached the node, a stale one is a renewal that did
+    not.
+    """
+
+    node: str
+    missing: tuple[str, ...]
+    stale: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {"node": self.node, "missing": list(self.missing), "stale": list(self.stale)}
+
+    def describe(self) -> str:
+        parts = []
+        if self.missing:
+            parts.append(f"missing {', '.join(self.missing)}")
+        if self.stale:
+            parts.append(f"stale {', '.join(self.stale)}")
+        return f"{self.node} ({'; '.join(parts)})"
+
+
+def certificate_gaps(
+    observation: ClusterObservation, certificates: CertificateTarget
+) -> tuple[CertificateGap, ...]:
+    """The readable nodes a configuration deploy must not be sent to yet.
+
+    This is §6.4's preflight: a release that references a certificate a node
+    does not carry would be installed and then refused by HAProxy on that node
+    - a failure that was knowable before the first node was touched. So the
+    comparison is made here, against the same fingerprints `cert-deploy` uses,
+    and the deploy blocks and names the command that fixes it. Nothing chains
+    the two operations together; that is the plan's rule, so that a certificate
+    rollout is always something a person asked for by name.
+
+    Only nodes that answered about certificates are judged. A node that said
+    nothing cannot be shown to be behind, and blocking on silence would make a
+    status script from before the field existed refuse every deploy. Such a
+    node is reported as unverified instead, by `unverified_certificates`.
+    """
+
+    gaps = []
+    for node in observation.usable:
+        if node.certificates is None:
+            continue
+        carried = dict(node.certificates)
+        missing = tuple(ref.id for ref in certificates.certificates if ref.id not in carried)
+        stale = tuple(
+            ref.id
+            for ref in certificates.certificates
+            if ref.id in carried and carried[ref.id] != ref.fingerprint
+        )
+        if missing or stale:
+            gaps.append(CertificateGap(node=node.name, missing=missing, stale=stale))
+    return tuple(gaps)
+
+
+def unverified_certificates(observation: ClusterObservation) -> tuple[str, ...]:
+    """The readable nodes that said nothing about the certificates they carry."""
+
+    return tuple(node.name for node in observation.usable if node.certificates is None)
+
+
+@dataclass(frozen=True, slots=True)
 class Progress:
     """What the loop has done so far. Empty on the first call."""
 

@@ -38,12 +38,15 @@ from haproxy_mgmt.deploy_plan import (
     EXIT_BLOCKED,
     NOTHING_DONE,
     Action,
+    CertificateTarget,
     Outcome,
     Progress,
     Step,
     Target,
+    certificate_gaps,
     next_step,
     record,
+    unverified_certificates,
     warnings_for,
 )
 from haproxy_mgmt.envelope import Message, envelope
@@ -150,6 +153,34 @@ class DeployRun:
     report: DeployReport
 
 
+#
+# The error code a configuration deploy blocks with when a readable node does
+# not carry the certificates the release references. Named here because the
+# jobs page reads it back: it is the one refusal the interface can offer to fix
+# with a button, and the two sides have to agree on the string.
+#
+CERTIFICATES_NOT_DEPLOYED = "certificates_not_deployed"
+
+
+@dataclass(frozen=True, slots=True)
+class CertificatePreflight:
+    """What a configuration deploy checks the nodes against before it starts.
+
+    `target` is the cluster's referenced certificates as the manager published
+    them - the same object `cert-deploy` reconciles towards, so the two commands
+    cannot disagree about what "the node has the certificate" means. It is None
+    when the manager has no certificate root to read them from; the check is
+    then not made, and the run says so instead of staying quiet about it.
+    `referenced` is the IDs by name, for that warning. `next_command` is what
+    the refusal tells the operator to run; the loop does not know the cluster's
+    name and should not have to.
+    """
+
+    target: CertificateTarget | None
+    referenced: tuple[str, ...]
+    next_command: str
+
+
 def _state_line(prefix: str, status: ClusterStatus) -> str:
     owners = ", ".join(status.vip_owners) if status.vip_owners else "-"
     usable = sum(1 for node in status.nodes if node.status_ok)
@@ -203,8 +234,15 @@ def run(
     allow_vip_unknown: bool = False,
     operation: str = OPERATION,
     lifeline: Lifeline | None = None,
+    preflight: CertificatePreflight | None = None,
 ) -> DeployRun:
-    """Reconcile the cluster and report, in text as it goes and in a result."""
+    """Reconcile the cluster and report, in text as it goes and in a result.
+
+    `preflight` is the certificate check a configuration deploy runs once, after
+    the first status read and before any node is touched. It is given rather
+    than derived because the loop is shared with `cert-deploy`, which is the
+    command that fixes what the check finds and must not be blocked by it.
+    """
 
     try:
         status = read_status()
@@ -231,6 +269,7 @@ def run(
 
     progress = NOTHING_DONE
     announced: tuple[str, ...] = ()
+    certificates_checked = preflight is None
 
     while True:
         #
@@ -271,6 +310,20 @@ def run(
             report.final_summary = status.summary
             report.error = Message(code="deploy_blocked", message=step.reason)
             return DeployRun(step.exit_code, report)
+
+        #
+        # After the cluster-wide blocks and before the first node. Split brain
+        # and an unreadable cluster are the graver faults and the ones with
+        # nothing to press, so they are what the operator hears about first;
+        # a missing certificate is only worth naming once the cluster is in a
+        # state where fixing it would let the deploy through.
+        #
+        if not certificates_checked:
+            certificates_checked = True
+            assert preflight is not None  # noqa: S101 - the flag starts true without one
+            blocked = _certificate_preflight(writer, status, report, preflight)
+            if blocked is not None:
+                return blocked
 
         if step.action is Action.FINISHED:
             return DeployRun(_report(writer, status, step, report), report)
@@ -351,6 +404,67 @@ def run(
         else:
             entry.outcome = "updated"
             entry.verified = bool(landed)
+
+
+def _certificate_preflight(
+    writer: TextIO, status: ClusterStatus, report: DeployReport, preflight: CertificatePreflight
+) -> DeployRun | None:
+    """Block before the first node if a readable node lacks a referenced certificate.
+
+    Once, not before every step: the check is about whether the release can be
+    activated at all, and a certificate does not appear on a node in the middle
+    of a configuration rollout. Re-checking after each node would only turn a
+    result that is already known into a later one.
+
+    A node that said nothing about certificates is warned about and let through.
+    The loop treats that silence as "unverified" everywhere else, and a
+    preflight that read it as "missing" would refuse every deploy against a
+    node whose status script predates the field - a refusal nobody could act on.
+    """
+
+    if preflight.target is None:
+        warning = (
+            f"no certificate root is configured; {', '.join(preflight.referenced)} "
+            "not checked on the nodes"
+        )
+        writer.write(f"WARNING: {warning}\n")
+        report.warnings.append(Message(code="certificates_unchecked", message=warning))
+        return None
+
+    if not preflight.target.certificates:
+        #
+        # Nothing referenced, nothing to be behind on. Warning about nodes
+        # that did not report certificates would then be noise about a
+        # question nobody asked.
+        #
+        return None
+
+    observation = status.observation()
+    gaps = certificate_gaps(observation, preflight.target)
+    if gaps:
+        named = "; ".join(gap.describe() for gap in gaps)
+        reason = (
+            f"referenced certificates are not on every node: {named}. "
+            f"Run {preflight.next_command} first, then deploy again"
+        )
+        writer.write(f"\nERROR: [{CERTIFICATES_NOT_DEPLOYED}] {reason}\n")
+        report.outcome = Outcome.BLOCKED
+        report.final_summary = status.summary
+        report.error = Message(
+            code=CERTIFICATES_NOT_DEPLOYED,
+            message=reason,
+            details={
+                "nodes": [gap.as_dict() for gap in gaps],
+                "next_command": preflight.next_command,
+            },
+        )
+        return DeployRun(EXIT_BLOCKED, report)
+
+    for name in unverified_certificates(observation):
+        warning = f"{name} did not report its certificates; they were not checked"
+        writer.write(f"WARNING: {warning}\n")
+        report.warnings.append(Message(code="certificates_unverified", message=warning, node=name))
+    return None
 
 
 def _released(

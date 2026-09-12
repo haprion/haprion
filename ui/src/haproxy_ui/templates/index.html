@@ -97,7 +97,8 @@
 
     {% if management_writes and role == 'admin' and cluster.configured %}
     <footer class="cluster-actions" aria-label="{{ cluster.cluster }} operations">
-      <div><strong>Operations</strong></div>
+      {% set block = certificate_blocks.get(cluster.cluster) if certificate_blocks else none %}
+      <div><strong>Operations</strong>{% if block %}<span class="warning-text" title="{{ block.sentence }}"><span class="status-dot status-warning" aria-hidden="true"></span>{{ block.headline }}</span>{% endif %}</div>
       {#
         One job per cluster at a time, so this is one state and not two: while
         something is running here, both buttons are gone and the operation that
@@ -115,9 +116,19 @@
         <a class="secondary-button" href="/jobs">Follow it</a>
       </div>
       {% else %}
+      {#
+        Certificates are deployed from here only when the engine has said they
+        have to be. The last deploy's preflight found a node without a
+        certificate the release references, so the offer is the fix for that
+        and nothing else: it goes away with the next finished job for the
+        cluster, whichever way that ends. A standing button for it used to sit
+        beside the deploy button and was removed with the certificates page's
+        copy - a certificate rollout nobody needs is key material moved for
+        no reason.
+      #}
       <div class="action-buttons">
+        {% if block %}<form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="cert_deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="dashboard"><button class="secondary-button" type="submit">Deploy certificates</button></form>{% endif %}
         <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="dashboard"><button class="secondary-button" type="submit">Deploy configuration</button></form>
-        <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="cert_deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="dashboard"><button class="secondary-button" type="submit">Deploy certificates</button></form>
       </div>
       {% endif %}
     </footer>

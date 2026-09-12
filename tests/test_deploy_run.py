@@ -15,8 +15,8 @@ import unittest
 
 from haproxy_mgmt import deploy_run
 from haproxy_mgmt.cluster_status import NodeStatus, parse_status
-from haproxy_mgmt.deploy_plan import ReleaseTarget
-from haproxy_mgmt.deploy_run import DeployReport
+from haproxy_mgmt.deploy_plan import CertificateRef, CertificateTarget, ReleaseTarget
+from haproxy_mgmt.deploy_run import CertificatePreflight, DeployReport
 from tests.node_harness import OLD_HASH, TARGET_HASH, FakeCluster, FakeNode, pair
 
 TARGET = ReleaseTarget(version=8, hash=TARGET_HASH)
@@ -29,6 +29,7 @@ def deploy(
     *,
     expected_hash: str | None = None,
     allow_vip_unknown: bool = False,
+    preflight: CertificatePreflight | None = None,
 ) -> tuple[int, str]:
     """Run one deploy. The report is kept aside for the cases that inspect it."""
 
@@ -46,6 +47,7 @@ def deploy(
         out,
         target=ReleaseTarget(version=8, hash=expected_hash) if expected_hash else None,
         allow_vip_unknown=allow_vip_unknown,
+        preflight=preflight,
     )
     LAST_REPORT[:] = [outcome.report]
     return outcome.exit_code, out.getvalue()
@@ -462,3 +464,194 @@ class TheTerminalNamesTheSameCodeAsThePage(unittest.TestCase):
 
         self.assertIn("RESULT: OK", shown)
         self.assertNotIn("[", shown.split("RESULT:")[1])
+
+
+#
+# The certificates a release references, as the manager published them, and
+# the fingerprints a node has to answer with to be current on them.
+#
+PUBLISHED = (("example-com", "a" * 64), ("example-net", "b" * 64))
+
+
+def preflight(*published: tuple[str, str], root: bool = True) -> CertificatePreflight:
+    return CertificatePreflight(
+        target=CertificateTarget(
+            certificates=tuple(CertificateRef(id=i, fingerprint=f) for i, f in published)
+        )
+        if root
+        else None,
+        referenced=tuple(identifier for identifier, _ in published),
+        next_command="haproxy-cert-deploy -c alpha",
+    )
+
+
+def carrying(*published: tuple[str, str]) -> FakeCluster:
+    cluster = pair()
+    for node in cluster.nodes:
+        node.certificates = published
+    return cluster
+
+
+class CertificatePreflightTests(unittest.TestCase):
+    """§6.4: a configuration deploy blocks when a readable node lacks a certificate.
+
+    Blocks, names the node and the certificate, names `cert-deploy`, and touches
+    nothing - and does not run `cert-deploy` itself. The plan forbids the
+    implicit chain, so that a certificate rollout is always asked for by name.
+    """
+
+    def test_a_node_missing_a_referenced_certificate_blocks_before_anything_is_touched(
+        self,
+    ) -> None:
+        cluster = carrying(PUBLISHED[0])
+
+        code, shown = deploy(cluster, preflight=preflight(*PUBLISHED))
+
+        self.assertEqual(cluster.triggered, [])
+        self.assertEqual(code, 65)
+        self.assertIn("ERROR: [certificates_not_deployed]", shown)
+        self.assertIn("node-a (missing example-net)", shown)
+        self.assertIn("node-b (missing example-net)", shown)
+        self.assertIn("Run haproxy-cert-deploy -c alpha first, then deploy again", shown)
+
+        report = LAST_REPORT[0]
+        self.assertEqual(report.outcome.value, "blocked")
+        assert report.error is not None
+        self.assertEqual(report.error.code, "certificates_not_deployed")
+        self.assertEqual(
+            report.error.details,
+            {
+                "nodes": [
+                    {"node": "node-a", "missing": ["example-net"], "stale": []},
+                    {"node": "node-b", "missing": ["example-net"], "stale": []},
+                ],
+                "next_command": "haproxy-cert-deploy -c alpha",
+            },
+        )
+
+    def test_a_node_carrying_other_bytes_is_stale_and_blocks_too(self) -> None:
+        #
+        # A renewal that did not reach one node. The other node is current and
+        # is not named: the message is about who has to be fixed, not a roll
+        # call.
+        #
+        cluster = carrying(*PUBLISHED)
+        cluster.node("node-b").certificates = (PUBLISHED[0], ("example-net", "c" * 64))
+
+        code, shown = deploy(cluster, preflight=preflight(*PUBLISHED))
+
+        self.assertEqual(cluster.triggered, [])
+        self.assertEqual(code, 65)
+        self.assertIn("node-b (stale example-net)", shown)
+        self.assertNotIn("node-a (", shown)
+
+    def test_nodes_carrying_the_published_bytes_are_deployed_as_usual(self) -> None:
+        cluster = carrying(*PUBLISHED)
+
+        code, shown = deploy(cluster, preflight=preflight(*PUBLISHED))
+
+        self.assertEqual(cluster.triggered, ["node-b", "node-a"])
+        self.assertEqual(code, 0)
+        self.assertNotIn("certificate", shown)
+        self.assertEqual(LAST_REPORT[0].warnings, [])
+
+    def test_a_certificate_the_node_carries_but_the_cluster_does_not_reference_is_ignored(
+        self,
+    ) -> None:
+        cluster = carrying(*PUBLISHED, ("something-else", "d" * 64))
+
+        code, _ = deploy(cluster, preflight=preflight(*PUBLISHED))
+
+        self.assertEqual(code, 0)
+
+    def test_a_node_that_says_nothing_about_certificates_is_warned_about_not_blocked(
+        self,
+    ) -> None:
+        #
+        # Silence is not absence. A status script from before the field
+        # existed would otherwise refuse every deploy, with nothing anybody
+        # could do about it short of upgrading the node first.
+        #
+        cluster = carrying(*PUBLISHED)
+        cluster.node("node-b").certificates = None
+
+        code, shown = deploy(cluster, preflight=preflight(*PUBLISHED))
+
+        self.assertEqual(cluster.triggered, ["node-b", "node-a"])
+        self.assertEqual(code, 0)
+        self.assertIn("WARNING: node-b did not report its certificates", shown)
+        warning = LAST_REPORT[0].warnings[0]
+        self.assertEqual((warning.code, warning.node), ("certificates_unverified", "node-b"))
+
+    def test_an_unreachable_peer_is_not_judged(self) -> None:
+        #
+        # The reachable node is checked and deployed; the peer is what partial
+        # already means. Blocking on a node nobody could read would turn every
+        # degraded deploy into a refusal.
+        #
+        cluster = carrying(*PUBLISHED)
+        cluster.node("node-a").reachable = False
+
+        code, shown = deploy(cluster, preflight=preflight(*PUBLISHED))
+
+        self.assertEqual(cluster.triggered, ["node-b"])
+        self.assertEqual(code, 69)
+        self.assertIn("RESULT: PARTIAL", shown)
+
+    def test_a_reachable_node_behind_still_blocks_a_degraded_deploy(self) -> None:
+        cluster = carrying(PUBLISHED[0])
+        cluster.node("node-a").reachable = False
+
+        code, shown = deploy(cluster, preflight=preflight(*PUBLISHED))
+
+        self.assertEqual(cluster.triggered, [])
+        self.assertEqual(code, 65)
+        self.assertIn("node-b (missing example-net)", shown)
+
+    def test_the_check_comes_after_the_cluster_wide_blocks(self) -> None:
+        #
+        # Split brain is the worse fault and the one with no override; it is
+        # what the operator has to hear about first.
+        #
+        cluster = carrying(PUBLISHED[0])
+        cluster.split_brain()
+
+        code, shown = deploy(cluster, preflight=preflight(*PUBLISHED))
+
+        self.assertEqual(code, 65)
+        self.assertIn("split brain", shown)
+        self.assertNotIn("certificates_not_deployed", shown)
+
+    def test_without_a_certificate_root_the_run_says_the_check_was_skipped(self) -> None:
+        cluster = carrying()
+
+        code, shown = deploy(cluster, preflight=preflight(*PUBLISHED, root=False))
+
+        self.assertEqual(code, 0)
+        self.assertIn(
+            "WARNING: no certificate root is configured; example-com, example-net "
+            "not checked on the nodes",
+            shown,
+        )
+        self.assertEqual(LAST_REPORT[0].warnings[0].code, "certificates_unchecked")
+
+    def test_a_cluster_referencing_nothing_is_not_checked_and_not_warned_about(self) -> None:
+        cluster = carrying()
+        cluster.node("node-b").certificates = None
+
+        code, shown = deploy(cluster, preflight=preflight())
+
+        self.assertEqual(code, 0)
+        self.assertNotIn("certificate", shown)
+        self.assertEqual(LAST_REPORT[0].warnings, [])
+
+    def test_without_a_preflight_nothing_is_compared(self) -> None:
+        #
+        # `cert-deploy` runs this same loop and is the command that fixes what
+        # the check finds; it must never be refused by it.
+        #
+        cluster = carrying()
+
+        code, _ = deploy(cluster)
+
+        self.assertEqual(code, 0)

@@ -23,6 +23,7 @@
         "referenced_by_cluster": true,
         "deployable": true,
         "validation_error": null,
+        "measured_at": null,
         "source": {
           "kind": "acme",
           "lineage": "example.com-wildcard"
@@ -55,6 +56,7 @@
           },
           "readable": true,
           "validation_error": null,
+          "measured_at": "source",
           "fingerprint_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
           "common_name": "*.example.com",
           "sans": [
@@ -86,6 +88,7 @@
           "distribution": null,
           "readable": true,
           "validation_error": null,
+          "measured_at": "source",
           "fingerprint_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
           "common_name": "lb-01.example.net",
           "sans": [
@@ -115,6 +118,7 @@
           },
           "readable": false,
           "validation_error": "no material at its source yet",
+          "measured_at": null,
           "fingerprint_sha256": null,
           "common_name": null,
           "sans": [],

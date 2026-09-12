@@ -322,6 +322,45 @@ def _published(path: Path, source_fingerprint: str | None) -> dict[str, Any]:
     }
 
 
+def _measure_registered(
+    entry: RegisteredCertificate, *, certificate_root: Path, live: Path, store: Path
+) -> tuple[str, Facts, str] | str:
+    """A registered certificate's fingerprint and facts, and where they were read.
+
+    At its source first: that is what a renewal writes first, so a target that
+    has not been published yet would otherwise report the previous certificate.
+
+    When the source holds nothing - an imported certificate registered before
+    the import helper exists - the published cluster copy is measured instead,
+    and the answer says so. That copy is real material the clusters are
+    serving; calling the certificate unreadable because its import directory
+    is empty would tell the reader the opposite of what the nodes are doing.
+    Only where a cluster names it: a receiver-only certificate has no
+    published copy this manager can open. The publisher still calls such an
+    entry skipped and leaves the copy alone; this is a listing, not a source.
+
+    Returns the reason as a string when nothing could be read.
+    """
+
+    try:
+        fingerprint, facts = _measure(source_directory(entry, live=live, store=store) / FULLCHAIN)
+        return fingerprint, facts, "source"
+    except FileNotFoundError:
+        pass
+    except (OSError, UnicodeDecodeError, CertificateError) as exc:
+        return str(exc)
+
+    if not entry.clusters:
+        return "no material at its source yet"
+    try:
+        fingerprint, facts = _measure(certificate_path(certificate_root, entry.certificate_id))
+        return fingerprint, facts, "distribution"
+    except FileNotFoundError:
+        return "no material at its source yet"
+    except (OSError, UnicodeDecodeError, CertificateError) as exc:
+        return str(exc)
+
+
 def registry_result(
     registry: Registry,
     *,
@@ -351,24 +390,17 @@ def registry_result(
             "source": {"kind": entry.source.kind, "lineage": entry.source.lineage},
             "readable": False,
             "validation_error": None,
+            "measured_at": None,
             **_unmeasured(now),
         }
         fingerprint: str | None = None
-        try:
-            fingerprint, facts = _measure(
-                source_directory(entry, live=live, store=store) / FULLCHAIN
-            )
-        except FileNotFoundError:
-            #
-            # What an imported certificate looks like before the import helper
-            # exists: registered, with nothing in the import store yet. The
-            # publisher calls that skipped and leaves the published copy alone,
-            # so the listing says the same rather than calling it broken.
-            #
-            row["validation_error"] = "no material at its source yet"
-        except (OSError, UnicodeDecodeError, CertificateError) as exc:
-            row["validation_error"] = str(exc)
+        measured = _measure_registered(
+            entry, certificate_root=certificate_root, live=live, store=store
+        )
+        if isinstance(measured, str):
+            row["validation_error"] = measured
         else:
+            fingerprint, facts, row["measured_at"] = measured
             row.update(
                 readable=True,
                 fingerprint_sha256=fingerprint,

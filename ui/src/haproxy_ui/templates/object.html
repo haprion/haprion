@@ -114,7 +114,7 @@
       rendered per request anyway, and a link is what survives being opened in
       a second tab beside the first.
     #}
-    <div class="cluster-state"><nav class="traffic-ranges" aria-label="Time range">{% for entry in traffic_windows %}<a href="?traffic={{ entry.key }}"{% if entry.key == traffic_chosen %} class="is-current" aria-current="true"{% endif %} title="{{ entry.label }}">{{ entry.key }}</a>{% endfor %}</nav></div>
+    <div class="cluster-state"><nav class="traffic-ranges" aria-label="Time range">{% for entry in traffic_windows %}<a href="?traffic={{ entry.key }}"{% if entry.key == traffic_chosen %} class="is-current" aria-current="true"{% endif %} title="{{ entry.label }}"><span>{{ entry.key }}</span><span class="segment-reserve" aria-hidden="true">{{ entry.key }}</span></a>{% endfor %}</nav></div>
   </header>
   {% for backend in traffic %}
   {% include "_traffic-card.html" %}

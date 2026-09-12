@@ -2,6 +2,7 @@
 {% block title %}Certificates — HAProxy Manager{% endblock %}
 {% block content %}
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
+<script defer src="{{ url_for('static', path='/certificates.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
   <div><h1>Certificates</h1></div>
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
@@ -10,15 +11,19 @@
 {#
   Two renderings of the same cached readings, switched with the segmented
   control Traffic already uses - at a larger size here, because at Traffic's
-  size it reads as a caption rather than as something to press. Only drawn
-  where a registry exists: without one there is a single view, and a switch
-  offering one choice is furniture.
+  size it reads as a caption rather than as something to press - and pinned
+  the way Traffic pins its ranges, so the switch is still there at the bottom
+  of a long registry. Only drawn where a registry exists: without one there is
+  a single view, and a switch offering one choice is furniture.
+
+  A click swaps the view in place rather than reloading the page around it,
+  and the detail row opens the same way. See `certificates.js`.
 #}
 {% if certificates.registry %}
-<nav class="traffic-ranges certificate-views" aria-label="Certificate views">
-  <a href="?view=registry"{% if chosen_view == 'registry' %} class="is-current" aria-current="true"{% endif %}>All certificates <b>{{ certificates.registry.certificate_count }}</b></a>
-  <a href="?view=clusters"{% if chosen_view == 'clusters' %} class="is-current" aria-current="true"{% endif %}>Clusters <b>{{ certificates.cluster_count }}</b></a>
-</nav>
+<div class="page-ranges-sticky"><nav class="traffic-ranges page-ranges certificate-views" aria-label="Certificate views">
+  <a href="?view=registry"{% if chosen_view == 'registry' %} class="is-current" aria-current="true"{% endif %}><span>All certificates <b>{{ certificates.registry.certificate_count }}</b></span><span class="segment-reserve" aria-hidden="true">All certificates <b>{{ certificates.registry.certificate_count }}</b></span></a>
+  <a href="?view=clusters"{% if chosen_view == 'clusters' %} class="is-current" aria-current="true"{% endif %}><span>Certificates on clusters <b>{{ certificates.cluster_count }}</b></span><span class="segment-reserve" aria-hidden="true">Certificates on clusters <b>{{ certificates.cluster_count }}</b></span></a>
+</nav></div>
 {% endif %}
 
 <section class="metric-grid certificate-summary" aria-label="Certificate summary">
@@ -26,6 +31,7 @@
   <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4l9 16H3z"></path><path d="M12 10v4M12 17h.01"></path></svg></span><div><strong>{{ certificates.attention_count }}</strong><span>Need attention</span><small>Expiring or unreadable</small></div></article>
 </section>
 
+<div data-certificates-region>
 {% if chosen_view == 'registry' %}
 <article class="cluster-card certificate-cluster-card cluster-accent-1">
   <header class="cluster-header">
@@ -55,6 +61,7 @@
         <div class="registry-detail-grid">
           <div><strong>Covers</strong><span>{% if certificate.sans %}{{ certificate.sans | join(', ') }}{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}{{ certificate.common_name }}{% endif %}</span></div>
           <div><strong>Issuer</strong><span>{{ certificate.issuer }}</span></div>
+          {% if certificate.material_note %}<div><strong>Material</strong><span>{{ certificate.material_note }}</span></div>{% endif %}
           <div><strong>State</strong><span>{{ certificate.state_detail }}</span></div>
           {#
             Per target, because the two kinds are knowable to different depths.
@@ -120,4 +127,5 @@
 {% endfor %}
 </div>
 {% endif %}
+</div>
 {% endblock %}

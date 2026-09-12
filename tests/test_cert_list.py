@@ -433,11 +433,12 @@ class RegistryListingTests(unittest.TestCase):
         self.assertFalse(entry["readable"])
         self.assertIsNone(entry["targets"]["receivers"][0]["current"])
 
-    def test_an_import_with_nothing_in_the_store_is_listed_with_the_reason(self) -> None:
+    def test_an_import_with_nothing_anywhere_is_listed_with_the_reason(self) -> None:
         #
         # What an imported certificate looks like until C6 builds the import
-        # store. The publisher calls it skipped and leaves the published copy
-        # alone, so the listing says the same rather than calling it broken.
+        # store, when nothing has been published for it either. The publisher
+        # calls it skipped, so the listing says the same rather than calling
+        # it broken.
         #
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -453,6 +454,72 @@ class RegistryListingTests(unittest.TestCase):
         self.assertFalse(entry["readable"])
         self.assertIn("no material at its source", entry["validation_error"])
         self.assertIsNone(entry["fingerprint_sha256"])
+        self.assertIsNone(entry["measured_at"])
+
+    def test_an_import_with_an_empty_source_is_measured_at_its_published_copy(self) -> None:
+        #
+        # The maintainer's own case, seen on the page 2026-09-12: a certificate
+        # published by hand before the import store existed, listed as
+        # unreadable in the registry while the cluster view read it fine. The
+        # published copy is what the nodes serve; it is measured, and the row
+        # says where the facts came from.
+        #
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "certdist").mkdir()
+            (root / "certdist" / "internal.pem").write_text(
+                _pem("internal.example.net", sans=("*.internal.example.net",)), encoding="ascii"
+            )
+            registry = self._registry(
+                root,
+                certificates={
+                    "internal": self._entry("internal", kind="import", clusters=("beta",))
+                },
+            )
+            result = self._run(root, registry)
+
+        entry = result["certificates"][0]
+        self.assertTrue(entry["readable"])
+        self.assertIsNone(entry["validation_error"])
+        self.assertEqual(entry["measured_at"], "distribution")
+        self.assertEqual(entry["common_name"], "internal.example.net")
+        self.assertTrue(entry["distribution"]["current"])
+
+    def test_a_source_that_is_read_says_so(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "live" / "lineage"
+            source.mkdir(parents=True)
+            (source / "fullchain.pem").write_text(_pem("one.example.net"), encoding="ascii")
+            registry = self._registry(
+                root, certificates={"one": self._entry("one", lineage="lineage")}
+            )
+            result = self._run(root, registry)
+
+        self.assertEqual(result["certificates"][0]["measured_at"], "source")
+
+    def test_a_receiver_only_import_without_material_is_not_read_from_anywhere_else(
+        self,
+    ) -> None:
+        #
+        # No cluster names it, so there is no published cluster copy to fall
+        # back on - and a receiver's directory is the receiver's, not a source.
+        #
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            published = root / "receivers" / "lb-01"
+            published.mkdir(parents=True)
+            (published / "fullchain.pem").write_text(_pem("one.example.net"), encoding="ascii")
+            registry = self._registry(
+                root,
+                receiver_names=("lb-01",),
+                certificates={"one": self._entry("one", kind="import", receivers=("lb-01",))},
+            )
+            result = self._run(root, registry)
+
+        entry = result["certificates"][0]
+        self.assertFalse(entry["readable"])
+        self.assertIsNone(entry["measured_at"])
 
     def test_the_shared_distribution_copy_is_one_fact_not_one_per_cluster(self) -> None:
         #

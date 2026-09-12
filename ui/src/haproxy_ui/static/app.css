@@ -720,6 +720,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    is the primary navigation between two quite different answers - so it is
    sized to be pressed. */
 .certificate-views { margin: 0 0 18px; }
+.page-ranges-sticky .certificate-views { margin: 0; }
 .certificate-views a { padding: 7px 15px; font-size: 13.5px; }
 .certificate-views b { margin-left: 7px; font-variant-numeric: tabular-nums; }
 
@@ -1366,6 +1367,19 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .traffic-ranges a:first-child { border-left: 0; }
 .traffic-ranges a:hover { background: var(--hover-surface); color: var(--text-strong); }
 .traffic-ranges a.is-current { background: var(--hover-surface); color: var(--text-strong); font-weight: 660; }
+/*
+ * Each segment is as wide as its bold self from the start. The current one
+ * is bold, bold is wider, and a segment that grows when it is chosen moves
+ * every segment after it by a few pixels - which reads as the control
+ * flinching. So every segment carries its label twice in the same grid
+ * cell: the one that is read, and an invisible bold twin that sets the
+ * width before anything is pressed. Markup rather than `attr()`, because the
+ * count inside the label has its own spacing and a generated string cannot
+ * reproduce it to the pixel.
+ */
+.traffic-ranges a { display: inline-grid; justify-items: center; }
+.traffic-ranges a > span { grid-area: 1 / 1; white-space: nowrap; }
+.traffic-ranges a > .segment-reserve { font-weight: 660; visibility: hidden; pointer-events: none; }
 
 .log-warning { position: relative; }
 .log-warning summary { display: inline-flex; align-items: center; gap: 8px; padding: 7px 11px; border: 1px solid var(--warning); border-radius: 999px; background: var(--warning-soft); color: var(--text-strong); font-size: 12px; font-weight: 650; list-style: none; white-space: nowrap; cursor: pointer; }

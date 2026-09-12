@@ -506,6 +506,29 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
         self.assertEqual(certificate_view.state_label, "Unreadable")
         self.assertEqual(certificate_view.expires, "—")
         self.assertEqual(certificate_view.expiry_label, "Unknown")
+        self.assertIsNone(certificate_view.material_note)
+
+    def test_facts_read_off_the_published_copy_say_so(self) -> None:
+        #
+        # The engine measures the published cluster copy when an import's own
+        # source is still empty. The facts are real - they are the nodes' -
+        # but the reader is told which file they came from.
+        #
+        entry = registered(kind="import")
+        entry["measured_at"] = "distribution"
+        view = overview(with_registry(reading(), entry))
+
+        certificate_view = registry_of(view).certificates[0]
+        self.assertTrue(certificate_view.readable)
+        self.assertIn("published cluster copy", certificate_view.material_note or "")
+
+        for measured_at in ("source", None, "something-new"):
+            with self.subTest(measured_at=measured_at):
+                entry = registered(kind="import")
+                if measured_at is not None:
+                    entry["measured_at"] = measured_at
+                view = overview(with_registry(reading(), entry))
+                self.assertIsNone(registry_of(view).certificates[0].material_note)
 
     def test_the_counters_count_the_registry_and_not_one_cluster_listing(self) -> None:
         #

@@ -1,0 +1,65 @@
+(() => {
+  //
+  // The certificate page's two views, and the detail row under a registry
+  // entry, without reloading the page around them.
+  //
+  // Which view is open and which entry is unfolded live in the address - that
+  // is what makes a certificate something you can paste to somebody - so every
+  // click is a navigation, and a navigation redraws the whole page and throws
+  // the reader back to the top of it. Traffic solved the same thing the same
+  // way, and this is that solution again: fetch the very same address, swap in
+  // the region the server rendered for it, and let the server keep doing all
+  // the reading. Nothing here knows what a certificate is.
+  //
+  // Without this script the links are plain links and behave as they always
+  // did, which is the reason they are links in the first place.
+  //
+  const REGION = "[data-certificates-region]";
+
+  const swap = async (href, push) => {
+    const answer = await fetch(href, { credentials: "same-origin" });
+    if (!answer.ok) throw new Error(String(answer.status));
+    const parsed = new DOMParser().parseFromString(await answer.text(), "text/html");
+    const fresh = parsed.querySelector(REGION);
+    const here = document.querySelector(REGION);
+    //
+    // Refused rather than patched up. A page without the region is a different
+    // page - a session that expired into a login form - and half-replacing it
+    // would leave the reader looking at two answers at once.
+    //
+    if (!fresh || !here) throw new Error("shape");
+    here.replaceWith(fresh);
+    const freshRanges = parsed.querySelector(".page-ranges-sticky");
+    const hereRanges = document.querySelector(".page-ranges-sticky");
+    if (freshRanges && hereRanges) hereRanges.replaceWith(freshRanges);
+    if (push) history.pushState({ certificates: true }, "", href);
+  };
+
+  const follow = (href) => {
+    swap(href, true).catch(() => {
+      //
+      // Anything unexpected - offline, a redirect to a login page, a shape
+      // that no longer matches - falls back to the navigation this replaced.
+      //
+      window.location.href = href;
+    });
+  };
+
+  document.addEventListener("click", (event) => {
+    if (event.button !== 0 || event.defaultPrevented) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const pick = event.target.closest(".certificate-views a, .registry-table .proxy-link");
+    if (!pick) return;
+    event.preventDefault();
+    follow(pick.getAttribute("href"));
+  });
+
+  //
+  // The back button walks the views back, which is the whole reason they are
+  // in the address. Answered the same way as a click, so going back is as
+  // still as going forward.
+  //
+  window.addEventListener("popstate", () => {
+    swap(window.location.href, false).catch(() => window.location.reload());
+  });
+})();

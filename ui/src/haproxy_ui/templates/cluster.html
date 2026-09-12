@@ -20,7 +20,7 @@
   One range control for the whole page, above every cluster. Two would let
   somebody compare one address's hour against another's week without noticing.
 #}
-<div class="page-ranges-sticky"><nav class="traffic-ranges page-ranges" aria-label="Time range">{% for entry in traffic_windows %}<a href="?traffic={{ entry.key }}"{% if entry.key == traffic_chosen %} class="is-current" aria-current="true"{% endif %} title="{{ entry.label }}">{{ entry.key }}</a>{% endfor %}</nav></div>
+<div class="page-ranges-sticky"><nav class="traffic-ranges page-ranges" aria-label="Time range">{% for entry in traffic_windows %}<a href="?traffic={{ entry.key }}"{% if entry.key == traffic_chosen %} class="is-current" aria-current="true"{% endif %} title="{{ entry.label }}"><span>{{ entry.key }}</span><span class="segment-reserve" aria-hidden="true">{{ entry.key }}</span></a>{% endfor %}</nav></div>
 
 <div class="cluster-list">
 {% for view in clusters %}

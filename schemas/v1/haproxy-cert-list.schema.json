@@ -94,7 +94,7 @@
       "description": "One certificate the manager holds, measured at its source rather than at a target. The source is what a renewal writes first, so a target that has not been published yet would otherwise report the previous certificate.",
       "type": "object",
       "required": [
-        "id", "source", "targets", "distribution", "readable", "validation_error",
+        "id", "source", "targets", "distribution", "readable", "validation_error", "measured_at",
         "fingerprint_sha256", "common_name", "sans", "not_before", "not_after",
         "issuer", "lifecycle", "valid"
       ],
@@ -130,6 +130,10 @@
         },
         "readable": { "type": "boolean" },
         "validation_error": { "type": ["string", "null"], "maxLength": 2048 },
+        "measured_at": {
+          "description": "Where the facts were read: the certificate's own source, or the published cluster copy when the source holds nothing yet - an import registered before the import helper exists. Null when nothing could be read.",
+          "enum": ["source", "distribution", null]
+        },
         "fingerprint_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
         "common_name": { "type": ["string", "null"], "maxLength": 255 },
         "sans": { "type": "array", "items": { "type": "string", "maxLength": 255 } },

@@ -124,6 +124,15 @@ class RegistryCertificateView:
     state_label: str
     state_detail: str
     state_tone: Tone
+    #
+    # Where the facts were read from, when that was not the certificate's own
+    # source. An import registered before the import helper exists has nothing
+    # at its source, and its facts come from the published cluster copy - the
+    # material the nodes are serving. Said in the detail row, because a reader
+    # who sees an expiry has a right to know which file it was read off.
+    # None on an older engine that does not report it, and for a source read.
+    #
+    material_note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -644,6 +653,11 @@ def _registry_certificate(
         state_label=state_label,
         state_detail=state_detail,
         state_tone=state_tone,
+        material_note=(
+            "Read from the published cluster copy; nothing is at its import source yet"
+            if readable and entry.get("measured_at") == "distribution"
+            else None
+        ),
     )
 
 

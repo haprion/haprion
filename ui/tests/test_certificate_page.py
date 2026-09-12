@@ -106,6 +106,29 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
     def test_an_unknown_view_falls_back_rather_than_failing(self) -> None:
         self.assertIn("referenced by this cluster", self.page("?view=nonsense"))
 
+    def test_the_switch_is_pinned_named_and_swapped_in_place(self) -> None:
+        #
+        # Three things the maintainer asked for on 2026-09-12, having seen the
+        # page: the second view is called what it shows, the switch stays put
+        # while the registry scrolls under it - Traffic's own pinned bar - and
+        # a click swaps the view rather than reloading the page around it.
+        #
+        page = self.page("?view=registry")
+
+        self.assertIn("Certificates on clusters", page)
+        self.assertNotIn(">Clusters <b>", page)
+        self.assertIn(
+            '<div class="page-ranges-sticky"><nav class="traffic-ranges page-ranges certificate-views"',
+            page,
+        )
+        self.assertIn("certificates.js", page)
+        self.assertEqual(page.count("data-certificates-region"), 1)
+        #
+        # The bold width is reserved from the label, so a segment cannot grow
+        # when it becomes current. Every segment carries its label for that.
+        #
+        self.assertEqual(page.count('class="segment-reserve" aria-hidden="true"'), 2)
+
 
 class WithoutARegistryThePageIsWhatItWas(LoginTestCase):
     """No registry declared, no switch drawn, and no empty second view."""

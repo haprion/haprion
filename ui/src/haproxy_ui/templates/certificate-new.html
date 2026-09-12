@@ -28,7 +28,7 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
 
-  <section class="cluster-card cluster-accent-1">
+  <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Certificate</h3></div></div></header>
     <div class="form-grid">
       <label>Domain<input name="domain" value="{{ form.domain }}" maxlength="255" placeholder="app.example.com or *.example.com" autocomplete="off" spellcheck="false" required autofocus><small>Becomes the certificate's name. <code>*.example.com</code> also covers <code>example.com</code>, the way the existing wildcard does.</small></label>
@@ -45,11 +45,12 @@
           <label class="check"><input type="radio" name="method" value="dns-01"{% if form.method != 'http-01' %} checked{% endif %}> DNS-01 <span class="optional">— a TXT record in the zone; the only method for a wildcard</span></label>
           <label class="check"><input type="radio" name="method" value="http-01"{% if form.method == 'http-01' %} checked{% endif %}> HTTP-01 <span class="optional">— a file under the policy's webroot; single names only</span></label>
         </div>
+        <p class="challenge-warning"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Validation is your responsibility: configure DNS access, or point the domain here for HTTP.</span></p>
       </div>
     </div>
   </section>
 
-  <section class="cluster-card cluster-accent-2">
+  <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published. At least one.</p></div></div></header>
     <div class="form-grid form-grid-pair">
       <div class="field">

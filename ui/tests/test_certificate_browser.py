@@ -48,7 +48,9 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
 
     def setUp(self) -> None:
         super().setUp()
-        config = replace(configuration(cookie_secure=False), clusters=("alpha",))
+        config = replace(
+            configuration(cookie_secure=False), management_writes=True, clusters=("alpha",)
+        )
         self.port = free_port()
         server = uvicorn.Server(
             uvicorn.Config(
@@ -67,7 +69,7 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             self.fail("the test server did not start")
 
     @contextlib.contextmanager
-    def signed_in(self, query: str = "") -> Iterator[Any]:
+    def signed_in(self, query: str = "", *, path: str = "/certificates") -> Iterator[Any]:
         page = self._browser.new_page()
         try:
             page.goto(f"http://127.0.0.1:{self.port}/login")
@@ -75,8 +77,10 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             page.fill("input[name=password]", PASSWORD)
             page.click("button[type=submit]")
             page.wait_for_url(f"http://127.0.0.1:{self.port}/")
-            page.goto(f"http://127.0.0.1:{self.port}/certificates{query}")
-            page.wait_for_selector(".certificate-views")
+            page.goto(f"http://127.0.0.1:{self.port}{path}{query}")
+            page.wait_for_selector(
+                ".certificate-form" if path == "/certificates/new" else ".certificate-views"
+            )
             yield page
         finally:
             page.close()
@@ -137,6 +141,20 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             )
             self.assertGreaterEqual(top, 0)
             self.assertLess(top, 300 - header)
+
+    def test_the_new_form_warning_stays_under_challenge_without_widening_the_page(self) -> None:
+        with self.signed_in(path="/certificates/new") as page:
+            page.set_viewport_size({"width": 1280, "height": 800})
+            choices = page.locator(".method-choices").bounding_box()
+            warning = page.locator(".challenge-warning").bounding_box()
+
+            if choices is None or warning is None:
+                self.fail("the challenge choices and warning must both have a layout box")
+            self.assertGreaterEqual(warning["y"], choices["y"] + choices["height"])
+            self.assertLessEqual(warning["height"], 36)
+            self.assertEqual(
+                page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), True
+            )
 
 
 if __name__ == "__main__":

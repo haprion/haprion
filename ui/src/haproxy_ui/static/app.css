@@ -1007,6 +1007,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * above its own name is a box nobody can read. */
 .certificate-form .method-choices .check, .certificate-form .form-checks-stacked .check { display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
 .certificate-form .method-choices .optional { font-weight: var(--font-weight-regular); }
+.certificate-form .challenge-warning { display: flex; align-items: flex-start; gap: 7px; margin: 9px 0 0; color: var(--text-secondary); font-size: 12px; font-weight: var(--font-weight-regular); line-height: 1.45; }
+.certificate-form .challenge-warning svg { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 1px; color: var(--warning); fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .certificate-form .field > .field-title { color: var(--text-secondary); font-weight: 620; }
 .certificate-form .field > small { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .certificate-form .warning-text { margin: 0; }

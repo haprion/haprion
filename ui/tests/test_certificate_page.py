@@ -90,6 +90,11 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         # of this page may say a certificate is on one.
         #
         self.assertNotIn("On all targets", page)
+        self.assertNotIn("certificate-cluster-card cluster-accent-", page)
+
+    def test_only_actual_cluster_cards_have_a_cluster_accent(self) -> None:
+        self.assertIn("certificate-cluster-card cluster-accent-", self.page("?view=clusters"))
+        self.assertNotIn("certificate-cluster-card cluster-accent-", self.page("?view=registry"))
 
     def test_a_row_expands_in_place_and_the_link_then_closes_it(self) -> None:
         opened = self.page("?view=registry&open=lb-01.example.net")

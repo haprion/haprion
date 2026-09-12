@@ -103,6 +103,28 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         self.assertIn('href="?view=registry"', opened)
         self.assertNotIn("registry-detail", self.page("?view=registry"))
 
+    def test_a_cluster_row_opens_the_same_detail_and_the_whole_row_is_the_control(
+        self,
+    ) -> None:
+        #
+        # Asked for on 2026-09-12: the detail on the cluster view too, and
+        # opened by clicking anywhere on the row rather than only the name.
+        # The row carries the address for the script; the name stays a link.
+        #
+        page = self.page("?view=clusters&open=example.com")
+
+        self.assertIn("registry-detail", page)
+        self.assertIn("<strong>Issuer</strong>", page)
+        self.assertIn('class="registry-row registry-open" data-href="?view=clusters"', page)
+        closed = self.page("?view=clusters")
+        self.assertNotIn("registry-detail", closed)
+        self.assertIn('data-href="?view=clusters&amp;open=example.com"', closed)
+        #
+        # The issuer left the row for the detail: the seven columns did not
+        # fit a 1920-wide screen at the maintainer's zoom with it there.
+        #
+        self.assertNotIn('class="certificate-issuer" title=', closed)
+
     def test_an_unknown_view_falls_back_rather_than_failing(self) -> None:
         self.assertIn("referenced by this cluster", self.page("?view=nonsense"))
 

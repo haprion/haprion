@@ -109,6 +109,21 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             page.wait_for_selector(".certificate-cluster-list")
             self.assertTrue(page.evaluate("window.__stayed === true"))
 
+    def test_clicking_anywhere_on_a_row_opens_its_detail_in_place(self) -> None:
+        with self.signed_in("?view=registry") as page:
+            page.evaluate("window.__stayed = true")
+            self.assertEqual(page.locator(".registry-detail").count(), 0)
+
+            page.click(".registry-row td[data-label='Valid from']")
+            page.wait_for_selector(".registry-detail")
+
+            self.assertTrue(page.evaluate("window.__stayed === true"))
+            self.assertIn("open=", page.url)
+
+            page.click(".registry-open td[data-label='Expires']")
+            page.wait_for_selector(".registry-detail", state="detached")
+            self.assertNotIn("open=", page.url)
+
     def test_the_switch_stays_on_screen_while_the_page_scrolls(self) -> None:
         with self.signed_in("?view=registry") as page:
             page.set_viewport_size({"width": 1000, "height": 300})

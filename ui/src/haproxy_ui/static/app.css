@@ -720,33 +720,33 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 /* One table for both views since 2026-09-12 - the registry and each cluster's
    card draw the same seven columns - and one set of column positions, so the
    columns do not move when the view changes or between one cluster's card
-   and the next. Sized by content the columns did move, because content
-   differs per card; fixed widths, measured with the interface's own font
-   (the rig measured in a fallback face until 2026-09-12 and every earlier
-   width was too narrow), keep every column under the same heading everywhere.
-   Each fixed width holds the widest phrase its column can produce; Names is
-   the one column that takes what is left and ellipsises, and the table stops
-   shrinking at a width where it still has a readable Names column - below
-   that the card scrolls sideways rather than crushing it. The issuer is
-   capped from inside its cell with the full name in its title. */
-.registry-table { min-width: 1300px; }
+   and the next. Fixed widths, measured with the interface's own font (the rig
+   measured in a fallback face until 2026-09-12 and every earlier width was
+   too narrow), each holding the widest phrase its column can produce; Names
+   is the one column that takes what is left and ellipsises. The sum fits a
+   1920-wide screen at the maintainer's zoom with Names still readable - the
+   issuer moved out of the row to make that true. */
 .registry-table th, .registry-table td { padding-left: 10px; padding-right: 10px; }
 .registry-table th:first-child, .registry-table td:first-child { padding-left: 20px; }
-.registry-table th:nth-child(1), .registry-table td:nth-child(1) { width: 190px; }
+.registry-table th:nth-child(1), .registry-table td:nth-child(1) { width: 180px; }
 .registry-table th:nth-child(2), .registry-table td:nth-child(2) { width: auto; }
-.registry-table th:nth-child(3), .registry-table td:nth-child(3) { width: 300px; }
+.registry-table th:nth-child(3), .registry-table td:nth-child(3) { width: 150px; }
 .registry-table th:nth-child(4), .registry-table td:nth-child(4) { width: 200px; }
 .registry-table th:nth-child(5), .registry-table td:nth-child(5) { width: 105px; }
 .registry-table th:nth-child(6), .registry-table td:nth-child(6) { width: 195px; }
 .registry-table th:nth-child(7), .registry-table td:nth-child(7) { width: 200px; }
-.registry-table .certificate-issuer { display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+/* The whole row opens its detail, so the whole row says so. */
+.registry-row { cursor: pointer; }
 .registry-table tbody tr.registry-open { background: var(--panel-soft); }
 .registry-table tbody tr.registry-detail:hover { background: transparent; }
-.registry-detail td { padding: 4px 0 14px; }
+/* The detail is prose and wraps; the node table's one-line rule is for cells
+   that hold a value, and inherited here it laid one label's text over the
+   next. */
+.registry-detail td { padding: 4px 0 14px; white-space: normal; }
 .registry-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 28px; padding: 2px 2px 0; }
 .registry-detail-grid > div { display: grid; gap: 3px; min-width: 0; }
 .registry-detail-grid strong { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
-.registry-detail-grid span { color: var(--text-primary); font-size: 12px; overflow-wrap: anywhere; }
+.registry-detail-grid span { color: var(--text-primary); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
 .registry-detail-targets { grid-column: 1 / -1; }
 /* A cluster and a receiver are different kinds of destination, and the word
    says which rather than a separator the reader has to learn. */

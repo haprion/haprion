@@ -49,9 +49,22 @@
     if (event.button !== 0 || event.defaultPrevented) return;
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const pick = event.target.closest(".certificate-views a, .registry-table .proxy-link");
-    if (!pick) return;
+    if (pick) {
+      event.preventDefault();
+      follow(pick.getAttribute("href"));
+      return;
+    }
+    //
+    // The rest of the row opens the detail too - anywhere on it, not only
+    // the name. Never over a selection somebody is making with the pointer,
+    // and never over a link or control, which already mean something.
+    //
+    const row = event.target.closest(".registry-row");
+    if (!row || !row.dataset.href) return;
+    if (event.target.closest("a, button, input, select, textarea, summary, label")) return;
+    if (String(window.getSelection() || "")) return;
     event.preventDefault();
-    follow(pick.getAttribute("href"));
+    follow(row.dataset.href);
   });
 
   //

@@ -115,6 +115,12 @@ class CertificateView:
     state_label: str = "Unknown"
     state_detail: str = ""
     state_tone: Tone = "unknown"
+    wildcard: bool = False
+    #
+    # Always None here: the cluster listing reads the published copy, which
+    # is the file it is about. Present so one row template serves both views.
+    #
+    material_note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +152,12 @@ class RegistryCertificateView:
     #
     material_note: str | None = None
     valid_from: str = "—"
+
+    @property
+    def lifecycle_label(self) -> str:
+        """The badge's word, under the name the cluster row uses for it."""
+
+        return self.source_label
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,6 +328,7 @@ def _certificate_view(value: Any, *, now: datetime) -> CertificateView | None:
         expiry_label=expiry_label,
         tone=tone,
         valid_from=_date(entry.get("not_before")),
+        wildcard=any(name.startswith("*.") for name in _sans(entry.get("sans"))),
     )
 
 
@@ -907,7 +920,21 @@ def build_certificate_overview(
     return CertificateOverview(
         clusters=tuple(clusters),
         cluster_count=len(clusters),
-        on_clusters_count=sum(entry.referenced for entry in distinct.values()),
+        #
+        # Referenced by any cluster, not by the cluster whose listing happened
+        # to come first: every listing names every file in the shared
+        # directory, so a certificate one cluster serves is in the other's
+        # listing as unreferenced, and `distinct` keeps whichever was first.
+        # Counted that way the switch said 2 for three certificates.
+        #
+        on_clusters_count=len(
+            {
+                certificate.fingerprint or f"id:{certificate.identifier}"
+                for cluster_view in clusters
+                for certificate in cluster_view.certificates
+                if certificate.referenced
+            }
+        ),
         #
         # The registry counts the material the manager looks after; the
         # per-cluster tally counts what the clusters can be given. Where a

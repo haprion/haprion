@@ -720,9 +720,18 @@ class WhatTheSwitchCounts(unittest.TestCase):
         # certificates, so the number is three - not two clusters, and not
         # four rows.
         #
+        # Every listing names every file in the shared directory, so what beta
+        # serves is in alpha's listing as unreferenced - and alpha's comes
+        # first. Counted from the first listing seen, "two" was missed.
         shared = certificate("shared.example.com", fingerprint="a" * 64)
         view = overview(
-            reading(certificates=[shared, certificate("one.example.com", fingerprint="b" * 64)]),
+            reading(
+                certificates=[
+                    shared,
+                    certificate("one.example.com", fingerprint="b" * 64),
+                    certificate("two.example.com", fingerprint="c" * 64, referenced=False),
+                ]
+            ),
             reading(
                 cluster="beta",
                 certificates=[

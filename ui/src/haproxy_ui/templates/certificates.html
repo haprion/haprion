@@ -1,6 +1,62 @@
 {% extends "layout.html" %}
 {% block title %}Certificates — HAProxy Manager{% endblock %}
 {% block content %}
+{#
+  One table for both views: the same seven columns, the same words, the same
+  widths - two answers about the same material, and a reader should not have
+  to re-learn the table between them (asked for on 2026-09-12). The issuer
+  lives in the detail row rather than beside the badge: with it in the row the
+  seven columns did not fit a 1920-wide screen at the maintainer's zoom, and
+  the badge alone says what the reader scans for.
+
+  A row is the control that opens its detail - anywhere on it, not only the
+  name - and the open row's own link is what closes it. The name stays a real
+  link, so the row works without the script; `certificates.js` answers the
+  click on the rest of the row.
+#}
+{% macro certificate_table(rows, view, opened) %}
+  <div class="table-scroll"><table class="node-table certificate-table registry-table">
+    <thead><tr><th>Certificate</th><th>Names</th><th>Source</th><th>Used by</th><th>Valid from</th><th>Expires</th><th>State</th></tr></thead>
+    <tbody>
+      {% for certificate in rows %}
+      {% set open = certificate.identifier == opened %}
+      {% set href = '?view=' ~ view ~ ('' if open else '&open=' ~ certificate.identifier) %}
+      <tr class="registry-row{% if open %} registry-open{% endif %}" data-href="{{ href }}">
+        <td data-label="Certificate"><a class="proxy-link" href="{{ href }}" aria-expanded="{{ 'true' if open else 'false' }}"><strong>{{ certificate.identifier }}</strong></a></td>
+        <td data-label="Names">{% if certificate.sans %}<span class="certificate-sans">{{ certificate.sans | join(', ') }}</span>{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}—{% endif %}</td>
+        <td data-label="Source"><span class="lifecycle-badge lifecycle-{{ 'acme' if certificate.lifecycle_label == 'Certbot' else 'static' }}">{{ certificate.lifecycle_label }}</span>{% if certificate.wildcard %}<span class="certificate-issuer">wildcard</span>{% endif %}</td>
+        <td data-label="Used by">{% if certificate.targets %}<span class="certificate-sans">{% for target in certificate.targets %}{% if not loop.first %}, {% endif %}{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span>{% endif %}{% endfor %}</span>{% else %}<span class="warning-text">Nowhere</span>{% endif %}</td>
+        <td data-label="Valid from"><span class="certificate-date">{{ certificate.valid_from }}</span></td>
+        <td data-label="Expires">{% if certificate.expires != '—' %}<span class="certificate-date">{{ certificate.expires }}</span>{% endif %}<span class="status-badge status-badge-{{ certificate.tone }}">{{ certificate.expiry_label }}</span></td>
+        <td data-label="State"><span class="status-badge status-badge-{{ certificate.state_tone }}">{{ certificate.state_label }}</span></td>
+      </tr>
+      {% if open %}
+      <tr class="registry-detail"><td colspan="7">
+        <div class="registry-detail-grid">
+          <div><strong>Covers</strong><span>{% if certificate.sans %}{{ certificate.sans | join(', ') }}{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}{{ certificate.common_name }}{% endif %}</span></div>
+          <div><strong>Issuer</strong><span>{{ certificate.issuer }}</span></div>
+          {% if certificate.material_note %}<div><strong>Material</strong><span>{{ certificate.material_note }}</span></div>{% endif %}
+          <div><strong>State</strong><span>{{ certificate.state_detail }}</span></div>
+          {#
+            Per target, because the two kinds are knowable to different depths.
+            A cluster's nodes report what they carry; a receiver fetches on its
+            own schedule with its own key and reports nothing back, so the most
+            that can be said of one is when the file was written for it.
+          #}
+          <div class="registry-detail-targets"><strong>Published to</strong>
+            {% for target in certificate.targets %}
+            <span>{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span> · {{ target.published_label }}{% if target.current is false %} <span class="warning-text">(older version)</span>{% endif %}{% else %} <span class="target-kind">cluster</span>{% endif %}</span>
+            {% else %}
+            <span class="warning-text">No target is registered for this certificate.</span>
+            {% endfor %}
+          </div>
+        </div>
+      </td></tr>
+      {% endif %}
+      {% endfor %}
+    </tbody></table></div>
+{% endmacro %}
+
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 <script defer src="{{ url_for('static', path='/certificates.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
@@ -44,51 +100,7 @@
     found on 2026-09-10, and found again in the C5 mockup with the state badge
     clipped at 130px where it needed 225.
   #}
-  <div class="table-scroll"><table class="node-table certificate-table registry-table">
-    {#
-      The same seven columns as a cluster's table below, in the same order and
-      with the same words - the two views are two answers about the same
-      material, and a reader should not have to re-learn the table between
-      them. Asked for on 2026-09-12.
-    #}
-    <thead><tr><th>Certificate</th><th>Names</th><th>Source</th><th>Used by</th><th>Valid from</th><th>Expires</th><th>State</th></tr></thead>
-    <tbody>
-      {% for certificate in certificates.registry.certificates %}
-      {% set open = certificate.identifier == opened %}
-      <tr{% if open %} class="registry-open"{% endif %}>
-        <td data-label="Certificate"><a class="proxy-link" href="?view=registry{% if not open %}&amp;open={{ certificate.identifier }}{% endif %}" aria-expanded="{{ 'true' if open else 'false' }}"><strong>{{ certificate.identifier }}</strong></a></td>
-        <td data-label="Names">{% if certificate.sans %}<span class="certificate-sans">{{ certificate.sans | join(', ') }}</span>{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}—{% endif %}</td>
-        <td data-label="Source"><span class="lifecycle-badge lifecycle-{{ 'acme' if certificate.source_label == 'Certbot' else 'static' }}">{{ certificate.source_label }}</span>{% if certificate.issuer != '—' %}<span class="certificate-issuer" title="{{ certificate.issuer }}">{{ certificate.issuer }}</span>{% endif %}</td>
-        <td data-label="Used by">{% if certificate.targets %}<span class="certificate-sans">{% for target in certificate.targets %}{% if not loop.first %}, {% endif %}{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span>{% endif %}{% endfor %}</span>{% else %}<span class="warning-text">Nowhere</span>{% endif %}</td>
-        <td data-label="Valid from"><span class="certificate-date">{{ certificate.valid_from }}</span></td>
-        <td data-label="Expires">{% if certificate.expires != '—' %}<span class="certificate-date">{{ certificate.expires }}</span>{% endif %}<span class="status-badge status-badge-{{ certificate.tone }}">{{ certificate.expiry_label }}</span></td>
-        <td data-label="State"><span class="status-badge status-badge-{{ certificate.state_tone }}">{{ certificate.state_label }}</span></td>
-      </tr>
-      {% if open %}
-      <tr class="registry-detail"><td colspan="7">
-        <div class="registry-detail-grid">
-          <div><strong>Covers</strong><span>{% if certificate.sans %}{{ certificate.sans | join(', ') }}{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}{{ certificate.common_name }}{% endif %}</span></div>
-          <div><strong>Issuer</strong><span>{{ certificate.issuer }}</span></div>
-          {% if certificate.material_note %}<div><strong>Material</strong><span>{{ certificate.material_note }}</span></div>{% endif %}
-          <div><strong>State</strong><span>{{ certificate.state_detail }}</span></div>
-          {#
-            Per target, because the two kinds are knowable to different depths.
-            A cluster's nodes report what they carry; a receiver fetches on its
-            own schedule with its own key and reports nothing back, so the most
-            that can be said of one is when the file was written for it.
-          #}
-          <div class="registry-detail-targets"><strong>Published to</strong>
-            {% for target in certificate.targets %}
-            <span>{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span> · {{ target.published_label }}{% if target.current is false %} <span class="warning-text">(older version)</span>{% endif %}{% else %} <span class="target-kind">cluster</span>{% endif %}</span>
-            {% else %}
-            <span class="warning-text">No target is registered for this certificate.</span>
-            {% endfor %}
-          </div>
-        </div>
-      </td></tr>
-      {% endif %}
-      {% endfor %}
-    </tbody></table></div>
+  {{ certificate_table(certificates.registry.certificates, 'registry', opened) }}
   {% else %}
   <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>No certificates registered</strong><span>The registry is readable and holds no entries</span></div></div>
   {% endif %}
@@ -115,19 +127,7 @@
       merely-available ones left, and a column with one value in it is a column
       that teaches the reader to stop looking at columns.
     #}
-    <div class="table-scroll"><table class="node-table certificate-table registry-table"><thead><tr><th>Certificate</th><th>Names</th><th>Source</th><th>Used by</th><th>Valid from</th><th>Expires</th><th>State</th></tr></thead><tbody>
-      {% for certificate in referenced %}
-      <tr>
-        <td data-label="Certificate"><strong>{{ certificate.identifier }}</strong></td>
-        <td data-label="Names">{% if certificate.sans %}<span class="certificate-sans">{{ certificate.sans | join(', ') }}</span>{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}—{% endif %}</td>
-        <td data-label="Source"><span class="lifecycle-badge lifecycle-{{ certificate.lifecycle }}">{{ certificate.lifecycle_label }}</span>{% if certificate.issuer != '—' %}<span class="certificate-issuer" title="{{ certificate.issuer }}">{{ certificate.issuer }}</span>{% endif %}</td>
-        <td data-label="Used by"><span class="certificate-sans">{% for target in certificate.targets %}{% if not loop.first %}, {% endif %}{{ target.name }}{% if target.kind == 'receiver' %} <span class="target-kind">receiver</span>{% endif %}{% endfor %}</span></td>
-        <td data-label="Valid from"><span class="certificate-date">{{ certificate.valid_from }}</span></td>
-        <td data-label="Expires">{% if certificate.expires != '—' %}<span class="certificate-date">{{ certificate.expires }}</span>{% endif %}<span class="status-badge status-badge-{{ certificate.tone }}">{{ certificate.expiry_label }}</span></td>
-        <td data-label="State"><span class="status-badge status-badge-{{ certificate.state_tone }}" title="{{ certificate.state_detail }}">{{ certificate.state_label }}</span></td>
-      </tr>
-      {% endfor %}
-    </tbody></table></div>
+    {{ certificate_table(referenced, 'clusters', opened) }}
     <p class="table-note">{{ cluster.referenced_count }} referenced by this cluster.</p>
     {% else %}
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>

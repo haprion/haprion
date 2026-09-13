@@ -70,7 +70,7 @@ haproxy-ui-traffic-collector = "haproxy_mgmt.traffic_collector:_entry"
 # this is what makes them visible.
 #
 [tool.setuptools.package-data]
-haproxy_mgmt = ["py.typed", "compatibility.json"]
+haproxy_mgmt = ["py.typed", "compatibility.json", "dns-providers.yaml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

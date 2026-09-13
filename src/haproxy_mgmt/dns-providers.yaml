@@ -1,0 +1,48 @@
+schema_version: 1
+providers:
+  - id: azure
+    name: Azure DNS
+    tier: community
+    package: certbot-dns-azure-modern
+    plugin: dns-azure
+    adapter: azure-service-principal
+    documentation: https://cloudchristoph.github.io/certbot-dns-azure-modern/configuration/
+    propagation_seconds: 30
+    verification: integration-tested
+    fields:
+      - id: client_id
+        label: Application (client) ID
+        kind: text
+        required: true
+        secret: false
+      - id: client_secret
+        label: Client secret
+        kind: text
+        required: true
+        secret: true
+      - id: tenant_id
+        label: Directory (tenant) ID
+        kind: text
+        required: true
+        secret: false
+      - id: zone_mappings
+        label: DNS zones and resource groups
+        kind: list
+        required: true
+        secret: false
+  - id: cloudflare
+    name: Cloudflare
+    tier: core
+    package: certbot-dns-cloudflare
+    plugin: dns-cloudflare
+    adapter: ini
+    documentation: https://certbot-dns-cloudflare.readthedocs.io/en/stable/
+    propagation_seconds: 30
+    verification: live-verified
+    fields:
+      - id: api_token
+        label: API token
+        kind: text
+        required: true
+        secret: true
+        key: dns_cloudflare_api_token

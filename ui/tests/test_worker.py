@@ -12,6 +12,7 @@ import json
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest import mock
 from uuid import uuid4
@@ -498,3 +499,13 @@ class WaitingForWork(unittest.TestCase):
         worker._wait_for_work(listener, FakeStop(stop_at=2), 3600)
 
         self.assertLessEqual(len(listener.waits), 2)
+
+
+class TheWorkerKeepsOutOfTheDraftTable(unittest.TestCase):
+    def test_prepare_is_never_handed_a_draft_lookup(self) -> None:
+        """The worker holds no grant on `proxy_draft`; a lookup handed in here
+        is a crash at run time, not a refusal (2026-09-13)."""
+
+        source = Path(worker.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("draft_references", source)
+        self.assertNotIn("live_drafts", source)

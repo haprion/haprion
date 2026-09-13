@@ -143,10 +143,15 @@ ProfileLookup = Callable[[str], SealedProfileRow | None]
 
 #
 # Which of the named certificates a draft still names, as certificate ID to
-# `cluster/object` rows. The database is the worker's to ask; this module only
-# refuses when the answer is not empty, so a draft written between the
-# confirmation page and the run is a refusal here and not a job that deleted
-# what somebody was about to publish.
+# `cluster/object` rows. The web asks its own database and hands the answer
+# in when it queues; the worker does not, because the worker holds no grant
+# on `proxy_draft` (INSTALLATION.md: it publishes from the payload, never
+# from the table) - a run-time check from the worker was tried on
+# 2026-09-13 and took the whole process down with `InsufficientPrivilege`.
+# So the last look at the drafts is the moment of queueing, and a draft
+# written after that names a certificate that may already be gone; its
+# publish then fails on a missing file, which is recoverable, where a worker
+# that can read drafts is not the privilege model.
 #
 DraftReferences = Callable[[tuple[str, ...]], Mapping[str, tuple[str, ...]]]
 

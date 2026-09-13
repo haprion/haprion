@@ -963,7 +963,10 @@ not become seventy jobs.
 **The guards are the operation, not a warning.** A certificate is refused, with nothing touched,
 when a proxy object in a cluster's committed configuration still names it, when it is a cluster's
 `default_certificate`, when it is the only certificate a cluster has (the engine refuses to load a
-cluster no certificate names), or when a draft in the interface's database still names it. A
+cluster no certificate names), or when a draft in the interface's database still names it. The
+draft check is the web's, made on the confirmation page and again as the job is queued; the worker
+holds no grant on drafts and does not look, so a draft written after queueing is the one window
+left open - its publish then fails on a missing file, which is recoverable. A
 refused certificate stops nothing else in the batch: it is reported on its own row and the others
 go through. The job's outcome is `done` when every row went, `partial` when any was refused or
 left a layer behind, `blocked` when every row was refused.

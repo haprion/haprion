@@ -564,6 +564,23 @@ class CertificateDeletion(unittest.TestCase):
                     idempotency_key=uuid4(),
                 )
 
+    def test_the_worker_cannot_read_drafts_so_the_draft_check_is_the_web_s(self) -> None:
+        """What took the worker down on 2026-09-13: the run-time draft check.
+
+        The grant is the design, not the bug. The worker publishes from the
+        payload and never from the table, so the last look at the drafts is
+        the moment the web queues the job; `db.live_drafts` is a web-only
+        read and must fail here.
+        """
+
+        with (
+            self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection,
+            self.assertRaises(psycopg.errors.InsufficientPrivilege),
+        ):
+            db.live_drafts(connection)
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            self.assertEqual(db.live_drafts(connection), [])
+
     def test_the_migration_downgrades_and_upgrades_cleanly_on_an_empty_queue(self) -> None:
         migration_path = (
             Path(__file__).resolve().parents[1] / "migrations" / "versions" / "0026_cert_delete.py"

@@ -202,8 +202,8 @@ class DeletingCertificates(unittest.TestCase):
                 )
 
     def test_a_draft_that_names_a_certificate_refuses_the_job(self) -> None:
-        """The check the worker repeats at run time, so a draft written after
-        the confirmation page is a refusal and not a deleted certificate."""
+        """The check the web makes as it queues; the worker holds no grant on
+        drafts and passes nothing here."""
 
         with self.assertRaisesRegex(operations.BadPayload, "alpha/shop"):
             operations.prepare(

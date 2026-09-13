@@ -7,8 +7,10 @@ the interface's database and nowhere the helper can see: which certificates
 were ticked, and which of those a **draft** still names. A draft is a change
 somebody has not published yet; deleting the certificate it names would make
 that publish fail on a file that used to exist, so the page refuses such a
-certificate before the job is queued and the worker refuses it once more at
-run time in case a draft arrived in between.
+certificate before the job is queued, and the queueing route looks once more
+at the moment it queues. The worker does not look: it holds no grant on
+`proxy_draft`, by design, so a draft written after queueing is the one window
+this side cannot close - its publish then fails on a missing file.
 
 The page shows every chosen certificate on its own row with what deleting it
 means, and queues only the ones nothing here refuses. What the helper then

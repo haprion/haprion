@@ -153,7 +153,10 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
                 self.fail("the certificate header, guidance and fields must have layout boxes")
             self.assertGreaterEqual(warning["y"], header["y"] + header["height"])
             self.assertLessEqual(warning["y"] + warning["height"], fields["y"])
-            self.assertLessEqual(warning["height"], 42)
+            #
+            # Three lines by design (one per statement), never a fourth.
+            #
+            self.assertLessEqual(warning["height"], 64)
             self.assertEqual(
                 page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), True
             )
@@ -162,10 +165,28 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             warning = page.locator(".challenge-warning").bounding_box()
             if warning is None:
                 self.fail("the guidance must keep its layout box on a narrow screen")
-            self.assertLessEqual(warning["height"], 110)
+            #
+            # Each statement wraps on its own here: six lines, measured.
+            #
+            self.assertLessEqual(warning["height"], 130)
             self.assertEqual(
                 page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), True
             )
+
+    def test_choosing_http_01_greys_the_profile_field_and_dns_01_gives_it_back(self) -> None:
+        with self.signed_in(path="/certificates/new") as page:
+            profile = page.locator("select[name='dns_profile']")
+            self.assertFalse(profile.is_disabled())
+
+            page.check("input[name='method'][value='http-01']")
+            self.assertTrue(profile.is_disabled())
+            self.assertLess(
+                page.evaluate("getComputedStyle(document.querySelector('.dns-only')).opacity"),
+                "1",
+            )
+
+            page.check("input[name='method'][value='dns-01']")
+            self.assertFalse(profile.is_disabled())
 
 
 if __name__ == "__main__":

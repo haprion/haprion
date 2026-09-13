@@ -246,11 +246,31 @@ class TheFormPage(CertificateFormRouteTestCase):
             page,
         )
         self.assertIn("the domain must already point to this installation", page)
+        #
+        # Three statements, three lines: the reader picks the one for the
+        # challenge they chose without reading the other two.
+        #
+        self.assertIn("its DNS plugins.<br>For DNS-01,", page)
+        self.assertIn("documentation.<br>For HTTP-01,", page)
         self.assertNotIn("Provide DNS access", page)
         self.assertIn("DNS record; supports wildcards", page)
         self.assertIn("Webroot file; single names only", page)
         self.assertNotIn("Asks the ACME account", page)
         self.assertNotIn("cluster-accent-", page)
+
+    def test_the_profile_field_is_greyed_under_http_01_and_the_page_wires_it(self) -> None:
+        client = self.writing_client()
+        page = client.get("/certificates/new").text
+        self.assertIn("certificate-form.js", page)
+        self.assertIn('<label class="dns-only">', page)
+        self.assertIn('<select name="dns_profile">', page)
+
+        #
+        # A refused HTTP-01 form is redrawn with the choice kept, so the
+        # server draws the field the way the script would have: disabled.
+        #
+        page = self.post(client, domain="*.example.com", method="http-01").text
+        self.assertIn('<select name="dns_profile" disabled>', page)
 
     def test_the_listing_links_to_it_for_an_admin_only(self) -> None:
         self.assertIn('href="/certificates/new"', self.writing_client().get("/certificates").text)

@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}New certificate — HAProxy Manager{% endblock %}
-{% block head_extra %}<script defer src="{{ url_for('static', path='/receiver-picker.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block head_extra %}<script defer src="{{ url_for('static', path='/certificate-form.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/receiver-picker.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
 {#
   Phase 11's gate, drawn: one form, one button. What it asks for is exactly
@@ -31,7 +31,7 @@
 
   <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Certificate</h3></div></div></header>
-    <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of Certbot and its DNS plugins. For DNS-01, consult the selected provider plugin's documentation. For HTTP-01, the domain must already point to this installation.</span></p>
+    <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of Certbot and its DNS plugins.<br>For DNS-01, consult the selected provider plugin's documentation.<br>For HTTP-01, the domain must already point to this installation.</span></p>
     <div class="form-grid">
       <label>Domain<input name="domain" value="{{ form.domain }}" maxlength="255" placeholder="app.example.com or *.example.com" autocomplete="off" spellcheck="false" required autofocus><small>Becomes the certificate's name. <code>*.example.com</code> also covers <code>example.com</code>, the way the existing wildcard does.</small></label>
       {#
@@ -48,8 +48,14 @@
           <label class="check"><input type="radio" name="method" value="http-01"{% if form.method == 'http-01' %} checked{% endif %}> <span><span class="method-name">HTTP-01</span> <span class="optional">— Webroot file; single names only</span></span></label>
         </div>
       </div>
-      <label><span class="field-title">DNS provider profile</span>
-        <select name="dns_profile">
+      {#
+        Greyed under HTTP-01, not hidden: the page keeps its height and the
+        label keeps saying what the challenge above decided. A disabled select
+        is not submitted, which is the right answer for HTTP-01 - the server
+        refuses a profile with it and requires one with DNS-01 either way.
+      #}
+      <label class="dns-only"><span class="field-title">DNS provider profile</span>
+        <select name="dns_profile"{% if form.method == 'http-01' %} disabled{% endif %}>
           <option value="">Choose a profile…</option>
           {% for profile in choices.dns_profiles %}<option value="{{ profile }}"{% if form.dns_profile == profile %} selected{% endif %}>{{ profile }}</option>{% endfor %}
         </select>

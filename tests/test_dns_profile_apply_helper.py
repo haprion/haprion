@@ -157,14 +157,28 @@ class Applying(ApplyFixture):
         renewal = self.root / "renewal"
         renewal.mkdir()
         (renewal / "example.com.conf").write_text(
-            f"[renewalparams]\ndns_cloudflare_credentials = {self.profile_dir / 'cf-main'}\n",
-            encoding="utf-8",
+            renewal_conf("example.com", self.profile_dir / "cf-main"), encoding="utf-8"
         )
 
         code, document, _ = self.invoke(self.request(remove=True), renewal_directory=renewal)
         self.assertEqual(code, 65)
         self.assertEqual(document["error"]["code"], "profile_in_use")
+        self.assertIn("example.com", document["error"]["message"])
         self.assertTrue((self.profile_dir / "cf-main").exists())
+
+    def test_remove_reads_certbot_lineages_that_point_elsewhere(self) -> None:
+        code, _, errors = self.invoke(self.request())
+        self.assertEqual(code, 0, errors)
+        renewal = self.root / "renewal"
+        renewal.mkdir()
+        (renewal / "other.example.conf").write_text(
+            renewal_conf("other.example", self.root / "elsewhere.ini"), encoding="utf-8"
+        )
+
+        code, document, errors = self.invoke(self.request(remove=True), renewal_directory=renewal)
+        self.assertEqual(code, 0, errors)
+        self.assertTrue(document["result"]["removed"])
+        self.assertFalse((self.profile_dir / "cf-main").exists())
 
     def test_remove_is_blocked_by_a_registry_source_reference(self) -> None:
         code, _, errors = self.invoke(self.request())
@@ -184,6 +198,27 @@ class Applying(ApplyFixture):
         self.assertEqual(document["error"]["code"], "profile_in_use")
         self.assertIn("example.com", document["error"]["message"])
         self.assertTrue((self.profile_dir / "cf-main").exists())
+
+
+def renewal_conf(lineage: str, credentials: Path) -> str:
+    """A renewal conf as certbot writes it: lineage paths above the section."""
+
+    return (
+        f"version = 5.8.0\n"
+        f"archive_dir = /etc/letsencrypt/archive/{lineage}\n"
+        f"cert = /etc/letsencrypt/live/{lineage}/cert.pem\n"
+        f"privkey = /etc/letsencrypt/live/{lineage}/privkey.pem\n"
+        f"chain = /etc/letsencrypt/live/{lineage}/chain.pem\n"
+        f"fullchain = /etc/letsencrypt/live/{lineage}/fullchain.pem\n"
+        f"[renewalparams]\n"
+        f"account = 97fd02a3f6b1cef3fd33c95a583abc17\n"
+        f"key_type = ecdsa\n"
+        f"authenticator = dns-cloudflare\n"
+        f"dns_cloudflare = True\n"
+        f"dns_cloudflare_propagation_seconds = 30\n"
+        f"dns_cloudflare_credentials = {credentials}\n"
+        f"server = https://acme-v02.api.letsencrypt.org/directory\n"
+    )
 
 
 def yaml_policy(path: Path):

@@ -1033,6 +1033,12 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .certificate-form .certificate-guidance { max-width: 1160px; margin: 14px 20px 0; font-size: 13px; line-height: 1.55; }
 .certificate-form .certificate-guidance span { min-width: 0; }
 .certificate-form .field > .field-title { color: var(--text-secondary); font-weight: 620; }
+/*
+ * The provider list is one control on an otherwise empty card. Stretched to
+ * the column it would be a bar the width of the page; sized to its longest
+ * name it is a list. `max-width` keeps it inside the column on a phone.
+ */
+.dns-profile-form select[name='provider'] { align-self: flex-start; width: auto; max-width: 100%; }
 .certificate-form .field > small { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .certificate-form .warning-text { margin: 0; }
 @media (max-width: 900px) {

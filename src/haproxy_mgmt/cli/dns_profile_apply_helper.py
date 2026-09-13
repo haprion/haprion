@@ -36,18 +36,28 @@ PARAMETERS = frozenset(
 )
 HELPER = dns_profiles.HELPER
 RENEWAL_DIRECTORY = Path("/etc/letsencrypt/renewal")
+_TOP_SECTION = "haproxy-manager.lineage"
 
 
 def _renewal_references(directory: Path, credentials: str) -> tuple[str, ...]:
-    """Lineages whose parsed renewal parameters name this exact file."""
+    """Lineages whose parsed renewal parameters name this exact file.
+
+    Certbot writes ``renewal/*.conf`` with configobj: the lineage paths
+    (``version``, ``archive_dir``, ``cert`` ...) stand above the first
+    section header and ``[renewalparams]`` follows. ``RawConfigParser``
+    rejects keys before a header, so the file is read under a synthetic
+    top section; the credentials flag lives in ``[renewalparams]`` but every
+    section is compared so a moved key cannot hide a reference.
+    """
 
     references: list[str] = []
     try:
         candidates = tuple(directory.glob("*.conf")) if directory.is_dir() else ()
         for path in candidates:
-            parser = configparser.RawConfigParser(interpolation=None)
-            with path.open(encoding="utf-8") as stream:
-                parser.read_file(stream)
+            parser = configparser.RawConfigParser(interpolation=None, strict=False)
+            parser.read_string(
+                f"[{_TOP_SECTION}]\n" + path.read_text(encoding="utf-8"), source=str(path)
+            )
             if any(
                 value.strip() == credentials
                 for section in parser.sections()

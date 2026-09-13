@@ -3,7 +3,8 @@
   "requires": {
     "database_head": "0024",
     "database_revisions": [
-      "0024"
+      "0024",
+      "0025"
     ],
     "engine_api": 1,
     "node_api": 1,

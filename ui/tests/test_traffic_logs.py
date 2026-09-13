@@ -551,7 +551,9 @@ class TheTrafficLogPage(LoginTestCase):
 
         page = self.page()
 
-        self.assertIn("last try 0 s ago — failed (ssh)", page)
+        # The view reads its own clock, so the seconds since the attempt depend
+        # on how slow the runner is; only the outcome and the old success matter.
+        self.assertRegex(page, r"last try \d+ s ago — failed \(ssh\)")
         self.assertIn("last success 10 min ago", page)
 
     def test_a_truncated_search_window_is_stated_on_the_page(self) -> None:

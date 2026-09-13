@@ -132,6 +132,8 @@ class WhatReachesCertbot(IssueFixture):
                 "--dns-cloudflare",
                 "--dns-cloudflare-credentials",
                 str(self.root / "cloudflare.ini"),
+                "--dns-cloudflare-propagation-seconds",
+                "30",
                 "-d",
                 "*.example.com",
                 "-d",

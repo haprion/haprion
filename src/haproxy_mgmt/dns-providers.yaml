@@ -7,6 +7,10 @@
 # Values in `fields` are what the form asks for; `key` is the INI key the
 # adapter writes. A field marked `secret` is scrubbed from certbot's output.
 # `delivery` is how the root helper hands certbot the rendered file.
+# `propagation_seconds` starts at the plugin's own default and is raised where
+# a real zone proved the default short: Cloudflare's 10 failed one renewal in
+# five on a live zone and 30 renewed all of them, so 30 is what every Cloudflare
+# lineage is issued with.
 # `verification` states the evidence: packaged (in the lock), loaded (the
 # entrypoint loads and the rendered file passes the plugin's own credential
 # validation), integration-tested (plugin and SDK exercised with a mocked
@@ -204,7 +208,7 @@ providers:
   adapter: ini
   delivery: flag:credentials
   documentation: https://certbot-dns-cloudflare.readthedocs.io/en/stable/
-  propagation_seconds: 10
+  propagation_seconds: 30
   verification: live-verified
   fields:
   - id: api_token

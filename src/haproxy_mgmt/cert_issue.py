@@ -46,7 +46,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from haproxy_mgmt import cert_registry, dns_profiles
+from haproxy_mgmt import cert_registry, dns_profiles, dns_provider_catalog
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_publish import (
     DEFAULT_LOCK_PATH,
@@ -288,10 +288,15 @@ def certbot_invocation(
                     "DNS-01 needs --dns-profile or acme.dns_cloudflare_credentials",
                     exit_code=78,
                 )
+            # The policy file predates profiles; the wait is still the
+            # catalogue's, so both roads issue a lineage that renews alike.
+            cloudflare = dns_provider_catalog.provider_by_id("cloudflare")
             authenticator = [
                 "--dns-cloudflare",
                 "--dns-cloudflare-credentials",
                 str(acme.dns_cloudflare_credentials),
+                "--dns-cloudflare-propagation-seconds",
+                str(cloudflare.propagation_seconds),
             ]
             environment = {}
             redactions = ()

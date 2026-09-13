@@ -172,6 +172,17 @@ class Report:
     def incomplete(self) -> tuple[str, ...]:
         return tuple(o.certificate_id for o in self.outcomes if o.state == "incomplete")
 
+    @property
+    def touched(self) -> tuple[str, ...]:
+        """Certificates that lost at least one layer, complete or not."""
+
+        return tuple(
+            o.certificate_id
+            for o in self.outcomes
+            if any(layer.state == "removed" for layer in o.layers)
+            or any(copy.state == "removed" for copy in o.nodes)
+        )
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "certificates": [outcome.as_dict() for outcome in self.outcomes],

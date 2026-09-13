@@ -354,6 +354,29 @@ class TheHelper(DeleteFixture):
         self.assertEqual(document["result"]["refused"], ["keeper-beta.example"])
         self.assertEqual(document["warnings"][0]["code"], "cluster_uncovered")
 
+    def test_kept_node_copies_make_a_partial_not_a_failure(self) -> None:
+        """The first live run (job 578, 2026-09-13): nodes without the verb."""
+
+        policy_path = self.prepared(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        self.node_answers["node-a.example.com"] = (1, "unknown request: cert-remove")
+        self.node_answers["node-b.example.com"] = (1, "unknown request: cert-remove")
+        code, document, _ = self.invoke(policy_path, "example.com")
+        self.assertEqual(code, 0)
+        self.assertEqual(document["outcome"], "partial")
+        self.assertEqual(document["result"]["incomplete"], ["example.com"])
+        self.assertNotIn("example.com", self.registered())
+
+    def test_nothing_removed_at_all_is_failed(self) -> None:
+        policy_path = self.prepared(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        (self.root / "certificates.yaml").chmod(0o000)
+        self.addCleanup((self.root / "certificates.yaml").chmod, 0o640)
+        code, document, _ = self.invoke(policy_path, "example.com")
+        self.assertNotEqual(document["outcome"], "done")
+
     def test_every_one_refused_is_blocked_and_nothing_is_touched(self) -> None:
         policy_path = self.prepared({})
         before = (self.root / "certificates.yaml").read_bytes()

@@ -54,13 +54,21 @@ def build_request(request_id: str, *, certificates: tuple[str, ...]) -> str:
 
 def outcome_of(report: Report) -> tuple[Outcome, int]:
     """`done` all gone; `blocked` every one refused and nothing touched;
-    `failed` nothing removed and a layer failed; `partial` everything between."""
+    `partial` when any layer of any certificate went; `failed` only when
+    nothing at all was removed and something was tried.
+
+    A certificate whose registry entry, files and lineage are gone but whose
+    node copies were kept is the normal shape of a deletion run before the
+    nodes carry the verb (INSTALLATION.md 1.4.6). Calling that `failed` was
+    the first live run's mistake: three layers of four had gone, and the
+    envelope said nothing had.
+    """
 
     if report.outcomes and len(report.removed) == len(report.outcomes):
         return "done", 0
     if len(report.refused) == len(report.outcomes):
         return "blocked", 65
-    if report.removed or report.refused:
+    if report.touched or report.refused:
         return "partial", 0
     return "failed", 1
 

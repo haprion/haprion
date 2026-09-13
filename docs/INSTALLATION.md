@@ -976,6 +976,12 @@ holds what. The node's own script refuses an ID that any installed crt-list, `ha
 `conf.d` fragment names — the same guard as the manager's, measured against what is actually
 served rather than what is committed — and it does not reload, because nothing changed for HAProxy.
 
+**The worker's sandbox opens the import store for it.** `07-platform-services` creates
+`/etc/haproxy-manager/certificates` (root, `700`) before it writes the worker unit, because the unit
+names the directory in `ReadWritePaths` without the optional dash: a missing path stops the worker
+from starting rather than being skipped in silence. An installation upgraded to this operation
+reruns step 7 before releasing the interface that queues it.
+
 **Nothing here can be undone.** A deleted lineage has to be issued again, and a deleted import has
 to be imported again. The confirmation page says so, and the job's rows say what went.
 

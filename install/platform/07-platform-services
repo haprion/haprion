@@ -131,6 +131,18 @@ fi
 started_at="$(sudo -u "$POLLER_USER" psql -d "${DB_NAME}" -qtAX \
     -c "select statement_timestamp()")"
 
+step "Directories the worker's sandbox opens"
+#
+# `ReadWritePaths` names them without the leading dash on purpose (see the
+# unit), so a path that does not exist stops the unit from starting at all
+# rather than being skipped in silence. The import store is defined by the
+# registry (INSTALLATION.md 1.4.1) and stays empty until the import helper
+# exists; the deletion helper removes from it, so the unit opens it, and it
+# has to be here before the unit is. Root-only, like the profile directory.
+# Certbot's directories and the distribution root are checked by step 14.
+#
+ensure_dir /etc/haproxy-manager/certificates root:root 700
+
 step "Units"
 install_file "/etc/systemd/system/${WORKER_USER}.service" root:root 644 \
     "$(render "examples/haproxy-ui-worker.service.example")"

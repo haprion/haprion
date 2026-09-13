@@ -28,7 +28,7 @@ class CatalogueContractTests(unittest.TestCase):
                 self.assertIn(provider.package, locked)
 
     def test_the_catalogue_states_evidence_without_upgrading_a_mock_to_live(self) -> None:
-        self.assertEqual(provider_by_id("azure").verification, "integration-tested")
+        self.assertEqual(provider_by_id("azure").verification, "loaded")
         self.assertEqual(provider_by_id("cloudflare").verification, "live-verified")
 
     def test_an_unknown_provider_is_a_refusal(self) -> None:

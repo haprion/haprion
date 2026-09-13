@@ -8,7 +8,7 @@ providers:
     adapter: azure-service-principal
     documentation: https://cloudchristoph.github.io/certbot-dns-azure-modern/configuration/
     propagation_seconds: 30
-    verification: loaded
+    verification: integration-tested
     fields:
       - id: client_id
         label: Application (client) ID

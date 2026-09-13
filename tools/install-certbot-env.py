@@ -7,8 +7,9 @@
 Reads `certbot/pyproject.toml` and `certbot/uv.lock`, lets uv install exactly
 that set - `--locked`, so a lock file that no longer matches the project is a
 refusal, not a re-resolve - into `<target>/releases/<certbot version>-<lock
-hash>/venv`, proves that every plugin in it loads, freezes the tree root-owned
-and read-only, and only then points `<target>/current` at it. A release that is
+hash>/venv`, proves that every plugin in it loads and runs the catalogue's
+mocked integration checks through the installed plugins, freezes the tree
+root-owned and read-only, and only then points `<target>/current` at it. A release that is
 already installed from the same lock is not rebuilt; the link is moved back to
 it, which is the rollback.
 
@@ -137,6 +138,43 @@ def verify_plugins(venv_python: Path, scratch: Path) -> list[str]:
     if not report["loaded"]:
         raise InstallError("no certbot plugins at all were found")
     return list(report["loaded"])
+
+
+def verify_integrations(venv_python: Path, project: Path, scratch: Path) -> list[str]:
+    """Run catalogue-to-plugin checks inside the environment being installed."""
+
+    verifier = project / "verify-integrations.py"
+    if not verifier.is_file() or verifier.is_symlink():
+        raise InstallError(f"{verifier} must be a regular non-symlink file")
+    source_root = project.parent / "src"
+    if not source_root.is_dir() or source_root.is_symlink():
+        raise InstallError(f"{source_root} must be a real source directory")
+    report_path = scratch / "integrations.json"
+    try:
+        completed = subprocess.run(  # noqa: S603 - locked interpreter and project verifier
+            [str(venv_python), "-I", str(verifier), str(source_root), str(report_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=VERIFY_TIMEOUT,
+        )
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        raise InstallError(f"integration verification could not run: {exc}") from exc
+    finally:
+        report_path.unlink(missing_ok=True)
+    if (
+        set(report) != {"passed", "failed"}
+        or not isinstance(report["passed"], list)
+        or not isinstance(report["failed"], list)
+    ):
+        raise InstallError("integration verification returned an invalid report")
+    if completed.returncode or report["failed"]:
+        detail = "; ".join(str(item) for item in report["failed"])
+        raise InstallError("integration checks failed" + (f": {detail}" if detail else ""))
+    if not report["passed"]:
+        raise InstallError("integration verification ran no checks")
+    return [str(item) for item in report["passed"]]
 
 
 def _relocate_scripts(venv: Path, final_venv: Path) -> None:
@@ -274,6 +312,7 @@ def install_environment(
             venv = staging / "venv"
             _sync(uv, project, venv, python)
             plugins = verify_plugins(venv / "bin" / "python", staging)
+            integrations = verify_integrations(venv / "bin" / "python", project, staging)
             _relocate_scripts(venv, final_release / "venv")
             installation = {
                 "project": PROJECT_NAME,
@@ -283,6 +322,7 @@ def install_environment(
                 "python": str(python),
                 "uv_sha256": sha256_file(uv),
                 "plugins": plugins,
+                "integrations": integrations,
             }
             (staging / "INSTALLATION.json").write_text(
                 json.dumps(installation, indent=2, sort_keys=True) + "\n", encoding="utf-8"

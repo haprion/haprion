@@ -804,8 +804,12 @@ sudo UV_BIN=/path/to/uv ./install/platform/14-platform-certbot answers.env /path
 
 The step hands the lock to [`../tools/install-certbot-env.py`](../tools/install-certbot-env.py),
 which lets uv install exactly the locked set into `/opt/haproxy-certbot/releases/<certbot
-version>-<lock hash>/venv`, proves that every plugin in it loads, freezes the tree root-owned and
-read-only, and points `/opt/haproxy-certbot/current` at it. Then the step runs
+version>-<lock hash>/venv` and proves that every plugin in it loads. It then runs
+`certbot/verify-integrations.py` with the new environment's interpreter. Those checks feed the
+catalogue's rendered credentials through the installed plugin and mock only the provider SDK's
+network boundary; a missing, empty or failed report refuses the release. The passed check names
+are recorded in `INSTALLATION.json`. The installer freezes the tree root-owned and read-only and
+points `/opt/haproxy-certbot/current` at it. Then the platform step runs
 `certbot renew --dry-run --run-deploy-hooks` from the release against every lineage on the host: the
 one gate a certbot upgrade has, and a failure puts the previous release back before the step
 stops. Only after that does renewal move: the distribution's `certbot.timer` is masked and

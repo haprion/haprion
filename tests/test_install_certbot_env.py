@@ -89,6 +89,11 @@ class InstallCertbotEnvTests(unittest.TestCase):
             '[project]\nname = "haproxy-manager-certbot-env"\nversion = "0"\n'
         )
         (self.project / "uv.lock").write_text(LOCK)
+        (self.project / "verify-integrations.py").write_text(
+            "import json, sys\n"
+            "json.dump({'passed': ['fake-integration'], 'failed': []}, open(sys.argv[2], 'w'))\n"
+        )
+        (self.work / "src").mkdir()
         self.target = self.work / "target"
 
     def tearDown(self) -> None:
@@ -117,6 +122,7 @@ class InstallCertbotEnvTests(unittest.TestCase):
         metadata = json.loads((release / "INSTALLATION.json").read_text())
         self.assertEqual(metadata["certbot"], "5.8.0")
         self.assertEqual(metadata["plugins"], ["dns-alpha", "dns-beta"])
+        self.assertEqual(metadata["integrations"], ["fake-integration"])
         self.assertEqual((release / "uv.lock").read_text(), LOCK)
 
         script = release / "venv" / "bin" / "certbot"
@@ -170,6 +176,21 @@ class InstallCertbotEnvTests(unittest.TestCase):
         with self.assertRaises(installer.InstallError) as caught:
             self.install("certbot-dns-alpha")
         self.assertIn("is not the haproxy-manager-certbot-env project", str(caught.exception))
+
+    def test_a_failed_or_missing_integration_verifier_refuses_the_release(self) -> None:
+        verifier = self.project / "verify-integrations.py"
+        verifier.write_text(
+            "import json, sys\n"
+            "json.dump({'passed': [], 'failed': ['mock failed']}, open(sys.argv[2], 'w'))\n"
+            "raise SystemExit(1)\n"
+        )
+        with self.assertRaisesRegex(installer.InstallError, "integration checks failed"):
+            self.install("certbot-dns-alpha")
+        self.assertFalse((self.target / "current").exists())
+
+        verifier.unlink()
+        with self.assertRaisesRegex(installer.InstallError, "regular non-symlink file"):
+            self.install("certbot-dns-alpha")
 
 
 if __name__ == "__main__":

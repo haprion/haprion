@@ -806,9 +806,12 @@ The step hands the lock to [`../tools/install-certbot-env.py`](../tools/install-
 which lets uv install exactly the locked set into `/opt/haproxy-certbot/releases/<certbot
 version>-<lock hash>/venv` and proves that every plugin in it loads. It then runs
 `certbot/verify-integrations.py` with the new environment's interpreter. Those checks feed the
-catalogue's rendered credentials through the installed plugin and mock only the provider SDK's
-network boundary; a missing, empty or failed report refuses the release. The passed check names
-are recorded in `INSTALLATION.json`. The installer freezes the tree root-owned and read-only and
+catalogue's rendered credentials through every offered plugin's own credential setup, exercise
+Azure through its SDK with the network mocked, and run with sockets disabled so a plugin that
+reaches out fails instead of passing quietly; a missing, empty or failed report refuses the
+release. The catalogue states per provider what has been proved (`packaged`, `loaded`,
+`integration-tested`, `live-verified`) and the verifier refuses a catalogue that claims more than
+the run showed. The passed check names are recorded in `INSTALLATION.json`. The installer freezes the tree root-owned and read-only and
 points `/opt/haproxy-certbot/current` at it. Then the platform step runs
 `certbot renew --dry-run --run-deploy-hooks` from the release against every lineage on the host: the
 one gate a certbot upgrade has, and a failure puts the previous release back before the step

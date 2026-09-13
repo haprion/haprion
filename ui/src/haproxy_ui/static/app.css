@@ -562,7 +562,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .follow-up-cell .secondary-button { white-space: nowrap; }
 .job-follow-up .status-dot { margin-right: 7px; }
 .job-follow-up code { margin-left: 7px; padding: 1px 6px; border-radius: 4px; background: var(--panel-soft); color: var(--text-primary); font-size: 11px; }
-.job-table tr:has(+ .job-failure) td { border-bottom: 0; }
+.job-table tr:has(+ .job-failure) td, .job-table tr:has(+ .job-note) td { border-bottom: 0; }
 .job-diagnostics { margin-top: 8px; }
 .job-diagnostics summary { display: inline-block; padding: 2px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); color: var(--text-secondary); cursor: pointer; font-size: 11px; }
 .job-diagnostics summary::-webkit-details-marker { display: none; }
@@ -735,6 +735,19 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .registry-table th:nth-child(5), .registry-table td:nth-child(5) { width: 105px; }
 .registry-table th:nth-child(6), .registry-table td:nth-child(6) { width: 195px; }
 .registry-table th:nth-child(7), .registry-table td:nth-child(7) { width: 200px; }
+/* With the cleanup's box column in front (C5b) every column is one further
+   along, and a fixed-layout table that is not told so hands the box the
+   name's 180px - found in the C5b mockup, the same way the C5 one found
+   the state badge clipped. The same seven widths, shifted by one; the box
+   takes 44px and the name gives up its wide left padding to it. */
+.selectable-table th:nth-child(1), .selectable-table td:nth-child(1) { width: 44px; padding-left: 18px; padding-right: 0; }
+.selectable-table th:nth-child(2), .selectable-table td:nth-child(2) { width: 180px; padding-left: 8px; }
+.selectable-table th:nth-child(3), .selectable-table td:nth-child(3) { width: auto; }
+.selectable-table th:nth-child(4), .selectable-table td:nth-child(4) { width: 150px; }
+.selectable-table th:nth-child(5), .selectable-table td:nth-child(5) { width: 200px; }
+.selectable-table th:nth-child(6), .selectable-table td:nth-child(6) { width: 105px; }
+.selectable-table th:nth-child(7), .selectable-table td:nth-child(7) { width: 195px; }
+.selectable-table th:nth-child(8), .selectable-table td:nth-child(8) { width: 200px; }
 /* The whole row opens its detail, so the whole row says so. */
 .registry-row { cursor: pointer; }
 .registry-table tbody tr.registry-open { background: var(--panel-soft); }
@@ -1042,6 +1055,30 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .certificate-form .certificate-guidance { max-width: 1160px; margin: 14px 20px 0; font-size: 13px; line-height: 1.55; }
 .certificate-form .certificate-guidance span { min-width: 0; }
 .certificate-form .field > .field-title { color: var(--text-secondary); font-weight: 620; }
+/*
+ * The registry's cleanup: a narrow box column that the fixed table layout
+ * must be told about, and a bar under the table holding the count and the
+ * one button. The refusal card's table on the confirmation page reads the
+ * same widths so the two pages agree.
+ */
+.select-box { display: inline-flex; align-items: center; justify-content: center; min-height: 20px; }
+.select-box input { margin: 0; width: 16px; height: 16px; accent-color: var(--critical); }
+.deletion-bar { display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+.deletion-count { color: var(--muted); font-size: 13px; }
+.deletion-table th:nth-child(1) { width: 26%; }
+.deletion-table th:nth-child(2) { width: 10%; }
+.deletion-table th:nth-child(3) { width: 22%; }
+.deletion-refused td { color: var(--muted); }
+/* The confirmation page's card is as wide as the listing it came from: a
+   row per certificate with a sentence in it does not fit the 720px the
+   one-question cards use, and the sentences have to wrap rather than run
+   under the next column, which `.node-table`'s nowrap would let them do. */
+.refusal-card.deletion-card { max-width: none; }
+.refusal-card .deletion-table { margin: 10px 0 4px; }
+.deletion-table td { white-space: normal; line-height: 1.5; vertical-align: top; }
+@media (max-width: 600px) {
+  .deletion-bar { flex-direction: column; align-items: stretch; }
+}
 /*
  * The provider list is one control on an otherwise empty card. Stretched to
  * the column it would be a bar the width of the page; sized to its longest
@@ -1493,7 +1530,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .log-pagination select { min-width: 66px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); font-variant-numeric: tabular-nums; }
 .log-pagination > span { font-variant-numeric: tabular-nums; }
 .log-pagination > div { display: inline-flex; gap: 7px; }
-.secondary-button:disabled { cursor: default; opacity: .45; }
+.secondary-button:disabled, .danger-button:disabled { cursor: default; opacity: .45; }
 /*
    .node-table is table-layout:fixed with column widths written for a table of a
    different shape, so without these the request column inherits 120px and its

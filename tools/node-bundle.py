@@ -23,6 +23,7 @@ COMMIT = re.compile(r"[0-9a-f]{40}")
 NODE_SCRIPTS = (
     "haproxy-pull-deploy",
     "haproxy-cert-pull",
+    "haproxy-cert-remove",
     "haproxy-cert-trigger",
     "haproxy-node-status",
     "haproxy-health-probe",

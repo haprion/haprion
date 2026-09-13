@@ -170,6 +170,67 @@ class TheCommandComesFromTheEngine(unittest.TestCase):
             )
 
 
+class DeletingCertificates(unittest.TestCase):
+    def test_the_request_carries_the_ids_and_nothing_else(self) -> None:
+        prepared = operations.prepare(
+            operation="cert_delete",
+            cluster=None,
+            request_id=REQUEST,
+            payload={"certificates": ["old.example.com", "older.example.net"]},
+        )
+        self.assertEqual(
+            prepared.argv[-1], "/opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper"
+        )
+        request = json.loads(prepared.request)
+        self.assertIsNone(request["cluster"])
+        self.assertEqual(
+            request["parameters"], {"certificates": ["old.example.com", "older.example.net"]}
+        )
+
+    def test_the_list_is_held_to_shape_and_size(self) -> None:
+        for payload in (
+            {"certificates": []},
+            {"certificates": "old.example.com"},
+            {"certificates": ["../etc/passwd"]},
+            {"certificates": ["a.example", "a.example"]},
+            {"certificates": [f"c{i}.example" for i in range(33)]},
+            {"certificates": ["a.example"], "force": True},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(operations.BadPayload):
+                operations.prepare(
+                    operation="cert_delete", cluster=None, request_id=REQUEST, payload=payload
+                )
+
+    def test_a_draft_that_names_a_certificate_refuses_the_job(self) -> None:
+        """The check the worker repeats at run time, so a draft written after
+        the confirmation page is a refusal and not a deleted certificate."""
+
+        with self.assertRaisesRegex(operations.BadPayload, "alpha/shop"):
+            operations.prepare(
+                operation="cert_delete",
+                cluster=None,
+                request_id=REQUEST,
+                payload={"certificates": ["old.example.com"]},
+                draft_references=lambda ids: {"old.example.com": ("alpha/shop",)},
+            )
+        operations.prepare(
+            operation="cert_delete",
+            cluster=None,
+            request_id=REQUEST,
+            payload={"certificates": ["old.example.com"]},
+            draft_references=lambda ids: {},
+        )
+
+    def test_a_cluster_is_refused(self) -> None:
+        with self.assertRaises(operations.BadPayload):
+            operations.prepare(
+                operation="cert_delete",
+                cluster="alpha",
+                request_id=REQUEST,
+                payload={"certificates": ["old.example.com"]},
+            )
+
+
 class PayloadsAreRefusedRatherThanTrimmed(unittest.TestCase):
     def test_an_unknown_operation_is_refused(self) -> None:
         with self.assertRaises(operations.UnknownOperation):
@@ -413,6 +474,7 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
             ("dns_profile_apply", "haproxy-dns-profile-apply.schema.json"),
             ("cert_publish", "haproxy-cert-publish.schema.json"),
             ("cert_target", "haproxy-cert-target.schema.json"),
+            ("cert_delete", "haproxy-cert-delete.schema.json"),
         ):
             with self.subTest(operation=name):
                 document = json.loads((schemas / path).read_text(encoding="utf-8"))

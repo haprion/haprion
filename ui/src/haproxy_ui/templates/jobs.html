@@ -79,6 +79,11 @@
         </td>
       </tr>
       {% endif %}
+      {% if job.note %}
+      <tr class="job-follow-up job-note">
+        <td colspan="9"><div class="follow-up-line"><span><span class="status-dot status-info" aria-hidden="true"></span>{{ job.note }}</span></div></td>
+      </tr>
+      {% endif %}
       {% if job.error_code or job.diagnostics %}
       <tr class="job-follow-up job-failure">
         <td colspan="9">

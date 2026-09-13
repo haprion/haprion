@@ -50,6 +50,7 @@ from haproxy_mgmt.traffic_collector import RETENTION_DAYS
 from haproxy_ui import (
     auth,
     backups,
+    certificate_delete,
     certificate_form,
     certificates,
     dashboard,
@@ -1878,6 +1879,183 @@ def build_router(config: Config) -> APIRouter:
                 "snapshot_age": "",
             },
         )
+
+    # - Certificate cleanup (C5b, B139) ------------------------------------
+
+    def _registry_views(
+        request: Request, config: Config
+    ) -> Mapping[str, certificates.RegistryCertificateView]:
+        """The registry as the listing draws it, by ID, for the cleanup page."""
+
+        clusters, certificate_rows, captured_at = read_source(request, config, CERTIFICATE_SOURCE)
+        overview = certificates.build_certificate_overview(
+            clusters,
+            certificate_rows,
+            now=captured_at,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            captured=captured_at is not None,
+        )
+        if overview.registry is None:
+            return {}
+        return {view.identifier: view for view in overview.registry.certificates}
+
+    def _certificate_delete_page(
+        request: Request,
+        session: AuthenticatedSession,
+        *,
+        chosen: Sequence[str],
+        problem: str = "",
+    ) -> Response:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        registry = _registry_views(request, config)
+        with request.app.state.pool.connection() as connection:
+            drafts = db.live_drafts(connection)
+            recent = db.recent_jobs(connection)
+        picked: certificate_delete.Selection | None = None
+        try:
+            picked = certificate_delete.selection(chosen, registry, drafts)
+        except certificate_delete.SelectionProblem as refused:
+            problem = problem or str(refused)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "certificate-delete.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "selection": picked,
+                "problem": problem,
+                "certificate_job": jobs.certificate_in_flight(recent),
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
+    def _certificate_delete_gate(request: Request) -> AuthenticatedSession | Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if not config.management_writes:
+            return PlainTextResponse("Not found", status_code=404)
+        if session.role != "admin":
+            return PlainTextResponse("Refused", status_code=403)
+        return session
+
+    @router.post("/certificates/delete", response_class=HTMLResponse)
+    def certificate_delete_review(
+        request: Request,
+        certificate: Sequence[str] = Form(default=()),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """The confirmation page for a selection: nothing is queued from here.
+
+        A POST rather than a GET with the IDs in the address, because the
+        selection can be long and because the page it draws is a question
+        about a change, not a view somebody should bookmark.
+        """
+
+        gate = _certificate_delete_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        return _certificate_delete_page(request, gate, chosen=tuple(certificate))
+
+    @router.post("/certificates/delete/confirm", response_class=HTMLResponse)
+    def certificate_delete_confirm(
+        request: Request,
+        certificate: Sequence[str] = Form(default=()),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue one `cert_delete` job for what the confirmation page offered.
+
+        The selection is evaluated again here, not trusted from the previous
+        page: a draft written in between is a refusal now, and the job
+        carries only what passes. The helper's own refusals arrive on the
+        job's rows.
+        """
+
+        gate = _certificate_delete_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+
+        registry = _registry_views(request, config)
+        with request.app.state.pool.connection() as connection:
+            drafts = db.live_drafts(connection)
+        try:
+            picked = certificate_delete.selection(tuple(certificate), registry, drafts)
+        except certificate_delete.SelectionProblem as refused:
+            return _certificate_delete_page(
+                request, gate, chosen=tuple(certificate), problem=str(refused)
+            )
+        if not picked.deletable:
+            return _certificate_delete_page(
+                request,
+                gate,
+                chosen=tuple(certificate),
+                problem="Nothing in the selection can be deleted from here.",
+            )
+        payload = {"certificates": list(picked.deletable)}
+        try:
+            operations.prepare(
+                operation="cert_delete",
+                cluster=None,
+                request_id=uuid4(),
+                payload=payload,
+                draft_references=lambda ids: certificate_delete.draft_references(drafts, ids),
+            )
+        except operations.BadPayload as refused:
+            return _certificate_delete_page(
+                request, gate, chosen=tuple(certificate), problem=str(refused)
+            )
+
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="cert_delete",
+                    cluster=None,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.CertificateBusy:
+                connection.rollback()
+                return _certificate_delete_page(
+                    request,
+                    gate,
+                    chosen=tuple(certificate),
+                    problem="A certificate job is already running. Wait for it to finish on "
+                    "the Jobs page, then ask again.",
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="queue_job",
+                cluster=None,
+                request_id=job.request_id,
+                detail={
+                    "operation": "cert_delete",
+                    "job": job.id,
+                    "certificates": list(picked.deletable),
+                },
+            )
+            connection.commit()
+        return RedirectResponse("/jobs", status_code=303)
 
     # - DNS provider profiles (P4) -----------------------------------------
 

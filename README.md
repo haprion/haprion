@@ -35,7 +35,9 @@ current foundation provides:
   `traffic_logging: true`, and the setting reaches its nodes with the next object publication
 - certificate issuance from one form: a domain, a challenge method and the targets; DNS-01
   through a provider profile whose credentials the web process sealed and only root's helper
-  opens, from a catalogue of locked Certbot plugins
+  opens, from a catalogue of locked Certbot plugins; and certificate cleanup as one job for a
+  whole selection, refusing row by row anything a committed object, a draft or a cluster still
+  depends on
 - the job path management operations will run through: an immutable queue, an atomic claim held
   under a renewable lease, and a worker that records how every job ended — including recovering a
   job whose worker died, which is decided from readable evidence rather than retried on assumption

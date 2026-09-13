@@ -42,6 +42,7 @@ shellcheck -x -P SCRIPTDIR "$base/run-checks" "$base/run-tests" "$base/tools/ins
     "$base/install/platform/bin"/haproxy-ui-* \
     "$base/install/node/haproxy-pull-deploy" \
     "$base/install/node/haproxy-cert-pull" \
+    "$base/install/node/haproxy-cert-remove" \
     "$base/install/node/haproxy-cert-trigger" \
     "$base/install/node/haproxy-keepalived-state" \
     "$base/install/node/haproxy-state-export" \

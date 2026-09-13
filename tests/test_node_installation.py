@@ -15,6 +15,7 @@ READING = re.compile(r"^def read_installation\(\):.*?(?=^def run\()", re.DOTALL 
 NODE_SCRIPTS = (
     "haproxy-pull-deploy",
     "haproxy-cert-pull",
+    "haproxy-cert-remove",
     "haproxy-cert-trigger",
     "haproxy-node-status",
     "haproxy-health-probe",

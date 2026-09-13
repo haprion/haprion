@@ -21,7 +21,8 @@
 
 set -Eeuo pipefail
 
-HELPER="/usr/local/sbin/haproxy-cert-pull"
+PULL_HELPER="/usr/local/sbin/haproxy-cert-pull"
+REMOVE_HELPER="/usr/local/sbin/haproxy-cert-remove"
 MAX_CERTIFICATES=32
 
 # The same pattern the manager validates cluster configuration with. No path
@@ -40,7 +41,16 @@ request="${SSH_ORIGINAL_COMMAND:-}"
 # Word splitting is what is wanted here, and only here.
 read -r -a parts <<< "$request"
 
-[[ "${parts[0]:-}" == "cert-pull" ]] || fail "unknown request: ${parts[0]:-<empty>}"
+#
+# Two verbs, two root helpers, and nothing else. `cert-remove` arrived with
+# B139; a manager that sends it to a node without this line is answered with
+# the "unknown request" below and reports the copy as kept.
+#
+case "${parts[0]:-}" in
+    cert-pull) HELPER="$PULL_HELPER" ;;
+    cert-remove) HELPER="$REMOVE_HELPER" ;;
+    *) fail "unknown request: ${parts[0]:-<empty>}" ;;
+esac
 
 ids=("${parts[@]:1}")
 

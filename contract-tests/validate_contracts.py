@@ -478,6 +478,45 @@ def check_dns_profile_apply_semantics(document: dict[str, object], path: Path) -
             raise AssertionError(f"{path}: dns_profile_apply result carries file content")
 
 
+def check_cert_delete_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] != "failed":
+            raise AssertionError(f"{path}: only a failed cert_delete may carry no result")
+        return
+    assert isinstance(result, dict)
+    certificates = result["certificates"]
+    assert isinstance(certificates, list)
+    by_state: dict[str, list[str]] = {"removed": [], "refused": [], "incomplete": []}
+    for entry in certificates:
+        assert isinstance(entry, dict)
+        by_state[str(entry["state"])].append(str(entry["certificate"]))
+        #
+        # A refused certificate was not touched, so it has no layers to
+        # report; a removed one has every layer gone and every node copy gone.
+        #
+        if entry["state"] == "refused" and (entry.get("layers") or entry.get("nodes")):
+            raise AssertionError(f"{path}: a refused certificate carries layers")
+        if entry["state"] == "removed":
+            layers = entry.get("layers") or []
+            nodes = entry.get("nodes") or []
+            if any(layer["state"] not in ("removed", "absent") for layer in layers) or any(
+                node["state"] != "removed" for node in nodes
+            ):
+                raise AssertionError(f"{path}: a removed certificate carries a kept layer")
+    for state, ids in by_state.items():
+        if result[state] != ids:
+            raise AssertionError(f"{path}: result.{state} disagrees with the rows")
+    #
+    # The envelope follows the rows: done only when every row is removed,
+    # blocked only when every row is refused.
+    #
+    if document["outcome"] == "done" and (by_state["refused"] or by_state["incomplete"]):
+        raise AssertionError(f"{path}: done envelope carries a refused or incomplete row")
+    if document["outcome"] == "blocked" and (by_state["removed"] or by_state["incomplete"]):
+        raise AssertionError(f"{path}: blocked envelope carries a touched row")
+
+
 def check_cert_issue_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -547,6 +586,7 @@ SEMANTIC_CHECKS = {
     "dns_profile_apply": check_dns_profile_apply_semantics,
     "cert_publish": check_cert_publish_semantics,
     "cert_target": check_cert_target_semantics,
+    "cert_delete": check_cert_delete_semantics,
 }
 
 
@@ -590,6 +630,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["plugin"] = "dns_example_login = leaked-example"
     elif operation == "cert_target":
         result["registry"]["abandoned"] = list(result["registry"]["targets"]["clusters"])
+    elif operation == "cert_delete":
+        result["removed"] = ["a-certificate-no-row-names"]
     else:
         raise AssertionError(f"no semantic mutation defined for {operation}")
 

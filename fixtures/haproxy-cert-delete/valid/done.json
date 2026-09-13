@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cert_delete",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "certificates": [
+      {
+        "certificate": "old.example.com",
+        "state": "removed",
+        "layers": [
+          { "layer": "registry", "state": "removed" },
+          { "layer": "/srv/certdist/old.example.com.pem", "state": "removed" },
+          { "layer": "lineage old.example.com", "state": "removed" }
+        ],
+        "nodes": [
+          { "cluster": "alpha", "node": "node-a", "state": "removed" },
+          { "cluster": "alpha", "node": "node-b", "state": "removed" }
+        ]
+      }
+    ],
+    "removed": ["old.example.com"],
+    "refused": [],
+    "incomplete": []
+  },
+  "warnings": [],
+  "error": null
+}

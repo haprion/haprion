@@ -80,6 +80,14 @@ class JobView:
     # cannot be shown it by a later change to a page.
     #
     diagnostics: str | None = None
+    #
+    # What a batch operation did, row by row, in one line: a certificate
+    # deletion's removed, refused and incomplete IDs with the reason beside
+    # each refused one. Shown for every ended job of that kind, not only a
+    # bad one - a `partial` is the normal shape of a cleanup with one
+    # refusal in it, and the person wants to know which.
+    #
+    note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,6 +395,51 @@ def diagnostics_of(job: Job) -> str | None:
     return job.stderr_excerpt or None
 
 
+def deletion_note(job: Job) -> str | None:
+    """One sentence per state for a `cert_delete` result, or None where there is none."""
+
+    if job.operation != "cert_delete" or not isinstance(job.result, dict):
+        return None
+    body = job.result.get("result")
+    if not isinstance(body, dict) or not isinstance(body.get("certificates"), list):
+        return None
+    removed: list[str] = []
+    refused: list[str] = []
+    incomplete: list[str] = []
+    for entry in body["certificates"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("certificate"), str):
+            continue
+        identifier = entry["certificate"]
+        state = entry.get("state")
+        if state == "removed":
+            removed.append(identifier)
+        elif state == "refused":
+            code = entry.get("code")
+            refused.append(
+                f"{identifier} ({code})" if isinstance(code, str) and code else identifier
+            )
+        elif state == "incomplete":
+            kept = [
+                f"{layer.get('layer')} {layer.get('state')}"
+                for layer in entry.get("layers") or []
+                if isinstance(layer, dict) and layer.get("state") in {"kept", "failed"}
+            ]
+            kept += [
+                f"{node.get('node')} {node.get('state')}"
+                for node in entry.get("nodes") or []
+                if isinstance(node, dict) and node.get("state") != "removed"
+            ]
+            incomplete.append(f"{identifier} ({', '.join(kept)})" if kept else identifier)
+    parts = []
+    if removed:
+        parts.append("Deleted: " + ", ".join(removed))
+    if refused:
+        parts.append("Refused: " + ", ".join(refused))
+    if incomplete:
+        parts.append("Left to clean up by hand: " + ", ".join(incomplete))
+    return ". ".join(parts) + "." if parts else None
+
+
 def _view(
     job: Job,
     now: datetime,
@@ -432,6 +485,7 @@ def _view(
         # row would bury the ones that mean something.
         #
         diagnostics=diagnostics_of(job) if diagnostics and ended_badly else None,
+        note=deletion_note(job),
     )
 
 
@@ -600,6 +654,7 @@ RUNNING_LABELS = {
     "objects_publish": "Publishing",
     "cert_issue": "Issuing certificate",
     "dns_profile_apply": "Applying DNS profile",
+    "cert_delete": "Deleting certificates",
     "cert_publish": "Distributing certificates",
     "cert_target": "Changing certificate targets",
 }
@@ -629,6 +684,7 @@ FAILURE_LABELS = {
     "objects_publish": "Publish failed",
     "cert_issue": "Certificate issue failed",
     "dns_profile_apply": "DNS profile apply failed",
+    "cert_delete": "Certificate deletion failed",
     "cert_publish": "Certificate distribution failed",
     "cert_target": "Certificate target change failed",
 }

@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "partial",
+  "operation": "cert_delete",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "certificates": [
+      {
+        "certificate": "old.example.com",
+        "state": "incomplete",
+        "reason": "some layers were kept; see the rows",
+        "layers": [
+          { "layer": "registry", "state": "removed" },
+          { "layer": "/srv/certdist/old.example.com.pem", "state": "removed" },
+          { "layer": "lineage old.example.com", "state": "absent" }
+        ],
+        "nodes": [
+          { "cluster": "alpha", "node": "node-a", "state": "removed" },
+          { "cluster": "alpha", "node": "node-b", "state": "kept", "detail": "unknown request: cert-remove" }
+        ]
+      },
+      {
+        "certificate": "shop.example.com",
+        "state": "refused",
+        "code": "referenced_by_object",
+        "reason": "named by the committed object(s) alpha/shop; change them first"
+      }
+    ],
+    "removed": [],
+    "refused": ["shop.example.com"],
+    "incomplete": ["old.example.com"]
+  },
+  "warnings": [
+    { "code": "incomplete", "message": "some layers were kept; see the rows", "node": null, "details": { "certificate": "old.example.com" } },
+    { "code": "referenced_by_object", "message": "named by the committed object(s) alpha/shop; change them first", "node": null, "details": { "certificate": "shop.example.com" } }
+  ],
+  "error": null
+}

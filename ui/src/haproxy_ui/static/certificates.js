@@ -16,6 +16,26 @@
   //
   const REGION = "[data-certificates-region]";
 
+  //
+  // The registry's delete button is greyed until something is ticked, and
+  // says how many. Wired after every swap as well as on load, because the
+  // region the boxes live in is replaced whole by a navigation.
+  //
+  const wireDeletion = () => {
+    const form = document.querySelector("[data-delete-form]");
+    if (!form) return;
+    const picks = Array.from(form.querySelectorAll("[data-delete-pick]"));
+    const submit = form.querySelector("[data-delete-submit]");
+    const count = form.querySelector("[data-delete-count]");
+    const update = () => {
+      const chosen = picks.filter((pick) => pick.checked).length;
+      if (submit) submit.disabled = chosen === 0;
+      if (count) count.textContent = chosen === 0 ? "Nothing selected" : `${chosen} selected`;
+    };
+    picks.forEach((pick) => pick.addEventListener("change", update));
+    update();
+  };
+
   const swap = async (href, push) => {
     const answer = await fetch(href, { credentials: "same-origin" });
     if (!answer.ok) throw new Error(String(answer.status));
@@ -29,6 +49,7 @@
     //
     if (!fresh || !here) throw new Error("shape");
     here.replaceWith(fresh);
+    wireDeletion();
     const freshRanges = parsed.querySelector(".page-ranges-sticky");
     const hereRanges = document.querySelector(".page-ranges-sticky");
     if (freshRanges && hereRanges) hereRanges.replaceWith(freshRanges);
@@ -75,4 +96,6 @@
   window.addEventListener("popstate", () => {
     swap(window.location.href, false).catch(() => window.location.reload());
   });
+
+  wireDeletion();
 })();

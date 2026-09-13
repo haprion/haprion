@@ -1,0 +1,53 @@
+{% extends "layout.html" %}
+{% block title %}Delete certificates — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  The question before the one operation that removes key material (B139).
+  One row per chosen certificate saying what deleting it means, and the
+  refusals this side can already give - a draft that still names it - drawn
+  on the row and left out of the job. The helper's own refusals (a committed
+  object, a cluster's default or last certificate) arrive on the job's rows.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Delete certificates</h1><p class="page-lede">Nothing is deleted until you confirm. One job removes each certificate from the registry, the published copies, Certbot and the nodes.</p></div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+{% if selection %}
+<div class="refusal-card deletion-card">
+  <p class="refusal-message"><span class="status-orb status-critical" aria-hidden="true"></span>Delete <strong>{{ selection.deletable | length }}</strong> certificate{% if selection.deletable | length != 1 %}s{% endif %}?{% if selection.refused %} <span class="optional">{{ selection.refused | length }} of the {{ selection.rows | length }} selected will not be.</span>{% endif %}</p>
+  <div class="table-scroll"><table class="node-table deletion-table">
+    <thead><tr><th>Certificate</th><th>Source</th><th>Published to</th><th>What happens</th></tr></thead>
+    <tbody>
+      {% for row in selection.rows %}
+      <tr class="{% if row.deletable %}deletion-row{% else %}deletion-refused{% endif %}">
+        <td data-label="Certificate"><strong>{{ row.identifier }}</strong></td>
+        <td data-label="Source">{{ row.source_label }}</td>
+        <td data-label="Published to">{% if row.targets %}{{ row.targets | join(', ') }}{% else %}—{% endif %}</td>
+        <td data-label="What happens">{% if row.deletable %}Removed from the registry and every target above. {{ row.lineage_note }} Each node of its clusters is asked to drop its copy.{% else %}<span class="warning-text">Kept. {{ row.refusal }}</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody></table></div>
+  <ul class="removal-consequences">
+    <li>A certificate a committed object still names, a cluster's default certificate, or a cluster's last certificate is refused by the job and reported on its own row; the others go through.</li>
+    <li>A node that does not know how to drop a copy yet keeps it and says so. The file is inert there: nothing lists it.</li>
+    <li>Nothing here can be undone. A deleted Certbot lineage has to be issued again.</li>
+  </ul>
+  {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish before deleting.</p>{% endif %}
+  <form method="post" action="/certificates/delete/confirm" class="editor-actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+    {% for identifier in selection.deletable %}<input type="hidden" name="certificate" value="{{ identifier }}">{% endfor %}
+    <button class="danger-button" type="submit"{% if certificate_job or not selection.deletable %} disabled{% endif %}>Delete {{ selection.deletable | length }} certificate{% if selection.deletable | length != 1 %}s{% endif %}</button>
+    <a class="secondary-button" href="/certificates?view=registry">Keep them</a>
+  </form>
+</div>
+{% else %}
+<div class="refusal-card">
+  <p class="refusal-hint"><a class="secondary-button" href="/certificates?view=registry">Back to the registry</a></p>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,22 +1,22 @@
-# Lets the interface's worker run the nine bounded mutations, and nothing else.
+# Lets the interface's worker run the ten bounded mutations, and nothing else.
 #
 # Its own rule, for the same reason the poller has one. %haproxy-mgmt holds the
 # operators and %sudo holds the humans; a service account must not reach a
 # privilege because somebody else needed it. This is the separate decision.
 #
-# What it grants, exactly: nine helpers, each with no arguments at all. The
+# What it grants, exactly: ten helpers, each with no arguments at all. The
 # helpers accept no argv and read a bounded JSON request on stdin, which is what
 # makes an exact rule possible - PRIVILEGE.md forbids wildcards in argument
 # matching, and a rule naming a cluster would need one.
 #
-# These nine write. That is the point of them, and it is why the list is this
+# These ten write. That is the point of them, and it is why the list is this
 # short: deploy brings nodes onto the published version, cert-deploy distributes
 # certificates, revert moves the cluster back to an earlier one, and the two
 # publish helpers write the network description and the objects into the cluster
 # repository. Everything else the worker might plausibly want - config edits,
 # history reset - is absent on purpose.
 #
-# The last four are Phase 11's, and they are the ones to read twice, because
+# The last five are Phase 11's, and they are the ones to read twice, because
 # they are the only rules here that reach private key material. What limits them
 # is not this file but their own shape: issue obtains a certificate for a domain
 # with certbot parameters fixed in the engine, publish distributes what the
@@ -25,6 +25,13 @@
 # one database-bound profile in its fixed policy directory. None can name an arbitrary path, account
 # or a directory, and none can register a receiver - that is an installation
 # step, deliberately kept out of reach of anything a request can ask for.
+#
+# The tenth, cert-delete, is the one rule here that removes key material, and
+# it is bounded the same way: the request names registered certificate IDs
+# and nothing else; which of them may go is decided from the registry, the
+# cluster files and each cluster's committed objects, never from the request.
+# A certificate a committed object still names, a cluster's default, or a
+# cluster's last certificate is refused row by row.
 #
 # What no rule here grants, and no rule ever should: reading a private key. The
 # helpers write key material to targets and never return it, which is why the
@@ -60,3 +67,4 @@ WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-issu
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-publish-helper ""
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-target-helper ""
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-dns-profile-apply-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper ""

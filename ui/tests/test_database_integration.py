@@ -26,7 +26,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0025",))
+            self.assertEqual(cursor.fetchone(), ("0026",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -519,4 +519,74 @@ class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
                 migration.upgrade()
                 cursor.execute("select to_regclass('dns_provider_profile')")
                 self.assertEqual(cursor.fetchone(), ("dns_provider_profile",))
+            connection.rollback()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class CertificateDeletion(unittest.TestCase):
+    """Migration 0026: the queue may carry `cert_delete`, in the certificate slot."""
+
+    def connect(self, role_variable: str) -> psycopg.Connection:
+        role = os.environ[role_variable]
+        return psycopg.connect(f"{DSN} user={role}")
+
+    def setUp(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("delete from job")
+            connection.commit()
+
+    def test_the_delete_job_is_a_clusterless_certificate_job(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            job = db.queue_job(
+                connection,
+                operation="cert_delete",
+                cluster=None,
+                payload={"certificates": ["old.example.com"]},
+                idempotency_key=uuid4(),
+            )
+            self.assertIsNone(job.cluster)
+            with self.assertRaises(db.CertificateBusy):
+                db.queue_job(
+                    connection,
+                    operation="cert_publish",
+                    cluster=None,
+                    payload={},
+                    idempotency_key=uuid4(),
+                )
+            connection.rollback()
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.queue_job(
+                    connection,
+                    operation="cert_delete",
+                    cluster="alpha",
+                    payload={},
+                    idempotency_key=uuid4(),
+                )
+
+    def test_the_migration_downgrades_and_upgrades_cleanly_on_an_empty_queue(self) -> None:
+        migration_path = (
+            Path(__file__).resolve().parents[1] / "migrations" / "versions" / "0026_cert_delete.py"
+        )
+        spec = importlib.util.spec_from_file_location("migration_0026", migration_path)
+        if spec is None or spec.loader is None:
+            self.fail(f"cannot load {migration_path}")
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        with self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection:
+            with connection.cursor() as cursor:
+                migration.op = _Executes(cursor)
+                migration.downgrade()
+                cursor.execute(
+                    "select pg_get_constraintdef(oid) from pg_constraint "
+                    "where conname = 'job_operation_allowed'"
+                )
+                self.assertNotIn("cert_delete", cursor.fetchone()[0])
+                migration.upgrade()
+                cursor.execute(
+                    "select pg_get_constraintdef(oid) from pg_constraint "
+                    "where conname = 'job_operation_allowed'"
+                )
+                self.assertIn("cert_delete", cursor.fetchone()[0])
             connection.rollback()

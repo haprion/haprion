@@ -937,6 +937,48 @@ and the catalogue's propagation wait into the lineage's renewal configuration, a
 renews through would break that renewal, which is why the registry and the renewal files are
 checked first.
 
+### 1.4.6 Deleting a certificate
+
+Nothing else in this project removes certificate material, and the helpers say so in their
+headers: a deletion can erase a certificate a cluster is serving. The cleanup exists anyway,
+because a registry that only ever grows is not caution — after a few years it holds hundreds of
+certificates that expired or stopped mattering, and for those the missing path is what makes the
+registry unusable.
+
+**Where it is.** The registry view at `/certificates?view=registry` has a box on every row and one
+button, grey until something is ticked. The button leads to a confirmation page that says, per
+certificate, what deleting it means; confirming queues one `cert_delete` job for the whole
+selection (at most 32 at a time). One job, not one per certificate: a cleanup of seventy rows must
+not become seventy jobs.
+
+**What one deletion is.** Four layers, in this order, for each certificate in the job:
+
+| Layer | What goes | Why this order |
+|---|---|---|
+| the registry entry | the certificate stops being published | first, so nothing below can be put back by the next renewal hook |
+| the material | `<certificate_root>/<id>.pem` and the two files in every receiver directory the entry named | |
+| the source | `certbot delete --cert-name <lineage>` for `acme`; `/etc/haproxy-manager/certificates/<id>/` for `import` | a dead certificate would otherwise renew forever |
+| the node copies | each node of every cluster the entry named is asked `cert-remove <id>` over the trigger identity | last, and the one layer that may lawfully be left behind |
+
+**The guards are the operation, not a warning.** A certificate is refused, with nothing touched,
+when a proxy object in a cluster's committed configuration still names it, when it is a cluster's
+`default_certificate`, when it is the only certificate a cluster has (the engine refuses to load a
+cluster no certificate names), or when a draft in the interface's database still names it. A
+refused certificate stops nothing else in the batch: it is reported on its own row and the others
+go through. The job's outcome is `done` when every row went, `partial` when any was refused or
+left a layer behind, `blocked` when every row was refused.
+
+**What is left behind, and said.** A node whose trigger does not know the verb yet answers
+"unknown request", and the copy is reported as kept, by node. The file is inert there: bind lines
+name certificates through crt-lists, and a PEM nothing lists is never loaded. So an installation
+can run deletions before its nodes carry the current bundle, and read on the job which node still
+holds what. The node's own script refuses an ID that any installed crt-list, `haproxy.cfg` or
+`conf.d` fragment names — the same guard as the manager's, measured against what is actually
+served rather than what is committed — and it does not reload, because nothing changed for HAProxy.
+
+**Nothing here can be undone.** A deleted lineage has to be issued again, and a deleted import has
+to be imported again. The confirmation page says so, and the job's rows say what went.
+
 ### 1.5 Validation certificate
 
 Candidate validation runs a real `haproxy -c` against the candidate. Any configuration that
@@ -1183,8 +1225,9 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 | Script | What it does |
 |---|---|
 | `haproxy-pull-deploy` | fetches the published release, validates it, installs it, reloads once |
-| `haproxy-cert-trigger` | unprivileged wrapper: validates certificate IDs, then escalates |
+| `haproxy-cert-trigger` | unprivileged wrapper: validates the verb (`cert-pull` or `cert-remove`) and the certificate IDs, then escalates |
 | `haproxy-cert-pull` | fetches the requested certificates, validates them, installs, reloads |
+| `haproxy-cert-remove` | removes the requested certificates from `/etc/haproxy/certs`, refusing any the installed configuration still names; no reload |
 | `haproxy-node-status` | reports version, health, carried certificates, keepalived state and the address list |
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |
 | `haproxy-state-export` | writes this node's permanent state to stdout as a gzipped tar |
@@ -1194,7 +1237,7 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 | `haproxy-traffic-log-prune` | deletes traffic day files past the 14-day window, whole and never renamed |
 
 Step 4 also writes `/etc/haproxy-manager/node-installation.json`. It records the
-node compatibility API and a SHA-256 digest for each of these ten scripts.
+node compatibility API and a SHA-256 digest for each of these eleven scripts.
 `haproxy-node-status` recomputes the digests on every reading, so copied metadata
 cannot hide a script changed after installation. The report contains code
 digests only, never node configuration or key material.
@@ -1205,7 +1248,10 @@ Two of these deserve attention:
 as SSH command arguments, and no wildcard rule can safely constrain them. So validation happens
 twice: unprivileged in the wrapper, and again in the root helper. The wrapper escalates with
 `sudo -n` and an exact `NOPASSWD` rule, so a policy mismatch fails immediately instead of falling
-back to an interactive password prompt.
+back to an interactive password prompt. Since the cleanup operation (1.4.6) the wrapper knows two
+verbs, `cert-pull` and `cert-remove`, each with its own root helper and its own sudoers rule; a
+node installed before that answers `cert-remove` with "unknown request", which the manager reports
+as a kept copy rather than as a failure. Rerun step 4 on such a node to give it the verb.
 
 **`haproxy-health-probe` is held to the same TLS floor as the configuration.** A pool whose object
 names a `legacy` policy is reached by HAProxy over TLS 1.1, so a probe that kept a floor of its own
@@ -2232,7 +2278,7 @@ rollback rather than a pause.
 
 #### What the worker may run
 
-Eight helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
+Ten helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 
 ```
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-helper ""
@@ -2243,10 +2289,13 @@ Eight helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-publish-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-target-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-dns-profile-apply-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper ""
 ```
 
-The last three are the certificate jobs (1.4.3): they belong to no cluster, and the queue runs one
-of them at a time.
+The last five are the certificate jobs (1.4.3, 1.4.5, 1.4.6): they belong to no cluster, and the
+queue runs one of them at a time. The last one is the only rule in the file that removes key
+material; 1.4.6 says what bounds it.
 
 Publishing was deliberately absent from that list until the editor existed, on the reasoning that
 it was an operator's decision made at a terminal. What changed is that the interface became where

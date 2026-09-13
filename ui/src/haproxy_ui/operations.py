@@ -22,6 +22,7 @@ from uuid import UUID
 
 from haproxy_mgmt import dns_profiles
 from haproxy_mgmt.cli import (
+    cert_delete_helper,
     cert_deploy,
     cert_issue_helper,
     cert_publish_helper,
@@ -31,6 +32,7 @@ from haproxy_mgmt.cli import (
     managed_objects_publish,
     revert,
 )
+from haproxy_mgmt.config import CERTIFICATE_ID
 from haproxy_mgmt.proxy_model import NAME
 
 #
@@ -111,8 +113,14 @@ def _targets(payload: Mapping[str, Any]) -> tuple[tuple[str, ...], tuple[str, ..
 
 
 CERTIFICATE_OPERATIONS = frozenset(
-    {"cert_issue", "cert_publish", "cert_target", "dns_profile_apply"}
+    {"cert_issue", "cert_publish", "cert_target", "dns_profile_apply", "cert_delete"}
 )
+
+#
+# The helper takes at most this many in one request (`cert_job.MAX_TARGETS`),
+# and a bulk cleanup that wants more is two jobs, which the page says.
+#
+MAX_DELETE_BATCH = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +141,15 @@ class SealedProfileRow:
 
 ProfileLookup = Callable[[str], SealedProfileRow | None]
 
+#
+# Which of the named certificates a draft still names, as certificate ID to
+# `cluster/object` rows. The database is the worker's to ask; this module only
+# refuses when the answer is not empty, so a draft written between the
+# confirmation page and the run is a refusal here and not a job that deleted
+# what somebody was about to publish.
+#
+DraftReferences = Callable[[tuple[str, ...]], Mapping[str, tuple[str, ...]]]
+
 
 def _certificate_operation(
     *,
@@ -140,6 +157,7 @@ def _certificate_operation(
     request_id: UUID,
     payload: Mapping[str, Any],
     profile_lookup: ProfileLookup | None,
+    draft_references: DraftReferences | None,
 ) -> Prepared:
     """The three operations scoped by certificate rather than by cluster.
 
@@ -243,6 +261,41 @@ def _certificate_operation(
             ),
         )
 
+    if operation == "cert_delete":
+        #
+        # A list of registered IDs and nothing else. What each one means -
+        # which files, which lineage, which nodes - is the helper's to read
+        # from the registry; the payload cannot name a path or a target.
+        #
+        _only(payload, "certificates")
+        certificates = payload.get("certificates")
+        if (
+            not isinstance(certificates, list)
+            or not certificates
+            or not all(
+                isinstance(item, str) and CERTIFICATE_ID.fullmatch(item) for item in certificates
+            )
+        ):
+            raise BadPayload("certificates must be a non-empty list of certificate IDs")
+        if len(certificates) > MAX_DELETE_BATCH:
+            raise BadPayload(f"at most {MAX_DELETE_BATCH} certificates in one job")
+        if len(set(certificates)) != len(certificates):
+            raise BadPayload("certificates contains a duplicate")
+        if draft_references is not None:
+            referenced = draft_references(tuple(certificates))
+            if referenced:
+                named = "; ".join(
+                    f"{certificate} by {', '.join(rows)}"
+                    for certificate, rows in sorted(referenced.items())
+                )
+                raise BadPayload(f"a draft still names a certificate: {named}")
+        return Prepared(
+            argv=(cert_delete_helper.SUDO, *SUDO_FLAGS, cert_delete_helper.HELPER),
+            request=cert_delete_helper.build_request(
+                str(request_id), certificates=tuple(certificates)
+            ),
+        )
+
     if operation == "cert_target":
         _only(payload, "certificate", "clusters", "receivers", "deploy")
         certificate = payload.get("certificate")
@@ -270,6 +323,7 @@ def prepare(
     request_id: UUID,
     payload: Mapping[str, Any],
     profile_lookup: ProfileLookup | None = None,
+    draft_references: DraftReferences | None = None,
 ) -> Prepared:
     """Build the command for one job, or refuse it.
 
@@ -299,6 +353,7 @@ def prepare(
             request_id=request_id,
             payload=payload,
             profile_lookup=profile_lookup,
+            draft_references=draft_references,
         )
 
     #

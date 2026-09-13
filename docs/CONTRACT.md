@@ -23,6 +23,8 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haproxy-cert-publish` | `cert_publish` | `done`, `partial`, `failed`, `blocked` | Registry-wide publication to clusters and receivers; `cluster` is always null |
 | `haproxy-cert-issue` | `cert_issue` | `done`, `failed` | One ACME certificate issued, registered, published and rolled out; `cluster` is always null |
 | `haproxy-dns-profile-apply-helper` | `dns_profile_apply` | `done`, `failed`, `blocked` | One sealed DNS provider profile opened by root and written as the plugin's credentials file; `cluster` is always null; the result names the profile, never its contents |
+| `haproxy-cert-target-helper` | `cert_target` | `done`, `partial`, `failed`, `blocked` | One certificate's whole target set written to the registry and published; a target dropped keeps its last copy and is reported as abandoned; `cluster` is always null |
+| `haproxy-cert-delete-helper` | `cert_delete` | `done`, `partial`, `failed`, `blocked` | Certificates removed from the registry, the targets, certbot and the nodes, one row per certificate with every layer's state; a refused certificate is untouched and does not stop the others; `cluster` is always null |
 
 `blocked` means that no mutation started. `failed` means the request failed or a started operation
 could not verify any successful target state. `partial` means at least one target was verified but

@@ -14,14 +14,20 @@
   link, so the row works without the script; `certificates.js` answers the
   click on the rest of the row.
 #}
-{% macro certificate_table(rows, view, opened) %}
-  <div class="table-scroll"><table class="node-table certificate-table registry-table">
-    <thead><tr><th>Certificate</th><th>Names</th><th>Source</th><th>Used by</th><th>Valid from</th><th>Expires</th><th>State</th></tr></thead>
+{% macro certificate_table(rows, view, opened, selectable=false) %}
+  <div class="table-scroll"><table class="node-table certificate-table registry-table{% if selectable %} selectable-table{% endif %}">
+    <thead><tr>{% if selectable %}<th class="select-column"><span class="visually-hidden">Select</span></th>{% endif %}<th>Certificate</th><th>Names</th><th>Source</th><th>Used by</th><th>Valid from</th><th>Expires</th><th>State</th></tr></thead>
     <tbody>
       {% for certificate in rows %}
       {% set open = certificate.identifier == opened %}
       {% set href = '?view=' ~ view ~ ('' if open else '&open=' ~ certificate.identifier) %}
       <tr class="registry-row{% if open %} registry-open{% endif %}" data-href="{{ href }}">
+        {#
+          The box is a control of its own and the row script leaves it alone
+          (`certificates.js` ignores clicks on inputs and labels), so ticking
+          one does not open the detail under it.
+        #}
+        {% if selectable %}<td class="select-column" data-label="Select"><label class="select-box"><input type="checkbox" name="certificate" value="{{ certificate.identifier }}" data-delete-pick aria-label="Select {{ certificate.identifier }}"></label></td>{% endif %}
         <td data-label="Certificate"><a class="proxy-link" href="{{ href }}" aria-expanded="{{ 'true' if open else 'false' }}"><strong>{{ certificate.identifier }}</strong></a></td>
         <td data-label="Names">{% if certificate.sans %}<span class="certificate-sans">{{ certificate.sans | join(', ') }}</span>{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}—{% endif %}</td>
         <td data-label="Source"><span class="lifecycle-badge lifecycle-{{ 'acme' if certificate.lifecycle_label == 'Certbot' else 'static' }}">{{ certificate.lifecycle_label }}</span>{% if certificate.wildcard %}<span class="certificate-issuer">wildcard</span>{% endif %}</td>
@@ -31,7 +37,7 @@
         <td data-label="State"><span class="status-badge status-badge-{{ certificate.state_tone }}">{{ certificate.state_label }}</span></td>
       </tr>
       {% if open %}
-      <tr class="registry-detail"><td colspan="7">
+      <tr class="registry-detail"><td colspan="{{ 8 if selectable else 7 }}">
         <div class="registry-detail-grid">
           <div><strong>Covers</strong><span>{% if certificate.sans %}{{ certificate.sans | join(', ') }}{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}{{ certificate.common_name }}{% endif %}</span></div>
           <div><strong>Issuer</strong><span>{{ certificate.issuer }}</span></div>
@@ -105,7 +111,24 @@
     found on 2026-09-10, and found again in the C5 mockup with the state badge
     clipped at 130px where it needed 225.
   #}
+  {% set can_delete = management_writes and role == 'admin' %}
+  {% if can_delete %}
+  {#
+    Bulk from the start (B139): a box per row and one button, greyed until
+    something is ticked. The form posts to a confirmation page; nothing is
+    queued from this one.
+  #}
+  <form method="post" action="/certificates/delete" class="deletion-form" data-delete-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {{ certificate_table(certificates.registry.certificates, 'registry', opened, selectable=true) }}
+    <div class="deletion-bar">
+      <span class="deletion-count" data-delete-count aria-live="polite">Nothing selected</span>
+      <button class="danger-button" type="submit" data-delete-submit disabled>Delete selected…</button>
+    </div>
+  </form>
+  {% else %}
   {{ certificate_table(certificates.registry.certificates, 'registry', opened) }}
+  {% endif %}
   {% else %}
   <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 9h8M8 13h5"></path></svg><div><strong>No certificates registered</strong><span>The registry is readable and holds no entries</span></div></div>
   {% endif %}

@@ -249,6 +249,10 @@ refuse "$WEB_USER" "has no DNS profile helper grant" \
     sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-dns-profile-apply-helper
 refuse "$POLLER_USER" "has no DNS profile helper grant" \
     sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-dns-profile-apply-helper
+refuse "$WEB_USER" "has no certificate delete grant" \
+    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper
+refuse "$POLLER_USER" "has no certificate delete grant" \
+    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper
 if [[ -d "${PLATFORM_ROOT}/secrets/dns-profile-keys" ]]; then
     while IFS= read -r key; do
         refuse "$WEB_USER" "cannot read a DNS profile private key" test -r "$key"

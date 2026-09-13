@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haproxy-cert-delete.schema.json",
+  "title": "haproxy-cert-delete-helper JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "cert_delete" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "partial", "failed", "blocked"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/delete_result" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "enum": ["done", "partial", "blocked"] } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/delete_result" } } }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "certificate_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,254}$" },
+    "layer": {
+      "type": "object",
+      "required": ["layer", "state"],
+      "properties": {
+        "layer": { "type": "string", "minLength": 1 },
+        "state": { "enum": ["removed", "absent", "kept", "failed"] },
+        "detail": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "node_copy": {
+      "type": "object",
+      "required": ["cluster", "node", "state"],
+      "properties": {
+        "cluster": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+        "node": { "type": "string", "minLength": 1 },
+        "state": { "enum": ["removed", "kept", "unreachable"] },
+        "detail": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "certificate": {
+      "type": "object",
+      "required": ["certificate", "state"],
+      "properties": {
+        "certificate": { "$ref": "#/$defs/certificate_id" },
+        "state": { "enum": ["removed", "refused", "incomplete"] },
+        "code": { "type": "string" },
+        "reason": { "type": "string" },
+        "layers": { "type": "array", "items": { "$ref": "#/$defs/layer" } },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/node_copy" } }
+      },
+      "additionalProperties": true
+    },
+    "delete_result": {
+      "type": "object",
+      "required": ["certificates", "removed", "refused", "incomplete"],
+      "properties": {
+        "certificates": { "type": "array", "items": { "$ref": "#/$defs/certificate" } },
+        "removed": { "type": "array", "items": { "$ref": "#/$defs/certificate_id" } },
+        "refused": { "type": "array", "items": { "$ref": "#/$defs/certificate_id" } },
+        "incomplete": { "type": "array", "items": { "$ref": "#/$defs/certificate_id" } }
+      },
+      "additionalProperties": true
+    }
+  }
+}

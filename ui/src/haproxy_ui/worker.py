@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-from haproxy_ui import db, diagnostics, execution, operations, recovery, service
+from haproxy_ui import certificate_delete, db, diagnostics, execution, operations, recovery, service
 from haproxy_ui.config import DEFAULT_CONFIG_PATH
 from haproxy_ui.config import load as load_config
 from haproxy_ui.service import StopRequest
@@ -111,6 +111,12 @@ _OPERATION_OUTCOMES = {
     # `dns_profile_apply` writes one file or refuses to; there is no half.
     #
     "dns_profile_apply": frozenset({"done", "failed", "blocked"}),
+    #
+    # `cert_delete` answers per certificate: `partial` is the normal shape of
+    # a batch with one refusal in it, `blocked` a batch where every row was
+    # refused and nothing touched.
+    #
+    "cert_delete": frozenset({"done", "partial", "failed", "blocked"}),
     "cert_publish": frozenset({"done", "partial", "failed", "blocked"}),
     "cert_target": frozenset({"done", "partial", "failed", "blocked"}),
 }
@@ -334,6 +340,9 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
             request_id=job.request_id,
             payload=job.payload,
             profile_lookup=lambda profile_id: _sealed_profile(connection, profile_id),
+            draft_references=lambda ids: certificate_delete.draft_references(
+                db.live_drafts(connection), ids
+            ),
         )
     except (operations.UnknownOperation, operations.BadPayload) as refusal:
         #

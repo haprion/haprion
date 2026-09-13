@@ -1367,6 +1367,25 @@ def cluster_drafts(connection: Connection[Any], cluster: str) -> list[ProxyDraft
         return cursor.fetchall()
 
 
+def live_drafts(connection: Connection[Any]) -> list[ProxyDraft]:
+    """Every draft in every cluster that still asks for an object to exist.
+
+    A draft marked `deleted` asks for its object to go and names nothing a
+    deletion has to respect, so it is left out here rather than filtered by
+    every caller.
+    """
+
+    with connection.cursor(row_factory=class_row(ProxyDraft)) as cursor:
+        cursor.execute(
+            "select id, cluster, object_id, yaml, base_version, base_hash, revision, "
+            "       updated_by, updated_at, deleted "
+            "  from proxy_draft "
+            " where not deleted "
+            " order by cluster, object_id"
+        )
+        return cursor.fetchall()
+
+
 def read_draft(connection: Connection[Any], cluster: str, object_id: str) -> ProxyDraft | None:
     """One draft, or None where the object has no unsaved edit."""
 

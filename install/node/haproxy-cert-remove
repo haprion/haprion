@@ -1,0 +1,95 @@
+#!/bin/bash
+#
+# Remove certificates this node no longer serves. The privileged half of the
+# manager's `cert-remove` request (B139), reached through haproxy-cert-trigger
+# the way `cert-pull` is.
+#
+# What it does:
+#
+#   * refuses an ID that any file HAProxy loads still names - a crt-list, the
+#     main file or a conf.d fragment. The manager checks the same thing from
+#     its side of the fence, against the committed configuration; this side
+#     checks what is actually installed here, which is the one that would be
+#     served. Both have to agree before a byte is removed
+#   * removes /etc/haproxy/certs/<id>.pem and nothing else
+#   * does not reload. A file nothing names is not loaded, so there is nothing
+#     for HAProxy to notice; a reload here would be a reload for no reason on a
+#     node carrying traffic
+#
+# What it does NOT do, on purpose:
+#
+#   * it does not decide which certificates belong to this cluster. The
+#     manager's registry decides; this script removes what it is asked to and
+#     refuses what is still in use
+#   * it does not remove anything that was not requested. The old behaviour of
+#     haproxy-cert-pull - never deleting what it was not asked about - is kept
+#     here as the only way anything is deleted at all: by name, one request
+#     per certificate, validated twice
+#
+# A certificate that is not here is not an error: the manager may ask every
+# node of a cluster, and a node that never carried the file has nothing to do.
+#
+
+set -Eeuo pipefail
+
+CERTS_DIR="/etc/haproxy/certs"
+HAPROXY_DIR="/etc/haproxy"
+
+ID_PATTERN='^[a-z0-9][a-z0-9._-]{0,254}$'
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+fail() {
+    log "ERROR: $*"
+    exit 1
+}
+
+(( $# > 0 )) || {
+    echo "Usage: haproxy-cert-remove <certificate-id> [...]" >&2
+    exit 64
+}
+
+#
+# Validated again here even though the trigger already did it. This helper runs
+# as root and must not depend on having been called by the wrapper.
+#
+for id in "$@"; do
+    [[ "$id" =~ $ID_PATTERN ]] || fail "invalid certificate ID"
+done
+
+exec 9>/run/lock/haproxy-cert-pull.lock
+if ! flock -n 9; then
+    fail "another certificate operation is already running"
+fi
+
+#
+# Every ID is checked before any file is removed, so a request naming one
+# certificate still in use removes nothing and says which.
+#
+declare -a loaded_files=("${HAPROXY_DIR}/haproxy.cfg")
+while IFS= read -r -d '' file; do
+    loaded_files+=("$file")
+done < <(find "${HAPROXY_DIR}/conf.d" "${HAPROXY_DIR}/crt-lists" -type f -print0 2>/dev/null)
+
+for id in "$@"; do
+    path="${CERTS_DIR}/${id}.pem"
+    if grep -qsF -- "$path" "${loaded_files[@]}"; then
+        fail "${id} is still named by the installed configuration; nothing removed"
+    fi
+done
+
+removed=0
+for id in "$@"; do
+    path="${CERTS_DIR}/${id}.pem"
+    if [[ -e "$path" || -L "$path" ]]; then
+        rm -f -- "$path"
+        log "Removed ${id}."
+        removed=$((removed + 1))
+    else
+        log "${id} was not present."
+    fi
+done
+
+log "Done: ${removed} removed, $(( $# - removed )) not present. No reload needed."

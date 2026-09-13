@@ -1,0 +1,46 @@
+{% extends "layout.html" %}
+{% block title %}DNS providers — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  One provider's credentials, entered once and kept sealed (B146). The page
+  never shows a value: a row is a name, a provider, which key it was sealed
+  against and whether the file certbot reads is the box the row holds (B147).
+  Editing is replacing - there is nothing to edit in a box nobody here can
+  open.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>DNS providers</h1><p class="page-lede">Credentials for DNS-01 challenges, sealed for the certificate helper. A profile is in effect once its apply job has finished; only a profile in effect can be chosen for a certificate.</p></div>
+  <div class="heading-badges">{% if public_key %}<a class="secondary-button" href="/dns-profiles/new">New profile</a>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
+</section>
+
+{% if not public_key %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>This installation has no DNS profile key.</strong> Profiles can be listed but not created until <code>[dns_profiles] public_key</code> names one; see the installation guide, 1.4.5.</p>
+{% endif %}
+
+{% if certificate_job %}
+<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> The queue runs one certificate job at a time; a profile saved now is applied when it has finished. Follow it on the <a href="/jobs">Jobs</a> page.</p>
+{% endif %}
+
+<section class="cluster-card">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Profiles</h3><p>{{ rows | length }} profile{{ '' if rows | length == 1 else 's' }}. <a href="/certificates">Back to certificates</a>.</p></div></div></header>
+  <div class="table-scroll"><table class="node-table dns-profile-table">
+    <colgroup><col style="width:16%"><col style="width:24%"><col style="width:20%"><col style="width:18%"><col style="width:15%"><col style="width:7%"></colgroup>
+    <thead><tr><th scope="col">Profile</th><th scope="col">Name</th><th scope="col">Provider</th><th scope="col">Key</th><th scope="col">Status</th><th scope="col"></th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+    <tr>
+      <td><code>{{ row.profile.id }}</code></td>
+      <td>{{ row.profile.name }}</td>
+      <td>{% if row.provider %}{{ row.provider.name }} <span class="optional">({{ row.provider.tier }})</span>{% else %}<span class="warning-text">{{ row.profile.provider_id }} — no longer offered</span>{% endif %}</td>
+      <td><code>{{ row.profile.key_id }}</code>{% if not row.current_key %} <span class="warning-text">old key</span>{% endif %}</td>
+      <td><span class="backend-health"><span class="status-dot status-{{ 'unknown' if row.status.tone == 'muted' else row.status.tone }}"></span>{{ row.status.label }}</span> <span class="optional">rev {{ row.profile.revision }}</span></td>
+      <td>{% if public_key %}<a href="/dns-profiles/{{ row.profile.id }}/replace">Replace</a>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6"><span class="optional">No profile yet. A profile is one provider's API credentials; the certificate form offers the ones in effect.</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="table-note">Values are never shown again after saving. To change one, replace the profile: the new values are sealed as the next revision and applied by a job. Removing a profile comes with the certificate clean-up (C5b).</p>
+</section>
+{% endblock %}

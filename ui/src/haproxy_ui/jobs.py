@@ -599,6 +599,7 @@ RUNNING_LABELS = {
     "network_publish": "Publishing addresses",
     "objects_publish": "Publishing",
     "cert_issue": "Issuing certificate",
+    "dns_profile_apply": "Applying DNS profile",
     "cert_publish": "Distributing certificates",
     "cert_target": "Changing certificate targets",
 }
@@ -627,6 +628,7 @@ FAILURE_LABELS = {
     "network_publish": "Publish failed",
     "objects_publish": "Publish failed",
     "cert_issue": "Certificate issue failed",
+    "dns_profile_apply": "DNS profile apply failed",
     "cert_publish": "Certificate distribution failed",
     "cert_target": "Certificate target change failed",
 }

@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import logging
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -34,6 +35,7 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from haproxy_mgmt import proxy_model
+from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haproxy_mgmt.proxy_model import (
     DEFAULT_FALL,
     DEFAULT_INTERVAL,
@@ -51,6 +53,7 @@ from haproxy_ui import (
     dashboard,
     db,
     demo,
+    dns_profile_form,
     health,
     history,
     jobs,
@@ -70,6 +73,7 @@ from haproxy_ui.config import CLUSTER_ID, Config
 from haproxy_ui.db import AuthenticatedSession
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+logger = logging.getLogger("haproxy_ui")
 
 #
 # A multi-select arrives as repeated fields, so its default has to be a list -
@@ -1838,6 +1842,279 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "form": certificate_form.normalise(form),
                 "choices": choices,
+                "problem": problem,
+                "certificate_job": jobs.certificate_in_flight(recent),
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
+    # - DNS provider profiles (P4) -----------------------------------------
+
+    def _dns_profiles_gate(request: Request) -> AuthenticatedSession | Response:
+        """The same three answers the certificate form gives before drawing."""
+
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if not config.management_writes:
+            return PlainTextResponse("Not found", status_code=404)
+        if session.role != "admin":
+            return PlainTextResponse("Refused", status_code=403)
+        return session
+
+    def _dns_public_key() -> DnsProfilePublicKey | None:
+        """The key the web seals against, read fresh: a rotation is a file swap."""
+
+        if config.dns_profiles_public_key is None:
+            return None
+        try:
+            return read_public_key(config.dns_profiles_public_key)
+        except KeyFileError as exc:
+            logger.error("dns_profiles.public_key cannot be read: %s", exc)
+            return None
+
+    @router.get("/dns-profiles", response_class=HTMLResponse)
+    def dns_profile_list(request: Request) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        with request.app.state.pool.connection() as connection:
+            profiles = db.dns_profiles(connection)
+            recent = db.recent_jobs(connection, limit=100)
+        public_key = _dns_public_key()
+        catalogue = {provider.id: provider for provider in dns_profile_form.providers()}
+        rows = [
+            {
+                "profile": profile,
+                "provider": catalogue.get(profile.provider_id),
+                "status": dns_profile_form.profile_status(profile.id, profile.revision, recent),
+                "current_key": public_key is not None and profile.key_id == public_key.key_id,
+            }
+            for profile in profiles
+        ]
+        return TEMPLATES.TemplateResponse(
+            request,
+            "dns-profiles.html",
+            {
+                "username": gate.username,
+                "role": gate.role,
+                "csrf_token": auth.csrf_token(token),
+                "rows": rows,
+                "public_key": public_key,
+                "certificate_job": jobs.certificate_in_flight(recent),
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
+    @router.get("/dns-profiles/new", response_class=HTMLResponse)
+    def dns_profile_new_form(request: Request, provider: str = "") -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        form = replace(dns_profile_form.EMPTY_FORM, provider_id=provider[:32])
+        return _dns_profile_form_page(request, gate, form, existing=None)
+
+    @router.post("/dns-profiles/new", response_class=HTMLResponse)
+    async def dns_profile_new_submit(request: Request) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        return await _dns_profile_submit(request, gate, existing=None)
+
+    @router.get("/dns-profiles/{profile_id}/replace", response_class=HTMLResponse)
+    def dns_profile_replace_form(request: Request, profile_id: str) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        with request.app.state.pool.connection() as connection:
+            existing = db.dns_profile(connection, profile_id[:32])
+        if existing is None:
+            return PlainTextResponse("Not found", status_code=404)
+        form = dns_profile_form.ProfileForm(
+            profile_id=existing.id, name=existing.name, provider_id=existing.provider_id, values={}
+        )
+        return _dns_profile_form_page(request, gate, form, existing=existing)
+
+    @router.post("/dns-profiles/{profile_id}/replace", response_class=HTMLResponse)
+    async def dns_profile_replace_submit(request: Request, profile_id: str) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        with request.app.state.pool.connection() as connection:
+            existing = db.dns_profile(connection, profile_id[:32])
+        if existing is None:
+            return PlainTextResponse("Not found", status_code=404)
+        return await _dns_profile_submit(request, gate, existing=existing)
+
+    async def _dns_profile_submit(
+        request: Request, session: AuthenticatedSession, *, existing: db.DnsProfile | None
+    ) -> Response:
+        """Seal one submission, store it, queue its apply job - or re-draw.
+
+        Read as a raw form rather than through typed parameters, because the
+        field names are the catalogue's, not this route's: which fields exist
+        depends on the provider chosen, and only the catalogue knows.
+        """
+
+        posted = await request.form()
+        text = {key: value for key, value in posted.items() if isinstance(value, str)}
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, text.get(auth.CSRF_FIELD, "")):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(text.get("idempotency_key", ""))
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+
+        form = dns_profile_form.ProfileForm(
+            profile_id=existing.id if existing else text.get("profile_id", "")[:64],
+            name=text.get("name", "")[:200],
+            provider_id=existing.provider_id if existing else text.get("provider_id", "")[:32],
+            values={
+                name.removeprefix("field."): value
+                for name, value in text.items()
+                if name.startswith("field.")
+            },
+        )
+        public_key = _dns_public_key()
+        if public_key is None:
+            return _dns_profile_form_page(
+                request,
+                session,
+                form,
+                existing=existing,
+                problem="This installation has no DNS profile key; see the installation "
+                "guide, 1.4.5.",
+            )
+        revision = existing.revision + 1 if existing else 1
+        with request.app.state.pool.connection() as connection:
+            taken = [profile.id for profile in db.dns_profiles(connection)]
+        try:
+            sealed = dns_profile_form.seal_submission(
+                form, public_key, revision=revision, taken=taken
+            )
+        except dns_profile_form.FormProblem as problem:
+            return _dns_profile_form_page(
+                request, session, form, existing=existing, problem=str(problem)
+            )
+
+        payload = {"profile": sealed.profile_id, "revision": revision}
+        with request.app.state.pool.connection() as connection:
+            try:
+                if existing is None:
+                    stored = db.create_dns_profile(
+                        connection,
+                        profile_id=sealed.profile_id,
+                        name=sealed.name,
+                        provider_id=sealed.provider_id,
+                        key_id=sealed.key_id,
+                        ciphertext=sealed.ciphertext,
+                        actor=session.username,
+                    )
+                else:
+                    stored = db.replace_dns_profile(
+                        connection,
+                        profile_id=sealed.profile_id,
+                        revision=revision,
+                        key_id=sealed.key_id,
+                        ciphertext=sealed.ciphertext,
+                        actor=session.username,
+                        name=sealed.name,
+                    )
+            except db.ProfileExists:
+                connection.rollback()
+                return _dns_profile_form_page(
+                    request,
+                    session,
+                    form,
+                    existing=existing,
+                    problem="Profile ID — a profile with this ID already exists.",
+                )
+            except db.ProfileMissing:
+                connection.rollback()
+                return _dns_profile_form_page(
+                    request,
+                    session,
+                    form,
+                    existing=existing,
+                    problem="The profile changed while this form was open. Reload and try again.",
+                )
+            #
+            # The row and the job are one transaction: a profile saved without
+            # its apply job would look stored and never reach certbot, which
+            # is the gap B147 closed.
+            #
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="dns_profile_apply",
+                    cluster=None,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.CertificateBusy:
+                connection.rollback()
+                return _dns_profile_form_page(
+                    request,
+                    session,
+                    form,
+                    existing=existing,
+                    problem="A certificate job is already running. Wait for it to finish "
+                    "on the Jobs page, then save again.",
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=session.username,
+                action="queue_job",
+                cluster=None,
+                request_id=job.request_id,
+                detail={
+                    "operation": "dns_profile_apply",
+                    "job": job.id,
+                    "profile": stored.id,
+                    "revision": stored.revision,
+                },
+            )
+            connection.commit()
+        return RedirectResponse("/dns-profiles", status_code=303)
+
+    def _dns_profile_form_page(
+        request: Request,
+        session: AuthenticatedSession,
+        form: dns_profile_form.ProfileForm,
+        *,
+        existing: db.DnsProfile | None,
+        problem: str = "",
+    ) -> Response:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        chosen = dns_profile_form.provider(form.provider_id)
+        with request.app.state.pool.connection() as connection:
+            recent = db.recent_jobs(connection)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "dns-profile-form.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "form": form,
+                "values": dns_profile_form.redraw_values(chosen, form.values),
+                "chosen": chosen,
+                "providers": dns_profile_form.providers(),
+                "existing": existing,
+                "public_key": _dns_public_key(),
                 "problem": problem,
                 "certificate_job": jobs.certificate_in_flight(recent),
                 "section": "certificates",

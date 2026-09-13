@@ -26,7 +26,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0024",))
+            self.assertEqual(cursor.fetchone(), ("0025",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -341,3 +341,178 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
         )
 
         self.assertEqual(second.id, first.id)
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
+    """Migration 0025: sealed DNS provider profiles and the job that applies them.
+
+    The grants are the point. The web writes boxes and reads metadata; the
+    worker reads a box to hand it to root; the poller sees nothing. Whether
+    the box can be opened is not a question this database can answer, which
+    is the whole design.
+    """
+
+    def connect(self, role_variable: str) -> psycopg.Connection:
+        role = os.environ[role_variable]
+        return psycopg.connect(f"{DSN} user={role}")
+
+    def setUp(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("delete from job")
+                cursor.execute("delete from dns_provider_profile")
+            connection.commit()
+
+    def test_the_web_creates_replaces_and_lists_without_seeing_the_box(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            created = db.create_dns_profile(
+                connection,
+                profile_id="cf-main",
+                name="Cloudflare main",
+                provider_id="cloudflare",
+                key_id="0123456789abcdef",
+                ciphertext=b"x" * 48,
+                actor="operator",
+            )
+            self.assertEqual(created.revision, 1)
+            with self.assertRaises(db.ProfileExists):
+                db.create_dns_profile(
+                    connection,
+                    profile_id="cf-main",
+                    name="again",
+                    provider_id="cloudflare",
+                    key_id="0123456789abcdef",
+                    ciphertext=b"y" * 48,
+                    actor="operator",
+                )
+            replaced = db.replace_dns_profile(
+                connection,
+                profile_id="cf-main",
+                revision=2,
+                key_id="fedcba9876543210",
+                ciphertext=b"z" * 48,
+                actor="admin",
+                name=None,
+            )
+            self.assertEqual(
+                (replaced.revision, replaced.key_id, replaced.name),
+                (2, "fedcba9876543210", "Cloudflare main"),
+            )
+            self.assertEqual(replaced.updated_by, "admin")
+            with self.assertRaises(db.ProfileMissing):
+                db.replace_dns_profile(
+                    connection,
+                    profile_id="cf-main",
+                    revision=2,
+                    key_id="fedcba9876543210",
+                    ciphertext=b"w" * 48,
+                    actor="admin",
+                )
+            self.assertEqual([row.id for row in db.dns_profiles(connection)], ["cf-main"])
+            self.assertIsNone(db.dns_profile(connection, "missing"))
+            with (
+                connection.cursor() as cursor,
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                cursor.execute("select ciphertext from dns_provider_profile")
+            connection.rollback()
+            with (
+                connection.cursor() as cursor,
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                cursor.execute("update dns_provider_profile set provider_id = 'hetzner'")
+            connection.rollback()
+            with (
+                connection.cursor() as cursor,
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                cursor.execute("delete from dns_provider_profile")
+            connection.rollback()
+
+    def test_the_worker_reads_the_box_and_the_poller_reads_nothing(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            db.create_dns_profile(
+                connection,
+                profile_id="cf-main",
+                name="Cloudflare main",
+                provider_id="cloudflare",
+                key_id="0123456789abcdef",
+                ciphertext=b"x" * 48,
+                actor="operator",
+            )
+            connection.commit()
+        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection:
+            sealed = db.sealed_profile(connection, "cf-main")
+            self.assertIsNotNone(sealed)
+            self.assertEqual(bytes(sealed.ciphertext if sealed else b""), b"x" * 48)
+            with (
+                connection.cursor() as cursor,
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                cursor.execute("select created_by from dns_provider_profile")
+        with (
+            self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection,
+            connection.cursor() as cursor,
+            self.assertRaises(psycopg.errors.InsufficientPrivilege),
+        ):
+            cursor.execute("select id from dns_provider_profile")
+
+    def test_the_apply_job_is_a_certificate_job(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            job = db.queue_job(
+                connection,
+                operation="dns_profile_apply",
+                cluster=None,
+                payload={"profile": "cf-main", "revision": 1},
+                idempotency_key=uuid4(),
+            )
+            self.assertIsNone(job.cluster)
+            with self.assertRaises(db.CertificateBusy):
+                db.queue_job(
+                    connection,
+                    operation="cert_issue",
+                    cluster=None,
+                    payload={"domain": "example.com"},
+                    idempotency_key=uuid4(),
+                )
+            connection.rollback()
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                db.queue_job(
+                    connection,
+                    operation="dns_profile_apply",
+                    cluster="alpha",
+                    payload={},
+                    idempotency_key=uuid4(),
+                )
+
+    def test_the_migration_downgrades_and_upgrades_cleanly_on_an_empty_queue(self) -> None:
+        """The whitelist narrows and widens with the table, both ways, in one transaction."""
+
+        migration_path = (
+            Path(__file__).resolve().parents[1]
+            / "migrations"
+            / "versions"
+            / "0025_dns_provider_profiles.py"
+        )
+        spec = importlib.util.spec_from_file_location("migration_0025", migration_path)
+        if spec is None or spec.loader is None:
+            self.fail(f"cannot load {migration_path}")
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        with self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection:
+            with connection.cursor() as cursor:
+                migration.op = _Executes(cursor)
+                migration.downgrade()
+                cursor.execute("select to_regclass('dns_provider_profile')")
+                self.assertEqual(cursor.fetchone(), (None,))
+                cursor.execute(
+                    "select pg_get_constraintdef(oid) from pg_constraint "
+                    "where conname = 'job_operation_allowed'"
+                )
+                self.assertNotIn("dns_profile_apply", cursor.fetchone()[0])
+                migration.upgrade()
+                cursor.execute("select to_regclass('dns_provider_profile')")
+                self.assertEqual(cursor.fetchone(), ("dns_provider_profile",))
+            connection.rollback()

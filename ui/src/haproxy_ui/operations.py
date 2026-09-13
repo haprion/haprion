@@ -15,11 +15,12 @@ the one that was asked for.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from haproxy_mgmt import dns_profiles
 from haproxy_mgmt.cli import (
     cert_deploy,
     cert_issue_helper,
@@ -109,11 +110,36 @@ def _targets(payload: Mapping[str, Any]) -> tuple[tuple[str, ...], tuple[str, ..
     return lists[0], lists[1]
 
 
-CERTIFICATE_OPERATIONS = frozenset({"cert_issue", "cert_publish", "cert_target"})
+CERTIFICATE_OPERATIONS = frozenset(
+    {"cert_issue", "cert_publish", "cert_target", "dns_profile_apply"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SealedProfileRow:
+    """What `prepare` needs from a profile row to build the apply request.
+
+    Mirrors `db.SealedProfile` without importing it: this module knows
+    operations, not the database, and the worker hands the lookup in.
+    """
+
+    id: str
+    provider_id: str
+    schema_version: int
+    key_id: str
+    revision: int
+    ciphertext: bytes
+
+
+ProfileLookup = Callable[[str], SealedProfileRow | None]
 
 
 def _certificate_operation(
-    *, operation: str, request_id: UUID, payload: Mapping[str, Any]
+    *,
+    operation: str,
+    request_id: UUID,
+    payload: Mapping[str, Any],
+    profile_lookup: ProfileLookup | None,
 ) -> Prepared:
     """The three operations scoped by certificate rather than by cluster.
 
@@ -154,6 +180,40 @@ def _certificate_operation(
             ),
         )
 
+    if operation == "dns_profile_apply":
+        #
+        # The payload names the profile and the revision the person saved;
+        # the box itself is read from the row at run time, never copied into
+        # the queue. A row replaced between queueing and running carries a
+        # higher revision, which the helper accepts (B146: never lower), so
+        # the file that lands is the newest one - and a row that vanished is
+        # a refusal here rather than a helper run with nothing to open.
+        #
+        _only(payload, "profile", "revision")
+        try:
+            profile_id = dns_profiles.check_profile_id(payload.get("profile"))
+            revision = dns_profiles.check_revision(payload.get("revision"))
+        except dns_profiles.ProfileError as exc:
+            raise BadPayload(str(exc)) from exc
+        if profile_lookup is None:
+            raise BadPayload("dns_profile_apply needs the profile row and none was offered")
+        row = profile_lookup(profile_id)
+        if row is None:
+            raise BadPayload(f"profile {profile_id} no longer exists")
+        if row.revision < revision:
+            raise BadPayload(f"profile {profile_id} is at revision {row.revision}, not {revision}")
+        return Prepared(
+            argv=(dns_profiles.SUDO, *SUDO_FLAGS, dns_profiles.HELPER),
+            request=dns_profiles.build_request(
+                str(request_id),
+                profile_id=row.id,
+                provider_id=row.provider_id,
+                key_id=row.key_id,
+                revision=row.revision,
+                ciphertext=row.ciphertext,
+            ),
+        )
+
     if operation == "cert_publish":
         _only(payload, "certificates", "deploy")
         certificates = payload.get("certificates", [])
@@ -191,7 +251,12 @@ def _certificate_operation(
 
 
 def prepare(
-    *, operation: str, cluster: str | None, request_id: UUID, payload: Mapping[str, Any]
+    *,
+    operation: str,
+    cluster: str | None,
+    request_id: UUID,
+    payload: Mapping[str, Any],
+    profile_lookup: ProfileLookup | None = None,
 ) -> Prepared:
     """Build the command for one job, or refuse it.
 
@@ -216,7 +281,12 @@ def prepare(
         #
         if cluster is not None:
             raise BadPayload(f"{operation} names no cluster; this job carries {cluster!r}")
-        return _certificate_operation(operation=operation, request_id=request_id, payload=payload)
+        return _certificate_operation(
+            operation=operation,
+            request_id=request_id,
+            payload=payload,
+            profile_lookup=profile_lookup,
+        )
 
     #
     # Everything below acts on one cluster, and from here it has one: the

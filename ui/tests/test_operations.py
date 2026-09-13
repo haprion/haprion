@@ -365,6 +365,7 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
             ("network_publish", "haproxy-network-publish.schema.json"),
             ("objects_publish", "haproxy-objects-publish.schema.json"),
             ("cert_issue", "haproxy-cert-issue.schema.json"),
+            ("dns_profile_apply", "haproxy-dns-profile-apply.schema.json"),
             ("cert_publish", "haproxy-cert-publish.schema.json"),
             ("cert_target", "haproxy-cert-target.schema.json"),
         ):

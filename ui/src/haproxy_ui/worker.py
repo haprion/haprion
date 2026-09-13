@@ -107,6 +107,10 @@ _OPERATION_OUTCOMES = {
     # something nobody has thought about.
     #
     "cert_issue": frozenset({"done", "failed", "blocked"}),
+    #
+    # `dns_profile_apply` writes one file or refuses to; there is no half.
+    #
+    "dns_profile_apply": frozenset({"done", "failed", "blocked"}),
     "cert_publish": frozenset({"done", "partial", "failed", "blocked"}),
     "cert_target": frozenset({"done", "partial", "failed", "blocked"}),
 }
@@ -278,6 +282,22 @@ def _internal_error() -> dict[str, Any]:
     }
 
 
+def _sealed_profile(connection: Any, profile_id: str) -> operations.SealedProfileRow | None:
+    """The one row a profile job needs, read as the worker under its own grant."""
+
+    row = db.sealed_profile(connection, profile_id)
+    if row is None:
+        return None
+    return operations.SealedProfileRow(
+        id=row.id,
+        provider_id=row.provider_id,
+        schema_version=row.schema_version,
+        key_id=row.key_id,
+        revision=row.revision,
+        ciphertext=bytes(row.ciphertext),
+    )
+
+
 def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
     """Run a claimed job and record how it ended.
 
@@ -294,6 +314,7 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
             cluster=job.cluster,
             request_id=job.request_id,
             payload=job.payload,
+            profile_lookup=lambda profile_id: _sealed_profile(connection, profile_id),
         )
     except (operations.UnknownOperation, operations.BadPayload) as refusal:
         #

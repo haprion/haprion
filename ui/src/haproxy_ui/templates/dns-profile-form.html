@@ -1,0 +1,91 @@
+{% extends "layout.html" %}
+{% block title %}{% if existing %}Replace profile{% else %}New DNS provider profile{% endif %} — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  Two steps on one page: pick a provider, then fill in exactly the fields the
+  catalogue names for it. The provider select navigates rather than posting,
+  so the second step is an ordinary GET a reader can bookmark and the form
+  never has to remember values across the switch. On a replace, the provider
+  is fixed: a different provider is a different profile.
+
+  A refusal is drawn with the non-secret values in place. Secret fields are
+  always drawn empty - a token echoed into a response is a token in a cache.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>{% if existing %}Replace <code>{{ existing.id }}</code>{% else %}New DNS provider profile{% endif %}</h1><p class="page-lede">{% if existing %}The new values are sealed as revision {{ existing.revision + 1 }} and applied by a job; the previous values stay in effect until it finishes.{% else %}The values are sealed against the installation's key before they are stored, and only the certificate helper can open them.{% endif %}</p></div>
+  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+{% if not public_key %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>This installation has no DNS profile key.</strong> See the installation guide, 1.4.5.</p>
+{% endif %}
+
+{% if not existing %}
+<form method="get" action="/dns-profiles/new" class="preview-form dns-profile-form">
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Provider</h3><p>Let's Encrypt is the CA; the provider is who hosts the zone.</p></div></div></header>
+    <div class="form-grid">
+      <label><span class="field-title">DNS provider</span>
+        <select name="provider" onchange="this.form.submit()">
+          <option value=""{% if not chosen %} selected{% endif %}>Choose a provider…</option>
+          {% for provider in providers %}
+          <option value="{{ provider.id }}"{% if chosen and chosen.id == provider.id %} selected{% endif %}>{{ provider.name }}{% if provider.tier == 'community' %} (community plugin){% endif %}</option>
+          {% endfor %}
+        </select>
+        <small>{{ providers | length }} providers. Core plugins ship with certbot; community plugins are third-party, built into the same locked environment.</small>
+      </label>
+      <noscript><button type="submit" class="secondary-button">Choose</button></noscript>
+    </div>
+  </section>
+</form>
+{% endif %}
+
+{% if chosen %}
+<form method="post" action="{% if existing %}/dns-profiles/{{ existing.id }}/replace{% else %}/dns-profiles/new{% endif %}" class="preview-form dns-profile-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <input type="hidden" name="provider_id" value="{{ chosen.id }}">
+
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ chosen.name }}</h3><p>Plugin <code>{{ chosen.plugin }}</code>{% if chosen.verification != 'live-verified' %} · verified: {{ chosen.verification }}{% endif %} · <a href="{{ chosen.documentation }}" rel="noopener noreferrer" target="_blank">plugin documentation</a></p></div></div></header>
+    <div class="form-grid">
+      {% if existing %}
+      <label><span class="field-title">Profile ID</span><input value="{{ existing.id }}" disabled><small>Fixed. The credentials file and the command line use it.</small></label>
+      {% else %}
+      <label><span class="field-title">Profile ID</span><input name="profile_id" value="{{ form.profile_id }}" maxlength="32" placeholder="cloudflare-main" pattern="[a-z0-9][a-z0-9-]{0,31}" spellcheck="false" required><small>1–32 lowercase letters, digits or hyphens. Names the credentials file; used as <code>--dns-profile</code> on the command line.</small></label>
+      {% endif %}
+      <label><span class="field-title">Name</span><input name="name" value="{{ form.name }}" maxlength="80" placeholder="Cloudflare — production zones" required><small>What the certificate form shows.</small></label>
+      {% for field in chosen.fields %}
+      {% if field.kind == 'choice' %}
+      <label><span class="field-title">{{ field.label }}{% if not field.required %} <span class="optional">(optional)</span>{% endif %}</span>
+        <select name="field.{{ field.id }}">
+          {% if not field.required %}<option value=""{% if not values.get(field.id) %} selected{% endif %}>—</option>{% endif %}
+          {% for choice in field.choices %}<option value="{{ choice }}"{% if values.get(field.id) == choice %} selected{% endif %}>{{ choice }}</option>{% endfor %}
+        </select>
+      </label>
+      {% elif field.kind == 'list' %}
+      <label><span class="field-title">{{ field.label }}{% if not field.required %} <span class="optional">(optional)</span>{% endif %}</span><textarea name="field.{{ field.id }}" rows="3" spellcheck="false"{% if field.required %} required{% endif %}>{{ values.get(field.id, '') }}</textarea><small>One entry per line.{% if field.id == 'zone_mappings' %} <code>example.com:/subscriptions/&lt;subscription&gt;/resourceGroups/&lt;group&gt;</code>{% endif %}</small></label>
+      {% elif field.kind == 'json' %}
+      <label><span class="field-title">{{ field.label }}</span><textarea name="field.{{ field.id }}" rows="4" spellcheck="false" required></textarea><small>Paste the key file's contents. Sealed on save; never shown again.</small></label>
+      {% elif field.secret %}
+      <label><span class="field-title">{{ field.label }}{% if not field.required %} <span class="optional">(optional)</span>{% endif %}</span><input type="password" name="field.{{ field.id }}" maxlength="4096" autocomplete="new-password" spellcheck="false"{% if field.required %} required{% endif %}><small>Sealed on save; never shown again.{% if existing %} Enter it again to replace.{% endif %}</small></label>
+      {% else %}
+      <label><span class="field-title">{{ field.label }}{% if not field.required %} <span class="optional">(optional)</span>{% endif %}</span><input name="field.{{ field.id }}" value="{{ values.get(field.id, '') }}" maxlength="4096" spellcheck="false"{% if field.required %} required{% endif %}></label>
+      {% endif %}
+      {% endfor %}
+      {% if chosen.exactly_one_of %}
+      <p class="table-note">Give exactly one of: {% for field in chosen.fields if field.id in chosen.exactly_one_of %}{{ field.label }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+      {% endif %}
+    </div>
+    <div class="editor-actions editor-submit">
+      <p class="table-note">Saving seals the values and queues one apply job; the profile is in effect when the job is done. Use a token scoped to the zones it needs where the provider offers one.</p>
+      <button type="submit" class="secondary-button deploy-button"{% if not public_key %} disabled{% endif %}>{% if existing %}Replace and apply{% else %}Save and apply{% endif %}</button>
+    </div>
+  </section>
+</form>
+{% endif %}
+{% endblock %}

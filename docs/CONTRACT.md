@@ -22,6 +22,7 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haproxy-cert-deploy` | `cert_deploy` | `done`, `partial`, `failed`, `blocked` | Certificate reconcile per node |
 | `haproxy-cert-publish` | `cert_publish` | `done`, `partial`, `failed`, `blocked` | Registry-wide publication to clusters and receivers; `cluster` is always null |
 | `haproxy-cert-issue` | `cert_issue` | `done`, `failed` | One ACME certificate issued, registered, published and rolled out; `cluster` is always null |
+| `haproxy-dns-profile-apply-helper` | `dns_profile_apply` | `done`, `failed`, `blocked` | One sealed DNS provider profile opened by root and written as the plugin's credentials file; `cluster` is always null; the result names the profile, never its contents |
 
 `blocked` means that no mutation started. `failed` means the request failed or a started operation
 could not verify any successful target state. `partial` means at least one target was verified but

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "dns_profile_apply",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "profile": "cf-main",
+    "provider": "cloudflare",
+    "key_id": "0123456789abcdef",
+    "revision": 2,
+    "plugin": "dns-cloudflare"
+  },
+  "warnings": [],
+  "error": null
+}

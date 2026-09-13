@@ -12,10 +12,19 @@ answers=""
 node=""
 cluster=""
 dry_run="no"
+#
+# The state backup archives the whole fleet, so a bundle rolled across four
+# nodes one invocation at a time would take eight of them for one change.
+# The rule is one before the first write and one after the last: the first
+# node keeps its "before", the last node its "after", the ones between skip
+# both. The default stays both, so a single-node run needs no flag.
+#
+backup_before="yes"
+backup_after="yes"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 usage() {
-    echo "usage: $(basename "$0") --bundle <tar.gz> --sha256 <digest> --answers <file> --node <host> --cluster <id> [--dry-run]"
+    echo "usage: $(basename "$0") --bundle <tar.gz> --sha256 <digest> --answers <file> --node <host> --cluster <id> [--dry-run] [--skip-backup-before] [--skip-backup-after]"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -26,6 +35,8 @@ while [[ $# -gt 0 ]]; do
         --node) node="${2:-}"; shift 2 ;;
         --cluster) cluster="${2:-}"; shift 2 ;;
         --dry-run) dry_run="yes"; shift ;;
+        --skip-backup-before) backup_before="no"; shift ;;
+        --skip-backup-after) backup_after="no"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; fail "unknown argument: $1" ;;
     esac
@@ -96,7 +107,11 @@ fi
 sudo -v
 sudo test -x "$STATE_BACKUP" \
     || fail "state backup command is not executable by root: ${STATE_BACKUP}"
-sudo "$STATE_BACKUP"
+if [[ "$backup_before" == "yes" ]]; then
+    sudo "$STATE_BACKUP"
+else
+    echo "state backup before: skipped on request (take one before the fleet's first node)"
+fi
 
 remote_dir="$(ssh "${ssh_opts[@]}" "$node" 'mktemp -d /tmp/haproxy-node-bundle.XXXXXXXX')"
 remote_dir="${remote_dir//$'\r'/}"
@@ -122,7 +137,11 @@ remote_install="
 # shellcheck disable=SC2029
 ssh -tt "${ssh_opts[@]}" "$node" "$remote_install"
 
-sudo "$STATE_BACKUP"
+if [[ "$backup_after" == "yes" ]]; then
+    sudo "$STATE_BACKUP"
+else
+    echo "state backup after: skipped on request (take one after the fleet's last node)"
+fi
 if [[ -x /opt/haproxy-mgmt/current/bin/haproxy-status ]]; then
     /opt/haproxy-mgmt/current/bin/haproxy-status -c "$cluster"
 else

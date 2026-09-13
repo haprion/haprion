@@ -1365,7 +1365,10 @@ tools/install-node-bundle --dry-run \
   --cluster alpha
 ```
 
-Remove `--dry-run` to install. The tool:
+Remove `--dry-run` to install. Rolling one bundle across a fleet, give the nodes between the
+first and the last `--skip-backup-before --skip-backup-after`, and the last one
+`--skip-backup-before`: the state backup archives the whole fleet, and one before the first write
+and one after the last is the rule, not one pair per node. The tool:
 
 1. verifies the external digest and complete internal manifest before contacting the node;
 2. takes a state backup before the first remote write;

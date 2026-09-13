@@ -33,6 +33,9 @@ current foundation provides:
   somebody is looking at a screen
 - an optional, manager-pulled traffic-log view; each cluster must explicitly set
   `traffic_logging: true`, and the setting reaches its nodes with the next object publication
+- certificate issuance from one form: a domain, a challenge method and the targets; DNS-01
+  through a provider profile whose credentials the web process sealed and only root's helper
+  opens, from a catalogue of locked Certbot plugins
 - the job path management operations will run through: an immutable queue, an atomic claim held
   under a renewable lease, and a worker that records how every job ended — including recovering a
   job whose worker died, which is decided from readable evidence rather than retried on assumption
@@ -54,8 +57,10 @@ identities do not own or read SSH private keys, certificate private keys, or unr
 Privileged operations cross narrow, allowlisted helper interfaces. See
 [`docs/PRIVILEGE.md`](docs/PRIVILEGE.md) for the frozen target contract.
 
-Certificate issuance and renewal, disaster recovery, and VM rebuild workflows are deliberately
-outside the application scope.
+Certificate issuance runs through an exact root helper around Certbot; DNS provider credentials
+entered in the web interface are sealed against a host key the web process cannot open. Renewal
+stays Certbot's own timer. Disaster recovery and VM rebuild workflows are deliberately outside the
+application scope.
 
 ## Repository layout
 

@@ -901,13 +901,41 @@ unreadable, and the recovery is to re-enter them, not to restore a dump.
 A development platform gets its own pair from the same step with its own answers file, and no
 runtime policy entry, because it has no helper.
 
-Saving or replacing a profile queues `dns_profile_apply`. The no-argument root helper opens the
-sealed row, verifies profile/provider/key/revision bindings, validates it against the provider
-catalogue, and atomically writes a `0600 root:root` credentials file plus root-only metadata. Only a
-profile whose current revision has a completed apply job is offered during certificate issuance.
-Removing one uses the same helper and is refused while either the certificate registry or a
-Certbot `renewal/*.conf` file still names it; the database row is deleted only after the helper's
-successful, revision-fenced result.
+#### The life of a profile
+
+Profiles are made and retired at **Certificates → DNS providers** (`/dns-profiles`), by an
+administrator, and never from a file. A profile is one provider's credentials under a short ID the
+operator chooses (`cloudflare-main`: lowercase letters, digits and hyphens, at most 32). The ID is
+the profile's name everywhere - the certificate form's choice list, the credentials file, and
+`--dns-profile` on the command line - so pick one that reads well typed from memory.
+
+Saving or replacing a profile seals the values in the browser's request against the public key and
+queues `dns_profile_apply`. The no-argument root helper opens the sealed row, verifies
+profile/provider/key/revision bindings, validates it against the provider catalogue, and atomically
+writes a `0600 root:root` credentials file plus root-only metadata under the policy's directory.
+The page waits a few seconds for that job before it redraws, so an idle queue shows the new row as
+**In effect** straight away; if a certificate job holds the queue, the row says **Applying** and
+the page refreshes itself until the file is written. Only a profile whose current revision has a
+completed apply job is offered during certificate issuance. The status column reads:
+
+| Status | Meaning |
+|---|---|
+| In effect | the file certbot reads is the box the row holds; the certificate form offers it |
+| Applying / Removing | its job is queued or running |
+| Apply failed | the helper refused it - the Jobs page carries its account, without the values |
+| Replaced; not applied | a newer revision was saved and its job has not finished |
+| Not applied | no apply job for the row was found at all |
+
+The values themselves are never shown again. To change one, **Replace** re-enters every value; the
+new box becomes the next revision and is applied by a job of its own. **Remove** uses the same helper
+and is refused while either the certificate registry or a Certbot `renewal/*.conf` file still names
+the profile; the database row is deleted only after the helper's successful, revision-fenced result.
+
+A lineage issued through a profile renews through it: certbot writes the profile's credentials path
+and the catalogue's propagation wait into the lineage's renewal configuration, and 1.4.4's
+`haproxy-cert-renew` restores what a plugin cannot persist. Removing a profile a lineage still
+renews through would break that renewal, which is why the registry and the renewal files are
+checked first.
 
 ### 1.5 Validation certificate
 
@@ -1868,7 +1896,10 @@ Any mismatch fails the unit, and the scratch database is dropped either way.
 
 This is a database backup, and the database is not the whole installation. It
 does not hold the HAProxy configuration — that lives in Git — nor the cluster
-definitions, the keys, or the release tree. **Nothing here survives losing the
+definitions, the keys, or the release tree. The DNS profiles it holds are
+ciphertext: without the private key in `secrets/dns-profile-keys/` (1.4.5) a
+restored dump lists every profile and can apply none of them, and the recovery
+is to re-enter them. **Nothing here survives losing the
 host**, and nor does anything else on it — the release tree, the runtime policy,
 the keys, the sudoers rules. **Backing up the management host itself is a very
 good idea**, and how that is done is entirely up to whoever runs it. If it is

@@ -41,7 +41,7 @@
         policy is set up for; HTTP-01 needs a webroot the policy names, and
         the job says so if it does not.
       #}
-      <div class="field">
+      <div class="field challenge-field">
         <span class="field-title">Challenge</span>
         <div class="method-choices">
           <label class="check"><input type="radio" name="method" value="dns-01"{% if form.method != 'http-01' %} checked{% endif %}> <span><span class="method-name">DNS-01</span> <span class="optional">— DNS record; supports wildcards</span></span></label>

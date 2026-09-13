@@ -188,6 +188,19 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             page.check("input[name='method'][value='dns-01']")
             self.assertFalse(profile.is_disabled())
 
+    def test_the_challenge_sits_midway_between_its_neighbours(self) -> None:
+        with self.signed_in(path="/certificates/new") as page:
+            page.set_viewport_size({"width": 1280, "height": 800})
+            domain = page.locator("input[name='domain']").bounding_box()
+            challenge = page.locator(".challenge-field").bounding_box()
+            profile = page.locator("select[name='dns_profile']").bounding_box()
+            if domain is None or challenge is None or profile is None:
+                self.fail("the three fields must have layout boxes")
+            left = challenge["x"] - (domain["x"] + domain["width"])
+            right = profile["x"] - (challenge["x"] + challenge["width"])
+            self.assertGreater(left, 16)
+            self.assertAlmostEqual(left, right, delta=2)
+
 
 if __name__ == "__main__":
     unittest.main()

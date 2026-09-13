@@ -1003,6 +1003,15 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  */
 .certificate-form .form-checks-stacked { flex-direction: column; align-items: flex-start; gap: 8px; padding: 4px 0 0; }
 .certificate-form .method-choices { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+/*
+ * The challenge sits between two controls that fill their columns, and it
+ * does not: left-flush it reads as leaning on the domain. Centred in its
+ * column the air on both sides is the same. Only in the three-column
+ * layout - stacked, everything is left-flush and so is this.
+ */
+@media (min-width: 900px) {
+  .certificate-form .challenge-field { justify-self: center; }
+}
 /* Row, said explicitly: `.form-grid label` stacks its contents, and a box
  * above its own name is a box nobody can read. */
 .certificate-form .method-choices .check, .certificate-form .form-checks-stacked .check { display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }

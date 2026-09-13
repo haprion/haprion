@@ -48,6 +48,27 @@
       "message": "Overly permissive mask in chmod sets file to group readable.",
       "decided": "2026-09-10",
       "reason": "This is the completed traffic mirror's publication step. The temporary remains 0o600 while it is assembled, then becomes 0o640 immediately before atomic rename into a setgid collector:web directory so the read-only web identity can serve /logs. Removing group read breaks that documented consumer; adding group write would break the privilege boundary."
+    },
+    {
+      "rule": "py/overly-permissive-file",
+      "path": "src/haproxy_mgmt/dns_profile_keys.py",
+      "message": "Overly permissive mask in open sets file to group readable.",
+      "decided": "2026-09-13",
+      "reason": "The public half of the DNS profile key pair (B146, B149) exists to be read by the web process, which seals provider credentials against it and holds no private material. It is created root:platform-group 0o640 under config/, the mode every file in that directory has; the private half beside it in secrets/ is written 0o600 by the function above and is what the rule protects. Group read is the contract, not an oversight."
+    },
+    {
+      "rule": "py/overly-permissive-file",
+      "path": "src/haproxy_mgmt/dns_profile_keys.py",
+      "message": "Overly permissive mask in chmod sets file to group readable.",
+      "decided": "2026-09-13",
+      "reason": "Same public key, same group: the chmod restates the mode the open created it with so the two agree after the chown, rather than leaving a file whose mode depends on the umask the installer ran under."
+    },
+    {
+      "rule": "py/clear-text-storage-sensitive-data",
+      "path": "certbot/verify-integrations.py",
+      "message": "This expression stores [sensitive data (secret)](1) as clear text.\nThis expression stores [sensitive data (secret)](2) as clear text.",
+      "decided": "2026-09-13",
+      "reason": "A certbot DNS plugin reads its credentials from a 0o600 INI file and nothing else; the rendered file is the interface, and this verifier proves the catalogue's rendering against the installed plugin by writing one into a private temporary directory and handing it to the plugin's own credential setup. The values are the verifier's fixed integration-test constants, named as such, never a real credential; the root helper that writes real ones (P5) writes them the same way because that is what certbot reads."
     }
   ]
 }

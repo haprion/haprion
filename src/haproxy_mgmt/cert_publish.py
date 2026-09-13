@@ -522,7 +522,7 @@ def publish_lock(path: Path = DEFAULT_LOCK_PATH, *, wait: int | None = None) -> 
 
     wait = LOCK_WAIT_SECONDS if wait is None else wait
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
-    handle = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
+    handle = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
     try:
         deadline = datetime.now(UTC) + timedelta(seconds=wait)
         while True:

@@ -440,7 +440,7 @@ class Locking(Fixture):
         policy = self.write_config(
             {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
         )
-        handle = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o644)
+        handle = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             with (
@@ -458,7 +458,7 @@ class Locking(Fixture):
         policy = self.write_config(
             {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
         )
-        handle = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o644)
+        handle = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
         fcntl.flock(handle, fcntl.LOCK_EX)
         released = threading.Timer(0.3, lambda: os.close(handle))
         released.start()

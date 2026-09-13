@@ -142,16 +142,27 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             self.assertGreaterEqual(top, 0)
             self.assertLess(top, 300 - header)
 
-    def test_the_new_form_warning_stays_under_challenge_without_widening_the_page(self) -> None:
+    def test_the_new_form_guidance_stays_above_the_fields_and_wraps_without_overflow(self) -> None:
         with self.signed_in(path="/certificates/new") as page:
             page.set_viewport_size({"width": 1280, "height": 800})
-            choices = page.locator(".method-choices").bounding_box()
+            header = page.locator(".certificate-form .cluster-header").first.bounding_box()
+            fields = page.locator(".certificate-form .form-grid").first.bounding_box()
             warning = page.locator(".challenge-warning").bounding_box()
 
-            if choices is None or warning is None:
-                self.fail("the challenge choices and warning must both have a layout box")
-            self.assertGreaterEqual(warning["y"], choices["y"] + choices["height"])
-            self.assertLessEqual(warning["height"], 36)
+            if header is None or fields is None or warning is None:
+                self.fail("the certificate header, guidance and fields must have layout boxes")
+            self.assertGreaterEqual(warning["y"], header["y"] + header["height"])
+            self.assertLessEqual(warning["y"] + warning["height"], fields["y"])
+            self.assertLessEqual(warning["height"], 42)
+            self.assertEqual(
+                page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), True
+            )
+
+            page.set_viewport_size({"width": 390, "height": 800})
+            warning = page.locator(".challenge-warning").bounding_box()
+            if warning is None:
+                self.fail("the guidance must keep its layout box on a narrow screen")
+            self.assertLessEqual(warning["height"], 110)
             self.assertEqual(
                 page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), True
             )

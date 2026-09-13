@@ -194,6 +194,11 @@ class ProfileStatus:
     usable: bool
     """True when the newest apply job for the current revision is done."""
 
+    attention_job: int | None = None
+    """A failed job worth opening without replacing the profile's real state."""
+
+    attention_label: str = ""
+
 
 def profile_status(profile_id: str, revision: int, jobs: Iterable[Any]) -> ProfileStatus:
     """Derive a profile's state from its apply jobs, newest first.
@@ -204,19 +209,33 @@ def profile_status(profile_id: str, revision: int, jobs: Iterable[Any]) -> Profi
     let somebody pick and certbot would then not find.
     """
 
+    attention_job: int | None = None
+    attention_label = ""
     for job in jobs:
         if job.operation != "dns_profile_apply" or job.payload.get("profile") != profile_id:
             continue
         job_revision = job.payload.get("revision")
         removing = job.payload.get("remove") is True
-        removing = job.payload.get("remove") is True
         if job.state in {"pending", "running"}:
             return ProfileStatus("Removing" if removing else "Applying", "info", False)
         if removing:
+            error = job.result.get("error") if isinstance(job.result, dict) else None
+            code = error.get("code") if isinstance(error, dict) else None
+            #
+            # The helper checks references before touching either root-owned
+            # file. A profile_in_use refusal therefore leaves the last applied
+            # revision exactly as it was: usable, but with a removal attempt
+            # the operator needs to see. Other failures can happen while the
+            # two files are being removed and must stay fail-closed.
+            #
+            if code == "profile_in_use":
+                attention_job = job.id
+                attention_label = "Removal refused"
+                continue
             return ProfileStatus("Remove failed", "critical", False)
         if job.state == "done" and job_revision == revision:
-            return ProfileStatus("In effect", "healthy", True)
+            return ProfileStatus("In effect", "healthy", True, attention_job, attention_label)
         if job.state == "done":
             return ProfileStatus("Replaced; not applied", "critical", False)
         return ProfileStatus("Apply failed", "critical", False)
-    return ProfileStatus("Not applied", "muted", False)
+    return ProfileStatus("Not applied", "muted", False, attention_job, attention_label)

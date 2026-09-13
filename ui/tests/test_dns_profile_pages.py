@@ -156,6 +156,18 @@ class TheFormModule(unittest.TestCase):
             payload={"profile": "cf-main", "revision": 1, "remove": True},
         )
         self.assertEqual(status("cf-main", 1, [removing]).label, "Removing")
+        refused = replace(
+            removing,
+            state="failed",
+            result={"error": {"code": "profile_in_use"}},
+        )
+        applied = job("done", 1)
+        refused_status = status("cf-main", 1, [refused, applied])
+        self.assertEqual(refused_status.label, "In effect")
+        self.assertTrue(refused_status.usable)
+        self.assertEqual(refused_status.attention_job, refused.id)
+        failed = replace(refused, result={"error": {"code": "dependency_unavailable"}})
+        self.assertFalse(status("cf-main", 1, [failed]).usable)
         self.assertEqual(
             status("cf-main", 1, [queued(operation="cert_issue", cluster=None)]).label,
             "Not applied",
@@ -268,6 +280,29 @@ class ThePages(ProfileRouteTestCase):
         self.assertIn('href="/dns-profiles/cf-main/replace"', page)
         self.assertIn('href="/dns-profiles/new"', page)
         self.assertNotIn(GUARD, page)
+
+    def test_a_reference_refusal_leaves_the_profile_in_effect_and_links_to_the_job(self) -> None:
+        self.rows = [profile_row(key_id=self.public_key.key_id)]
+        refused = queued(
+            id=41,
+            operation="dns_profile_apply",
+            cluster=None,
+            state="failed",
+            payload={"profile": "cf-main", "revision": 1, "remove": True},
+            result={"error": {"code": "profile_in_use"}},
+        )
+        applied = replace(
+            refused,
+            id=40,
+            state="done",
+            payload={"profile": "cf-main", "revision": 1},
+            result=None,
+        )
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[refused, applied]):
+            page = self.writing_client().get("/dns-profiles").text
+
+        self.assertIn("In effect", page)
+        self.assertIn('href="/jobs#job-41">· Removal refused</a>', page)
 
     def test_without_a_key_the_page_says_so_and_offers_no_form(self) -> None:
         page = self.writing_client(with_key=False).get("/dns-profiles").text
@@ -431,7 +466,10 @@ class RemovingAProfile(ProfileRouteTestCase):
         page = client.get("/dns-profiles/cf-main/remove")
         self.assertEqual(page.status_code, 200)
         self.assertIn("Remove DNS profile", page.text)
-        self.assertIn("refers to this profile", page.text)
+        self.assertIn('class="refusal-card"', page.text)
+        self.assertIn("still uses the profile", page.text)
+        self.assertIn("A refused removal leaves the working profile in effect", page.text)
+        self.assertIn(">Keep it</a>", page.text)
 
         token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
         response = client.post(

@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}New certificate — HAProxy Manager{% endblock %}
+{% block head_extra %}<script defer src="{{ url_for('static', path='/receiver-picker.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
 {#
   Phase 11's gate, drawn: one form, one button. What it asks for is exactly
@@ -30,6 +31,7 @@
 
   <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Certificate</h3></div></div></header>
+    <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of Certbot and its DNS plugins. For DNS-01, consult the selected provider plugin's documentation. For HTTP-01, the domain must already point to this installation.</span></p>
     <div class="form-grid">
       <label>Domain<input name="domain" value="{{ form.domain }}" maxlength="255" placeholder="app.example.com or *.example.com" autocomplete="off" spellcheck="false" required autofocus><small>Becomes the certificate's name. <code>*.example.com</code> also covers <code>example.com</code>, the way the existing wildcard does.</small></label>
       {#
@@ -45,7 +47,6 @@
           <label class="check"><input type="radio" name="method" value="dns-01"{% if form.method != 'http-01' %} checked{% endif %}> <span><span class="method-name">DNS-01</span> <span class="optional">— DNS record; supports wildcards</span></span></label>
           <label class="check"><input type="radio" name="method" value="http-01"{% if form.method == 'http-01' %} checked{% endif %}> <span><span class="method-name">HTTP-01</span> <span class="optional">— Webroot file; single names only</span></span></label>
         </div>
-        <p class="challenge-warning"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Provide DNS access or route HTTP validation here.</span></p>
       </div>
       <label><span class="field-title">DNS provider profile</span>
         <select name="dns_profile">
@@ -77,7 +78,7 @@
         <small>Published to the cluster's distribution directory and rolled out to its nodes.</small>
       </div>
       <div class="field">
-        <span class="field-title">Receivers <span class="optional">(optional)</span></span>
+        <div class="receiver-heading"><span class="field-title">Receivers <span class="optional">(optional)</span></span>{% if choices.receivers %}<span class="optional" data-receiver-count aria-live="polite">{{ form.receivers | length }} selected</span>{% endif %}</div>
         {#
           Chosen, never typed. A receiver is a directory, an account and a key
           locked to that directory, registered on the manager by whoever
@@ -85,14 +86,16 @@
           anything, so the page offers the ones that exist and says where a
           missing one is made.
         #}
-        <div class="form-checks form-checks-stacked receiver-options">
+        <small>Hosts outside the clusters that fetch this certificate. Receiver setup is described in the installation guide, 1.4.1.</small>
+        {% if choices.receivers | length > 8 %}<label class="receiver-search" data-receiver-search hidden><span class="visually-hidden">Search receivers</span><input type="search" placeholder="Search receivers…" autocomplete="off" spellcheck="false"></label>{% endif %}
+        <div class="form-checks form-checks-stacked receiver-options{% if choices.receivers | length > 8 %} receiver-options-many{% endif %}" data-receiver-options>
           {% for name in choices.receivers %}
-          <label class="check"><input type="checkbox" name="receiver" value="{{ name }}"{% if name in form.receivers %} checked{% endif %}> {{ name }}</label>
+          <label class="check" data-receiver-option><input type="checkbox" name="receiver" value="{{ name }}"{% if name in form.receivers %} checked{% endif %}> <span>{{ name }}</span></label>
           {% else %}
           <span class="optional">No receiver is registered.</span>
           {% endfor %}
         </div>
-        <small>Hosts outside the clusters that fetch this certificate. Receiver setup is described in the installation guide, 1.4.1.</small>
+        {% if choices.receivers | length > 8 %}<span class="optional receiver-no-results" data-receiver-empty hidden>No receivers match.</span>{% endif %}
       </div>
     </div>
     <div class="editor-actions editor-submit">

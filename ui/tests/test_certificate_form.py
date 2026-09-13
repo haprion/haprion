@@ -219,16 +219,34 @@ class TheFormPage(CertificateFormRouteTestCase):
         #
         self.assertNotIn('name="receiver" type="text"', page)
         self.assertIn("Receiver setup is described in the installation guide", page)
+        self.assertIn("0 selected", page)
+        self.assertNotIn("data-receiver-search", page)
         self.assertIn("Request the certificate", page)
 
-    def test_the_challenge_warning_is_compact_and_the_form_has_no_cluster_accent(self) -> None:
+    def test_a_large_receiver_registry_gets_the_searchable_bounded_picker(self) -> None:
+        receivers = tuple(f"receiver-{number:02}.example.net" for number in range(28))
+        reading = [
+            with_registry(
+                certificate_reading(), registered(fingerprint="a" * 64), receivers=receivers
+            )
+        ]
+        with mock.patch("haproxy_ui.db.cluster_certificates", return_value=reading):
+            page = self.writing_client().get("/certificates/new").text
+
+        self.assertEqual(page.count(" data-receiver-option>"), 28)
+        self.assertIn("data-receiver-search hidden", page)
+        self.assertIn("receiver-options-many", page)
+
+    def test_validation_guidance_sits_at_the_top_and_the_form_has_no_cluster_accent(self) -> None:
         page = self.writing_client().get("/certificates/new").text
 
-        self.assertIn('class="challenge-warning"', page)
+        self.assertIn('class="challenge-warning certificate-guidance"', page)
         self.assertIn(
-            "Provide DNS access or route HTTP validation here.",
+            "Certificate validation requires some knowledge of Certbot and its DNS plugins.",
             page,
         )
+        self.assertIn("the domain must already point to this installation", page)
+        self.assertNotIn("Provide DNS access", page)
         self.assertIn("DNS record; supports wildcards", page)
         self.assertIn("Webroot file; single names only", page)
         self.assertNotIn("Asks the ACME account", page)

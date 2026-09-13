@@ -32,7 +32,7 @@
     <tr>
       <td data-label="Profile"><code>{{ row.profile.id }}</code></td>
       <td data-label="Provider">{% if row.provider %}{{ row.provider.name }} <span class="optional">({{ row.provider.tier }})</span>{% else %}<span class="warning-text">{{ row.profile.provider_id }} — no longer offered</span>{% endif %}</td>
-      <td data-label="Status"><span class="backend-health"><span class="status-dot status-{{ 'unknown' if row.status.tone == 'muted' else row.status.tone }}"></span>{{ row.status.label }}</span> <span class="optional">rev {{ row.profile.revision }}</span>{% if not row.current_key %} <span class="warning-text">· old sealing key</span>{% endif %}</td>
+      <td data-label="Status"><span class="backend-health"><span class="status-dot status-{{ 'unknown' if row.status.tone == 'muted' else row.status.tone }}"></span>{{ row.status.label }}</span> <span class="optional">rev {{ row.profile.revision }}</span>{% if row.status.attention_job %} <a class="warning-text" href="/jobs#job-{{ row.status.attention_job }}">· {{ row.status.attention_label }}</a>{% endif %}{% if not row.current_key %} <span class="warning-text">· old sealing key</span>{% endif %}</td>
       <td data-label="Actions">{% if public_key %}<a href="/dns-profiles/{{ row.profile.id }}/replace">Replace</a> · {% endif %}<a href="/dns-profiles/{{ row.profile.id }}/remove">Remove</a></td>
     </tr>
     {% else %}

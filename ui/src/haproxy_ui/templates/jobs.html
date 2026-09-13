@@ -26,7 +26,7 @@
     <thead><tr><th>Job</th><th>Operation</th><th>Cluster</th><th>State</th><th>Requested</th><th>Started</th><th>Finished</th><th>Outcome</th><th>Exit</th></tr></thead>
     <tbody>
     {% for job in jobs.jobs %}
-      <tr>
+      <tr id="job-{{ job.id }}">
         <td data-label="Job"><strong>#{{ job.id }}</strong></td>
         <td data-label="Operation">{{ job.operation }}</td>
         <td data-label="Cluster"><strong>{{ job.cluster }}</strong></td>

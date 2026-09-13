@@ -1019,15 +1019,30 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .dns-profile-table th:nth-child(4), .dns-profile-table td:nth-child(4) { width: auto; text-align: right; }
 .dns-profile-table td:nth-child(1), .dns-profile-table td:nth-child(2), .dns-profile-table td:nth-child(3) { overflow: hidden; text-overflow: ellipsis; }
 .certificate-target-grid { grid-template-columns: minmax(240px, 0.55fr) minmax(480px, 1.45fr); align-items: start; }
-.certificate-form .receiver-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); width: 100%; }
+.certificate-form .receiver-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.certificate-form .receiver-heading .field-title { color: var(--text-secondary); font-weight: 620; }
+.certificate-form .receiver-search { margin-top: 4px; }
+.certificate-form .receiver-search input { width: 100%; }
+.certificate-form .receiver-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); width: 100%; }
+.certificate-form .receiver-options-many { max-height: 218px; padding: 10px 12px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); }
 .certificate-form .receiver-options .check { min-width: 0; overflow-wrap: anywhere; }
+.certificate-form .receiver-no-results { display: block; padding-top: 3px; }
+.certificate-form .receiver-no-results[hidden] { display: none; }
 .certificate-form .challenge-warning { display: flex; align-items: flex-start; gap: 7px; margin: 9px 0 0; color: var(--text-secondary); font-size: 12px; font-weight: var(--font-weight-regular); line-height: 1.45; }
 .certificate-form .challenge-warning svg { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 1px; color: var(--warning); fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.certificate-form .certificate-guidance { max-width: 1160px; margin: 14px 20px 0; font-size: 13px; line-height: 1.55; }
+.certificate-form .certificate-guidance span { min-width: 0; }
 .certificate-form .field > .field-title { color: var(--text-secondary); font-weight: 620; }
 .certificate-form .field > small { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .certificate-form .warning-text { margin: 0; }
 @media (max-width: 900px) {
   .certificate-target-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .certificate-form .certificate-guidance { margin: 12px 16px 0; }
+  .certificate-form .receiver-options { grid-template-columns: 1fr; }
+  .certificate-form .editor-submit { align-items: stretch; flex-direction: column; }
+  .certificate-form .editor-submit button { width: 100%; white-space: nowrap; }
 }
 /* A refusal on the form it refused: the critical hue, where the notice above
  * the form is otherwise informational. */

@@ -18,6 +18,7 @@ The rules that shape every handler below:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import ipaddress
 import json
@@ -27,6 +28,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
+from time import monotonic
 from typing import Annotated, Any
 from urllib.parse import quote
 from uuid import UUID, uuid4, uuid5
@@ -237,6 +239,13 @@ def snapshot_age(captured_at: datetime | None) -> str:
 # of imprecision against a ten-hour timeout is not a meaningful difference.
 #
 TOUCH_AFTER = timedelta(minutes=1)
+
+# How long saving a DNS profile waits for its apply job before the list is
+# drawn. The job is one root helper call; when the queue is idle it is done
+# within a second, and the page should say so rather than send the operator
+# to the Jobs page for a one-second job. In seconds.
+#
+DNS_PROFILE_APPLY_WAIT = 6.0
 
 SIGN_IN_FAILED = "Sign-in failed. Check the username and password and try again."
 
@@ -1906,11 +1915,15 @@ def build_router(config: Config) -> APIRouter:
             recent = db.recent_jobs(connection, limit=100)
         public_key = _dns_public_key()
         catalogue = {provider.id: provider for provider in dns_profile_form.providers()}
+        statuses = {
+            profile.id: dns_profile_form.profile_status(profile.id, profile.revision, recent)
+            for profile in profiles
+        }
         rows = [
             {
                 "profile": profile,
                 "provider": catalogue.get(profile.provider_id),
-                "status": dns_profile_form.profile_status(profile.id, profile.revision, recent),
+                "status": statuses[profile.id],
                 "current_key": public_key is not None and profile.key_id == public_key.key_id,
             }
             for profile in profiles
@@ -1924,6 +1937,7 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "rows": rows,
                 "public_key": public_key,
+                "refresh": any(s.label in {"Applying", "Removing"} for s in statuses.values()),
                 "certificate_job": jobs.certificate_in_flight(recent),
                 "section": "certificates",
                 "management_writes": config.management_writes,
@@ -1958,7 +1972,7 @@ def build_router(config: Config) -> APIRouter:
         if existing is None:
             return PlainTextResponse("Not found", status_code=404)
         form = dns_profile_form.ProfileForm(
-            profile_id=existing.id, name=existing.name, provider_id=existing.provider_id, values={}
+            profile_id=existing.id, provider_id=existing.provider_id, values={}
         )
         return _dns_profile_form_page(request, gate, form, existing=existing)
 
@@ -2002,7 +2016,7 @@ def build_router(config: Config) -> APIRouter:
         )
 
     @router.post("/dns-profiles/{profile_id}/remove")
-    def dns_profile_remove_submit(
+    async def dns_profile_remove_submit(
         request: Request,
         profile_id: str,
         csrf_token: Annotated[str, Form(max_length=128)],
@@ -2054,6 +2068,7 @@ def build_router(config: Config) -> APIRouter:
                 },
             )
             connection.commit()
+        await _await_dns_profile_job(request, job.id)
         return RedirectResponse("/dns-profiles", status_code=303)
 
     async def _dns_profile_submit(
@@ -2078,7 +2093,6 @@ def build_router(config: Config) -> APIRouter:
 
         form = dns_profile_form.ProfileForm(
             profile_id=existing.id if existing else text.get("profile_id", "")[:64],
-            name=text.get("name", "")[:200],
             provider_id=existing.provider_id if existing else text.get("provider_id", "")[:32],
             values={
                 name.removeprefix("field."): value
@@ -2189,7 +2203,25 @@ def build_router(config: Config) -> APIRouter:
                 },
             )
             connection.commit()
+        await _await_dns_profile_job(request, job.id)
         return RedirectResponse("/dns-profiles", status_code=303)
+
+    async def _await_dns_profile_job(request: Request, job_id: int) -> None:
+        """Give the worker a moment before the list is drawn.
+
+        Applying a profile is one helper call and takes about a second when
+        the queue is idle, so the page after saving should say "In effect",
+        not "Applying" with a pointer to another page. Waits a few seconds at
+        most; a longer job is left to the list's own refresh.
+        """
+
+        deadline = monotonic() + DNS_PROFILE_APPLY_WAIT
+        while monotonic() < deadline:
+            await asyncio.sleep(0.25)
+            with request.app.state.pool.connection() as connection:
+                state = db.job_state(connection, job_id)
+            if state not in {"pending", "running"}:
+                return
 
     def _dns_profile_form_page(
         request: Request,

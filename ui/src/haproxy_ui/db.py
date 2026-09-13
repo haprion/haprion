@@ -419,6 +419,15 @@ def recent_jobs(
         return cursor.fetchall()
 
 
+def job_state(connection: Connection[Any], job_id: int) -> str | None:
+    """One job's state, or None when there is no such job."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("select state from job where id = %(job_id)s", {"job_id": job_id})
+        row = cursor.fetchone()
+    return None if row is None else str(row[0])
+
+
 def queue_job(
     connection: Connection[Any],
     *,

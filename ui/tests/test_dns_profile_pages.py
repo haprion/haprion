@@ -13,6 +13,7 @@ import unittest
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
@@ -51,10 +52,7 @@ class TheFormModule(unittest.TestCase):
 
     def seal(self, **overrides: Any) -> dns_profile_form.Sealed:
         form = dns_profile_form.ProfileForm(
-            profile_id="cf-main",
-            name="  Cloudflare   main ",
-            provider_id="cloudflare",
-            values={"api_token": GUARD},
+            profile_id="cf-main", provider_id="cloudflare", values={"api_token": GUARD}
         )
         return dns_profile_form.seal_submission(
             replace(form, **overrides), self.public_key, revision=1
@@ -62,7 +60,7 @@ class TheFormModule(unittest.TestCase):
 
     def test_a_good_submission_seals_the_catalogue_s_fields_and_nothing_else(self) -> None:
         sealed = self.seal()
-        self.assertEqual(sealed.name, "Cloudflare main")
+        self.assertEqual(sealed.name, "cf-main")
         self.assertEqual(sealed.key_id, self.public_key.key_id)
         opened = open_profile(
             self.private_key,
@@ -76,7 +74,6 @@ class TheFormModule(unittest.TestCase):
     def test_refusals_name_the_field_and_never_the_value(self) -> None:
         cases = [
             (dict(profile_id="Cf Main"), "Profile ID"),
-            (dict(name=""), "Name"),
             (dict(provider_id="example"), "Choose a DNS provider"),
             (dict(values={"api_token": ""}), "API token — required"),
             (dict(values={"api_token": GUARD + "\nx = y"}), "API token — "),
@@ -90,7 +87,7 @@ class TheFormModule(unittest.TestCase):
 
     def test_a_taken_id_is_refused_for_a_new_profile_only(self) -> None:
         form = dns_profile_form.ProfileForm(
-            profile_id="cf-main", name="x", provider_id="cloudflare", values={"api_token": "t"}
+            profile_id="cf-main", provider_id="cloudflare", values={"api_token": "t"}
         )
         with self.assertRaisesRegex(dns_profile_form.FormProblem, "already exists"):
             dns_profile_form.seal_submission(form, self.public_key, revision=1, taken=["cf-main"])
@@ -99,7 +96,6 @@ class TheFormModule(unittest.TestCase):
     def test_optional_fields_lists_and_choices_take_the_form_s_shapes(self) -> None:
         form = dns_profile_form.ProfileForm(
             profile_id="bind",
-            name="Internal BIND",
             provider_id="rfc2136",
             values={"server": "192.0.2.53", "name": "acme", "secret": "YWJj", "algorithm": ""},
         )
@@ -114,7 +110,6 @@ class TheFormModule(unittest.TestCase):
         self.assertNotIn("algorithm", opened.credentials)
         azure = dns_profile_form.ProfileForm(
             profile_id="az",
-            name="Azure",
             provider_id="azure",
             values={
                 "client_id": "c",
@@ -179,6 +174,12 @@ class ProfileRouteTestCase(LoginTestCase):
         self.created: list[dict[str, Any]] = []
         self.replaced: list[dict[str, Any]] = []
         self.rows: list[db.DnsProfile] = []
+        self.job_states: list[str] = ["done"]
+        self.state_reads = 0
+
+        def job_state(_c: object, _job_id: int) -> str:
+            self.state_reads += 1
+            return self.job_states[min(self.state_reads, len(self.job_states)) - 1]
 
         def queue(_c: object, **fields: Any) -> db.Job:
             self.queued.append(fields)
@@ -197,6 +198,8 @@ class ProfileRouteTestCase(LoginTestCase):
             mock.patch("haproxy_ui.db.create_dns_profile", side_effect=create),
             mock.patch("haproxy_ui.db.replace_dns_profile", side_effect=replace_profile),
             mock.patch("haproxy_ui.db.dns_profiles", side_effect=lambda _c: list(self.rows)),
+            mock.patch("haproxy_ui.db.job_state", side_effect=job_state),
+            mock.patch("haproxy_ui.views.DNS_PROFILE_APPLY_WAIT", 1.0),
             mock.patch(
                 "haproxy_ui.db.dns_profile",
                 side_effect=lambda _c, pid: next((r for r in self.rows if r.id == pid), None),
@@ -221,7 +224,6 @@ class ProfileRouteTestCase(LoginTestCase):
         token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
         data: dict[str, Any] = {
             "profile_id": "cf-main",
-            "name": "Cloudflare main",
             "provider_id": "cloudflare",
             "field.api_token": GUARD,
             "idempotency_key": KEY,
@@ -287,6 +289,16 @@ class ThePages(ProfileRouteTestCase):
         unknown = client.get("/dns-profiles/new?provider=example").text
         self.assertNotIn('name="field.', unknown)
 
+    def test_providers_are_offered_in_one_alphabet_with_the_tier_as_a_suffix(self) -> None:
+        offered = dns_profile_form.providers()
+        names = [provider.name.lower() for provider in offered]
+        self.assertEqual(names, sorted(names))
+        self.assertIn("community", {provider.tier for provider in offered[:3]})
+        page = self.writing_client().get("/dns-profiles/new").text
+        self.assertIn(">Cloudflare</option>", page)
+        self.assertIn("(community plugin)</option>", page)
+        self.assertNotIn('name="name"', page)
+
     def test_the_certificates_page_links_here_for_an_admin(self) -> None:
         self.assertIn('href="/dns-profiles"', self.writing_client().get("/certificates").text)
 
@@ -321,11 +333,43 @@ class SavingAProfile(ProfileRouteTestCase):
         self.assertNotIn(GUARD, repr(job))
         self.assertIn("queue_job", self.audit)
 
+    def test_saving_waits_for_the_apply_job_and_lands_on_the_result(self) -> None:
+        self.job_states = ["pending", "running", "done"]
+        started = monotonic()
+        response = self.post(self.writing_client())
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(self.state_reads, 3)
+        self.assertLess(monotonic() - started, 1.0)
+
+    def test_a_slow_apply_job_is_left_to_the_list_s_own_refresh(self) -> None:
+        self.job_states = ["running"]
+        started = monotonic()
+        response = self.post(self.writing_client())
+        self.assertEqual(response.status_code, 303)
+        self.assertGreaterEqual(monotonic() - started, 1.0)
+        self.assertGreaterEqual(self.state_reads, 3)
+
+        self.rows = [profile_row()]
+        with mock.patch(
+            "haproxy_ui.db.recent_jobs",
+            return_value=[
+                queued(
+                    operation="dns_profile_apply",
+                    cluster=None,
+                    payload={"profile": "cf-main", "revision": 1},
+                )
+            ],
+        ):
+            page = self.writing_client().get("/dns-profiles").text
+        self.assertIn("Applying", page)
+        self.assertIn('http-equiv="refresh" content="3"', page)
+        self.assertNotIn('href="/jobs"', page.split("<main")[1])
+
     def test_a_refusal_redraws_the_form_without_the_secret(self) -> None:
         response = self.post(self.writing_client(), **{"field.api_token": ""})
         self.assertEqual(response.status_code, 200)
         self.assertIn("API token — required", response.text)
-        self.assertIn('value="Cloudflare main"', response.text)
+        self.assertIn('value="cf-main"', response.text)
         self.assertEqual(self.created, [])
         self.assertEqual(self.queued, [])
 

@@ -1007,6 +1007,19 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * above its own name is a box nobody can read. */
 .certificate-form .method-choices .check, .certificate-form .form-checks-stacked .check { display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
 .certificate-form .method-choices .optional { font-weight: var(--font-weight-regular); }
+.certificate-form .method-choices .check { align-items: flex-start; }
+.certificate-form .method-choices .check input { flex: none; margin-top: 4px; }
+.certificate-form .method-choices .method-name { flex: none; white-space: nowrap; }
+/* The profile table is a .node-table for its look, not for its columns: the
+   node table's fixed pixel widths are sized for nodes, and inherited here they
+   squeezed a 16-hex key and "In effect rev 2" into 120 px each and pushed the
+   actions off the card - the B133 class of fault. Five columns, own widths;
+   the provider takes what is left. */
+.dns-profile-table th:nth-child(1), .dns-profile-table td:nth-child(1) { width: 18%; }
+.dns-profile-table th:nth-child(2), .dns-profile-table td:nth-child(2) { width: auto; }
+.dns-profile-table th:nth-child(3), .dns-profile-table td:nth-child(3) { width: 27ch; }
+.dns-profile-table th:nth-child(4), .dns-profile-table td:nth-child(4) { width: 22ch; }
+.dns-profile-table th:nth-child(5), .dns-profile-table td:nth-child(5) { width: 17ch; text-align: right; }
 .certificate-form .challenge-warning { display: flex; align-items: flex-start; gap: 7px; margin: 9px 0 0; color: var(--text-secondary); font-size: 12px; font-weight: var(--font-weight-regular); line-height: 1.45; }
 .certificate-form .challenge-warning svg { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 1px; color: var(--warning); fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .certificate-form .field > .field-title { color: var(--text-secondary); font-weight: 620; }

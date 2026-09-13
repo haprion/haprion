@@ -29,7 +29,6 @@ from haproxy_mgmt.dns_provider_catalog import (
     provider_by_id,
 )
 
-MAX_NAME = 80
 MAX_VALUE = 4096
 MAX_JSON_VALUE = 16384
 MAX_LIST_ITEMS = 32
@@ -44,7 +43,6 @@ class ProfileForm:
     """One submission, still in the browser's shape."""
 
     profile_id: str
-    name: str
     provider_id: str
     values: dict[str, str]
     """Every field as typed, keyed by field id; a list field is one value per line."""
@@ -61,17 +59,13 @@ class Sealed:
     ciphertext: bytes
 
 
-EMPTY_FORM = ProfileForm(profile_id="", name="", provider_id="", values={})
+EMPTY_FORM = ProfileForm(profile_id="", provider_id="", values={})
 
 
 def providers() -> tuple[DNSProvider, ...]:
-    """The catalogue as the page offers it: core first, then community, by name."""
+    """The catalogue as the page offers it: by name, one alphabet; the tier is a suffix."""
 
-    return tuple(
-        sorted(
-            load_catalog(), key=lambda provider: (provider.tier != "core", provider.name.lower())
-        )
-    )
+    return tuple(sorted(load_catalog(), key=lambda provider: provider.name.lower()))
 
 
 def provider(provider_id: str) -> DNSProvider | None:
@@ -119,7 +113,6 @@ def seal_submission(
     """
 
     profile_id = form.profile_id.strip().lower()
-    name = " ".join(form.name.split())
     try:
         check_profile_id(profile_id)
     except ProfileError:
@@ -129,8 +122,6 @@ def seal_submission(
         ) from None
     if revision == 1 and profile_id in set(taken):
         raise FormProblem("Profile ID — a profile with this ID already exists.")
-    if not name or len(name) > MAX_NAME:
-        raise FormProblem(f"Name — 1-{MAX_NAME} characters.")
     chosen = provider(form.provider_id)
     if chosen is None:
         raise FormProblem("Choose a DNS provider from the list.")
@@ -153,9 +144,11 @@ def seal_submission(
         )
     except ProfileError as problem:
         raise FormProblem(_sentence(chosen, str(problem))) from problem
+    # The ID is the name (B150): a short name the operator chose, the same
+    # one the credentials file and `--dns-profile` carry.
     return Sealed(
         profile_id=profile_id,
-        name=name,
+        name=profile_id,
         provider_id=chosen.id,
         key_id=public_key.key_id,
         ciphertext=ciphertext,

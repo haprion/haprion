@@ -6,7 +6,7 @@
 </section>
 
 <section class="cluster-card form-card">
-  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ profile.name }}</h3><p><code>{{ profile.id }}</code> · {{ profile.provider_id }} · revision {{ profile.revision }}</p></div></div></header>
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3><code>{{ profile.id }}</code></h3><p>{{ profile.provider_id }} · revision {{ profile.revision }}</p></div></div></header>
   <p>The helper refuses removal while any certificate in the registry or any Certbot renewal configuration refers to this profile.</p>
   {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish before removing this profile.</p>{% endif %}
   <div class="action-buttons">

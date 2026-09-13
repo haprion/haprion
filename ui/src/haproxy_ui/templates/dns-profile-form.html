@@ -36,7 +36,7 @@
           <option value="{{ provider.id }}"{% if chosen and chosen.id == provider.id %} selected{% endif %}>{{ provider.name }}{% if provider.tier == 'community' %} (community plugin){% endif %}</option>
           {% endfor %}
         </select>
-        <small>{{ providers | length }} providers. Core plugins ship with certbot; community plugins are third-party, built into the same locked environment.</small>
+        <small>{{ providers | length }} providers, A–Z. Community plugins are third-party, built into the same locked environment as certbot's own.</small>
       </label>
       <noscript><button type="submit" class="secondary-button">Choose</button></noscript>
     </div>
@@ -56,9 +56,8 @@
       {% if existing %}
       <label><span class="field-title">Profile ID</span><input value="{{ existing.id }}" disabled><small>Fixed. The credentials file and the command line use it.</small></label>
       {% else %}
-      <label><span class="field-title">Profile ID</span><input name="profile_id" value="{{ form.profile_id }}" maxlength="32" placeholder="cloudflare-main" pattern="[a-z0-9][a-z0-9-]{0,31}" spellcheck="false" required><small>1–32 lowercase letters, digits or hyphens. Names the credentials file; used as <code>--dns-profile</code> on the command line.</small></label>
+      <label><span class="field-title">Profile ID</span><input name="profile_id" value="{{ form.profile_id }}" maxlength="32" placeholder="cloudflare-main" pattern="[a-z0-9][a-z0-9-]{0,31}" spellcheck="false" required><small>1–32 lowercase letters, digits or hyphens. The certificate form shows it; it names the credentials file and is <code>--dns-profile</code> on the command line.</small></label>
       {% endif %}
-      <label><span class="field-title">Name</span><input name="name" value="{{ form.name }}" maxlength="80" placeholder="Cloudflare — production zones" required><small>What the certificate form shows.</small></label>
       {% for field in chosen.fields %}
       {% if field.kind == 'choice' %}
       <label><span class="field-title">{{ field.label }}{% if not field.required %} <span class="optional">(optional)</span>{% endif %}</span>

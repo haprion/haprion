@@ -40,6 +40,18 @@ class CertbotProjectTests(unittest.TestCase):
             "the two distributions install the same module and may not coexist",
         )
 
+    def test_the_retired_google_domains_plugin_is_not_offered(self) -> None:
+        project = tomllib.loads(PROJECT.read_text())
+        dependencies = project["project"]["dependencies"]
+        self.assertFalse(
+            any(item.startswith("certbot-dns-google-domains") for item in dependencies)
+        )
+
+        lock = tomllib.loads(LOCK.read_text())
+        locked = {package["name"] for package in lock["package"]}
+        self.assertNotIn("certbot-dns-google-domains", locked)
+        self.assertNotIn("dataclasses-json", locked)
+
 
 if __name__ == "__main__":
     unittest.main()

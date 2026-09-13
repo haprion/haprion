@@ -124,6 +124,51 @@ class TheCommandComesFromTheEngine(unittest.TestCase):
             ),
         )
 
+    def test_certificate_issue_forwards_only_the_profile_id_to_the_helper(self) -> None:
+        prepared = operations.prepare(
+            operation="cert_issue",
+            cluster=None,
+            request_id=REQUEST,
+            payload={
+                "domain": "app.example.com",
+                "method": "dns-01",
+                "dns_profile": "cf-main",
+                "clusters": ["alpha"],
+                "receivers": [],
+            },
+        )
+
+        parameters = json.loads(prepared.request)["parameters"]
+        self.assertEqual(parameters["dns_profile"], "cf-main")
+        self.assertNotIn("provider", parameters)
+
+    def test_profile_removal_is_bound_to_the_exact_stored_revision(self) -> None:
+        row = operations.SealedProfileRow(
+            id="cf-main",
+            provider_id="cloudflare",
+            schema_version=1,
+            key_id="0123456789abcdef",
+            revision=3,
+            ciphertext=b"x" * 48,
+        )
+        prepared = operations.prepare(
+            operation="dns_profile_apply",
+            cluster=None,
+            request_id=REQUEST,
+            payload={"profile": "cf-main", "revision": 3, "remove": True},
+            profile_lookup=lambda _profile: row,
+        )
+        self.assertIs(json.loads(prepared.request)["parameters"]["remove"], True)
+
+        with self.assertRaisesRegex(operations.BadPayload, "revision 3, not 2"):
+            operations.prepare(
+                operation="dns_profile_apply",
+                cluster=None,
+                request_id=REQUEST,
+                payload={"profile": "cf-main", "revision": 2, "remove": True},
+                profile_lookup=lambda _profile: row,
+            )
+
 
 class PayloadsAreRefusedRatherThanTrimmed(unittest.TestCase):
     def test_an_unknown_operation_is_refused(self) -> None:

@@ -18,7 +18,7 @@ import os
 import stat
 import tempfile
 import unittest
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from unittest import mock
 
@@ -39,9 +39,11 @@ class FakeCertbot:
         self.returncode = returncode
         self.output = output
         self.calls: list[list[str]] = []
+        self.environments: list[dict[str, str]] = []
 
-    def __call__(self, arguments: Sequence[str]) -> CertbotResult:
+    def __call__(self, arguments: Sequence[str], environment: Mapping[str, str]) -> CertbotResult:
         self.calls.append(list(arguments))
+        self.environments.append(dict(environment))
         if self.returncode == 0:
             name = arguments[list(arguments).index("--cert-name") + 1]
             issue(self.live / name, name)
@@ -175,6 +177,111 @@ class WhatReachesCertbot(IssueFixture):
         )
         self.assertEqual(code, 78)
         self.assertIn("acme.webroot", err)
+
+    def test_a_materialized_profile_selects_the_plugin_file_and_propagation(self) -> None:
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        document = yaml.safe_load(policy_path.read_text())
+        profile_dir = self.root / "profiles"
+        profile_dir.mkdir()
+        document["acme"]["dns_profiles"] = {
+            "directory": str(profile_dir),
+            "private_keys": [str(self.root / "unused.key")],
+        }
+        policy_path.write_text(yaml.safe_dump(document))
+        policy = load_policy(policy_path, require_secure=False)
+        assert policy.acme is not None and policy.acme.dns_profiles is not None
+        from haproxy_mgmt.dns_profiles import OpenedProfile, materialize
+
+        materialize(
+            policy.acme.dns_profiles,
+            OpenedProfile(
+                profile_id="cf-main",
+                provider_id="cloudflare",
+                schema_version=1,
+                key_id="0123456789abcdef",
+                revision=1,
+                fields={"api_token": "token-example"},
+                credentials="dns_cloudflare_api_token = token-example\n",
+            ),
+            require_secure=False,
+        )
+        certbot = FakeCertbot(self.live)
+
+        code, _, errors, _ = self.run_issue(
+            policy_path,
+            "--domain",
+            "new.example",
+            "--method",
+            "dns-01",
+            "--dns-profile",
+            "cf-main",
+            "--cluster",
+            "alpha",
+            "--json",
+            certbot=certbot,
+        )
+
+        self.assertEqual(code, 0, errors)
+        arguments = certbot.calls[0]
+        self.assertIn("--dns-cloudflare", arguments)
+        self.assertIn("--dns-cloudflare-credentials", arguments)
+        self.assertIn(str(profile_dir / "cf-main"), arguments)
+        self.assertIn("--dns-cloudflare-propagation-seconds", arguments)
+        registry = yaml.safe_load(self.registry_path.read_text())
+        self.assertEqual(
+            registry["certificates"]["new.example"]["source"]["dns_profile"], "cf-main"
+        )
+
+    def test_profile_secrets_are_removed_from_certbot_diagnostics(self) -> None:
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        document = yaml.safe_load(policy_path.read_text())
+        profile_dir = self.root / "profiles"
+        profile_dir.mkdir()
+        document["acme"]["dns_profiles"] = {
+            "directory": str(profile_dir),
+            "private_keys": [str(self.root / "unused.key")],
+        }
+        policy_path.write_text(yaml.safe_dump(document))
+        policy = load_policy(policy_path, require_secure=False)
+        assert policy.acme is not None and policy.acme.dns_profiles is not None
+        from haproxy_mgmt.dns_profiles import OpenedProfile, materialize
+
+        materialize(
+            policy.acme.dns_profiles,
+            OpenedProfile(
+                "cf-main",
+                "cloudflare",
+                1,
+                "0123456789abcdef",
+                1,
+                {"api_token": "token-example"},
+                "dns_cloudflare_api_token = token-example\n",
+            ),
+            require_secure=False,
+        )
+        certbot = FakeCertbot(self.live, returncode=1, output="provider rejected token-example")
+
+        code, out, errors, _ = self.run_issue(
+            policy_path,
+            "--domain",
+            "new.example",
+            "--method",
+            "dns-01",
+            "--dns-profile",
+            "cf-main",
+            "--cluster",
+            "alpha",
+            "--json",
+            certbot=certbot,
+        )
+
+        self.assertEqual(code, 1)
+        self.assertNotIn("token-example", out + errors)
+        self.assertIn("[redacted]", out)
 
     def test_refusals_before_certbot_is_called(self) -> None:
         policy_path = self.policy_with_acme(

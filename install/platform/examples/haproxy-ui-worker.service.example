@@ -26,7 +26,7 @@ RestartSec=5
 # open rather than the helper being hardened separately.
 #
 # Where the real limit now lives: /etc/sudoers.d/haproxy-ui-worker, which names
-# four helpers and permits no arguments at all. The sandbox never was what
+# each mutation helper and permits no arguments at all. The sandbox never was what
 # stopped this account from deploying - the absence of a sudo rule was. Widening
 # here does not widen what may be run; only that file does.
 
@@ -76,13 +76,14 @@ ProtectHome=read-only
 #   /var/log/letsencrypt        certbot's log, and the lock it takes first
 #   /srv/certdist               where the publisher writes what certbot made
 #   /configs/haproxy-mgmt       the registry the new certificate is entered in
+#   /etc/haproxy-manager/dns-profiles  root-only provider credentials
 #
 # All of these are root-owned and writable by root alone, so opening the mount
 # namespace does not let the worker account itself write to them - the helper
 # writes as root, and file permissions stay the real boundary. This list is the
 # second layer, not the only one.
 ProtectSystem=strict
-ReadWritePaths=/run/haproxy-mgmt /configs/haproxy /configs/haproxy-published /configs/haproxy-validation /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist /configs/haproxy-mgmt
+ReadWritePaths=/run/haproxy-mgmt /configs/haproxy /configs/haproxy-published /configs/haproxy-validation /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist /configs/haproxy-mgmt /etc/haproxy-manager/dns-profiles
 
 # Unchanged, and none of them stand in the helper's way. Kept so that opening
 # the four above is a decision about four things and not about the whole file.

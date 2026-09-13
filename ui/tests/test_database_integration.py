@@ -451,6 +451,10 @@ class TheProfileTableHoldsABoxNobodyHereCanOpen(unittest.TestCase):
                 self.assertRaises(psycopg.errors.InsufficientPrivilege),
             ):
                 cursor.execute("select created_by from dns_provider_profile")
+            connection.rollback()
+            self.assertTrue(db.delete_dns_profile(connection, "cf-main", 1))
+            self.assertFalse(db.delete_dns_profile(connection, "cf-main", 1))
+            connection.commit()
         with (
             self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection,
             connection.cursor() as cursor,

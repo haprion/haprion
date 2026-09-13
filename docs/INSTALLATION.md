@@ -725,7 +725,8 @@ number: a certificate on its targets in minutes, from one line.
 
 ```bash
 sudo haproxy-cert-issue --domain www.example.com --method dns-01 --cluster alpha
-sudo haproxy-cert-issue --domain '*.example.net' --method dns-01 --cluster alpha --receiver lb-01.example.net
+sudo haproxy-cert-issue --domain '*.example.net' --method dns-01 --dns-profile cf-main \
+  --cluster alpha --receiver lb-01.example.net
 ```
 
 What the caller supplies is a domain, a method and target names the registry already knows.
@@ -751,7 +752,7 @@ and which private keys may open them; 1.4.5 makes the keys.
 
 | Method | certbot | What the installation is responsible for |
 |---|---|---|
-| `dns-01` | `--dns-cloudflare` with the credential file above | the token may edit that zone |
+| `dns-01` | the plugin and root-only file selected by `--dns-profile`; without it, legacy `--dns-cloudflare` with the policy file above | the profile may edit that zone |
 | `http-01` | `--webroot -w <webroot>` | `http://<name>/.well-known/acme-challenge/` reaches that directory |
 
 A method whose setting is missing is refused by name before certbot runs. A wildcard
@@ -782,7 +783,7 @@ whole under `error.details.diagnostics` in the JSON envelope, so the account of 
 reaches whoever asked, in certbot's own words.
 
 The web interface asks for the same thing from **Certificates → New certificate**: a domain, a
-method, and boxes for the clusters and the registered receivers. It queues one `cert_issue` job
+method, an in-effect DNS profile for DNS-01, and boxes for the clusters and the registered receivers. It queues one `cert_issue` job
 through `haproxy-cert-issue-helper` (§4.4) and reports on the Jobs page, certbot's output included.
 The form cannot register a receiver - one is a directory, an account and a key, made on the host as
 in 1.4.1 - and it refuses a wildcard over `http-01` before the job is queued.
@@ -821,20 +822,24 @@ release. The catalogue states per provider what has been proved (`packaged`, `lo
 `integration-tested`, `live-verified`) and the verifier refuses a catalogue that claims more than
 the run showed. The passed check names are recorded in `INSTALLATION.json`. The installer freezes the tree root-owned and read-only and
 points `/opt/haproxy-certbot/current` at it. Then the platform step runs
-`certbot renew --dry-run --run-deploy-hooks` from the release against every lineage on the host: the
+`haproxy-cert-renew --certbot <new binary> --dry-run --run-deploy-hooks` against every lineage on the host: the
 one gate a certbot upgrade has, and a failure puts the previous release back before the step
 stops. Only after that does renewal move: the distribution's `certbot.timer` is masked and
 `haproxy-certbot-renew.timer` - the same schedule, the release's binary, the same
-`/etc/letsencrypt` - takes over. One certbot owns the lineages; `renew` walks all of them and fails
+`/etc/letsencrypt` - takes over. Its bounded wrapper invokes Certbot once per lineage. Most plugins
+persist their credentials-file flag in the renewal configuration; Route53 has no such flag, so the
+wrapper restores `AWS_SHARED_CREDENTIALS_FILE` from the registry's `source.dns_profile` binding.
+One certbot owns the lineages; renewal walks all of them and fails
 on one whose plugin it cannot load, which is why the distribution's timer is masked rather than
 left disabled.
 
 The step also checks that the worker's unit opens certbot's directories (`/etc/letsencrypt`,
-`/var/lib/letsencrypt`, `/var/log/letsencrypt`), the publisher's target (`/srv/certdist`) and the
-registry's directory (`/configs/haproxy-mgmt`): the
-issue helper runs certbot inside the worker's sandbox, and without them every issuance from the
-web interface fails on certbot's log lock. Step 07 installs the unit; rerun it with a source tree
-that has them before running step 14.
+`/var/lib/letsencrypt`, `/var/log/letsencrypt`), the publisher's target (`/srv/certdist`), the
+registry's directory (`/configs/haproxy-mgmt`) and the DNS profile directory
+(`/etc/haproxy-manager/dns-profiles`). The issue helper runs certbot inside the worker's sandbox,
+and without those paths every issuance from the web interface fails on a write such as certbot's
+log lock. Step 07 installs the unit; rerun it with a source tree that has them before running step
+14.
 
 Point the runtime policy at the release afterwards - `acme.certbot` in 1.4.3 - and the issue
 helper runs it too. Upgrading is the same step with a newer lock, a few times a year: bump
@@ -895,6 +900,14 @@ unreadable, and the recovery is to re-enter them, not to restore a dump.
 
 A development platform gets its own pair from the same step with its own answers file, and no
 runtime policy entry, because it has no helper.
+
+Saving or replacing a profile queues `dns_profile_apply`. The no-argument root helper opens the
+sealed row, verifies profile/provider/key/revision bindings, validates it against the provider
+catalogue, and atomically writes a `0600 root:root` credentials file plus root-only metadata. Only a
+profile whose current revision has a completed apply job is offered during certificate issuance.
+Removing one uses the same helper and is refused while either the certificate registry or a
+Certbot `renewal/*.conf` file still names it; the database row is deleted only after the helper's
+successful, revision-fenced result.
 
 ### 1.5 Validation certificate
 

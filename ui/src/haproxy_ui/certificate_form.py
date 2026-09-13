@@ -45,6 +45,7 @@ class IssueForm:
     method: str
     clusters: tuple[str, ...]
     receivers: tuple[str, ...]
+    dns_profile: str = ""
 
     @property
     def wildcard(self) -> bool:
@@ -57,9 +58,11 @@ class IssueChoices:
 
     clusters: tuple[str, ...]
     receivers: tuple[str, ...]
+    dns_profiles: tuple[str, ...] = ()
+    profiles_required: bool = False
 
 
-EMPTY_FORM = IssueForm(domain="", method="dns-01", clusters=(), receivers=())
+EMPTY_FORM = IssueForm(domain="", method="dns-01", dns_profile="", clusters=(), receivers=())
 
 
 def normalise(form: IssueForm) -> IssueForm:
@@ -68,6 +71,7 @@ def normalise(form: IssueForm) -> IssueForm:
     return IssueForm(
         domain=form.domain.strip().lower().rstrip("."),
         method=form.method.strip(),
+        dns_profile=form.dns_profile.strip(),
         clusters=tuple(dict.fromkeys(name.strip() for name in form.clusters if name.strip())),
         receivers=tuple(dict.fromkeys(name.strip() for name in form.receivers if name.strip())),
     )
@@ -103,6 +107,13 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             "A wildcard certificate needs DNS-01. HTTP-01 cannot prove a wildcard, "
             "because no CA issues one against an HTTP challenge."
         )
+    if form.method == "dns-01":
+        if choices.profiles_required and not form.dns_profile:
+            raise FormProblem("Choose a DNS provider profile that is in effect.")
+        if choices.profiles_required and form.dns_profile not in choices.dns_profiles:
+            raise FormProblem("The chosen DNS provider profile is not in effect.")
+    elif form.dns_profile:
+        raise FormProblem("A DNS provider profile belongs to DNS-01 only.")
     if not form.clusters and not form.receivers:
         raise FormProblem("Choose at least one target: a cluster or a receiver.")
     #
@@ -119,12 +130,15 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             "One of the chosen receivers is not registered. A receiver is registered "
             "on the manager, not from this form."
         )
-    return {
+    payload = {
         "domain": form.domain,
         "method": form.method,
         "clusters": list(form.clusters),
         "receivers": list(form.receivers),
     }
+    if form.dns_profile:
+        payload["dns_profile"] = form.dns_profile
+    return payload
 
 
 def _unknown(chosen: Iterable[str], offered: Iterable[str]) -> tuple[str, ...]:

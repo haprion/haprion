@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haproxy_mgmt import dns_profiles
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_issue import Certbot, IssueError, issue, run_certbot
 from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
@@ -31,7 +32,7 @@ from haproxy_mgmt.helper_protocol import (
 )
 
 OPERATION = "cert_issue"
-PARAMETERS = frozenset({"domain", "method", "clusters", "receivers"})
+PARAMETERS = frozenset({"domain", "method", "clusters", "receivers", "dns_profile"})
 MAX_DOMAIN_BYTES = 255
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper"
 SUDO = "/usr/bin/sudo"
@@ -44,6 +45,7 @@ def build_request(
     method: str,
     clusters: tuple[str, ...] = (),
     receivers: tuple[str, ...] = (),
+    dns_profile: str | None = None,
 ) -> str:
     """The exact bounded request the worker sends. Null cluster, by contract."""
 
@@ -58,6 +60,7 @@ def build_request(
                 "method": method,
                 "clusters": list(clusters),
                 "receivers": list(receivers),
+                "dns_profile": dns_profile,
             },
         },
         separators=(",", ":"),
@@ -110,8 +113,12 @@ def main(
             raise HelperProtocolError("parameters.method must be a string", exit_code=65)
         clusters = cert_job.clusters(request.parameters)
         receivers = cert_job.receivers(request.parameters)
-    except HelperProtocolError as exc:
-        return refuse("bad_input", str(exc), exc.exit_code)
+        dns_profile_value = request.parameters.get("dns_profile")
+        dns_profile = None
+        if dns_profile_value is not None:
+            dns_profile = dns_profiles.check_profile_id(dns_profile_value)
+    except (HelperProtocolError, dns_profiles.ProfileError) as exc:
+        return refuse("bad_input", str(exc), 65)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -131,6 +138,7 @@ def main(
             method=method,
             clusters=clusters,
             receivers=receivers,
+            dns_profile=dns_profile,
             policy=policy,
             runtime=runtime,
             certbot=certbot,

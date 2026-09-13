@@ -37,8 +37,8 @@ Step 13 mirrors each node's structured traffic log onto this host. Production
 only, and it fetches nothing until each node has accepted the key it prints.
 
 Step 14 builds the locked certbot environment - certbot and every DNS plugin
-the web interface offers - under `/opt/haproxy-certbot`, proves it with a
-dry-run renewal, and moves renewal onto it. Rerun with a newer lock to upgrade;
+the web interface offers - under `/opt/haproxy-certbot`, proves it with the
+profile-aware dry-run renewal wrapper, and moves renewal onto it. Rerun with a newer lock to upgrade;
 the previous release is restored if the dry run fails.
 
 Step 15 makes the key pair that seals DNS provider credentials between the web

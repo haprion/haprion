@@ -1712,6 +1712,7 @@ def build_router(config: Config) -> APIRouter:
         method: str = Form(default="", max_length=16),
         cluster: Sequence[str] = Form(default=()),
         receiver: Sequence[str] = Form(default=()),
+        dns_profile: str = Form(default="", max_length=32),
         idempotency_key: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
@@ -1725,7 +1726,11 @@ def build_router(config: Config) -> APIRouter:
         """
 
         form = certificate_form.IssueForm(
-            domain=domain, method=method, clusters=tuple(cluster), receivers=tuple(receiver)
+            domain=domain,
+            method=method,
+            dns_profile=dns_profile,
+            clusters=tuple(cluster),
+            receivers=tuple(receiver),
         )
         session = current_session(request)
         if session is None:
@@ -1804,9 +1809,22 @@ def build_router(config: Config) -> APIRouter:
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
             captured=captured_at is not None,
         )
+        usable_profiles: tuple[str, ...] = ()
+        profiles_required = config.dns_profiles_public_key is not None
+        if profiles_required:
+            with request.app.state.pool.connection() as connection:
+                profile_rows = db.dns_profiles(connection)
+                recent = db.recent_jobs(connection)
+            usable_profiles = tuple(
+                profile.id
+                for profile in profile_rows
+                if dns_profile_form.profile_status(profile.id, profile.revision, recent).usable
+            )
         return certificate_form.IssueChoices(
             clusters=tuple(clusters),
             receivers=overview.registry.receivers if overview.registry else (),
+            dns_profiles=usable_profiles,
+            profiles_required=profiles_required,
         )
 
     def _certificate_form_page(
@@ -1936,7 +1954,7 @@ def build_router(config: Config) -> APIRouter:
         if not isinstance(gate, AuthenticatedSession):
             return gate
         with request.app.state.pool.connection() as connection:
-            existing = db.dns_profile(connection, profile_id[:32])
+            existing = db.dns_profile(connection, profile_id)
         if existing is None:
             return PlainTextResponse("Not found", status_code=404)
         form = dns_profile_form.ProfileForm(
@@ -1950,10 +1968,93 @@ def build_router(config: Config) -> APIRouter:
         if not isinstance(gate, AuthenticatedSession):
             return gate
         with request.app.state.pool.connection() as connection:
-            existing = db.dns_profile(connection, profile_id[:32])
+            existing = db.dns_profile(connection, profile_id)
         if existing is None:
             return PlainTextResponse("Not found", status_code=404)
         return await _dns_profile_submit(request, gate, existing=existing)
+
+    @router.get("/dns-profiles/{profile_id}/remove", response_class=HTMLResponse)
+    def dns_profile_remove_form(request: Request, profile_id: str) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        with request.app.state.pool.connection() as connection:
+            existing = db.dns_profile(connection, profile_id)
+            recent = db.recent_jobs(connection)
+        if existing is None:
+            return PlainTextResponse("Not found", status_code=404)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        return TEMPLATES.TemplateResponse(
+            request,
+            "dns-profile-remove.html",
+            {
+                "username": gate.username,
+                "role": gate.role,
+                "csrf_token": auth.csrf_token(token),
+                "profile": existing,
+                "certificate_job": jobs.certificate_in_flight(recent),
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
+    @router.post("/dns-profiles/{profile_id}/remove")
+    def dns_profile_remove_submit(
+        request: Request,
+        profile_id: str,
+        csrf_token: Annotated[str, Form(max_length=128)],
+        idempotency_key: Annotated[str, Form(max_length=64)],
+    ) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        with request.app.state.pool.connection() as connection:
+            existing = db.dns_profile(connection, profile_id)
+            if existing is None:
+                return PlainTextResponse("Not found", status_code=404)
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="dns_profile_apply",
+                    cluster=None,
+                    payload={"profile": existing.id, "revision": existing.revision, "remove": True},
+                    idempotency_key=key,
+                )
+            except db.CertificateBusy:
+                connection.rollback()
+                return PlainTextResponse(
+                    "A certificate job is already running. Wait for it to finish, then try again.",
+                    status_code=409,
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="queue_job",
+                cluster=None,
+                request_id=job.request_id,
+                detail={
+                    "operation": "dns_profile_apply",
+                    "job": job.id,
+                    "profile": existing.id,
+                    "revision": existing.revision,
+                    "remove": True,
+                },
+            )
+            connection.commit()
+        return RedirectResponse("/dns-profiles", status_code=303)
 
     async def _dns_profile_submit(
         request: Request, session: AuthenticatedSession, *, existing: db.DnsProfile | None

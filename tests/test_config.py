@@ -599,6 +599,20 @@ class TheCertificateRegistry(unittest.TestCase):
             registry.certificates["example.com"].source.lineage, "example.com-wildcard"
         )
 
+    def test_an_acme_source_may_name_the_dns_profile_that_renews_it(self) -> None:
+        def add_profile(data):
+            data["certificates"]["example.net"]["source"]["dns_profile"] = "cf-main"
+
+        registry = self.load(mutate_registry=add_profile).registry
+        assert registry is not None
+        self.assertEqual(registry.certificates["example.net"].source.dns_profile, "cf-main")
+
+        def put_profile_on_import(data):
+            data["certificates"]["lb-01.example.net"]["source"]["dns_profile"] = "cf-main"
+
+        with self.assertRaisesRegex(ConfigError, "belongs to an acme source only"):
+            self.load(mutate_registry=put_profile_on_import)
+
     def test_the_acme_block_is_read_and_held_to_its_three_keys(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_file = self.setup(Path(raw), None, None)

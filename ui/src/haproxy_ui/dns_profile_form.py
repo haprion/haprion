@@ -202,8 +202,12 @@ def profile_status(profile_id: str, revision: int, jobs: Iterable[Any]) -> Profi
         if job.operation != "dns_profile_apply" or job.payload.get("profile") != profile_id:
             continue
         job_revision = job.payload.get("revision")
+        removing = job.payload.get("remove") is True
+        removing = job.payload.get("remove") is True
         if job.state in {"pending", "running"}:
-            return ProfileStatus("Applying", "info", False)
+            return ProfileStatus("Removing" if removing else "Applying", "info", False)
+        if removing:
+            return ProfileStatus("Remove failed", "critical", False)
         if job.state == "done" and job_revision == revision:
             return ProfileStatus("In effect", "healthy", True)
         if job.state == "done":

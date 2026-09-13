@@ -156,7 +156,7 @@ def _certificate_operation(
     """
 
     if operation == "cert_issue":
-        _only(payload, "domain", "method", "clusters", "receivers")
+        _only(payload, "domain", "method", "dns_profile", "clusters", "receivers")
         domain = payload.get("domain")
         if not isinstance(domain, str) or not domain:
             raise BadPayload("domain must be a non-empty string")
@@ -168,6 +168,15 @@ def _certificate_operation(
         #
         if method not in {"dns-01", "http-01"}:
             raise BadPayload("method must be dns-01 or http-01")
+        dns_profile_value = payload.get("dns_profile")
+        dns_profile = None
+        if dns_profile_value is not None:
+            try:
+                dns_profile = dns_profiles.check_profile_id(dns_profile_value)
+            except dns_profiles.ProfileError as exc:
+                raise BadPayload(str(exc)) from exc
+            if method != "dns-01":
+                raise BadPayload("dns_profile belongs to dns-01 only")
         clusters, receivers = _targets(payload)
         return Prepared(
             argv=(cert_issue_helper.SUDO, *SUDO_FLAGS, cert_issue_helper.HELPER),
@@ -177,6 +186,7 @@ def _certificate_operation(
                 method=method,
                 clusters=clusters,
                 receivers=receivers,
+                dns_profile=dns_profile,
             ),
         )
 
@@ -189,18 +199,19 @@ def _certificate_operation(
         # the file that lands is the newest one - and a row that vanished is
         # a refusal here rather than a helper run with nothing to open.
         #
-        _only(payload, "profile", "revision")
+        _only(payload, "profile", "revision", "remove")
         try:
             profile_id = dns_profiles.check_profile_id(payload.get("profile"))
             revision = dns_profiles.check_revision(payload.get("revision"))
         except dns_profiles.ProfileError as exc:
             raise BadPayload(str(exc)) from exc
+        remove = _flag(payload, "remove", default=False)
         if profile_lookup is None:
             raise BadPayload("dns_profile_apply needs the profile row and none was offered")
         row = profile_lookup(profile_id)
         if row is None:
             raise BadPayload(f"profile {profile_id} no longer exists")
-        if row.revision < revision:
+        if row.revision < revision or (remove and row.revision != revision):
             raise BadPayload(f"profile {profile_id} is at revision {row.revision}, not {revision}")
         return Prepared(
             argv=(dns_profiles.SUDO, *SUDO_FLAGS, dns_profiles.HELPER),
@@ -208,9 +219,11 @@ def _certificate_operation(
                 str(request_id),
                 profile_id=row.id,
                 provider_id=row.provider_id,
+                schema_version=row.schema_version,
                 key_id=row.key_id,
                 revision=row.revision,
                 ciphertext=row.ciphertext,
+                remove=remove,
             ),
         )
 

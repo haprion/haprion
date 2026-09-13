@@ -24,7 +24,8 @@
         "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
         "key_id": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
         "revision": { "type": "integer", "minimum": 1, "maximum": 1000000 },
-        "plugin": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]+$" }
+        "plugin": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]+$" },
+        "removed": { "type": "boolean" }
       },
       "additionalProperties": true
     }

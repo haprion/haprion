@@ -24,7 +24,8 @@
       "haproxy-objects-publish-helper",
       "haproxy-cert-issue-helper",
       "haproxy-cert-publish-helper",
-      "haproxy-cert-target-helper"
+      "haproxy-cert-target-helper",
+      "haproxy-dns-profile-apply-helper"
     ]
   }
 }

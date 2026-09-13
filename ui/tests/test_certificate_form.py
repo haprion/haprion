@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest import mock
 from uuid import UUID, uuid4
@@ -86,6 +88,12 @@ class WhatTheFormAccepts(unittest.TestCase):
 
         self.assertEqual(payload["clusters"], ["alpha"])
 
+    def test_an_in_effect_profile_becomes_the_only_dns_credential_reference(self) -> None:
+        choices = replace(CHOICES, dns_profiles=("cf-main",), profiles_required=True)
+        payload = certificate_form.payload_from_form(form(dns_profile="cf-main"), choices)
+
+        self.assertEqual(payload["dns_profile"], "cf-main")
+
 
 class WhatTheFormRefuses(unittest.TestCase):
     def test_an_empty_name(self) -> None:
@@ -132,6 +140,21 @@ class WhatTheFormRefuses(unittest.TestCase):
         self.assertIn("not registered", sentence)
         self.assertIn("on the manager", sentence)
         self.assertNotIn("server724", sentence)
+
+    def test_dns_needs_a_profile_that_is_in_effect_once_profiles_are_enabled(self) -> None:
+        choices = replace(CHOICES, dns_profiles=("cf-main",), profiles_required=True)
+        for submission in (form(), form(dns_profile="old-profile")):
+            with (
+                self.subTest(profile=submission.dns_profile),
+                self.assertRaises(certificate_form.FormProblem),
+            ):
+                certificate_form.payload_from_form(submission, choices)
+
+    def test_http_refuses_a_dns_profile(self) -> None:
+        with self.assertRaisesRegex(certificate_form.FormProblem, "belongs to DNS-01"):
+            certificate_form.payload_from_form(
+                form(method="http-01", dns_profile="cf-main"), CHOICES
+            )
 
 
 KEY = str(uuid4())
@@ -233,6 +256,47 @@ class TheFormPage(CertificateFormRouteTestCase):
 
         self.assertIn("Issuing certificate is in progress", page)
         self.assertIn("disabled>Request the certificate", page)
+
+    def test_only_an_in_effect_dns_profile_is_offered(self) -> None:
+        now = datetime.now(UTC)
+        profile = db.DnsProfile(
+            "cf-main",
+            "Cloudflare",
+            "cloudflare",
+            1,
+            "0123456789abcdef",
+            2,
+            now,
+            "admin",
+            now,
+            "admin",
+        )
+        config = replace(
+            configuration(),
+            management_writes=True,
+            clusters=("alpha", "beta"),
+            dns_profiles_public_key=Path("/example/public.key"),
+        )
+        with (
+            mock.patch("haproxy_ui.db.dns_profiles", return_value=[profile]),
+            mock.patch(
+                "haproxy_ui.db.recent_jobs",
+                return_value=[
+                    queued(
+                        operation="dns_profile_apply",
+                        cluster=None,
+                        state="done",
+                        payload={"profile": "cf-main", "revision": 2},
+                    )
+                ],
+            ),
+        ):
+            client = self.client(config)
+            self.sign_in(client)
+            page = client.get("/certificates/new").text
+
+        self.assertIn('name="dns_profile"', page)
+        self.assertIn('value="cf-main"', page)
 
 
 class SendingTheForm(CertificateFormRouteTestCase):

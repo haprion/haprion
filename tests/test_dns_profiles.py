@@ -143,6 +143,7 @@ class SealingTests(unittest.TestCase):
                 "ffffffff-ffff-4fff-8fff-ffffffffffff",
                 profile_id="cf-main",
                 provider_id="cloudflare",
+                schema_version=1,
                 key_id=self.public_key.key_id,
                 revision=2,
                 ciphertext=self.ciphertext,

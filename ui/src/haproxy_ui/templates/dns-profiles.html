@@ -34,13 +34,13 @@
       <td>{% if row.provider %}{{ row.provider.name }} <span class="optional">({{ row.provider.tier }})</span>{% else %}<span class="warning-text">{{ row.profile.provider_id }} — no longer offered</span>{% endif %}</td>
       <td><code>{{ row.profile.key_id }}</code>{% if not row.current_key %} <span class="warning-text">old key</span>{% endif %}</td>
       <td><span class="backend-health"><span class="status-dot status-{{ 'unknown' if row.status.tone == 'muted' else row.status.tone }}"></span>{{ row.status.label }}</span> <span class="optional">rev {{ row.profile.revision }}</span></td>
-      <td>{% if public_key %}<a href="/dns-profiles/{{ row.profile.id }}/replace">Replace</a>{% endif %}</td>
+      <td>{% if public_key %}<a href="/dns-profiles/{{ row.profile.id }}/replace">Replace</a> · {% endif %}<a href="/dns-profiles/{{ row.profile.id }}/remove">Remove</a></td>
     </tr>
     {% else %}
     <tr><td colspan="6"><span class="optional">No profile yet. A profile is one provider's API credentials; the certificate form offers the ones in effect.</span></td></tr>
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="table-note">Values are never shown again after saving. To change one, replace the profile: the new values are sealed as the next revision and applied by a job. Removing a profile comes with the certificate clean-up (C5b).</p>
+  <p class="table-note">Values are never shown again after saving. To change one, replace the profile: the new values are sealed as the next revision and applied by a job. Removal is refused while the certificate registry or a Certbot renewal configuration still refers to the profile.</p>
 </section>
 {% endblock %}

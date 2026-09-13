@@ -339,6 +339,7 @@ class CertificateSource:
     # where an existing lineage was named before the ID convention existed.
     #
     lineage: str | None
+    dns_profile: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -976,21 +977,28 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
         _only_keys(raw, {"source", "clusters", "receivers"}, location)
 
         raw_source = _mapping(raw.get("source"), f"{location}.source")
-        _only_keys(raw_source, {"kind", "lineage"}, f"{location}.source")
+        _only_keys(raw_source, {"kind", "lineage", "dns_profile"}, f"{location}.source")
         kind = _required_string(raw_source, "kind", f"{location}.source")
         if kind not in SOURCE_KINDS:
             raise ConfigError(
                 f"{location}.source.kind must be one of: {', '.join(sorted(SOURCE_KINDS))}"
             )
         lineage: str | None = None
+        dns_profile: str | None = None
         if kind == "acme":
             lineage = certificate_id
             if raw_source.get("lineage") is not None:
                 lineage = _required_string(raw_source, "lineage", f"{location}.source")
                 if not CERTIFICATE_ID.fullmatch(lineage):
                     raise ConfigError(f"{location}.source.lineage is not a lineage name")
+            if raw_source.get("dns_profile") is not None:
+                dns_profile = _required_string(raw_source, "dns_profile", f"{location}.source")
+                if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", dns_profile):
+                    raise ConfigError(f"{location}.source.dns_profile is not a profile ID")
         elif raw_source.get("lineage") is not None:
             raise ConfigError(f"{location}.source.lineage belongs to an acme source only")
+        elif raw_source.get("dns_profile") is not None:
+            raise ConfigError(f"{location}.source.dns_profile belongs to an acme source only")
 
         clusters = _id_list(raw, "clusters", location, CLUSTER_ID)
         named = _id_list(raw, "receivers", location, RECEIVER_ID)
@@ -1001,7 +1009,7 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             )
         certificates[certificate_id] = RegisteredCertificate(
             certificate_id=certificate_id,
-            source=CertificateSource(kind=kind, lineage=lineage),
+            source=CertificateSource(kind=kind, lineage=lineage, dns_profile=dns_profile),
             clusters=clusters,
             receivers=named,
         )

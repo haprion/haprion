@@ -1,0 +1,21 @@
+{% extends "layout.html" %}
+{% block title %}Remove DNS profile — HAProxy Manager{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div class="heading-title"><h1>Remove DNS profile</h1><p class="page-lede">The sealed database row and the root-only credentials file are removed together by a job.</p></div>
+</section>
+
+<section class="cluster-card form-card">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ profile.name }}</h3><p><code>{{ profile.id }}</code> · {{ profile.provider_id }} · revision {{ profile.revision }}</p></div></div></header>
+  <p>The helper refuses removal while any certificate in the registry or any Certbot renewal configuration refers to this profile.</p>
+  {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish before removing this profile.</p>{% endif %}
+  <div class="action-buttons">
+    <form method="post" action="/dns-profiles/{{ profile.id }}/remove">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+      <button class="danger-button" type="submit"{% if certificate_job %} disabled{% endif %}>Remove profile</button>
+    </form>
+    <a class="secondary-button" href="/dns-profiles">Cancel</a>
+  </div>
+</section>
+{% endblock %}

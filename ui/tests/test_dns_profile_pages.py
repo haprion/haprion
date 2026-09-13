@@ -154,6 +154,13 @@ class TheFormModule(unittest.TestCase):
             status("cf-main", 2, [job("pending", 2), job("done", 1)]).label, "Applying"
         )
         self.assertEqual(status("cf-main", 1, [job("failed", 1)]).label, "Apply failed")
+        removing = queued(
+            operation="dns_profile_apply",
+            cluster=None,
+            state="pending",
+            payload={"profile": "cf-main", "revision": 1, "remove": True},
+        )
+        self.assertEqual(status("cf-main", 1, [removing]).label, "Removing")
         self.assertEqual(
             status("cf-main", 1, [queued(operation="cert_issue", cluster=None)]).label,
             "Not applied",
@@ -367,6 +374,29 @@ class SavingAProfile(ProfileRouteTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("already running", response.text)
         self.assertEqual(self.pool.rollbacks, 1)
+
+
+class RemovingAProfile(ProfileRouteTestCase):
+    def test_removal_has_a_confirmation_page_and_queues_a_fenced_job(self) -> None:
+        self.rows = [profile_row(revision=3)]
+        client = self.writing_client()
+        page = client.get("/dns-profiles/cf-main/remove")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Remove DNS profile", page.text)
+        self.assertIn("refers to this profile", page.text)
+
+        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        response = client.post(
+            "/dns-profiles/cf-main/remove",
+            data={auth.CSRF_FIELD: token, "idempotency_key": KEY},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/dns-profiles")
+        self.assertEqual(
+            self.queued[0]["payload"],
+            {"profile": "cf-main", "revision": 3, "remove": True},
+        )
 
 
 if __name__ == "__main__":

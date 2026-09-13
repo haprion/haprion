@@ -189,9 +189,16 @@ def _registered(entry: RegisteredCertificate | None) -> dict[str, Any]:
     if entry is None:
         return {"source": None, "targets": None}
     return {
-        "source": {"kind": entry.source.kind, "lineage": entry.source.lineage},
+        "source": _source(entry),
         "targets": {"clusters": list(entry.clusters), "receivers": list(entry.receivers)},
     }
+
+
+def _source(entry: RegisteredCertificate) -> dict[str, Any]:
+    result = {"kind": entry.source.kind, "lineage": entry.source.lineage}
+    if entry.source.dns_profile is not None:
+        result["dns_profile"] = entry.source.dns_profile
+    return result
 
 
 def _one(
@@ -387,7 +394,7 @@ def registry_result(
     for entry in registry.certificates.values():
         row: dict[str, Any] = {
             "id": entry.certificate_id,
-            "source": {"kind": entry.source.kind, "lineage": entry.source.lineage},
+            "source": _source(entry),
             "readable": False,
             "validation_error": None,
             "measured_at": None,

@@ -40,13 +40,13 @@ from __future__ import annotations
 import re
 import subprocess
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from haproxy_mgmt import cert_registry
+from haproxy_mgmt import cert_registry, dns_profiles
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_publish import (
     DEFAULT_LOCK_PATH,
@@ -114,6 +114,7 @@ class IssueRequest:
     method: Method
     clusters: tuple[str, ...]
     receivers: tuple[str, ...]
+    dns_profile: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +123,14 @@ class CertbotResult:
     output: str
 
 
-type Certbot = Callable[[Sequence[str]], CertbotResult]
+type Certbot = Callable[[Sequence[str], Mapping[str, str]], CertbotResult]
+
+
+@dataclass(frozen=True, slots=True)
+class CertbotInvocation:
+    arguments: tuple[str, ...]
+    environment: Mapping[str, str]
+    redactions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +146,7 @@ class IssueResult:
             "lineage": self.request.certificate_id,
             "domains": list(self.request.domains),
             "method": self.request.method,
+            "dns_profile": self.request.dns_profile,
             "targets": {
                 "clusters": list(self.request.clusters),
                 "receivers": list(self.request.receivers),
@@ -171,6 +180,7 @@ def build_request(
     clusters: Sequence[str],
     receivers: Sequence[str],
     runtime: RuntimeConfig,
+    dns_profile: str | None = None,
 ) -> IssueRequest:
     certificate_id, domains, wildcard = parse_domain(domain)
     if method not in METHODS:
@@ -179,6 +189,13 @@ def build_request(
         raise IssueError(
             "bad_input", "a wildcard certificate needs DNS-01; HTTP-01 cannot prove a wildcard"
         )
+    if dns_profile is not None:
+        try:
+            dns_profile = dns_profiles.check_profile_id(dns_profile)
+        except dns_profiles.ProfileError as exc:
+            raise IssueError("bad_input", str(exc)) from exc
+        if method != "dns-01":
+            raise IssueError("bad_input", "a DNS profile belongs to DNS-01 only")
     if not clusters and not receivers:
         raise IssueError("bad_input", "at least one target (cluster or receiver) is required")
 
@@ -211,6 +228,7 @@ def build_request(
         method=method,
         clusters=tuple(dict.fromkeys(clusters)),
         receivers=tuple(dict.fromkeys(receivers)),
+        dns_profile=dns_profile,
     )
 
 
@@ -228,23 +246,55 @@ def certbot_binary(policy: PathPolicy) -> str:
     return CERTBOT
 
 
-def certbot_arguments(request: IssueRequest, policy: PathPolicy) -> list[str]:
+def certbot_invocation(
+    request: IssueRequest, policy: PathPolicy, *, require_secure: bool = True
+) -> CertbotInvocation:
     """The certonly command, binary first, every part fixed here or read from
     the policy."""
 
     acme = policy.acme
     if request.method == "dns-01":
-        if acme is None or acme.dns_cloudflare_credentials is None:
-            raise IssueError(
-                "dependency_unavailable",
-                "DNS-01 needs acme.dns_cloudflare_credentials in the runtime policy",
-                exit_code=78,
+        if request.dns_profile is not None:
+            profile_policy = acme.dns_profiles if acme is not None else None
+            if profile_policy is None:
+                raise IssueError(
+                    "dependency_unavailable",
+                    "DNS profiles need acme.dns_profiles in the runtime policy",
+                    exit_code=78,
+                )
+            try:
+                materialized = dns_profiles.read_materialized(
+                    profile_policy, request.dns_profile, require_secure=require_secure
+                )
+                redactions = dns_profiles.materialized_secret_values(materialized)
+            except dns_profiles.ProfileError as exc:
+                raise IssueError("dependency_unavailable", str(exc), exit_code=78) from exc
+            provider = materialized.provider
+            authenticator = [f"--{provider.plugin}"]
+            environment = {}
+            if provider.credentials_flag is not None:
+                authenticator.extend([provider.credentials_flag, materialized.credentials_path])
+            elif provider.credentials_env is not None:
+                environment[provider.credentials_env] = materialized.credentials_path
+            else:
+                raise IssueError("dependency_unavailable", "the DNS provider has no delivery")
+            authenticator.extend(
+                [f"--{provider.plugin}-propagation-seconds", str(provider.propagation_seconds)]
             )
-        authenticator = [
-            "--dns-cloudflare",
-            "--dns-cloudflare-credentials",
-            str(acme.dns_cloudflare_credentials),
-        ]
+        else:
+            if acme is None or acme.dns_cloudflare_credentials is None:
+                raise IssueError(
+                    "dependency_unavailable",
+                    "DNS-01 needs --dns-profile or acme.dns_cloudflare_credentials",
+                    exit_code=78,
+                )
+            authenticator = [
+                "--dns-cloudflare",
+                "--dns-cloudflare-credentials",
+                str(acme.dns_cloudflare_credentials),
+            ]
+            environment = {}
+            redactions = ()
     else:
         if acme is None or acme.webroot is None:
             raise IssueError(
@@ -253,6 +303,8 @@ def certbot_arguments(request: IssueRequest, policy: PathPolicy) -> list[str]:
                 exit_code=78,
             )
         authenticator = ["--webroot", "-w", str(acme.webroot)]
+        environment = {}
+        redactions = ()
 
     arguments = [
         certbot_binary(policy),
@@ -267,15 +319,28 @@ def certbot_arguments(request: IssueRequest, policy: PathPolicy) -> list[str]:
     ]
     for domain in request.domains:
         arguments.extend(["-d", domain])
-    return arguments
+    fixed_environment = {
+        "HOME": "/root",
+        "LANG": "C.UTF-8",
+        "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+        **environment,
+    }
+    return CertbotInvocation(tuple(arguments), fixed_environment, redactions)
 
 
-def run_certbot(command: Sequence[str]) -> CertbotResult:
+def certbot_arguments(request: IssueRequest, policy: PathPolicy) -> list[str]:
+    """Compatibility view used by callers that only need to inspect argv."""
+
+    return list(certbot_invocation(request, policy, require_secure=False).arguments)
+
+
+def run_certbot(command: Sequence[str], environment: Mapping[str, str]) -> CertbotResult:
     try:
         completed = subprocess.run(  # noqa: S603 - binary from the policy, arguments assembled above
             list(command),
             capture_output=True,
             text=True,
+            env=dict(environment),
             timeout=CERTBOT_TIMEOUT,
             check=False,
         )
@@ -306,6 +371,8 @@ def add_to_registry(
         document = cert_registry.read_document(path)
         certificates = dict(document.get("certificates") or {})
         entry: dict[str, Any] = {"source": {"kind": "acme"}}
+        if request.dns_profile is not None:
+            entry["source"]["dns_profile"] = request.dns_profile
         if request.clusters:
             entry["clusters"] = list(request.clusters)
         if request.receivers:
@@ -345,6 +412,7 @@ def issue(
     method: str,
     clusters: Sequence[str],
     receivers: Sequence[str],
+    dns_profile: str | None = None,
     policy: PathPolicy,
     runtime: RuntimeConfig,
     certbot: Certbot = run_certbot,
@@ -357,7 +425,12 @@ def issue(
 ) -> IssueResult:
     started = time.monotonic()
     request = build_request(
-        domain=domain, method=method, clusters=clusters, receivers=receivers, runtime=runtime
+        domain=domain,
+        method=method,
+        clusters=clusters,
+        receivers=receivers,
+        runtime=runtime,
+        dns_profile=dns_profile,
     )
     if (live / request.certificate_id).exists():
         raise IssueError(
@@ -365,10 +438,10 @@ def issue(
             f"certbot already has a lineage named {request.certificate_id!r}; register it "
             "in the registry instead of issuing it again",
         )
-    arguments = certbot_arguments(request, policy)
+    invocation = certbot_invocation(request, policy, require_secure=require_secure)
 
     certbot_started = time.monotonic()
-    result = certbot(arguments)
+    result = certbot(invocation.arguments, invocation.environment)
     certbot_seconds = time.monotonic() - certbot_started
     if result.returncode != 0:
         #
@@ -378,12 +451,15 @@ def issue(
         # whole under `details.diagnostics` rather than cut off mid-line in
         # the message.
         #
+        diagnostics = result.output
+        for value in sorted(invocation.redactions, key=len, reverse=True):
+            diagnostics = diagnostics.replace(value, "[redacted]")
         raise IssueError(
             "certbot_failed",
             f"certbot exited {result.returncode} after {certbot_seconds:.0f}s",
             exit_code=1,
             details={
-                "diagnostics": result.output,
+                "diagnostics": diagnostics,
                 "certbot_exit_code": result.returncode,
                 "certbot_seconds": round(certbot_seconds, 1),
             },

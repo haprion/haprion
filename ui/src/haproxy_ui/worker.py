@@ -253,6 +253,24 @@ def _finish(
         connection.rollback()
         return False
 
+    removed_profile: str | None = None
+    if (
+        state == "done"
+        and job.operation == "dns_profile_apply"
+        and job.payload.get("remove") is True
+    ):
+        profile = job.payload.get("profile")
+        revision = job.payload.get("revision")
+        if (
+            not isinstance(profile, str)
+            or type(revision) is not int
+            or not db.delete_dns_profile(connection, profile, revision)
+        ):
+            logger.error("job %s removed profile files but its fenced database row changed", job.id)
+            connection.rollback()
+            return False
+        removed_profile = profile
+
     db.record_audit_event(
         connection,
         actor=worker,
@@ -266,6 +284,7 @@ def _finish(
             "outcome": outcome,
             "exit_code": exit_code,
             "error_code": _error_code(result),
+            **({"removed_profile": removed_profile} if removed_profile is not None else {}),
         },
     )
     connection.commit()

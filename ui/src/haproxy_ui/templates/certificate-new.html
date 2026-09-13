@@ -47,6 +47,13 @@
         </div>
         <p class="challenge-warning"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Validation is your responsibility: configure DNS access, or point the domain here for HTTP.</span></p>
       </div>
+      <label><span class="field-title">DNS provider profile</span>
+        <select name="dns_profile">
+          <option value="">Choose a profile…</option>
+          {% for profile in choices.dns_profiles %}<option value="{{ profile }}"{% if form.dns_profile == profile %} selected{% endif %}>{{ profile }}</option>{% endfor %}
+        </select>
+        <small>Required for DNS-01 and ignored only after you choose HTTP-01. Only profiles whose apply job is done are offered. <a href="/dns-profiles">Manage profiles</a>.</small>
+      </label>
     </div>
   </section>
 

@@ -245,6 +245,17 @@ refuse "$WEB_USER" "cannot run the network helper" \
     sudo -n /opt/haproxy-mgmt/current/bin/haproxy-network-helper
 refuse "$WORKER_USER" "cannot run the network helper" \
     sudo -n /opt/haproxy-mgmt/current/bin/haproxy-network-helper
+refuse "$WEB_USER" "has no DNS profile helper grant" \
+    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-dns-profile-apply-helper
+refuse "$POLLER_USER" "has no DNS profile helper grant" \
+    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-dns-profile-apply-helper
+if [[ -d "${PLATFORM_ROOT}/secrets/dns-profile-keys" ]]; then
+    while IFS= read -r key; do
+        refuse "$WEB_USER" "cannot read a DNS profile private key" test -r "$key"
+        refuse "$WORKER_USER" "cannot read a DNS profile private key" test -r "$key"
+        refuse "$POLLER_USER" "cannot read a DNS profile private key" test -r "$key"
+    done < <(find "${PLATFORM_ROOT}/secrets/dns-profile-keys" -maxdepth 1 -type f -name '*.key')
+fi
 refuse "$POLLER_USER" "cannot write a job row" \
     psql -d "${DB_NAME}" -qtAX -v ON_ERROR_STOP=1 \
     -c "insert into job (operation, cluster, payload) values ('deploy', 'alpha', '{}')"

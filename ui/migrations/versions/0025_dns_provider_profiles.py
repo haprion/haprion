@@ -75,6 +75,7 @@ def upgrade() -> None:
         on dns_provider_profile to app_web;
     grant select (id, provider_id, schema_version, key_id, revision, ciphertext)
         on dns_provider_profile to app_worker;
+    grant delete on dns_provider_profile to app_worker;
 
     --
     -- Applying a profile is a certificate-scoped job: no cluster, one at a

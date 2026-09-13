@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
@@ -108,6 +109,30 @@ class WorkerTestCase(unittest.TestCase):
 
 
 class GoodAnswers(WorkerTestCase):
+    def test_done_profile_removal_deletes_the_fenced_row_in_the_finish_transaction(self) -> None:
+        job = replace(
+            claimed(
+                operation="dns_profile_apply",
+                payload={"profile": "cf-main", "revision": 4, "remove": True},
+            ),
+            cluster=None,
+        )
+        with mock.patch.object(db, "delete_dns_profile", return_value=True) as delete:
+            finished = worker._finish(
+                self.connection,
+                job,
+                state="done",
+                outcome="done",
+                exit_code=0,
+                result=result_document(job),
+                stderr_excerpt=None,
+                worker=WORKER,
+            )
+
+        self.assertTrue(finished)
+        delete.assert_called_once_with(self.connection, "cf-main", 4)
+        self.assertEqual(self.audited[0]["detail"]["removed_profile"], "cf-main")
+
     def test_the_envelopes_outcome_becomes_the_jobs_state(self) -> None:
         job = claimed()
         document = result_document(job)

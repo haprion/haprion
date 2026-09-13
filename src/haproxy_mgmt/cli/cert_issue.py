@@ -30,7 +30,8 @@ EXIT_USAGE = 64
 USAGE = (
     "Usage:\n"
     "  haproxy-cert-issue --domain <name> --method dns-01|http-01\n"
-    "                     [--cluster <id>]... [--receiver <id>]... [--json]\n"
+    "                     [--dns-profile <id>] [--cluster <id>]...\n"
+    "                     [--receiver <id>]... [--json]\n"
     "\n"
     "Obtains a certificate from the ACME account this host already has, adds it\n"
     "to the certificate registry, publishes it to the named targets and rolls\n"
@@ -41,6 +42,8 @@ USAGE = (
     "                        name without the asterisk.\n"
     "  --method dns-01       DNS challenge through the credential file named by\n"
     "                        acme.dns_cloudflare_credentials in the runtime policy.\n"
+    "  --dns-profile <id>    Materialized provider profile for DNS-01. Omit only\n"
+    "                        for the legacy Cloudflare policy credential.\n"
     "  --method http-01      HTTP challenge through acme.webroot; the name must\n"
     "                        already reach that directory over port 80. Not for\n"
     "                        wildcards.\n"
@@ -50,9 +53,12 @@ USAGE = (
 )
 
 
-def _parse(argv: list[str], writer: TextIO) -> tuple[str, str, list[str], list[str], bool]:
+def _parse(
+    argv: list[str], writer: TextIO
+) -> tuple[str, str, str | None, list[str], list[str], bool]:
     domain: str | None = None
     method: str | None = None
+    dns_profile: str | None = None
     clusters: list[str] = []
     receivers: list[str] = []
     json_mode = False
@@ -75,6 +81,9 @@ def _parse(argv: list[str], writer: TextIO) -> tuple[str, str, list[str], list[s
         elif argument == "--cluster":
             clusters.append(value())
             index += 2
+        elif argument == "--dns-profile":
+            dns_profile = value()
+            index += 2
         elif argument == "--receiver":
             receivers.append(value())
             index += 2
@@ -87,7 +96,7 @@ def _parse(argv: list[str], writer: TextIO) -> tuple[str, str, list[str], list[s
     if domain is None or method is None:
         writer.write(USAGE)
         raise SystemExit(EXIT_USAGE)
-    return domain, method, clusters, receivers, json_mode
+    return domain, method, dns_profile, clusters, receivers, json_mode
 
 
 def _summary(result: IssueResult, writer: TextIO) -> None:
@@ -167,7 +176,7 @@ def main(
     request_id = new_request_id()
 
     try:
-        domain, method, clusters, receivers, json_mode = _parse(argv, writer)
+        domain, method, dns_profile, clusters, receivers, json_mode = _parse(argv, writer)
     except SystemExit as exc:
         return int(exc.code or 0)
 
@@ -216,6 +225,7 @@ def main(
             method=method,
             clusters=clusters,
             receivers=receivers,
+            dns_profile=dns_profile,
             policy=policy,
             runtime=runtime,
             deployer=deployer or default_deployer(errors),

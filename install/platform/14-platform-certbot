@@ -50,7 +50,7 @@ step "The worker's sandbox"
 #
 worker_unit="/etc/systemd/system/${WORKER_USER}.service"
 [[ -f "$worker_unit" ]] || die "${worker_unit} is missing; run 07-platform-services first"
-for path in /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist /configs/haproxy-mgmt; do
+for path in /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist /configs/haproxy-mgmt /etc/haproxy-manager/dns-profiles; do
     grep -Eq "^ReadWritePaths=(.* )?${path}( .*)?$" "$worker_unit" \
         || die "${worker_unit} does not open ${path}; rerun 07-platform-services with this source tree"
 done
@@ -78,7 +78,8 @@ step "Proving it against this host's lineages"
 # the release's certbot and plugins, and runs the deploy hook - which publishes
 # nothing, because no certificate changed. The one gate a certbot upgrade has.
 #
-if ! "$CERTBOT" renew --dry-run --run-deploy-hooks; then
+if ! /opt/haproxy-mgmt/current/bin/haproxy-cert-renew \
+    --certbot "$CERTBOT" --dry-run --run-deploy-hooks; then
     restore_previous
     die "the dry-run renewal failed with ${release##*/}; the previous environment is current again"
 fi

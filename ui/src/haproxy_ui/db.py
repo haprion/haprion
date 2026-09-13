@@ -2337,3 +2337,14 @@ def sealed_profile(connection: Connection[Any], profile_id: str) -> SealedProfil
             {"id": profile_id},
         )
         return cursor.fetchone()
+
+
+def delete_dns_profile(connection: Connection[Any], profile_id: str, revision: int) -> bool:
+    """Delete exactly the row whose materialization the helper removed."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "delete from dns_provider_profile where id = %(id)s and revision = %(revision)s",
+            {"id": profile_id, "revision": revision},
+        )
+        return cursor.rowcount == 1

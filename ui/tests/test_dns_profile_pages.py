@@ -241,7 +241,7 @@ class ThePages(ProfileRouteTestCase):
         self.assertEqual(self.writing_client(role="reader").get("/dns-profiles").status_code, 403)
         self.assertEqual(self.writing_client().get("/dns-profiles").status_code, 200)
 
-    def test_the_listing_shows_status_and_key_and_never_a_value(self) -> None:
+    def test_the_listing_shows_status_and_only_calls_out_an_old_key(self) -> None:
         self.rows = [
             profile_row(key_id=self.public_key.key_id),
             profile_row(id="old", name="Old key", key_id="ffffffffffffffff", revision=3),
@@ -261,7 +261,9 @@ class ThePages(ProfileRouteTestCase):
 
         self.assertIn("In effect", page)
         self.assertIn("Not applied", page)
-        self.assertIn(">old key<", page)
+        self.assertIn("old sealing key", page)
+        self.assertNotIn('<th scope="col">Key</th>', page)
+        self.assertNotIn(self.public_key.key_id, page)
         self.assertIn("Cloudflare <span", page)
         self.assertIn('href="/dns-profiles/cf-main/replace"', page)
         self.assertIn('href="/dns-profiles/new"', page)
@@ -285,6 +287,8 @@ class ThePages(ProfileRouteTestCase):
         self.assertIn('<select name="field.algorithm"', second)
         self.assertIn("HMAC-SHA256", second)
         self.assertIn("Save and apply", second)
+        self.assertIn('placeholder="rfc2136"', second)
+        self.assertIn("Plugin and credential format tested", second)
 
         unknown = client.get("/dns-profiles/new?provider=example").text
         self.assertNotIn('name="field.', unknown)

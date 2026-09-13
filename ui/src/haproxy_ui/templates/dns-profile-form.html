@@ -51,12 +51,12 @@
   <input type="hidden" name="provider_id" value="{{ chosen.id }}">
 
   <section class="cluster-card">
-    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ chosen.name }}</h3><p>Plugin <code>{{ chosen.plugin }}</code>{% if chosen.verification != 'live-verified' %} · verified: {{ chosen.verification }}{% endif %} · <a href="{{ chosen.documentation }}" rel="noopener noreferrer" target="_blank">plugin documentation</a></p></div></div></header>
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ chosen.name }}</h3><p>Plugin <code>{{ chosen.plugin }}</code> · {{ verification_label }} · <a href="{{ chosen.documentation }}" rel="noopener noreferrer" target="_blank">plugin documentation</a></p></div></div></header>
     <div class="form-grid">
       {% if existing %}
       <label><span class="field-title">Profile ID</span><input value="{{ existing.id }}" disabled><small>Fixed. The credentials file and the command line use it.</small></label>
       {% else %}
-      <label><span class="field-title">Profile ID</span><input name="profile_id" value="{{ form.profile_id }}" maxlength="32" placeholder="cloudflare-main" pattern="[a-z0-9][a-z0-9-]{0,31}" spellcheck="false" required><small>1–32 lowercase letters, digits or hyphens. The certificate form shows it; it names the credentials file and is <code>--dns-profile</code> on the command line.</small></label>
+      <label><span class="field-title">Profile ID</span><input name="profile_id" value="{{ form.profile_id }}" maxlength="32" placeholder="{{ chosen.id }}" pattern="[a-z0-9][a-z0-9-]{0,31}" spellcheck="false" required><small>1–32 lowercase letters, digits or hyphens. The certificate form shows it; it names the credentials file and is <code>--dns-profile</code> on the command line.</small></label>
       {% endif %}
       {% for field in chosen.fields %}
       {% if field.kind == 'choice' %}

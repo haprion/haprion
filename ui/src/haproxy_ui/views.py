@@ -2245,6 +2245,9 @@ def build_router(config: Config) -> APIRouter:
                 "form": form,
                 "values": dns_profile_form.redraw_values(chosen, form.values),
                 "chosen": chosen,
+                "verification_label": (
+                    dns_profile_form.verification_label(chosen) if chosen else ""
+                ),
                 "providers": dns_profile_form.providers(),
                 "existing": existing,
                 "public_key": _dns_public_key(),

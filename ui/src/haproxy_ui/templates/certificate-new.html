@@ -12,7 +12,7 @@
   whose purpose is to be filled in should not lose what was filled in.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>New certificate</h1><p class="page-lede">Asks the ACME account this manager already has for a certificate, registers it, publishes it to the chosen targets and rolls it out to the chosen clusters — as one job.</p></div>
+  <div class="heading-title"><h1>New certificate</h1></div>
   <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
 </section>
 
@@ -42,24 +42,24 @@
       <div class="field">
         <span class="field-title">Challenge</span>
         <div class="method-choices">
-          <label class="check"><input type="radio" name="method" value="dns-01"{% if form.method != 'http-01' %} checked{% endif %}> <span class="method-name">DNS-01</span> <span class="optional">— a TXT record in the zone; the only method for a wildcard</span></label>
-          <label class="check"><input type="radio" name="method" value="http-01"{% if form.method == 'http-01' %} checked{% endif %}> <span class="method-name">HTTP-01</span> <span class="optional">— a file under the policy's webroot; single names only</span></label>
+          <label class="check"><input type="radio" name="method" value="dns-01"{% if form.method != 'http-01' %} checked{% endif %}> <span><span class="method-name">DNS-01</span> <span class="optional">— DNS record; supports wildcards</span></span></label>
+          <label class="check"><input type="radio" name="method" value="http-01"{% if form.method == 'http-01' %} checked{% endif %}> <span><span class="method-name">HTTP-01</span> <span class="optional">— Webroot file; single names only</span></span></label>
         </div>
-        <p class="challenge-warning"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Validation is your responsibility: configure DNS access, or point the domain here for HTTP.</span></p>
+        <p class="challenge-warning"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Provide DNS access or route HTTP validation here.</span></p>
       </div>
       <label><span class="field-title">DNS provider profile</span>
         <select name="dns_profile">
           <option value="">Choose a profile…</option>
           {% for profile in choices.dns_profiles %}<option value="{{ profile }}"{% if form.dns_profile == profile %} selected{% endif %}>{{ profile }}</option>{% endfor %}
         </select>
-        <small>Required for DNS-01 and ignored only after you choose HTTP-01. Only profiles whose apply job is done are offered. <a href="/dns-profiles">Manage profiles</a>.</small>
+        <small>Required for DNS-01. <a href="/dns-profiles">Manage profiles</a>.</small>
       </label>
     </div>
   </section>
 
   <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published. At least one.</p></div></div></header>
-    <div class="form-grid form-grid-pair">
+    <div class="form-grid certificate-target-grid">
       <div class="field">
         <span class="field-title">Clusters</span>
         {#
@@ -85,14 +85,14 @@
           anything, so the page offers the ones that exist and says where a
           missing one is made.
         #}
-        <div class="form-checks form-checks-stacked">
+        <div class="form-checks form-checks-stacked receiver-options">
           {% for name in choices.receivers %}
           <label class="check"><input type="checkbox" name="receiver" value="{{ name }}"{% if name in form.receivers %} checked{% endif %}> {{ name }}</label>
           {% else %}
           <span class="optional">No receiver is registered.</span>
           {% endfor %}
         </div>
-        <small>A host outside the clusters that fetches the certificate with its own key. Missing one? It is registered on the manager, not here — see the installation guide, 1.4.1.</small>
+        <small>Hosts outside the clusters that fetch this certificate. Receiver setup is described in the installation guide, 1.4.1.</small>
       </div>
     </div>
     <div class="editor-actions editor-submit">

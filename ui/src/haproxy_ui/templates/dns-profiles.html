@@ -4,8 +4,9 @@
 {% block content %}
 {#
   One provider's credentials, entered once and kept sealed (B146). The page
-  never shows a value: a row is an ID, a provider, which key it was sealed
-  against and whether the file certbot reads is the box the row holds (B147).
+  never shows a value: a row is an ID, a provider and whether the file certbot
+  reads is the box the row holds (B147). The installation key is deliberately
+  absent: it is the same for every current row. Only an old key is noteworthy.
   Editing is replacing - there is nothing to edit in a box nobody here can
   open.
 #}
@@ -25,21 +26,20 @@
 <section class="cluster-card">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Profiles</h3><p>{{ rows | length }} profile{{ '' if rows | length == 1 else 's' }}. <a href="/certificates">Back to certificates</a>.</p></div></div></header>
   <div class="table-scroll"><table class="node-table dns-profile-table">
-    <thead><tr><th scope="col">Profile</th><th scope="col">Provider</th><th scope="col">Key</th><th scope="col">Status</th><th scope="col"></th></tr></thead>
+    <thead><tr><th scope="col">Profile</th><th scope="col">Provider</th><th scope="col">Status</th><th scope="col"></th></tr></thead>
     <tbody>
     {% for row in rows %}
     <tr>
-      <td><code>{{ row.profile.id }}</code></td>
-      <td>{% if row.provider %}{{ row.provider.name }} <span class="optional">({{ row.provider.tier }})</span>{% else %}<span class="warning-text">{{ row.profile.provider_id }} — no longer offered</span>{% endif %}</td>
-      <td><code>{{ row.profile.key_id }}</code>{% if not row.current_key %} <span class="warning-text">old key</span>{% endif %}</td>
-      <td><span class="backend-health"><span class="status-dot status-{{ 'unknown' if row.status.tone == 'muted' else row.status.tone }}"></span>{{ row.status.label }}</span> <span class="optional">rev {{ row.profile.revision }}</span></td>
-      <td>{% if public_key %}<a href="/dns-profiles/{{ row.profile.id }}/replace">Replace</a> · {% endif %}<a href="/dns-profiles/{{ row.profile.id }}/remove">Remove</a></td>
+      <td data-label="Profile"><code>{{ row.profile.id }}</code></td>
+      <td data-label="Provider">{% if row.provider %}{{ row.provider.name }} <span class="optional">({{ row.provider.tier }})</span>{% else %}<span class="warning-text">{{ row.profile.provider_id }} — no longer offered</span>{% endif %}</td>
+      <td data-label="Status"><span class="backend-health"><span class="status-dot status-{{ 'unknown' if row.status.tone == 'muted' else row.status.tone }}"></span>{{ row.status.label }}</span> <span class="optional">rev {{ row.profile.revision }}</span>{% if not row.current_key %} <span class="warning-text">· old sealing key</span>{% endif %}</td>
+      <td data-label="Actions">{% if public_key %}<a href="/dns-profiles/{{ row.profile.id }}/replace">Replace</a> · {% endif %}<a href="/dns-profiles/{{ row.profile.id }}/remove">Remove</a></td>
     </tr>
     {% else %}
-    <tr><td colspan="5"><span class="optional">No profile yet. A profile is one provider's API credentials; the certificate form offers the ones in effect.</span></td></tr>
+    <tr><td colspan="4"><span class="optional">No profile yet. A profile is one provider's API credentials; the certificate form offers the ones in effect.</span></td></tr>
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="table-note">Values are never shown again after saving. To change one, replace the profile: the new values are sealed as the next revision and applied by a job. Removal is refused while the certificate registry or a Certbot renewal configuration still refers to the profile.</p>
+  <p class="table-note">Values are never shown again after saving. To change one, replace the profile - the new values are sealed as the next revision and applied by a job.<br>Removal is refused while the certificate registry or a Certbot renewal configuration still uses the profile.</p>
 </section>
 {% endblock %}

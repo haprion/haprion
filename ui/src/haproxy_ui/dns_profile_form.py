@@ -61,6 +61,13 @@ class Sealed:
 
 EMPTY_FORM = ProfileForm(profile_id="", provider_id="", values={})
 
+VERIFICATION_LABELS = {
+    "packaged": "Plugin packaged",
+    "loaded": "Plugin and credential format tested",
+    "integration-tested": "Integration tested",
+    "live-verified": "Live issuance verified",
+}
+
 
 def providers() -> tuple[DNSProvider, ...]:
     """The catalogue as the page offers it: by name, one alphabet; the tier is a suffix."""
@@ -73,6 +80,12 @@ def provider(provider_id: str) -> DNSProvider | None:
         return provider_by_id(provider_id)
     except ProviderCatalogError:
         return None
+
+
+def verification_label(chosen: DNSProvider) -> str:
+    """The catalogue's evidence level in words meant for an operator."""
+
+    return VERIFICATION_LABELS.get(chosen.verification, "Verification unavailable")
 
 
 def redraw_values(chosen: DNSProvider | None, values: Mapping[str, str]) -> dict[str, str]:

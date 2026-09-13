@@ -1010,21 +1010,25 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .certificate-form .method-choices .check { align-items: flex-start; }
 .certificate-form .method-choices .check input { flex: none; margin-top: 4px; }
 .certificate-form .method-choices .method-name { flex: none; white-space: nowrap; }
-/* The profile table is a .node-table for its look, not for its columns: the
-   node table's fixed pixel widths are sized for nodes, and inherited here they
-   squeezed a 16-hex key and "In effect rev 2" into 120 px each and pushed the
-   actions off the card - the B133 class of fault. Five columns, own widths;
-   the provider takes what is left. */
-.dns-profile-table th:nth-child(1), .dns-profile-table td:nth-child(1) { width: 18%; }
-.dns-profile-table th:nth-child(2), .dns-profile-table td:nth-child(2) { width: auto; }
-.dns-profile-table th:nth-child(3), .dns-profile-table td:nth-child(3) { width: 27ch; }
-.dns-profile-table th:nth-child(4), .dns-profile-table td:nth-child(4) { width: 22ch; }
-.dns-profile-table th:nth-child(5), .dns-profile-table td:nth-child(5) { width: 17ch; text-align: right; }
+/* The installation key was identical on every ordinary row and is no longer a
+   column. Keep the three facts compact at the left; actions own the remaining
+   width and stay against the card edge. */
+.dns-profile-table th:nth-child(1), .dns-profile-table td:nth-child(1) { width: 34ch; }
+.dns-profile-table th:nth-child(2), .dns-profile-table td:nth-child(2) { width: 36ch; }
+.dns-profile-table th:nth-child(3), .dns-profile-table td:nth-child(3) { width: 36ch; }
+.dns-profile-table th:nth-child(4), .dns-profile-table td:nth-child(4) { width: auto; text-align: right; }
+.dns-profile-table td:nth-child(1), .dns-profile-table td:nth-child(2), .dns-profile-table td:nth-child(3) { overflow: hidden; text-overflow: ellipsis; }
+.certificate-target-grid { grid-template-columns: minmax(240px, 0.55fr) minmax(480px, 1.45fr); align-items: start; }
+.certificate-form .receiver-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); width: 100%; }
+.certificate-form .receiver-options .check { min-width: 0; overflow-wrap: anywhere; }
 .certificate-form .challenge-warning { display: flex; align-items: flex-start; gap: 7px; margin: 9px 0 0; color: var(--text-secondary); font-size: 12px; font-weight: var(--font-weight-regular); line-height: 1.45; }
 .certificate-form .challenge-warning svg { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 1px; color: var(--warning); fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .certificate-form .field > .field-title { color: var(--text-secondary); font-weight: 620; }
 .certificate-form .field > small { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .certificate-form .warning-text { margin: 0; }
+@media (max-width: 900px) {
+  .certificate-target-grid { grid-template-columns: 1fr; }
+}
 /* A refusal on the form it refused: the critical hue, where the notice above
  * the form is otherwise informational. */
 .form-problem { display: flex; align-items: center; gap: 10px; border-left-color: var(--critical); background: var(--critical-soft); }

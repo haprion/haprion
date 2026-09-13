@@ -218,7 +218,7 @@ class TheFormPage(CertificateFormRouteTestCase):
         # page says so where the boxes are.
         #
         self.assertNotIn('name="receiver" type="text"', page)
-        self.assertIn("registered on the manager, not here", page)
+        self.assertIn("Receiver setup is described in the installation guide", page)
         self.assertIn("Request the certificate", page)
 
     def test_the_challenge_warning_is_compact_and_the_form_has_no_cluster_accent(self) -> None:
@@ -226,10 +226,12 @@ class TheFormPage(CertificateFormRouteTestCase):
 
         self.assertIn('class="challenge-warning"', page)
         self.assertIn(
-            "Validation is your responsibility: configure DNS access, or point the domain here "
-            "for HTTP.",
+            "Provide DNS access or route HTTP validation here.",
             page,
         )
+        self.assertIn("DNS record; supports wildcards", page)
+        self.assertIn("Webroot file; single names only", page)
+        self.assertNotIn("Asks the ACME account", page)
         self.assertNotIn("cluster-accent-", page)
 
     def test_the_listing_links_to_it_for_an_admin_only(self) -> None:

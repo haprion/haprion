@@ -629,6 +629,48 @@ class TheCertificateRegistry(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 load_policy(policy_file, require_secure=False)
 
+    def test_the_dns_profiles_block_names_a_directory_and_its_private_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_file = self.setup(Path(raw), None, None)
+            document = yaml.safe_load(policy_file.read_text())
+            document["acme"] = {
+                "dns_profiles": {
+                    "directory": "/etc/example/dns-profiles",
+                    "private_keys": ["/srv/example/secrets/dns-profile-keys/0123.key"],
+                }
+            }
+            policy_file.write_text(yaml.safe_dump(document))
+            policy = load_policy(policy_file, require_secure=False)
+            assert policy.acme is not None and policy.acme.dns_profiles is not None
+            self.assertEqual(policy.acme.dns_profiles.directory, Path("/etc/example/dns-profiles"))
+            self.assertEqual(
+                policy.acme.dns_profiles.private_keys,
+                (Path("/srv/example/secrets/dns-profile-keys/0123.key"),),
+            )
+            self.assertIsNone(policy.acme.dns_cloudflare_credentials)
+
+            bad_blocks: list[dict[str, object]] = [
+                {"directory": "/etc/example/dns-profiles"},
+                {"directory": "/etc/example/dns-profiles", "private_keys": []},
+                {"directory": "/etc/example/dns-profiles", "private_keys": ["relative.key"]},
+                {"directory": "relative", "private_keys": ["/srv/example/a.key"]},
+                {
+                    "directory": "/etc/example/dns-profiles",
+                    "private_keys": ["/srv/example/a.key", "/srv/example/a.key"],
+                },
+                {
+                    "directory": "/etc/example/dns-profiles",
+                    "private_keys": ["/srv/example/a.key"],
+                    "public_key": "/srv/example/a.pub",
+                },
+            ]
+            for block in bad_blocks:
+                with self.subTest(block=block):
+                    document["acme"] = {"dns_profiles": block}
+                    policy_file.write_text(yaml.safe_dump(document))
+                    with self.assertRaises(ConfigError):
+                        load_policy(policy_file, require_secure=False)
+
     def test_the_allowlist_in_clusters_yaml_is_refused_once_the_registry_exists(self) -> None:
         """One answer, not two that can drift apart."""
 

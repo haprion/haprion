@@ -20,12 +20,13 @@ sudo ./05-platform-nginx ../answers.env
 sudo ./check-compatibility ../answers.env
 ```
 
-Steps 11, 13 and 14 are optional and come after them:
+Steps 11, 13, 14 and 15 are optional and come after them:
 
 ```bash
 sudo ./11-platform-retention ../answers.env
 sudo ./13-platform-traffic-collector ../answers.env
 sudo UV_BIN=/path/to/uv ./14-platform-certbot ../answers.env /path/to/source-tree
+sudo ./15-platform-dns-keys ../answers.env /path/to/source-tree
 ```
 
 Step 11 keeps the job table bounded. Separate from the backup step because it is
@@ -40,8 +41,12 @@ the web interface offers - under `/opt/haproxy-certbot`, proves it with a
 dry-run renewal, and moves renewal onto it. Rerun with a newer lock to upgrade;
 the previous release is restored if the dry run fails.
 
-For an isolated dev platform the normal path stops at step 4, though step 11 is
-worth running there too. If developers
+Step 15 makes the key pair that seals DNS provider credentials between the web
+interface and the root helper: private key under `secrets/`, public key under
+`config/`, never overwritten. Development gets its own pair from the same step.
+
+For an isolated dev platform the normal path stops at step 4, though steps 11
+and 15 are worth running there too. If developers
 need a direct browser address rather than an SSH tunnel, give the dev answers
 file its own `SERVER_NAME` and run the optional step 9 after its service is up:
 

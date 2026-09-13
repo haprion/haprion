@@ -123,6 +123,14 @@ class PathPolicy:
     # the distribution's `/usr/bin/certbot` until then. Left out, the helper
     # uses the distribution's; it never takes the path from its caller.
     #
+    # `dns_profiles` (P3, B146) is where the DNS provider credentials the web
+    # interface collects end up, and which private keys may open them: the
+    # directory the profile helper materialises credential files into, and
+    # the key files the installation created. More than one key is listed
+    # only while a key is being replaced; the web always seals against the
+    # current public key, and a profile sealed against a key no longer listed
+    # cannot be applied until it is re-entered.
+    #
     acme: AcmePolicy | None = None
 
 
@@ -131,6 +139,13 @@ class AcmePolicy:
     dns_cloudflare_credentials: Path | None
     webroot: Path | None
     certbot: Path | None
+    dns_profiles: DnsProfilesPolicy | None
+
+
+@dataclass(frozen=True, slots=True)
+class DnsProfilesPolicy:
+    directory: Path
+    private_keys: tuple[Path, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -888,11 +903,38 @@ def _acme_policy(data: Mapping[str, Any]) -> AcmePolicy | None:
         return None
     location = "runtime policy.acme"
     entry = _mapping(raw, location)
-    _only_keys(entry, {"dns_cloudflare_credentials", "webroot", "certbot"}, location)
+    _only_keys(
+        entry, {"dns_cloudflare_credentials", "webroot", "certbot", "dns_profiles"}, location
+    )
     return AcmePolicy(
         dns_cloudflare_credentials=_optional_root(entry, "dns_cloudflare_credentials"),
         webroot=_optional_root(entry, "webroot"),
         certbot=_optional_root(entry, "certbot"),
+        dns_profiles=_dns_profiles_policy(entry, f"{location}.dns_profiles"),
+    )
+
+
+def _dns_profiles_policy(acme: Mapping[str, Any], location: str) -> DnsProfilesPolicy | None:
+    raw = acme.get("dns_profiles")
+    if raw is None:
+        return None
+    entry = _mapping(raw, location)
+    _only_keys(entry, {"directory", "private_keys"}, location)
+    keys_raw = entry.get("private_keys")
+    if not isinstance(keys_raw, list) or not keys_raw:
+        raise ConfigError(f"{location}.private_keys must be a non-empty list")
+    private_keys: list[Path] = []
+    for index, item in enumerate(keys_raw):
+        if not isinstance(item, str) or not item:
+            raise ConfigError(f"{location}.private_keys[{index}] must be a non-empty string")
+        private_keys.append(_absolute_path(item, f"{location}.private_keys[{index}]"))
+    if len(set(private_keys)) != len(private_keys):
+        raise ConfigError(f"{location}.private_keys lists a key twice")
+    return DnsProfilesPolicy(
+        directory=_absolute_path(
+            _required_string(entry, "directory", location), f"{location}.directory"
+        ),
+        private_keys=tuple(private_keys),
     )
 
 

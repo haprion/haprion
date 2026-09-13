@@ -78,3 +78,10 @@ port = 8080
 # enabled = true
 # directory = "/apps/haproxy-manager/logs/mirror"
 # max_lines = 500
+
+# [dns_profiles]
+# The public half of the key pair platform step 15 made. DNS provider
+# credentials entered in the interface are sealed against it before they are
+# stored; the private half is root's, under secrets/, and this process never
+# reads it. Absent, the interface offers no provider profiles.
+# public_key = "/apps/haproxy-manager/config/dns-profile-keys/<key id>.pub"

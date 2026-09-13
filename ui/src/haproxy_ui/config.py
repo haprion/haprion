@@ -35,6 +35,7 @@ ALLOWED_KEYS = frozenset(
         "demo_fixture",
         "production_snapshot",
         "traffic_logs",
+        "dns_profiles",
     }
 )
 ALLOWED_DATABASE_KEYS = frozenset({"name", "socket_directory"})
@@ -43,6 +44,7 @@ ALLOWED_SESSION_KEYS = frozenset({"inactivity_minutes", "absolute_hours", "cooki
 ALLOWED_THROTTLE_KEYS = frozenset({"max_failures", "window_minutes"})
 ALLOWED_POLLER_KEYS = frozenset({"interval_seconds"})
 ALLOWED_TRAFFIC_LOG_KEYS = frozenset({"enabled", "directory", "max_lines"})
+ALLOWED_DNS_PROFILE_KEYS = frozenset({"public_key"})
 
 #
 # A cluster id, the same shape the engine and the database CHECK both use. The
@@ -192,6 +194,13 @@ class Config:
         directory=Path("/apps/haproxy-manager/logs/mirror"),
         max_lines=500,
     )
+    #
+    # The public half of the pair platform step 15 made (B146): what DNS
+    # provider credentials entered here are sealed against before they are
+    # stored. The private half is root's, under secrets/, and this process
+    # never learns it. Absent, the interface offers no provider profiles.
+    #
+    dns_profiles_public_key: Path | None = None
 
 
 def _section(data: Any, key: str, allowed: frozenset[str]) -> dict[str, Any]:
@@ -280,6 +289,7 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
     throttle = _optional_section(data, "throttle", ALLOWED_THROTTLE_KEYS)
     poller = _optional_section(data, "poller", ALLOWED_POLLER_KEYS)
     traffic_logs = _optional_section(data, "traffic_logs", ALLOWED_TRAFFIC_LOG_KEYS)
+    dns_profiles = _optional_section(data, "dns_profiles", ALLOWED_DNS_PROFILE_KEYS)
 
     clusters = data.get("clusters", [])
     if not isinstance(clusters, list) or not all(isinstance(name, str) for name in clusters):
@@ -329,6 +339,15 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
         raise ConfigError("traffic_logs cannot be combined with production_snapshot")
     if traffic_logs.get("enabled") and demo_fixture:
         raise ConfigError("traffic_logs cannot be combined with demo_fixture")
+
+    public_key: Path | None = None
+    if dns_profiles:
+        public_key_value = dns_profiles.get("public_key")
+        if not isinstance(public_key_value, str) or not public_key_value:
+            raise ConfigError("dns_profiles.public_key must be a non-empty string")
+        public_key = Path(public_key_value)
+        if not public_key.is_absolute() or ".." in public_key.parts:
+            raise ConfigError("dns_profiles.public_key must be an absolute path without '..'")
 
     return Config(
         database=Database(
@@ -380,4 +399,5 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
                 traffic_logs, "max_lines", "traffic_logs", low=1, high=500, default=500
             ),
         ),
+        dns_profiles_public_key=public_key,
     )

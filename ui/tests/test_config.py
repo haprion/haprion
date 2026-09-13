@@ -123,6 +123,23 @@ class ConfigTests(unittest.TestCase):
             self.load(VALID.replace("socket_directory", "socket_dir"))
         self.assertIn("socket_dir", str(raised.exception))
 
+    def test_the_dns_profile_public_key_is_optional_and_an_absolute_path(self) -> None:
+        self.assertIsNone(self.load(VALID).dns_profiles_public_key)
+        config = self.load(
+            VALID + '\n[dns_profiles]\npublic_key = "/srv/example/config/dns-profile-keys/a.pub"\n'
+        )
+        self.assertEqual(
+            config.dns_profiles_public_key, Path("/srv/example/config/dns-profile-keys/a.pub")
+        )
+        for bad in (
+            '[dns_profiles]\npublic_key = "relative.pub"\n',
+            '[dns_profiles]\npublic_key = "/srv/../a.pub"\n',
+            '[dns_profiles]\npublic_key = ""\n',
+            '[dns_profiles]\nprivate_key = "/srv/example/a.key"\n',
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ConfigError):
+                self.load(VALID + "\n" + bad)
+
     def test_a_port_outside_the_range_is_refused(self) -> None:
         for port in ("0", "65536", '"8080"', "true"):
             with self.subTest(port=port), self.assertRaises(ConfigError):

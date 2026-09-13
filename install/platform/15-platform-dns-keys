@@ -1,0 +1,122 @@
+#!/bin/bash
+#
+# Platform step 15 - the key pair that seals DNS provider credentials.
+#
+#     sudo ./15-platform-dns-keys <answers-file> <source-tree>
+#
+# The web interface collects a DNS provider's credentials once, seals them
+# against this installation's public key, and stores only the ciphertext; the
+# root helper that runs certbot is the one holder of the private key. This step
+# makes that pair: the private key root-only under secrets/, the public key
+# group-readable under config/, both named by the key's identifier. An
+# installation that already has a pair gets nothing new - a key is replaced by
+# running the step with ROTATE=1, which adds a second pair beside the first so
+# the runtime policy can list both while profiles are re-entered.
+#
+# Production and development each get their own pair: the step works under the
+# answers file's PLATFORM_ROOT and nothing else.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+
+need_root
+load_answers "${1:-}"
+require_vars PLATFORM_ROOT PLATFORM_GROUP
+source_tree="${2:-}"
+[[ -n "$source_tree" && -d "$source_tree" ]] || die "usage: $0 <answers-file> <source-tree>"
+source_tree="$(cd "$source_tree" && pwd)"
+tool="${source_tree}/tools/dns-profile-keys.py"
+[[ -f "$tool" ]] || die "${tool} is missing; this is not a source tree with the key tool"
+
+PRIVATE_DIR="${PLATFORM_ROOT}/secrets/dns-profile-keys"
+PUBLIC_DIR="${PLATFORM_ROOT}/config/dns-profile-keys"
+POLICY="/etc/haproxy-manager/runtime-policy.yaml"
+PROFILE_DIR="/etc/haproxy-manager/dns-profiles"
+
+step "The interpreter"
+#
+# The tool runs on the system interpreter with the distribution's PyNaCl, the
+# same pair the installed CLI release uses - a release that cannot import it
+# is refused by its own installer, so the package is checked here first.
+#
+if /usr/bin/python3 -I -c 'import nacl.public' 2>/dev/null; then
+    log "  ok       /usr/bin/python3 imports nacl"
+else
+    die "/usr/bin/python3 cannot import nacl; install the distribution's package: apt install python3-nacl"
+fi
+
+step "Directories"
+[[ -d "${PLATFORM_ROOT}/secrets" && -d "${PLATFORM_ROOT}/config" ]] \
+    || die "${PLATFORM_ROOT}/secrets and config are missing; run 01-platform-prepare first"
+ensure_dir "$PRIVATE_DIR" root:root 700
+ensure_dir "$PUBLIC_DIR"  "root:${PLATFORM_GROUP}" 750
+
+step "The key pair"
+existing=()
+while IFS= read -r file; do
+    [[ -n "$file" ]] && existing+=("$file")
+done < <(find "$PRIVATE_DIR" -maxdepth 1 -name '*.key' -type f | sort)
+if (( ${#existing[@]} > 0 )) && [[ "${ROTATE:-0}" != "1" ]]; then
+    for file in "${existing[@]}"; do
+        key_id="$(basename "$file" .key)"
+        [[ -f "${PUBLIC_DIR}/${key_id}.pub" ]] \
+            || die "${file} has no public half at ${PUBLIC_DIR}/${key_id}.pub"
+        log "  ok       ${key_id}  (private ${file}, public ${PUBLIC_DIR}/${key_id}.pub)"
+    done
+    log "  kept     ${#existing[@]} pair(s); run with ROTATE=1 to add a new one"
+else
+    key_id="$(/usr/bin/python3 -I "$tool" create \
+        --private "$PRIVATE_DIR" --public "$PUBLIC_DIR" --group "$PLATFORM_GROUP")"
+    log "  created  ${key_id}"
+    log "           private ${PRIVATE_DIR}/${key_id}.key  (root, 0600)"
+    log "           public  ${PUBLIC_DIR}/${key_id}.pub  (root:${PLATFORM_GROUP}, 0640)"
+fi
+
+step "The profile directory"
+#
+# Where the helper materialises a credential file per profile, root-only.
+# Production's alone: a development platform has no helper and no policy, and
+# this path is not under its root.
+#
+if [[ "${ENVIRONMENT:-prod}" == "dev" ]]; then
+    log "  skipped  ${PROFILE_DIR}  (development has no helper)"
+else
+    ensure_dir "$PROFILE_DIR" root:root 700
+fi
+
+step "The runtime policy"
+#
+# Not edited here: the policy is the operator's file, and a development
+# platform has none. What the helper needs is the profile directory and every
+# private key a stored profile may have been sealed against.
+#
+if [[ "${ENVIRONMENT:-prod}" == "dev" ]]; then
+    log "  skipped  ${POLICY}  (development has none)"
+    warn "give the development web interface the public key in ${PLATFORM_ROOT}/config/ui.toml:"
+    warn "    [dns_profiles]"
+    warn "    public_key = \"${PUBLIC_DIR}/<key id>.pub\""
+elif [[ -f "$POLICY" ]] && grep -Eq "^\s*dns_profiles:\s*$" "$POLICY"; then
+    for file in "${PRIVATE_DIR}"/*.key; do
+        if grep -Eq "^\s*-\s*${file}\s*$" "$POLICY"; then
+            log "  ok       ${POLICY} lists ${file}"
+        else
+            warn "${POLICY} does not list ${file} under acme.dns_profiles.private_keys"
+        fi
+    done
+else
+    warn "${POLICY} has no acme.dns_profiles block. Add, under acme:"
+    warn "    dns_profiles:"
+    warn "      directory: ${PROFILE_DIR}"
+    warn "      private_keys:"
+    for file in "${PRIVATE_DIR}"/*.key; do
+        warn "        - ${file}"
+    done
+    warn "and give the web interface the public key in ${PLATFORM_ROOT}/config/ui.toml:"
+    warn "    [dns_profiles]"
+    warn "    public_key = \"${PUBLIC_DIR}/<key id>.pub\""
+fi
+
+echo
+log "platform step 15 done"

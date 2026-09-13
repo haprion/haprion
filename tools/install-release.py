@@ -56,7 +56,8 @@ def inspect_runtime(python: Path) -> dict[str, str]:
     probe = (
         "import importlib.metadata,json,sys;"
         "print(json.dumps({'python':'.'.join(map(str,sys.version_info[:3])),"
-        "'pyyaml':importlib.metadata.version('PyYAML')}))"
+        "'pyyaml':importlib.metadata.version('PyYAML'),"
+        "'pynacl':importlib.metadata.version('PyNaCl')}))"
     )
     try:
         completed = subprocess.run(  # noqa: S603 - validated absolute interpreter, fixed argv
@@ -68,18 +69,27 @@ def inspect_runtime(python: Path) -> dict[str, str]:
         )
         result = json.loads(completed.stdout)
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError, KeyError) as exc:
-        raise InstallError(f"runtime Python/PyYAML probe failed: {exc}") from exc
+        raise InstallError(f"runtime Python/PyYAML/PyNaCl probe failed: {exc}") from exc
     if not isinstance(result, dict) or not all(
-        isinstance(result.get(key), str) for key in ("python", "pyyaml")
+        isinstance(result.get(key), str) for key in ("python", "pyyaml", "pynacl")
     ):
-        raise InstallError("runtime Python/PyYAML probe returned invalid data")
+        raise InstallError("runtime Python/PyYAML/PyNaCl probe returned invalid data")
     python_version = tuple(int(part) for part in result["python"].split("."))
     yaml_major = int(result["pyyaml"].split(".", maxsplit=1)[0])
     if python_version < (3, 12, 0):
         raise InstallError("runtime Python must be version 3.12 or newer")
     if yaml_major != 6:
         raise InstallError("runtime PyYAML must be major version 6")
-    return {"python": result["python"], "pyyaml": result["pyyaml"]}
+    #
+    # PyNaCl seals DNS provider credentials between the web and the root
+    # helper (B146). The distribution's python3-nacl, like its PyYAML: the
+    # release runs on the system interpreter and carries no packages of its
+    # own. Its absence is named here, before anything is unpacked.
+    #
+    nacl_major = int(result["pynacl"].split(".", maxsplit=1)[0])
+    if nacl_major != 1:
+        raise InstallError("runtime PyNaCl must be major version 1")
+    return {"python": result["python"], "pyyaml": result["pyyaml"], "pynacl": result["pynacl"]}
 
 
 def _safe_member(name: str) -> PurePosixPath:
@@ -271,6 +281,7 @@ def install_release(
                 "wheel_sha256": actual_sha256,
                 "python": runtime["python"],
                 "pyyaml": runtime["pyyaml"],
+                "pynacl": runtime["pynacl"],
                 "entry_points": sorted(scripts),
                 "engine_api": engine_api,
             }

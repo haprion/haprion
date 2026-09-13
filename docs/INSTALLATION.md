@@ -93,6 +93,8 @@ HAProxy itself. Before starting, you need:
 - a current Linux distribution with `systemd`
 - Python 3.12 or newer at `/usr/bin/python3`
 - the operating-system PyYAML package, major version 6
+- the operating-system PyNaCl package (`python3-nacl`), major version 1 - the CLI release's
+  installer refuses a host without it, as it does without PyYAML
 - `git`, `rsync`, `openssh-client`
 - `sudo` new enough to support the no-argument sudoers form (`command ""`)
 
@@ -736,10 +738,16 @@ acme:
   dns_cloudflare_credentials: /etc/letsencrypt/cloudflare/example.ini
   webroot: /var/www/acme
   certbot: /opt/haproxy-certbot/current/venv/bin/certbot
+  dns_profiles:
+    directory: /etc/haproxy-manager/dns-profiles
+    private_keys:
+      - /srv/platform/secrets/dns-profile-keys/0123456789abcdef.key
 ```
 
 `certbot` names the binary the helper runs: the locked environment's, once 1.4.4 has installed it.
 Left out, the helper runs the distribution's `/usr/bin/certbot`, with the distribution's plugins.
+`dns_profiles` is where the DNS provider credentials entered through the web interface end up,
+and which private keys may open them; 1.4.5 makes the keys.
 
 | Method | certbot | What the installation is responsible for |
 |---|---|---|
@@ -834,6 +842,59 @@ helper runs it too. Upgrading is the same step with a newer lock, a few times a 
 gate. A plugin that no longer resolves against the newer certbot falls out of the lock, and so out
 of what the interface offers; a release that fails the dry run is never made current. Rolling back
 by hand is one symlink, which the step prints, followed by the same dry run.
+
+### 1.4.5 The DNS profile key pair
+
+A DNS provider's credentials are entered once, in the web interface, and stored sealed: the web
+process encrypts them against the installation's public key and keeps only the ciphertext, and the
+root helper that runs certbot holds the one private key that opens them (libsodium's sealed box,
+through PyNaCl). A compromised web process can therefore add or replace a profile but never read
+one back, and a database dump carries nothing a reader can use without root's key file.
+
+Platform step 15 makes the pair, under the platform root of the answers file it is given:
+
+```bash
+sudo ./install/platform/15-platform-dns-keys answers.env /path/to/source-tree
+```
+
+The private key lands in `secrets/dns-profile-keys/<key id>.key`, root-only; the public key in
+`config/dns-profile-keys/<key id>.pub`, readable by the platform group. The key id is a digest of
+the public key, so it is read off either file rather than assigned, and a stored profile names the
+id it was sealed against. Both files are one tagged line, and a private key placed where a public
+one belongs is refused by its tag. The step proves the pair by sealing and opening a message
+through the files it wrote, and never overwrites an existing key.
+
+Then tell both readers about it. The runtime policy (1.4.3) names the private key and the
+directory the helper materialises credential files into:
+
+```yaml
+acme:
+  dns_profiles:
+    directory: /etc/haproxy-manager/dns-profiles
+    private_keys:
+      - /srv/platform/secrets/dns-profile-keys/0123456789abcdef.key
+```
+
+and the web interface's `config/ui.toml` names the public key:
+
+```toml
+[dns_profiles]
+public_key = "/srv/platform/config/dns-profile-keys/0123456789abcdef.pub"
+```
+
+A new runtime policy key costs a CLI release before the policy is edited, and a platform release
+after it, in that order: `check-compatibility` reads the policy through the platform's own copy of
+the engine, and the installed engine refuses a key it does not know.
+
+**Replacing the key.** Run the step with `ROTATE=1`: it adds a second pair beside the first. List
+both private keys in the policy, point `ui.toml` at the new public key, and re-enter each profile
+so it is sealed against the new key; a profile sealed against a key the policy no longer lists
+cannot be applied until it is. Remove the old pair last. The private key file is part of the host's
+disaster-recovery material like the SSH identities in 1.6: without it every stored profile is
+unreadable, and the recovery is to re-enter them, not to restore a dump.
+
+A development platform gets its own pair from the same step with its own answers file, and no
+runtime policy entry, because it has no helper.
 
 ### 1.5 Validation certificate
 
@@ -2220,6 +2281,7 @@ sudo ./02-platform-database  answers-dev.env
 sudo ./install-ui-release   answers-dev.env <source-tree>
 sudo ./migrate               answers-dev.env
 sudo ./04-platform-service   answers-dev.env
+sudo ./15-platform-dns-keys  answers-dev.env <source-tree>
 ```
 
 Steps 5, 6 and 7 are deliberately **not** run for development. It does not need

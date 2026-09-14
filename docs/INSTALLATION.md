@@ -1006,6 +1006,52 @@ reruns step 7 before releasing the interface that queues it.
 **Nothing here can be undone.** A deleted lineage has to be issued again, and a deleted import has
 to be imported again. The confirmation page says so, and the job's rows say what went.
 
+### 1.4.7 Importing a certificate
+
+`haproxy-cert-import` is the other way a certificate reaches the registry: one issued elsewhere -
+an internal CA, a purchased certificate, a wildcard exported from a Windows CA - whose key the
+maintainer already holds. Root only. Like `haproxy-cert-issue` it goes all the way: the import
+store, the registry entry, the publish and the rollout of the clusters named.
+
+```bash
+sudo haproxy-cert-import --id intranet.example --certificate intranet.example.crt --key intranet.example.key \
+  --chain issuing-ca.pem --cluster alpha
+sudo haproxy-cert-import --id intranet.example --pkcs12 intranet.example.pfx --password-file /root/intranet.example.pw \
+  --cluster alpha
+```
+
+**What is read.** PEM files, or one PKCS#12 (`.pfx`/`.p12`) holding everything. The password for
+a PKCS#12 comes from the first line of a file, never from the command line, where every user on
+the host can read it (`ps`). An encrypted PEM key is refused - decrypt it first with
+`openssl pkey` - because a passphrase the publisher would have to know is a secret in a second
+place. Bag attributes and comments between blocks are dropped; a Windows export is read as it is.
+
+**What is checked before anything is written.** The material is taken apart into blocks; the
+leaf is the one certificate whose public key is the key's, so a chain handed in the wrong order,
+or a PKCS#12 with the CA certificates first, comes out right. A key that belongs to no
+certificate is refused (`key_mismatch`). The chain is then followed by issuer from the leaf
+upward, and a self-signed root is left out: clients hold it already, and serving it is noise. A
+certificate that has already expired is refused (`expired`). An ID certbot has a lineage for
+(`already_exists`), an ID registered as `acme` (`not_import`), and an unknown cluster or
+receiver are refused too. None of these leave anything behind.
+
+**What is written.** `/etc/haproxy-manager/certificates/<id>/` with `privkey.pem`, `cert.pem`,
+`chain.pem` and `fullchain.pem`, root-only, in one rename - the same four files certbot's `live/`
+holds, so the publisher and the listing read both sources the same way. Then the registry entry,
+`source.kind: import`, with the targets named. Then the publish for that one certificate and the
+rollout of its clusters, exactly as after an issue.
+
+**Importing again.** The same ID imported a second time replaces the material - a rotated key, a
+renewed certificate from the same CA - and keeps the targets the entry has unless new ones are
+named. The manager does not renew an imported certificate; its expiry is on the registry view,
+and a new import before that date is the maintainer's job. A certificate registered as `import`
+before this command existed, with its material placed by hand, is replaced the same way.
+
+**What the interface offers instead.** The interface has no key upload, by design: a private key
+pasted into a browser has been in a clipboard, a page and a request log. Its way in is the CSR
+flow, where the key is born on the manager and never leaves it; the certificate that comes back
+is public. `haproxy-cert-import` is for the case where the key already exists somewhere else.
+
 ### 1.5 Validation certificate
 
 Candidate validation runs a real `haproxy -c` against the candidate. Any configuration that

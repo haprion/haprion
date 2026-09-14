@@ -37,7 +37,8 @@ current foundation provides:
   through a provider profile whose credentials the web process sealed and only root's helper
   opens, from a catalogue of locked Certbot plugins; and certificate cleanup as one job for a
   whole selection, refusing row by row anything a committed object, a draft or a cluster still
-  depends on
+  depends on; a certificate issued elsewhere is imported from PEM or PKCS#12 on the command line
+  and taken to its targets the same way
 - the job path management operations will run through: an immutable queue, an atomic claim held
   under a renewable lease, and a worker that records how every job ended — including recovering a
   job whose worker died, which is decided from readable evidence rather than retried on assumption

@@ -2,16 +2,19 @@
 
 Most of what is held here is refusal, because the operation is the one thing
 in the project that removes key material. The rest is the shape of the answer:
-one row per certificate, with every layer that was touched or kept on it, so
-an operator reading the job knows what to clean up by hand and what not to.
+one row per certificate, with every layer that was touched or kept on it, and
+that the same selection deleted again finishes what a kept layer left.
 """
 
 from __future__ import annotations
 
+import fcntl
 import io
 import json
+import os
 import subprocess
 import unittest
+import unittest.mock
 import uuid
 from pathlib import Path
 from typing import Any
@@ -95,8 +98,16 @@ class DeleteFixture(Fixture):
         return 0, ""
 
     def node(self, identity: Any, host: str, certificate_id: str) -> tuple[int, str]:
+        """The node script's own lines: one for a copy removed, one for none there."""
+
         self.node_calls.append((host, certificate_id))
-        return self.node_answers.get(host, (0, "removed"))
+        if host in self.node_answers:
+            return self.node_answers[host]
+        return 0, f"[ts] Removed {certificate_id}.\n[ts] Done: 1 removed, 0 not present."
+
+    def nodes_have_nothing(self) -> None:
+        for host in ("node-a.example.com", "node-b.example.com"):
+            self.node_answers[host] = (0, "[ts] x was not present.\n[ts] Done: 0 removed.")
 
     def run_delete(
         self, policy_path: Path, *certificate_ids: str, guards: Guards | None = None
@@ -108,6 +119,7 @@ class DeleteFixture(Fixture):
             renewal_directory=self.renewal,
             store=self.store,
             certbot="/usr/bin/certbot",
+            lock_path=self.lock,
             lineage_remover=self.certbot,
             node_remover=self.node,
             guards_reader=lambda runtime, ids: guards or Guards(),
@@ -135,10 +147,52 @@ class WhatIsRefused(DeleteFixture):
         self.assertEqual(self.certbot_calls, [])
         self.assertEqual(self.node_calls, [])
 
-    def test_a_certificate_that_is_not_registered(self) -> None:
+    def test_a_certificate_that_is_not_registered_and_nowhere_else(self) -> None:
+        """Every node is asked, because only the nodes know; they had nothing."""
+
+        self.nodes_have_nothing()
         report = self.run_delete(self.policy_path, "nobody.example")
         (outcome,) = report.outcomes
         self.assertEqual((outcome.state, outcome.code), ("refused", "not_registered"))
+        self.assertEqual(outcome.layers, ())
+        self.assertEqual(
+            {host for host, _ in self.node_calls}, {"node-a.example.com", "node-b.example.com"}
+        )
+        self.assertEqual((self.root / "certificates.yaml").read_bytes(), self.before)
+
+    def test_an_unregistered_certificate_a_committed_object_names_is_refused_first(self) -> None:
+        guards = Guards(referenced={"nobody.example": ("alpha/shop",)})
+        report = self.run_delete(self.policy_path, "nobody.example", guards=guards)
+        self.assertEqual(report.outcomes[0].code, "referenced_by_object")
+        self.assertEqual(self.node_calls, [])
+
+    def test_a_lineage_another_entry_also_names(self) -> None:
+        policy_path = self.prepared(
+            {
+                "wild": {
+                    "source": {"kind": "acme", "lineage": "example.com"},
+                    "clusters": ["alpha"],
+                },
+                "example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]},
+            }
+        )
+        self.before = (self.root / "certificates.yaml").read_bytes()
+        report = self.run_delete(policy_path, "wild", "example.com")
+        self.assert_untouched(report, "wild", "shared_source")
+        self.assert_untouched(report, "example.com", "shared_source")
+        self.assertIn("'example.com'", report.outcomes[0].reason)
+
+    def test_a_receiver_another_entry_also_publishes_to(self) -> None:
+        policy_path = self.prepared(
+            {
+                "one.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]},
+                "two.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]},
+            }
+        )
+        self.before = (self.root / "certificates.yaml").read_bytes()
+        report = self.run_delete(policy_path, "one.example")
+        self.assert_untouched(report, "one.example", "shared_receiver")
+        self.assertTrue((self.receiver_dir / FULLCHAIN).exists())
 
     def test_a_certificate_a_committed_object_names(self) -> None:
         guards = Guards(referenced={"example.com": ("alpha/shop",)})
@@ -246,8 +300,28 @@ class WhatGoes(DeleteFixture):
         (self.dist / "example.com.pem").unlink()
         report = self.run_delete(policy_path, "example.com")
         self.assertEqual(report.removed, ("example.com",))
-        self.assertEqual({layer.state for layer in report.outcomes[0].layers[1:]}, {"absent"})
+        self.assertEqual({layer.state for layer in report.outcomes[0].layers[:-1]}, {"absent"})
         self.assertEqual(self.certbot_calls, [])
+
+    def test_the_run_holds_the_publisher_s_lock_and_gives_up_after_the_wait(self) -> None:
+        policy_path = self.prepared(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        handle = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, handle)
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        with (
+            unittest.mock.patch.object(
+                cert_delete, "publish_lock", wraps=cert_delete.publish_lock
+            ) as held,
+            unittest.mock.patch("haproxy_mgmt.cert_publish.LOCK_WAIT_SECONDS", 0),
+            self.assertRaises(cert_delete.DeleteError) as refused,
+        ):
+            self.run_delete(policy_path, "example.com")
+        self.assertEqual(refused.exception.code, "operation_locked")
+        self.assertEqual(held.call_args.args, (self.lock,))
+        self.assertIn("example.com", self.registered())
+        self.assertTrue((self.dist / "example.com.pem").exists())
 
 
 class WhatIsLeftAndSaid(DeleteFixture):
@@ -281,6 +355,7 @@ class WhatIsLeftAndSaid(DeleteFixture):
         policy_path = self.prepared(
             {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
         )
+        working = self.certbot
         self.certbot = lambda command: (1, "certbot: No certificate found")  # type: ignore[method-assign]
         report = self.run_delete(policy_path, "example.com")
         (outcome,) = report.outcomes
@@ -289,6 +364,43 @@ class WhatIsLeftAndSaid(DeleteFixture):
         self.assertEqual(lineage.state, "failed")
         self.assertIn("No certificate found", lineage.detail)
         self.assertFalse((self.dist / "example.com.pem").exists())
+        #
+        # The entry stays, so the certificate is still there to delete again;
+        # with certbot answering, the second run finishes it.
+        #
+        self.assertEqual(outcome.layers[-1].state, "kept")
+        self.assertIn("example.com", self.registered())
+        self.certbot = working  # type: ignore[method-assign]
+        again = self.run_delete(policy_path, "example.com")
+        self.assertEqual(again.removed, ("example.com",))
+        self.assertNotIn("example.com", self.registered())
+
+    def test_a_deleted_certificate_s_leftover_node_copy_is_removed_by_name(self) -> None:
+        """A node that missed the first run - unreachable then - is asked again."""
+
+        policy_path = self.prepared(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        self.node_answers["node-b.example.com"] = (255, "connection refused")
+        first = self.run_delete(policy_path, "example.com")
+        self.assertEqual(first.incomplete, ("example.com",))
+        self.assertNotIn("example.com", self.registered())
+
+        self.node_answers["node-a.example.com"] = (0, "[ts] example.com was not present.")
+        del self.node_answers["node-b.example.com"]
+        again = self.run_delete(policy_path, "example.com")
+        (outcome,) = again.outcomes
+        self.assertEqual(outcome.state, "removed")
+        self.assertEqual({layer.state for layer in outcome.layers}, {"absent"})
+        self.assertEqual(
+            {(copy.cluster, copy.node): copy.state for copy in outcome.nodes},
+            {
+                ("alpha", "node-a"): "absent",
+                ("alpha", "node-b"): "removed",
+                ("beta", "node-a"): "absent",
+                ("beta", "node-b"): "removed",
+            },
+        )
 
 
 class TheGuardsReadTheCommittedObjects(DeleteFixture):
@@ -328,6 +440,7 @@ class TheHelper(DeleteFixture):
             require_root=False,
             renewal_directory=self.renewal,
             store=self.store,
+            lock_path=self.lock,
             lineage_remover=self.certbot,
             node_remover=self.node,
             guards_reader=lambda runtime, ids: Guards(),
@@ -368,17 +481,28 @@ class TheHelper(DeleteFixture):
         self.assertEqual(document["result"]["incomplete"], ["example.com"])
         self.assertNotIn("example.com", self.registered())
 
+    @unittest.skipIf(os.geteuid() == 0, "root can unlink from a read-only directory")
     def test_nothing_removed_at_all_is_failed(self) -> None:
+        """Every layer refuses to go: the PEM cannot be unlinked, certbot fails, the nodes keep."""
+
         policy_path = self.prepared(
             {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
         )
-        (self.root / "certificates.yaml").chmod(0o000)
-        self.addCleanup((self.root / "certificates.yaml").chmod, 0o640)
+        self.dist.chmod(0o500)
+        self.addCleanup(self.dist.chmod, 0o700)
+        self.certbot = lambda command: (1, "certbot: locked")  # type: ignore[method-assign]
+        self.node_answers["node-a.example.com"] = (1, "unknown request: cert-remove")
+        self.node_answers["node-b.example.com"] = (1, "unknown request: cert-remove")
         code, document, _ = self.invoke(policy_path, "example.com")
-        self.assertNotEqual(document["outcome"], "done")
+        self.assertEqual(code, 1)
+        self.assertEqual(document["outcome"], "failed")
+        self.assertEqual(document["error"]["code"], "delete_failed")
+        self.assertEqual(document["result"]["incomplete"], ["example.com"])
+        self.assertIn("example.com", self.registered())
 
     def test_every_one_refused_is_blocked_and_nothing_is_touched(self) -> None:
         policy_path = self.prepared({})
+        self.nodes_have_nothing()
         before = (self.root / "certificates.yaml").read_bytes()
         code, document, _ = self.invoke(policy_path, "keeper-alpha.example", "nobody.example")
         self.assertEqual(code, 65)

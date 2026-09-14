@@ -9,7 +9,8 @@ One refused certificate does not stop the batch. The envelope is `done` when
 every certificate went through all four layers, `partial` when any was
 refused or left a layer behind, and `failed` only when nothing was removed and
 something went wrong. A `partial` is the normal answer to a cleanup that
-included one certificate somebody still needs, and the row says which.
+included one certificate somebody still needs, and the row says which; the
+same selection deleted again finishes what a `partial` left.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from haproxy_mgmt import cert_delete
 from haproxy_mgmt.cert_delete import HELPER, OPERATION, SUDO, DeleteError, Report
 from haproxy_mgmt.cert_inventory import IMPORT_STORE
 from haproxy_mgmt.cert_issue import certbot_binary
+from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH
 from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy
 from haproxy_mgmt.envelope import Message, Outcome, envelope
@@ -61,7 +63,9 @@ def outcome_of(report: Report) -> tuple[Outcome, int]:
     node copies were kept is the normal shape of a deletion run before the
     nodes carry the verb (INSTALLATION.md 1.4.6). Calling that `failed` was
     the first live run's mistake: three layers of four had gone, and the
-    envelope said nothing had.
+    envelope said nothing had. `failed` is what is left when the first layer
+    already would not go - a PEM that cannot be unlinked, a node that cannot
+    be reached for a certificate nothing else holds.
     """
 
     if report.outcomes and len(report.removed) == len(report.outcomes):
@@ -84,6 +88,7 @@ def main(
     require_root: bool = True,
     renewal_directory: Path = RENEWAL_DIRECTORY,
     store: Path = IMPORT_STORE,
+    lock_path: Path = DEFAULT_LOCK_PATH,
     lineage_remover: cert_delete.LineageRemover = cert_delete.run_certbot,
     node_remover: cert_delete.NodeRemover = cert_delete.ask_node,
     guards_reader: cert_delete.GuardsReader = cert_delete.read_guards,
@@ -125,6 +130,7 @@ def main(
             require_secure=require_secure,
             renewal_directory=renewal_directory,
             store=store,
+            lock_path=lock_path,
             certbot=certbot_binary(policy),
             lineage_remover=lineage_remover,
             node_remover=node_remover,

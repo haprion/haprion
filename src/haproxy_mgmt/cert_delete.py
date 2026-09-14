@@ -11,18 +11,31 @@ What a deletion is
 ------------------
 Four layers, in this order, for each certificate in the request:
 
-1. the registry entry - the certificate stops being published;
-2. the material - the cluster PEM under the certificate root and the two
+1. the material - the cluster PEM under the certificate root and the two
    files in every receiver directory the entry named;
-3. the certbot lineage - otherwise a dead certificate renews forever - or the
+2. the certbot lineage - otherwise a dead certificate renews forever - or the
    import store for an imported one;
+3. the registry entry - the certificate stops being published. Only once the
+   two layers above are gone: an entry that outlives its material is a
+   certificate the next run can finish, an entry that is gone before its
+   material is one nothing can find again;
 4. the copy on every node of every cluster the entry named, through the same
    trigger identity that pulls certificates there.
 
-The order is the safe one. Once the registry no longer names a certificate,
-the next renewal hook cannot put the material back, so a step that fails
-after the first leaves something to clean up by hand, never something that
-comes back. Each layer's outcome is reported on the certificate's own row.
+The whole run holds the publisher's lock (`cert_publish.publish_lock`), like
+issue, publish and target do. The renewal timer publishes outside the job
+queue, and a renewal that ran between these layers would put the material
+of a still-registered certificate back - correctly, from its side - and
+leave the node copies of a deleted one behind. Under the lock the layers
+are one step as far as the publisher is concerned.
+
+Every layer is idempotent, and the run is meant to be repeated: a layer that
+fails is reported on the certificate's row and the entry stays, so the same
+selection deleted again picks up where it stopped. A certificate that is no
+longer registered is still looked for by name - its PEM, its lineage, its
+import directory and the copy on every node - so the one layer that may
+lawfully be left behind, a node that did not know the verb or was
+unreachable, is cleaned by asking again.
 
 The guards are the operation, not a warning
 -------------------------------------------
@@ -33,7 +46,10 @@ A certificate is refused, before any of its layers is touched, when:
 * it is a cluster's `default_certificate`;
 * removing it would leave a cluster with no certificate at all - the engine
   refuses to load such a configuration, for every command;
-* it is not in the registry.
+* another registry entry names the same certbot lineage or the same
+  receiver directory - the lineage and the receiver's pair are not the
+  entry's alone to remove;
+* it is not in the registry and nothing of it remains anywhere.
 
 A refused certificate stops nothing else in the batch; it is reported on its
 row and the others go through. Drafts are the interface's to check: they live
@@ -60,6 +76,8 @@ from typing import Any
 
 from haproxy_mgmt import cert_registry
 from haproxy_mgmt.cert_inventory import FULLCHAIN, IMPORT_STORE, PRIVKEY
+from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, publish_lock
+from haproxy_mgmt.cert_publish import PublishError as LockError
 from haproxy_mgmt.certificates import certificate_path
 from haproxy_mgmt.config import (
     CERTIFICATE_ID,
@@ -86,6 +104,15 @@ SUDO = "/usr/bin/sudo"
 # here and not an error.
 #
 NODE_VERB = "cert-remove"
+#
+# The node script (`install/node/haproxy-cert-remove`) logs one line per
+# certificate it removed, in this form. A copy the node never had answers with
+# exit 0 as well, and only this line tells the two apart - `absent` is what a
+# repeated run sees on every node. The wording is part of the node contract:
+# changing it there without changing it here turns every removal into an
+# `absent`.
+#
+NODE_REMOVED_LINE = "Removed {certificate_id}."
 CERTBOT_TIMEOUT = 120
 
 
@@ -120,7 +147,8 @@ class NodeCopy:
     cluster: str
     node: str
     state: str
-    """`removed`, `kept` (the node refused or does not know the verb) or `unreachable`."""
+    """`removed`, `absent` (the node had no copy), `kept` (the node refused or does not
+    know the verb) or `unreachable`."""
 
     detail: str = ""
 
@@ -136,7 +164,7 @@ class CertificateOutcome:
     certificate_id: str
     state: str
     """`removed` (every layer gone), `refused` (a guard held, nothing touched) or
-    `incomplete` (the registry entry is gone and a later layer is not)."""
+    `incomplete` (a layer stayed; the row says which, and the run can be repeated)."""
 
     reason: str = ""
     code: str = ""
@@ -248,19 +276,23 @@ def read_guards(runtime: RuntimeConfig, certificate_ids: Sequence[str]) -> Guard
 
 
 def refusal(certificate_id: str, runtime: RuntimeConfig, guards: Guards) -> tuple[str, str] | None:
-    """Why this certificate must not be deleted, or None when it may be."""
+    """Why this certificate must not be deleted, or None when it may be.
+
+    An unregistered certificate is not refused here: the sweep in `delete`
+    looks for what is left of it by name and refuses only when nothing is.
+    """
 
     registry = runtime.registry
     assert registry is not None  # noqa: S101 - the helper checks; stated for the reader
-    entry = registry.certificates.get(certificate_id)
-    if entry is None:
-        return ("not_registered", "not in the registry")
     objects = guards.referenced.get(certificate_id, ())
     if objects:
         return (
             "referenced_by_object",
             "named by the committed object(s) " + ", ".join(objects) + "; change them first",
         )
+    entry = registry.certificates.get(certificate_id)
+    if entry is None:
+        return None
     defaults = guards.defaults.get(certificate_id, ())
     if defaults:
         return (
@@ -277,6 +309,44 @@ def refusal(certificate_id: str, runtime: RuntimeConfig, guards: Guards) -> tupl
             "cluster_uncovered",
             "the only certificate of " + ", ".join(uncovered) + ", and a cluster that no "
             "certificate names cannot be loaded; give it another certificate first",
+        )
+    #
+    # The lineage and a receiver's pair are removed whole, so they have to be
+    # this entry's alone. Nothing in the registry keeps two entries from
+    # naming the same one - `lineage:` exists to point at an existing lineage
+    # - and the deletion is where sharing would cost the other entry its
+    # renewal or its published files.
+    #
+    others = [
+        other for other_id, other in registry.certificates.items() if other_id != certificate_id
+    ]
+    if entry.source.kind == "acme":
+        lineage = entry.source.lineage or certificate_id
+        sharing = sorted(
+            other.certificate_id
+            for other in others
+            if other.source.kind == "acme"
+            and (other.source.lineage or other.certificate_id) == lineage
+        )
+        if sharing:
+            return (
+                "shared_source",
+                f"its certbot lineage {lineage!r} is also the source of "
+                + ", ".join(sharing)
+                + "; deleting it would stop their renewal too",
+            )
+    shared_receivers = sorted(
+        f"{receiver_id} (also {other.certificate_id})"
+        for other in others
+        for receiver_id in entry.receivers
+        if receiver_id in other.receivers
+    )
+    if shared_receivers:
+        return (
+            "shared_receiver",
+            "its receiver directory is also published to by another certificate: "
+            + ", ".join(shared_receivers)
+            + "; change the targets first",
         )
     return None
 
@@ -401,7 +471,7 @@ def remove_node_copies(
     identity: DeployIdentity | None,
     ask: NodeRemover,
 ) -> tuple[NodeCopy, ...]:
-    """Layer four, node by node. A refusal is a kept copy, reported and not retried."""
+    """Layer four, node by node. A refusal is a kept copy, reported and asked again next run."""
 
     copies: list[NodeCopy] = []
     for cluster in clusters:
@@ -415,7 +485,10 @@ def remove_node_copies(
                 continue
             code, output = ask(identity, node.mgmt_host, certificate_id)
             if code == 0:
-                copies.append(NodeCopy(cluster.cluster_id, node.name, "removed"))
+                had_copy = NODE_REMOVED_LINE.format(certificate_id=certificate_id) in output
+                copies.append(
+                    NodeCopy(cluster.cluster_id, node.name, "removed" if had_copy else "absent")
+                )
             elif code == 255:
                 copies.append(NodeCopy(cluster.cluster_id, node.name, "unreachable", output[-300:]))
             else:
@@ -431,6 +504,7 @@ def delete(
     renewal_directory: Path = Path("/etc/letsencrypt/renewal"),
     store: Path = IMPORT_STORE,
     certbot: str = "/usr/bin/certbot",
+    lock_path: Path = DEFAULT_LOCK_PATH,
     lineage_remover: LineageRemover = run_certbot,
     node_remover: NodeRemover = ask_node,
     guards_reader: GuardsReader = read_guards,
@@ -450,6 +524,37 @@ def delete(
             "runtime policy.",
         )
     try:
+        with publish_lock(lock_path):
+            return _delete_locked(
+                certificate_ids,
+                policy,
+                require_secure=require_secure,
+                renewal_directory=renewal_directory,
+                store=store,
+                certbot=certbot,
+                lineage_remover=lineage_remover,
+                node_remover=node_remover,
+                guards_reader=guards_reader,
+            )
+    except LockError as exc:
+        raise DeleteError(exc.code, str(exc), exit_code=65) from exc
+
+
+def _delete_locked(
+    certificate_ids: Sequence[str],
+    policy: PathPolicy,
+    *,
+    require_secure: bool,
+    renewal_directory: Path,
+    store: Path,
+    certbot: str,
+    lineage_remover: LineageRemover,
+    node_remover: NodeRemover,
+    guards_reader: GuardsReader,
+) -> Report:
+    registry_path = policy.certificate_registry
+    assert registry_path is not None  # noqa: S101 - `delete` refused before taking the lock
+    try:
         runtime = load_runtime_config(policy, require_secure=require_secure)
     except ConfigError as exc:
         raise DeleteError("dependency_unavailable", str(exc), exit_code=exc.exit_code) from exc
@@ -463,33 +568,23 @@ def delete(
             continue
         registry = runtime.registry
         assert registry is not None  # noqa: S101
-        entry = registry.certificates[certificate_id]
-
-        #
-        # Layer one. `cert_registry.write` re-checks coverage before the
-        # rename; a refusal there is the same guard as above seen by the
-        # writer, and is reported the same way.
-        #
-        try:
-            document = cert_registry.read_document(policy.certificate_registry)
-            remaining = {
-                key: value
-                for key, value in (document.get("certificates") or {}).items()
-                if key != certificate_id
-            }
-            cert_registry.write(
-                policy.certificate_registry,
-                document=document,
-                certificates=remaining,
-                runtime=runtime,
-                require_secure=require_secure,
+        entry = registry.certificates.get(certificate_id)
+        if entry is None:
+            outcomes.append(
+                _sweep(
+                    certificate_id,
+                    runtime,
+                    policy,
+                    renewal_directory=renewal_directory,
+                    store=store,
+                    certbot=certbot,
+                    lineage_remover=lineage_remover,
+                    node_remover=node_remover,
+                )
             )
-        except cert_registry.RegistryError as exc:
-            outcomes.append(CertificateOutcome(certificate_id, "refused", str(exc), exc.code))
             continue
-        layers: list[Layer] = [Layer("registry", "removed")]
 
-        layers.extend(
+        layers: list[Layer] = list(
             remove_material(entry.clusters, entry.receivers, certificate_id, runtime, policy)
         )
         layers.append(
@@ -503,24 +598,41 @@ def delete(
                 run=lineage_remover,
             )
         )
+
+        #
+        # Layer three, only once nothing above it stayed. `cert_registry.write`
+        # re-checks coverage before the rename; a refusal there is the same
+        # guard as above seen by the writer, and the entry stays with it.
+        #
+        if all(layer.state in {"removed", "absent"} for layer in layers):
+            try:
+                document = cert_registry.read_document(registry_path)
+                remaining = {
+                    key: value
+                    for key, value in (document.get("certificates") or {}).items()
+                    if key != certificate_id
+                }
+                cert_registry.write(
+                    registry_path,
+                    document=document,
+                    certificates=remaining,
+                    runtime=runtime,
+                    require_secure=require_secure,
+                )
+            except cert_registry.RegistryError as exc:
+                layers.append(Layer("registry", "kept", f"{exc.code}: {exc}"))
+            else:
+                layers.append(Layer("registry", "removed"))
+        else:
+            layers.append(
+                Layer("registry", "kept", "material or source remains; run the deletion again")
+            )
+
         clusters = [runtime.clusters[c] for c in entry.clusters if c in runtime.clusters]
         nodes = remove_node_copies(
             clusters, certificate_id, policy.cert_deploy_identity, node_remover
         )
-
-        complete = all(layer.state in {"removed", "absent"} for layer in layers) and all(
-            copy.state == "removed" for copy in nodes
-        )
-        outcomes.append(
-            CertificateOutcome(
-                certificate_id,
-                "removed" if complete else "incomplete",
-                "" if complete else "some layers were kept; see the rows",
-                "",
-                tuple(layers),
-                nodes,
-            )
-        )
+        outcomes.append(_outcome(certificate_id, tuple(layers), nodes))
         #
         # The next certificate's guards must see this one gone.
         #
@@ -529,3 +641,88 @@ def delete(
         except ConfigError as exc:
             raise DeleteError("dependency_unavailable", str(exc), exit_code=exc.exit_code) from exc
     return Report(tuple(outcomes))
+
+
+def _outcome(
+    certificate_id: str, layers: tuple[Layer, ...], nodes: tuple[NodeCopy, ...]
+) -> CertificateOutcome:
+    complete = all(layer.state in {"removed", "absent"} for layer in layers) and all(
+        copy.state in {"removed", "absent"} for copy in nodes
+    )
+    return CertificateOutcome(
+        certificate_id,
+        "removed" if complete else "incomplete",
+        "" if complete else "some layers were kept; see the rows, and run the deletion again",
+        "",
+        layers,
+        nodes,
+    )
+
+
+def _sweep(
+    certificate_id: str,
+    runtime: RuntimeConfig,
+    policy: PathPolicy,
+    *,
+    renewal_directory: Path,
+    store: Path,
+    certbot: str,
+    lineage_remover: LineageRemover,
+    node_remover: NodeRemover,
+) -> CertificateOutcome:
+    """A certificate the registry no longer names: what is left of it, by name.
+
+    The registry entry is the one layer that says where a certificate went,
+    so without it the search is by ID - the PEM under the certificate root, a
+    lineage of the same name, the import directory, and the copy on every
+    node of every cluster. A receiver's pair is not named by the ID and is
+    not looked for; the registry layer runs last for exactly that reason, so
+    a receiver's files never outlive the entry.
+
+    Refused as `not_registered` only when nothing was found anywhere - the
+    nodes included, which had to be asked to know; a node that had nothing
+    answers so, and nothing was touched.
+    """
+
+    layers: list[Layer] = []
+    if policy.certificate_root is not None:
+        layers.append(_unlink(certificate_path(policy.certificate_root, certificate_id)))
+    layers.append(
+        remove_source(
+            "acme",
+            certificate_id,
+            certificate_id,
+            certbot=certbot,
+            renewal_directory=renewal_directory,
+            store=store,
+            run=lineage_remover,
+        )
+    )
+    layers.append(
+        remove_source(
+            "import",
+            certificate_id,
+            certificate_id,
+            certbot=certbot,
+            renewal_directory=renewal_directory,
+            store=store,
+            run=lineage_remover,
+        )
+    )
+    nodes = remove_node_copies(
+        [runtime.clusters[key] for key in sorted(runtime.clusters)],
+        certificate_id,
+        policy.cert_deploy_identity,
+        node_remover,
+    )
+    nothing_left = all(layer.state == "absent" for layer in layers) and all(
+        copy.state == "absent" for copy in nodes
+    )
+    if nothing_left:
+        return CertificateOutcome(
+            certificate_id,
+            "refused",
+            "not in the registry, and nothing of it remains on the manager or the nodes",
+            "not_registered",
+        )
+    return _outcome(certificate_id, tuple(layers), nodes)

@@ -10,11 +10,11 @@
       {
         "certificate": "old.example.com",
         "state": "incomplete",
-        "reason": "some layers were kept; see the rows",
+        "reason": "some layers were kept; see the rows, and run the deletion again",
         "layers": [
-          { "layer": "registry", "state": "removed" },
           { "layer": "/srv/certdist/old.example.com.pem", "state": "removed" },
-          { "layer": "lineage old.example.com", "state": "absent" }
+          { "layer": "lineage old.example.com", "state": "absent" },
+          { "layer": "registry", "state": "removed" }
         ],
         "nodes": [
           { "cluster": "alpha", "node": "node-a", "state": "removed" },
@@ -33,7 +33,7 @@
     "incomplete": ["old.example.com"]
   },
   "warnings": [
-    { "code": "incomplete", "message": "some layers were kept; see the rows", "node": null, "details": { "certificate": "old.example.com" } },
+    { "code": "incomplete", "message": "some layers were kept; see the rows, and run the deletion again", "node": null, "details": { "certificate": "old.example.com" } },
     { "code": "referenced_by_object", "message": "named by the committed object(s) alpha/shop; change them first", "node": null, "details": { "certificate": "shop.example.com" } }
   ],
   "error": null

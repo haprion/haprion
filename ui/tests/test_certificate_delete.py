@@ -183,12 +183,13 @@ class Confirming(DeleteRouteTestCase):
         self.assertEqual(job["payload"], {"certificates": ["imported.example", "old.example.com"]})
         self.assertIn("queue_job", self.audit)
 
-    def test_a_draft_written_since_the_question_refuses_that_certificate_again(self) -> None:
+    def test_a_draft_written_since_the_question_asks_it_again_and_queues_nothing(self) -> None:
         self.drafts = [SHOP_DRAFT]
         response = self.confirm(self.writing_client(), "old.example.com", "imported.example")
-        self.assertEqual(response.status_code, 303)
-        (job,) = self.queued
-        self.assertEqual(job["payload"], {"certificates": ["imported.example"]})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("something changed for old.example.com", response.text)
+        self.assertIn("A draft still names it", response.text)
+        self.assertEqual(self.queued, [])
 
     def test_nothing_deletable_draws_the_page_again_and_queues_nothing(self) -> None:
         self.drafts = [SHOP_DRAFT]
@@ -233,9 +234,20 @@ class TheJobsPageSaysWhatHappened(unittest.TestCase):
         self.assertEqual(
             jobs.deletion_note(job),
             "Deleted: old.example.com. Refused: shop.example.com (referenced_by_object). "
-            "Left to clean up by hand: gone.example.com (node-b kept).",
+            "Left; delete them again to finish: gone.example.com (node-b kept).",
         )
         self.assertIsNone(jobs.deletion_note(queued(operation="cert_issue", cluster=None)))
+
+    def test_a_deletion_where_every_row_went_has_no_note(self) -> None:
+        job = replace(
+            queued(operation="cert_delete", cluster=None),
+            state="done",
+            outcome="done",
+            result={
+                "result": {"certificates": [{"certificate": "old.example.com", "state": "removed"}]}
+            },
+        )
+        self.assertIsNone(jobs.deletion_note(job))
 
 
 if __name__ == "__main__":

@@ -182,7 +182,7 @@ class NodeBundleTransportContractTests(unittest.TestCase):
         before, after = [
             index
             for index, line in enumerate(self.script.splitlines())
-            if line == 'sudo "$STATE_BACKUP"'
+            if line.strip() == 'sudo "$STATE_BACKUP"'
         ]
         install = self.script.splitlines().index(
             'ssh -tt "${ssh_opts[@]}" "$node" "$remote_install"'

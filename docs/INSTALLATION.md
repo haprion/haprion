@@ -955,21 +955,39 @@ not become seventy jobs.
 
 | Layer | What goes | Why this order |
 |---|---|---|
-| the registry entry | the certificate stops being published | first, so nothing below can be put back by the next renewal hook |
 | the material | `<certificate_root>/<id>.pem` and the two files in every receiver directory the entry named | |
 | the source | `certbot delete --cert-name <lineage>` for `acme`; `/etc/haproxy-manager/certificates/<id>/` for `import` | a dead certificate would otherwise renew forever |
-| the node copies | each node of every cluster the entry named is asked `cert-remove <id>` over the trigger identity | last, and the one layer that may lawfully be left behind |
+| the registry entry | the certificate stops being published | only once the two above are gone: an entry that outlives its material is a certificate the next run can finish, an entry gone before its material is one nothing can find again |
+| the node copies | each node of every cluster the entry named is asked `cert-remove <id>` over the trigger identity | last, and the one layer that may lawfully be left behind; a node is asked by name, so it needs no entry |
+
+The whole job holds the publisher's lock (`/run/haproxy-mgmt/locks/cert-publish.lock`), like
+issue, publish and target changes do. The renewal timer publishes outside the job queue, and a
+renewal that ran between the layers would put a still-registered certificate's material back
+and leave a deleted one's node copies behind; under the lock the layers are one step to it.
+
+**A deletion can be run again.** Every layer is idempotent and reports `absent` where there was
+nothing to remove. A layer that fails — certbot refuses, a file cannot be unlinked, a node is
+unreachable or does not know the verb — is reported on the certificate's row, the entry stays
+where the failure was above it, and the same selection deleted again picks up where it stopped.
+A certificate that is no longer registered is still looked for by name: its PEM, a lineage of
+the same name, its import directory and the copy on every node of every cluster. So the row a
+job reports as left is finished by ticking the certificate again, not by hand; only a
+certificate nothing holds anywhere is refused as `not_registered`.
 
 **The guards are the operation, not a warning.** A certificate is refused, with nothing touched,
 when a proxy object in a cluster's committed configuration still names it, when it is a cluster's
 `default_certificate`, when it is the only certificate a cluster has (the engine refuses to load a
-cluster no certificate names), or when a draft in the interface's database still names it. The
+cluster no certificate names), when another registry entry names the same certbot lineage or the
+same receiver directory (the lineage and the receiver's pair are removed whole, so they have to
+be the entry's alone), or when a draft in the interface's database still names it. The
 draft check is the web's, made on the confirmation page and again as the job is queued; the worker
 holds no grant on drafts and does not look, so a draft written after queueing is the one window
-left open - its publish then fails on a missing file, which is recoverable. A
+left open - its publish then fails on a missing file, which is recoverable. A draft written
+between the confirmation page and the confirm is a refusal at the confirm: the question is asked
+again with the draft on the row, and nothing is queued until it is confirmed as it now stands. A
 refused certificate stops nothing else in the batch: it is reported on its own row and the others
 go through. The job's outcome is `done` when every row went, `partial` when any was refused or
-left a layer behind, `blocked` when every row was refused.
+left a layer behind, `blocked` when every row was refused, and `failed` when nothing at all went.
 
 **What is left behind, and said.** A node whose trigger does not know the verb yet answers
 "unknown request", and the copy is reported as kept, by node. The file is inert there: bind lines

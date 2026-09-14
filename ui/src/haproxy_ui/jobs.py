@@ -83,9 +83,9 @@ class JobView:
     #
     # What a batch operation did, row by row, in one line: a certificate
     # deletion's removed, refused and incomplete IDs with the reason beside
-    # each refused one. Shown for every ended job of that kind, not only a
-    # bad one - a `partial` is the normal shape of a cleanup with one
-    # refusal in it, and the person wants to know which.
+    # each refused one. Shown when a row did not go - a `partial` is the
+    # normal shape of a cleanup with one refusal in it, and the person wants
+    # to know which - and not for a `done`, where the job's own row says it.
     #
     note: str | None = None
 
@@ -430,14 +430,16 @@ def deletion_note(job: Job) -> str | None:
                 if isinstance(node, dict) and node.get("state") != "removed"
             ]
             incomplete.append(f"{identifier} ({', '.join(kept)})" if kept else identifier)
+    if not refused and not incomplete:
+        return None
     parts = []
     if removed:
         parts.append("Deleted: " + ", ".join(removed))
     if refused:
         parts.append("Refused: " + ", ".join(refused))
     if incomplete:
-        parts.append("Left to clean up by hand: " + ", ".join(incomplete))
-    return ". ".join(parts) + "." if parts else None
+        parts.append("Left; delete them again to finish: " + ", ".join(incomplete))
+    return ". ".join(parts) + "."
 
 
 def _view(

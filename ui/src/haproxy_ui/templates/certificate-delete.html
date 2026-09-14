@@ -32,8 +32,8 @@
       {% endfor %}
     </tbody></table></div>
   <ul class="removal-consequences">
-    <li>A certificate a committed object still names, a cluster's default certificate, or a cluster's last certificate is refused by the job and reported on its own row; the others go through.</li>
-    <li>A node that does not know how to drop a copy yet keeps it and says so. The file is inert there: nothing lists it.</li>
+    <li>The job refuses a certificate that is still in use — named by a published object, set as a cluster's default, the last one a cluster has, or sharing its Certbot lineage or receiver with another certificate — and says why on its row. The others are deleted.</li>
+    <li>A node that does not know how to drop a copy yet, or cannot be reached, keeps it and says so. The file is inert there: nothing lists it. Deleting the same certificate again asks that node again.</li>
     <li>Nothing here can be undone. A deleted Certbot lineage has to be issued again.</li>
   </ul>
   {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish before deleting.</p>{% endif %}

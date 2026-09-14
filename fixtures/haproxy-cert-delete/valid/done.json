@@ -11,13 +11,13 @@
         "certificate": "old.example.com",
         "state": "removed",
         "layers": [
-          { "layer": "registry", "state": "removed" },
           { "layer": "/srv/certdist/old.example.com.pem", "state": "removed" },
-          { "layer": "lineage old.example.com", "state": "removed" }
+          { "layer": "lineage old.example.com", "state": "removed" },
+          { "layer": "registry", "state": "removed" }
         ],
         "nodes": [
           { "cluster": "alpha", "node": "node-a", "state": "removed" },
-          { "cluster": "alpha", "node": "node-b", "state": "removed" }
+          { "cluster": "alpha", "node": "node-b", "state": "absent" }
         ]
       }
     ],

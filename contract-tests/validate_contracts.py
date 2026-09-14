@@ -501,7 +501,7 @@ def check_cert_delete_semantics(document: dict[str, object], path: Path) -> None
             layers = entry.get("layers") or []
             nodes = entry.get("nodes") or []
             if any(layer["state"] not in ("removed", "absent") for layer in layers) or any(
-                node["state"] != "removed" for node in nodes
+                node["state"] not in ("removed", "absent") for node in nodes
             ):
                 raise AssertionError(f"{path}: a removed certificate carries a kept layer")
     for state, ids in by_state.items():

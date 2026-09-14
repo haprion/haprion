@@ -1975,9 +1975,10 @@ def build_router(config: Config) -> APIRouter:
         """Queue one `cert_delete` job for what the confirmation page offered.
 
         The selection is evaluated again here, not trusted from the previous
-        page: a draft written in between is a refusal now, and the job
-        carries only what passes. The helper's own refusals arrive on the
-        job's rows.
+        page: a draft written in between is a refusal now, and the question
+        is asked again with it on the row rather than the job quietly
+        carrying less than was confirmed. The helper's own refusals arrive
+        on the job's rows.
         """
 
         gate = _certificate_delete_gate(request)
@@ -2006,6 +2007,15 @@ def build_router(config: Config) -> APIRouter:
                 gate,
                 chosen=tuple(certificate),
                 problem="Nothing in the selection can be deleted from here.",
+            )
+        if picked.refused:
+            return _certificate_delete_page(
+                request,
+                gate,
+                chosen=tuple(certificate),
+                problem="Since you were asked, something changed for "
+                + ", ".join(row.identifier for row in picked.refused)
+                + "; nothing was queued. Read the rows and confirm again.",
             )
         payload = {"certificates": list(picked.deletable)}
         try:

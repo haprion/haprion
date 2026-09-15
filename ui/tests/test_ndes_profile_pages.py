@@ -11,6 +11,8 @@ from uuid import uuid4
 from haproxy_mgmt.ndes_profiles import open_profile
 
 from haproxy_ui import auth, db, operations
+from tests.test_certificates import reading as certificate_reading
+from tests.test_certificates import registered, with_registry
 from tests.test_dns_profile_pages import GUARD, KEY, ProfileRouteTestCase, profile_row
 from tests.test_queue_route import queued
 
@@ -184,6 +186,18 @@ class RemovingAnNdesProfile(NdesPages):
         self.assertIn("In effect", page)
         self.assertIn("Removal of <code>certserver1</code> was refused.", page)
         self.assertIn("webserver1-scep", page)
+
+        # Once the registry no longer names the profile the reason is gone,
+        # and so is the note - without waiting for another attempt.
+        emptied = with_registry(certificate_reading(), registered("unrelated", kind="import"))
+        with (
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=[refused, applied]),
+            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[emptied]),
+        ):
+            page = self.writing_client().get("/ndes-profiles").text
+        self.assertIn("In effect", page)
+        self.assertNotIn("was refused", page)
+        self.assertNotIn("Removal refused", page)
 
     def test_the_replace_form_starts_with_the_stored_endpoint(self) -> None:
         self.rows = [profile_row(id="certserver1", provider_id="ndes", endpoint=ENDPOINT)]

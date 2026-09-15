@@ -2119,8 +2119,14 @@ def build_router(config: Config) -> APIRouter:
             recent = db.recent_jobs(connection, limit=100)
         public_key = _dns_public_key()
         catalogue = {provider.id: provider for provider in dns_profile_form.providers()}
+        _, certificate_rows, _ = read_source(request, config, CERTIFICATE_SOURCE)
+        references = certificates.profile_references(certificate_rows, field="dns_profile")
         statuses = {
-            profile.id: dns_profile_form.profile_status(profile.id, profile.revision, recent)
+            profile.id: dns_profile_form.without_stale_refusal(
+                dns_profile_form.profile_status(profile.id, profile.revision, recent),
+                profile.id,
+                references,
+            )
             for profile in profiles
         }
         rows = [
@@ -2502,8 +2508,13 @@ def build_router(config: Config) -> APIRouter:
         with request.app.state.pool.connection() as connection:
             profiles = db.ndes_profiles(connection)
             recent = db.recent_jobs(connection, limit=100)
+        _, certificate_rows, _ = read_source(request, config, CERTIFICATE_SOURCE)
+        references = certificates.profile_references(certificate_rows, field="ndes_profile")
         statuses = {
-            p.id: ndes_profile_form.profile_status(p.id, p.revision, recent) for p in profiles
+            p.id: dns_profile_form.without_stale_refusal(
+                ndes_profile_form.profile_status(p.id, p.revision, recent), p.id, references
+            )
+            for p in profiles
         }
         return TEMPLATES.TemplateResponse(
             request,

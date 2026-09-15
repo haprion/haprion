@@ -826,6 +826,38 @@ def _registry_certificate(
     )
 
 
+def profile_references(
+    readings: Iterable[ClusterCertificates], *, field: str
+) -> dict[str, tuple[str, ...]] | None:
+    """Which registered certificates name each provider profile, by profile.
+
+    `field` is `dns_profile` or `ndes_profile`, the registry's own binding.
+    None where no reading carries a registry at all - then nothing can be
+    said either way, and a caller must not treat silence as "unreferenced".
+    The profile pages use this to drop a "removal refused" notice once the
+    certificates it named are gone, without waiting for another attempt.
+    """
+
+    newest: ClusterCertificates | None = None
+    for reading in readings:
+        if not isinstance(_mapping(reading.result).get("registry"), Mapping):
+            continue
+        if newest is None or reading.observed_at > newest.observed_at:
+            newest = reading
+    if newest is None:
+        return None
+    entries = _mapping(_mapping(newest.result).get("registry")).get("certificates")
+    references: dict[str, list[str]] = {}
+    if isinstance(entries, list):
+        for value in entries:
+            entry = _mapping(value)
+            profile = _mapping(entry.get("source")).get(field)
+            identifier = entry.get("id")
+            if isinstance(profile, str) and isinstance(identifier, str):
+                references.setdefault(profile, []).append(identifier)
+    return {profile: tuple(sorted(ids)) for profile, ids in references.items()}
+
+
 def _registry_view(
     readings: Iterable[ClusterCertificates],
     status_readings: Iterable[Any],

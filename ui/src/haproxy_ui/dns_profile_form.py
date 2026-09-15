@@ -16,7 +16,7 @@ cache.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey
@@ -203,6 +203,25 @@ class ProfileStatus:
 
     attention_message: str = ""
     """The helper's own words for the refusal, so the page can say why."""
+
+
+def without_stale_refusal(
+    status: ProfileStatus, profile_id: str, references: Mapping[str, tuple[str, ...]] | None
+) -> ProfileStatus:
+    """The status without its "removal refused" note once nothing names the profile.
+
+    The note comes from the newest removal job, which stays the newest job
+    until somebody tries again; the registry says whether the reason still
+    holds. Kept where the registry cannot be read (`references` is None).
+    """
+
+    if (
+        status.attention_label != "Removal refused"
+        or references is None
+        or profile_id in references
+    ):
+        return status
+    return replace(status, attention_job=None, attention_label="", attention_message="")
 
 
 def profile_status(

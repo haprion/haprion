@@ -1886,9 +1886,8 @@ def build_router(config: Config) -> APIRouter:
                 detail={"operation": "cert_scep", "job": job.id, "resume": certificate_id},
             )
             connection.commit()
-        return RedirectResponse(
-            f"/certificates?view=registry&open={certificate_id}", status_code=303
-        )
+        # A fixed address: the listing's State cell follows the job from there.
+        return RedirectResponse("/certificates?view=registry", status_code=303)
 
     def _certificate_choices(request: Request, config: Config) -> certificate_form.IssueChoices:
         """The targets the form may offer, read the way the listing reads them."""

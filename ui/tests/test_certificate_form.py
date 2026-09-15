@@ -242,19 +242,19 @@ class TheFormPage(CertificateFormRouteTestCase):
 
         self.assertIn('class="challenge-warning certificate-guidance"', page)
         self.assertIn(
-            "Certificate validation requires some knowledge of Certbot and its DNS plugins.",
+            "Certificate validation requires some knowledge of the chosen CA.",
             page,
         )
-        self.assertIn("the domain must already point to this installation", page)
+        self.assertIn("the domain must already point here", page)
         #
-        # Three statements, three lines: the reader picks the one for the
-        # challenge they chose without reading the other two.
+        # Three lines: the general sentence, the two Let's Encrypt challenges,
+        # the NDES one - the reader picks the line for the CA they chose.
         #
-        self.assertIn("its DNS plugins.<br>For DNS-01,", page)
-        self.assertIn("documentation.<br>For HTTP-01,", page)
+        self.assertIn("the chosen CA.<br>DNS-01:", page)
+        self.assertIn("point here.<br>NDES:", page)
         self.assertNotIn("Provide DNS access", page)
-        self.assertIn("DNS record; supports wildcards", page)
-        self.assertIn("Webroot file; single names only", page)
+        self.assertIn("Let's Encrypt; DNS record, wildcards", page)
+        self.assertIn("Let's Encrypt; webroot, single names", page)
         self.assertNotIn("Asks the ACME account", page)
         self.assertNotIn("cluster-accent-", page)
 
@@ -337,7 +337,7 @@ class TheFormPage(CertificateFormRouteTestCase):
         self.assertIn('value="cf-main"', page)
         # The NDES profile is saved but not applied: the third choice says why it is off.
         self.assertIn('value="ndes" disabled', page)
-        self.assertIn("no NDES provider profile is in effect", page)
+        self.assertIn("Microsoft AD CS; no profile in effect", page)
 
         enrolled = replace(
             applied,

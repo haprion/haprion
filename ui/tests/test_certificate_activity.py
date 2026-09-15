@@ -179,7 +179,7 @@ class ResumingAnEnrollment(DeleteRouteTestCase):
                 follow_redirects=False,
             )
         self.assertEqual(response.status_code, 303)
-        self.assertIn("open=wait.example.com", response.headers["location"])
+        self.assertEqual(response.headers["location"], "/certificates?view=registry")
         (job,) = self.queued
         self.assertEqual(job["operation"], "cert_scep")
         self.assertEqual(job["payload"], {"id": "wait.example.com", "resume": True})

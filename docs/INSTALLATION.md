@@ -1061,6 +1061,12 @@ retained Certmonger client, the root enrollment CLI and its job helper, and the 
 form's third choice, *Microsoft AD CS · NDES*. Two live enrollments (a DNS name; a wildcard
 with its base name) were verified end to end.
 
+**Other SCEP servers.** NDES is Microsoft's SCEP implementation; the client speaks plain SCEP
+and the manager makes two choices that NDES needs and other servers accept - a signature-and-
+encryption request, and a PrintableString challenge. Only NDES has been verified. Another SCEP
+CA (step-ca is the quickest to stand up; EJBCA, OpenXPKI and network appliances also serve
+SCEP) should work and is untested; the profile and policy fields keep their NDES names.
+
 **Selected client:** [Certmonger](https://codeberg.org/freeipa/certmonger/) will provide the
 SCEP protocol support through a temporary process and private socket, with automatic renewal
 disabled. Its installation and runtime dependencies will be included in the manager installation.

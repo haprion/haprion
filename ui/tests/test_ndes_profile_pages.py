@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
 from uuid import uuid4
@@ -191,6 +192,15 @@ class RemovingAnNdesProfile(NdesPages):
         # Once is enough: the next visit keeps the status column's link only.
         self.assertNotIn("was refused", later)
         self.assertIn("· Removal refused</a>", later)
+
+        # And the link is for an hour: a refusal from this morning is not
+        # the profile's state (seen 2026-09-15: "I have not tried to remove it").
+        stale = replace(refused, finished_at=datetime.now(UTC) - timedelta(hours=2))
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[stale, applied]):
+            old = self.writing_client().get("/ndes-profiles?removed=certserver1").text
+        self.assertIn("In effect", old)
+        self.assertNotIn("Removal refused", old)
+        self.assertNotIn("was refused", old)
 
         # Once the registry no longer names the profile the reason is gone,
         # and so is the note - without waiting for another attempt.

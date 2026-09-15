@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey
@@ -205,6 +206,12 @@ class ProfileStatus:
     """The helper's own words for the refusal, so the page can say why."""
 
 
+#
+# How long a refused removal stays on the profile's row.
+#
+REFUSAL_LIFETIME = timedelta(hours=1)
+
+
 def without_stale_refusal(
     status: ProfileStatus, profile_id: str, references: Mapping[str, tuple[str, ...]] | None
 ) -> ProfileStatus:
@@ -256,10 +263,18 @@ def profile_status(
             # two files are being removed and must stay fail-closed.
             #
             if code == "profile_in_use":
-                attention_job = job.id
-                attention_label = "Removal refused"
-                message = error.get("message") if isinstance(error, dict) else None
-                attention_message = message if isinstance(message, str) else ""
+                #
+                # And only for an hour: a refusal is what the operator just
+                # did, not the profile's state. The registry still says who
+                # references it, and the jobs page keeps the attempt.
+                #
+                finished = job.finished_at
+                fresh = finished is None or datetime.now(UTC) - finished <= REFUSAL_LIFETIME
+                if fresh:
+                    attention_job = job.id
+                    attention_label = "Removal refused"
+                    message = error.get("message") if isinstance(error, dict) else None
+                    attention_message = message if isinstance(message, str) else ""
                 continue
             return ProfileStatus("Remove failed", "critical", False)
         if job.state == "done" and job_revision == revision:

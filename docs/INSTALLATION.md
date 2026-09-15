@@ -1099,8 +1099,8 @@ CA (step-ca is the quickest to stand up; EJBCA, OpenXPKI and network appliances 
 SCEP) should work and is untested; the profile and policy fields keep their NDES names.
 
 **Selected client:** [Certmonger](https://codeberg.org/freeipa/certmonger/) will provide the
-SCEP protocol support through a temporary process and private socket, with automatic renewal
-disabled. Its installation and runtime dependencies will be included in the manager installation.
+SCEP protocol support through a temporary process and private socket, with Certmonger's own
+renewal disabled - the manager schedules renewal itself, below. Its installation and runtime dependencies will be included in the manager installation.
 Release materials must retain the selected package, corresponding source, license and build
 instructions so the selected version remains available independently of its upstream hosting.
 The packaging tools are described below. Root installation has not yet been verified.
@@ -1111,8 +1111,8 @@ publication and distribution path. The private key stays on the manager. The man
 domain membership or AD account and does not visit `mscep_admin` during normal operation.
 
 **Manager configuration and packaging (source implementation).** The optional root policy
-`ndes` object has the fields `endpoint`, `tls_ca`, `issuing_ca`, `client_root`, `state_root`
-and `profiles`. Paths are absolute. `profiles` contains `directory` and `private_keys`,
+`ndes` object has the fields `endpoint`, `tls_ca`, `issuing_ca`, `client_root`, `state_root`,
+`profiles` and the optional `renew_days` (1–3650, default 30). Paths are absolute. `profiles` contains `directory` and `private_keys`,
 a non-empty list of absolute private-key file paths using the existing profile sealing keys. The endpoint must use HTTPS and
 match the encrypted provider profile exactly. TLS trust and certificate issuing trust are
 configured separately. Suggested roots are `/opt/haproxy-scep/current`,
@@ -1141,8 +1141,22 @@ A CA approval wait returns `state: pending` and envelope outcome `partial`; the 
 registered at once, without material, so the listing shows it as **Request pending**. Resume with
 `haproxy-cert-scep --id <id> --resume` - the request's root-only record holds the profile and
 the names, the original key is retained, and a resume that disagrees with the record is refused.
-Automatic renewal is disabled. Returned certificates must pass chain, names, usages and key
-validation before the existing import/publication path is called.
+Returned certificates must pass chain, names, usages and key validation before the existing
+import/publication path is called.
+
+**Scheduled renewal.** `haproxy-cert-renew` - the command the daily `haproxy-certbot-renew.timer`
+runs - makes an NDES pass after certbot's: every registered certificate whose source names an
+NDES profile and whose `not_after`, read at its source, is less than `ndes.renew_days` away is
+enrolled again under the same ID, with the same profile, the names the current certificate
+carries (CN first) and the targets the registry holds. It is the same request as a first
+enrollment: a fresh key, and the published material replaced only once the new certificate has
+been validated; a request the CA holds is **Renewal pending** on the row, with the same *Resume
+enrollment* button. One record per certificate under `<state_root>/renewals/` says what the last
+attempt did, and the listing shows a failure as **Renewal failed** with the CA's sentence rather
+than an expiry creeping closer. `haproxy-cert-renew --ndes-now <id>` renews one certificate at
+once, threshold or not, and skips certbot's pass: the way to prove the path on a template whose
+validity cannot be shortened per request, and to rotate a key. `--dry-run` says who would renew.
+
 
 From the interface, *Certificates → New certificate* offers *Microsoft AD CS · NDES* beside
 the two Let's Encrypt challenges whenever an NDES profile is in effect; a wildcard becomes the
@@ -1249,9 +1263,9 @@ Key Usage, validity, key match and certificate chain. A responsive landing page 
 alone does not prove enrollment. Application acceptance will also cover verified TLS,
 `GetCACert`, SCEP response correlation, pending/failure handling and diagnostics without secrets.
 
-The planned integration automates issuance requested through CLI/UI; it does not add scheduled
-renewal for SCEP-issued certificates. CEP/CES/WSTEP, template discovery and automatic password
-retrieval from `mscep_admin` are outside this integration.
+The integration automates issuance requested through CLI/UI and renews on schedule (above).
+CEP/CES/WSTEP, template discovery and automatic password retrieval from `mscep_admin` are outside
+this integration.
 
 ### 1.5 Validation certificate
 

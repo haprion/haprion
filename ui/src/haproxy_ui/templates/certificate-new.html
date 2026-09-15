@@ -31,7 +31,7 @@
 
   <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Certificate</h3></div></div></header>
-    <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of the chosen CA.<br>DNS-01: see the provider plugin's documentation. HTTP-01: the domain must already point here.<br>NDES: the profile holds the CA's challenge; no scheduled renewal.</span></p>
+    <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of the chosen CA.<br>DNS-01: see the provider plugin's documentation. HTTP-01: the domain must already point here.<br>NDES: the profile holds the CA's challenge; renewed on schedule like the others.</span></p>
     <div class="form-grid">
       <label>Domain<input name="domain" value="{{ form.domain }}" maxlength="255" placeholder="app.example.com or *.example.com" autocomplete="off" spellcheck="false" required autofocus><small>Becomes the certificate's name. <code>*.example.com</code> also covers <code>example.com</code>, the way the existing wildcard does; over NDES the base name is the CN and the wildcard a SAN.</small></label>
       {#

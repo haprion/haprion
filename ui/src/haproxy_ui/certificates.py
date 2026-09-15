@@ -25,6 +25,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from haproxy_ui import metrics
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterCertificates
@@ -773,6 +774,33 @@ def _registry_state(
                 "info",
             )
         return "Unreadable", _text(entry.get("validation_error"), "Could not be read"), "critical"
+
+    #
+    # The scheduled NDES renewal's last word about this certificate, when it
+    # is not "renewed": a failure with the CA's sentence, or a request the
+    # CA is holding. The material is still readable - it is the old one -
+    # so this comes before the copies are judged, which would say "on all
+    # nodes" about a certificate that is quietly running out.
+    #
+    renewal = _mapping(entry.get("renewal"))
+    if renewal.get("outcome") == "failed":
+        attempted = _expiry(renewal.get("attempted_at"))
+        when = (
+            f" (tried {metrics.shown(attempted).strftime(metrics.TIMESTAMP)})"
+            if attempted is not None
+            else ""
+        )
+        return (
+            "Renewal failed",
+            _text(renewal.get("message"), "The scheduled renewal failed") + when,
+            "critical",
+        )
+    if renewal.get("outcome") == "pending":
+        return (
+            "Renewal pending",
+            "The CA is holding the renewal request; resume it from the row",
+            "info",
+        )
 
     clusters = tuple(target.name for target in targets if target.kind == "cluster")
     receivers = tuple(target for target in targets if target.kind == "receiver")

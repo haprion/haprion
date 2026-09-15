@@ -157,6 +157,11 @@ class NdesPolicy:
     client_root: Path
     state_root: Path
     profiles: DnsProfilesPolicy
+    #
+    # When the scheduled renewal asks for a new certificate: this many days
+    # before the current one expires. Optional; 30 is certbot's habit.
+    #
+    renew_days: int = 30
 
 
 @dataclass(frozen=True, slots=True)
@@ -926,9 +931,16 @@ def _ndes_policy(data: Mapping[str, Any]) -> NdesPolicy | None:
     entry = _mapping(raw, location)
     _only_keys(
         entry,
-        {"endpoint", "tls_ca", "issuing_ca", "client_root", "state_root", "profiles"},
+        {"endpoint", "tls_ca", "issuing_ca", "client_root", "state_root", "profiles", "renew_days"},
         location,
     )
+    renew_days = entry.get("renew_days", 30)
+    if (
+        isinstance(renew_days, bool)
+        or not isinstance(renew_days, int)
+        or not 1 <= renew_days <= 3650
+    ):
+        raise ConfigError(f"{location}.renew_days must be an integer between 1 and 3650")
     from haproxy_mgmt.dns_profiles import ProfileError
     from haproxy_mgmt.ndes_profiles import check_endpoint
 
@@ -952,6 +964,7 @@ def _ndes_policy(data: Mapping[str, Any]) -> NdesPolicy | None:
             _required_string(entry, "state_root", location), f"{location}.state_root"
         ),
         profiles=profiles,
+        renew_days=renew_days,
     )
 
 

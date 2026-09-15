@@ -15,11 +15,17 @@ import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, TextIO
 
-from haproxy_mgmt import dns_profiles
+from haproxy_mgmt import dns_profiles, ndes_renew
+from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_issue import CERTBOT_TIMEOUT, certbot_binary
+from haproxy_mgmt.cli import cert_scep
+from haproxy_mgmt.cli.cert_publish import default_deployer
 from haproxy_mgmt.config import (
+    CERTIFICATE_ID,
     DEFAULT_POLICY_PATH,
     ConfigError,
     PathPolicy,
@@ -27,6 +33,7 @@ from haproxy_mgmt.config import (
     load_policy,
     load_runtime_config,
 )
+from haproxy_mgmt.envelope import new_request_id
 
 RENEWAL_DIRECTORY = Path("/etc/letsencrypt/renewal")
 FIXED_ENVIRONMENT = {
@@ -118,26 +125,122 @@ def _scrub(text: str, values: Sequence[str]) -> str:
     return text
 
 
+def renew_ndes(
+    policy: PathPolicy,
+    runtime: RuntimeConfig,
+    *,
+    only: Sequence[str] = (),
+    dry_run: bool = False,
+    now: datetime | None = None,
+    enroll: ndes_renew.Enroller | None = None,
+    errors: TextIO = sys.stderr,
+    policy_path: Path = DEFAULT_POLICY_PATH,
+    live: Path = LETSENCRYPT_LIVE,
+    store: Path = IMPORT_STORE,
+) -> bool:
+    """The NDES pass: renew what is due, or what `only` names. True when anything failed.
+
+    Runs after certbot's pass and independently of it, from the same daily
+    timer. Certbot's lineages are certbot's; these are the manager's own
+    requests, made again through `cert_scep.enroll` - one code path.
+    """
+
+    if policy.ndes is None:
+        if only:
+            print("ERROR: --ndes-now needs an ndes policy", file=errors)
+            return True
+        return False
+    moment = now or datetime.now(UTC)
+    due, problems = ndes_renew.candidates(
+        runtime,
+        policy,
+        now=moment,
+        threshold_days=policy.ndes.renew_days,
+        only=only,
+        live=live,
+        store=store,
+    )
+    for problem in problems:
+        if problem.certificate_id in only:
+            print(f"ERROR: {problem.certificate_id}: {problem.message}", file=errors)
+        else:
+            print(f"ndes: {problem.certificate_id}: skipped, {problem.message}", file=errors)
+    for candidate in due:
+        print(
+            f"ndes: {candidate.certificate_id} expires in {candidate.days_left} days; "
+            + ("would renew" if dry_run else "renewing"),
+            file=errors,
+        )
+    if dry_run:
+        return any(p.certificate_id in only for p in problems)
+
+    def enroll_again(candidate: ndes_renew.Candidate) -> tuple[dict[str, Any], int]:
+        try:
+            return cert_scep.enroll(
+                certificate_id=candidate.certificate_id,
+                profile_id=candidate.profile_id,
+                domains=candidate.domains,
+                clusters=candidate.clusters,
+                receivers=candidate.receivers,
+                resume=False,
+                request_id=new_request_id(),
+                policy_path=policy_path,
+                deployer=default_deployer(errors),
+                live=live,
+                store=store,
+            )
+        except cert_scep.ScepRefusal as exc:
+            return {
+                "outcome": "failed",
+                "error": {"code": exc.code, "message": str(exc)},
+            }, exc.exit_code
+
+    outcomes = ndes_renew.renew(
+        due, state_root=policy.ndes.state_root, enroll=enroll or enroll_again, now=moment
+    )
+    failed = any(p.certificate_id in only for p in problems)
+    for outcome in outcomes:
+        print(
+            f"ndes: {outcome.certificate_id}: {outcome.outcome} {outcome.message}".rstrip(),
+            file=errors,
+        )
+        failed = failed or outcome.outcome == "failed"
+    return failed
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Renew Certbot lineages with DNS profiles")
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY_PATH)
     parser.add_argument("--certbot", help="certbot binary used by the upgrade gate")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--run-deploy-hooks", action="store_true")
+    parser.add_argument(
+        "--ndes-now",
+        action="append",
+        default=[],
+        metavar="ID",
+        help="renew this NDES certificate now, whatever its expiry; certbot's pass is skipped",
+    )
     args = parser.parse_args(argv)
     if os.geteuid() != 0:
         parser.error("must run as root")
     if args.certbot is not None and not Path(args.certbot).is_absolute():
         parser.error("--certbot must be an absolute path")
+    if any(not CERTIFICATE_ID.fullmatch(item) for item in args.ndes_now):
+        parser.error("--ndes-now takes a certificate ID")
     try:
         policy = load_policy(args.policy)
         runtime = load_runtime_config(policy)
-        commands = invocations(
-            policy,
-            runtime,
-            binary=args.certbot,
-            dry_run=args.dry_run,
-            run_deploy_hooks=args.run_deploy_hooks,
+        commands = (
+            ()
+            if args.ndes_now
+            else invocations(
+                policy,
+                runtime,
+                binary=args.certbot,
+                dry_run=args.dry_run,
+                run_deploy_hooks=args.run_deploy_hooks,
+            )
         )
     except ConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -161,7 +264,14 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, subprocess.TimeoutExpired) as exc:
             print(f"ERROR: renewal of {invocation.lineage!r} could not run: {exc}", file=sys.stderr)
             failed = True
-    return 1 if failed else 0
+    #
+    # After certbot, not instead of it: a failure in one pass does not spare
+    # the other, and the exit code says whether either had one.
+    #
+    ndes_failed = renew_ndes(
+        policy, runtime, only=tuple(args.ndes_now), dry_run=args.dry_run, policy_path=args.policy
+    )
+    return 1 if failed or ndes_failed else 0
 
 
 if __name__ == "__main__":

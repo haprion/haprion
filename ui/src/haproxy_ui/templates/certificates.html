@@ -43,7 +43,7 @@
           <div><strong>Covers</strong><span>{% if certificate.sans %}{{ certificate.sans | join(', ') }}{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}{{ certificate.common_name }}{% endif %}</span></div>
           <div><strong>Issuer</strong><span>{{ certificate.issuer }}</span></div>
           {% if certificate.material_note %}<div><strong>Material</strong><span>{{ certificate.material_note }}</span></div>{% endif %}
-          <div><strong>State</strong><span>{{ certificate.state_detail }}{% if certificate.state_label == 'Request pending' and management_writes and role == 'admin' %} <form method="post" action="/certificates/{{ certificate.identifier }}/resume" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button type="submit" class="secondary-button">Resume enrollment</button></form>{% endif %}</span></div>
+          <div><strong>State</strong><span>{{ certificate.state_detail }}{% if certificate.state_label in ('Request pending', 'Renewal pending') and management_writes and role == 'admin' %} <form method="post" action="/certificates/{{ certificate.identifier }}/resume" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button type="submit" class="secondary-button">Resume enrollment</button></form>{% endif %}</span></div>
           {#
             Per target, because the two kinds are knowable to different depths.
             A cluster's nodes report what they carry; a receiver fetches on its

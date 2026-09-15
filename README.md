@@ -62,7 +62,8 @@ Privileged operations cross narrow, allowlisted helper interfaces. See
 
 Certificate issuance runs through an exact root helper around Certbot; DNS provider credentials
 entered in the web interface are sealed against a host key the web process cannot open. Renewal
-stays Certbot's own timer. Disaster recovery and VM rebuild workflows are deliberately outside the
+stays Certbot's own timer; certificates the manager enrolls from a Microsoft CA over NDES/SCEP
+are renewed by the same daily run through the same enrollment path. Disaster recovery and VM rebuild workflows are deliberately outside the
 application scope.
 
 ## Repository layout

@@ -60,3 +60,51 @@ def request_record(state_root: Path, certificate_id: str) -> dict[str, Any] | No
     except (OSError, ValueError, UnicodeError):
         return None
     return loaded if isinstance(loaded, dict) else None
+
+
+#
+# The renewal record: what the last scheduled renewal did to one certificate,
+# written by `ndes_renew` as root and read by the listing helper as root.
+#
+RECORDS_DIRECTORY = "renewals"
+MAX_RENEWAL_RECORD_BYTES = 16 * 1024
+
+
+def records_directory(state_root: Path) -> Path:
+    return state_root / RECORDS_DIRECTORY
+
+
+def record_path(state_root: Path, certificate_id: str) -> Path:
+    """Hashed like the request directory, so an ID is never a path."""
+
+    return records_directory(state_root) / (
+        request_directory(state_root, certificate_id).name + ".json"
+    )
+
+
+def renewal_record(state_root: Path, certificate_id: str) -> dict[str, Any] | None:
+    """The last attempt's record, or None; anything unreadable is no record."""
+
+    path = record_path(state_root, certificate_id)
+    try:
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.stat().st_size > MAX_RENEWAL_RECORD_BYTES
+        ):
+            return None
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    attempted = loaded.get("attempted_at")
+    outcome = loaded.get("outcome")
+    message = loaded.get("message")
+    if (
+        not isinstance(attempted, str)
+        or outcome not in {"renewed", "pending", "failed"}
+        or not isinstance(message, str)
+    ):
+        return None
+    return {"attempted_at": attempted, "outcome": outcome, "message": message[:1000]}

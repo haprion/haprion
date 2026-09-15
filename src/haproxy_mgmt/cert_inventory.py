@@ -42,7 +42,7 @@ from haproxy_mgmt.certificates import (
     leaf_fingerprint,
 )
 from haproxy_mgmt.config import Cluster, RegisteredCertificate, Registry
-from haproxy_mgmt.ndes_state import request_is_pending
+from haproxy_mgmt.ndes_state import renewal_record, request_is_pending
 
 OPENSSL = "/usr/bin/openssl"
 LETSENCRYPT_ROOT = Path("/etc/letsencrypt")
@@ -332,7 +332,7 @@ def _published(path: Path, source_fingerprint: str | None) -> dict[str, Any]:
     }
 
 
-def _measure_registered(
+def measure_registered(
     entry: RegisteredCertificate, *, certificate_root: Path, live: Path, store: Path
 ) -> tuple[str, Facts, str] | str:
     """A registered certificate's fingerprint and facts, and where they were read.
@@ -405,7 +405,7 @@ def registry_result(
             **_unmeasured(now),
         }
         fingerprint: str | None = None
-        measured = _measure_registered(
+        measured = measure_registered(
             entry, certificate_root=certificate_root, live=live, store=store
         )
         if isinstance(measured, str):
@@ -423,6 +423,16 @@ def registry_result(
                 row["request_state"] = "pending"
         else:
             fingerprint, facts, row["measured_at"] = measured
+            #
+            # What the scheduled renewal last did to an NDES certificate,
+            # if it has tried: the material above is still the measurement,
+            # this is the run's own word, for the row to say "renewal
+            # failed" with the CA's sentence rather than an expiry creeping.
+            #
+            if request_root is not None and entry.source.ndes_profile is not None:
+                renewal = renewal_record(request_root, entry.certificate_id)
+                if renewal is not None:
+                    row["renewal"] = renewal
             row.update(
                 readable=True,
                 fingerprint_sha256=fingerprint,

@@ -448,6 +448,36 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
         self.assertEqual(certificate_view.state_label, "On all 2 nodes")
         self.assertEqual(certificate_view.state_tone, "healthy")
 
+    def test_the_scheduled_renewal_s_last_word_outranks_the_copies(self) -> None:
+        """A readable certificate whose renewal failed is not "on all nodes" (2026-09-15)."""
+
+        entry = registered(fingerprint="a" * 64, kind="import")
+        entry["source"]["ndes_profile"] = "certserver1"
+        entry["renewal"] = {
+            "attempted_at": "2026-09-15T05:00:00Z",
+            "outcome": "failed",
+            "message": "Certmonger enrollment stopped: CA_REJECTED",
+        }
+        view = overview(
+            with_registry(reading(), entry),
+            status=(status(node(("example.com", "a" * 64)), node(("example.com", "a" * 64))),),
+        )
+        row = registry_of(view).certificates[0]
+        self.assertEqual((row.state_label, row.state_tone), ("Renewal failed", "critical"))
+        self.assertIn("CA_REJECTED", row.state_detail)
+        self.assertIn("(tried 26-09-15 ", row.state_detail)
+
+        entry["renewal"]["outcome"] = "pending"
+        row = registry_of(view := overview(with_registry(reading(), entry))).certificates[0]
+        self.assertEqual((row.state_label, row.state_tone), ("Renewal pending", "info"))
+
+        entry["renewal"]["outcome"] = "renewed"
+        view = overview(
+            with_registry(reading(), entry),
+            status=(status(node(("example.com", "a" * 64)), node(("example.com", "a" * 64))),),
+        )
+        self.assertEqual(registry_of(view).certificates[0].state_label, "On all 2 nodes")
+
     def test_a_node_that_is_behind_is_counted_and_named_as_such(self) -> None:
         entry = registered(fingerprint="a" * 64)
         view = overview(

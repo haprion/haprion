@@ -487,10 +487,13 @@ def validate_certificate(material: Material, requested: Sequence[str], directory
                 )
             return result.stdout
 
-        if "CA:FALSE" not in extension("basicConstraints"):
+        # A CA certificate must carry basicConstraints with CA:TRUE (RFC 5280,
+        # Basic Constraints); a leaf need not carry the extension at all, and AD CS
+        # leaves issued from a web-server template do not. Absence is a leaf.
+        if "CA:TRUE" in extension("basicConstraints"):
             raise NdesError(
                 "certificate_mismatch",
-                "issued certificate is not an end-entity certificate",
+                "issued certificate is a CA certificate, not an end-entity certificate",
                 exit_code=1,
             )
         eku = extension("extendedKeyUsage")

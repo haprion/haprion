@@ -162,6 +162,44 @@ class IssuedCertificate(unittest.TestCase):
         with self.assertRaisesRegex(ndes.NdesError, "chain"):
             ndes.validate_certificate(self.material, DOMAINS, self.root)
 
+    def test_leaf_without_basic_constraints_passes_as_ad_cs_issues_it(self) -> None:
+        # The first live NDES issuance (2026-09-15) came back without the
+        # extension and was refused as "not an end-entity certificate".
+        extensions = self.pki.directory / (DOMAINS[0] + ".adcs.ext")
+        extensions.write_text(
+            "subjectAltName=DNS:service.example.com,DNS:*.service.example.com\nextendedKeyUsage=serverAuth\nkeyUsage=critical,digitalSignature,keyEncipherment\n"
+        )
+        leaf = self.root / "adcs-leaf.pem"
+        openssl(
+            "x509",
+            "-req",
+            "-in",
+            str(self.pki.directory / (DOMAINS[0] + ".csr")),
+            "-CA",
+            str(self.pki.intermediate),
+            "-CAkey",
+            str(self.pki.intermediate_key),
+            "-CAcreateserial",
+            "-out",
+            str(leaf),
+            "-days",
+            "30",
+            "-extfile",
+            str(extensions),
+        )
+        material = cert_import.assemble(
+            [leaf.read_text(), self.pki.intermediate.read_text()], [self.pki.leaf_key.read_text()]
+        )
+        ndes.validate_certificate(material, DOMAINS, self.root)
+
+    def test_ca_certificate_offered_as_leaf_is_refused(self) -> None:
+        material = cert_import.assemble(
+            [self.pki.intermediate.read_text(), self.pki.root.read_text()],
+            [self.pki.intermediate_key.read_text()],
+        )
+        with self.assertRaises(ndes.NdesError):
+            ndes.validate_certificate(material, DOMAINS, self.root)
+
     def test_missing_server_eku_and_key_usages_fail(self) -> None:
         _, cert = self.pki._signed(
             DOMAINS[0], self.pki.intermediate, self.pki.intermediate_key, sans=DOMAINS

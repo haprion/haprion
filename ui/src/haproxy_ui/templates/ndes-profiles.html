@@ -6,9 +6,9 @@
   The DNS providers page, for the other credential (B152): one master
   challenge per profile, sealed on save and opened only by the root helper.
   Same shape on purpose - a reader who knows one page knows the other. The
-  row shows the ID and whether the sealed challenge is the one root has
-  materialised; the endpoint is inside the sealed record and the policy
-  pins it, so there is nothing else to list.
+  row shows the ID, the endpoint (a plain copy kept beside the box, since
+  the box cannot be listed) and whether the sealed challenge is the one root
+  has materialised.
 #}
 <section class="page-heading">
   <div class="heading-title"><h1>NDES providers</h1><p class="page-lede">Master challenges for Microsoft AD CS enrollment over SCEP, sealed for the enrollment helper.</p></div>
@@ -21,21 +21,21 @@
 
 <section class="cluster-card">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Profiles</h3><p>{{ profiles | length }} profile{{ '' if profiles | length == 1 else 's' }}. <a href="/certificates">Back to certificates</a>.</p></div></div></header>
-  <div class="table-scroll"><table class="node-table dns-profile-table">
-    <thead><tr><th scope="col">Profile</th><th scope="col">Challenge</th><th scope="col">Status</th><th scope="col"></th></tr></thead>
+  <div class="table-scroll"><table class="node-table dns-profile-table ndes-profile-table">
+    <thead><tr><th scope="col">Profile</th><th scope="col">Endpoint</th><th scope="col">Status</th><th scope="col"></th></tr></thead>
     <tbody>
     {% for profile in profiles %}
     <tr>
       <td data-label="Profile"><code>{{ profile.id }}</code></td>
-      <td data-label="Challenge">Sealed <span class="optional">(single password)</span></td>
+      <td data-label="Endpoint">{% if profile.endpoint %}<span class="certificate-sans" title="{{ profile.endpoint }}">{{ profile.endpoint }}</span>{% else %}<span class="optional">Sealed; shown after the next replace</span>{% endif %}</td>
       <td data-label="Status"><span class="backend-health"><span class="status-dot status-{{ 'unknown' if statuses[profile.id].tone == 'muted' else statuses[profile.id].tone }}"></span>{{ statuses[profile.id].label }}</span> <span class="optional">rev {{ profile.revision }}</span>{% if statuses[profile.id].attention_job %} <a class="warning-text" href="/jobs#job-{{ statuses[profile.id].attention_job }}">· {{ statuses[profile.id].attention_label }}</a>{% endif %}</td>
-      <td data-label="Actions">{% if public_key %}<a href="/ndes-profiles/{{ profile.id }}/replace">Replace</a>{% endif %}</td>
+      <td data-label="Actions">{% if public_key %}<a href="/ndes-profiles/{{ profile.id }}/replace">Replace</a> · {% endif %}<a href="/ndes-profiles/{{ profile.id }}/remove">Remove</a></td>
     </tr>
     {% else %}
     <tr><td colspan="4"><span class="optional">No profile yet. A profile is one NDES endpoint's reusable challenge; enrollment uses the one in effect.</span></td></tr>
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="table-note">Values are never shown again after saving. To change one, replace the profile - the new challenge is sealed as the next revision and applied by a job.</p>
+  <p class="table-note">The challenge is never shown again after saving. To change it, replace the profile - the new challenge is sealed as the next revision and applied by a job.<br>Removal is refused while a certificate enrolled through the profile is still registered or an enrollment is still waiting on the CA.</p>
 </section>
 {% endblock %}

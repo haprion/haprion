@@ -1104,8 +1104,16 @@ A CA approval wait returns `state: pending` and envelope outcome `partial`. Repe
 command with `--resume`; it retains the original key and refuses changed request bindings.
 Automatic renewal is disabled. Returned certificates must pass chain, names, usages and key
 validation before the existing import/publication path is called. This CLI has no enrollment
-job/helper or enrollment form yet. Migration `0027` adds provider storage and apply jobs only;
-a compatible UI bridge is required before migrating an installation still on `0026`.
+job/helper or enrollment form yet. Migration `0027` adds provider storage and apply jobs;
+`0028` adds the profile's plain endpoint column and lets the worker delete a profile row.
+A compatible UI bridge is required before each migration.
+
+A certificate the CLI enrolls is registered as `source.kind: import` with
+`source.ndes_profile` naming the profile whose challenge enrolled it; the interface shows
+such a certificate as **NDES** rather than **Imported**. Removing a profile (Certificates →
+NDES providers → Remove) runs one job that deletes the root-only record and then the row;
+it is refused while the registry still names the profile or an enrollment request under
+`state_root` is still bound to it. A refused removal leaves the profile in effect.
 
 **Server prerequisites.** Install and configure the AD CS Network Device Enrollment Service role
 with IIS, an issuing CA and valid NDES signing/encryption RA certificates. NDES and the CA may

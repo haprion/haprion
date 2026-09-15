@@ -152,6 +152,7 @@ def main(
                     store=store,
                     lock_path=lock_path,
                     require_secure=require_secure,
+                    ndes_profile=profile.profile_id,
                 )
                 doc, exit_code = result_envelope(imported, request_id=request_id)
                 doc["operation"] = OPERATION

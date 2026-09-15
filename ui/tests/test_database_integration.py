@@ -26,7 +26,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0027",))
+            self.assertEqual(cursor.fetchone(), ("0028",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -630,13 +630,16 @@ class NdesDatabase(unittest.TestCase):
                 key_id="0123456789abcdef",
                 ciphertext=b"x" * 48,
                 actor="admin",
+                endpoint="https://ca.example.com/certsrv/mscep/mscep.dll",
             )
             connection.commit()
 
     def test_web_can_write_list_and_replace_but_cannot_read_ciphertext(self) -> None:
         self.create()
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
-            self.assertEqual(db.ndes_profiles(connection)[0].id, "internal-ca")
+            listed = db.ndes_profiles(connection)[0]
+            self.assertEqual(listed.id, "internal-ca")
+            self.assertEqual(listed.endpoint, "https://ca.example.com/certsrv/mscep/mscep.dll")
             self.assertIsNotNone(db.ndes_profile(connection, "internal-ca"))
             replaced = db.replace_ndes_profile(
                 connection,
@@ -645,8 +648,10 @@ class NdesDatabase(unittest.TestCase):
                 key_id="0123456789abcdef",
                 ciphertext=b"y" * 48,
                 actor="admin",
+                endpoint="https://ca2.example.com/certsrv/mscep/mscep.dll",
             )
             self.assertEqual(replaced.revision, 2)
+            self.assertEqual(replaced.endpoint, "https://ca2.example.com/certsrv/mscep/mscep.dll")
             connection.commit()
             with self.assertRaises(db.ProfileMissing):
                 db.replace_ndes_profile(
@@ -656,7 +661,14 @@ class NdesDatabase(unittest.TestCase):
                     key_id="0123456789abcdef",
                     ciphertext=b"z" * 48,
                     actor="admin",
+                    endpoint="https://ca.example.com/certsrv/mscep/mscep.dll",
                 )
+            with (
+                connection.cursor() as cursor,
+                self.assertRaises(psycopg.errors.CheckViolation),
+            ):
+                cursor.execute("update ndes_provider_profile set endpoint = 'http://plain'")
+            connection.rollback()
             for sql in (
                 "select ciphertext from ndes_provider_profile",
                 "delete from ndes_provider_profile",
@@ -675,6 +687,10 @@ class NdesDatabase(unittest.TestCase):
             row = db.sealed_ndes_profile(connection, "internal-ca")
             self.assertIsNotNone(row)
             self.assertEqual(row.ciphertext if row else None, b"x" * 48)
+            # The removal job's last step: exactly the fenced row, nothing else.
+            self.assertFalse(db.delete_ndes_profile(connection, "internal-ca", 7))
+            self.assertTrue(db.delete_ndes_profile(connection, "internal-ca", 1))
+            connection.rollback()
             with (
                 connection.cursor() as cursor,
                 self.assertRaises(psycopg.errors.InsufficientPrivilege),

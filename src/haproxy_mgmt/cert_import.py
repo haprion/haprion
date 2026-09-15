@@ -391,6 +391,7 @@ def register(
     clusters: Sequence[str],
     receivers: Sequence[str],
     require_secure: bool,
+    ndes_profile: str | None = None,
 ) -> None:
     """The entry, through the one writer the registry has.
 
@@ -406,6 +407,8 @@ def register(
         certificates = dict(document.get("certificates") or {})
         existing = certificates.get(certificate_id)
         entry: dict[str, Any] = {"source": {"kind": "import"}}
+        if ndes_profile is not None:
+            entry["source"]["ndes_profile"] = ndes_profile
         if isinstance(existing, dict):
             kind = (existing.get("source") or {}).get("kind")
             if kind != "import":
@@ -453,6 +456,7 @@ def import_certificate(
     lock_path: Path = DEFAULT_LOCK_PATH,
     require_secure: bool = True,
     now: datetime | None = None,
+    ndes_profile: str | None = None,
 ) -> ImportResult:
     """Steps 3-6: check, write, register, publish."""
 
@@ -503,6 +507,7 @@ def import_certificate(
         clusters=clusters,
         receivers=receivers,
         require_secure=require_secure,
+        ndes_profile=ndes_profile,
     )
     try:
         refreshed = load_runtime_config(policy, require_secure=require_secure)

@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "requires": {
-    "database_head": "0027",
+    "database_head": "0028",
     "database_revisions": [
-      "0026",
-      "0027"
+      "0027",
+      "0028"
     ],
     "engine_api": 1,
     "node_api": 1,

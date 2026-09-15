@@ -2499,7 +2499,7 @@ def build_router(config: Config) -> APIRouter:
                 "profiles": profiles,
                 "statuses": statuses,
                 "public_key": _dns_public_key(),
-                "refresh": any(p.label == "Applying" for p in statuses.values()),
+                "refresh": any(p.label in {"Applying", "Removing"} for p in statuses.values()),
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
@@ -2609,6 +2609,7 @@ def build_router(config: Config) -> APIRouter:
                         key_id=sealed.key_id,
                         ciphertext=sealed.ciphertext,
                         actor=session.username,
+                        endpoint=sealed.endpoint,
                     )
                 else:
                     stored = db.replace_ndes_profile(
@@ -2618,6 +2619,7 @@ def build_router(config: Config) -> APIRouter:
                         key_id=sealed.key_id,
                         ciphertext=sealed.ciphertext,
                         actor=session.username,
+                        endpoint=sealed.endpoint,
                         name=sealed.name,
                     )
             except db.ProfileExists:
@@ -2675,6 +2677,90 @@ def build_router(config: Config) -> APIRouter:
                     "job": job.id,
                     "profile": stored.id,
                     "revision": stored.revision,
+                },
+            )
+            connection.commit()
+        await _await_dns_profile_job(request, job.id)
+        return RedirectResponse("/ndes-profiles", status_code=303)
+
+    @router.get("/ndes-profiles/{profile_id}/remove", response_class=HTMLResponse)
+    def ndes_profile_remove_form(request: Request, profile_id: str) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        with request.app.state.pool.connection() as connection:
+            existing = db.ndes_profile(connection, profile_id)
+            recent = db.recent_jobs(connection)
+        if existing is None:
+            return PlainTextResponse("Not found", status_code=404)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        return TEMPLATES.TemplateResponse(
+            request,
+            "ndes-profile-remove.html",
+            {
+                "username": gate.username,
+                "role": gate.role,
+                "csrf_token": auth.csrf_token(token),
+                "profile": existing,
+                "certificate_job": jobs.certificate_in_flight(recent),
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
+    @router.post("/ndes-profiles/{profile_id}/remove")
+    async def ndes_profile_remove_submit(
+        request: Request,
+        profile_id: str,
+        csrf_token: Annotated[str, Form(max_length=128)],
+        idempotency_key: Annotated[str, Form(max_length=64)],
+    ) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        with request.app.state.pool.connection() as connection:
+            existing = db.ndes_profile(connection, profile_id)
+            if existing is None:
+                return PlainTextResponse("Not found", status_code=404)
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="ndes_profile_apply",
+                    cluster=None,
+                    payload={"profile": existing.id, "revision": existing.revision, "remove": True},
+                    idempotency_key=key,
+                )
+            except db.CertificateBusy:
+                connection.rollback()
+                return PlainTextResponse(
+                    "A certificate job is already running. Wait for it to finish, then try again.",
+                    status_code=409,
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="queue_job",
+                cluster=None,
+                request_id=job.request_id,
+                detail={
+                    "operation": "ndes_profile_apply",
+                    "job": job.id,
+                    "profile": existing.id,
+                    "revision": existing.revision,
+                    "remove": True,
                 },
             )
             connection.commit()

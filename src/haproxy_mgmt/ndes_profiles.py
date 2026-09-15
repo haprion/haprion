@@ -255,6 +255,56 @@ def materialize(policy: NdesPolicy, opened: OpenedProfile, *, require_secure: bo
         Path(temporary).unlink(missing_ok=True)
 
 
+def pending_requests(
+    policy: NdesPolicy, profile_id: str, *, require_secure: bool = True
+) -> tuple[str, ...]:
+    """Certificate IDs of enrollment requests still bound to the profile.
+
+    A request directory under the state root holds the key of a request the
+    CA has not answered yet, and its record names the profile whose challenge
+    signed it. Removing that profile would strand the request: a resume would
+    have no challenge to open. A directory without a readable record is
+    counted too - what cannot be read cannot be shown to be finished.
+    """
+
+    check_profile_id(profile_id)
+    secure_directory(policy.state_root, require_secure=require_secure)
+    bound: list[str] = []
+    for entry in sorted(policy.state_root.iterdir()):
+        if entry.is_symlink() or not entry.is_dir():
+            continue
+        try:
+            record = json.loads(secure_read(entry / "request.json", require_secure=require_secure))
+        except (ProfileError, ValueError, UnicodeError):
+            bound.append(entry.name)
+            continue
+        if isinstance(record, dict) and record.get("profile") == profile_id:
+            certificate = record.get("certificate")
+            bound.append(certificate if isinstance(certificate, str) else entry.name)
+    return tuple(bound)
+
+
+def remove_materialized(
+    policy: NdesPolicy, profile_id: str, *, require_secure: bool = True
+) -> None:
+    """Remove the root-only record. A missing record makes a retry idempotent."""
+
+    secure_directory(policy.profiles.directory, require_secure=require_secure)
+    path = record_path(policy, profile_id)
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise ProfileError("NDES profile record is unavailable") from None
+    if not stat.S_ISREG(info.st_mode):
+        raise ProfileError("NDES profile record is not a regular file")
+    try:
+        path.unlink()
+    except OSError:
+        raise ProfileError("NDES profile record could not be removed") from None
+
+
 def build_request(
     request_id: str,
     *,
@@ -263,6 +313,7 @@ def build_request(
     key_id: str,
     revision: int,
     ciphertext: bytes,
+    remove: bool = False,
 ) -> str:
     return json.dumps(
         {
@@ -277,6 +328,7 @@ def build_request(
                 "key_id": key_id,
                 "revision": revision,
                 "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
+                **({"remove": True} if remove else {}),
             },
         },
         separators=(",", ":"),

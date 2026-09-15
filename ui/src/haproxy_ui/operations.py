@@ -258,18 +258,20 @@ def _certificate_operation(
         )
 
     if operation == "ndes_profile_apply":
-        _only(payload, "profile", "revision")
+        _only(payload, "profile", "revision", "remove")
         try:
             profile_id = dns_profiles.check_profile_id(payload.get("profile"))
             revision = dns_profiles.check_revision(payload.get("revision"))
         except dns_profiles.ProfileError as exc:
             raise BadPayload(str(exc)) from exc
+        remove = _flag(payload, "remove", default=False)
         row = profile_lookup(profile_id) if profile_lookup is not None else None
         if (
             row is None
             or row.id != profile_id
             or row.provider_id != "ndes"
             or row.revision < revision
+            or (remove and row.revision != revision)
         ):
             raise BadPayload("NDES profile row is missing, stale or has the wrong type")
         return Prepared(
@@ -281,6 +283,7 @@ def _certificate_operation(
                 key_id=row.key_id,
                 revision=row.revision,
                 ciphertext=row.ciphertext,
+                remove=remove,
             ),
         )
 

@@ -1,0 +1,24 @@
+{% extends "layout.html" %}
+{% block title %}Remove NDES profile — HAProxy Manager{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div class="heading-title"><h1>Remove NDES profile</h1><p class="page-lede">Nothing is removed until you confirm.</p></div>
+</section>
+
+<div class="refusal-card">
+  <p class="refusal-message"><span class="status-orb status-critical" aria-hidden="true"></span>Remove <strong><code>{{ profile.id }}</code></strong>?</p>
+  <ul class="removal-consequences">
+    <li>The sealed profile and its root-only challenge record are removed together by one job.</li>
+    <li>Removal is refused while a certificate the manager enrolled through this profile is still registered, or an enrollment request is still waiting on the CA.</li>
+    <li>A refused removal leaves the working profile in effect.</li>
+  </ul>
+  <p class="refusal-hint">{% if profile.endpoint %}{{ profile.endpoint }} · {% endif %}revision {{ profile.revision }}</p>
+  {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish before removing this profile.</p>{% endif %}
+  <form method="post" action="/ndes-profiles/{{ profile.id }}/remove" class="editor-actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+    <button class="danger-button" type="submit"{% if certificate_job %} disabled{% endif %}>Remove profile</button>
+    <a class="secondary-button" href="/ndes-profiles">Keep it</a>
+  </form>
+</div>
+{% endblock %}

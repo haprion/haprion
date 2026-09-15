@@ -199,3 +199,134 @@ class NdesProfiles(unittest.TestCase):
         self.assertEqual(doc["outcome"], "done")
         self.assertEqual(set(doc["result"]), {"profile", "provider", "key_id", "revision"})
         self.assertNotIn("example-challenge", output.getvalue() + errors.getvalue())
+
+
+class NdesProfileRemoval(NdesProfiles):
+    def _helper(self, request: str) -> tuple[int, dict, str]:
+        output, errors = io.StringIO(), io.StringIO()
+        code = ndes_profile_apply_helper.main(
+            [],
+            policy_path=self.root / "runtime.yaml",
+            input_stream=io.BytesIO(request.encode()),
+            output_stream=output,
+            error_stream=errors,
+            require_root=False,
+            require_secure=False,
+        )
+        return code, json.loads(output.getvalue()), errors.getvalue()
+
+    def _policy_file(self) -> None:
+        private_path = self.policy.profiles.private_keys[0]
+        private_path.write_text(render_private_key(self.private))
+        os.chmod(private_path, 0o600)
+        self.policy.state_root.mkdir(mode=0o700)
+        (self.root / "runtime.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "schema_version": 1,
+                    "cluster_file": str(self.root / "clusters.yaml"),
+                    "config_root": str(self.root / "config"),
+                    "publish_root": str(self.root / "publish"),
+                    "validation_certs_root": str(self.root / "validation"),
+                    "ndes": {
+                        "endpoint": ENDPOINT,
+                        "tls_ca": str(self.policy.tls_ca),
+                        "issuing_ca": str(self.policy.issuing_ca),
+                        "client_root": str(self.policy.client_root),
+                        "state_root": str(self.policy.state_root),
+                        "profiles": {
+                            "directory": str(self.policy.profiles.directory),
+                            "private_keys": [str(private_path)],
+                        },
+                    },
+                }
+            )
+        )
+
+    def _request(self, *, remove: bool) -> str:
+        return ndes_profiles.build_request(
+            "ffffffff-ffff-4fff-8fff-ffffffffffff",
+            profile_id="internal-ca",
+            schema_version=1,
+            key_id=self.public.key_id,
+            revision=2,
+            ciphertext=self.ciphertext,
+            remove=remove,
+        )
+
+    def test_remove_flag_is_absent_unless_asked_and_must_be_boolean(self) -> None:
+        self.assertNotIn("remove", json.loads(self._request(remove=False))["parameters"])
+        self.assertIs(json.loads(self._request(remove=True))["parameters"]["remove"], True)
+        self._policy_file()
+        broken = json.loads(self._request(remove=True))
+        broken["parameters"]["remove"] = "yes"
+        code, doc, _ = self._helper(json.dumps(broken))
+        self.assertEqual(code, 65)
+        self.assertEqual(doc["error"]["code"], "bad_input")
+
+    def test_helper_removes_the_record_and_a_retry_is_idempotent(self) -> None:
+        self._policy_file()
+        code, doc, errors = self._helper(self._request(remove=False))
+        self.assertEqual(code, 0, errors)
+        record = ndes_profiles.record_path(self.policy, "internal-ca")
+        self.assertTrue(record.exists())
+        code, doc, errors = self._helper(self._request(remove=True))
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(doc["result"]["removed"], True)
+        self.assertFalse(record.exists())
+        self.assertNotIn("example-challenge", json.dumps(doc) + errors)
+        code, doc, _ = self._helper(self._request(remove=True))
+        self.assertEqual(code, 0)
+
+    def test_removal_is_refused_while_an_enrollment_is_pending(self) -> None:
+        self._policy_file()
+        self._helper(self._request(remove=False))
+        request_dir = self.policy.state_root / "abc123"
+        request_dir.mkdir(mode=0o700)
+        (request_dir / "request.json").write_text(
+            json.dumps({"certificate": "web-cert", "profile": "internal-ca"})
+        )
+        os.chmod(request_dir / "request.json", 0o600)
+        code, doc, _ = self._helper(self._request(remove=True))
+        self.assertEqual(code, 65)
+        self.assertEqual(doc["error"]["code"], "profile_in_use")
+        self.assertIn("web-cert", doc["error"]["message"])
+        self.assertTrue(ndes_profiles.record_path(self.policy, "internal-ca").exists())
+        # A request bound to another profile is no objection; an unreadable one is.
+        (request_dir / "request.json").write_text(
+            json.dumps({"certificate": "web-cert", "profile": "other"})
+        )
+        self.assertEqual(
+            ndes_profiles.pending_requests(self.policy, "internal-ca", require_secure=False), ()
+        )
+        (request_dir / "request.json").write_text("{broken")
+        self.assertEqual(
+            ndes_profiles.pending_requests(self.policy, "internal-ca", require_secure=False),
+            ("abc123",),
+        )
+
+    def test_removal_is_refused_while_the_registry_names_the_profile(self) -> None:
+        self._policy_file()
+        self._helper(self._request(remove=False))
+        registry = self.root / "certificates.yaml"
+        registry.write_text(
+            yaml.safe_dump(
+                {
+                    "schema_version": 1,
+                    "certificates": {
+                        "webserver1-scep": {
+                            "source": {"kind": "import", "ndes_profile": "internal-ca"}
+                        },
+                        "by-hand": {"source": {"kind": "import"}},
+                    },
+                }
+            )
+        )
+        config = yaml.safe_load((self.root / "runtime.yaml").read_text())
+        config["certificate_registry"] = str(registry)
+        (self.root / "runtime.yaml").write_text(yaml.safe_dump(config))
+        code, doc, _ = self._helper(self._request(remove=True))
+        self.assertEqual(code, 65)
+        self.assertEqual(doc["error"]["code"], "profile_in_use")
+        self.assertIn("webserver1-scep", doc["error"]["message"])
+        self.assertNotIn("by-hand", doc["error"]["message"])

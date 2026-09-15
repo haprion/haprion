@@ -37,16 +37,17 @@ def seal_submission(
         check_profile_id(profile_id)
         if revision == 1 and profile_id in set(taken):
             raise FormProblem("Profile ID already exists.")
+        endpoint = ndes_profiles.check_endpoint(form.values.get("endpoint", ""))
         ciphertext = ndes_profiles.seal_profile(
             public_key,
             profile_id=profile_id,
-            endpoint=form.values.get("endpoint", ""),
+            endpoint=endpoint,
             challenge=form.values.get("challenge", ""),
             revision=revision,
         )
     except ProfileError as exc:
         raise FormProblem(str(exc)) from None
-    return Sealed(profile_id, profile_id, "ndes", public_key.key_id, ciphertext)
+    return Sealed(profile_id, profile_id, "ndes", public_key.key_id, ciphertext, endpoint)
 
 
 def profile_status(profile_id: str, revision: int, jobs: Iterable[Any]) -> ProfileStatus:

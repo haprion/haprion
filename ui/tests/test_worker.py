@@ -134,6 +134,34 @@ class GoodAnswers(WorkerTestCase):
         delete.assert_called_once_with(self.connection, "cf-main", 4)
         self.assertEqual(self.audited[0]["detail"]["removed_profile"], "cf-main")
 
+    def test_done_ndes_profile_removal_deletes_its_own_table_row(self) -> None:
+        job = replace(
+            claimed(
+                operation="ndes_profile_apply",
+                payload={"profile": "internal-ca", "revision": 2, "remove": True},
+            ),
+            cluster=None,
+        )
+        with (
+            mock.patch.object(db, "delete_ndes_profile", return_value=True) as delete,
+            mock.patch.object(db, "delete_dns_profile") as wrong_table,
+        ):
+            finished = worker._finish(
+                self.connection,
+                job,
+                state="done",
+                outcome="done",
+                exit_code=0,
+                result=result_document(job),
+                stderr_excerpt=None,
+                worker=WORKER,
+            )
+
+        self.assertTrue(finished)
+        delete.assert_called_once_with(self.connection, "internal-ca", 2)
+        wrong_table.assert_not_called()
+        self.assertEqual(self.audited[0]["detail"]["removed_profile"], "internal-ca")
+
     def test_the_envelopes_outcome_becomes_the_jobs_state(self) -> None:
         job = claimed()
         document = result_document(job)

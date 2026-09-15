@@ -2229,6 +2229,8 @@ class DnsProfile:
     created_by: str
     updated_at: datetime
     updated_by: str
+    endpoint: str = ""
+    """NDES rows only: the plain copy of the sealed endpoint, for listing."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -2383,7 +2385,7 @@ def ndes_profiles(connection: Connection[Any]) -> list[DnsProfile]:
     with connection.cursor(row_factory=class_row(DnsProfile)) as cursor:
         cursor.execute(
             "select id, name, provider_id, schema_version, key_id, revision, "
-            "       created_at, created_by, updated_at, updated_by "
+            "       created_at, created_by, updated_at, updated_by, endpoint "
             "  from ndes_provider_profile order by id"
         )
         return cursor.fetchall()
@@ -2393,7 +2395,7 @@ def ndes_profile(connection: Connection[Any], profile_id: str) -> DnsProfile | N
     with connection.cursor(row_factory=class_row(DnsProfile)) as cursor:
         cursor.execute(
             "select id, name, provider_id, schema_version, key_id, revision, "
-            "       created_at, created_by, updated_at, updated_by "
+            "       created_at, created_by, updated_at, updated_by, endpoint "
             "  from ndes_provider_profile where id = %(id)s",
             {"id": profile_id},
         )
@@ -2409,6 +2411,7 @@ def create_ndes_profile(
     key_id: str,
     ciphertext: bytes,
     actor: str,
+    endpoint: str,
 ) -> DnsProfile:
     """Insert revision 1 of a new profile, or say that the ID is taken."""
 
@@ -2420,11 +2423,11 @@ def create_ndes_profile(
             cursor.execute(
                 "insert into ndes_provider_profile "
                 "  (id, name, provider_id, schema_version, key_id, revision, ciphertext, "
-                "   created_by, updated_by) "
+                "   created_by, updated_by, endpoint) "
                 "values (%(id)s, %(name)s, %(provider)s, 1, %(key_id)s, 1, %(box)s, "
-                "        %(actor)s, %(actor)s) "
+                "        %(actor)s, %(actor)s, %(endpoint)s) "
                 "returning id, name, provider_id, schema_version, key_id, revision, "
-                "          created_at, created_by, updated_at, updated_by",
+                "          created_at, created_by, updated_at, updated_by, endpoint",
                 {
                     "id": profile_id,
                     "name": name,
@@ -2432,6 +2435,7 @@ def create_ndes_profile(
                     "key_id": key_id,
                     "box": ciphertext,
                     "actor": actor,
+                    "endpoint": endpoint,
                 },
             )
             row = cursor.fetchone()
@@ -2450,6 +2454,7 @@ def replace_ndes_profile(
     key_id: str,
     ciphertext: bytes,
     actor: str,
+    endpoint: str,
     name: str | None = None,
 ) -> DnsProfile:
     """Store a new box as the next revision. The provider never changes.
@@ -2463,11 +2468,11 @@ def replace_ndes_profile(
         cursor.execute(
             "update ndes_provider_profile "
             "   set revision = %(revision)s, key_id = %(key_id)s, ciphertext = %(box)s, "
-            "       name = coalesce(%(name)s, name), "
+            "       name = coalesce(%(name)s, name), endpoint = %(endpoint)s, "
             "       updated_at = statement_timestamp(), updated_by = %(actor)s "
             " where id = %(id)s and revision = %(revision)s - 1 "
             "returning id, name, provider_id, schema_version, key_id, revision, "
-            "          created_at, created_by, updated_at, updated_by",
+            "          created_at, created_by, updated_at, updated_by, endpoint",
             {
                 "id": profile_id,
                 "revision": revision,
@@ -2475,12 +2480,24 @@ def replace_ndes_profile(
                 "box": ciphertext,
                 "name": name,
                 "actor": actor,
+                "endpoint": endpoint,
             },
         )
         row = cursor.fetchone()
     if row is None:
         raise ProfileMissing(profile_id)
     return row
+
+
+def delete_ndes_profile(connection: Connection[Any], profile_id: str, revision: int) -> bool:
+    """Delete exactly the row whose root record the helper removed."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "delete from ndes_provider_profile where id = %(id)s and revision = %(revision)s",
+            {"id": profile_id, "revision": revision},
+        )
+        return cursor.rowcount == 1
 
 
 def sealed_ndes_profile(connection: Connection[Any], profile_id: str) -> SealedProfile | None:

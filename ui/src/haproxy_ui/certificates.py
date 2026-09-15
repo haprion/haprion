@@ -332,6 +332,21 @@ def _certificate_view(value: Any, *, now: datetime) -> CertificateView | None:
     )
 
 
+def _source_label(kind: str, source: Mapping[str, Any]) -> str:
+    """Where the material came from, as the registry records it.
+
+    An import the manager enrolled itself over NDES is still `import` to the
+    registry - static material, no certbot lineage - but the operator asked
+    a CA for it and should see that CA's name, not "Imported".
+    """
+
+    if kind == "acme":
+        return "Certbot"
+    if isinstance(source.get("ndes_profile"), str):
+        return "NDES"
+    return "Imported"
+
+
 def _lifecycle_label(lifecycle: str) -> str:
     """What renews this certificate, said as the operator would say it.
 
@@ -759,7 +774,7 @@ def _registry_certificate(
     )
     return RegistryCertificateView(
         identifier=identifier,
-        source_label="Certbot" if kind == "acme" else "Imported",
+        source_label=_source_label(kind, source),
         lifecycle=lifecycle if readable else "unknown",
         wildcard=any(name.startswith("*.") for name in sans),
         common_name=_text(entry.get("common_name"), identifier),

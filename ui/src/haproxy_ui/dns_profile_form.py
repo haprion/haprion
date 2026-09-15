@@ -57,6 +57,8 @@ class Sealed:
     provider_id: str
     key_id: str
     ciphertext: bytes
+    endpoint: str = ""
+    """NDES only: the checked endpoint, kept in plain beside the box for listing."""
 
 
 EMPTY_FORM = ProfileForm(profile_id="", provider_id="", values={})

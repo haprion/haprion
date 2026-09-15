@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest import mock
 from uuid import uuid4
@@ -123,4 +124,72 @@ class NdesPages(ProfileRouteTestCase):
                     revision=2,
                     ciphertext=b"x" * 48,
                 ),
+            )
+
+
+class RemovingAnNdesProfile(NdesPages):
+    def test_removal_has_a_confirmation_page_and_queues_a_fenced_job(self) -> None:
+        self.rows = [
+            profile_row(id="internal-ca", provider_id="ndes", revision=3, endpoint=ENDPOINT)
+        ]
+        client = self.writing_client()
+        listing = client.get("/ndes-profiles")
+        self.assertIn(ENDPOINT, listing.text)
+        self.assertIn('href="/ndes-profiles/internal-ca/remove"', listing.text)
+
+        page = client.get("/ndes-profiles/internal-ca/remove")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Remove NDES profile", page.text)
+        self.assertIn('class="refusal-card"', page.text)
+        self.assertIn("still registered", page.text)
+        self.assertIn(ENDPOINT, page.text)
+        self.assertIn(">Keep it</a>", page.text)
+
+        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        response = client.post(
+            "/ndes-profiles/internal-ca/remove",
+            data={auth.CSRF_FIELD: token, "idempotency_key": KEY},
+            follow_redirects=False,
+        )
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/ndes-profiles")
+        self.assertEqual(
+            self.queued[0]["payload"],
+            {"profile": "internal-ca", "revision": 3, "remove": True},
+        )
+        self.assertEqual(client.get("/ndes-profiles/missing/remove").status_code, 404)
+
+    def test_a_row_from_before_the_endpoint_column_says_so(self) -> None:
+        self.rows = [profile_row(id="internal-ca", provider_id="ndes")]
+        listing = self.writing_client().get("/ndes-profiles")
+        self.assertIn("shown after the next replace", listing.text)
+
+    def test_saving_keeps_a_plain_copy_of_the_checked_endpoint(self) -> None:
+        self.post_ndes(self.writing_client())
+        self.assertEqual(self.created[0]["endpoint"], ENDPOINT)
+
+    def test_worker_removal_is_fenced_on_the_exact_revision(self) -> None:
+        row = operations.SealedProfileRow(
+            id="internal-ca",
+            provider_id="ndes",
+            schema_version=1,
+            key_id=self.public_key.key_id,
+            revision=2,
+            ciphertext=b"x" * 48,
+        )
+        prepared = operations.prepare(
+            operation="ndes_profile_apply",
+            cluster=None,
+            request_id=uuid4(),
+            payload={"profile": "internal-ca", "revision": 2, "remove": True},
+            profile_lookup=lambda _p: row,
+        )
+        self.assertIs(json.loads(prepared.request)["parameters"]["remove"], True)
+        with self.assertRaises(operations.BadPayload):
+            operations.prepare(
+                operation="ndes_profile_apply",
+                cluster=None,
+                request_id=uuid4(),
+                payload={"profile": "internal-ca", "revision": 1, "remove": True},
+                profile_lookup=lambda _p: row,
             )

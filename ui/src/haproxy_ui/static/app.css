@@ -1040,6 +1040,9 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .dns-profile-table th:nth-child(3), .dns-profile-table td:nth-child(3) { width: 36ch; }
 .dns-profile-table th:nth-child(4), .dns-profile-table td:nth-child(4) { width: auto; text-align: right; }
 .dns-profile-table td:nth-child(1), .dns-profile-table td:nth-child(2), .dns-profile-table td:nth-child(3) { overflow: hidden; text-overflow: ellipsis; }
+/* The NDES list shows a URL where the DNS list shows a provider name; a 36ch cell cuts it. */
+.ndes-profile-table th:nth-child(1), .ndes-profile-table td:nth-child(1) { width: 20ch; }
+.ndes-profile-table th:nth-child(2), .ndes-profile-table td:nth-child(2) { width: 60ch; }
 .certificate-target-grid { grid-template-columns: minmax(240px, 0.55fr) minmax(480px, 1.45fr); align-items: start; }
 .certificate-form .receiver-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .certificate-form .receiver-heading .field-title { color: var(--text-secondary); font-weight: 620; }

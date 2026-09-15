@@ -567,6 +567,14 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
         self.assertEqual(view.certificate_count, 3)
         self.assertEqual(view.acme_count, 2)
 
+    def test_an_import_the_manager_enrolled_over_ndes_names_its_ca(self) -> None:
+        enrolled = registered("webserver1-scep", kind="import", clusters=())
+        enrolled["source"]["ndes_profile"] = "certserver1"
+        by_hand = registered("by-hand", kind="import", clusters=())
+        view = overview(with_registry(reading(cluster="alpha"), enrolled, by_hand))
+        labels = {e.identifier: e.source_label for e in registry_of(view).certificates}
+        self.assertEqual(labels, {"webserver1-scep": "NDES", "by-hand": "Imported"})
+
     def test_the_freshest_cluster_row_supplies_the_registry(self) -> None:
         #
         # Every cluster's listing carries the same block. Taking the newest

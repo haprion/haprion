@@ -643,6 +643,27 @@ class TheCertificateRegistry(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 load_policy(policy_file, require_secure=False)
 
+    def test_an_import_source_may_name_the_ndes_profile_that_enrolled_it(self) -> None:
+        def add_profile(data):
+            data["certificates"]["lb-01.example.net"]["source"]["ndes_profile"] = "certserver1"
+
+        registry = self.load(mutate_registry=add_profile).registry
+        assert registry is not None
+        self.assertEqual(registry.certificates["lb-01.example.net"].source.ndes_profile, "certserver1")
+        self.assertIsNone(registry.certificates["example.net"].source.ndes_profile)
+
+        def put_profile_on_acme(data):
+            data["certificates"]["example.net"]["source"]["ndes_profile"] = "certserver1"
+
+        with self.assertRaisesRegex(ConfigError, "belongs to an import source only"):
+            self.load(mutate_registry=put_profile_on_acme)
+
+        def bad_id(data):
+            data["certificates"]["lb-01.example.net"]["source"]["ndes_profile"] = "Not Valid"
+
+        with self.assertRaisesRegex(ConfigError, "not a profile ID"):
+            self.load(mutate_registry=bad_id)
+
     def test_the_dns_profiles_block_names_a_directory_and_its_private_keys(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_file = self.setup(Path(raw), None, None)

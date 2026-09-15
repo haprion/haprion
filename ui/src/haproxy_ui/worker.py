@@ -263,15 +263,20 @@ def _finish(
     removed_profile: str | None = None
     if (
         state == "done"
-        and job.operation == "dns_profile_apply"
+        and job.operation in {"dns_profile_apply", "ndes_profile_apply"}
         and job.payload.get("remove") is True
     ):
         profile = job.payload.get("profile")
         revision = job.payload.get("revision")
+        delete_row = (
+            db.delete_dns_profile
+            if job.operation == "dns_profile_apply"
+            else db.delete_ndes_profile
+        )
         if (
             not isinstance(profile, str)
             or type(revision) is not int
-            or not db.delete_dns_profile(connection, profile, revision)
+            or not delete_row(connection, profile, revision)
         ):
             logger.error("job %s removed profile files but its fenced database row changed", job.id)
             connection.rollback()

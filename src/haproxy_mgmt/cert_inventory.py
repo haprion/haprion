@@ -198,6 +198,8 @@ def _source(entry: RegisteredCertificate) -> dict[str, Any]:
     result = {"kind": entry.source.kind, "lineage": entry.source.lineage}
     if entry.source.dns_profile is not None:
         result["dns_profile"] = entry.source.dns_profile
+    if entry.source.ndes_profile is not None:
+        result["ndes_profile"] = entry.source.ndes_profile
     return result
 
 

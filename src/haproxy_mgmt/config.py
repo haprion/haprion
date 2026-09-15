@@ -351,6 +351,13 @@ class CertificateSource:
     #
     lineage: str | None
     dns_profile: str | None = None
+    #
+    # For `import`: the NDES profile whose challenge enrolled the material,
+    # when the manager enrolled it itself. Absent for material imported by
+    # hand. Named so the interface can say where it came from and the profile
+    # cannot be removed from under a certificate that still reads it.
+    #
+    ndes_profile: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1027,7 +1034,9 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
         _only_keys(raw, {"source", "clusters", "receivers"}, location)
 
         raw_source = _mapping(raw.get("source"), f"{location}.source")
-        _only_keys(raw_source, {"kind", "lineage", "dns_profile"}, f"{location}.source")
+        _only_keys(
+            raw_source, {"kind", "lineage", "dns_profile", "ndes_profile"}, f"{location}.source"
+        )
         kind = _required_string(raw_source, "kind", f"{location}.source")
         if kind not in SOURCE_KINDS:
             raise ConfigError(
@@ -1035,6 +1044,7 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             )
         lineage: str | None = None
         dns_profile: str | None = None
+        ndes_profile: str | None = None
         if kind == "acme":
             lineage = certificate_id
             if raw_source.get("lineage") is not None:
@@ -1049,6 +1059,14 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             raise ConfigError(f"{location}.source.lineage belongs to an acme source only")
         elif raw_source.get("dns_profile") is not None:
             raise ConfigError(f"{location}.source.dns_profile belongs to an acme source only")
+        if raw_source.get("ndes_profile") is not None:
+            if kind != "import":
+                raise ConfigError(
+                    f"{location}.source.ndes_profile belongs to an import source only"
+                )
+            ndes_profile = _required_string(raw_source, "ndes_profile", f"{location}.source")
+            if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", ndes_profile):
+                raise ConfigError(f"{location}.source.ndes_profile is not a profile ID")
 
         clusters = _id_list(raw, "clusters", location, CLUSTER_ID)
         named = _id_list(raw, "receivers", location, RECEIVER_ID)
@@ -1059,7 +1077,9 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             )
         certificates[certificate_id] = RegisteredCertificate(
             certificate_id=certificate_id,
-            source=CertificateSource(kind=kind, lineage=lineage, dns_profile=dns_profile),
+            source=CertificateSource(
+                kind=kind, lineage=lineage, dns_profile=dns_profile, ndes_profile=ndes_profile
+            ),
             clusters=clusters,
             receivers=named,
         )

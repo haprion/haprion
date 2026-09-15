@@ -1,15 +1,46 @@
 {% extends "layout.html" %}
-{% block title %}NDES profile — HAProxy Manager{% endblock %}
+{% block title %}{% if existing %}Replace profile{% else %}New NDES profile{% endif %} — HAProxy Manager{% endblock %}
 {% block content %}
-<section class="page-heading"><div class="heading-title"><h1>{% if existing %}Replace {{ existing.id }}{% else %}New NDES profile{% endif %}</h1><p class="page-lede">Credentials for Microsoft AD CS enrollment.</p></div></section>
-{% if problem %}<p class="preview-notice form-problem"><strong>{{ problem }}</strong></p>{% endif %}
-{% if not public_key %}<p class="preview-notice form-problem">Certificate credential storage is not configured. See the installation guide.</p>{% endif %}
-<form method="post" action="{% if existing %}/ndes-profiles/{{ existing.id }}/replace{% else %}/ndes-profiles/new{% endif %}" class="preview-form" autocomplete="off">
-<input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
-<section class="cluster-card"><div class="form-grid">
-<label><span class="field-title">Profile ID</span>{% if existing %}<input value="{{ existing.id }}" disabled>{% else %}<input name="profile_id" value="{{ form.profile_id }}" maxlength="32" pattern="[a-z0-9][a-z0-9-]{0,31}" required>{% endif %}</label>
-<label><span class="field-title">NDES endpoint</span><input name="field.endpoint" type="url" value="{{ values.endpoint }}" maxlength="2048" placeholder="https://ca.example.com/certsrv/mscep/mscep.dll" required><small>Use the endpoint approved for this manager.{% if existing %} Enter it again when replacing the challenge.{% endif %}</small></label>
-<label><span class="field-title">Master challenge</span><input name="field.challenge" type="password" autocomplete="new-password" maxlength="4096" required><small>Stored encrypted; never shown again. Enter the reusable challenge from your NDES administrator.</small></label>
-</div><div class="editor-actions editor-submit"><a href="/ndes-profiles">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if not public_key %} disabled{% endif %}>{% if existing %}Replace and apply{% else %}Save and apply{% endif %}</button></div></section>
+{#
+  One provider, so one step: the DNS form's second card without its first.
+  The endpoint is typed rather than taken from the policy so a profile is a
+  complete statement on its own, and the helper refuses one that names a
+  different endpoint than the policy pins. The challenge is always drawn
+  empty - a value echoed into a response is a value in a cache.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>{% if existing %}Replace <code>{{ existing.id }}</code>{% else %}New NDES profile{% endif %}</h1><p class="page-lede">{% if existing %}The new challenge is sealed as revision {{ existing.revision + 1 }} and applied by a job; the previous one stays in effect until it finishes.{% else %}The challenge is sealed against the installation's key before it is stored, and only the enrollment helper can open it.{% endif %}</p></div>
+  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+{% if not public_key %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>This installation has no profile key.</strong> See the installation guide, 1.4.5.</p>
+{% endif %}
+
+<form method="post" action="{% if existing %}/ndes-profiles/{{ existing.id }}/replace{% else %}/ndes-profiles/new{% endif %}" class="preview-form dns-profile-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Microsoft AD CS over NDES</h3><p>SCEP with a reusable challenge · one fixed template on the CA · <a href="/ndes-profiles">Back to NDES providers</a>.</p></div></div></header>
+    <div class="form-grid">
+      {% if existing %}
+      <label><span class="field-title">Profile ID</span><input value="{{ existing.id }}" disabled><small>Fixed. The profile record and the command line use it.</small></label>
+      {% else %}
+      <label><span class="field-title">Profile ID</span><input name="profile_id" value="{{ form.profile_id }}" maxlength="32" placeholder="internal-ca" pattern="[a-z0-9][a-z0-9-]{0,31}" spellcheck="false" required><small>1–32 lowercase letters, digits or hyphens. It names the profile record and is <code>--profile</code> on the command line.</small></label>
+      {% endif %}
+      <label><span class="field-title">NDES endpoint</span><input name="field.endpoint" type="url" value="{{ values.endpoint }}" maxlength="2048" placeholder="https://ca.example.com/certsrv/mscep/mscep.dll" spellcheck="false" required><small>HTTPS, the <code>mscep.dll</code> address. It must match the endpoint the installation's policy pins.{% if existing %} Enter it again to replace.{% endif %}</small></label>
+      <label><span class="field-title">Master challenge</span><input type="password" name="field.challenge" maxlength="4096" autocomplete="new-password" spellcheck="false" required><small>The reusable single password from <code>mscep_admin</code>. Sealed on save; never shown again.{% if existing %} Enter it again to replace.{% endif %}</small></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <p class="table-note">Saving seals the challenge and queues one apply job; the profile is in effect when the job is done.</p>
+      <a href="/ndes-profiles">Cancel</a>
+      <button type="submit" class="secondary-button deploy-button"{% if not public_key %} disabled{% endif %}>{% if existing %}Replace and apply{% else %}Save and apply{% endif %}</button>
+    </div>
+  </section>
 </form>
 {% endblock %}

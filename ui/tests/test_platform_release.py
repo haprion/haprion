@@ -78,7 +78,7 @@ class CoordinatedUpdateTests(unittest.TestCase):
         prepare = self.update.index("install-ui-release --prepare")
         prerequisites = self.update.index("--before-migration")
         migrate = self.update.index('migrate "$answers" --release')
-        database = self.update.index('03-verify "$answers"')
+        database = self.update.index('install/platform/03-verify" "$answers"')
         candidate = self.update.index(
             'check-compatibility "$answers" --release "$release_id"', database
         )

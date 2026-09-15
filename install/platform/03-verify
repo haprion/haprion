@@ -123,10 +123,6 @@ app_web	cluster_status	SELECT	cluster, error, observed_at, outcome, poll_error, 
 app_web	dns_provider_profile	INSERT	ciphertext, created_by, id, key_id, name, provider_id, revision, schema_version, updated_by
 app_web	dns_provider_profile	SELECT	created_at, created_by, id, key_id, name, provider_id, revision, schema_version, updated_at, updated_by
 app_web	dns_provider_profile	UPDATE	ciphertext, key_id, name, revision, schema_version, updated_at, updated_by
-app_web	ndes_provider_profile	INSERT	ciphertext, created_by, id, key_id, name, provider_id, revision, schema_version, updated_by
-app_web	ndes_provider_profile	SELECT	created_at, created_by, id, key_id, name, provider_id, revision, schema_version, updated_at, updated_by
-app_web	ndes_provider_profile	UPDATE	ciphertext, key_id, name, revision, schema_version, updated_at, updated_by
-app_worker	ndes_provider_profile	SELECT	ciphertext, id, key_id, provider_id, revision, schema_version
 app_web	job	INSERT	cluster, idempotency_key, operation, payload
 app_web	job	SELECT	attempts, cluster, created_at, exit_code, finished_at, id, idempotency_key, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt
 app_web	login_attempt	INSERT	client_ip, succeeded, username_normalised
@@ -138,6 +134,9 @@ app_web	metric_listener	SELECT	bin, bout, cluster, dreq, dresp, econ, ereq, eres
 app_web	metric_pool_hour	SELECT	backend, bin, bout, bucket_at, check_code, check_status, cluster, dreq, dresp, econ, ereq, eresp, floor_uptime_sec, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, member, node, observed_at, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
 app_web	metric_pool_member	SELECT	backend, bin, bout, check_code, check_status, cluster, dreq, dresp, econ, ereq, eresp, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, member, node, observed_at, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
 app_web	metric_rollup_state	SELECT	complete_before, rollup_name
+app_web	ndes_provider_profile	INSERT	ciphertext, created_by, id, key_id, name, provider_id, revision, schema_version, updated_by
+app_web	ndes_provider_profile	SELECT	created_at, created_by, id, key_id, name, provider_id, revision, schema_version, updated_at, updated_by
+app_web	ndes_provider_profile	UPDATE	ciphertext, key_id, name, revision, schema_version, updated_at, updated_by
 app_web	proxy_draft	INSERT	base_hash, base_version, cluster, deleted, object_id, updated_by, yaml
 app_web	proxy_draft	SELECT	base_hash, base_version, cluster, deleted, id, object_id, revision, updated_at, updated_by, yaml
 app_web	proxy_draft	UPDATE	base_hash, base_version, deleted, updated_by, yaml
@@ -146,6 +145,7 @@ app_worker	cluster_history	SELECT	cluster, error, observed_at, outcome, poll_err
 app_worker	dns_provider_profile	SELECT	ciphertext, id, key_id, provider_id, revision, schema_version
 app_worker	job	SELECT	attempts, claim_token, cluster, created_at, exit_code, finished_at, id, idempotency_key, lease_until, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt, worker_id
 app_worker	job	UPDATE	attempts, claim_token, exit_code, finished_at, lease_until, outcome, result, started_at, state, stderr_excerpt, worker_id
+app_worker	ndes_provider_profile	SELECT	ciphertext, id, key_id, provider_id, revision, schema_version
 EOF
 )
 actual_grants="$(run -c "

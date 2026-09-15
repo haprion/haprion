@@ -48,7 +48,10 @@ step "Migrating from the prepared release"
 ./migrate "$answers" --release "$release_id"
 
 step "Proving database privileges after migration"
-./03-verify "$answers"
+# The privilege contract belongs to the release being installed, like its
+# migrations: a bridge that migrates nothing must be judged by its own list,
+# not by whichever newer checkout holds this wrapper.
+"${source_tree}/install/platform/03-verify" "$answers"
 
 step "Checking the complete candidate before activation"
 ./check-compatibility "$answers" --release "$release_id"

@@ -66,12 +66,12 @@
       <div class="field profile-field" data-profile-field>
         <span class="field-title" id="profile-field-title">Provider profile</span>
         <select name="dns_profile" class="dns-only" aria-labelledby="profile-field-title"{% if form.method in ('http-01', 'ndes') %} disabled{% endif %}{% if form.method == 'ndes' %} hidden{% endif %}>
-          <option value="">Choose a profile…</option>
-          {% for profile in choices.dns_profiles %}<option value="{{ profile }}"{% if form.dns_profile == profile %} selected{% endif %}>{{ profile }}</option>{% endfor %}
+          {% if not choices.dns_profiles %}<option value="">No profile in effect</option>{% endif %}
+          {% for profile in choices.dns_profiles %}<option value="{{ profile }}"{% if form.dns_profile == profile or (not form.dns_profile and loop.first) %} selected{% endif %}>{{ profile }}</option>{% endfor %}
         </select>
         <select name="ndes_profile" class="ndes-only" aria-labelledby="profile-field-title"{% if form.method != 'ndes' %} disabled hidden{% endif %}>
-          <option value="">Choose a profile…</option>
-          {% for profile in choices.ndes_profiles %}<option value="{{ profile }}"{% if form.ndes_profile == profile %} selected{% endif %}>{{ profile }}</option>{% endfor %}
+          {% if not choices.ndes_profiles %}<option value="">No profile in effect</option>{% endif %}
+          {% for profile in choices.ndes_profiles %}<option value="{{ profile }}"{% if form.ndes_profile == profile or (not form.ndes_profile and loop.first) %} selected{% endif %}>{{ profile }}</option>{% endfor %}
         </select>
         <small data-profile-hint="dns-01"{% if form.method in ('http-01', 'ndes') %} hidden{% endif %}>Required for DNS-01. <a href="/dns-profiles">Manage DNS profiles</a>.</small>
         <small data-profile-hint="http-01"{% if form.method != 'http-01' %} hidden{% endif %}>Not used with HTTP-01.</small>

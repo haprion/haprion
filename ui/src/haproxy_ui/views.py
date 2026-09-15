@@ -1818,16 +1818,13 @@ def build_router(config: Config) -> APIRouter:
             )
             connection.commit()
         #
-        # Back to the listing, opened on the row the request is: the row says
+        # Back to the listing, where the request is the first row: it says
         # "Requesting" and refreshes until the CA has answered, and carries
-        # the CA's own words if the answer is no. The jobs page keeps the
-        # full record, but it is not where a person expects to land.
+        # the CA's own words if the answer is no. Not opened - the detail
+        # under a row that has no material yet is empty. The jobs page keeps
+        # the full record, but it is not where a person expects to land.
         #
-        identifier = payload.get("id") or certificate_form.certificate_id_of(form)
-        return RedirectResponse(
-            f"/certificates?view=registry&open={quote(str(identifier), safe='')}",
-            status_code=303,
-        )
+        return RedirectResponse("/certificates?view=registry", status_code=303)
 
     @router.post("/certificates/{certificate_id}/resume")
     async def resume_enrollment(

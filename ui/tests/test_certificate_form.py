@@ -420,9 +420,7 @@ class SendingTheFormOverNdes(CertificateFormRouteTestCase):
             self.ndes_client(), domain="*.example.com", method="ndes", ndes_profile="certserver1"
         )
         self.assertEqual(response.status_code, 303, response.text)
-        self.assertEqual(
-            response.headers["location"], "/certificates?view=registry&open=example.com"
-        )
+        self.assertEqual(response.headers["location"], "/certificates?view=registry")
         (job,) = self.queued
         self.assertEqual(job["operation"], "cert_scep")
         self.assertIsNone(job["cluster"])
@@ -436,6 +434,15 @@ class SendingTheFormOverNdes(CertificateFormRouteTestCase):
                 "receivers": [],
             },
         )
+
+    def test_the_first_profile_is_preselected_and_a_typed_choice_is_kept(self) -> None:
+        """One profile per CA is the ordinary installation; picking it is a click for nothing."""
+
+        page = self.ndes_client().get("/certificates/new").text
+        self.assertIn('<option value="certserver1" selected>certserver1</option>', page)
+        self.assertNotIn("Choose a profile", page)
+        page = self.post(self.ndes_client(), method="ndes", ndes_profile="certserver1", cluster=[]).text
+        self.assertIn('<option value="certserver1" selected>certserver1</option>', page)
 
     def test_a_refused_ndes_form_is_redrawn_with_the_ndes_select_shown(self) -> None:
         page = self.post(self.ndes_client(), method="ndes").text
@@ -467,9 +474,7 @@ class SendingTheForm(CertificateFormRouteTestCase):
         self.assertEqual(response.status_code, 303)
         # To the listing, opened on the row that is now "Requesting" - not to
         # the jobs page, which is where a person looks when something failed.
-        self.assertEqual(
-            response.headers["location"], "/certificates?view=registry&open=app.example.com"
-        )
+        self.assertEqual(response.headers["location"], "/certificates?view=registry")
         self.assertEqual(len(self.queued), 1)
         job = self.queued[0]
         self.assertEqual(job["operation"], "cert_issue")

@@ -508,3 +508,13 @@ otherwise create a file the interface can read.
 **No collector on a development platform.** The step refuses to run unless
 `ENVIRONMENT` is `prod`. A dev platform is built not to reach the real nodes,
 and a key plus an inventory would undo the property that makes it safe.
+
+### Optional SCEP client bundle
+
+`16-platform-scep <bundle.zip> <verified-sha256>` installs a reviewed native Certmonger
+bundle and its distribution runtime libraries as root. Build the bundle with
+`tools/build-scep-client.py`; retain the matching package, complete source, license
+and build instructions. The installer refuses a different OS release or architecture
+and activates only three client programs, without installing a Certmonger service.
+See INSTALLATION.md §1.4.8 for root policy and provider configuration. This step is
+implemented in source; live installation and enrollment remain to be verified.

@@ -110,6 +110,7 @@ _OPERATION_OUTCOMES = {
     #
     # `dns_profile_apply` writes one file or refuses to; there is no half.
     #
+    "ndes_profile_apply": frozenset({"done", "failed", "blocked"}),
     "dns_profile_apply": frozenset({"done", "failed", "blocked"}),
     #
     # `cert_delete` answers per certificate: `partial` is the normal shape of
@@ -307,10 +308,16 @@ def _internal_error() -> dict[str, Any]:
     }
 
 
-def _sealed_profile(connection: Any, profile_id: str) -> operations.SealedProfileRow | None:
+def _sealed_profile(
+    connection: Any, profile_id: str, *, ndes: bool = False
+) -> operations.SealedProfileRow | None:
     """The one row a profile job needs, read as the worker under its own grant."""
 
-    row = db.sealed_profile(connection, profile_id)
+    row = (
+        db.sealed_ndes_profile(connection, profile_id)
+        if ndes
+        else db.sealed_profile(connection, profile_id)
+    )
     if row is None:
         return None
     return operations.SealedProfileRow(
@@ -339,7 +346,9 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
             cluster=job.cluster,
             request_id=job.request_id,
             payload=job.payload,
-            profile_lookup=lambda profile_id: _sealed_profile(connection, profile_id),
+            profile_lookup=lambda profile_id: _sealed_profile(
+                connection, profile_id, ndes=job.operation == "ndes_profile_apply"
+            ),
         )
     except (operations.UnknownOperation, operations.BadPayload) as refusal:
         #

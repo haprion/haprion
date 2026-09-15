@@ -68,3 +68,6 @@ WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-publ
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-target-helper ""
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-dns-profile-apply-helper ""
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper ""
+
+# NDES profiles: ciphertext arrives only on stdin.
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-ndes-profile-apply-helper ""

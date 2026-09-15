@@ -1,0 +1,10 @@
+{% extends "layout.html" %}
+{% block title %}NDES providers — HAProxy Manager{% endblock %}
+{% block head_extra %}{% if refresh %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
+{% block content %}
+<section class="page-heading"><div class="heading-title"><h1>NDES providers</h1><p class="page-lede">Credentials for Microsoft AD CS enrollment.</p></div><div class="heading-badges">{% if public_key %}<a class="secondary-button" href="/ndes-profiles/new">New profile</a>{% endif %}</div></section>
+{% if not public_key %}<p class="preview-notice form-problem">Certificate credential storage is not configured. See the installation guide.</p>{% endif %}
+<section class="cluster-card"><div class="table-scroll"><table class="node-table"><thead><tr><th>Profile</th><th>Challenge</th><th>Status</th><th></th></tr></thead><tbody>
+{% for profile in profiles %}<tr><td><code>{{ profile.id }}</code></td><td>Stored encrypted</td><td><span class="status-dot status-{{ statuses[profile.id].tone }}"></span>{{ statuses[profile.id].label }} <span class="optional">rev {{ profile.revision }}</span></td><td><a href="/ndes-profiles/{{ profile.id }}/replace">Replace</a></td></tr>{% else %}<tr><td colspan="4">No NDES profile yet.</td></tr>{% endfor %}
+</tbody></table></div><p class="table-note">Challenge values are never shown after saving. <a href="/certificates">Back to certificates</a>.</p></section>
+{% endblock %}

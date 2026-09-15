@@ -1,0 +1,15 @@
+{% extends "layout.html" %}
+{% block title %}NDES profile — HAProxy Manager{% endblock %}
+{% block content %}
+<section class="page-heading"><div class="heading-title"><h1>{% if existing %}Replace {{ existing.id }}{% else %}New NDES profile{% endif %}</h1><p class="page-lede">Credentials for Microsoft AD CS enrollment.</p></div></section>
+{% if problem %}<p class="preview-notice form-problem"><strong>{{ problem }}</strong></p>{% endif %}
+{% if not public_key %}<p class="preview-notice form-problem">Certificate credential storage is not configured. See the installation guide.</p>{% endif %}
+<form method="post" action="{% if existing %}/ndes-profiles/{{ existing.id }}/replace{% else %}/ndes-profiles/new{% endif %}" class="preview-form" autocomplete="off">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+<section class="cluster-card"><div class="form-grid">
+<label><span class="field-title">Profile ID</span>{% if existing %}<input value="{{ existing.id }}" disabled>{% else %}<input name="profile_id" value="{{ form.profile_id }}" maxlength="32" pattern="[a-z0-9][a-z0-9-]{0,31}" required>{% endif %}</label>
+<label><span class="field-title">NDES endpoint</span><input name="field.endpoint" type="url" value="{{ values.endpoint }}" maxlength="2048" placeholder="https://ca.example.com/certsrv/mscep/mscep.dll" required><small>Use the endpoint approved for this manager.{% if existing %} Enter it again when replacing the challenge.{% endif %}</small></label>
+<label><span class="field-title">Master challenge</span><input name="field.challenge" type="password" autocomplete="new-password" maxlength="4096" required><small>Stored encrypted; never shown again. Enter the reusable challenge from your NDES administrator.</small></label>
+</div><div class="editor-actions editor-submit"><a href="/ndes-profiles">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if not public_key %} disabled{% endif %}>{% if existing %}Replace and apply{% else %}Save and apply{% endif %}</button></div></section>
+</form>
+{% endblock %}

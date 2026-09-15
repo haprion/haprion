@@ -26,7 +26,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0026",))
+            self.assertEqual(cursor.fetchone(), ("0027",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -606,4 +606,105 @@ class CertificateDeletion(unittest.TestCase):
                     "where conname = 'job_operation_allowed'"
                 )
                 self.assertIn("cert_delete", cursor.fetchone()[0])
+            connection.rollback()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class NdesDatabase(unittest.TestCase):
+    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def setUp(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("delete from job")
+            cursor.execute("delete from ndes_provider_profile")
+            connection.commit()
+
+    def create(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            db.create_ndes_profile(
+                connection,
+                profile_id="internal-ca",
+                name="internal-ca",
+                provider_id="ndes",
+                key_id="0123456789abcdef",
+                ciphertext=b"x" * 48,
+                actor="admin",
+            )
+            connection.commit()
+
+    def test_web_can_write_list_and_replace_but_cannot_read_ciphertext(self) -> None:
+        self.create()
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            self.assertEqual(db.ndes_profiles(connection)[0].id, "internal-ca")
+            self.assertIsNotNone(db.ndes_profile(connection, "internal-ca"))
+            replaced = db.replace_ndes_profile(
+                connection,
+                profile_id="internal-ca",
+                revision=2,
+                key_id="0123456789abcdef",
+                ciphertext=b"y" * 48,
+                actor="admin",
+            )
+            self.assertEqual(replaced.revision, 2)
+            connection.commit()
+            with self.assertRaises(db.ProfileMissing):
+                db.replace_ndes_profile(
+                    connection,
+                    profile_id="internal-ca",
+                    revision=2,
+                    key_id="0123456789abcdef",
+                    ciphertext=b"z" * 48,
+                    actor="admin",
+                )
+            for sql in (
+                "select ciphertext from ndes_provider_profile",
+                "delete from ndes_provider_profile",
+                "update ndes_provider_profile set provider_id = 'cloudflare'",
+            ):
+                with (
+                    connection.cursor() as cursor,
+                    self.assertRaises(psycopg.errors.InsufficientPrivilege),
+                ):
+                    cursor.execute(sql)
+                connection.rollback()
+
+    def test_worker_reads_only_sealed_binding_and_poller_has_no_access(self) -> None:
+        self.create()
+        with self.connect("HAPROXY_UI_TEST_WORKER_ROLE") as connection:
+            row = db.sealed_ndes_profile(connection, "internal-ca")
+            self.assertIsNotNone(row)
+            self.assertEqual(row.ciphertext if row else None, b"x" * 48)
+            with (
+                connection.cursor() as cursor,
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                cursor.execute("select created_by from ndes_provider_profile")
+            connection.rollback()
+        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+            with (
+                connection.cursor() as cursor,
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                cursor.execute("select id from ndes_provider_profile")
+            connection.rollback()
+
+    def test_ndes_apply_uses_the_shared_certificate_slot(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            job = db.queue_job(
+                connection,
+                operation="ndes_profile_apply",
+                cluster=None,
+                payload={"profile": "internal-ca", "revision": 1},
+                idempotency_key=uuid4(),
+            )
+            self.assertIsNone(job.cluster)
+            with self.assertRaises(db.CertificateBusy):
+                db.queue_job(
+                    connection,
+                    operation="cert_publish",
+                    cluster=None,
+                    payload={},
+                    idempotency_key=uuid4(),
+                )
             connection.rollback()

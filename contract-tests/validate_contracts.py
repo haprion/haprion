@@ -584,6 +584,7 @@ SEMANTIC_CHECKS = {
     "cert_deploy": check_reconcile_semantics,
     "cert_issue": check_cert_issue_semantics,
     "dns_profile_apply": check_dns_profile_apply_semantics,
+    "ndes_profile_apply": check_dns_profile_apply_semantics,
     "cert_publish": check_cert_publish_semantics,
     "cert_target": check_cert_target_semantics,
     "cert_delete": check_cert_delete_semantics,
@@ -626,7 +627,7 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
     elif operation == "cert_issue":
         result["method"] = "http-01"
         result["domains"] = ["*." + str(result["id"])]
-    elif operation == "dns_profile_apply":
+    elif operation in {"dns_profile_apply", "ndes_profile_apply"}:
         result["plugin"] = "dns_example_login = leaked-example"
     elif operation == "cert_target":
         result["registry"]["abandoned"] = list(result["registry"]["targets"]["clusters"])

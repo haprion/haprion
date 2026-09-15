@@ -84,7 +84,7 @@ ProtectHome=read-only
 # writes as root, and file permissions stay the real boundary. This list is the
 # second layer, not the only one.
 ProtectSystem=strict
-ReadWritePaths=/run/haproxy-mgmt /configs/haproxy /configs/haproxy-published /configs/haproxy-validation /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist /configs/haproxy-mgmt /etc/haproxy-manager/dns-profiles /etc/haproxy-manager/certificates
+ReadWritePaths=/run/haproxy-mgmt /configs/haproxy /configs/haproxy-published /configs/haproxy-validation /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /srv/certdist /configs/haproxy-mgmt /etc/haproxy-manager/dns-profiles /etc/haproxy-manager/certificates /etc/haproxy-manager/ndes-profiles /etc/haproxy-manager/ndes-requests
 
 # Unchanged, and none of them stand in the helper's way. Kept so that opening
 # the four above is a decision about four things and not about the whole file.

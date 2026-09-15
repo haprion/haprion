@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Install the retained native client; server configuration remains external.
+set -euo pipefail
+cd "$(dirname "$0")"
+source ../lib.sh
+need_root
+if [[ $# != 2 ]]; then
+    die "usage: 16-platform-scep <bundle.zip> <sha256>"
+fi
+source_tree="$(cd ../.. && pwd)"
+python3 "${source_tree}/tools/install-scep-client.py" --bundle "$1" --sha256 "$2"
+ensure_dir /etc/haproxy-manager/ndes-profiles root:root 700
+ensure_dir /etc/haproxy-manager/ndes-requests root:root 700
+log "SCEP client installed; configure runtime policy.ndes and create the NDES profile in the app."

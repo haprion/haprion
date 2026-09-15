@@ -200,7 +200,9 @@ class ProfileStatus:
     attention_label: str = ""
 
 
-def profile_status(profile_id: str, revision: int, jobs: Iterable[Any]) -> ProfileStatus:
+def profile_status(
+    profile_id: str, revision: int, jobs: Iterable[Any], *, operation: str = "dns_profile_apply"
+) -> ProfileStatus:
     """Derive a profile's state from its apply jobs, newest first.
 
     "Saved" and "in effect" are the same thing only once the job that
@@ -212,7 +214,7 @@ def profile_status(profile_id: str, revision: int, jobs: Iterable[Any]) -> Profi
     attention_job: int | None = None
     attention_label = ""
     for job in jobs:
-        if job.operation != "dns_profile_apply" or job.payload.get("profile") != profile_id:
+        if job.operation != operation or job.payload.get("profile") != profile_id:
             continue
         job_revision = job.payload.get("revision")
         removing = job.payload.get("remove") is True

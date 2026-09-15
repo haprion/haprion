@@ -132,6 +132,7 @@ class PathPolicy:
     # cannot be applied until it is re-entered.
     #
     acme: AcmePolicy | None = None
+    ndes: NdesPolicy | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +147,16 @@ class AcmePolicy:
 class DnsProfilesPolicy:
     directory: Path
     private_keys: tuple[Path, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class NdesPolicy:
+    endpoint: str
+    tls_ca: Path
+    issuing_ca: Path
+    client_root: Path
+    state_root: Path
+    profiles: DnsProfilesPolicy
 
 
 @dataclass(frozen=True, slots=True)
@@ -866,6 +877,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             "backup_timer",
             "certificate_registry",
             "acme",
+            "ndes",
         },
         "runtime policy",
     )
@@ -895,6 +907,44 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
         backup_timer=_optional_timer(data, "backup_timer"),
         certificate_registry=_optional_root(data, "certificate_registry"),
         acme=_acme_policy(data),
+        ndes=_ndes_policy(data),
+    )
+
+
+def _ndes_policy(data: Mapping[str, Any]) -> NdesPolicy | None:
+    raw = data.get("ndes")
+    if raw is None:
+        return None
+    location = "runtime policy.ndes"
+    entry = _mapping(raw, location)
+    _only_keys(
+        entry,
+        {"endpoint", "tls_ca", "issuing_ca", "client_root", "state_root", "profiles"},
+        location,
+    )
+    from haproxy_mgmt.dns_profiles import ProfileError
+    from haproxy_mgmt.ndes_profiles import check_endpoint
+
+    try:
+        endpoint = check_endpoint(_required_string(entry, "endpoint", location))
+    except ProfileError:
+        raise ConfigError(f"{location}.endpoint must be a valid HTTPS URL") from None
+    profiles = _dns_profiles_policy({"dns_profiles": entry.get("profiles")}, f"{location}.profiles")
+    if profiles is None:
+        raise ConfigError(f"{location}.profiles must be configured")
+    return NdesPolicy(
+        endpoint=endpoint,
+        tls_ca=_absolute_path(_required_string(entry, "tls_ca", location), f"{location}.tls_ca"),
+        issuing_ca=_absolute_path(
+            _required_string(entry, "issuing_ca", location), f"{location}.issuing_ca"
+        ),
+        client_root=_absolute_path(
+            _required_string(entry, "client_root", location), f"{location}.client_root"
+        ),
+        state_root=_absolute_path(
+            _required_string(entry, "state_root", location), f"{location}.state_root"
+        ),
+        profiles=profiles,
     )
 
 

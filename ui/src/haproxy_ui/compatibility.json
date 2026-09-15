@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "requires": {
-    "database_head": "0026",
+    "database_head": "0027",
     "database_revisions": [
-      "0025",
-      "0026"
+      "0026",
+      "0027"
     ],
     "engine_api": 1,
     "node_api": 1,
@@ -27,7 +27,8 @@
       "haproxy-cert-publish-helper",
       "haproxy-cert-target-helper",
       "haproxy-dns-profile-apply-helper",
-      "haproxy-cert-delete-helper"
+      "haproxy-cert-delete-helper",
+      "haproxy-ndes-profile-apply-helper"
     ]
   }
 }

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "blocked",
+  "operation": "ndes_profile_apply",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": null,
+  "warnings": [],
+  "error": {
+    "code": "profile_binding_mismatch",
+    "message": "the opened profile is an older revision than the job asked for",
+    "details": {
+      "profile": "internal-ca",
+      "binding": "revision"
+    }
+  }
+}

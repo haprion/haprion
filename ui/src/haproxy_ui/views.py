@@ -61,6 +61,7 @@ from haproxy_ui import (
     history,
     jobs,
     metrics,
+    ndes_profile_form,
     network,
     objects,
     operations,
@@ -2448,6 +2449,237 @@ def build_router(config: Config) -> APIRouter:
                 "snapshot_age": "",
             },
         )
+
+    def _ndes_profile_form_page(
+        request: Request,
+        session: AuthenticatedSession,
+        form: ndes_profile_form.ProfileForm,
+        *,
+        existing: db.DnsProfile | None,
+        problem: str = "",
+    ) -> Response:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        return TEMPLATES.TemplateResponse(
+            request,
+            "ndes-profile-form.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "form": form,
+                "values": ndes_profile_form.redraw_values(form.values),
+                "existing": existing,
+                "public_key": _dns_public_key(),
+                "problem": problem,
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
+    @router.get("/ndes-profiles", response_class=HTMLResponse)
+    def ndes_profile_list(request: Request) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        with request.app.state.pool.connection() as connection:
+            profiles = db.ndes_profiles(connection)
+            recent = db.recent_jobs(connection, limit=100)
+        statuses = {
+            p.id: ndes_profile_form.profile_status(p.id, p.revision, recent) for p in profiles
+        }
+        return TEMPLATES.TemplateResponse(
+            request,
+            "ndes-profiles.html",
+            {
+                "username": gate.username,
+                "role": gate.role,
+                "profiles": profiles,
+                "statuses": statuses,
+                "public_key": _dns_public_key(),
+                "refresh": any(p.label == "Applying" for p in statuses.values()),
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
+    @router.get("/ndes-profiles/new", response_class=HTMLResponse)
+    def ndes_profile_new_form(request: Request) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        return _ndes_profile_form_page(request, gate, ndes_profile_form.EMPTY_FORM, existing=None)
+
+    @router.post("/ndes-profiles/new", response_class=HTMLResponse)
+    async def ndes_profile_new_submit(request: Request) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        return await _ndes_profile_submit(request, gate, existing=None)
+
+    @router.get("/ndes-profiles/{profile_id}/replace", response_class=HTMLResponse)
+    def ndes_profile_replace_form(request: Request, profile_id: str) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        with request.app.state.pool.connection() as connection:
+            existing = db.ndes_profile(connection, profile_id)
+        if existing is None:
+            return PlainTextResponse("Not found", status_code=404)
+        return _ndes_profile_form_page(
+            request, gate, ndes_profile_form.ProfileForm(existing.id), existing=existing
+        )
+
+    @router.post("/ndes-profiles/{profile_id}/replace", response_class=HTMLResponse)
+    async def ndes_profile_replace_submit(request: Request, profile_id: str) -> Response:
+        gate = _dns_profiles_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        with request.app.state.pool.connection() as connection:
+            existing = db.ndes_profile(connection, profile_id)
+        if existing is None:
+            return PlainTextResponse("Not found", status_code=404)
+        return await _ndes_profile_submit(request, gate, existing=existing)
+
+    async def _ndes_profile_submit(
+        request: Request, session: AuthenticatedSession, *, existing: db.DnsProfile | None
+    ) -> Response:
+        """Seal one submission, store it, queue its apply job - or re-draw.
+
+        Read as a raw form rather than through typed parameters, because the
+        field names are the catalogue's, not this route's: which fields exist
+        depends on the provider chosen, and only the catalogue knows.
+        """
+
+        posted = await request.form()
+        text = {key: value for key, value in posted.items() if isinstance(value, str)}
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, text.get(auth.CSRF_FIELD, "")):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(text.get("idempotency_key", ""))
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+
+        form = ndes_profile_form.ProfileForm(
+            profile_id=existing.id if existing else text.get("profile_id", "")[:64],
+            provider_id=existing.provider_id if existing else text.get("provider_id", "")[:32],
+            values={
+                name.removeprefix("field."): value
+                for name, value in text.items()
+                if name.startswith("field.")
+            },
+        )
+        public_key = _dns_public_key()
+        if public_key is None:
+            return _ndes_profile_form_page(
+                request,
+                session,
+                form,
+                existing=existing,
+                problem="This installation has no certificate profile key; see the installation "
+                "guide, 1.4.8.",
+            )
+        revision = existing.revision + 1 if existing else 1
+        with request.app.state.pool.connection() as connection:
+            taken = [profile.id for profile in db.ndes_profiles(connection)]
+        try:
+            sealed = ndes_profile_form.seal_submission(
+                form, public_key, revision=revision, taken=taken
+            )
+        except ndes_profile_form.FormProblem as problem:
+            return _ndes_profile_form_page(
+                request, session, form, existing=existing, problem=str(problem)
+            )
+
+        payload = {"profile": sealed.profile_id, "revision": revision}
+        with request.app.state.pool.connection() as connection:
+            try:
+                if existing is None:
+                    stored = db.create_ndes_profile(
+                        connection,
+                        profile_id=sealed.profile_id,
+                        name=sealed.name,
+                        provider_id=sealed.provider_id,
+                        key_id=sealed.key_id,
+                        ciphertext=sealed.ciphertext,
+                        actor=session.username,
+                    )
+                else:
+                    stored = db.replace_ndes_profile(
+                        connection,
+                        profile_id=sealed.profile_id,
+                        revision=revision,
+                        key_id=sealed.key_id,
+                        ciphertext=sealed.ciphertext,
+                        actor=session.username,
+                        name=sealed.name,
+                    )
+            except db.ProfileExists:
+                connection.rollback()
+                return _ndes_profile_form_page(
+                    request,
+                    session,
+                    form,
+                    existing=existing,
+                    problem="Profile ID — a profile with this ID already exists.",
+                )
+            except db.ProfileMissing:
+                connection.rollback()
+                return _ndes_profile_form_page(
+                    request,
+                    session,
+                    form,
+                    existing=existing,
+                    problem="The profile changed while this form was open. Reload and try again.",
+                )
+            #
+            # The row and the job are one transaction: a profile saved without
+            # its apply job would look stored and never reach certbot, which
+            # is the gap B147 closed.
+            #
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="ndes_profile_apply",
+                    cluster=None,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.CertificateBusy:
+                connection.rollback()
+                return _ndes_profile_form_page(
+                    request,
+                    session,
+                    form,
+                    existing=existing,
+                    problem="A certificate job is already running. Wait for it to finish "
+                    "on the Jobs page, then save again.",
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=session.username,
+                action="queue_job",
+                cluster=None,
+                request_id=job.request_id,
+                detail={
+                    "operation": "ndes_profile_apply",
+                    "job": job.id,
+                    "profile": stored.id,
+                    "revision": stored.revision,
+                },
+            )
+            connection.commit()
+        await _await_dns_profile_job(request, job.id)
+        return RedirectResponse("/ndes-profiles", status_code=303)
 
     @router.get("/backups", response_class=HTMLResponse)
     def backup_overview(request: Request) -> Response:

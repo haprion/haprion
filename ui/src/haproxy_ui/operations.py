@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from haproxy_mgmt import dns_profiles
+from haproxy_mgmt import dns_profiles, ndes_profiles
 from haproxy_mgmt.cli import (
     cert_delete_helper,
     cert_deploy,
@@ -113,7 +113,14 @@ def _targets(payload: Mapping[str, Any]) -> tuple[tuple[str, ...], tuple[str, ..
 
 
 CERTIFICATE_OPERATIONS = frozenset(
-    {"cert_issue", "cert_publish", "cert_target", "dns_profile_apply", "cert_delete"}
+    {
+        "cert_issue",
+        "cert_publish",
+        "cert_target",
+        "dns_profile_apply",
+        "ndes_profile_apply",
+        "cert_delete",
+    }
 )
 
 #
@@ -247,6 +254,33 @@ def _certificate_operation(
                 revision=row.revision,
                 ciphertext=row.ciphertext,
                 remove=remove,
+            ),
+        )
+
+    if operation == "ndes_profile_apply":
+        _only(payload, "profile", "revision")
+        try:
+            profile_id = dns_profiles.check_profile_id(payload.get("profile"))
+            revision = dns_profiles.check_revision(payload.get("revision"))
+        except dns_profiles.ProfileError as exc:
+            raise BadPayload(str(exc)) from exc
+        row = profile_lookup(profile_id) if profile_lookup is not None else None
+        if (
+            row is None
+            or row.id != profile_id
+            or row.provider_id != "ndes"
+            or row.revision < revision
+        ):
+            raise BadPayload("NDES profile row is missing, stale or has the wrong type")
+        return Prepared(
+            argv=(dns_profiles.SUDO, *SUDO_FLAGS, ndes_profiles.HELPER),
+            request=ndes_profiles.build_request(
+                str(request_id),
+                profile_id=row.id,
+                schema_version=row.schema_version,
+                key_id=row.key_id,
+                revision=row.revision,
+                ciphertext=row.ciphertext,
             ),
         )
 

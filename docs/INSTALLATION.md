@@ -1048,9 +1048,157 @@ and a new import before that date is the maintainer's job. A certificate registe
 before this command existed, with its material placed by hand, is replaced the same way.
 
 **What the interface offers instead.** The interface has no key upload, by design: a private key
-pasted into a browser has been in a clipboard, a page and a request log. Its way in is the CSR
-flow, where the key is born on the manager and never leaves it; the certificate that comes back
-is public. `haproxy-cert-import` is for the case where the key already exists somewhere else.
+pasted into a browser has been in a clipboard, a page and a request log. The planned CSR/SCEP
+flow creates the key on the manager and keeps it there; the returned certificate is public.
+Server preparation for that integration is described in 1.4.8; enrollment from the interface is
+not implemented yet. `haproxy-cert-import` is for the case where the key already exists
+somewhere else.
+
+### 1.4.8 Preparing Microsoft AD CS / NDES for CSR enrollment
+
+**Status:** Linux-to-NDES enrollment has been demonstrated technically, including multiple DNS
+SANs and a wildcard with its base name. The source now includes encrypted NDES provider profiles,
+a root enrollment CLI and client packaging tools. Installation and live Certmonger enrollment
+still need verification; enrollment jobs and the certificate enrollment form are not implemented.
+
+**Selected client:** [Certmonger](https://codeberg.org/freeipa/certmonger/) will provide the
+SCEP protocol support through a temporary process and private socket, with automatic renewal
+disabled. Its installation and runtime dependencies will be included in the manager installation.
+Release materials must retain the selected package, corresponding source, license and build
+instructions so the selected version remains available independently of its upstream hosting.
+The packaging tools are described below. Root installation has not yet been verified.
+
+The intended flow creates an RSA key and a PKCS#10 CSR locally on the manager, sends an enrollment
+request through SCEP over verified HTTPS, validates the returned certificate and uses the existing
+publication and distribution path. The private key stays on the manager. The manager needs no
+domain membership or AD account and does not visit `mscep_admin` during normal operation.
+
+**Manager configuration and packaging (source implementation).** The optional root policy
+`ndes` object has the fields `endpoint`, `tls_ca`, `issuing_ca`, `client_root`, `state_root`
+and `profiles`. Paths are absolute. `profiles` contains `directory` and `private_keys`,
+a non-empty list of absolute private-key file paths using the existing profile sealing keys. The endpoint must use HTTPS and
+match the encrypted provider profile exactly. TLS trust and certificate issuing trust are
+configured separately. Suggested roots are `/opt/haproxy-scep/current`,
+`/etc/haproxy-manager/ndes-requests` and `/etc/haproxy-manager/ndes-profiles`.
+The latter directories are root-owned, mode `0700`; records and keys are mode `0600`.
+
+Build the native bundle with `tools/build-scep-client.py`: supply `--package`, its independently
+verified `--package-sha256`, the matching signed `--source-description` and verified
+`--source-sha256`, plus `--distribution`, `--distribution-release` and `--output`.
+Keep both source archives beside the source description. The bundle retains the package,
+complete corresponding source, license and rebuild instructions; a bit-for-bit rebuild has
+not been demonstrated. Only matching Debian-family distribution packages are supported.
+Install the reviewed bundle as root with
+`install/platform/16-platform-scep <bundle.zip> <verified-bundle-sha256>`.
+The installer checks hashes, archive paths, OS release and architecture, installs runtime
+library dependencies and activates the three client programs under an immutable release.
+It does not install a standing Certmonger service.
+
+After installation, root policy configuration and provider application, the pilot root CLI is:
+
+```sh
+haproxy-cert-scep --id example-cert --profile internal-ca --domain example.test --domain '*.example.test' --json
+```
+
+A CA approval wait returns `state: pending` and envelope outcome `partial`. Repeat the same
+command with `--resume`; it retains the original key and refuses changed request bindings.
+Automatic renewal is disabled. Returned certificates must pass chain, names, usages and key
+validation before the existing import/publication path is called. This CLI has no enrollment
+job/helper or enrollment form yet. Migration `0027` adds provider storage and apply jobs only;
+a compatible UI bridge is required before migrating an installation still on `0026`.
+
+**Server prerequisites.** Install and configure the AD CS Network Device Enrollment Service role
+with IIS, an issuing CA and valid NDES signing/encryption RA certificates. NDES and the CA may
+share a server; co-location is not a product requirement. Microsoft's
+[NDES overview](https://learn.microsoft.com/en-us/windows-server/identity/ad-cs/network-device-enrollment-service-overview)
+describes the role and its IIS applications. For a dedicated domain service identity, follow
+[Microsoft's service-account instructions](https://learn.microsoft.com/en-us/windows-server/identity/ad-cs/create-domain-user-account-ndes-service-account).
+The identity needs local `IIS_IUSRS` membership, effective CA `Request Certificates` permission
+and `Read` + `Enroll` on the dedicated certificate template. It need not be a domain or local
+administrator. Ensure the IIS `Default Web Site` exists before NDES configuration; a missing site
+caused setup error `0x80070003` in the technical trial. The working SCEP application pool used
+`Load User Profile = True`.
+
+**One dedicated, published template.** Set the following values in the certificate template and
+publish it on the issuing CA:
+
+| Setting | Required value |
+|---|---|
+| Request Handling / Purpose | Signature and encryption |
+| Cryptography | RSA, minimum 2048 bits |
+| Subject Name | Supply in the request |
+| Application Policies / EKU | Server Authentication |
+| Key Usage | Digital Signature, Key Encipherment |
+| CA certificate manager approval | Disabled for immediate unattended issuance |
+| Allow private key to be exported | Disabled; the manager generates its own key |
+| Template security | Read and Enroll for the NDES service identity |
+
+`Supply in the request` allows the enrolling identity to request names supplied by the client;
+restrict template rights and endpoint access according to your PKI policy. SANs are CSR
+extensions. The integration does not require enabling the global CA flag
+`EDITF_ATTRIBUTESUBJECTALTNAME2`.
+
+Map `GeneralPurposeTemplate` under
+`HKLM\SOFTWARE\Microsoft\Cryptography\MSCEP` to the template's **internal name**, rather
+than its display name. For example, an installation may name its dedicated template
+`HAProxyWebServer`. The signature-and-encryption request selects this mapping; no template is
+selected in the manager's interface. The other two mappings need not change for this request type.
+
+**HTTPS and trust.** Expose the SCEP endpoint at
+`https://<ndes-fqdn>/certsrv/mscep/mscep.dll` with a server certificate matching the endpoint's DNS
+name. The manager must trust its TLS chain and separately validate the certificate issued by the
+CA. Provision the trust anchor explicitly: SCEP `GetCACert` retrieves protocol CA/RA material but
+does not itself establish trust. Serve the issued leaf plus any intermediate certificates to
+HAProxy; omit the root from the served fullchain.
+
+**Reusable challenge.** The intended unattended integration requires these DWORD settings:
+
+| Registry subkey under `HKLM\SOFTWARE\Microsoft\Cryptography\MSCEP` | Value name | Value |
+|---|---|---|
+| `EnforcePassword` | `EnforcePassword` | `1` |
+| `UseSinglePassword` | `UseSinglePassword` | `1` |
+
+An administrator retrieves the master challenge once from
+`https://<ndes-fqdn>/certsrv/mscep_admin/` and enters it in the NDES provider profile under Certificates → NDES providers.
+As with DNS provider credentials, the web application seals it using the installation public
+key, and the database stores only ciphertext. Only the root helper can decrypt it and create
+the root-owned, mode `0600` challenge file that Certmonger reads. The profile offers replacement
+of the challenge, never plaintext retrieval. NDES uses a separate profile type with validated
+identity and revision binding. The helper atomically writes a root-only profile record, then
+enrollment creates a temporary challenge file and removes that file when its process ends.
+Protected request state can still contain the challenge in its CSR. Normal enrollment uses only
+`mscep.dll` and this secret.
+Microsoft's historical
+[single-password article](https://support.microsoft.com/en-au/topic/two-improvements-are-available-that-shorten-the-time-that-is-required-to-manage-scep-certificates-by-using-the-network-device-enrollment-service-in-windows-server-2008-c497db37-9c87-0cd0-30dc-845eeb8ba9f5)
+documents the reusable, non-expiring password and registry setting for Windows Server 2008;
+it is a historical reference, not an instruction to install that hotfix on a modern server.
+The technical trial verified this mode on Windows Server 2022. In that trial the NDES service
+identity needed Full Control on the MSCEP registry subtree for single-password operation;
+review the necessary registry permissions in your installation.
+
+The master challenge is a long-lived credential. Endpoint access and NDES protection remain
+operator responsibilities. Keep its plaintext out of command arguments, job payloads, logs,
+job results and the database; only the sealed ciphertext may be stored in the database. A CSR contains this credential as `challengePassword`, so protect CSRs and any temporary
+OpenSSL request configuration as secret material too. Rotate a challenge exposed during testing
+before using it in production.
+
+**Interoperability and verification.** The tested NDES installation accepted `challengePassword`
+as ASN.1 PrintableString. A missing attribute caused NDES Event ID 28; the trial's initial encoding
+caused Event ID 29. OpenSSL `string_mask = nombstr` produced a working PrintableString. This is a
+technical trial finding, not a general encoding rule established by the Microsoft links above.
+The tested client, `scepclient 2.3.0`, needed a pre-created CSR for multiple SANs and a PKCS#1 RSA
+key representation; those are client constraints, not general SCEP requirements or a selected
+product dependency.
+
+Verify enrollment from Linux with both a single DNS name and a wildcard plus its base name,
+using the same challenge twice. Check the exact SAN set, Subject, Server Authentication EKU,
+Key Usage, validity, key match and certificate chain. A responsive landing page or `GetCACaps`
+alone does not prove enrollment. Application acceptance will also cover verified TLS,
+`GetCACert`, SCEP response correlation, pending/failure handling and diagnostics without secrets.
+
+The planned integration automates issuance requested through CLI/UI; it does not add scheduled
+renewal for SCEP-issued certificates. CEP/CES/WSTEP, template discovery and automatic password
+retrieval from `mscep_admin` are outside this integration.
 
 ### 1.5 Validation certificate
 

@@ -201,6 +201,9 @@ class ProfileStatus:
 
     attention_label: str = ""
 
+    attention_message: str = ""
+    """The helper's own words for the refusal, so the page can say why."""
+
 
 def profile_status(
     profile_id: str, revision: int, jobs: Iterable[Any], *, operation: str = "dns_profile_apply"
@@ -215,6 +218,7 @@ def profile_status(
 
     attention_job: int | None = None
     attention_label = ""
+    attention_message = ""
     for job in jobs:
         if job.operation != operation or job.payload.get("profile") != profile_id:
             continue
@@ -235,11 +239,17 @@ def profile_status(
             if code == "profile_in_use":
                 attention_job = job.id
                 attention_label = "Removal refused"
+                message = error.get("message") if isinstance(error, dict) else None
+                attention_message = message if isinstance(message, str) else ""
                 continue
             return ProfileStatus("Remove failed", "critical", False)
         if job.state == "done" and job_revision == revision:
-            return ProfileStatus("In effect", "healthy", True, attention_job, attention_label)
+            return ProfileStatus(
+                "In effect", "healthy", True, attention_job, attention_label, attention_message
+            )
         if job.state == "done":
             return ProfileStatus("Replaced; not applied", "critical", False)
         return ProfileStatus("Apply failed", "critical", False)
-    return ProfileStatus("Not applied", "muted", False, attention_job, attention_label)
+    return ProfileStatus(
+        "Not applied", "muted", False, attention_job, attention_label, attention_message
+    )

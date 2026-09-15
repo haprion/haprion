@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import Any
 from unittest import mock
 from uuid import uuid4
@@ -11,6 +12,7 @@ from haproxy_mgmt.ndes_profiles import open_profile
 
 from haproxy_ui import auth, db, operations
 from tests.test_dns_profile_pages import GUARD, KEY, ProfileRouteTestCase, profile_row
+from tests.test_queue_route import queued
 
 ENDPOINT = "https://ca.example.com/certsrv/mscep/mscep.dll"
 
@@ -158,6 +160,39 @@ class RemovingAnNdesProfile(NdesPages):
             {"profile": "internal-ca", "revision": 3, "remove": True},
         )
         self.assertEqual(client.get("/ndes-profiles/missing/remove").status_code, 404)
+
+    def test_a_refused_removal_says_why_on_the_page(self) -> None:
+        self.rows = [profile_row(id="certserver1", provider_id="ndes", key_id=self.public_key.key_id)]
+        refused = queued(
+            id=41,
+            operation="ndes_profile_apply",
+            cluster=None,
+            state="failed",
+            payload={"profile": "certserver1", "revision": 1, "remove": True},
+            result={
+                "error": {
+                    "code": "profile_in_use",
+                    "message": "profile 'certserver1' is referenced by certificate(s): webserver1-scep",
+                }
+            },
+        )
+        applied = replace(
+            refused, id=40, state="done", payload={"profile": "certserver1", "revision": 1}, result=None
+        )
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[refused, applied]):
+            page = self.writing_client().get("/ndes-profiles").text
+        self.assertIn("In effect", page)
+        self.assertIn("Removal of <code>certserver1</code> was refused.", page)
+        self.assertIn("webserver1-scep", page)
+
+    def test_the_replace_form_starts_with_the_stored_endpoint(self) -> None:
+        self.rows = [profile_row(id="certserver1", provider_id="ndes", endpoint=ENDPOINT)]
+        page = self.writing_client().get("/ndes-profiles/certserver1/replace").text
+        self.assertIn(f'value="{ENDPOINT}"', page)
+        self.assertIn(
+            'class="form-buttons"><a class="secondary-button" href="/ndes-profiles">Cancel</a>',
+            page,
+        )
 
     def test_a_row_from_before_the_endpoint_column_says_so(self) -> None:
         self.rows = [profile_row(id="internal-ca", provider_id="ndes")]

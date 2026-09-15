@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}Certificates — HAProxy Manager{% endblock %}
+{% block head_extra %}{% if refresh %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
 {% block content %}
 {#
   One table for both views: the same seven columns, the same words, the same

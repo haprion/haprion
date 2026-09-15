@@ -93,7 +93,7 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
         )
 
     def test_choosing_a_view_swaps_it_in_place_and_moves_no_segment(self) -> None:
-        with self.signed_in() as page:
+        with self.signed_in("?view=clusters") as page:
             page.evaluate("window.__stayed = true")
             before = self.widths(page)
             self.assertNotIn("Certificate registry", page.content())

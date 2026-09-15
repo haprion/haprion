@@ -67,16 +67,16 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         self.assertEqual(response.status_code, 200)
         return response.text
 
-    def test_the_cluster_cards_stay_the_default_view(self) -> None:
+    def test_the_registry_is_the_default_view(self) -> None:
         #
-        # Anyone who already has this URL bookmarked gets the page they know.
-        # A new default would be a silent change to something people navigate
-        # by muscle memory.
+        # The complete list, and the one the certificate actions return to
+        # (2026-09-15). The cluster cards are one link away and keep their URL.
         #
         page = self.page()
 
-        self.assertIn("referenced by this cluster", page)
-        self.assertNotIn("Certificate registry", page)
+        self.assertIn("Certificate registry", page)
+        self.assertNotIn("referenced by this cluster", page)
+        self.assertIn("referenced by this cluster", self.page("?view=clusters"))
 
     def test_the_registry_view_is_reached_by_a_link_and_names_both_kinds(self) -> None:
         page = self.page("?view=registry")
@@ -131,7 +131,7 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         self.assertNotIn('class="certificate-issuer" title=', closed)
 
     def test_an_unknown_view_falls_back_rather_than_failing(self) -> None:
-        self.assertIn("referenced by this cluster", self.page("?view=nonsense"))
+        self.assertIn("Certificate registry", self.page("?view=nonsense"))
 
     def test_the_switch_is_pinned_named_and_swapped_in_place(self) -> None:
         #

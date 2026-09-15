@@ -50,6 +50,7 @@ from haproxy_mgmt.traffic_collector import RETENTION_DAYS
 from haproxy_ui import (
     auth,
     backups,
+    certificate_activity,
     certificate_delete,
     certificate_form,
     certificates,
@@ -1670,15 +1671,28 @@ def build_router(config: Config) -> APIRouter:
             captured=captured_at is not None,
         )
         with request.app.state.pool.connection() as connection:
-            running = jobs.in_flight(db.recent_jobs(connection))
+            recent = db.recent_jobs(connection, limit=100)
+        running = jobs.in_flight(recent)
+        #
+        # A row the queue is deleting says so in its State cell instead of
+        # the page sending the person to the jobs list to watch; the page
+        # refreshes itself while that is going on.
+        #
+        deleting = certificate_activity.deletion_states(recent)
+        overview = certificates.with_deletion_states(overview, deleting)
+        refresh = any(
+            deleting[entry.identifier].active
+            for entry in (overview.registry.certificates if overview.registry else ())
+            if entry.identifier in deleting
+        )
         #
         # Which view and which expanded row, in the query string rather than in
         # script: the page is read-only, the two views are two renderings of
         # cached readings, and a link is something an operator can send to
-        # somebody else. The cluster cards stay the default because that is the
-        # page anyone who already uses this URL is expecting.
+        # somebody else. The registry is the default since 2026-09-15: it is
+        # the complete list, and the one the certificate actions return to.
         #
-        chosen = "registry" if request.query_params.get("view") == "registry" else "clusters"
+        chosen = "clusters" if request.query_params.get("view") == "clusters" else "registry"
         if overview.registry is None:
             chosen = "clusters"
         return TEMPLATES.TemplateResponse(
@@ -1690,6 +1704,7 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "certificates": overview,
                 "chosen_view": chosen,
+                "refresh": refresh,
                 "opened": request.query_params.get("open", ""),
                 #
                 # What this cluster is busy with, read the same way the
@@ -2066,7 +2081,7 @@ def build_router(config: Config) -> APIRouter:
                 },
             )
             connection.commit()
-        return RedirectResponse("/jobs", status_code=303)
+        return RedirectResponse("/certificates?view=registry", status_code=303)
 
     # - DNS provider profiles (P4) -----------------------------------------
 
@@ -2531,8 +2546,13 @@ def build_router(config: Config) -> APIRouter:
             existing = db.ndes_profile(connection, profile_id)
         if existing is None:
             return PlainTextResponse("Not found", status_code=404)
+        # The endpoint is not a secret and the row keeps a plain copy, so the
+        # replace form starts with it; only the challenge is typed again.
         return _ndes_profile_form_page(
-            request, gate, ndes_profile_form.ProfileForm(existing.id), existing=existing
+            request,
+            gate,
+            ndes_profile_form.ProfileForm(existing.id, values={"endpoint": existing.endpoint}),
+            existing=existing,
         )
 
     @router.post("/ndes-profiles/{profile_id}/replace", response_class=HTMLResponse)

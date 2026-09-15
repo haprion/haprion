@@ -1283,6 +1283,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  * row ends, so its bottom padding is the card's bottom margin.
  */
 .editor-submit { align-items: center; justify-content: space-between; gap: 16px; padding: 4px 20px 20px; }
+/* Cancel beside the submit, as a button rather than a link the eye has to find. */
+.editor-submit .form-buttons { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .editor-submit .table-note { margin: 0; padding: 0; }
 .editor-actions .secondary-button { padding: 9px 22px; }
 /*

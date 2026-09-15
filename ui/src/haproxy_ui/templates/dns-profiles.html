@@ -23,6 +23,10 @@
 <p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> The queue runs one certificate job at a time; a profile saved now is applied when it has finished.{% if refresh %} This page refreshes until then.{% endif %}</p>
 {% endif %}
 
+{% for row in rows if row.status.attention_message %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>Removal of <code>{{ row.profile.id }}</code> was refused.</strong> {{ row.status.attention_message }}. The profile stays in effect.</p>
+{% endfor %}
+
 <section class="cluster-card">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Profiles</h3><p>{{ rows | length }} profile{{ '' if rows | length == 1 else 's' }}. <a href="/certificates">Back to certificates</a>.</p></div></div></header>
   <div class="table-scroll"><table class="node-table dns-profile-table">

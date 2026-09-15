@@ -82,7 +82,7 @@
     </div>
     <div class="editor-actions editor-submit">
       <p class="table-note">Saving seals the values and queues one apply job; the profile is in effect when the job is done. Use a token scoped to the zones it needs where the provider offers one.</p>
-      <button type="submit" class="secondary-button deploy-button"{% if not public_key %} disabled{% endif %}>{% if existing %}Replace and apply{% else %}Save and apply{% endif %}</button>
+      <div class="form-buttons"><a class="secondary-button" href="/dns-profiles">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if not public_key %} disabled{% endif %}>{% if existing %}Replace and apply{% else %}Save and apply{% endif %}</button></div>
     </div>
   </section>
 </form>

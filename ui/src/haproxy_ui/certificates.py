@@ -29,7 +29,7 @@ from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterCertificates
 
-type Tone = Literal["healthy", "warning", "critical", "unknown"]
+type Tone = Literal["healthy", "warning", "critical", "unknown", "info"]
 
 #
 # A static certificate is renewed by a person, so it is flagged a month out -
@@ -330,6 +330,33 @@ def _certificate_view(value: Any, *, now: datetime) -> CertificateView | None:
         valid_from=_date(entry.get("not_before")),
         wildcard=any(name.startswith("*.") for name in _sans(entry.get("sans"))),
     )
+
+
+def with_deletion_states(
+    overview: CertificateOverview, states: Mapping[str, Any]
+) -> CertificateOverview:
+    """The registry rows with the queue's word in the State cell where it has one.
+
+    The states come from `certificate_activity`; they carry a label, detail
+    and tone in the shape the cell already draws. A tone the badge CSS does
+    not know would draw as plain text, so only the registry rows are touched
+    and only for identifiers the queue actually names.
+    """
+
+    if overview.registry is None or not states:
+        return overview
+    rows = tuple(
+        replace(
+            entry,
+            state_label=states[entry.identifier].label,
+            state_detail=states[entry.identifier].detail,
+            state_tone=states[entry.identifier].tone,
+        )
+        if entry.identifier in states
+        else entry
+        for entry in overview.registry.certificates
+    )
+    return replace(overview, registry=replace(overview.registry, certificates=rows))
 
 
 def _source_label(kind: str, source: Mapping[str, Any]) -> str:

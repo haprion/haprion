@@ -289,7 +289,12 @@ class ThePages(ProfileRouteTestCase):
             cluster=None,
             state="failed",
             payload={"profile": "cf-main", "revision": 1, "remove": True},
-            result={"error": {"code": "profile_in_use"}},
+            result={
+                "error": {
+                    "code": "profile_in_use",
+                    "message": "profile 'cf-main' is referenced by certificate(s): shop",
+                }
+            },
         )
         applied = replace(
             refused,
@@ -303,6 +308,9 @@ class ThePages(ProfileRouteTestCase):
 
         self.assertIn("In effect", page)
         self.assertIn('href="/jobs#job-41">· Removal refused</a>', page)
+        # The helper's reason is on the page itself, not one click away.
+        self.assertIn("Removal of <code>cf-main</code> was refused.", page)
+        self.assertIn("referenced by certificate(s): shop", page)
 
     def test_without_a_key_the_page_says_so_and_offers_no_form(self) -> None:
         page = self.writing_client(with_key=False).get("/dns-profiles").text

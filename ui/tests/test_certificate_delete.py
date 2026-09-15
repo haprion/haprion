@@ -173,7 +173,8 @@ class Confirming(DeleteRouteTestCase):
     def test_queues_one_clusterless_job_with_exactly_the_deletable_ids(self) -> None:
         response = self.confirm(self.writing_client(), "old.example.com", "imported.example")
         self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/jobs")
+        # Back to the listing, whose State cell now follows the job.
+        self.assertEqual(response.headers["location"], "/certificates?view=registry")
         (job,) = self.queued
         self.assertEqual(job["operation"], "cert_delete")
         self.assertIsNone(job["cluster"])

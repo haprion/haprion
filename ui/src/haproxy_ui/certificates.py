@@ -152,6 +152,12 @@ class RegistryCertificateView:
     #
     material_note: str | None = None
     valid_from: str = "—"
+    #
+    # A row for a request the registry has not answered yet: drawn from the
+    # job's payload, not from any file, so it has no material to read, no
+    # box to tick and nothing to delete.
+    #
+    placeholder: bool = False
 
     @property
     def lifecycle_label(self) -> str:
@@ -345,6 +351,7 @@ def with_deletion_states(
 
     if overview.registry is None or not states:
         return overview
+    listed = {entry.identifier for entry in overview.registry.certificates}
     rows = tuple(
         replace(
             entry,
@@ -352,11 +359,47 @@ def with_deletion_states(
             state_detail=states[entry.identifier].detail,
             state_tone=states[entry.identifier].tone,
         )
-        if entry.identifier in states
+        if entry.identifier in states and not states[entry.identifier].placeholder_only
         else entry
         for entry in overview.registry.certificates
     )
-    return replace(overview, registry=replace(overview.registry, certificates=rows))
+    #
+    # A request the registry cannot list yet is a row above the rest: the
+    # newest thing on the page, and the one the person just came here for.
+    #
+    requested = tuple(
+        _placeholder_row(identifier, state)
+        for identifier, state in states.items()
+        if identifier not in listed and state.placeholder is not None
+    )
+    return replace(overview, registry=replace(overview.registry, certificates=requested + rows))
+
+
+def _placeholder_row(identifier: str, state: Any) -> RegistryCertificateView:
+    asked = state.placeholder
+    targets = tuple(TargetView(name, "cluster", None, "", None) for name in asked.clusters) + tuple(
+        TargetView(name, "receiver", None, "not yet published", None) for name in asked.receivers
+    )
+    return RegistryCertificateView(
+        identifier=identifier,
+        source_label=asked.source_label,
+        lifecycle=asked.lifecycle,
+        wildcard=asked.wildcard,
+        common_name=identifier,
+        sans=asked.sans,
+        issuer="—",
+        fingerprint="",
+        readable=False,
+        problem=None,
+        targets=targets,
+        expires="—",
+        expiry_label="",
+        tone="unknown",
+        state_label=state.label,
+        state_detail=state.detail,
+        state_tone=state.tone,
+        placeholder=True,
+    )
 
 
 def _source_label(kind: str, source: Mapping[str, Any]) -> str:

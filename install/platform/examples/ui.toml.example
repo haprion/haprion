@@ -75,9 +75,13 @@ port = 8080
 # Requires platform step 13 and each node's own route. Cannot be combined with
 # demo_fixture or production_snapshot: a development platform has no collector,
 # no key and no node access, so a mirror it could read arrived some other way.
+#
+# The unfiltered page shows the newest records. A filter searches the whole
+# mirror - everything the collector kept - and shows the newest max_lines
+# matches (1-10000).
 # enabled = true
 # directory = "/apps/haproxy-manager/logs/mirror"
-# max_lines = 500
+# max_lines = 2000
 
 # [dns_profiles]
 # The public half of the key pair platform step 15 made. DNS provider

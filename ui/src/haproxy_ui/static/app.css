@@ -1025,9 +1025,10 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 @media (min-width: 900px) {
   .certificate-form .challenge-field { justify-self: center; }
 }
-/* The two provider profiles share a column: one belongs to each CA choice,
- * never both at once, and three columns keep the radio labels on one line. */
-.certificate-form .profile-fields { display: flex; flex-direction: column; gap: 14px; }
+/* One provider profile field: the select that belongs to the chosen CA is
+ * shown, the other hidden, and under HTTP-01 the DNS one greyed in place. */
+.certificate-form .profile-field [hidden] { display: none; }
+.certificate-form .profile-field:has(select:disabled:not([hidden])) { opacity: 0.7; }
 /* Row, said explicitly: `.form-grid label` stacks its contents, and a box
  * above its own name is a box nobody can read. */
 .certificate-form .method-choices .check, .certificate-form .form-checks-stacked .check { display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }

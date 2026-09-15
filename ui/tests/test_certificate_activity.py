@@ -118,7 +118,119 @@ class EnrollmentStates(unittest.TestCase):
         self.assertNotIn("wait.example.com", states)
 
 
+def issue_job(state: str, domain: str = "new.example.com", **extra: Any) -> Any:
+    return queued(
+        operation="cert_issue",
+        cluster=None,
+        state=state,
+        payload={"domain": domain, "method": "dns-01", "clusters": ["alpha"], "receivers": ["pve"]},
+        finished_at=None if state in {"pending", "running"} else NOW - timedelta(minutes=5),
+        **extra,
+    )
+
+
+class RequestStates(unittest.TestCase):
+    """A request is a row before the registry has one (2026-09-15).
+
+    The page after pressing "Request the certificate" used to be the jobs
+    page; now it is the listing, so the listing has to say what is going on
+    about a name that has no material yet.
+    """
+
+    def states(self, *jobs: Any) -> dict[str, certificate_activity.DeletionState]:
+        return certificate_activity.deletion_states(jobs, now=NOW)
+
+    def test_a_running_request_is_a_placeholder_drawn_from_the_payload(self) -> None:
+        state = self.states(issue_job("running", "*.example.com"))["example.com"]
+        self.assertEqual((state.label, state.tone, state.active), ("Requesting", "info", True))
+        self.assertFalse(state.placeholder_only)
+        asked = state.placeholder
+        if asked is None:
+            self.fail("a running request must carry a placeholder row")
+        self.assertEqual(asked.source_label, "Certbot")
+        self.assertTrue(asked.wildcard)
+        self.assertEqual(asked.sans, ("*.example.com", "example.com"))
+        self.assertEqual((asked.clusters, asked.receivers), (("alpha",), ("pve",)))
+
+    def test_a_failed_request_carries_certbot_s_words_for_an_hour(self) -> None:
+        failed = issue_job(
+            "failed",
+            result={"error": {"code": "certbot_failed", "message": "DNS problem: NXDOMAIN"}},
+        )
+        state = self.states(failed)["new.example.com"]
+        self.assertEqual(
+            (state.label, state.tone, state.active), ("Request failed", "critical", False)
+        )
+        self.assertEqual(state.detail, "DNS problem: NXDOMAIN")
+        stale = queued(
+            operation="cert_issue",
+            cluster=None,
+            state="failed",
+            payload={"domain": "new.example.com"},
+            finished_at=NOW - timedelta(minutes=61),
+        )
+        self.assertEqual(self.states(stale), {})
+
+    def test_a_finished_request_only_fills_the_gap_until_the_poll(self) -> None:
+        state = self.states(issue_job("done"))["new.example.com"]
+        self.assertEqual(state.label, "Issued")
+        self.assertTrue(state.active)
+        self.assertTrue(state.placeholder_only)
+
+    def test_a_payload_without_a_usable_domain_is_no_row(self) -> None:
+        bad = queued(operation="cert_issue", cluster=None, state="running", payload={"domain": "*"})
+        self.assertEqual(self.states(bad), {})
+
+    def test_an_enrollment_carries_a_placeholder_too(self) -> None:
+        running = queued(
+            operation="cert_scep",
+            cluster=None,
+            state="running",
+            payload={
+                "id": "web.example.com",
+                "profile": "certserver1",
+                "domains": ["web.example.com"],
+                "clusters": ["alpha"],
+            },
+        )
+        asked = self.states(running)["web.example.com"].placeholder
+        if asked is None:
+            self.fail("a running enrollment must carry a placeholder row")
+        self.assertEqual(
+            (asked.source_label, asked.lifecycle, asked.wildcard), ("NDES", "import", False)
+        )
+        self.assertEqual(asked.clusters, ("alpha",))
+
+
 class TheListingFollowsTheJob(DeleteRouteTestCase):
+    def test_a_requested_certificate_is_a_row_before_the_registry_lists_it(self) -> None:
+        with mock.patch(
+            "haproxy_ui.db.recent_jobs", return_value=[issue_job("running", "*.brand.example")]
+        ):
+            page = self.writing_client().get("/certificates?open=brand.example").text
+        self.assertIn('<meta http-equiv="refresh" content="3">', page)
+        self.assertIn('status-badge-info">Requesting<', page)
+        self.assertIn("<strong>brand.example</strong>", page)
+        self.assertIn("*.brand.example, brand.example", page)
+        # No box to tick and no expiry badge: there is nothing yet.
+        self.assertNotIn('value="brand.example" data-delete-pick', page)
+        self.assertIn("The CA is being asked for the certificate", page)
+        self.assertIn('<td data-label="Expires">—</td>', page)
+        # First in the table: the newest thing on the page.
+        self.assertLess(
+            page.index("<strong>brand.example</strong>"), page.index("<strong>example.com</strong>")
+        )
+
+    def test_a_listed_certificate_keeps_its_own_state_once_the_request_is_done(self) -> None:
+        listed = with_registry(certificate_reading(), registered("new.example.com", kind="acme"))
+        with (
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=[issue_job("done")]),
+            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[listed]),
+        ):
+            page = self.writing_client().get("/certificates").text
+        self.assertNotIn('">Issued<', page)
+        self.assertEqual(page.count("<strong>new.example.com</strong>"), 1)
+
     def test_a_deleting_row_shows_the_badge_and_the_page_refreshes(self) -> None:
         with mock.patch(
             "haproxy_ui.db.recent_jobs", return_value=[delete_job("running", "old.example.com")]

@@ -1586,7 +1586,7 @@ def build_router(config: Config) -> APIRouter:
                 server_addresses=addresses,
             )
             if config.traffic_logs.enabled
-            else traffic_logs.Reading((), (), 0, False, False)
+            else traffic_logs.Reading((), (), 0, False)
         )
         if time_filter_error is not None:
             reading = replace(reading, entries=(), filter_error=time_filter_error)
@@ -1623,8 +1623,6 @@ def build_router(config: Config) -> APIRouter:
                 "enabled": config.traffic_logs.enabled,
                 "reading": reading,
                 "freshness_warnings": freshness_warnings,
-                "scan_mib_per_node": traffic_logs.MAX_SCAN_BYTES // (1024 * 1024),
-                "scan_mib_total": traffic_logs.MAX_TOTAL_SCAN_BYTES // (1024 * 1024),
                 "clusters": config.clusters,
                 "selected_cluster": selected_cluster,
                 "selected_status": selected_status,
@@ -1820,12 +1818,16 @@ def build_router(config: Config) -> APIRouter:
             )
             connection.commit()
         #
-        # To the jobs page, not back to the listing. The listing cannot show
-        # a job that belongs to no cluster, and the jobs page is where
-        # certbot's answer arrives - the thing the person pressed the button
-        # to find out.
+        # Back to the listing, opened on the row the request is: the row says
+        # "Requesting" and refreshes until the CA has answered, and carries
+        # the CA's own words if the answer is no. The jobs page keeps the
+        # full record, but it is not where a person expects to land.
         #
-        return RedirectResponse("/jobs", status_code=303)
+        identifier = payload.get("id") or certificate_form.certificate_id_of(form)
+        return RedirectResponse(
+            f"/certificates?view=registry&open={quote(str(identifier), safe='')}",
+            status_code=303,
+        )
 
     @router.post("/certificates/{certificate_id}/resume")
     async def resume_enrollment(
@@ -2184,6 +2186,18 @@ def build_router(config: Config) -> APIRouter:
             logger.error("dns_profiles.public_key cannot be read: %s", exc)
             return None
 
+    def _just_removed(request: Request, profile_ids: Sequence[str]) -> str:
+        """The profile a removal was just asked for, if the address names one.
+
+        The refused-removal banner is drawn once, on the page the removal
+        lands on; after that the status column's "Removal refused" link
+        carries the same fact without shouting it on every visit. Only an
+        existing profile's ID is echoed, never the query string itself.
+        """
+
+        wanted = request.query_params.get("removed", "")
+        return wanted if wanted in profile_ids else ""
+
     @router.get("/dns-profiles", response_class=HTMLResponse)
     def dns_profile_list(request: Request) -> Response:
         gate = _dns_profiles_gate(request)
@@ -2222,6 +2236,7 @@ def build_router(config: Config) -> APIRouter:
                 "role": gate.role,
                 "csrf_token": auth.csrf_token(token),
                 "rows": rows,
+                "just_removed": _just_removed(request, [profile.id for profile in profiles]),
                 "public_key": public_key,
                 "refresh": any(s.label in {"Applying", "Removing"} for s in statuses.values()),
                 "certificate_job": jobs.certificate_in_flight(recent),
@@ -2355,7 +2370,7 @@ def build_router(config: Config) -> APIRouter:
             )
             connection.commit()
         await _await_dns_profile_job(request, job.id)
-        return RedirectResponse("/dns-profiles", status_code=303)
+        return RedirectResponse(f"/dns-profiles?removed={existing.id}", status_code=303)
 
     async def _dns_profile_submit(
         request: Request, session: AuthenticatedSession, *, existing: db.DnsProfile | None
@@ -2600,6 +2615,7 @@ def build_router(config: Config) -> APIRouter:
                 "role": gate.role,
                 "profiles": profiles,
                 "statuses": statuses,
+                "just_removed": _just_removed(request, [profile.id for profile in profiles]),
                 "public_key": _dns_public_key(),
                 "refresh": any(p.label in {"Applying", "Removing"} for p in statuses.values()),
                 "section": "certificates",
@@ -2872,7 +2888,7 @@ def build_router(config: Config) -> APIRouter:
             )
             connection.commit()
         await _await_dns_profile_job(request, job.id)
-        return RedirectResponse("/ndes-profiles", status_code=303)
+        return RedirectResponse(f"/ndes-profiles?removed={existing.id}", status_code=303)
 
     @router.get("/backups", response_class=HTMLResponse)
     def backup_overview(request: Request) -> Response:

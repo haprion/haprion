@@ -178,15 +178,21 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             profile = page.locator("select[name='dns_profile']")
             self.assertFalse(profile.is_disabled())
 
+            ndes = page.locator("select[name='ndes_profile']")
+            self.assertFalse(ndes.is_visible())
+
             page.check("input[name='method'][value='http-01']")
             self.assertTrue(profile.is_disabled())
+            self.assertTrue(profile.is_visible())
             self.assertLess(
-                page.evaluate("getComputedStyle(document.querySelector('.dns-only')).opacity"),
+                page.evaluate("getComputedStyle(document.querySelector('.profile-field')).opacity"),
                 "1",
             )
+            self.assertTrue(page.locator("[data-profile-hint='http-01']").is_visible())
 
             page.check("input[name='method'][value='dns-01']")
             self.assertFalse(profile.is_disabled())
+            self.assertTrue(page.locator("[data-profile-hint='dns-01']").is_visible())
 
     def test_the_challenge_sits_midway_between_its_neighbours(self) -> None:
         with self.signed_in(path="/certificates/new") as page:

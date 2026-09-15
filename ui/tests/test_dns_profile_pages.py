@@ -304,13 +304,21 @@ class ThePages(ProfileRouteTestCase):
             result=None,
         )
         with mock.patch("haproxy_ui.db.recent_jobs", return_value=[refused, applied]):
-            page = self.writing_client().get("/dns-profiles").text
+            client = self.writing_client()
+            page = client.get("/dns-profiles?removed=cf-main").text
+            later = client.get("/dns-profiles").text
+            other = client.get("/dns-profiles?removed=<b>x").text
 
         self.assertIn("In effect", page)
         self.assertIn('href="/jobs#job-41">· Removal refused</a>', page)
-        # The helper's reason is on the page itself, not one click away.
+        # The helper's reason is on the page the removal lands on, not one
+        # click away - and only there. A later visit has the column's link.
         self.assertIn("Removal of <code>cf-main</code> was refused.", page)
         self.assertIn("referenced by certificate(s): shop", page)
+        self.assertNotIn("was refused", later)
+        self.assertIn('href="/jobs#job-41">· Removal refused</a>', later)
+        self.assertNotIn("was refused", other)
+        self.assertNotIn("<b>x", other)
 
     def test_without_a_key_the_page_says_so_and_offers_no_form(self) -> None:
         page = self.writing_client(with_key=False).get("/dns-profiles").text
@@ -486,7 +494,7 @@ class RemovingAProfile(ProfileRouteTestCase):
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/dns-profiles")
+        self.assertEqual(response.headers["location"], "/dns-profiles?removed=cf-main")
         self.assertEqual(
             self.queued[0]["payload"],
             {"profile": "cf-main", "revision": 3, "remove": True},

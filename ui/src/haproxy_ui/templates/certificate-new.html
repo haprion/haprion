@@ -22,7 +22,7 @@
 {% endif %}
 
 {% if certificate_job %}
-<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> The queue runs one certificate job at a time; this form can be sent once it has finished. Follow it on the <a href="/jobs">Jobs</a> page.</p>
+<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> The queue runs one certificate job at a time; this form can be sent once it has finished. Its row on the <a href="/certificates">certificate list</a> shows how it is going.</p>
 {% endif %}
 
 <form method="post" action="/certificates/new" class="preview-form certificate-form">
@@ -55,26 +55,27 @@
         </div>
       </div>
       {#
-        Greyed under HTTP-01, not hidden: the page keeps its height and the
-        label keeps saying what the challenge above decided. A disabled select
-        is not submitted, which is the right answer for HTTP-01 - the server
-        refuses a profile with it and requires one with DNS-01 either way.
+        One field, whichever CA was chosen: the select that belongs to the
+        challenge above is the one shown, and under HTTP-01 the DNS one stays
+        in place greyed, so the page keeps its height. A disabled select is
+        not submitted, which is the right answer for HTTP-01 - the server
+        refuses a profile with it and requires one with the other two either
+        way. Two selects with different names because the server reads two
+        fields; the reader sees one.
       #}
-      <div class="field profile-fields">
-      <label class="dns-only"><span class="field-title">DNS provider profile</span>
-        <select name="dns_profile"{% if form.method in ('http-01', 'ndes') %} disabled{% endif %}>
+      <div class="field profile-field" data-profile-field>
+        <span class="field-title" id="profile-field-title">Provider profile</span>
+        <select name="dns_profile" class="dns-only" aria-labelledby="profile-field-title"{% if form.method in ('http-01', 'ndes') %} disabled{% endif %}{% if form.method == 'ndes' %} hidden{% endif %}>
           <option value="">Choose a profile…</option>
           {% for profile in choices.dns_profiles %}<option value="{{ profile }}"{% if form.dns_profile == profile %} selected{% endif %}>{{ profile }}</option>{% endfor %}
         </select>
-        <small>Required for DNS-01. <a href="/dns-profiles">Manage profiles</a>.</small>
-      </label>
-      <label class="ndes-only"><span class="field-title">NDES provider profile</span>
-        <select name="ndes_profile"{% if form.method != 'ndes' %} disabled{% endif %}>
+        <select name="ndes_profile" class="ndes-only" aria-labelledby="profile-field-title"{% if form.method != 'ndes' %} disabled hidden{% endif %}>
           <option value="">Choose a profile…</option>
           {% for profile in choices.ndes_profiles %}<option value="{{ profile }}"{% if form.ndes_profile == profile %} selected{% endif %}>{{ profile }}</option>{% endfor %}
         </select>
-        <small>Required for Microsoft AD CS. <a href="/ndes-profiles">Manage profiles</a>.</small>
-      </label>
+        <small data-profile-hint="dns-01"{% if form.method in ('http-01', 'ndes') %} hidden{% endif %}>Required for DNS-01. <a href="/dns-profiles">Manage DNS profiles</a>.</small>
+        <small data-profile-hint="http-01"{% if form.method != 'http-01' %} hidden{% endif %}>Not used with HTTP-01.</small>
+        <small data-profile-hint="ndes"{% if form.method != 'ndes' %} hidden{% endif %}>Required for Microsoft AD CS. <a href="/ndes-profiles">Manage NDES profiles</a>.</small>
       </div>
     </div>
   </section>
@@ -120,7 +121,7 @@
       </div>
     </div>
     <div class="editor-actions editor-submit">
-      <p class="table-note">The job takes a minute or two. Its outcome — and certbot's own words if it fails — is on the Jobs page.</p>
+      <p class="table-note">The job takes a minute or two. The certificate's row shows it being requested, and the CA's own words if it fails.</p>
       <button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Request the certificate</button>
     </div>
   </section>

@@ -19,7 +19,7 @@
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>This installation has no profile key.</strong> Profiles can be listed but not created until <code>[dns_profiles] public_key</code> names one; see the installation guide, 1.4.5.</p>
 {% endif %}
 
-{% for profile in profiles if statuses[profile.id].attention_message %}
+{% for profile in profiles if statuses[profile.id].attention_message and profile.id == just_removed %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>Removal of <code>{{ profile.id }}</code> was refused.</strong> {{ statuses[profile.id].attention_message }}. The profile stays in effect; delete or re-enroll those certificates first.</p>
 {% endfor %}
 

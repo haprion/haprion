@@ -262,15 +262,36 @@ class TheFormPage(CertificateFormRouteTestCase):
         client = self.writing_client()
         page = client.get("/certificates/new").text
         self.assertIn("certificate-form.js", page)
-        self.assertIn('<label class="dns-only">', page)
-        self.assertIn('<select name="dns_profile">', page)
+        self.assertIn('<div class="field profile-field" data-profile-field>', page)
+        self.assertIn(
+            '<select name="dns_profile" class="dns-only" aria-labelledby="profile-field-title">',
+            page,
+        )
+        #
+        # One field for the reader: the NDES select is there for the server
+        # but hidden until its CA is chosen, and only one hint shows.
+        #
+        self.assertIn(
+            '<select name="ndes_profile" class="ndes-only" aria-labelledby="profile-field-title" disabled hidden>',
+            page,
+        )
+        self.assertIn('<small data-profile-hint="dns-01">Required for DNS-01.', page)
+        self.assertIn(
+            '<small data-profile-hint="http-01" hidden>Not used with HTTP-01.</small>', page
+        )
+        self.assertEqual(page.count("Provider profile</span>"), 1)
 
         #
         # A refused HTTP-01 form is redrawn with the choice kept, so the
         # server draws the field the way the script would have: disabled.
         #
         page = self.post(client, domain="*.example.com", method="http-01").text
-        self.assertIn('<select name="dns_profile" disabled>', page)
+        self.assertIn(
+            '<select name="dns_profile" class="dns-only" aria-labelledby="profile-field-title" disabled>',
+            page,
+        )
+        self.assertIn('<small data-profile-hint="http-01">Not used with HTTP-01.</small>', page)
+        self.assertIn('<small data-profile-hint="dns-01" hidden>', page)
 
     def test_the_listing_links_to_it_for_an_admin_only(self) -> None:
         self.assertIn('href="/certificates/new"', self.writing_client().get("/certificates").text)
@@ -399,6 +420,9 @@ class SendingTheFormOverNdes(CertificateFormRouteTestCase):
             self.ndes_client(), domain="*.example.com", method="ndes", ndes_profile="certserver1"
         )
         self.assertEqual(response.status_code, 303, response.text)
+        self.assertEqual(
+            response.headers["location"], "/certificates?view=registry&open=example.com"
+        )
         (job,) = self.queued
         self.assertEqual(job["operation"], "cert_scep")
         self.assertIsNone(job["cluster"])
@@ -412,6 +436,19 @@ class SendingTheFormOverNdes(CertificateFormRouteTestCase):
                 "receivers": [],
             },
         )
+
+    def test_a_refused_ndes_form_is_redrawn_with_the_ndes_select_shown(self) -> None:
+        page = self.post(self.ndes_client(), method="ndes").text
+        self.assertIn(
+            '<select name="dns_profile" class="dns-only" aria-labelledby="profile-field-title" disabled hidden>',
+            page,
+        )
+        self.assertIn(
+            '<select name="ndes_profile" class="ndes-only" aria-labelledby="profile-field-title">',
+            page,
+        )
+        self.assertIn('<small data-profile-hint="ndes">Required for Microsoft AD CS.', page)
+        self.assertIn('<small data-profile-hint="dns-01" hidden>', page)
 
     def test_ndes_needs_a_profile_in_effect_and_refuses_a_dns_profile(self) -> None:
         page = self.post(self.ndes_client(), method="ndes").text
@@ -428,7 +465,11 @@ class SendingTheForm(CertificateFormRouteTestCase):
         response = self.post(self.writing_client())
 
         self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/jobs")
+        # To the listing, opened on the row that is now "Requesting" - not to
+        # the jobs page, which is where a person looks when something failed.
+        self.assertEqual(
+            response.headers["location"], "/certificates?view=registry&open=app.example.com"
+        )
         self.assertEqual(len(self.queued), 1)
         job = self.queued[0]
         self.assertEqual(job["operation"], "cert_issue")

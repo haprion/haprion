@@ -156,7 +156,7 @@ class RemovingAnNdesProfile(NdesPages):
             follow_redirects=False,
         )
         self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/ndes-profiles")
+        self.assertEqual(response.headers["location"], "/ndes-profiles?removed=internal-ca")
         self.assertEqual(
             self.queued[0]["payload"],
             {"profile": "internal-ca", "revision": 3, "remove": True},
@@ -182,10 +182,15 @@ class RemovingAnNdesProfile(NdesPages):
             refused, id=40, state="done", payload={"profile": "certserver1", "revision": 1}, result=None
         )
         with mock.patch("haproxy_ui.db.recent_jobs", return_value=[refused, applied]):
-            page = self.writing_client().get("/ndes-profiles").text
+            client = self.writing_client()
+            page = client.get("/ndes-profiles?removed=certserver1").text
+            later = client.get("/ndes-profiles").text
         self.assertIn("In effect", page)
         self.assertIn("Removal of <code>certserver1</code> was refused.", page)
         self.assertIn("webserver1-scep", page)
+        # Once is enough: the next visit keeps the status column's link only.
+        self.assertNotIn("was refused", later)
+        self.assertIn("· Removal refused</a>", later)
 
         # Once the registry no longer names the profile the reason is gone,
         # and so is the note - without waiting for another attempt.

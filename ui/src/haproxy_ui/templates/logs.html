@@ -62,7 +62,6 @@
 </form>
 
 {% if reading.filter_error %}<p class="notice notice-warning">{{ reading.filter_error }}</p>{% endif %}
-{% if reading.truncated %}<p class="notice notice-warning">Filters searched only the newest {{ scan_mib_per_node }} MiB per node, within a {{ scan_mib_total }} MiB page-wide window. Older records were not searched.</p>{% endif %}
 <div class="table-scroll log-table-wrap">
   <table class="node-table log-table">
     <thead><tr><th class="log-select"><input type="checkbox" data-log-select-all aria-label="Select all visible requests"></th><th>Time</th><th>Cluster / node</th><th>Client</th><th>Request</th><th>Status</th><th>Destination</th><th>Bytes</th></tr></thead>
@@ -75,7 +74,7 @@
       <td><span class="status-badge status-badge-{{ 'healthy' if entry.status < 400 else 'warning' if entry.status < 500 else 'critical' }}">{{ entry.status }}</span></td>
       <td><code title="{{ entry.server or 'Destination unavailable' }}">{{ entry.server or 'Destination unavailable' }}</code></td>
       <td>{{ entry.bytes }}</td>
-    </tr>{% else %}<tr><td colspan="8"><div class="empty-state"><div><strong>No matching requests</strong><span>The view shows at most the {{ max_lines }} newest mirrored records.</span></div></div></td></tr>{% endfor %}</tbody>
+    </tr>{% else %}<tr><td colspan="8"><div class="empty-state"><div><strong>No matching requests</strong><span>A filter searches the whole mirror; the view shows at most the {{ max_lines }} newest matches.</span></div></div></td></tr>{% endfor %}</tbody>
   </table>
 </div>
 {% if reading.entries %}<nav class="log-pagination" aria-label="Traffic log pages">

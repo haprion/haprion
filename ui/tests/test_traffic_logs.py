@@ -143,7 +143,6 @@ class TrafficLogReadingTests(unittest.TestCase):
             nodes=(),
             malformed=0,
             unavailable=False,
-            truncated=False,
         )
 
         resolved = resolve_server_addresses(reading, addresses)
@@ -156,7 +155,6 @@ class TrafficLogReadingTests(unittest.TestCase):
             nodes=(),
             malformed=0,
             unavailable=False,
-            truncated=False,
         )
 
         resolved = resolve_server_addresses(reading, {})
@@ -260,10 +258,8 @@ class TrafficLogReadingTests(unittest.TestCase):
 
         self.mirror("beta", "node-c", record())
 
-        self.assertEqual(read(self.root, ("alpha",)), Reading((), (), 0, False, False))
-        self.assertEqual(
-            read(self.root, ("alpha",), cluster="beta"), Reading((), (), 0, False, False)
-        )
+        self.assertEqual(read(self.root, ("alpha",)), Reading((), (), 0, False))
+        self.assertEqual(read(self.root, ("alpha",), cluster="beta"), Reading((), (), 0, False))
 
     def test_a_file_name_that_is_not_a_node_is_ignored(self) -> None:
         for name in ("alpha--.jsonl", "alpha--../escape.jsonl", "alpha--a b.jsonl"):
@@ -378,14 +374,52 @@ class TrafficLogReadingTests(unittest.TestCase):
 
         self.assertEqual(len(read(self.root, ("alpha",), limit=10).entries), 10)
 
-    def test_a_bounded_tail_reports_that_older_records_were_not_searched(self) -> None:
+    def test_the_unfiltered_view_reads_a_bounded_tail(self) -> None:
         self.mirror("alpha", "node-a", record(path="/old"), record(path="/new"))
 
-        with patch("haproxy_ui.traffic_logs.MAX_SCAN_BYTES", len(record()) + 1):
+        with patch("haproxy_ui.traffic_logs.MAX_TAIL_BYTES", len(record()) + 1):
             reading = read(self.root, ("alpha",))
 
-        self.assertTrue(reading.truncated)
         self.assertEqual([entry.path for entry in reading.entries], ["/new"])
+
+    def test_a_filter_searches_the_whole_mirror_and_not_only_the_tail(self) -> None:
+        """The question that found this: "ftp, some day last week".
+
+        The unfiltered page shows the newest records and reads the newest
+        bytes. A filter is a question about everything the collector kept,
+        and a match older than the tail must be found.
+        """
+
+        self.mirror(
+            "alpha", "node-a", record(path="/ftp-old"), *(record(path="/new") for _ in range(20))
+        )
+
+        with patch("haproxy_ui.traffic_logs.MAX_TAIL_BYTES", len(record()) * 3):
+            unfiltered = read(self.root, ("alpha",))
+            searched = read(self.root, ("alpha",), substring="ftp")
+            by_status = read(self.root, ("alpha",), status="200")
+
+        self.assertNotIn("/ftp-old", [entry.path for entry in unfiltered.entries])
+        self.assertEqual([entry.path for entry in searched.entries], ["/ftp-old"])
+        self.assertEqual(len(by_status.entries), 21)
+
+    def test_a_search_stops_at_the_collector_s_size_limit_and_drops_the_cut_line(self) -> None:
+        self.mirror(
+            "alpha", "node-a", record(path="/one"), record(path="/two"), record(path="/three")
+        )
+
+        with patch("haproxy_ui.traffic_logs.MAX_SEARCH_BYTES", len(record()) * 2 + 5):
+            reading = read(self.root, ("alpha",), substring="/")
+
+        self.assertEqual(sorted(entry.path for entry in reading.entries), ["/one", "/two"])
+        self.assertEqual(reading.malformed, 0)
+
+    def test_a_search_keeps_only_the_newest_matches_within_the_limit(self) -> None:
+        self.mirror("alpha", "node-a", *(record(request=n) for n in range(30)))
+
+        reading = read(self.root, ("alpha",), substring="/", limit=5)
+
+        self.assertEqual([entry.request for entry in reading.entries], [29, 28, 27, 26, 25])
 
 
 class TheTrafficLogPage(LoginTestCase):
@@ -555,15 +589,6 @@ class TheTrafficLogPage(LoginTestCase):
         # on how slow the runner is; only the outcome and the old success matter.
         self.assertRegex(page, r"last try \d+ s ago — failed \(ssh\)")
         self.assertIn("last success 10 min ago", page)
-
-    def test_a_truncated_search_window_is_stated_on_the_page(self) -> None:
-        (self.root / "alpha--node-a.jsonl").write_bytes(record(path="/old") + record(path="/new"))
-
-        with patch("haproxy_ui.traffic_logs._tail", return_value=(record(path="/new"), True)):
-            page = self.page()
-
-        self.assertIn("Filters searched only the newest 16 MiB per node", page)
-        self.assertIn("Older records were not searched", page)
 
     def test_a_record_and_time_pickers_use_the_host_s_clock_without_a_zone_label(self) -> None:
         """One clock across the interface, and the page says which one it is.

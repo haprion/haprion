@@ -23,7 +23,7 @@
 <p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> The queue runs one certificate job at a time; a profile saved now is applied when it has finished.{% if refresh %} This page refreshes until then.{% endif %}</p>
 {% endif %}
 
-{% for row in rows if row.status.attention_message %}
+{% for row in rows if row.status.attention_message and row.profile.id == just_removed %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>Removal of <code>{{ row.profile.id }}</code> was refused.</strong> {{ row.status.attention_message }}. The profile stays in effect.</p>
 {% endfor %}
 

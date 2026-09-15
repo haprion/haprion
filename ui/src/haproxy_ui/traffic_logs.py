@@ -7,10 +7,11 @@ much this process reads, how long a field is, or what a template renders.
 
 from __future__ import annotations
 
+import heapq
 import json
 import os
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,10 +22,17 @@ from haproxy_mgmt.proxy_model import Proxy
 
 NODE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 MAX_RECORD_BYTES = 16 * 1024
-MAX_SCAN_BYTES = 16 * 1024 * 1024
-# One node cannot make the page expensive by growing, and a directory full of
-# names cannot make it expensive by counting. Both limits are on this side.
-MAX_TOTAL_SCAN_BYTES = 64 * 1024 * 1024
+# The unfiltered page shows the newest records, so it reads the newest bytes:
+# a bounded tail per node, and a page-wide budget so a directory full of
+# nodes cannot make the page expensive by counting.
+MAX_TAIL_BYTES = 16 * 1024 * 1024
+MAX_TOTAL_TAIL_BYTES = 64 * 1024 * 1024
+# A filter is a question about the whole mirror - "ftp, some day last week" -
+# and an answer drawn from the newest sixteen mebibytes is a wrong answer
+# that looks like an empty one. So a filtered read streams every record the
+# collector kept, one line at a time, keeping only what matches; the bound is
+# the collector's own mirror size, which is what a node cannot grow past.
+MAX_SEARCH_BYTES = 256 * 1024 * 1024
 MAX_NODES = 64
 MAX_META_BYTES = 4096
 MAX_SEARCH_TOKENS = 64
@@ -95,7 +103,6 @@ class Reading:
     nodes: tuple[Freshness, ...]
     malformed: int
     unavailable: bool
-    truncated: bool
     filter_error: str | None = None
 
 
@@ -395,7 +402,7 @@ def _tail(path: Path, *, budget: int) -> tuple[bytes, bool]:
     descriptor = os.open(path, flags)
     try:
         size = os.fstat(descriptor).st_size
-        window = min(budget, MAX_SCAN_BYTES)
+        window = min(budget, MAX_TAIL_BYTES)
         start = max(0, size - window)
         os.lseek(descriptor, start, os.SEEK_SET)
         remaining = min(size, window)
@@ -410,6 +417,39 @@ def _tail(path: Path, *, budget: int) -> tuple[bytes, bool]:
     finally:
         os.close(descriptor)
     return data, start > 0
+
+
+def _lines(path: Path) -> Iterator[bytes]:
+    """Every line of a mirror, streamed, without following a symlink.
+
+    The whole file and nothing held: a chunk at a time, split on newlines, the
+    unfinished last line carried into the next chunk. A file past the
+    collector's own limit stops being read where that limit is; the last line
+    of such a read is a record cut in half and is dropped, not counted as
+    malformed. Opened here, not on first use, so a missing or unreadable file
+    is reported where the caller is looking for it.
+    """
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    return _stream(os.open(path, flags))
+
+
+def _stream(descriptor: int) -> Iterator[bytes]:
+    try:
+        remaining = MAX_SEARCH_BYTES
+        carry = b""
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 1024 * 1024))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            lines = (carry + chunk).split(b"\n")
+            carry = lines.pop()
+            yield from lines
+        if carry and remaining:
+            yield carry
+    finally:
+        os.close(descriptor)
 
 
 def _targets(directory: Path, clusters: tuple[str, ...]) -> tuple[list[tuple[str, str]], bool]:
@@ -449,13 +489,13 @@ def read(
 ) -> Reading:
     wanted = (cluster,) if cluster else clusters
     if cluster and cluster not in clusters:
-        return Reading((), (), 0, False, False)
+        return Reading((), (), 0, False)
     status_code = int(status) if status.isdigit() and len(status) == 3 else None
     status_class = (
         int(status[0]) if len(status) == 3 and status[1:] == "xx" and status[0].isdigit() else None
     )
     if status and status_code is None and status_class is None:
-        return Reading((), (), 0, False, False)
+        return Reading((), (), 0, False)
     filter_error: str | None
     try:
         expression = _Parser(_tokens(substring[:200])).parse()
@@ -466,55 +506,69 @@ def read(
         filter_error = None
     addresses = server_addresses or {}
 
+    #
+    # The cluster choice is a scope, not a question about the records, and
+    # the newest records are in the newest bytes. Every other filter is a
+    # question the whole mirror has to answer.
+    #
+    searching = bool(status or substring or from_at is not None or to_at is not None)
     targets, unavailable = _targets(directory, tuple(wanted))
     entries: list[Entry] = []
     nodes: list[Freshness] = []
     malformed = 0
-    any_truncated = False
-    budget = MAX_TOTAL_SCAN_BYTES
+    budget = MAX_TOTAL_TAIL_BYTES
 
     for cluster_id, node in targets:
         nodes.append(_freshness(directory / f"{cluster_id}--{node}{META_SUFFIX}", cluster_id, node))
         path = directory / f"{cluster_id}--{node}{MIRROR_SUFFIX}"
+        lines: Iterable[bytes]
         try:
-            data, truncated = _tail(path, budget=budget)
+            if searching:
+                lines = _lines(path)
+            else:
+                data, truncated = _tail(path, budget=budget)
+                budget -= len(data)
+                lines = data.splitlines()
+                #
+                # The first line of a truncated window is a record cut in
+                # half. Dropping it is not defensive tidying: parsing it would
+                # count as malformed and report the size limit as corrupt data.
+                #
+                if truncated and lines:
+                    lines = lines[1:]
+            #
+            # A read that fails half way through a stream leaves the node's
+            # matches so far in place and says the mirror was unavailable; a
+            # partial answer marked as partial beats an empty page.
+            #
+            for line in lines:
+                try:
+                    entry = parse(line, cluster_id, node)
+                except (OSError, UnicodeError, ValueError, OverflowError):
+                    malformed += 1
+                    continue
+                entry = _resolved_server(entry, addresses)
+                if from_at is not None and entry.at < from_at:
+                    continue
+                if to_at is not None and entry.at > to_at:
+                    continue
+                if status_code is not None and entry.status != status_code:
+                    continue
+                if status_class is not None and entry.status // 100 != status_class:
+                    continue
+                searchable = (
+                    f"{entry.cluster} {entry.node} {entry.client} {entry.method} {entry.host} "
+                    f"{entry.path} {entry.frontend} {entry.backend} {entry.server} "
+                    f"{entry.status} {entry.bytes}"
+                ).casefold()
+                if expression is None or not _matches(expression, searchable):
+                    continue
+                entries.append(entry)
         except FileNotFoundError:
             continue
         except OSError:
             unavailable = True
             continue
-        budget -= len(data)
-        any_truncated = any_truncated or truncated
-        lines = data.splitlines()
-        #
-        # The first line of a truncated window is a record cut in half. Dropping
-        # it is not defensive tidying: parsing it would count as malformed and
-        # report the size limit as corrupt data.
-        #
-        if truncated and lines:
-            lines = lines[1:]
-        for line in lines:
-            try:
-                entry = parse(line, cluster_id, node)
-            except (OSError, UnicodeError, ValueError, OverflowError):
-                malformed += 1
-                continue
-            entry = _resolved_server(entry, addresses)
-            if from_at is not None and entry.at < from_at:
-                continue
-            if to_at is not None and entry.at > to_at:
-                continue
-            if status_code is not None and entry.status != status_code:
-                continue
-            if status_class is not None and entry.status // 100 != status_class:
-                continue
-            searchable = (
-                f"{entry.cluster} {entry.node} {entry.client} {entry.method} {entry.host} {entry.path} "
-                f"{entry.frontend} {entry.backend} {entry.server} {entry.status} {entry.bytes}"
-            ).casefold()
-            if expression is None or not _matches(expression, searchable):
-                continue
-            entries.append(entry)
 
     #
     # The accept time is whole seconds, so a busy second holds many records and
@@ -522,12 +576,5 @@ def read(
     # counter breaks the tie within one node, which is the only place it means
     # anything - it restarts with the process, and two nodes never share one.
     #
-    entries.sort(key=lambda item: (item.at, item.node, item.request), reverse=True)
-    return Reading(
-        tuple(entries[:limit]),
-        tuple(nodes),
-        malformed,
-        unavailable,
-        any_truncated,
-        filter_error,
-    )
+    newest = heapq.nlargest(limit, entries, key=lambda item: (item.at, item.node, item.request))
+    return Reading(tuple(newest), tuple(nodes), malformed, unavailable, filter_error)

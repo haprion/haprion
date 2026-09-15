@@ -188,6 +188,19 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
     return payload
 
 
+def certificate_id_of(form: IssueForm) -> str:
+    """The name the certificate will be listed under, the engine's way.
+
+    Only called for a form `payload_from_form` accepted, so the domain has
+    already parsed; the fallback keeps a bad one from raising here.
+    """
+
+    try:
+        return parse_domain(form.domain)[0]
+    except IssueError:
+        return form.domain
+
+
 def _unknown(chosen: Iterable[str], offered: Iterable[str]) -> tuple[str, ...]:
     known = set(offered)
     return tuple(name for name in chosen if name not in known)

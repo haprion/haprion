@@ -568,6 +568,34 @@ def check_cert_target_semantics(document: dict[str, object], path: Path) -> None
     )
 
 
+def check_cert_scep_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] in {"done", "partial"}:
+            raise AssertionError(f"{path}: a done or pending cert_scep carries a result")
+        return
+    assert isinstance(result, dict)
+    # The wildcard is a SAN beside its base name; the CN is never a wildcard
+    # (the engine refuses the request before Certmonger starts).
+    if str(result["domains"][0]).startswith("*."):
+        raise AssertionError(f"{path}: the primary name cannot be a wildcard")
+    if result["state"] == "pending":
+        if document["outcome"] != "partial" or "publication" in result:
+            raise AssertionError(f"{path}: a pending request is partial and unpublished")
+        return
+    if document["outcome"] == "partial":
+        raise AssertionError(f"{path}: an issued certificate is not partial")
+    publication = result["publication"]
+    assert isinstance(publication, dict)
+    if publication["certificate"] != result["id"]:
+        raise AssertionError(f"{path}: the publication names the enrolled certificate")
+    if set(publication["sans"]) != set(result["domains"]):
+        raise AssertionError(f"{path}: the issued SANs are exactly the requested names")
+    check_cert_publish_semantics(
+        {**document, "operation": "cert_publish", "result": publication["publish"]}, path
+    )
+
+
 SEMANTIC_CHECKS = {
     "status": check_status_semantics,
     "list": check_list_semantics,
@@ -588,6 +616,7 @@ SEMANTIC_CHECKS = {
     "cert_publish": check_cert_publish_semantics,
     "cert_target": check_cert_target_semantics,
     "cert_delete": check_cert_delete_semantics,
+    "cert_scep": check_cert_scep_semantics,
 }
 
 
@@ -633,6 +662,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["registry"]["abandoned"] = list(result["registry"]["targets"]["clusters"])
     elif operation == "cert_delete":
         result["removed"] = ["a-certificate-no-row-names"]
+    elif operation == "cert_scep":
+        result["domains"] = ["*." + str(result["domains"][0])]
     else:
         raise AssertionError(f"no semantic mutation defined for {operation}")
 

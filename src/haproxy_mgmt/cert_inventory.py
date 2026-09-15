@@ -42,6 +42,7 @@ from haproxy_mgmt.certificates import (
     leaf_fingerprint,
 )
 from haproxy_mgmt.config import Cluster, RegisteredCertificate, Registry
+from haproxy_mgmt.ndes_state import request_is_pending
 
 OPENSSL = "/usr/bin/openssl"
 LETSENCRYPT_ROOT = Path("/etc/letsencrypt")
@@ -378,6 +379,7 @@ def registry_result(
     now: datetime,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
+    request_root: Path | None = None,
 ) -> dict[str, Any]:
     """Every certificate the manager holds, measured at its source.
 
@@ -408,6 +410,17 @@ def registry_result(
         )
         if isinstance(measured, str):
             row["validation_error"] = measured
+            #
+            # An import whose material has not arrived may be a request the
+            # CA is still holding (C6). Said as its own field so the listing
+            # can tell "waiting" from "broken" without parsing the sentence.
+            #
+            if (
+                request_root is not None
+                and entry.source.kind == "import"
+                and request_is_pending(request_root, entry.certificate_id)
+            ):
+                row["request_state"] = "pending"
         else:
             fingerprint, facts, row["measured_at"] = measured
             row.update(
@@ -496,6 +509,7 @@ def cert_list_result(
     now: datetime | None = None,
     registry: Registry | None = None,
     import_store: Path = IMPORT_STORE,
+    request_root: Path | None = None,
 ) -> dict[str, Any]:
     """The cluster's referenced certificates, then the rest of the directory.
 
@@ -552,5 +566,6 @@ def cert_list_result(
             now=clock,
             live=letsencrypt_root / "live",
             store=import_store,
+            request_root=request_root,
         )
     return result

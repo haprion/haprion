@@ -455,6 +455,54 @@ class RegistryListingTests(unittest.TestCase):
         self.assertIn("no material at its source", entry["validation_error"])
         self.assertIsNone(entry["fingerprint_sha256"])
         self.assertIsNone(entry["measured_at"])
+        self.assertNotIn("request_state", entry)
+
+    def test_an_import_the_ca_is_still_holding_says_pending(self) -> None:
+        #
+        # C6: the same empty import, but a request for it is on the disk and
+        # has no certificate yet. Said as its own field, so the interface can
+        # tell waiting from broken without parsing the sentence.
+        #
+        from haproxy_mgmt.ndes_state import request_directory
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requests = root / "requests"
+            pending = request_directory(requests, "internal")
+            pending.mkdir(parents=True)
+            (pending / "request.json").write_text('{"certificate": "internal"}')
+            registry = self._registry(
+                root,
+                certificates={
+                    "internal": self._entry("internal", kind="import", clusters=("beta",)),
+                    "other": self._entry("other", kind="import", clusters=("beta",)),
+                },
+            )
+            result = cert_inventory.registry_result(
+                registry,
+                certificate_root=root / "certdist",
+                renewed=frozenset(),
+                now=datetime.now(UTC),
+                live=root / "live",
+                store=root / "import",
+                request_root=requests,
+            )
+            by_id = {entry["id"]: entry for entry in result["certificates"]}
+            self.assertEqual(by_id["internal"]["request_state"], "pending")
+            self.assertNotIn("request_state", by_id["other"])
+            # Once the CA has answered, the material is beside the record and
+            # the request is no longer pending, whatever the import says.
+            (pending / "cert.pem").write_text("not yet imported")
+            result = cert_inventory.registry_result(
+                registry,
+                certificate_root=root / "certdist",
+                renewed=frozenset(),
+                now=datetime.now(UTC),
+                live=root / "live",
+                store=root / "import",
+                request_root=requests,
+            )
+            self.assertNotIn("request_state", result["certificates"][0])
 
     def test_an_import_with_an_empty_source_is_measured_at_its_published_copy(self) -> None:
         #

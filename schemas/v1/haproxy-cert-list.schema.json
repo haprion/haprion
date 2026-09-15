@@ -134,6 +134,10 @@
         },
         "readable": { "type": "boolean" },
         "validation_error": { "type": ["string", "null"], "maxLength": 2048 },
+        "request_state": {
+          "description": "Additive (C6): an import whose material has not arrived because an NDES enrollment for it is still waiting on the CA. Absent otherwise.",
+          "const": "pending"
+        },
         "measured_at": {
           "description": "Where the facts were read: the certificate's own source, or the published cluster copy when the source holds nothing yet - an import registered before the import helper exists. Null when nothing could be read.",
           "enum": ["source", "distribution", null]

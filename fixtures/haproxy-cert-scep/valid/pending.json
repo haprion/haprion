@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "partial",
+  "operation": "cert_scep",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "id": "web-cert",
+    "profile": "certserver1",
+    "domains": ["web.example.test"],
+    "state": "pending"
+  },
+  "warnings": [
+    { "code": "request_pending", "message": "CA approval is pending; resume the same request to retain its key", "node": null, "details": null }
+  ],
+  "error": null
+}

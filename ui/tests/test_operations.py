@@ -476,6 +476,7 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
             ("cert_publish", "haproxy-cert-publish.schema.json"),
             ("cert_target", "haproxy-cert-target.schema.json"),
             ("cert_delete", "haproxy-cert-delete.schema.json"),
+            ("cert_scep", "haproxy-cert-scep.schema.json"),
         ):
             with self.subTest(operation=name):
                 document = json.loads((schemas / path).read_text(encoding="utf-8"))
@@ -500,3 +501,59 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
         for operation in sorted(accepted):
             with self.subTest(operation=operation):
                 self.assertIn(f"'{operation}'", permitted)
+
+
+class EnrollingOverNdes(unittest.TestCase):
+    def test_a_request_carries_the_names_and_targets_and_never_a_secret(self) -> None:
+        prepared = operations.prepare(
+            operation="cert_scep",
+            cluster=None,
+            request_id=uuid4(),
+            payload={
+                "id": "example.com",
+                "profile": "certserver1",
+                "domains": ["example.com", "*.example.com"],
+                "clusters": ["alpha"],
+                "receivers": [],
+            },
+        )
+        self.assertTrue(prepared.argv[-1].endswith("haproxy-cert-scep-helper"))
+        request = json.loads(prepared.request)
+        self.assertIsNone(request["cluster"])
+        self.assertEqual(
+            request["parameters"],
+            {
+                "id": "example.com",
+                "profile": "certserver1",
+                "domains": ["example.com", "*.example.com"],
+                "clusters": ["alpha"],
+                "receivers": [],
+                "resume": False,
+            },
+        )
+
+    def test_a_resume_names_only_the_certificate(self) -> None:
+        prepared = operations.prepare(
+            operation="cert_scep",
+            cluster=None,
+            request_id=uuid4(),
+            payload={"id": "example.com", "resume": True},
+        )
+        parameters = json.loads(prepared.request)["parameters"]
+        self.assertEqual((parameters["id"], parameters["resume"]), ("example.com", True))
+        self.assertEqual(parameters["domains"], [])
+        for payload in (
+            {"id": "example.com", "resume": True, "domains": ["example.com"]},
+            {
+                "id": "example.com",
+                "profile": "certserver1",
+                "domains": ["*.example.com"],
+                "clusters": ["alpha"],
+            },
+            {"id": "example.com", "profile": "certserver1", "domains": ["example.com"]},
+            {"id": "../x", "profile": "certserver1", "domains": ["example.com"], "clusters": ["alpha"]},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(operations.BadPayload):
+                operations.prepare(
+                    operation="cert_scep", cluster=None, request_id=uuid4(), payload=payload
+                )

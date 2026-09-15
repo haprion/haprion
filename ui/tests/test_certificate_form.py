@@ -317,19 +317,17 @@ class TheFormPage(CertificateFormRouteTestCase):
             clusters=("alpha", "beta"),
             dns_profiles_public_key=Path("/example/public.key"),
         )
+        ndes = replace(profile, id="certserver1", name="certserver1", provider_id="ndes", revision=1)
+        applied = queued(
+            operation="dns_profile_apply",
+            cluster=None,
+            state="done",
+            payload={"profile": "cf-main", "revision": 2},
+        )
         with (
             mock.patch("haproxy_ui.db.dns_profiles", return_value=[profile]),
-            mock.patch(
-                "haproxy_ui.db.recent_jobs",
-                return_value=[
-                    queued(
-                        operation="dns_profile_apply",
-                        cluster=None,
-                        state="done",
-                        payload={"profile": "cf-main", "revision": 2},
-                    )
-                ],
-            ),
+            mock.patch("haproxy_ui.db.ndes_profiles", return_value=[ndes]),
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=[applied]),
         ):
             client = self.client(config)
             self.sign_in(client)
@@ -337,6 +335,92 @@ class TheFormPage(CertificateFormRouteTestCase):
 
         self.assertIn('name="dns_profile"', page)
         self.assertIn('value="cf-main"', page)
+        # The NDES profile is saved but not applied: the third choice says why it is off.
+        self.assertIn('value="ndes" disabled', page)
+        self.assertIn("no NDES provider profile is in effect", page)
+
+        enrolled = replace(
+            applied,
+            id=9,
+            operation="ndes_profile_apply",
+            payload={"profile": "certserver1", "revision": 1},
+        )
+        with (
+            mock.patch("haproxy_ui.db.dns_profiles", return_value=[profile]),
+            mock.patch("haproxy_ui.db.ndes_profiles", return_value=[ndes]),
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=[enrolled, applied]),
+        ):
+            client = self.client(config)
+            self.sign_in(client)
+            page = client.get("/certificates/new").text
+        self.assertNotIn('value="ndes" disabled', page)
+        self.assertIn('<option value="certserver1"', page)
+
+
+class SendingTheFormOverNdes(CertificateFormRouteTestCase):
+    def ndes_client(self, *, in_effect: bool = True) -> Any:
+        now = datetime.now(UTC)
+        profile = db.DnsProfile(
+            "certserver1", "certserver1", "ndes", 1, "0123456789abcdef", 1, now, "admin", now, "admin"
+        )
+        jobs = (
+            [
+                queued(
+                    operation="ndes_profile_apply",
+                    cluster=None,
+                    state="done",
+                    payload={"profile": "certserver1", "revision": 1},
+                )
+            ]
+            if in_effect
+            else []
+        )
+        for patch in (
+            mock.patch("haproxy_ui.db.dns_profiles", return_value=[]),
+            mock.patch("haproxy_ui.db.ndes_profiles", return_value=[profile]),
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=jobs),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.account = replace(self.account, role="admin")
+        client = self.client(
+            replace(
+                configuration(),
+                management_writes=True,
+                clusters=("alpha", "beta"),
+                dns_profiles_public_key=Path("/example/public.key"),
+            )
+        )
+        self.sign_in(client)
+        return client
+
+    def test_a_wildcard_over_ndes_becomes_one_cert_scep_job(self) -> None:
+        response = self.post(
+            self.ndes_client(), domain="*.example.com", method="ndes", ndes_profile="certserver1"
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+        (job,) = self.queued
+        self.assertEqual(job["operation"], "cert_scep")
+        self.assertIsNone(job["cluster"])
+        self.assertEqual(
+            job["payload"],
+            {
+                "id": "example.com",
+                "profile": "certserver1",
+                "domains": ["example.com", "*.example.com"],
+                "clusters": ["alpha"],
+                "receivers": [],
+            },
+        )
+
+    def test_ndes_needs_a_profile_in_effect_and_refuses_a_dns_profile(self) -> None:
+        page = self.post(self.ndes_client(), method="ndes").text
+        self.assertIn("Choose an NDES provider profile that is in effect", page)
+        page = self.post(self.ndes_client(in_effect=False), method="ndes", ndes_profile="certserver1").text
+        self.assertIn("enrollment over NDES is unavailable", page)
+        page = self.post(self.ndes_client(), method="dns-01", ndes_profile="certserver1").text
+        self.assertIn("belongs to NDES enrollment only", page)
+        self.assertEqual(self.queued, [])
 
 
 class SendingTheForm(CertificateFormRouteTestCase):

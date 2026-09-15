@@ -267,6 +267,10 @@ refuse "$WEB_USER" "has no NDES profile helper grant" \
     sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-ndes-profile-apply-helper
 refuse "$POLLER_USER" "has no NDES profile helper grant" \
     sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-ndes-profile-apply-helper
+refuse "$WEB_USER" "has no NDES enrollment helper grant" \
+    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper
+refuse "$POLLER_USER" "has no NDES enrollment helper grant" \
+    sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper
 refuse "$WEB_USER" "has no certificate delete grant" \
     sudo -n -l /opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper
 refuse "$POLLER_USER" "has no certificate delete grant" \

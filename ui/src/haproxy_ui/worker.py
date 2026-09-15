@@ -113,6 +113,11 @@ _OPERATION_OUTCOMES = {
     "ndes_profile_apply": frozenset({"done", "failed", "blocked"}),
     "dns_profile_apply": frozenset({"done", "failed", "blocked"}),
     #
+    # `cert_scep` has a real half: the CA holding the request. That is
+    # `partial` - the key is kept and the same request is resumed later.
+    #
+    "cert_scep": frozenset({"done", "partial", "failed", "blocked"}),
+    #
     # `cert_delete` answers per certificate: `partial` is the normal shape of
     # a batch with one refusal in it, `blocked` a batch where every row was
     # refused and nothing touched.

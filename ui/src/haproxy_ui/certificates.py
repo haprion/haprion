@@ -719,6 +719,16 @@ def _registry_state(
     """
 
     if entry.get("readable") is not True:
+        #
+        # No material yet because the CA is still holding the request is
+        # waiting, not breakage; the listing helper says which (C6).
+        #
+        if entry.get("request_state") == "pending":
+            return (
+                "Request pending",
+                "The CA is holding the enrollment; resume it from the certificate form",
+                "info",
+            )
         return "Unreadable", _text(entry.get("validation_error"), "Could not be read"), "critical"
 
     clusters = tuple(target.name for target in targets if target.kind == "cluster")

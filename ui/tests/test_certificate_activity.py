@@ -9,6 +9,8 @@ from unittest import mock
 
 from haproxy_ui import auth, certificate_activity
 from tests.test_certificate_delete import DeleteRouteTestCase
+from tests.test_certificates import reading as certificate_reading
+from tests.test_certificates import registered, with_registry
 from tests.test_queue_route import queued
 
 NOW = datetime(2026, 9, 15, 14, 0, tzinfo=UTC)
@@ -84,6 +86,38 @@ class DeletionStates(unittest.TestCase):
         self.assertEqual(self.states(queued(operation="deploy")), {})
 
 
+class EnrollmentStates(unittest.TestCase):
+    def test_a_running_enrollment_and_a_fresh_failure_are_overlays(self) -> None:
+        running = queued(
+            operation="cert_scep",
+            cluster=None,
+            state="running",
+            payload={"id": "web.example.com", "profile": "certserver1", "domains": ["web.example.com"]},
+        )
+        failed = queued(
+            operation="cert_scep",
+            cluster=None,
+            state="failed",
+            payload={"id": "old.example.com", "resume": True},
+            result={"error": {"code": "scep_failed", "message": "Certmonger stopped: CA_REJECTED"}},
+            finished_at=NOW - timedelta(minutes=5),
+        )
+        pending = queued(
+            operation="cert_scep",
+            cluster=None,
+            state="partial",
+            payload={"id": "wait.example.com", "resume": True},
+            finished_at=NOW,
+        )
+        states = certificate_activity.deletion_states([running, failed, pending], now=NOW)
+        self.assertEqual(states["web.example.com"].label, "Enrolling")
+        self.assertTrue(states["web.example.com"].active)
+        self.assertEqual(states["old.example.com"].label, "Enrollment failed")
+        self.assertIn("CA_REJECTED", states["old.example.com"].detail)
+        # A pending request is the listing helper's fact, not the job's.
+        self.assertNotIn("wait.example.com", states)
+
+
 class TheListingFollowsTheJob(DeleteRouteTestCase):
     def test_a_deleting_row_shows_the_badge_and_the_page_refreshes(self) -> None:
         with mock.patch(
@@ -116,3 +150,49 @@ class TheListingFollowsTheJob(DeleteRouteTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ResumingAnEnrollment(DeleteRouteTestCase):
+    def test_a_pending_row_offers_the_button_and_the_post_queues_a_resume(self) -> None:
+        pending = registered("wait.example.com", kind="import", clusters=("alpha",), readable=False)
+        pending["request_state"] = "pending"
+        pending["validation_error"] = "no material at its source yet"
+        pending["source"]["ndes_profile"] = "certserver1"
+        with mock.patch(
+            "haproxy_ui.db.cluster_certificates",
+            return_value=[with_registry(certificate_reading(), pending)],
+        ):
+            client = self.writing_client()
+            page = client.get("/certificates?view=registry&open=wait.example.com").text
+            self.assertIn('status-badge-info">Request pending<', page)
+            self.assertIn('action="/certificates/wait.example.com/resume"', page)
+            self.assertIn(">Resume enrollment<", page)
+            self.assertIn('status-badge-info">Request pending<', page)
+
+            token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+            response = client.post(
+                "/certificates/wait.example.com/resume",
+                data={
+                    "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                    auth.CSRF_FIELD: token,
+                },
+                follow_redirects=False,
+            )
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("open=wait.example.com", response.headers["location"])
+        (job,) = self.queued
+        self.assertEqual(job["operation"], "cert_scep")
+        self.assertEqual(job["payload"], {"id": "wait.example.com", "resume": True})
+
+    def test_the_resume_has_the_form_s_gates(self) -> None:
+        reader = self.writing_client(role="reader")
+        token = auth.csrf_token(reader.cookies[auth.SESSION_COOKIE])
+        response = reader.post(
+            "/certificates/x.example/resume",
+            data={
+                "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                auth.CSRF_FIELD: token,
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.queued, [])

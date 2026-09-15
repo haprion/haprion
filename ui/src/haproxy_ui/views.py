@@ -1739,10 +1739,11 @@ def build_router(config: Config) -> APIRouter:
         cluster: Sequence[str] = Form(default=()),
         receiver: Sequence[str] = Form(default=()),
         dns_profile: str = Form(default="", max_length=32),
+        ndes_profile: str = Form(default="", max_length=32),
         idempotency_key: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        """Queue one `cert_issue` job, or draw the form again saying why not.
+        """Queue one `cert_issue` or `cert_scep` job, or draw the form again saying why not.
 
         The same four refusals `/operations` makes, in the same order, and
         then the form's own. Not routed through `/operations`: that route
@@ -1755,6 +1756,7 @@ def build_router(config: Config) -> APIRouter:
             domain=domain,
             method=method,
             dns_profile=dns_profile,
+            ndes_profile=ndes_profile,
             clusters=tuple(cluster),
             receivers=tuple(receiver),
         )
@@ -1779,9 +1781,10 @@ def build_router(config: Config) -> APIRouter:
         except certificate_form.FormProblem as problem:
             return _certificate_form_page(request, config, form, problem=str(problem))
 
+        operation = certificate_form.operation_of(form)
         try:
             operations.prepare(
-                operation="cert_issue", cluster=None, request_id=uuid4(), payload=payload
+                operation=operation, cluster=None, request_id=uuid4(), payload=payload
             )
         except operations.BadPayload:
             return PlainTextResponse("Invalid operation parameters", status_code=400)
@@ -1790,7 +1793,7 @@ def build_router(config: Config) -> APIRouter:
             try:
                 job = db.queue_job(
                     connection,
-                    operation="cert_issue",
+                    operation=operation,
                     cluster=None,
                     payload=payload,
                     idempotency_key=key,
@@ -1813,7 +1816,7 @@ def build_router(config: Config) -> APIRouter:
                 action="queue_job",
                 cluster=None,
                 request_id=job.request_id,
-                detail={"operation": "cert_issue", "job": job.id},
+                detail={"operation": operation, "job": job.id},
             )
             connection.commit()
         #
@@ -1823,6 +1826,69 @@ def build_router(config: Config) -> APIRouter:
         # to find out.
         #
         return RedirectResponse("/jobs", status_code=303)
+
+    @router.post("/certificates/{certificate_id}/resume")
+    async def resume_enrollment(
+        request: Request,
+        certificate_id: str,
+        csrf_token: Annotated[str, Form(max_length=128)],
+        idempotency_key: Annotated[str, Form(max_length=64)],
+    ) -> Response:
+        """Queue the resume of an NDES request the CA was still holding.
+
+        The request's root-only record holds everything else - profile,
+        names, targets - so the job carries only the ID (C6).
+        """
+
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if not config.management_writes:
+            return PlainTextResponse("Not found", status_code=404)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token) or session.role != "admin":
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        payload = {"id": certificate_id, "resume": True}
+        try:
+            operations.prepare(
+                operation="cert_scep", cluster=None, request_id=uuid4(), payload=payload
+            )
+        except operations.BadPayload:
+            return PlainTextResponse("Invalid operation parameters", status_code=400)
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="cert_scep",
+                    cluster=None,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.CertificateBusy:
+                connection.rollback()
+                return PlainTextResponse(
+                    "A certificate job is already running. Wait for it to finish, then try again.",
+                    status_code=409,
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=session.username,
+                action="queue_job",
+                cluster=None,
+                request_id=job.request_id,
+                detail={"operation": "cert_scep", "job": job.id, "resume": certificate_id},
+            )
+            connection.commit()
+        return RedirectResponse(
+            f"/certificates?view=registry&open={certificate_id}", status_code=303
+        )
 
     def _certificate_choices(request: Request, config: Config) -> certificate_form.IssueChoices:
         """The targets the form may offer, read the way the listing reads them."""
@@ -1846,11 +1912,22 @@ def build_router(config: Config) -> APIRouter:
                 for profile in profile_rows
                 if dns_profile_form.profile_status(profile.id, profile.revision, recent).usable
             )
+        usable_ndes: tuple[str, ...] = ()
+        if profiles_required:
+            with request.app.state.pool.connection() as connection:
+                ndes_rows = db.ndes_profiles(connection)
+                recent = db.recent_jobs(connection, limit=100)
+            usable_ndes = tuple(
+                profile.id
+                for profile in ndes_rows
+                if ndes_profile_form.profile_status(profile.id, profile.revision, recent).usable
+            )
         return certificate_form.IssueChoices(
             clusters=tuple(clusters),
             receivers=overview.registry.receivers if overview.registry else (),
             dns_profiles=usable_profiles,
             profiles_required=profiles_required,
+            ndes_profiles=usable_ndes,
         )
 
     def _certificate_form_page(

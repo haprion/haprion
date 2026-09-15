@@ -31,21 +31,27 @@
 
   <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Certificate</h3></div></div></header>
-    <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of Certbot and its DNS plugins.<br>For DNS-01, consult the selected provider plugin's documentation.<br>For HTTP-01, the domain must already point to this installation.</span></p>
+    <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of Certbot and its DNS plugins.<br>For DNS-01, consult the selected provider plugin's documentation.<br>For HTTP-01, the domain must already point to this installation.<br>For Microsoft AD CS, the NDES provider profile holds the CA's challenge; the certificate is not renewed on a schedule.</span></p>
     <div class="form-grid">
-      <label>Domain<input name="domain" value="{{ form.domain }}" maxlength="255" placeholder="app.example.com or *.example.com" autocomplete="off" spellcheck="false" required autofocus><small>Becomes the certificate's name. <code>*.example.com</code> also covers <code>example.com</code>, the way the existing wildcard does.</small></label>
+      <label>Domain<input name="domain" value="{{ form.domain }}" maxlength="255" placeholder="app.example.com or *.example.com" autocomplete="off" spellcheck="false" required autofocus><small>Becomes the certificate's name. <code>*.example.com</code> also covers <code>example.com</code>, the way the existing wildcard does; over NDES the base name is the CN and the wildcard a SAN.</small></label>
       {#
-        Two radios, not a select: the choice has two answers and one of them
-        rules the wildcard out, and a reader should see both at once to see
+        Radios, not a select: the choice has three answers and one of them
+        rules the wildcard out, and a reader should see them at once to see
         why. DNS-01 first and preset because it is the one the manager's
         policy is set up for; HTTP-01 needs a webroot the policy names, and
         the job says so if it does not.
+
+        The third radio is the other CA (C6): the organisation's own
+        Microsoft CA over NDES/SCEP. Offered only where a profile is in
+        effect; otherwise the radio stays, disabled, with the reason beside
+        it, so the reader learns what would make it available.
       #}
       <div class="field challenge-field">
-        <span class="field-title">Challenge</span>
+        <span class="field-title">Certificate authority and challenge</span>
         <div class="method-choices">
-          <label class="check"><input type="radio" name="method" value="dns-01"{% if form.method != 'http-01' %} checked{% endif %}> <span><span class="method-name">DNS-01</span> <span class="optional">— DNS record; supports wildcards</span></span></label>
-          <label class="check"><input type="radio" name="method" value="http-01"{% if form.method == 'http-01' %} checked{% endif %}> <span><span class="method-name">HTTP-01</span> <span class="optional">— Webroot file; single names only</span></span></label>
+          <label class="check"><input type="radio" name="method" value="dns-01"{% if form.method not in ('http-01', 'ndes') %} checked{% endif %}> <span><span class="method-name">Let's Encrypt · DNS-01</span> <span class="optional">— DNS record; supports wildcards</span></span></label>
+          <label class="check"><input type="radio" name="method" value="http-01"{% if form.method == 'http-01' %} checked{% endif %}> <span><span class="method-name">Let's Encrypt · HTTP-01</span> <span class="optional">— Webroot file; single names only</span></span></label>
+          <label class="check"><input type="radio" name="method" value="ndes"{% if form.method == 'ndes' %} checked{% endif %}{% if not choices.ndes_profiles %} disabled{% endif %}> <span><span class="method-name">Microsoft AD CS · NDES</span> <span class="optional">— {% if choices.ndes_profiles %}internal CA; supports wildcards{% else %}unavailable: no NDES provider profile is in effect{% endif %}</span></span></label>
         </div>
       </div>
       {#
@@ -54,13 +60,22 @@
         is not submitted, which is the right answer for HTTP-01 - the server
         refuses a profile with it and requires one with DNS-01 either way.
       #}
+      <div class="field profile-fields">
       <label class="dns-only"><span class="field-title">DNS provider profile</span>
-        <select name="dns_profile"{% if form.method == 'http-01' %} disabled{% endif %}>
+        <select name="dns_profile"{% if form.method in ('http-01', 'ndes') %} disabled{% endif %}>
           <option value="">Choose a profile…</option>
           {% for profile in choices.dns_profiles %}<option value="{{ profile }}"{% if form.dns_profile == profile %} selected{% endif %}>{{ profile }}</option>{% endfor %}
         </select>
         <small>Required for DNS-01. <a href="/dns-profiles">Manage profiles</a>.</small>
       </label>
+      <label class="ndes-only"><span class="field-title">NDES provider profile</span>
+        <select name="ndes_profile"{% if form.method != 'ndes' %} disabled{% endif %}>
+          <option value="">Choose a profile…</option>
+          {% for profile in choices.ndes_profiles %}<option value="{{ profile }}"{% if form.ndes_profile == profile %} selected{% endif %}>{{ profile }}</option>{% endfor %}
+        </select>
+        <small>Required for Microsoft AD CS. <a href="/ndes-profiles">Manage profiles</a>.</small>
+      </label>
+      </div>
     </div>
   </section>
 

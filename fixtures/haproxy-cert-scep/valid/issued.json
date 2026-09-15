@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cert_scep",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "id": "webserver1-wild-scep",
+    "profile": "certserver1",
+    "domains": [
+      "webserver1.example.test",
+      "*.webserver1.example.test"
+    ],
+    "state": "issued",
+    "publication": {
+      "certificate": "webserver1-wild-scep",
+      "fingerprint_sha256": "aa68a3805be3c995886f810a33f555579bc117fdf6bdb2d0b87be36a672fbdfd",
+      "common_name": "webserver1.example.test",
+      "sans": [
+        "webserver1.example.test",
+        "*.webserver1.example.test"
+      ],
+      "issuer": "CN=example-issuing-ca,DC=example,DC=test",
+      "not_before": "2026-09-15T11:41:57+00:00",
+      "not_after": "2029-09-14T11:41:57+00:00",
+      "chain_length": 0,
+      "replaced": false,
+      "publish": {
+        "certificates": [
+          {
+            "id": "webserver1-wild-scep",
+            "status": "published",
+            "fingerprint_sha256": "aa68a3805be3c995886f810a33f555579bc117fdf6bdb2d0b87be36a672fbdfd",
+            "not_after": "2029-09-14T11:41:57Z",
+            "targets": [
+              {
+                "kind": "cluster",
+                "name": "alpha",
+                "changed": true
+              }
+            ],
+            "error": null
+          }
+        ],
+        "changed_clusters": [
+          "alpha"
+        ],
+        "deployments": [
+          {
+            "cluster": "alpha",
+            "exit_code": 0
+          }
+        ]
+      }
+    }
+  },
+  "warnings": [],
+  "error": null
+}

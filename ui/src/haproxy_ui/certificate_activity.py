@@ -52,6 +52,13 @@ def deletion_states(
     moment = now or datetime.now(UTC)
     states: dict[str, DeletionState] = {}
     for job in jobs:
+        if job.operation == "cert_scep":
+            identifier = job.payload.get("id")
+            if isinstance(identifier, str) and identifier not in states:
+                state = _enrollment_state_of(job, moment)
+                if state is not None:
+                    states[identifier] = state
+            continue
         if job.operation != "cert_delete":
             continue
         named = job.payload.get("certificates")
@@ -64,6 +71,31 @@ def deletion_states(
             if state is not None:
                 states[identifier] = state
     return states
+
+
+def _enrollment_state_of(job: Job, now: datetime) -> DeletionState | None:
+    """An NDES enrollment in flight or just failed; the listing says the rest.
+
+    A pending request and an issued certificate are both facts the listing
+    helper reads from the manager itself (`request_state`, the material), so
+    only the running job and a fresh failure are overlays here.
+    """
+
+    if job.state in {"pending", "running"}:
+        return DeletionState("Enrolling", "The CA is being asked for the certificate", "info", True)
+    if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
+        return None
+    if job.state == "failed":
+        result = job.result if isinstance(job.result, Mapping) else {}
+        error = result.get("error") if isinstance(result.get("error"), Mapping) else {}
+        message = error.get("message") if isinstance(error, Mapping) else None
+        return DeletionState(
+            "Enrollment failed",
+            message if isinstance(message, str) and message else "The enrollment job failed",
+            "critical",
+            False,
+        )
+    return None
 
 
 def _state_of(job: Job, identifier: str, now: datetime) -> DeletionState | None:

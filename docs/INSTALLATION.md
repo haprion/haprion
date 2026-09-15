@@ -1056,10 +1056,10 @@ somewhere else.
 
 ### 1.4.8 Preparing Microsoft AD CS / NDES for CSR enrollment
 
-**Status:** Linux-to-NDES enrollment has been demonstrated technically, including multiple DNS
-SANs and a wildcard with its base name. The source now includes encrypted NDES provider profiles,
-a root enrollment CLI and client packaging tools. Installation and live Certmonger enrollment
-still need verification; enrollment jobs and the certificate enrollment form are not implemented.
+**Status:** enrollment from the manager is complete: encrypted NDES provider profiles, the
+retained Certmonger client, the root enrollment CLI and its job helper, and the certificate
+form's third choice, *Microsoft AD CS · NDES*. Two live enrollments (a DNS name; a wildcard
+with its base name) were verified end to end.
 
 **Selected client:** [Certmonger](https://codeberg.org/freeipa/certmonger/) will provide the
 SCEP protocol support through a temporary process and private socket, with automatic renewal
@@ -1100,12 +1100,20 @@ After installation, root policy configuration and provider application, the pilo
 haproxy-cert-scep --id example-cert --profile internal-ca --domain example.test --domain '*.example.test' --json
 ```
 
-A CA approval wait returns `state: pending` and envelope outcome `partial`. Repeat the same
-command with `--resume`; it retains the original key and refuses changed request bindings.
+A CA approval wait returns `state: pending` and envelope outcome `partial`; the certificate is
+registered at once, without material, so the listing shows it as **Request pending**. Resume with
+`haproxy-cert-scep --id <id> --resume` - the request's root-only record holds the profile and
+the names, the original key is retained, and a resume that disagrees with the record is refused.
 Automatic renewal is disabled. Returned certificates must pass chain, names, usages and key
-validation before the existing import/publication path is called. This CLI has no enrollment
-job/helper or enrollment form yet. Migration `0027` adds provider storage and apply jobs;
-`0028` adds the profile's plain endpoint column and lets the worker delete a profile row.
+validation before the existing import/publication path is called.
+
+From the interface, *Certificates → New certificate* offers *Microsoft AD CS · NDES* beside
+the two Let's Encrypt challenges whenever an NDES profile is in effect; a wildcard becomes the
+base name as CN with the wildcard as a SAN. The submission is one `cert_scep` job run by
+`haproxy-cert-scep-helper` (the twelfth worker helper; a sudoers rule and step 07 are part of
+its installation). A pending request shows **Resume enrollment** in its registry row, which
+queues the same job with only the ID. Migration `0027` adds provider storage and apply jobs,
+`0028` the profile's plain endpoint column and worker deletion, `0029` the `cert_scep` job.
 A compatible UI bridge is required before each migration.
 
 A certificate the CLI enrolls is registered as `source.kind: import` with

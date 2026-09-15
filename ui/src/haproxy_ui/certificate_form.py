@@ -46,10 +46,25 @@ class IssueForm:
     clusters: tuple[str, ...]
     receivers: tuple[str, ...]
     dns_profile: str = ""
+    ndes_profile: str = ""
 
     @property
     def wildcard(self) -> bool:
         return self.domain.strip().startswith("*.")
+
+
+#
+# The third answer to "which CA": not an ACME challenge at all but the
+# organisation's own Microsoft CA over NDES/SCEP (C6, B152). Same form, same
+# domain rule, same targets; a different job behind the button.
+#
+NDES_METHOD = "ndes"
+
+
+def operation_of(form: IssueForm) -> str:
+    """Which job the submission becomes: certbot's, or the NDES enrollment."""
+
+    return "cert_scep" if form.method.strip() == NDES_METHOD else "cert_issue"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +75,11 @@ class IssueChoices:
     receivers: tuple[str, ...]
     dns_profiles: tuple[str, ...] = ()
     profiles_required: bool = False
+    #
+    # NDES profiles in effect. The NDES choice is offered only where there is
+    # at least one; the page names the reason otherwise.
+    #
+    ndes_profiles: tuple[str, ...] = ()
 
 
 EMPTY_FORM = IssueForm(domain="", method="dns-01", dns_profile="", clusters=(), receivers=())
@@ -72,6 +92,7 @@ def normalise(form: IssueForm) -> IssueForm:
         domain=form.domain.strip().lower().rstrip("."),
         method=form.method.strip(),
         dns_profile=form.dns_profile.strip(),
+        ndes_profile=form.ndes_profile.strip(),
         clusters=tuple(dict.fromkeys(name.strip() for name in form.clusters if name.strip())),
         receivers=tuple(dict.fromkeys(name.strip() for name in form.receivers if name.strip())),
     )
@@ -95,9 +116,20 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             "That is not a domain name the engine can issue for: lowercase labels "
             "separated by dots, optionally starting with *. for a wildcard."
         ) from problem
-    if form.method not in METHODS:
+    if form.method == NDES_METHOD:
+        if not choices.ndes_profiles:
+            raise FormProblem(
+                "No NDES provider profile is in effect; enrollment over NDES is unavailable."
+            )
+        if form.ndes_profile not in choices.ndes_profiles:
+            raise FormProblem("Choose an NDES provider profile that is in effect.")
+        if form.dns_profile:
+            raise FormProblem("A DNS provider profile belongs to DNS-01 only.")
+    elif form.method not in METHODS:
         raise FormProblem("Choose a challenge method.")
-    if wildcard and form.method != "dns-01":
+    elif form.ndes_profile:
+        raise FormProblem("An NDES provider profile belongs to NDES enrollment only.")
+    if wildcard and form.method not in {"dns-01", NDES_METHOD}:
         #
         # Said here as well as by the engine: the engine's refusal would arrive
         # as a failed job on another page, and this is the one rule a reader
@@ -107,7 +139,9 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             "A wildcard certificate needs DNS-01. HTTP-01 cannot prove a wildcard, "
             "because no CA issues one against an HTTP challenge."
         )
-    if form.method == "dns-01":
+    if form.method == NDES_METHOD:
+        pass
+    elif form.method == "dns-01":
         if choices.profiles_required and not form.dns_profile:
             raise FormProblem("Choose a DNS provider profile that is in effect.")
         if choices.profiles_required and form.dns_profile not in choices.dns_profiles:
@@ -130,6 +164,19 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             "One of the chosen receivers is not registered. A receiver is registered "
             "on the manager, not from this form."
         )
+    if form.method == NDES_METHOD:
+        #
+        # The engine's own reading of the name: the base name is the ID and
+        # the CN, the wildcard a SAN beside it - the CN is never a wildcard.
+        #
+        name, names, _ = parse_domain(form.domain)
+        return {
+            "id": name,
+            "profile": form.ndes_profile,
+            "domains": [name, *[n for n in names if n != name]],
+            "clusters": list(form.clusters),
+            "receivers": list(form.receivers),
+        }
     payload = {
         "domain": form.domain,
         "method": form.method,

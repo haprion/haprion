@@ -26,6 +26,7 @@ from haproxy_mgmt.cli import (
     cert_deploy,
     cert_issue_helper,
     cert_publish_helper,
+    cert_scep_helper,
     cert_target_helper,
     deploy,
     managed_network_publish,
@@ -120,6 +121,7 @@ CERTIFICATE_OPERATIONS = frozenset(
         "dns_profile_apply",
         "ndes_profile_apply",
         "cert_delete",
+        "cert_scep",
     }
 )
 
@@ -217,6 +219,56 @@ def _certificate_operation(
                 clusters=clusters,
                 receivers=receivers,
                 dns_profile=dns_profile,
+            ),
+        )
+
+    if operation == "cert_scep":
+        _only(payload, "id", "profile", "domains", "clusters", "receivers", "resume")
+        certificate_id = payload.get("id")
+        if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
+            raise BadPayload("id must be a certificate ID")
+        resume = _flag(payload, "resume", default=False)
+        #
+        # A resume names the certificate and nothing else: the request's own
+        # root-only record holds the profile, the names and the targets it
+        # was made with, and the helper refuses a resume that disagrees.
+        #
+        if resume:
+            _only(payload, "id", "resume")
+            return Prepared(
+                argv=(cert_scep_helper.SUDO, *SUDO_FLAGS, cert_scep_helper.HELPER),
+                request=cert_scep_helper.build_request(
+                    str(request_id),
+                    certificate_id=certificate_id,
+                    profile_id="",
+                    domains=(),
+                    resume=True,
+                ),
+            )
+        try:
+            profile_id = dns_profiles.check_profile_id(payload.get("profile"))
+        except dns_profiles.ProfileError as exc:
+            raise BadPayload(str(exc)) from exc
+        domains = payload.get("domains")
+        if (
+            not isinstance(domains, list)
+            or not domains
+            or not all(isinstance(name, str) and name for name in domains)
+        ):
+            raise BadPayload("domains must be a non-empty list of DNS names")
+        if domains[0].startswith("*."):
+            raise BadPayload("the first name is the CN and cannot be a wildcard")
+        clusters, receivers = _targets(payload)
+        return Prepared(
+            argv=(cert_scep_helper.SUDO, *SUDO_FLAGS, cert_scep_helper.HELPER),
+            request=cert_scep_helper.build_request(
+                str(request_id),
+                certificate_id=certificate_id,
+                profile_id=profile_id,
+                domains=tuple(domains),
+                clusters=clusters,
+                receivers=receivers,
+                resume=resume,
             ),
         )
 

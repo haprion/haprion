@@ -1,22 +1,22 @@
-# Lets the interface's worker run the ten bounded mutations, and nothing else.
+# Lets the interface's worker run the twelve bounded mutations, and nothing else.
 #
 # Its own rule, for the same reason the poller has one. %haproxy-mgmt holds the
 # operators and %sudo holds the humans; a service account must not reach a
 # privilege because somebody else needed it. This is the separate decision.
 #
-# What it grants, exactly: ten helpers, each with no arguments at all. The
+# What it grants, exactly: twelve helpers, each with no arguments at all. The
 # helpers accept no argv and read a bounded JSON request on stdin, which is what
 # makes an exact rule possible - PRIVILEGE.md forbids wildcards in argument
 # matching, and a rule naming a cluster would need one.
 #
-# These ten write. That is the point of them, and it is why the list is this
+# These twelve write. That is the point of them, and it is why the list is this
 # short: deploy brings nodes onto the published version, cert-deploy distributes
 # certificates, revert moves the cluster back to an earlier one, and the two
 # publish helpers write the network description and the objects into the cluster
 # repository. Everything else the worker might plausibly want - config edits,
 # history reset - is absent on purpose.
 #
-# The last five are Phase 11's, and they are the ones to read twice, because
+# The last seven are Phase 11's, and they are the ones to read twice, because
 # they are the only rules here that reach private key material. What limits them
 # is not this file but their own shape: issue obtains a certificate for a domain
 # with certbot parameters fixed in the engine, publish distributes what the
@@ -71,3 +71,6 @@ WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-dele
 
 # NDES profiles: ciphertext arrives only on stdin.
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-ndes-profile-apply-helper ""
+
+# NDES enrollment: the challenge is read from the root-only profile record, never from the request.
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper ""

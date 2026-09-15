@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "failed",
+  "operation": "cert_scep",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": null,
+  "warnings": [],
+  "error": { "code": "certificate_mismatch", "message": "issued certificate has unexpected SAN entries", "node": null, "details": null }
+}

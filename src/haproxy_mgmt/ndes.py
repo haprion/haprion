@@ -28,6 +28,7 @@ from haproxy_mgmt.cert_issue import HOSTNAME
 from haproxy_mgmt.config import CERTIFICATE_ID, NdesPolicy
 from haproxy_mgmt.dns_profiles import ProfileError
 from haproxy_mgmt.ndes_profiles import OpenedProfile, check_challenge, secure_directory
+from haproxy_mgmt.ndes_state import request_directory
 
 MAX_BYTES = 1024 * 1024
 COMMAND_TIMEOUT = 15
@@ -239,7 +240,7 @@ def _enroll(
             "bad_input", "use the base DNS name as primary CN and list the wildcard as a SAN"
         )
     validate_policy(policy, require_secure=require_secure)
-    directory = policy.state_root / hashlib.sha256(certificate_id.encode()).hexdigest()[:24]
+    directory = request_directory(policy.state_root, certificate_id)
     if directory.is_symlink() or policy.state_root.is_symlink():
         raise NdesError("bad_input", "NDES state directories cannot be symlinks")
     directory.mkdir(mode=0o700, exist_ok=True)

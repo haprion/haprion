@@ -96,8 +96,16 @@ def main(
             exit_code=65,
         )
 
+    # The pending-request field is read from the NDES state root when the
+    # policy names one. A policy without the block lists as before.
+    ndes_policy = getattr(policy, "ndes", None)
     try:
-        result = cert_list_result(policy.certificate_root, cluster, registry=runtime.registry)
+        result = cert_list_result(
+            policy.certificate_root,
+            cluster,
+            registry=runtime.registry,
+            request_root=ndes_policy.state_root if ndes_policy is not None else None,
+        )
     except CertInventoryError as exc:
         return write_failure(
             writer,

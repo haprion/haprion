@@ -1025,6 +1025,9 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 @media (min-width: 900px) {
   .certificate-form .challenge-field { justify-self: center; }
 }
+/* The two provider profiles share a column: one belongs to each CA choice,
+ * never both at once, and three columns keep the radio labels on one line. */
+.certificate-form .profile-fields { display: flex; flex-direction: column; gap: 14px; }
 /* Row, said explicitly: `.form-grid label` stacks its contents, and a box
  * above its own name is a box nobody can read. */
 .certificate-form .method-choices .check, .certificate-form .form-checks-stacked .check { display: flex; flex-direction: row; align-items: center; gap: 8px; color: var(--text-secondary); font-weight: 620; }
@@ -1581,3 +1584,5 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 }
 @media (max-width: 1000px) { .log-filters { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 680px) { .log-pagination { flex-wrap: wrap; } }
+/* A one-button form inside a detail cell: sits on the line, no block of its own. */
+.registry-detail .inline-form { display: inline-flex; margin-left: 12px; vertical-align: middle; }

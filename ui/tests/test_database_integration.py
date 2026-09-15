@@ -26,7 +26,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0028",))
+            self.assertEqual(cursor.fetchone(), ("0029",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -553,6 +553,29 @@ class CertificateDeletion(unittest.TestCase):
                     cluster=None,
                     payload={},
                     idempotency_key=uuid4(),
+                )
+            connection.rollback()
+
+    def test_cert_scep_is_a_clusterless_certificate_job(self) -> None:
+        # Migration 0029: the enrollment job in the same slot as the others.
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            job = db.queue_job(
+                connection,
+                operation="cert_scep",
+                cluster=None,
+                payload={"id": "web.example.com", "resume": True},
+                idempotency_key=uuid4(),
+            )
+            self.assertIsNone(job.cluster)
+            connection.rollback()
+            with (
+                connection.cursor() as cursor,
+                self.assertRaises(psycopg.errors.CheckViolation),
+            ):
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key) "
+                    "values ('cert_scep', 'alpha', '{}', %(key)s)",
+                    {"key": uuid4()},
                 )
             connection.rollback()
             with self.assertRaises(psycopg.errors.CheckViolation):

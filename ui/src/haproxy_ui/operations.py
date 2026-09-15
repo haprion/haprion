@@ -391,16 +391,50 @@ def _certificate_operation(
         )
 
     if operation == "cert_target":
-        _only(payload, "certificate", "clusters", "receivers", "deploy")
-        certificate = payload.get("certificate")
-        if not isinstance(certificate, str) or not certificate:
-            raise BadPayload("certificate must be a non-empty string")
+        #
+        # A list of registered IDs and one delta - `add` or `remove` of
+        # clusters and receivers - checked here for shape only. Whether the
+        # targets exist is the helper's to read from the registry. A remove
+        # from a cluster is refused while a draft in that cluster names the
+        # certificate, the way a deletion is: the draft lives in this
+        # database and the helper cannot see it.
+        #
+        _only(payload, "certificates", "action", "clusters", "receivers", "deploy")
+        certificates = payload.get("certificates")
+        if (
+            not isinstance(certificates, list)
+            or not certificates
+            or not all(
+                isinstance(item, str) and CERTIFICATE_ID.fullmatch(item) for item in certificates
+            )
+        ):
+            raise BadPayload("certificates must be a non-empty list of certificate IDs")
+        if len(certificates) > MAX_DELETE_BATCH:
+            raise BadPayload(f"at most {MAX_DELETE_BATCH} certificates in one job")
+        if len(set(certificates)) != len(certificates):
+            raise BadPayload("certificates contains a duplicate")
+        action = payload.get("action")
+        if action not in {"add", "remove"}:
+            raise BadPayload("action must be add or remove")
         clusters, receivers = _targets(payload)
+        if action == "remove" and clusters and draft_references is not None:
+            referenced = {
+                certificate: tuple(row for row in rows if row.split("/", 1)[0] in clusters)
+                for certificate, rows in draft_references(tuple(certificates)).items()
+            }
+            named = "; ".join(
+                f"{certificate} by {', '.join(rows)}"
+                for certificate, rows in sorted(referenced.items())
+                if rows
+            )
+            if named:
+                raise BadPayload(f"a draft still names a certificate: {named}")
         return Prepared(
             argv=(cert_target_helper.SUDO, *SUDO_FLAGS, cert_target_helper.HELPER),
             request=cert_target_helper.build_request(
                 str(request_id),
-                certificate=certificate,
+                certificates=tuple(certificates),
+                action=action,
                 clusters=clusters,
                 receivers=receivers,
                 deploy=_flag(payload, "deploy", default=True),

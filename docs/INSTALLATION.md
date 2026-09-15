@@ -1006,6 +1006,37 @@ reruns step 7 before releasing the interface that queues it.
 **Nothing here can be undone.** A deleted lineage has to be issued again, and a deleted import has
 to be imported again. The confirmation page says so, and the job's rows say what went.
 
+#### Publishing to another target, and withdrawing from one
+
+The same boxes carry two more buttons, *Publish to…* and *Remove from…*, for the two questions
+short of a deletion: a certificate that should also go to the other cluster, and one that was
+sent to a cluster (or a receiver) it should not be on. Each leads to a page that offers the
+targets the change would touch — for a publish, what some chosen certificate is not on yet; for
+a removal, what some chosen certificate is on — and confirming queues one `cert_target` job for
+the selection and one delta. The job applies the delta per certificate to whatever the registry
+holds when it runs, so thirty certificates sent to the wrong cluster are one job, and a
+certificate somebody else changed in between is not overwritten with a stale target set.
+
+**Publishing** registers the certificate for the target, publishes its material there, and rolls
+each added cluster out once — a `haproxy-cert-deploy` for the cluster, so its nodes pull and
+**reload HAProxy**. A receiver fetches on its own schedule. A certificate already on a chosen
+target is reported `unchanged`.
+
+**Removing** takes the target off the registry entry and removes the copy that target held: each
+node of a removed cluster is asked `cert-remove <id>` over the trigger identity (no reload — a
+file nothing names is not loaded), and a removed receiver's pair on the manager is unlinked.
+What the receiver host already fetched stays there; the manager cannot reach into it. A receiver
+another certificate also publishes to keeps its pair. Nothing else is touched: not the material
+for the remaining targets, not the lineage, not the entry.
+
+**The guards are the deletion's, scoped to the removed cluster.** A certificate is refused, with
+nothing touched, when a proxy object in *that* cluster's committed configuration still names it,
+when it is that cluster's `default_certificate`, when it is the only certificate that cluster
+has, or when a draft in that cluster names it (the web's check, as for a deletion). An object in
+another cluster does not hold it. A refused certificate stops nothing else in the batch; the
+job's outcome follows the rows the way a deletion's does, and a node that kept its copy makes the
+row `incomplete` — the registry has changed, and running the removal again asks the node again.
+
 ### 1.4.7 Importing a certificate
 
 `haproxy-cert-import` is the other way a certificate reaches the registry: one issued elsewhere -

@@ -6,7 +6,7 @@
       "0028",
       "0029"
     ],
-    "engine_api": 1,
+    "engine_api": 2,
     "node_api": 1,
     "poller_helpers": [
       "haproxy-status-helper",

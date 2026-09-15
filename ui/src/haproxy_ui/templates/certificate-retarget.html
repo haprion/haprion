@@ -1,0 +1,77 @@
+{% extends "layout.html" %}
+{% block title %}{{ selection.label if selection else 'Certificate targets' }} — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  The question before a target change for a selection: which targets, and
+  what that does. One page for both directions, because they are one
+  operation with one delta - the words and the consequences differ, the
+  shape does not. Nothing is queued from the listing; this page asks.
+#}
+{% set adding = selection is not none and selection.action == 'add' %}
+<section class="page-heading">
+  <div class="heading-title"><h1>{{ selection.label if selection else 'Certificate targets' }}</h1><p class="page-lede">{% if adding %}Nothing changes until you confirm. One job registers each certificate for the targets you choose, publishes it there, and rolls each new cluster out.{% elif selection %}Nothing changes until you confirm. One job takes each certificate off the targets you choose and removes the copy that target held.{% endif %}</p></div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+{% if selection %}
+<div class="refusal-card deletion-card">
+  <p class="refusal-message"><span class="status-orb status-{{ 'info' if adding else 'critical' }}" aria-hidden="true"></span>{{ selection.label }}… <strong>{{ selection.rows | length }}</strong> certificate{% if selection.rows | length != 1 %}s{% endif %}</p>
+  <div class="table-scroll"><table class="node-table deletion-table">
+    <thead><tr><th>Certificate</th><th>Source</th><th>Published to</th><th>Note</th></tr></thead>
+    <tbody>
+      {% for row in selection.rows %}
+      <tr class="deletion-row">
+        <td data-label="Certificate"><strong>{{ row.identifier }}</strong></td>
+        <td data-label="Source">{{ row.source_label }}</td>
+        <td data-label="Published to">{% if row.targets %}{{ row.targets | join(', ') }}{% else %}—{% endif %}</td>
+        <td data-label="Note">{% if not adding and row.drafts %}<span class="warning-text">A draft names it: {{ row.drafts | join(', ') }}. Removal from that cluster is refused until the draft is published or discarded.</span>{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody></table></div>
+
+  <form method="post" action="/certificates/targets/{{ selection.action }}/confirm" class="preview-form retarget-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+    {% for identifier in selection.identifiers %}<input type="hidden" name="certificate" value="{{ identifier }}">{% endfor %}
+    <div class="field">
+      <span class="field-title">{{ 'Targets to publish to' if adding else 'Targets to remove from' }}</span>
+      {#
+        Only targets the change would touch: an add offers what some chosen
+        certificate is not on yet, a remove what some chosen certificate is
+        on. The count says how many of the selection already have it.
+      #}
+      <div class="form-checks form-checks-stacked retarget-choices">
+        {% for choice in selection.choices %}
+        <label class="check"><input type="checkbox" name="{{ choice.kind }}" value="{{ choice.name }}" data-target-pick> <span>{{ choice.name }} <span class="target-kind">{{ choice.kind }}</span>{% if adding and choice.holding %} <span class="optional">· {{ choice.holding }} of {{ selection.rows | length }} already there</span>{% elif not adding and choice.holding < selection.rows | length %} <span class="optional">· {{ choice.holding }} of {{ selection.rows | length }} are on it</span>{% endif %}</span></label>
+        {% else %}
+        <span class="optional">{% if adding %}Every selected certificate is already on every target.{% else %}No selected certificate is on any target.{% endif %}</span>
+        {% endfor %}
+      </div>
+    </div>
+    <ul class="removal-consequences">
+      {% if adding %}
+      <li>Each added cluster is rolled out once: its nodes pull the certificate and <strong>reload HAProxy</strong>. A receiver fetches on its own schedule.</li>
+      <li>A certificate already on a chosen target is left as it is and reported unchanged.</li>
+      {% else %}
+      <li>Each node of a removed cluster is asked to drop its copy. No reload: a file nothing names is not loaded. A node that cannot be reached keeps it and says so; running the removal again asks it again.</li>
+      <li>A removed receiver stops receiving new versions and its pair on the manager is removed; what the receiver host already fetched stays there. A receiver another certificate also publishes to keeps its pair.</li>
+      <li>The job refuses a certificate a published object in that cluster still names, that is the cluster's default, or that is the last one the cluster has — and says why on its row. The others go through.</li>
+      {% endif %}
+    </ul>
+    {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish first.</p>{% endif %}
+    <div class="editor-actions">
+      <button class="{{ 'secondary-button deploy-button' if adding else 'danger-button' }}" type="submit" data-target-submit{% if certificate_job or not selection.choices %} disabled{% endif %}>{{ selection.label }} the chosen targets</button>
+      <a class="secondary-button" href="/certificates?view=registry">Cancel</a>
+    </div>
+  </form>
+</div>
+{% else %}
+<div class="refusal-card">
+  <p class="refusal-hint"><a class="secondary-button" href="/certificates?view=registry">Back to the registry</a></p>
+</div>
+{% endif %}
+<script defer src="{{ url_for('static', path='/retarget.js') }}?v={{ asset_token }}"></script>
+{% endblock %}

@@ -105,6 +105,15 @@ def deletion_states(
                 if state is not None:
                     states[requested[0]] = state
             continue
+        if job.operation == "cert_target":
+            named = job.payload.get("certificates")
+            for identifier in named if isinstance(named, list) else []:
+                if not isinstance(identifier, str) or identifier in states:
+                    continue
+                state = _target_state_of(job, identifier, moment)
+                if state is not None:
+                    states[identifier] = state
+            continue
         if job.operation != "cert_delete":
             continue
         named = job.payload.get("certificates")
@@ -252,6 +261,54 @@ def _state_of(job: Job, identifier: str, now: datetime) -> DeletionState | None:
         return DeletionState("Delete refused", _reason(row), "critical", False)
     if outcome == "incomplete":
         return DeletionState("Delete incomplete", _reason(row), "warning", False)
+    return None
+
+
+#
+# How long a finished target change keeps the page refreshing: the "Used by"
+# column follows the poller's next read of the registry, not the job.
+#
+FOLLOW_UP = timedelta(seconds=90)
+
+
+def _target_state_of(job: Job, identifier: str, now: datetime) -> DeletionState | None:
+    """A Publish to… / Remove from… job, on each certificate it names."""
+
+    adding = job.payload.get("action") == "add"
+    verb = "Publishing" if adding else "Removing from targets"
+    if job.state in {"pending", "running"}:
+        return DeletionState(verb, "A target change job is running", "info", True)
+    if job.finished_at is None:
+        return None
+    age = now - job.finished_at
+    if age > VERDICT_LIFETIME:
+        return None
+    result = job.result if isinstance(job.result, Mapping) else {}
+    if job.state == "failed":
+        error = result.get("error") if isinstance(result.get("error"), Mapping) else {}
+        message = error.get("message") if isinstance(error, Mapping) else None
+        return DeletionState(
+            "Target change failed",
+            message if isinstance(message, str) and message else "The target change job failed",
+            "critical",
+            False,
+        )
+    row = _row(result, identifier)
+    outcome = row.get("state") if row else None
+    moved = ", ".join(
+        str(n) for n in ((row or {}).get("added") or (row or {}).get("abandoned") or [])
+    )
+    if outcome == "changed":
+        return DeletionState(
+            "Published to " + moved if adding else "Removed from " + moved,
+            "The listing follows at the next poll",
+            "info",
+            age <= FOLLOW_UP,
+        )
+    if outcome == "refused":
+        return DeletionState("Target change refused", _reason(row), "critical", False)
+    if outcome == "incomplete":
+        return DeletionState("Copy kept", _reason(row), "warning", False)
     return None
 
 

@@ -53,6 +53,7 @@ from haproxy_ui import (
     certificate_activity,
     certificate_delete,
     certificate_form,
+    certificate_retarget,
     certificates,
     dashboard,
     db,
@@ -2034,6 +2035,151 @@ def build_router(config: Config) -> APIRouter:
         if session.role != "admin":
             return PlainTextResponse("Refused", status_code=403)
         return session
+
+    # - Publish to… / Remove from… (2026-09-15) ---------------------------
+
+    def _certificate_retarget_page(
+        request: Request,
+        session: AuthenticatedSession,
+        action: str,
+        *,
+        chosen: Sequence[str],
+        problem: str = "",
+    ) -> Response:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        registry = _registry_views(request, config)
+        choices = _certificate_choices(request, config)
+        with request.app.state.pool.connection() as connection:
+            drafts = db.live_drafts(connection)
+            recent = db.recent_jobs(connection)
+        picked: certificate_retarget.Selection | None = None
+        try:
+            picked = certificate_retarget.selection(
+                action, chosen, registry, choices.clusters, choices.receivers, drafts
+            )
+        except certificate_retarget.SelectionProblem as refused:
+            problem = problem or str(refused)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "certificate-retarget.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "selection": picked,
+                "problem": problem,
+                "certificate_job": jobs.certificate_in_flight(recent),
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
+    @router.post("/certificates/targets/{action}", response_class=HTMLResponse)
+    def certificate_retarget_review(
+        request: Request,
+        action: str,
+        certificate: Sequence[str] = Form(default=()),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """The page that asks which targets: nothing is queued from here."""
+
+        if action not in certificate_retarget.ACTIONS:
+            return PlainTextResponse("Not found", status_code=404)
+        gate = _certificate_delete_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        return _certificate_retarget_page(request, gate, action, chosen=tuple(certificate))
+
+    @router.post("/certificates/targets/{action}/confirm", response_class=HTMLResponse)
+    def certificate_retarget_confirm(
+        request: Request,
+        action: str,
+        certificate: Sequence[str] = Form(default=()),
+        cluster: Sequence[str] = Form(default=()),
+        receiver: Sequence[str] = Form(default=()),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue one `cert_target` job for the selection and the ticked targets.
+
+        The selection and the offered targets are evaluated again here, not
+        trusted from the previous page; a target that stopped being offered
+        in between is simply not in the job, and a draft written in between
+        is a refusal now.
+        """
+
+        if action not in certificate_retarget.ACTIONS:
+            return PlainTextResponse("Not found", status_code=404)
+        gate = _certificate_delete_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+
+        registry = _registry_views(request, config)
+        choices = _certificate_choices(request, config)
+        with request.app.state.pool.connection() as connection:
+            drafts = db.live_drafts(connection)
+        try:
+            picked = certificate_retarget.selection(
+                action, tuple(certificate), registry, choices.clusters, choices.receivers, drafts
+            )
+            payload = certificate_retarget.payload(picked, tuple(cluster), tuple(receiver))
+            operations.prepare(
+                operation="cert_target",
+                cluster=None,
+                request_id=uuid4(),
+                payload=payload,
+                draft_references=lambda ids: certificate_delete.draft_references(drafts, ids),
+            )
+        except (certificate_retarget.SelectionProblem, operations.BadPayload) as refused:
+            return _certificate_retarget_page(
+                request, gate, action, chosen=tuple(certificate), problem=str(refused)
+            )
+
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="cert_target",
+                    cluster=None,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.CertificateBusy:
+                connection.rollback()
+                return _certificate_retarget_page(
+                    request,
+                    gate,
+                    action,
+                    chosen=tuple(certificate),
+                    problem="A certificate job is already running. Wait for it to finish, "
+                    "then ask again.",
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="queue_job",
+                cluster=None,
+                request_id=job.request_id,
+                detail={"operation": "cert_target", "job": job.id, **payload},
+            )
+            connection.commit()
+        return RedirectResponse("/certificates?view=registry", status_code=303)
 
     @router.post("/certificates/delete", response_class=HTMLResponse)
     def certificate_delete_review(

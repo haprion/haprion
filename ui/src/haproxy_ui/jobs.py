@@ -396,9 +396,13 @@ def diagnostics_of(job: Job) -> str | None:
 
 
 def deletion_note(job: Job) -> str | None:
-    """One sentence per state for a `cert_delete` result, or None where there is none."""
+    """One sentence per state for a `cert_delete` or `cert_target` result, or None.
 
-    if job.operation != "cert_delete" or not isinstance(job.result, dict):
+    The two share a row shape - one certificate, one state, layers and node
+    copies where something was removed - and so share the sentence.
+    """
+
+    if job.operation not in {"cert_delete", "cert_target"} or not isinstance(job.result, dict):
         return None
     body = job.result.get("result")
     if not isinstance(body, dict) or not isinstance(body.get("certificates"), list):
@@ -406,12 +410,13 @@ def deletion_note(job: Job) -> str | None:
     removed: list[str] = []
     refused: list[str] = []
     incomplete: list[str] = []
+    done_word = "Deleted" if job.operation == "cert_delete" else "Changed"
     for entry in body["certificates"]:
         if not isinstance(entry, dict) or not isinstance(entry.get("certificate"), str):
             continue
         identifier = entry["certificate"]
         state = entry.get("state")
-        if state == "removed":
+        if state in {"removed", "changed"}:
             removed.append(identifier)
         elif state == "refused":
             code = entry.get("code")
@@ -434,7 +439,7 @@ def deletion_note(job: Job) -> str | None:
         return None
     parts = []
     if removed:
-        parts.append("Deleted: " + ", ".join(removed))
+        parts.append(f"{done_word}: " + ", ".join(removed))
     if refused:
         parts.append("Refused: " + ", ".join(refused))
     if incomplete:

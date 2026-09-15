@@ -122,8 +122,15 @@
   <form method="post" action="/certificates/delete" class="deletion-form" data-delete-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     {{ certificate_table(certificates.registry.certificates, 'registry', opened, selectable=true) }}
+    {#
+      Three questions about one selection (2026-09-15): where else it should
+      go, where it should stop going, and whether it should go at all. Each
+      button posts the same boxes to its own confirmation page.
+    #}
     <div class="deletion-bar">
       <span class="deletion-count" data-delete-count aria-live="polite">Nothing selected</span>
+      <button class="secondary-button" type="submit" formaction="/certificates/targets/add" data-delete-submit disabled>Publish to…</button>
+      <button class="secondary-button" type="submit" formaction="/certificates/targets/remove" data-delete-submit disabled>Remove from…</button>
       <button class="danger-button" type="submit" data-delete-submit disabled>Delete selected…</button>
     </div>
   </form>

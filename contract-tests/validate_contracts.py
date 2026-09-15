@@ -550,22 +550,56 @@ def check_cert_issue_semantics(document: dict[str, object], path: Path) -> None:
 def check_cert_target_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done cert_target carries a result")
         return
-    registry = result["registry"]
-    targets = set(registry["targets"]["clusters"]) | set(registry["targets"]["receivers"])
-    added = set(registry["added"])
-    abandoned = set(registry["abandoned"])
-    # Added targets are in the new set; abandoned ones are not. A name in both
-    # lists would describe a change that did not happen.
-    if not added <= targets:
-        raise AssertionError(f"{path}: a target was added and is not in the new set")
-    if abandoned & targets:
-        raise AssertionError(f"{path}: a target is both abandoned and current")
-    if registry["changed"] != bool(added or abandoned):
-        raise AssertionError(f"{path}: the change flag disagrees with what moved")
-    check_cert_publish_semantics(
-        {"outcome": document["outcome"], "result": result["publish"]}, path
-    )
+    assert isinstance(result, dict)
+    certificates = result["certificates"]
+    assert isinstance(certificates, list)
+    by_state: dict[str, list[str]] = {
+        "changed": [],
+        "unchanged": [],
+        "refused": [],
+        "incomplete": [],
+    }
+    for entry in certificates:
+        assert isinstance(entry, dict)
+        by_state[str(entry["state"])].append(str(entry["certificate"]))
+        added, abandoned = set(entry["added"]), set(entry["abandoned"])
+        # One delta per request: a row gained targets or lost them, never both,
+        # and a row that changed names what moved.
+        if added and abandoned:
+            raise AssertionError(f"{path}: a row both added and abandoned targets")
+        if result["action"] == "add" and abandoned:
+            raise AssertionError(f"{path}: an add abandoned a target")
+        if result["action"] == "remove" and added:
+            raise AssertionError(f"{path}: a remove added a target")
+        if entry["state"] == "changed" and not (added or abandoned):
+            raise AssertionError(f"{path}: a changed row names no target")
+        # A refused or unchanged certificate was not touched.
+        if entry["state"] in ("refused", "unchanged") and (
+            added or abandoned or entry.get("layers") or entry.get("nodes")
+        ):
+            raise AssertionError(f"{path}: an untouched row carries a change")
+        if entry["state"] == "changed" and (
+            any(layer["state"] == "failed" for layer in entry.get("layers") or [])
+            or any(node["state"] not in ("removed", "absent") for node in entry.get("nodes") or [])
+        ):
+            raise AssertionError(f"{path}: a changed row carries a kept copy")
+    for state, ids in by_state.items():
+        if result[state] != ids:
+            raise AssertionError(f"{path}: result.{state} disagrees with the rows")
+    deployments = result["deployments"]
+    assert isinstance(deployments, list)
+    if result["action"] == "remove" and deployments:
+        raise AssertionError(f"{path}: a remove rolls nothing out")
+    failed_deploys = [d for d in deployments if d["exit_code"] != 0]
+    if document["outcome"] == "done" and (
+        by_state["refused"] or by_state["incomplete"] or failed_deploys
+    ):
+        raise AssertionError(f"{path}: done envelope carries a refused or incomplete row")
+    if document["outcome"] == "blocked" and (by_state["changed"] or by_state["incomplete"]):
+        raise AssertionError(f"{path}: blocked envelope carries a touched row")
 
 
 def check_cert_scep_semantics(document: dict[str, object], path: Path) -> None:
@@ -659,7 +693,7 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
     elif operation in {"dns_profile_apply", "ndes_profile_apply"}:
         result["plugin"] = "dns_example_login = leaked-example"
     elif operation == "cert_target":
-        result["registry"]["abandoned"] = list(result["registry"]["targets"]["clusters"])
+        result["changed"] = ["a-certificate-no-row-names"]
     elif operation == "cert_delete":
         result["removed"] = ["a-certificate-no-row-names"]
     elif operation == "cert_scep":

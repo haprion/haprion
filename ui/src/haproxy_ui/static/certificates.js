@@ -25,11 +25,11 @@
     const form = document.querySelector("[data-delete-form]");
     if (!form) return;
     const picks = Array.from(form.querySelectorAll("[data-delete-pick]"));
-    const submit = form.querySelector("[data-delete-submit]");
+    const submits = Array.from(form.querySelectorAll("[data-delete-submit]"));
     const count = form.querySelector("[data-delete-count]");
     const update = () => {
       const chosen = picks.filter((pick) => pick.checked).length;
-      if (submit) submit.disabled = chosen === 0;
+      submits.forEach((submit) => { submit.disabled = chosen === 0; });
       if (count) count.textContent = chosen === 0 ? "Nothing selected" : `${chosen} selected`;
     };
     picks.forEach((pick) => pick.addEventListener("change", update));

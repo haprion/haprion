@@ -231,6 +231,83 @@ class DeletingCertificates(unittest.TestCase):
             )
 
 
+class RetargetingCertificates(unittest.TestCase):
+    """Publish to… and Remove from… (2026-09-15): a list of IDs and one delta."""
+
+    def test_the_request_carries_the_ids_and_the_delta(self) -> None:
+        prepared = operations.prepare(
+            operation="cert_target",
+            cluster=None,
+            request_id=REQUEST,
+            payload={
+                "certificates": ["a.example", "b.example"],
+                "action": "add",
+                "clusters": ["beta"],
+            },
+        )
+        self.assertEqual(
+            prepared.argv[-1], "/opt/haproxy-mgmt/current/bin/haproxy-cert-target-helper"
+        )
+        request = json.loads(prepared.request)
+        self.assertIsNone(request["cluster"])
+        self.assertEqual(
+            request["parameters"],
+            {
+                "certificates": ["a.example", "b.example"],
+                "add": {"clusters": ["beta"], "receivers": []},
+                "deploy": True,
+            },
+        )
+        prepared = operations.prepare(
+            operation="cert_target",
+            cluster=None,
+            request_id=REQUEST,
+            payload={"certificates": ["a.example"], "action": "remove", "receivers": ["lb-01"]},
+        )
+        self.assertEqual(
+            json.loads(prepared.request)["parameters"]["remove"],
+            {"clusters": [], "receivers": ["lb-01"]},
+        )
+
+    def test_the_payload_is_held_to_shape(self) -> None:
+        for payload in (
+            {"certificates": [], "action": "add", "clusters": ["beta"]},
+            {"certificates": ["a.example"], "action": "replace", "clusters": ["beta"]},
+            {"certificates": ["a.example"], "action": "add"},
+            {"certificates": ["a.example"], "action": "add", "clusters": ["beta"], "extra": 1},
+            {"certificates": ["a.example", "a.example"], "action": "add", "clusters": ["beta"]},
+            {"certificate": "a.example", "clusters": ["beta"]},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(operations.BadPayload):
+                operations.prepare(
+                    operation="cert_target", cluster=None, request_id=REQUEST, payload=payload
+                )
+
+    def test_a_draft_in_the_dropped_cluster_refuses_a_remove_and_nothing_else(self) -> None:
+        references = {"a.example": ("alpha/shop", "beta/shop")}
+        with self.assertRaisesRegex(operations.BadPayload, "beta/shop"):
+            operations.prepare(
+                operation="cert_target",
+                cluster=None,
+                request_id=REQUEST,
+                payload={"certificates": ["a.example"], "action": "remove", "clusters": ["beta"]},
+                draft_references=lambda ids: references,
+            )
+        # A draft in another cluster, or an add, is not held by it.
+        for payload in (
+            {"certificates": ["a.example"], "action": "remove", "clusters": ["gamma"]},
+            {"certificates": ["a.example"], "action": "add", "clusters": ["beta"]},
+            {"certificates": ["a.example"], "action": "remove", "receivers": ["lb-01"]},
+        ):
+            operations.prepare(
+                operation="cert_target",
+                cluster=None,
+                request_id=REQUEST,
+                payload=payload,
+                draft_references=lambda ids: references,
+            )
+
+
 class PayloadsAreRefusedRatherThanTrimmed(unittest.TestCase):
     def test_an_unknown_operation_is_refused(self) -> None:
         with self.assertRaises(operations.UnknownOperation):

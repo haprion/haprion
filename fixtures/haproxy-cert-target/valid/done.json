@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cert_target",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "action": "add",
+    "certificates": [
+      { "certificate": "example.com", "state": "changed", "added": ["beta"], "abandoned": [] },
+      { "certificate": "shop.example.com", "state": "unchanged", "added": [], "abandoned": [] }
+    ],
+    "changed": ["example.com"],
+    "unchanged": ["shop.example.com"],
+    "refused": [],
+    "incomplete": [],
+    "deployments": [{ "cluster": "beta", "exit_code": 0 }]
+  },
+  "warnings": [],
+  "error": null
+}

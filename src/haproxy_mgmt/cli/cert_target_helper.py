@@ -1,59 +1,47 @@
-"""Change one certificate's targets in the registry, then publish it there.
+"""Publish certificates to more targets, or withdraw them from some.
 
-The operation the interface's target checkboxes become. One request states the
-whole intended target set - not an add and not a remove - because the page it
-came from was drawn from a registry some seconds old, and two people editing two
-certificates would otherwise each write their own view of the other's.
+The operation the interface's *Publish to…* and *Remove from…* become. One
+request names a list of certificates and one delta - targets to add, or
+targets to remove - and `cert_retarget` decides per certificate what that
+means from the registry, the cluster files and each cluster's committed
+objects; never from the request. Until 2026-09-15 this helper took one
+certificate and its whole new target set, and left a dropped cluster's copy
+on its nodes; the batch and the removal are the maintainer's two asks.
 
-What it will not do
--------------------
-Invent a target. A cluster has to be one `clusters.yaml` defines and a receiver
-one the registry already lists; `cert_registry.set_targets` checks both, and a
-receiver is registered during installation rather than by a request. That is the
-property the phase gate names: the interface can choose targets but cannot
-create them, so a certificate cannot be published into a directory nobody
-registered.
-
-Delete nothing
---------------
-A target dropped here keeps the copy it was last published. Nothing in this
-project removes certificate material, and a helper that did would be able to
-erase a certificate a cluster is currently serving - a reload away from a site
-that no longer answers. The abandoned targets are reported instead, by name, as
-a warning the operator can act on by hand.
+One refused certificate does not stop the batch. The envelope is `done` when
+every certificate followed the request, `partial` when any was refused or
+left a copy behind or a rollout failed, `blocked` when every one was refused,
+and `failed` only when nothing changed and something went wrong.
 """
 
 from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haproxy_mgmt import cert_registry
+from haproxy_mgmt import cert_retarget
+from haproxy_mgmt.cert_delete import NodeRemover, ask_node, read_guards
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
-from haproxy_mgmt.cert_publish import (
-    DEFAULT_LOCK_PATH,
-    Deployer,
-    PublishError,
-    publish,
-)
+from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
+from haproxy_mgmt.cert_retarget import HELPER, OPERATION, SUDO, Change, Report, RetargetError
 from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.cli.cert_publish import default_deployer
-from haproxy_mgmt.cli.cert_publish_helper import publish_exit_code
-from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
-from haproxy_mgmt.envelope import Message, envelope
+from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy
+from haproxy_mgmt.envelope import Message, Outcome, envelope
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
+    JsonValue,
     config_error_code,
     write_document,
 )
 
-OPERATION = "cert_target"
-PARAMETERS = frozenset({"certificate", "clusters", "receivers", "deploy"})
-HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-target-helper"
-SUDO = "/usr/bin/sudo"
+PARAMETERS = frozenset({"certificates", "add", "remove", "deploy"})
+
+__all__ = ["HELPER", "SUDO", "build_request", "main", "outcome_of"]
 
 # EX_CONFIG: the installation has no registry, which is not the request's fault.
 EXIT_NO_REGISTRY = 78
@@ -62,10 +50,11 @@ EXIT_NO_REGISTRY = 78
 def build_request(
     request_id: str,
     *,
-    certificate: str,
+    certificates: tuple[str, ...],
+    action: str,
     clusters: tuple[str, ...] = (),
     receivers: tuple[str, ...] = (),
-    deploy: bool = False,
+    deploy: bool = True,
 ) -> str:
     """The exact bounded request the worker sends. Null cluster, by contract."""
 
@@ -76,14 +65,56 @@ def build_request(
             "cluster": None,
             "request_id": request_id,
             "parameters": {
-                "certificate": certificate,
-                "clusters": list(clusters),
-                "receivers": list(receivers),
+                "certificates": list(certificates),
+                action: {"clusters": list(clusters), "receivers": list(receivers)},
                 "deploy": deploy,
             },
         },
         separators=(",", ":"),
     )
+
+
+def read_change(parameters: Mapping[str, JsonValue]) -> Change:
+    """Exactly one of `add` and `remove`, each an object of cluster and receiver IDs."""
+
+    present = [key for key in ("add", "remove") if key in parameters]
+    if len(present) != 1:
+        raise HelperProtocolError(
+            "parameters must carry exactly one of add and remove", exit_code=65
+        )
+    action = present[0]
+    block = parameters.get(action)
+    if not isinstance(block, dict):
+        raise HelperProtocolError(f"parameters.{action} must be an object", exit_code=65)
+    unknown = sorted(set(block) - {"clusters", "receivers"})
+    if unknown:
+        raise HelperProtocolError(
+            f"parameters.{action} has unknown key(s): {', '.join(unknown)}", exit_code=65
+        )
+    change = Change(
+        action,
+        clusters=cert_job.clusters(block),
+        receivers=cert_job.receivers(block),
+    )
+    if not change.targets:
+        raise HelperProtocolError(f"parameters.{action} names no target", exit_code=65)
+    return change
+
+
+def outcome_of(report: Report) -> tuple[Outcome, int]:
+    """`done` every certificate as asked; `blocked` every one refused; `partial`
+    when anything followed and something did not; `failed` when nothing did."""
+
+    if not report.outcomes:
+        return "failed", 1
+    followed = len(report.changed) + len(report.unchanged)
+    if followed == len(report.outcomes) and not report.deploy_failed:
+        return "done", 0
+    if len(report.refused) == len(report.outcomes):
+        return "blocked", 65
+    if followed or report.incomplete:
+        return "partial", 0
+    return "failed", 1
 
 
 def main(
@@ -96,6 +127,8 @@ def main(
     require_secure: bool = True,
     require_root: bool = True,
     deployer: Deployer | None = None,
+    node_remover: NodeRemover = ask_node,
+    guards_reader: cert_retarget.GuardsReader = read_guards,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
@@ -120,16 +153,18 @@ def main(
 
     refuse = cert_job.Refuse(OPERATION, request, writer, errors)
     try:
-        certificate = cert_job.certificate(request.parameters)
-        clusters = cert_job.clusters(request.parameters)
-        receivers = cert_job.receivers(request.parameters)
-        deploy = cert_job.flag(request.parameters, "deploy")
+        certificates = cert_job.certificates(request.parameters)
+        change = read_change(request.parameters)
+        deploy = (
+            cert_job.flag(request.parameters, "deploy") if "deploy" in request.parameters else True
+        )
     except HelperProtocolError as exc:
         return refuse("bad_input", str(exc), exc.exit_code)
+    if not certificates:
+        return refuse("bad_input", "parameters.certificates names no certificate", 65)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
-        runtime = load_runtime_config(policy, require_secure=require_secure)
     except ConfigError as exc:
         return refuse(config_error_code(exc.exit_code), str(exc), exc.exit_code)
 
@@ -142,103 +177,62 @@ def main(
         )
 
     try:
-        change = cert_registry.set_targets(
-            policy.certificate_registry,
-            certificate_id=certificate,
-            clusters=clusters,
-            receivers=receivers,
-            runtime=runtime,
-            require_secure=require_secure,
-        )
-    except cert_registry.RegistryError as exc:
-        return refuse(exc.code, str(exc), exc.exit_code)
-
-    #
-    # Re-read rather than patched in memory, for the reason `issue` gives: the
-    # publisher must see exactly what the next renewal's hook will see.
-    #
-    try:
-        refreshed = load_runtime_config(policy, require_secure=require_secure)
-    except ConfigError as exc:
-        return refuse(config_error_code(exc.exit_code), str(exc), exc.exit_code)
-
-    try:
-        report = publish(
-            refreshed,
+        report = cert_retarget.retarget(
+            certificates,
+            change,
             policy,
-            only=[certificate],
+            deploy=deploy,
+            require_secure=require_secure,
             live=live,
             store=store,
             lock_path=lock_path,
-            deployer=(deployer if deployer is not None else default_deployer(errors))
-            if deploy
-            else None,
+            deployer=deployer if deployer is not None else default_deployer(errors),
+            node_remover=node_remover,
+            guards_reader=guards_reader,
             now=now,
         )
-    except PublishError as exc:
-        #
-        # The registry was already changed and stays changed. Reporting the
-        # publish failure as the result of the whole operation is the honest
-        # answer - the targets are what the operator asked for, and the material
-        # has not reached the new ones yet - and a rollback of the registry here
-        # would undo a decision because a later step failed.
-        #
-        return refuse(exc.code, str(exc), publish_exit_code(exc))
+    except RetargetError as exc:
+        return refuse(exc.code, str(exc), exc.exit_code)
 
+    outcome, exit_code = outcome_of(report)
     warnings = [
-        Message(code=entry.error[0], message=entry.error[1], node=entry.certificate_id)
-        for entry in report.skipped
-        if entry.error
+        Message(
+            code=item.code or "incomplete",
+            message=item.reason,
+            details={"certificate": item.certificate_id},
+        )
+        for item in report.outcomes
+        if item.state in {"refused", "incomplete"}
     ]
-    if change.abandoned:
+    for cluster_id in report.deploy_failed:
         warnings.append(
             Message(
-                code="target_abandoned",
-                message=(
-                    "no longer published to: "
-                    + ", ".join(change.abandoned)
-                    + ". The copy already there was left in place; remove it by hand when "
-                    "the target no longer needs it."
-                ),
-                details={"targets": list(change.abandoned)},
+                code="deploy_failed",
+                message=f"cluster {cluster_id} was not rolled out; deploy it again",
+                details={"cluster": cluster_id},
             )
         )
-
-    result = {"registry": change.as_dict(), "publish": report.as_dict()}
-    failed = [entry.certificate_id for entry in report.failed]
-    not_deployed = [item.cluster for item in report.deployments if item.exit_code != 0]
-    if failed or not_deployed:
-        parts = []
-        if failed:
-            parts.append("not published: " + ", ".join(failed))
-        if not_deployed:
-            parts.append("not deployed: " + ", ".join(not_deployed))
-        write_document(
-            writer,
-            envelope(
-                operation=OPERATION,
-                outcome="failed",
-                cluster=None,
-                request_id=request.request_id,
-                result=result,
-                warnings=tuple(warnings),
-                error=Message(code="publish_failed", message="; ".join(parts)),
-            ),
+    error = None
+    if outcome == "blocked":
+        error = Message(
+            code="all_refused",
+            message="every certificate was refused: " + ", ".join(report.refused),
         )
-        return 1
-
+    elif outcome == "failed":
+        error = Message(code="retarget_failed", message="no certificate's targets changed")
     write_document(
         writer,
         envelope(
             operation=OPERATION,
-            outcome="partial" if warnings else "done",
+            outcome=outcome,
             cluster=None,
             request_id=request.request_id,
-            result=result,
+            result=report.as_dict(),
             warnings=tuple(warnings),
+            error=error,
         ),
     )
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

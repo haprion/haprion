@@ -19,6 +19,7 @@ from typing import Any
 
 import yaml
 
+from haproxy_mgmt.cert_delete import Guards
 from haproxy_mgmt.cli import cert_issue_helper, cert_publish_helper, cert_target_helper
 from haproxy_mgmt.envelope import new_request_id
 from tests.test_cert_issue import FakeCertbot
@@ -92,7 +93,7 @@ class TheBoundaryEveryOneOfThemHolds(HelperFixture):
         (cert_publish_helper, {"certificates": [], "deploy": False}),
         (
             cert_target_helper,
-            {"certificate": "example.com", "clusters": ["alpha"], "deploy": False},
+            {"certificates": ["example.com"], "add": {"clusters": ["alpha"]}, "deploy": False},
         ),
     )
 
@@ -252,28 +253,34 @@ class WhatIssuingAnswers(HelperFixture):
 
 
 class WhatRetargetingAnswers(HelperFixture):
-    def test_the_targets_become_exactly_those_asked_for_and_the_drop_is_named(self) -> None:
-        issue(self.live / "example.com", "example.com")
-        for name in KEEPERS:
+    """The batch with a delta (2026-09-15); the engine is measured in test_cert_retarget."""
+
+    def test_adding_a_target_publishes_and_rolls_the_new_cluster_out(self) -> None:
+        for name in ("example.com", *KEEPERS):
             issue(self.live / name, name)
 
         code, document, _ = self.run_helper(
             cert_target_helper,
             self.request(
                 "cert_target",
-                {"certificate": "example.com", "receivers": ["lb-01"], "deploy": False},
+                {
+                    "certificates": ["example.com"],
+                    "add": {"clusters": ["beta"], "receivers": ["lb-01"]},
+                },
             ),
         )
 
         self.assertEqual(code, 0)
         assert document is not None
-        registry = document["result"]["registry"]
-        self.assertEqual(registry["targets"], {"clusters": [], "receivers": ["lb-01"]})
-        self.assertEqual(registry["abandoned"], ["alpha"])
-        self.assertEqual(document["outcome"], "partial")
-        self.assertIn("target_abandoned", [warning["code"] for warning in document["warnings"]])
+        self.assertEqual(document["outcome"], "done")
+        result = document["result"]
+        self.assertEqual(result["action"], "add")
+        self.assertEqual(result["changed"], ["example.com"])
+        self.assertEqual(result["certificates"][0]["added"], ["beta", "lb-01"])
+        self.assertEqual(result["deployments"], [{"cluster": "beta", "exit_code": 0}])
+        self.assertEqual(self.deployed, ["beta"])
 
-    def test_an_unregistered_receiver_is_refused_and_the_registry_is_untouched(self) -> None:
+    def test_an_unregistered_receiver_is_a_refused_row_and_the_registry_is_untouched(self) -> None:
         registry = self.root / "certificates.yaml"
         before = registry.read_bytes()
 
@@ -281,14 +288,72 @@ class WhatRetargetingAnswers(HelperFixture):
             cert_target_helper,
             self.request(
                 "cert_target",
-                {"certificate": "example.com", "receivers": ["lb-99"], "deploy": False},
+                {"certificates": ["example.com"], "add": {"receivers": ["lb-99"]}, "deploy": False},
             ),
         )
 
-        self.assertEqual(code, 64)
+        self.assertEqual(code, 65)
         assert document is not None
-        self.assertEqual(document["error"]["code"], "unknown_receiver")
+        self.assertEqual(document["outcome"], "blocked")
+        self.assertEqual(document["error"]["code"], "all_refused")
+        self.assertEqual(document["result"]["certificates"][0]["code"], "unknown_receiver")
         self.assertEqual(registry.read_bytes(), before)
+
+    def test_a_request_must_say_add_or_remove_and_not_both(self) -> None:
+        for parameters in (
+            {"certificates": ["example.com"]},
+            {
+                "certificates": ["example.com"],
+                "add": {"clusters": ["beta"]},
+                "remove": {"clusters": ["alpha"]},
+            },
+            {"certificates": ["example.com"], "add": {"clusters": []}},
+            {"certificates": ["example.com"], "add": {"nodes": ["x"]}},
+            {"certificates": [], "add": {"clusters": ["beta"]}},
+        ):
+            with self.subTest(parameters=parameters):
+                code, document, _ = self.run_helper(
+                    cert_target_helper, self.request("cert_target", parameters)
+                )
+                self.assertEqual(code, 65)
+                assert document is not None
+                self.assertEqual(document["error"]["code"], "bad_input")
+
+    def test_removing_a_cluster_asks_its_nodes_and_never_the_deployer(self) -> None:
+        asked: list[str] = []
+        key = self.root / "id_ed25519"
+        key.write_text("dummy\n", encoding="utf-8")
+        key.chmod(0o600)
+        policy = yaml.safe_load(self.policy_path.read_text())
+        policy["cert_deploy_identity"] = {"user": "svc-cert", "key": str(key)}
+        self.policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+
+        def node(identity: Any, host: str, certificate_id: str) -> tuple[int, str]:
+            asked.append(host)
+            return 0, f"Removed {certificate_id}."
+
+        code, document, _ = self.run_helper(
+            cert_target_helper,
+            self.request(
+                "cert_target",
+                {
+                    "certificates": ["example.com", "keeper-alpha.example"],
+                    "remove": {"clusters": ["alpha"]},
+                },
+            ),
+            node_remover=node,
+            guards_reader=lambda runtime, ids: Guards(),
+        )
+
+        self.assertEqual(code, 0)
+        assert document is not None
+        # example.com leaves alpha; the keeper is then alpha's last and is refused.
+        self.assertEqual(document["outcome"], "partial")
+        self.assertEqual(document["result"]["changed"], ["example.com"])
+        self.assertEqual(document["result"]["refused"], ["keeper-alpha.example"])
+        self.assertEqual(self.deployed, [])
+        self.assertEqual(asked, ["node-a.example.com", "node-b.example.com"])
+        self.assertEqual(document["warnings"][0]["code"], "cluster_uncovered")
 
 
 class WhatPublishingAnswers(HelperFixture):

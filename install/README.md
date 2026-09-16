@@ -31,7 +31,7 @@ host who owns the address. There is a working starting point in
 4 checks all three and says so if one is missing.
 
 The
-management host needs Python 3.12+, the OS PyYAML package, `git`, `rsync`,
+management host needs Python 3.12+, the OS PyYAML, PyNaCl and psycopg 3 packages, `git`, `rsync`,
 `openssh-client` and a `sudo` new enough for no-argument rules.
 
 Copy the answers file and fill it in. It is the only place you make decisions:

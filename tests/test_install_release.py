@@ -64,6 +64,7 @@ class InstallReleaseTests(unittest.TestCase):
             self.assertEqual(metadata["entry_points"], ["haproxy-example"])
             self.assertEqual(metadata["engine_api"], 1)
             self.assertRegex(metadata["pynacl"], r"^1\.")
+            self.assertRegex(metadata["psycopg"], r"^3\.")
             self.assertEqual(stat.S_IMODE(release.stat().st_mode), 0o555)
             self.assertEqual(stat.S_IMODE((release / "bin/haproxy-example").stat().st_mode), 0o555)
             self.assertEqual(
@@ -144,6 +145,16 @@ class InstallReleaseTests(unittest.TestCase):
             fake.write_text('#!/bin/sh\necho \'{"python": "3.12.0", "pyyaml": "6.0.0"}\'\n')
             fake.chmod(0o755)
             with self.assertRaisesRegex(install_release_module.InstallError, "PyNaCl"):
+                install_release_module.inspect_runtime(fake)
+
+    def test_a_runtime_without_psycopg_is_refused_by_name(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            fake = Path(raw) / "python3"
+            fake.write_text(
+                '#!/bin/sh\necho \'{"python": "3.12.0", "pyyaml": "6.0.0", "pynacl": "1.6.2"}\'\n'
+            )
+            fake.chmod(0o755)
+            with self.assertRaisesRegex(install_release_module.InstallError, "psycopg"):
                 install_release_module.inspect_runtime(fake)
 
 

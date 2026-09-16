@@ -95,6 +95,8 @@ HAProxy itself. Before starting, you need:
 - the operating-system PyYAML package, major version 6
 - the operating-system PyNaCl package (`python3-nacl`), major version 1 - the CLI release's
   installer refuses a host without it, as it does without PyYAML
+- the operating-system psycopg package (`python3-psycopg`), major version 3 - the collector uses
+  it for transactional PostgreSQL COPY and the CLI installer refuses a host without it
 - `git`, `rsync`, `openssh-client`
 - `sudo` new enough to support the no-argument sudoers form (`command ""`)
 
@@ -1780,7 +1782,8 @@ sudo /usr/bin/python3 tools/install-release.py \
 ```
 
 The installer fails closed unless it runs as root and the supplied digest matches. It also rejects
-unsafe wheel members and entry points, verifies the runtime baseline and imports, then installs:
+unsafe wheel members and entry points, verifies the runtime baseline (including the distribution's
+PyYAML, PyNaCl and psycopg packages) and imports, then installs:
 
 ```text
 /opt/haproxy-mgmt/

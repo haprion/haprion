@@ -57,7 +57,8 @@ def inspect_runtime(python: Path) -> dict[str, str]:
         "import importlib.metadata,json,sys;"
         "print(json.dumps({'python':'.'.join(map(str,sys.version_info[:3])),"
         "'pyyaml':importlib.metadata.version('PyYAML'),"
-        "'pynacl':importlib.metadata.version('PyNaCl')}))"
+        "'pynacl':importlib.metadata.version('PyNaCl'),"
+        "'psycopg':importlib.metadata.version('psycopg')}))"
     )
     try:
         completed = subprocess.run(  # noqa: S603 - validated absolute interpreter, fixed argv
@@ -69,11 +70,11 @@ def inspect_runtime(python: Path) -> dict[str, str]:
         )
         result = json.loads(completed.stdout)
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError, KeyError) as exc:
-        raise InstallError(f"runtime Python/PyYAML/PyNaCl probe failed: {exc}") from exc
+        raise InstallError(f"runtime Python/PyYAML/PyNaCl/psycopg probe failed: {exc}") from exc
     if not isinstance(result, dict) or not all(
-        isinstance(result.get(key), str) for key in ("python", "pyyaml", "pynacl")
+        isinstance(result.get(key), str) for key in ("python", "pyyaml", "pynacl", "psycopg")
     ):
-        raise InstallError("runtime Python/PyYAML/PyNaCl probe returned invalid data")
+        raise InstallError("runtime Python/PyYAML/PyNaCl/psycopg probe returned invalid data")
     python_version = tuple(int(part) for part in result["python"].split("."))
     yaml_major = int(result["pyyaml"].split(".", maxsplit=1)[0])
     if python_version < (3, 12, 0):
@@ -89,7 +90,15 @@ def inspect_runtime(python: Path) -> dict[str, str]:
     nacl_major = int(result["pynacl"].split(".", maxsplit=1)[0])
     if nacl_major != 1:
         raise InstallError("runtime PyNaCl must be major version 1")
-    return {"python": result["python"], "pyyaml": result["pyyaml"], "pynacl": result["pynacl"]}
+    psycopg_major = int(result["psycopg"].split(".", maxsplit=1)[0])
+    if psycopg_major != 3:
+        raise InstallError("runtime psycopg must be major version 3")
+    return {
+        "python": result["python"],
+        "pyyaml": result["pyyaml"],
+        "pynacl": result["pynacl"],
+        "psycopg": result["psycopg"],
+    }
 
 
 def _safe_member(name: str) -> PurePosixPath:
@@ -282,6 +291,7 @@ def install_release(
                 "python": runtime["python"],
                 "pyyaml": runtime["pyyaml"],
                 "pynacl": runtime["pynacl"],
+                "psycopg": runtime["psycopg"],
                 "entry_points": sorted(scripts),
                 "engine_api": engine_api,
             }

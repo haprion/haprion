@@ -186,6 +186,118 @@ class ARealDatabase(unittest.TestCase):
             cursor.execute("select count(*) from traffic_log where host = 'copy.example.com'")
             self.assertEqual(cursor.fetchone(), (1,))
 
+    def test_an_unusable_record_is_stepped_over_rather_than_wedging_the_stream(self) -> None:
+        """One bad line must not stop the good ones, this run or any later one.
+
+        Measured on the real mirror before this was written: three lines out of
+        roughly a hundred thousand could not be read - the traffic route's own
+        probe record, which carries no timestamp, and two lines an rsyslog
+        restart had cut in half. Each of them stopped the import of every node,
+        every minute, because the checkpoint never passes the record that
+        raised.
+        """
+
+        now = datetime.now(UTC).replace(microsecond=0)
+
+        def record(host: str) -> str:
+            return json.dumps(
+                {
+                    "schema": 1,
+                    "at": int(now.timestamp()),
+                    "request": 91,
+                    "client": "192.0.2.21",
+                    "method": "GET",
+                    "host": host,
+                    "path": "/after",
+                    "frontend": "mgd-main-http",
+                    "backend": "mgd-app-primary",
+                    "server": "s1",
+                    "status": 200,
+                    "request_time": 0,
+                    "queue_time": 0,
+                    "connect_time": 1,
+                    "response_time": 2,
+                    "total_time": 3,
+                    "bytes": 0,
+                },
+                separators=(",", ":"),
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            part = root / f"alpha--node-a--{now:%Y-%m-%d}.jsonl"
+            part.write_text(
+                '{"schema":1,"probe":true}\n'
+                + "{not json at all\n"
+                + record("skipped.example.com")
+                + "\n"
+            )
+            target = NodeTarget("alpha", "node-a", "node-a.example.com")
+            config = CollectorConfig(
+                "svc-logread",
+                root / "key",
+                root / "known_hosts",
+                root,
+                root,
+                (target,),
+            )
+            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+                skipped = _ingest_part(config, connection, target, part)
+            self.assertEqual(skipped, 2)
+            checkpoint = root / f".{part.name}.database-offset"
+            self.assertEqual(int(checkpoint.read_text()), part.stat().st_size)
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+            cursor.execute("select count(*) from traffic_log where host = 'skipped.example.com'")
+            self.assertEqual(cursor.fetchone(), (1,))
+
+    def test_a_record_still_being_written_is_left_for_the_next_run(self) -> None:
+        """The open day grows under the reader; half a line is not damage."""
+
+        now = datetime.now(UTC).replace(microsecond=0)
+        body = {
+            "schema": 1,
+            "at": int(now.timestamp()),
+            "request": 92,
+            "client": "192.0.2.22",
+            "method": "GET",
+            "host": "partial.example.com",
+            "path": "/tail",
+            "frontend": "mgd-main-http",
+            "backend": "mgd-app-primary",
+            "server": "s1",
+            "status": 200,
+            "request_time": 0,
+            "queue_time": 0,
+            "connect_time": 1,
+            "response_time": 2,
+            "total_time": 3,
+            "bytes": 0,
+        }
+        line = json.dumps(body, separators=(",", ":"))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            part = root / f"alpha--node-a--{now:%Y-%m-%d}.jsonl"
+            part.write_text(line[:40])
+            target = NodeTarget("alpha", "node-a", "node-a.example.com")
+            config = CollectorConfig(
+                "svc-logread",
+                root / "key",
+                root / "known_hosts",
+                root,
+                root,
+                (target,),
+            )
+            checkpoint = root / f".{part.name}.database-offset"
+            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+                self.assertEqual(_ingest_part(config, connection, target, part), 0)
+                self.assertFalse(checkpoint.exists())
+                part.write_text(line + "\n")
+                self.assertEqual(_ingest_part(config, connection, target, part), 0)
+            self.assertEqual(int(checkpoint.read_text()), part.stat().st_size)
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+            cursor.execute("select count(*) from traffic_log where host = 'partial.example.com'")
+            self.assertEqual(cursor.fetchone(), (1,))
+
     def test_database_search_uses_boolean_terms_status_and_newest_first(self) -> None:
         with (
             tempfile.TemporaryDirectory() as temporary,

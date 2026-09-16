@@ -688,18 +688,41 @@ def _ingest_part(
     connection: psycopg.Connection[Any],
     target: NodeTarget,
     part: Path,
-) -> None:
+) -> int:
+    """Import one staging part, and answer how many records it had to skip."""
+
     metadata = _regular(part)
     checkpoint = _database_checkpoint(config, part)
     offset = _checkpoint_offset(checkpoint, size=metadata.st_size)
     rows: list[tuple[Any, ...]] = []
     end = offset
+    skipped = 0
     with part.open("rb") as stream:
         stream.seek(offset)
         while line := stream.readline(MAX_RECORD_BYTES + 1):
             if not line.endswith(b"\n"):
-                raise CollectorError("staging part ends in a partial traffic record")
-            rows.append(_database_row(target.cluster, target.node, line[:-1]))
+                #
+                # The open day is still being written to. A final line without
+                # its newline is the writer half way through a record, not
+                # damage: stop before it and take it on the next run, when it is
+                # whole. Treating it as an error stopped the import of the day
+                # that is actually accumulating.
+                #
+                break
+            try:
+                rows.append(_database_row(target.cluster, target.node, line[:-1]))
+            except CollectorError:
+                #
+                # One unreadable record must not stop a hundred thousand good
+                # ones, and stopping would be permanent rather than momentary:
+                # the checkpoint never advances past the record that raised, so
+                # every later run reaches the same line and fails again. The
+                # mirror legitimately holds lines this schema does not describe -
+                # the route's own probe record carries no timestamp, and an
+                # rsyslog restart can cut a line in half. Count them, step over
+                # them, and say how many in the run's output.
+                #
+                skipped += 1
             end = stream.tell()
             if len(rows) == DATABASE_BATCH_ROWS:
                 with connection.cursor() as cursor, cursor.copy(_TRAFFIC_COPY) as copy:
@@ -714,11 +737,22 @@ def _ingest_part(
                     copy.write_row(row)
             connection.commit()
             _replace(checkpoint, f"{end}\n".encode(), 0o600)
+        elif end > offset:
+            #
+            # Nothing to commit, but the reader did move: a tail of records this
+            # schema cannot use. The checkpoint still has to pass them, or the
+            # next run reads and rejects exactly the same bytes forever.
+            #
+            _replace(checkpoint, f"{end}\n".encode(), 0o600)
+    return skipped
 
 
-def _ingest_database(config: CollectorConfig) -> None:
+def _ingest_database(config: CollectorConfig) -> int:
+    """Import every staging part, and answer how many records were skipped."""
+
     if config.database is None or config.database_socket is None:
-        return
+        return 0
+    skipped = 0
     try:
         with psycopg.connect(
             f"dbname={config.database} host={config.database_socket}", autocommit=False
@@ -726,9 +760,10 @@ def _ingest_database(config: CollectorConfig) -> None:
             for target in config.nodes:
                 prefix = f"{target.cluster}--{target.node}--"
                 for part in sorted(config.staging.glob(f"{prefix}*.jsonl")):
-                    _ingest_part(config, connection, target, part)
+                    skipped += _ingest_part(config, connection, target, part)
     except psycopg.Error as exc:
         raise CollectorError("database import failed") from exc
+    return skipped
 
 
 def collect(
@@ -759,7 +794,9 @@ def collect(
                 print(f"{target.cluster}/{target.node}: {exc}", file=sys.stderr)
                 failures += 1
         try:
-            _ingest_database(config)
+            skipped = _ingest_database(config)
+            if skipped:
+                print(f"database: skipped {skipped} unusable record(s)", file=sys.stderr)
         except (CollectorError, OSError) as exc:
             print(f"database: {exc}", file=sys.stderr)
             for target in mirrored:

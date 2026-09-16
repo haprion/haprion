@@ -18,8 +18,9 @@ ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-ui-traffic-collector --config /e
 # retry itself, and would hold an SSH identity in memory between runs for no
 # reason.
 #
-# No database, no sudo, no privileged helper - so unlike the poller this unit
-# gets every restriction, with nothing relaxed.
+# The local PostgreSQL socket is its only manager-side service. Peer
+# authentication maps this OS identity to the insert-only collector role; it
+# has no password, sudo rule or privileged helper.
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 ProtectSystem=strict

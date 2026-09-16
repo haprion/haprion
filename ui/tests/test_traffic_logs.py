@@ -16,6 +16,7 @@ from haproxy_ui.config import TrafficLogs
 from haproxy_ui.db import ClusterObjects
 from haproxy_ui.traffic_logs import (
     MAX_RECORD_BYTES,
+    Freshness,
     Reading,
     configured_server_addresses,
     parse,
@@ -25,6 +26,14 @@ from haproxy_ui.traffic_logs import (
 from tests.test_login import LoginTestCase, configuration
 
 NOW = datetime(2026, 9, 8, 12, 0, 0, tzinfo=UTC)
+
+
+class TrafficFreshnessTests(unittest.TestCase):
+    def test_a_failure_in_the_same_pass_as_the_last_mirror_success_is_visible(self) -> None:
+        freshness = Freshness("alpha", "node-a", NOW, NOW, "database")
+
+        self.assertTrue(freshness.latest_attempt_failed())
+
 
 PROXY = """schema: 1
 name: sample-proxy
@@ -468,11 +477,22 @@ class TheTrafficLogPage(LoginTestCase):
         config = replace(
             configuration(),
             clusters=clusters,
-            traffic_logs=TrafficLogs(enabled=enabled, directory=self.root, max_lines=500),
+            traffic_logs=TrafficLogs(
+                enabled=enabled, directory=self.root, max_lines=500, retention_days=14
+            ),
         )
         client = self.client(config)
         self.sign_in(client)
-        with patch("haproxy_ui.db.cluster_objects", return_value=list(objects)):
+
+        def file_read(
+            _connection: object, directory: Path, named: tuple[str, ...], **kwargs: object
+        ) -> Reading:
+            return read(directory, named, **kwargs)  # type: ignore[arg-type]
+
+        with (
+            patch("haproxy_ui.db.cluster_objects", return_value=list(objects)),
+            patch("haproxy_ui.traffic_logs.read_database", side_effect=file_read),
+        ):
             response = client.get(f"/logs{query}")
 
         self.assertEqual(response.status_code, 200)

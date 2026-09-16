@@ -92,6 +92,6 @@ done
 
 step "Done"
 log "  ${unit}.timer runs daily: prunes finished jobs older than a week, keeping the 20 most recent,"
-log "           and rolls up complete metric hours before safely pruning their raw rows"
+log "           rolls up metric hours, and rotates traffic-log partitions at the configured retention"
 log "  nothing has been deleted yet; run it now with:"
 log "    sudo haproxy-ui-retention prune -e ${ENVIRONMENT}"

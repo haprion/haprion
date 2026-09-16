@@ -163,25 +163,28 @@ while read -r cluster; do
 done < <(each_cluster)
 [[ ${#inventory[@]} -gt 0 ]] || die "no nodes are defined in the answers file"
 
+DB_SOCKET_DIRECTORY="${DB_SOCKET_DIRECTORY:-/var/run/postgresql}"
 config="$(/usr/bin/python3 - "$LOGREAD_USER" "$COLLECTOR_KEY" "$COLLECTOR_KNOWN_HOSTS" \
-    "$MIRROR" "$STAGING" "${inventory[@]}" <<'PY'
+    "$MIRROR" "$STAGING" "$DB_NAME" "$DB_SOCKET_DIRECTORY" "${inventory[@]}" <<'PY'
 import json
 import sys
 
-user, key, known_hosts, mirror, staging = sys.argv[1:6]
+user, key, known_hosts, mirror, staging, database, database_socket = sys.argv[1:8]
 nodes = []
-for entry in sys.argv[6:]:
+for entry in sys.argv[8:]:
     cluster, name, host = entry.split(":", 2)
     nodes.append({"cluster": cluster, "node": name, "host": host})
 print(
     json.dumps(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "user": user,
             "key": key,
             "known_hosts": known_hosts,
             "mirror": mirror,
             "staging": staging,
+            "database": database,
+            "database_socket": database_socket,
             "nodes": nodes,
         },
         indent=2,
@@ -260,7 +263,11 @@ deny "$COLLECTOR_USER" "write into the release tree" \
 # somebody installed it.
 #
 if command -v psql >/dev/null; then
-    deny "$COLLECTOR_USER" "reach the database" psql -d "$DB_NAME" -qtAX -c 'select 1'
+    allow "$COLLECTOR_USER" "reach its database role" psql -d "$DB_NAME" -qtAX -c 'select 1'
+    deny "$COLLECTOR_USER" "read traffic rows" \
+        psql -d "$DB_NAME" -qtAX -c 'select cluster from traffic_log limit 0'
+    deny "$COLLECTOR_USER" "delete traffic rows" \
+        psql -d "$DB_NAME" -qtAX -c 'delete from traffic_log where false'
 else
     warn "psql is not installed here; the database boundary was not checked"
 fi

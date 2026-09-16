@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -17,11 +18,14 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import psycopg
+
 MAX_CONFIG_BYTES = 1024 * 1024
 MAX_HEADER_BYTES = 4096
 MAX_SEND = 8 * 1024 * 1024
 MAX_STDERR = 64 * 1024
-MAX_MIRROR_BYTES = 256 * 1024 * 1024
+MAX_RECORD_BYTES = 16 * 1024
+DATABASE_BATCH_ROWS = 1000
 RETENTION_DAYS = 14
 SSH_TIMEOUT_SECONDS = 30
 # A node names its day file from its own UTC clock.  During the first minutes
@@ -31,6 +35,7 @@ SSH_TIMEOUT_SECONDS = 30
 # closed day immutable locally.
 CLOSED_DAY_GRACE = timedelta(minutes=5)
 ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+DATABASE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 USER = re.compile(r"^[a-z_][a-z0-9_-]{0,30}$")
 HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$")
@@ -63,6 +68,8 @@ class CollectorConfig:
     mirror: Path
     staging: Path
     nodes: tuple[NodeTarget, ...]
+    database: str | None = None
+    database_socket: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +124,7 @@ def load_config(path: Path, *, require_secure: bool = True) -> CollectorConfig:
         value = json.loads(path.read_bytes())
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise CollectorError(f"cannot read collector configuration: {exc}") from exc
-    if not isinstance(value, dict) or set(value) != {
+    base_fields = {
         "schema_version",
         "user",
         "key",
@@ -125,10 +132,28 @@ def load_config(path: Path, *, require_secure: bool = True) -> CollectorConfig:
         "mirror",
         "staging",
         "nodes",
-    }:
+    }
+    if not isinstance(value, dict):
         raise CollectorError("collector configuration has unexpected or missing fields")
-    if type(value["schema_version"]) is not int or value["schema_version"] != 1:
-        raise CollectorError("collector configuration schema_version must be 1")
+    schema_version = value.get("schema_version")
+    expected = base_fields if schema_version == 1 else base_fields | {"database", "database_socket"}
+    if set(value) != expected:
+        raise CollectorError("collector configuration has unexpected or missing fields")
+    if type(schema_version) is not int or schema_version not in {1, 2}:
+        raise CollectorError("collector configuration schema_version must be 1 or 2")
+    database: str | None = None
+    database_socket: str | None = None
+    if schema_version == 2:
+        database = value["database"]
+        database_socket = value["database_socket"]
+        if not isinstance(database, str) or DATABASE.fullmatch(database) is None:
+            raise CollectorError("collector database is invalid")
+        if (
+            not isinstance(database_socket, str)
+            or not Path(database_socket).is_absolute()
+            or ".." in Path(database_socket).parts
+        ):
+            raise CollectorError("collector database_socket is invalid")
     user = value["user"]
     if not isinstance(user, str) or USER.fullmatch(user) is None:
         raise CollectorError("collector user is invalid")
@@ -159,6 +184,8 @@ def load_config(path: Path, *, require_secure: bool = True) -> CollectorConfig:
         mirror=_absolute(value["mirror"], "mirror"),
         staging=_absolute(value["staging"], "staging"),
         nodes=tuple(nodes),
+        database=database,
+        database_socket=database_socket,
     )
 
 
@@ -299,7 +326,7 @@ def _part(config: CollectorConfig, target: NodeTarget, wanted: date) -> Path:
 
 def _safe_size(path: Path) -> int:
     try:
-        return _regular(path, maximum=MAX_MIRROR_BYTES).st_size
+        return _regular(path).st_size
     except CollectorError:
         if path.exists() or path.is_symlink():
             raise
@@ -364,8 +391,6 @@ def _update_day(config: CollectorConfig, target: NodeTarget, wanted: date, fetch
         # damaged/replaced file. Rebuild the day rather than preserving a hole.
         _replace(path, b"", 0o600)
         return False
-    if offset + len(response.payload) > MAX_MIRROR_BYTES:
-        raise CollectorError("one node day exceeds the mirror size limit")
     _append(path, response.payload)
     return response.eof
 
@@ -384,7 +409,6 @@ def _assemble(config: CollectorConfig, target: NodeTarget, days: tuple[date, ...
     # what `_replace` beside this already does.
     #
     temporary = config.mirror / f".{target.cluster}--{target.node}.mirror-{os.getpid()}"
-    total = 0
     try:
         with temporary.open("xb") as output:
             os.chmod(temporary, 0o600)
@@ -392,10 +416,7 @@ def _assemble(config: CollectorConfig, target: NodeTarget, days: tuple[date, ...
                 path = _part(config, target, wanted)
                 if not path.exists() and not path.is_symlink():
                     continue
-                metadata = _regular(path, maximum=MAX_MIRROR_BYTES)
-                total += metadata.st_size
-                if total > MAX_MIRROR_BYTES:
-                    raise CollectorError("node mirror exceeds its size limit")
+                _regular(path)
                 with path.open("rb") as source:
                     while chunk := source.read(1024 * 1024):
                         output.write(chunk)
@@ -478,12 +499,17 @@ def collect_node(
     # complete. Pruning only the parts left one marker per node-day behind, and
     # nothing ever removed them.
     #
-    for suffix, maximum in ((".jsonl", MAX_MIRROR_BYTES), (".done", 1)):
+    for suffix, maximum in ((".jsonl", None), (".done", 1)):
         for path in config.staging.glob(f"{prefix}*{suffix}"):
             day = path.name[len(prefix) : -len(suffix)]
             if day not in keep:
                 _regular(path, maximum=maximum)
                 path.unlink()
+                if suffix == ".jsonl":
+                    checkpoint = _database_checkpoint(config, path)
+                    if checkpoint.exists() or checkpoint.is_symlink():
+                        _regular(checkpoint, maximum=32)
+                        checkpoint.unlink()
 
     try:
         current_complete = _update_day(config, target, today, fetch)
@@ -574,6 +600,137 @@ def _retire_staging(config: CollectorConfig, *, now: datetime) -> None:
             print(f"retired part {name}: {exc}", file=sys.stderr)
 
 
+def _database_checkpoint(config: CollectorConfig, part: Path) -> Path:
+    return config.staging / f".{part.name}.database-offset"
+
+
+def _checkpoint_offset(path: Path, *, size: int) -> int:
+    try:
+        raw = _read_small_file(path, 32)
+        offset = int(raw)
+    except (OSError, ValueError):
+        return 0
+    return offset if 0 <= offset <= size else 0
+
+
+def _read_small_file(path: Path, maximum: int) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > maximum:
+            raise CollectorError("database checkpoint is invalid")
+        return os.read(descriptor, maximum)
+    finally:
+        os.close(descriptor)
+
+
+def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
+    if not line or len(line) > MAX_RECORD_BYTES:
+        raise CollectorError("traffic record exceeds its size limit")
+    try:
+        value = json.loads(line)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise CollectorError("traffic record is not JSON") from exc
+    if not isinstance(value, dict) or value.get("schema") != 1:
+        raise CollectorError("traffic record has an unsupported schema")
+
+    def number(name: str, *, low: int = -1, high: int = 2**63 - 1) -> int:
+        item = value.get(name)
+        if not isinstance(item, int) or isinstance(item, bool) or not low <= item <= high:
+            raise CollectorError(f"traffic record {name} is invalid")
+        return item
+
+    def text(name: str, maximum: int) -> str:
+        item = value.get(name)
+        if not isinstance(item, str) or len(item) > maximum:
+            raise CollectorError(f"traffic record {name} is invalid")
+        return item
+
+    stamp = number("at", low=0)
+    request = value.get("request", 0)
+    if not isinstance(request, int) or isinstance(request, bool) or request < 0:
+        raise CollectorError("traffic record request is invalid")
+    identity = hashlib.sha256(cluster.encode() + b"\0" + node.encode() + b"\0" + line).digest()
+    return (
+        identity,
+        cluster,
+        node,
+        datetime.fromtimestamp(stamp, UTC),
+        request,
+        text("client", 64),
+        text("method", 16),
+        text("host", 253),
+        text("path", 8192),
+        text("frontend", 128),
+        text("backend", 128),
+        text("server", 128),
+        number("status", low=0, high=999),
+        number("request_time"),
+        number("queue_time"),
+        number("connect_time"),
+        number("response_time"),
+        number("total_time"),
+        number("bytes", low=0),
+    )
+
+
+_TRAFFIC_COPY = """
+copy traffic_log
+    (event_id, cluster, node, occurred_at, request_number, client, method, host,
+     path, frontend, backend, server, status, request_time, queue_time,
+     connect_time, response_time, total_time, bytes)
+from stdin
+"""
+
+
+def _ingest_part(
+    config: CollectorConfig,
+    connection: psycopg.Connection[Any],
+    target: NodeTarget,
+    part: Path,
+) -> None:
+    metadata = _regular(part)
+    checkpoint = _database_checkpoint(config, part)
+    offset = _checkpoint_offset(checkpoint, size=metadata.st_size)
+    rows: list[tuple[Any, ...]] = []
+    end = offset
+    with part.open("rb") as stream:
+        stream.seek(offset)
+        while line := stream.readline(MAX_RECORD_BYTES + 1):
+            if not line.endswith(b"\n"):
+                raise CollectorError("staging part ends in a partial traffic record")
+            rows.append(_database_row(target.cluster, target.node, line[:-1]))
+            end = stream.tell()
+            if len(rows) == DATABASE_BATCH_ROWS:
+                with connection.cursor() as cursor, cursor.copy(_TRAFFIC_COPY) as copy:
+                    for row in rows:
+                        copy.write_row(row)
+                connection.commit()
+                _replace(checkpoint, f"{end}\n".encode(), 0o600)
+                rows.clear()
+        if rows:
+            with connection.cursor() as cursor, cursor.copy(_TRAFFIC_COPY) as copy:
+                for row in rows:
+                    copy.write_row(row)
+            connection.commit()
+            _replace(checkpoint, f"{end}\n".encode(), 0o600)
+
+
+def _ingest_database(config: CollectorConfig) -> None:
+    if config.database is None or config.database_socket is None:
+        return
+    try:
+        with psycopg.connect(
+            f"dbname={config.database} host={config.database_socket}", autocommit=False
+        ) as connection:
+            for target in config.nodes:
+                prefix = f"{target.cluster}--{target.node}--"
+                for part in sorted(config.staging.glob(f"{prefix}*.jsonl")):
+                    _ingest_part(config, connection, target, part)
+    except psycopg.Error as exc:
+        raise CollectorError("database import failed") from exc
+
+
 def collect(
     config: CollectorConfig, *, now: datetime | None = None, fetch: Fetch | None = None
 ) -> int:
@@ -592,13 +749,28 @@ def collect(
             return 0
         attempted = now or datetime.now(UTC)
         failures = 0
+        mirrored: list[NodeTarget] = []
         for target in config.nodes:
             selected = fetch or (lambda node, day, offset: ssh_fetch(config, node, day, offset))
             try:
                 collect_node(config, target, now=attempted, fetch=selected)
+                mirrored.append(target)
             except (CollectorError, OSError) as exc:
                 print(f"{target.cluster}/{target.node}: {exc}", file=sys.stderr)
                 failures += 1
+        try:
+            _ingest_database(config)
+        except (CollectorError, OSError) as exc:
+            print(f"database: {exc}", file=sys.stderr)
+            for target in mirrored:
+                _write_meta(
+                    config,
+                    target,
+                    attempted=attempted,
+                    outcome="database",
+                    success=False,
+                )
+            failures += 1
         _retire(config, now=attempted)
         _retire_staging(config, now=attempted)
         return 1 if failures else 0

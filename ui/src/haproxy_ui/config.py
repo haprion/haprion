@@ -43,7 +43,7 @@ ALLOWED_LISTEN_KEYS = frozenset({"host", "port"})
 ALLOWED_SESSION_KEYS = frozenset({"inactivity_minutes", "absolute_hours", "cookie_secure"})
 ALLOWED_THROTTLE_KEYS = frozenset({"max_failures", "window_minutes"})
 ALLOWED_POLLER_KEYS = frozenset({"interval_seconds"})
-ALLOWED_TRAFFIC_LOG_KEYS = frozenset({"enabled", "directory", "max_lines"})
+ALLOWED_TRAFFIC_LOG_KEYS = frozenset({"enabled", "directory", "max_lines", "retention_days"})
 ALLOWED_DNS_PROFILE_KEYS = frozenset({"public_key"})
 
 #
@@ -153,6 +153,7 @@ class TrafficLogs:
     enabled: bool
     directory: Path
     max_lines: int
+    retention_days: int = 7
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,7 +193,8 @@ class Config:
     traffic_logs: TrafficLogs = TrafficLogs(
         enabled=False,
         directory=Path("/apps/haproxy-manager/logs/mirror"),
-        max_lines=2000,
+        max_lines=500,
+        retention_days=7,
     )
     #
     # The public half of the pair platform step 15 made (B146): what DNS
@@ -396,7 +398,10 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
             enabled=_boolean(traffic_logs, "enabled", "traffic_logs", default=False),
             directory=log_directory,
             max_lines=_bounded_int(
-                traffic_logs, "max_lines", "traffic_logs", low=1, high=10000, default=2000
+                traffic_logs, "max_lines", "traffic_logs", low=1, high=10000, default=500
+            ),
+            retention_days=_bounded_int(
+                traffic_logs, "retention_days", "traffic_logs", low=1, high=90, default=7
             ),
         ),
         dns_profiles_public_key=public_key,

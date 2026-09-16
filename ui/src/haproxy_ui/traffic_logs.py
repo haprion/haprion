@@ -19,6 +19,8 @@ from typing import Any, Literal, cast
 
 from haproxy_mgmt.generate import PREFIX
 from haproxy_mgmt.proxy_model import Proxy
+from psycopg import Connection, sql
+from psycopg.rows import class_row
 
 NODE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 MAX_RECORD_BYTES = 16 * 1024
@@ -93,7 +95,7 @@ class Freshness:
         return (
             self.outcome not in {"ok", "unknown"}
             and self.last_attempt is not None
-            and (self.last_success is None or self.last_attempt > self.last_success)
+            and (self.last_success is None or self.last_attempt >= self.last_success)
         )
 
 
@@ -252,6 +254,25 @@ def _matches(expression: _Expression, text: str) -> bool:
     if isinstance(expression, _And):
         return _matches(expression.left, text) and _matches(expression.right, text)
     return _matches(expression.left, text) or _matches(expression.right, text)
+
+
+def _search_sql(expression: _Expression, parameters: list[Any]) -> sql.Composable:
+    # Keep this expression byte-for-byte aligned with the per-partition
+    # pg_trgm index created by migration 0030.
+    searchable = sql.SQL("(host || ' ' || path || ' ' || backend)")
+    if isinstance(expression, _Term):
+        if not expression.value:
+            return sql.SQL("true")
+        parameters.append(f"%{expression.value}%")
+        return sql.SQL("{} ilike %s").format(searchable)
+    if isinstance(expression, _Not):
+        return sql.SQL("not ({})").format(_search_sql(expression.value, parameters))
+    operator = sql.SQL(" and " if isinstance(expression, _And) else " or ")
+    return sql.SQL("({}){}({})").format(
+        _search_sql(expression.left, parameters),
+        operator,
+        _search_sql(expression.right, parameters),
+    )
 
 
 def configured_server_addresses(
@@ -578,3 +599,70 @@ def read(
     #
     newest = heapq.nlargest(limit, entries, key=lambda item: (item.at, item.node, item.request))
     return Reading(tuple(newest), tuple(nodes), malformed, unavailable, filter_error)
+
+
+def read_database(
+    connection: Connection[Any],
+    directory: Path,
+    clusters: tuple[str, ...],
+    *,
+    limit: int = 500,
+    cluster: str = "",
+    status: str = "",
+    substring: str = "",
+    from_at: datetime | None = None,
+    to_at: datetime | None = None,
+    server_addresses: Mapping[tuple[str, str, str], str] | None = None,
+) -> Reading:
+    """Read indexed rows while retaining the collector's per-node freshness files."""
+
+    wanted = (cluster,) if cluster else clusters
+    if cluster and cluster not in clusters:
+        return Reading((), (), 0, False)
+    status_code = int(status) if status.isdigit() and len(status) == 3 else None
+    status_class = (
+        int(status[0]) if len(status) == 3 and status[1:] == "xx" and status[0].isdigit() else None
+    )
+    if status and status_code is None and status_class is None:
+        return Reading((), (), 0, False)
+    try:
+        expression = _Parser(_tokens(substring[:200])).parse()
+    except SearchSyntaxError as exc:
+        return Reading((), (), 0, False, str(exc))
+
+    conditions: list[sql.Composable] = [sql.SQL("cluster = any(%s)")]
+    parameters: list[Any] = [list(wanted)]
+    if status_code is not None:
+        conditions.append(sql.SQL("status = %s"))
+        parameters.append(status_code)
+    elif status_class is not None:
+        conditions.append(sql.SQL("status between %s and %s"))
+        parameters.extend((status_class * 100, status_class * 100 + 99))
+    if substring:
+        conditions.append(_search_sql(expression, parameters))
+    if from_at is not None:
+        conditions.append(sql.SQL("occurred_at >= %s"))
+        parameters.append(from_at)
+    if to_at is not None:
+        conditions.append(sql.SQL("occurred_at <= %s"))
+        parameters.append(to_at)
+    parameters.append(min(max(limit, 1), 10_000))
+    statement = sql.SQL("""
+        select cluster, node, occurred_at as at, request_number as request,
+               client, method, host, path, frontend, backend, server, status,
+               request_time, queue_time, connect_time, response_time, total_time, bytes
+          from traffic_log
+         where {}
+         order by occurred_at desc, request_number desc
+         limit %s
+    """).format(sql.SQL(" and ").join(conditions))
+    with connection.cursor(row_factory=class_row(Entry)) as cursor:
+        cursor.execute(statement, parameters)
+        entries = tuple(_resolved_server(row, server_addresses or {}) for row in cursor.fetchall())
+
+    targets, unavailable = _targets(directory, tuple(wanted))
+    nodes = tuple(
+        _freshness(directory / f"{cluster_id}--{node}{META_SUFFIX}", cluster_id, node)
+        for cluster_id, node in targets
+    )
+    return Reading(entries, nodes, 0, unavailable)

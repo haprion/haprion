@@ -146,6 +146,32 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual(meta["last_attempt"], later.isoformat())
         self.assertEqual(meta["outcome"], "ssh")
 
+    def test_database_failure_is_visible_without_erasing_mirror_success(self) -> None:
+        configured = CollectorConfig(
+            self.config.user,
+            self.config.key,
+            self.config.known_hosts,
+            self.config.mirror,
+            self.config.staging,
+            self.config.nodes,
+            "haproxy_ui",
+            "/run/postgresql",
+        )
+
+        def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            return self.response(wanted, offset, b"")
+
+        with patch(
+            "haproxy_mgmt.traffic_collector._ingest_database",
+            side_effect=CollectorError("database import failed"),
+        ):
+            self.assertEqual(collect(configured, now=NOW, fetch=fetch), 1)
+
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
+        self.assertEqual(meta["outcome"], "database")
+        self.assertEqual(meta["last_attempt"], NOW.isoformat())
+        self.assertEqual(meta["last_success"], NOW.isoformat())
+
     def test_remote_reset_discards_the_local_day_without_advancing_a_cursor(self) -> None:
         part = self.staging / "alpha--node-a--2026-09-08.jsonl"
         part.write_bytes(b"old\n")
@@ -319,6 +345,8 @@ class WhatTheInstallationStepWrites(unittest.TestCase):
                 "/etc/haproxy-manager/traffic-collector/known_hosts",
                 "/apps/haproxy-manager/logs/mirror",
                 "/apps/haproxy-manager/logs/staging",
+                "haproxy_ui",
+                "/var/run/postgresql",
                 *inventory,
             ],
             capture_output=True,

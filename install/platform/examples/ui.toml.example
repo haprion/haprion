@@ -76,12 +76,12 @@ port = 8080
 # demo_fixture or production_snapshot: a development platform has no collector,
 # no key and no node access, so a mirror it could read arrived some other way.
 #
-# The unfiltered page shows the newest records. A filter searches the whole
-# mirror - everything the collector kept - and shows the newest max_lines
-# matches (1-10000).
+# The unfiltered page shows the newest database records. Filters use the
+# retained daily partitions and show the newest max_lines matches (1-10000).
 # enabled = true
 # directory = "/apps/haproxy-manager/logs/mirror"
-# max_lines = 2000
+# max_lines = 500
+# retention_days = 7
 
 # [dns_profiles]
 # The public half of the key pair platform step 15 made. DNS provider

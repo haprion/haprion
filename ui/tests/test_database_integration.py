@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -11,8 +13,9 @@ from typing import Any
 from uuid import uuid4
 
 import psycopg
+from haproxy_mgmt.traffic_collector import CollectorConfig, NodeTarget, _ingest_part
 
-from haproxy_ui import db
+from haproxy_ui import db, traffic_logs
 
 DSN = os.environ.get("HAPROXY_UI_TEST_DATABASE_DSN", "")
 
@@ -26,13 +29,14 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0029",))
+            self.assertEqual(cursor.fetchone(), ("0030",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
             "HAPROXY_UI_TEST_WEB_ROLE": "app_web",
             "HAPROXY_UI_TEST_WORKER_ROLE": "app_worker",
             "HAPROXY_UI_TEST_POLLER_ROLE": "app_poller",
+            "HAPROXY_UI_TEST_COLLECTOR_ROLE": "app_collector",
         }
         with self.connect() as connection, connection.cursor() as cursor:
             for variable, contract in expected.items():
@@ -81,6 +85,122 @@ class ARealDatabase(unittest.TestCase):
             self.assertRaises(psycopg.errors.InsufficientPrivilege),
         ):
             cursor.execute("select id from job limit 0")
+
+    def test_traffic_log_roles_are_one_way_and_partitions_are_indexed(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        values = (
+            b"x" * 32,
+            "alpha",
+            "node-a",
+            now,
+            1,
+            "192.0.2.10",
+            "GET",
+            "service.example.com",
+            "/health",
+            "mgd-main-http",
+            "mgd-app-primary",
+            "s1",
+            200,
+            0,
+            0,
+            1,
+            2,
+            3,
+            42,
+        )
+        statement = """insert into traffic_log
+            (event_id, cluster, node, occurred_at, request_number, client, method, host,
+             path, frontend, backend, server, status, request_time, queue_time, connect_time,
+             response_time, total_time, bytes)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            on conflict do nothing"""
+        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            connection.execute(statement, values)
+            connection.execute(statement, values)
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select host, path, status from traffic_log "
+                "where cluster = 'alpha' and host = 'service.example.com'"
+            )
+            self.assertEqual(cursor.fetchall(), [("service.example.com", "/health", 200)])
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                cursor.execute(statement, values)
+        with (
+            self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection,
+            connection.cursor() as cursor,
+            self.assertRaises(psycopg.errors.InsufficientPrivilege),
+        ):
+            cursor.execute("select host from traffic_log limit 0")
+        suffix = f"{now:%Y%m%d}"
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select indexname from pg_indexes where tablename = %s order by indexname",
+                (f"traffic_log_{suffix}",),
+            )
+            indexes = {row[0] for row in cursor.fetchall()}
+        self.assertIn(f"traffic_log_{suffix}_occurred_at", indexes)
+        self.assertIn(f"traffic_log_{suffix}_search", indexes)
+
+    def test_collector_copy_is_checkpointed_and_safe_to_repeat(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        record = {
+            "schema": 1,
+            "at": int(now.timestamp()),
+            "request": 77,
+            "client": "192.0.2.20",
+            "method": "GET",
+            "host": "copy.example.com",
+            "path": "/ready",
+            "frontend": "mgd-main-http",
+            "backend": "mgd-app-primary",
+            "server": "s1",
+            "status": 204,
+            "request_time": 0,
+            "queue_time": 0,
+            "connect_time": 1,
+            "response_time": 2,
+            "total_time": 3,
+            "bytes": 0,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            part = root / f"alpha--node-a--{now:%Y-%m-%d}.jsonl"
+            part.write_text(json.dumps(record, separators=(",", ":")) + "\n")
+            target = NodeTarget("alpha", "node-a", "node-a.example.com")
+            config = CollectorConfig(
+                "svc-logread",
+                root / "key",
+                root / "known_hosts",
+                root,
+                root,
+                (target,),
+            )
+            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+                _ingest_part(config, connection, target, part)
+                checkpoint = root / f".{part.name}.database-offset"
+                checkpoint.unlink()
+                _ingest_part(config, connection, target, part)
+            self.assertEqual(int(checkpoint.read_text()), part.stat().st_size)
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+            cursor.execute("select count(*) from traffic_log where host = 'copy.example.com'")
+            self.assertEqual(cursor.fetchone(), (1,))
+
+    def test_database_search_uses_boolean_terms_status_and_newest_first(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection,
+        ):
+            reading = traffic_logs.read_database(
+                connection,
+                Path(temporary),
+                ("alpha",),
+                status="2xx",
+                substring="copy AND ready NOT missing",
+            )
+
+        self.assertEqual([entry.host for entry in reading.entries], ["copy.example.com"])
+        self.assertEqual(reading.entries[0].path, "/ready")
 
     def test_frontend_buckets_never_mix_two_nodes_uptime(self) -> None:
         #

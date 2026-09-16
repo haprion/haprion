@@ -66,7 +66,7 @@ export HAPROXY_UI_DATABASE_URL="postgresql+psycopg://${DB_MIGRATION_ROLE}@/${DB_
 # true, but not a sentence that tells anyone what to do about it.
 #
 missing=""
-for role in app_web app_worker app_poller; do
+for role in app_web app_worker app_poller app_collector; do
     if [[ "$(psql -U "$DB_MIGRATION_ROLE" -d "$DB_NAME" -qtAX \
              -c "select 1 from pg_roles where rolname = '${role}'")" != "1" ]]; then
         missing="${missing} ${role}"

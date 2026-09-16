@@ -1873,8 +1873,8 @@ own. Running a migration is a deliberate root action, mapped explicitly in
 `pg_ident.conf`.
 
 Table grants live in the migration that creates the table, so a column's
-permissions are versioned with the column. They name three contract roles —
-`app_web`, `app_worker`, `app_poller` — and never an account; the installation
+permissions are versioned with the column. They name contract roles —
+`app_web`, `app_worker`, `app_poller`, `app_collector` — and never an account; the installation
 connects whatever the accounts are called to those roles. Columns are listed one
 at a time, because a grant written as a whole table widens itself the next time
 somebody adds one.
@@ -2347,8 +2347,9 @@ over SSH for configuration, certificates and status, so this adds one key to a
 path the product already requires. An installation whose firewall differs still
 needs nothing new.
 
-**A fourth account that joins nothing.** The collector is not a member of the
-configuration group, holds no database role and has no sudoers rule. It owns one
+**A fourth account with one narrow database direction.** The collector is not a member of the
+configuration group and has no sudoers rule. Its `app_collector` contract role can only insert
+traffic rows; it cannot select, update or delete them. It owns one
 SSH key, and the far end of that key is a forced command that can return one
 validated day of one node's traffic log and nothing else. The step checks that
 boundary rather than describing it, and checks it by traversal: `ls` on a
@@ -2392,9 +2393,16 @@ mirrored to the manager and shown in the interface. HAProxy's ordinary
 contains the complete request target, including any query string. Treat that
 local file accordingly when choosing retention, backup and access controls.
 
-The interface reads the mirror once `[traffic_logs]` is enabled in `ui.toml`. It
-reads files and never asks a node anything, so an unreachable node cannot make a
-page slow — it can only make its own mirror old. The page therefore names every
+The collector imports complete records with PostgreSQL `COPY` and advances an atomic local
+checkpoint only after the database transaction commits. Repeating a batch is safe because each
+record has a deterministic identity. The interface reads indexed database rows once
+`[traffic_logs]` is enabled in `ui.toml`; the mirror metadata still reports collection freshness.
+`retention_days` defaults to seven (range 1–90). The privileged retention timer creates daily
+partitions ahead and removes expired data by dropping whole partitions; application identities
+have no `CREATE` or `DELETE`. PostgreSQL's `pg_trgm` extension is installed once by platform step
+2 so host, path and backend substring searches use per-day GIN indexes.
+It never asks a node anything, so an unreachable node cannot make a page slow — it can only make
+its own mirror old. The page therefore names every
 node and how old its mirror is **before** the records, because a node that
 stopped answering renders an empty table that otherwise reads as calm. Log text
 is written by whoever made the request and is escaped as text, never as markup.

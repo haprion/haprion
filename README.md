@@ -27,12 +27,13 @@ current foundation provides:
   find out
 - a scripted installation covering the management host, the nodes, and the web platform
 - the web platform's foundation: a versioned application release, a database whose schema and
-  column-level grants are versioned together, and three service identities that cannot do each
+  column-level grants are versioned together, and separate service identities that cannot do each
   other's work
 - a read-only web interface over that foundation, fed by a poller rather than by reads made while
   somebody is looking at a screen
-- an optional, manager-pulled traffic-log view; each cluster must explicitly set
-  `traffic_logging: true`, and the setting reaches its nodes with the next object publication
+- an optional, manager-pulled traffic-log view backed by seven days of indexed, daily PostgreSQL
+  partitions; each cluster must explicitly set `traffic_logging: true`, and the setting reaches
+  its nodes with the next object publication
 - certificate issuance from one form: a domain, a challenge method and the targets; DNS-01
   through a provider profile whose credentials the web process sealed and only root's helper
   opens, from a catalogue of locked Certbot plugins; and certificate cleanup as one job for a

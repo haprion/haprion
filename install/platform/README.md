@@ -33,8 +33,9 @@ Step 11 keeps the job table bounded. Separate from the backup step because it is
 the only thing here that touches rows in a live table, and it deletes nothing
 itself: it reports what the first run would remove and leaves that to the timer.
 
-Step 13 mirrors each node's structured traffic log onto this host. Production
-only, and it fetches nothing until each node has accepted the key it prints.
+Step 13 mirrors each node's structured traffic log onto this host and imports it
+into daily PostgreSQL partitions. Production only, and it fetches nothing until
+each node has accepted the key it prints.
 
 Step 14 builds the locked certbot environment - certbot and every DNS plugin
 the web interface offers - under `/opt/haproxy-certbot`, proves it with the
@@ -317,6 +318,10 @@ normal seven-day split, and pool raw data is retained until the boundary plus a
 safety day proves it replaceable. `report` shows the boundary without changing
 it. Listener metrics have no rollup and retain their fixed seven days.
 
+Traffic logs follow the separate `[traffic_logs].retention_days` setting. The
+same privileged timer creates upcoming daily partitions and drops only complete
+partitions older than that boundary; application roles never receive `delete`.
+
 Its units are named after the environment, unlike the backup step's. Development
 runs this step and does not run step 6, so these are the units that would
 otherwise collide on a machine carrying both platforms — and two timers pruning
@@ -484,13 +489,18 @@ could not open that connection. Nothing here asks for a new network path: the
 management host already reaches every node over SSH for configuration, status
 and certificates, so this adds one key on a path the product already requires.
 
-**The collector is not one of the three service accounts and joins no group.**
-It has no database role, no sudo rule, and cannot read `secrets/`, `ui.toml` or
+**The collector is not one of the three application accounts and joins no filesystem group.**
+Its database role can only insert traffic rows; it has no sudo rule and cannot read `secrets/`, `ui.toml` or
 any other identity's key. What it owns is one SSH key whose far end is a forced
 command that can do nothing but return one validated day of one node's traffic
 log. The step proves that boundary rather than describing it, with traversal
 rather than listing — `ls` fails whether or not an account can reach through a
 directory, which is exactly how an earlier privilege slip went unnoticed.
+
+Complete records are imported with PostgreSQL `COPY` into daily partitions. The
+web role can only select them, the collector can only insert them, and the
+privileged retention timer drops expired partitions. `[traffic_logs]` defaults
+to seven days and may be set from 1 to 90 days.
 
 **Host keys are copied, never scanned.** `ssh-keyscan` asks each node who it is
 and believes the answer, which is trust on first use wearing a pinning costume.

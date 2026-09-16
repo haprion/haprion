@@ -98,9 +98,11 @@ The temporary accounts deliberately mirror the installed privilege model:
 | `app_web` | no | fixed contract role for web grants |
 | `app_worker` | no | fixed contract role for worker grants |
 | `app_poller` | no | fixed contract role for poller grants |
+| `app_collector` | no | fixed contract role with traffic-log `INSERT` only |
 | `hm_test_web` | yes | inherits only `app_web`; exercises browser-facing SQL |
 | `hm_test_worker` | yes | inherits only `app_worker`; exercises job SQL |
 | `hm_test_poller` | yes | inherits only `app_poller`; exercises cache and metric writes |
+| `hm_test_collector` | yes | inherits only `app_collector`; exercises traffic-log ingestion |
 
 PostgreSQL's bootstrap superuser exists only inside the disposable cluster and is used only to
 create those roles and the database. Application queries are tested through the corresponding

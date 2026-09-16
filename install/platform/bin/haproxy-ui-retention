@@ -84,6 +84,8 @@ METRIC_ROLLUP_SAFETY_DAYS=1
 # it, and the prune cannot remove those rows while the rollup is behind.
 #
 METRIC_ROLLUP_LAG_DAYS=1
+TRAFFIC_KEEP_DAYS=7
+TRAFFIC_AHEAD_DAYS=7
 
 #
 # HAProxy's own counter column names, in the order the rest of the project
@@ -159,6 +161,49 @@ metrics_present() {
 
 rollup_state_present() {
     [[ "$(psql_as -c "select to_regclass('public.metric_rollup_state') is not null")" == "t" ]]
+}
+
+traffic_logs_present() {
+    [[ "$(psql_as -c "select to_regclass('public.traffic_log') is not null")" == "t" ]]
+}
+
+traffic_partitions_expired() {
+    cat <<SQL
+    select child.relname
+      from pg_inherits
+      join pg_class parent on parent.oid = pg_inherits.inhparent
+      join pg_class child on child.oid = pg_inherits.inhrelid
+     where parent.relname = 'traffic_log'
+       and child.relname ~ '^traffic_log_[0-9]{8}\$'
+       and to_date(right(child.relname, 8), 'YYYYMMDD')
+           < current_date - ${TRAFFIC_KEEP_DAYS} + 1
+     order by child.relname
+SQL
+}
+
+traffic_partitions() {
+    local partition
+    local -a expired=()
+    traffic_logs_present || return 0
+    if [[ "$dry_run" -eq 1 ]]; then
+        log "  traffic_log: dry run, partition horizon unchanged"
+    else
+        psql_as -c "select traffic_log_partition(day::date)
+                      from generate_series(
+                          current_date - ${TRAFFIC_KEEP_DAYS} + 1,
+                          current_date + ${TRAFFIC_AHEAD_DAYS},
+                          interval '1 day'
+                      ) as day" >/dev/null
+    fi
+    mapfile -t expired < <(psql_as -c "$(traffic_partitions_expired)")
+    if [[ "$dry_run" -eq 1 ]]; then
+        log "  traffic_log: ${#expired[@]} expired partition(s), none dropped"
+        return 0
+    fi
+    for partition in "${expired[@]}"; do
+        psql_as -c "drop table if exists \"${partition}\""
+    done
+    log "  traffic_log: dropped ${#expired[@]} expired partition(s)"
 }
 
 metrics_report() {
@@ -403,6 +448,18 @@ source "$config"
 for name in DB_NAME DB_ROLE; do
     [[ -n "${!name:-}" ]] || die "${name} is not set in ${config}"
 done
+if [[ -n "${UI_CONFIG:-}" && -r "$UI_CONFIG" ]]; then
+    TRAFFIC_KEEP_DAYS="$(/usr/bin/python3 - "$UI_CONFIG" <<'PY'
+import sys
+import tomllib
+with open(sys.argv[1], "rb") as stream:
+    value = tomllib.load(stream).get("traffic_logs", {}).get("retention_days", 7)
+if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 90:
+    raise SystemExit("traffic_logs.retention_days must be an integer between 1 and 90")
+print(value)
+PY
+)"
+fi
 
 #
 # `client_min_messages=warning` silences one NOTICE per partition that already
@@ -460,6 +517,9 @@ main() {
     case "$command" in
         report)
             metrics_report
+            if traffic_logs_present; then
+                log "  traffic_log: $(psql_as -c 'select count(*) from traffic_log') row(s), retention ${TRAFFIC_KEEP_DAYS} day(s)"
+            fi
             ;;
         prune)
             #
@@ -469,6 +529,7 @@ main() {
             # partition for tomorrow is worse than one with neither done.
             #
             metric_partitions_prepare
+            traffic_partitions
             if metrics_present; then
                 #
                 # After the partitions and before the pruning, because the

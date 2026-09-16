@@ -45,7 +45,6 @@ from haproxy_mgmt.proxy_model import (
     ModelError,
     load_proxy,
 )
-from haproxy_mgmt.traffic_collector import RETENTION_DAYS
 
 from haproxy_ui import (
     auth,
@@ -1530,7 +1529,8 @@ def build_router(config: Config) -> APIRouter:
         now = datetime.now(UTC)
         local_now = metrics.shown(now)
         local_earliest = datetime.combine(
-            local_now.date() - timedelta(days=RETENTION_DAYS - 1), datetime.min.time()
+            local_now.date() - timedelta(days=config.traffic_logs.retention_days - 1),
+            datetime.min.time(),
         ).astimezone()
         earliest = local_earliest.astimezone(UTC)
         time_filter_error: str | None
@@ -1574,21 +1574,22 @@ def build_router(config: Config) -> APIRouter:
         # request hang - it can only make its own mirror old, which is exactly
         # what the compact warning reports.
         #
-        reading = (
-            traffic_logs.read(
-                config.traffic_logs.directory,
-                config.clusters,
-                limit=config.traffic_logs.max_lines,
-                cluster=selected_cluster,
-                status=selected_status,
-                substring=selected_query,
-                from_at=from_at,
-                to_at=to_at,
-                server_addresses=addresses,
-            )
-            if config.traffic_logs.enabled
-            else traffic_logs.Reading((), (), 0, False)
-        )
+        if config.traffic_logs.enabled:
+            with request.app.state.pool.connection() as connection:
+                reading = traffic_logs.read_database(
+                    connection,
+                    config.traffic_logs.directory,
+                    config.clusters,
+                    limit=config.traffic_logs.max_lines,
+                    cluster=selected_cluster,
+                    status=selected_status,
+                    substring=selected_query,
+                    from_at=from_at,
+                    to_at=to_at,
+                    server_addresses=addresses,
+                )
+        else:
+            reading = traffic_logs.Reading((), (), 0, False)
         if time_filter_error is not None:
             reading = replace(reading, entries=(), filter_error=time_filter_error)
         freshness = tuple(

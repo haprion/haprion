@@ -92,7 +92,7 @@ HAProxy itself. Before starting, you need:
 
 - a current Linux distribution with `systemd`
 - Python 3.12 or newer at `/usr/bin/python3`
-- the operating-system PyYAML package, major version 6
+- the operating-system PyYAML package (`python3-yaml`), major version 6
 - the operating-system PyNaCl package (`python3-nacl`), major version 1 - the CLI release's
   installer refuses a host without it, as it does without PyYAML
 - the operating-system psycopg package (`python3-psycopg`), major version 3 - the collector uses

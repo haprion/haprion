@@ -371,14 +371,14 @@ name = "haproxy-manager"
 version = "0.1.0"
 source = { editable = "../" }
 dependencies = [
-    { name = "psycopg", extra = ["binary"] },
+    { name = "psycopg" },
     { name = "pynacl" },
     { name = "pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.3,<4" },
+    { name = "psycopg", specifier = ">=3.3,<4" },
     { name = "pynacl", specifier = ">=1.5,<2" },
     { name = "pyyaml", specifier = ">=6,<7" },
 ]

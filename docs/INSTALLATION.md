@@ -2404,6 +2404,16 @@ record has a deterministic identity. The interface reads indexed database rows o
 partitions ahead and removes expired data by dropping whole partitions; application identities
 have no `CREATE` or `DELETE`. PostgreSQL's `pg_trgm` extension is installed once by platform step
 2 so host, path and backend substring searches use per-day GIN indexes.
+
+**The manager's mirror follows that setting rather than carrying a window of its own.** Each run
+takes the days the database still holds, keeps one more as the margin it would replay from after a
+restore, and lets the rest go. Nothing is configured twice: a mirrored day the database has no
+partition for can be neither read in the interface nor imported, so keeping it would cost disk on
+the volume the mirror sits on and buy nothing. A run that cannot reach the database keeps the wider
+fallback window instead of pruning — fetching is the part that cannot be caught up later, because
+each node drops its own day files on its own schedule. **The nodes keep fourteen days regardless.**
+Those cost the node's disk rather than the manager's, and they are what makes raising
+`retention_days` a setting rather than a hole in the history.
 It never asks a node anything, so an unreachable node cannot make a page slow — it can only make
 its own mirror old. The page therefore names every
 node and how old its mirror is **before** the records, because a node that

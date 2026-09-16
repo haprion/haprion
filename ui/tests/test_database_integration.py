@@ -14,10 +14,12 @@ from uuid import uuid4
 
 import psycopg
 from haproxy_mgmt.traffic_collector import (
+    RETENTION_DAYS,
     CollectorConfig,
     NodeTarget,
     _database_days,
     _ingest_part,
+    _mirror_window,
 )
 
 from haproxy_ui import db, traffic_logs
@@ -362,6 +364,52 @@ class ARealDatabase(unittest.TestCase):
                 self.assertRaises(psycopg.Error),
             ):
                 _ingest_part(config, connection, target, part)
+
+    def test_the_mirror_window_follows_the_database_with_one_margin_day(self) -> None:
+        """One window, derived - not a second number kept in step by hand.
+
+        The database's own retention decides how far back anything can be read,
+        so the manager keeps that many days plus one to replay from after a
+        restore. Days beyond it can be neither read nor imported.
+        """
+
+        now = datetime.now(UTC)
+        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            days = _database_days(connection)
+        past = sum(1 for day in days if day <= f"{now:%Y%m%d}")
+        config = CollectorConfig(
+            "svc-logread",
+            Path("/nonexistent/key"),
+            Path("/nonexistent/known_hosts"),
+            Path("/nonexistent/mirror"),
+            Path("/nonexistent/staging"),
+            (NodeTarget("alpha", "node-a", "node-a.example.com"),),
+            os.environ["HAPROXY_UI_TEST_DATABASE_NAME"],
+            os.environ["HAPROXY_UI_TEST_DATABASE_SOCKET"],
+        )
+        self.assertEqual(_mirror_window(config, now=now), past + 1)
+
+    def test_an_unreachable_database_widens_the_window_rather_than_stopping_the_mirror(
+        self,
+    ) -> None:
+        """Fetching is the part that cannot be caught up later.
+
+        A node drops its own day files on its own schedule, so a run that cannot
+        reach the database still has to mirror. It falls back to the wider
+        window - the safe direction - and the import phase reports the failure.
+        """
+
+        config = CollectorConfig(
+            "svc-logread",
+            Path("/nonexistent/key"),
+            Path("/nonexistent/known_hosts"),
+            Path("/nonexistent/mirror"),
+            Path("/nonexistent/staging"),
+            (NodeTarget("alpha", "node-a", "node-a.example.com"),),
+            "haproxy_ui_absent",
+            "/nonexistent/socket",
+        )
+        self.assertEqual(_mirror_window(config, now=datetime.now(UTC)), RETENTION_DAYS)
 
     def test_database_search_uses_boolean_terms_status_and_newest_first(self) -> None:
         with (

@@ -26,7 +26,16 @@ MAX_SEND = 8 * 1024 * 1024
 MAX_STDERR = 64 * 1024
 MAX_RECORD_BYTES = 16 * 1024
 DATABASE_BATCH_ROWS = 1000
+#
+# What the manager keeps when it has no database to ask. The number is B125's:
+# it was the product's history window back when the mirror was the store and the
+# page read these files directly. With the records in PostgreSQL the database
+# decides how far back anything can be read, so this is the fallback for a
+# mirror-only installation and for a run that cannot reach the database - never
+# a second window kept in step by hand.
+#
 RETENTION_DAYS = 14
+MIRROR_MARGIN_DAYS = 1
 SSH_TIMEOUT_SECONDS = 30
 # A node names its day file from its own UTC clock.  During the first minutes
 # after the manager has crossed midnight, the node may therefore still append
@@ -487,10 +496,11 @@ def collect_node(
     *,
     now: datetime,
     fetch: Fetch,
+    window: int = RETENTION_DAYS,
 ) -> None:
     utc_now = now.astimezone(UTC)
     today = utc_now.date()
-    days = tuple(today - timedelta(days=offset) for offset in reversed(range(RETENTION_DAYS)))
+    days = tuple(today - timedelta(days=offset) for offset in reversed(range(window)))
     keep = {item.isoformat() for item in days}
     prefix = f"{target.cluster}--{target.node}--"
     #
@@ -544,7 +554,7 @@ def collect_node(
         raise
 
 
-def _retire(config: CollectorConfig, *, now: datetime) -> None:
+def _retire(config: CollectorConfig, *, now: datetime, window: int = RETENTION_DAYS) -> None:
     """Let what a node left behind when it left inventory die of old age.
 
     Nothing is deleted while it could still be worth reading. A mirror is
@@ -562,7 +572,7 @@ def _retire(config: CollectorConfig, *, now: datetime) -> None:
     for target in config.nodes:
         keep.add(f"{target.cluster}--{target.node}.jsonl")
         keep.add(f"{target.cluster}--{target.node}.meta.json")
-    cutoff = (now - timedelta(days=RETENTION_DAYS)).timestamp()
+    cutoff = (now - timedelta(days=window)).timestamp()
     for path in config.mirror.iterdir():
         if path.name in keep or path.name.startswith("."):
             continue
@@ -577,11 +587,13 @@ def _retire(config: CollectorConfig, *, now: datetime) -> None:
             print(f"retired mirror {path.name}: {exc}", file=sys.stderr)
 
 
-def _retire_staging(config: CollectorConfig, *, now: datetime) -> None:
+def _retire_staging(
+    config: CollectorConfig, *, now: datetime, window: int = RETENTION_DAYS
+) -> None:
     """The same window, applied to parts and markers no active node claims."""
 
     keep = {f"{target.cluster}--{target.node}--" for target in config.nodes}
-    oldest = (now.date() - timedelta(days=RETENTION_DAYS - 1)).isoformat()
+    oldest = (now.date() - timedelta(days=window - 1)).isoformat()
     for path in config.staging.iterdir():
         name = path.name
         if name.startswith(".") or not name.endswith((".jsonl", ".done")):
@@ -782,6 +794,47 @@ def _database_days(connection: psycopg.Connection[Any]) -> frozenset[str]:
     return days
 
 
+def _mirror_window(config: CollectorConfig, *, now: datetime) -> int:
+    """How many days the manager keeps, taken from what the database keeps.
+
+    Three windows is two too many. B125 gave the node and the manager fourteen
+    days each, because the mirror was then the store and that was the product's
+    history. The database took that role with its own, configurable, retention,
+    and the manager's copy was never revisited: it went on holding a week of
+    records nothing could read and nothing could import, growing with traffic on
+    the volume that has to be sized for it.
+
+    So the window is derived rather than configured, from the same fact the
+    import already asks for - which day partitions exist. One margin day is kept
+    deliberately: the mirror is the only thing left to replay from if the
+    database is restored, and a boundary that lines up exactly would lose the
+    oldest day to the clock.
+
+    The node keeps its own fourteen. Those cost the node's disk rather than this
+    one, and they are the headroom that makes raising the database's retention a
+    setting rather than a hole in the history.
+    """
+
+    if config.database is None or config.database_socket is None:
+        return RETENTION_DAYS
+    try:
+        with psycopg.connect(
+            f"dbname={config.database} host={config.database_socket}"
+        ) as connection:
+            days = _database_days(connection)
+    except (psycopg.Error, CollectorError):
+        #
+        # Mirroring must not stop because the database is unreachable: fetching
+        # is the part that cannot be caught up later, since the node drops its
+        # own day files on its own schedule. Fall back to the wider window - the
+        # safe direction - and let the import phase report the failure.
+        #
+        return RETENTION_DAYS
+    today = now.astimezone(UTC).date()
+    past = sum(1 for day in days if day <= f"{today:%Y%m%d}")
+    return min(RETENTION_DAYS, max(1, past) + MIRROR_MARGIN_DAYS)
+
+
 def _ingest_database(config: CollectorConfig) -> tuple[int, int]:
     """Import every staging part, and answer what it skipped: records, parts."""
 
@@ -824,12 +877,13 @@ def collect(
         except BlockingIOError:
             return 0
         attempted = now or datetime.now(UTC)
+        window = _mirror_window(config, now=attempted)
         failures = 0
         mirrored: list[NodeTarget] = []
         for target in config.nodes:
             selected = fetch or (lambda node, day, offset: ssh_fetch(config, node, day, offset))
             try:
-                collect_node(config, target, now=attempted, fetch=selected)
+                collect_node(config, target, now=attempted, fetch=selected, window=window)
                 mirrored.append(target)
             except (CollectorError, OSError) as exc:
                 print(f"{target.cluster}/{target.node}: {exc}", file=sys.stderr)
@@ -854,8 +908,8 @@ def collect(
                     success=False,
                 )
             failures += 1
-        _retire(config, now=attempted)
-        _retire_staging(config, now=attempted)
+        _retire(config, now=attempted, window=window)
+        _retire_staging(config, now=attempted, window=window)
         return 1 if failures else 0
 
 

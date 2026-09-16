@@ -62,6 +62,10 @@ SQL
 
 export HAPROXY_UI_DATABASE_URL="postgresql+psycopg://hm_test_migrate@/${database}?host=${socket_dir}"
 export HAPROXY_UI_TEST_DATABASE_DSN="dbname=${database} host=${socket_dir}"
+# Given separately as well: the collector connects by name and socket rather
+# than by DSN, so a check of its behaviour needs the same two values it uses.
+export HAPROXY_UI_TEST_DATABASE_NAME="${database}"
+export HAPROXY_UI_TEST_DATABASE_SOCKET="${socket_dir}"
 export HAPROXY_UI_TEST_MIGRATION_ROLE=hm_test_migrate
 export HAPROXY_UI_TEST_WEB_ROLE=hm_test_web
 export HAPROXY_UI_TEST_WORKER_ROLE=hm_test_worker

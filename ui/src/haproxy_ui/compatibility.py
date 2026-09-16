@@ -353,6 +353,20 @@ def check_traffic_collector(report: Report, *, policy: Path, collector_config: P
     except (EngineConfigError, CollectorError, OSError) as exc:
         report.fail("traffic collector inventory", str(exc))
         return
+    #
+    # Checked before the inventory, because a mirror-only collector is the
+    # failure that looks like calm. This release reads traffic records from the
+    # database; a configuration still on schema 1 mirrors files and ingests
+    # nothing, so the page renders an empty table with nothing to say why. A
+    # current node list does not make that state correct.
+    #
+    if collector.database is None:
+        report.fail(
+            "traffic collector database",
+            "the collector configuration predates database ingest; rerun platform step 13",
+        )
+        return
+    report.pass_("traffic collector database", collector.database)
     expected = (
         (cluster.cluster_id, node.name, node.mgmt_host)
         for cluster in runtime.clusters.values()

@@ -747,23 +747,64 @@ def _ingest_part(
     return skipped
 
 
-def _ingest_database(config: CollectorConfig) -> int:
-    """Import every staging part, and answer how many records were skipped."""
+def _database_days(connection: psycopg.Connection[Any]) -> frozenset[str]:
+    """The days the database can still store, asked of the database itself.
+
+    The mirror deliberately keeps files for longer than the database keeps rows:
+    after a restore it is the only thing left to replay from. The two windows
+    are therefore different on purpose, and the collector must not offer a row
+    the database has no partition for - PostgreSQL refuses the whole batch with
+    `no partition of relation "traffic_log" found for row`, which fails the
+    import for every node, not just the day that is out of range.
+
+    Asked rather than configured: this is a fact about what exists, not a policy
+    to keep in step. `[traffic_logs].retention_days` can change on the platform
+    without anything here being told, and the next run simply reads the new
+    horizon.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select right(child.relname, 8) from pg_inherits "
+            "join pg_class child on child.oid = pg_inherits.inhrelid "
+            "join pg_class parent on parent.oid = pg_inherits.inhparent "
+            "where parent.relname = 'traffic_log' "
+            "and child.relname ~ '^traffic_log_[0-9]{8}$'"
+        )
+        days = frozenset(str(row[0]) for row in cursor.fetchall())
+    if not days:
+        #
+        # Loud rather than quiet. No partitions at all means the schema is not
+        # what this collector was built against, and skipping every part would
+        # look exactly like a quiet week of traffic.
+        #
+        raise CollectorError("the database holds no traffic log partitions")
+    return days
+
+
+def _ingest_database(config: CollectorConfig) -> tuple[int, int]:
+    """Import every staging part, and answer what it skipped: records, parts."""
 
     if config.database is None or config.database_socket is None:
-        return 0
+        return 0, 0
     skipped = 0
+    expired = 0
     try:
         with psycopg.connect(
             f"dbname={config.database} host={config.database_socket}", autocommit=False
         ) as connection:
+            days = _database_days(connection)
             for target in config.nodes:
                 prefix = f"{target.cluster}--{target.node}--"
                 for part in sorted(config.staging.glob(f"{prefix}*.jsonl")):
+                    day = part.name[len(prefix) : -len(".jsonl")]
+                    if day.replace("-", "") not in days:
+                        expired += 1
+                        continue
                     skipped += _ingest_part(config, connection, target, part)
     except psycopg.Error as exc:
         raise CollectorError("database import failed") from exc
-    return skipped
+    return skipped, expired
 
 
 def collect(
@@ -794,9 +835,14 @@ def collect(
                 print(f"{target.cluster}/{target.node}: {exc}", file=sys.stderr)
                 failures += 1
         try:
-            skipped = _ingest_database(config)
+            skipped, expired = _ingest_database(config)
             if skipped:
                 print(f"database: skipped {skipped} unusable record(s)", file=sys.stderr)
+            if expired:
+                print(
+                    f"database: {expired} mirrored day(s) are older than the database keeps",
+                    file=sys.stderr,
+                )
         except (CollectorError, OSError) as exc:
             print(f"database: {exc}", file=sys.stderr)
             for target in mirrored:

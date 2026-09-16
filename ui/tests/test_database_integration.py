@@ -13,7 +13,12 @@ from typing import Any
 from uuid import uuid4
 
 import psycopg
-from haproxy_mgmt.traffic_collector import CollectorConfig, NodeTarget, _ingest_part
+from haproxy_mgmt.traffic_collector import (
+    CollectorConfig,
+    NodeTarget,
+    _database_days,
+    _ingest_part,
+)
 
 from haproxy_ui import db, traffic_logs
 
@@ -297,6 +302,66 @@ class ARealDatabase(unittest.TestCase):
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute("select count(*) from traffic_log where host = 'partial.example.com'")
             self.assertEqual(cursor.fetchone(), (1,))
+
+    def test_the_database_names_the_days_it_can_still_store(self) -> None:
+        """The mirror keeps files for longer than the database keeps rows.
+
+        That difference is deliberate - after a restore the mirror is the only
+        thing left to replay from - so the collector asks which days exist
+        rather than assuming its own window matches the platform's retention.
+        """
+
+        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            days = _database_days(connection)
+        self.assertIn(f"{datetime.now(UTC):%Y%m%d}", days)
+        self.assertNotIn("19990101", days)
+
+    def test_a_day_outside_the_window_is_refused_by_postgresql_not_stored(self) -> None:
+        """The reason the filter above exists, stated as a measurement.
+
+        A row whose day has no partition does not fail quietly on its own row:
+        PostgreSQL refuses it, the transaction is lost, and with it every other
+        node's batch in the same run.
+        """
+
+        old = datetime(1999, 1, 1, 12, tzinfo=UTC)
+        record = {
+            "schema": 1,
+            "at": int(old.timestamp()),
+            "request": 93,
+            "client": "192.0.2.23",
+            "method": "GET",
+            "host": "expired.example.com",
+            "path": "/gone",
+            "frontend": "mgd-main-http",
+            "backend": "mgd-app-primary",
+            "server": "s1",
+            "status": 200,
+            "request_time": 0,
+            "queue_time": 0,
+            "connect_time": 1,
+            "response_time": 2,
+            "total_time": 3,
+            "bytes": 0,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            part = root / f"alpha--node-a--{old:%Y-%m-%d}.jsonl"
+            part.write_text(json.dumps(record, separators=(",", ":")) + "\n")
+            target = NodeTarget("alpha", "node-a", "node-a.example.com")
+            config = CollectorConfig(
+                "svc-logread",
+                root / "key",
+                root / "known_hosts",
+                root,
+                root,
+                (target,),
+            )
+            with (
+                self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection,
+                self.assertRaises(psycopg.Error),
+            ):
+                _ingest_part(config, connection, target, part)
 
     def test_database_search_uses_boolean_terms_status_and_newest_first(self) -> None:
         with (

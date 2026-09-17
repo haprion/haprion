@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import stat
+import types
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
@@ -111,6 +112,18 @@ class PathPolicy:
     # `clusters.yaml` - and once declared, the allowlist must have moved.
     #
     certificate_registry: Path | None = None
+
+    #
+    # Where `haproxy-cert-receiver` creates a receiver's directory (C7,
+    # §9 choice 2). Its own root rather than a corner of `certificate_root`:
+    # the distribution root is the manager's own copy of every certificate,
+    # while these directories are other machines' mailboxes, owned by their
+    # accounts and chrooted into by sshd. Stating the root in the policy also
+    # makes it movable without a code change, and a registered receiver keeps
+    # the path it was given - the registry, not this root, says where each
+    # one actually is.
+    #
+    receiver_root: Path | None = None
 
     #
     # How this installation answers ACME challenges (Phase 11, C3). Each
@@ -345,6 +358,61 @@ class Cluster:
 SOURCE_KINDS = frozenset({"acme", "import"})
 RECEIVER_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 
+#
+# A DNS label sequence, lowercase, no trailing dot. Deliberately narrower
+# than what DNS allows: this name becomes a certbot lineage name, a file
+# name under the distribution root and a registry key, and all three are
+# happier without anything outside this class.
+#
+HOSTNAME = re.compile(
+    r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
+)
+
+#
+# How a receiver fetches, how its directory is laid out, and in what form the
+# material is written there (B138, B159).
+#
+# `rsync` and `flat` are the defaults because they are what the three
+# receivers registered before C7 do, and the reader has to keep reading their
+# entries unchanged. That is the only reason: `haproxy-cert-receiver` refuses
+# to create a new `flat` receiver, since a directory that holds one
+# certificate's `fullchain.pem` cannot hold a second certificate at all.
+#
+# `https` is the sinking of the trust level B138 admits to - a fetch with no
+# key, held together by an address whitelist - and the publisher and the
+# registry writer fence it in rather than this reader: what may be published
+# where is a question about a certificate and its clusters, not about the
+# shape of one line of YAML.
+#
+RECEIVER_TRANSPORTS = ("rsync", "sftp", "https")
+RECEIVER_LAYOUTS = ("flat", "per-certificate")
+RECEIVER_FORMATS = ("pem", "pkcs12")
+DEFAULT_RECEIVER_TRANSPORT = "rsync"
+DEFAULT_RECEIVER_LAYOUT = "flat"
+DEFAULT_RECEIVER_FORMAT = "pem"
+
+
+def receiver_id_names_a_host(receiver_id: str) -> bool:
+    """B141: a receiver ID is the fetching host's DNS name or its IP address.
+
+    Held here as a function rather than as a pattern because an IP address is
+    not a regular expression anyone should write twice, and because two places
+    ask the question for the same reason: `haproxy-cert-receiver` refuses a
+    registration whose ID is not a host, and the lock it writes -
+    `from="<id>"` in `authorized_keys`, `allow <id>` in nginx - is what makes
+    the answer matter. Existing entries are not held to it (§3 of the C7
+    design); the check belongs at registration, where a name can still be
+    chosen.
+    """
+
+    if HOSTNAME.fullmatch(receiver_id):
+        return True
+    try:
+        ipaddress.ip_address(receiver_id)
+    except ValueError:
+        return False
+    return True
+
 
 @dataclass(frozen=True, slots=True)
 class CertificateSource:
@@ -370,6 +438,19 @@ class Receiver:
     receiver_id: str
     path: Path
     owner: str
+    #
+    # Set once, at registration, and never edited: a receiver that woke up to
+    # a different transport or a moved path would find out at its next fetch,
+    # which is a renewal away (B138). Changing either is remove and register.
+    #
+    transport: str = DEFAULT_RECEIVER_TRANSPORT
+    layout: str = DEFAULT_RECEIVER_LAYOUT
+    #
+    # `https` only: the addresses and networks nginx lets through. Required
+    # and non-empty there, refused everywhere else - an `allow` list on an
+    # `rsync` receiver would read as a restriction that nothing enforces.
+    #
+    allow: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,7 +458,21 @@ class RegisteredCertificate:
     certificate_id: str
     source: CertificateSource
     clusters: tuple[str, ...]
+    #
+    # The receiver IDs, in registry order. A list element is either the bare
+    # ID or a `{id, format}` mapping (B159), and both arrive here as the ID:
+    # the format is a property of this pair - one receiver may want PEM for
+    # one certificate and a PKCS#12 bundle for another - so it is kept beside
+    # the list rather than turned into a second kind of element every reader
+    # of `receivers` would have to learn.
+    #
     receivers: tuple[str, ...]
+    formats: Mapping[str, str] = types.MappingProxyType({})
+
+    def format_for(self, receiver_id: str) -> str:
+        """The form this certificate is written in for that receiver."""
+
+        return self.formats.get(receiver_id, DEFAULT_RECEIVER_FORMAT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -888,6 +983,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             "backup_root",
             "backup_timer",
             "certificate_registry",
+            "receiver_root",
             "acme",
             "ndes",
         },
@@ -918,6 +1014,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
         backup_root=_optional_root(data, "backup_root"),
         backup_timer=_optional_timer(data, "backup_timer"),
         certificate_registry=_optional_root(data, "certificate_registry"),
+        receiver_root=_optional_root(data, "receiver_root"),
         acme=_acme_policy(data),
         ndes=_ndes_policy(data),
     )
@@ -1028,14 +1125,21 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             raise ConfigError(f"invalid receiver ID in certificate registry: {receiver_id!r}")
         location = f"receivers.{receiver_id}"
         raw = _mapping(raw_value, location)
-        _only_keys(raw, {"path", "owner"}, location)
+        _only_keys(raw, {"path", "owner", "transport", "layout", "allow"}, location)
         owner = _required_string(raw, "owner", location)
         if not USERNAME.fullmatch(owner):
             raise ConfigError(f"{location}.owner is not a valid account name")
+        transport = _one_of(
+            raw, "transport", location, RECEIVER_TRANSPORTS, DEFAULT_RECEIVER_TRANSPORT
+        )
+        layout = _one_of(raw, "layout", location, RECEIVER_LAYOUTS, DEFAULT_RECEIVER_LAYOUT)
         receivers[receiver_id] = Receiver(
             receiver_id=receiver_id,
             path=_absolute_path(_required_string(raw, "path", location), f"{location}.path"),
             owner=owner,
+            transport=transport,
+            layout=layout,
+            allow=_allow_list(raw, location, transport),
         )
 
     certificates: dict[str, RegisteredCertificate] = {}
@@ -1082,7 +1186,7 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
                 raise ConfigError(f"{location}.source.ndes_profile is not a profile ID")
 
         clusters = _id_list(raw, "clusters", location, CLUSTER_ID)
-        named = _id_list(raw, "receivers", location, RECEIVER_ID)
+        named, formats = _receiver_list(raw, location)
         unknown = sorted(set(named) - set(receivers))
         if unknown:
             raise ConfigError(
@@ -1095,8 +1199,93 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             ),
             clusters=clusters,
             receivers=named,
+            formats=types.MappingProxyType(formats),
         )
     return Registry(receivers=receivers, certificates=certificates)
+
+
+def _one_of(
+    raw: Mapping[str, Any], key: str, location: str, allowed: tuple[str, ...], default: str
+) -> str:
+    """An optional keyword from a closed set; absent means the default."""
+
+    value = raw.get(key)
+    if value is None:
+        return default
+    if value not in allowed:
+        raise ConfigError(f"{location}.{key} must be one of: {', '.join(allowed)}")
+    return str(value)
+
+
+def _allow_list(raw: Mapping[str, Any], location: str, transport: str) -> tuple[str, ...]:
+    """The `https` whitelist: addresses or networks, and only where it acts.
+
+    Refused on the other transports rather than ignored. A list nothing reads
+    is a rule an operator believes in, and the belief is the dangerous part.
+    """
+
+    value = raw.get("allow")
+    if transport != "https":
+        if value is not None:
+            raise ConfigError(f"{location}.allow belongs to an https receiver only")
+        return ()
+    if not isinstance(value, list) or not value:
+        raise ConfigError(f"{location}.allow must be a non-empty list for an https receiver")
+    entries: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            raise ConfigError(f"{location}.allow[{index}] must be a string")
+        try:
+            #
+            # Strict: `192.0.2.1/24` is a typo for either the host or the
+            # network, and nginx would silently take the network - which is
+            # 255 addresses more than whoever wrote the line meant.
+            #
+            ipaddress.ip_network(item, strict=True)
+        except ValueError as exc:
+            raise ConfigError(
+                f"{location}.allow[{index}] is not an address or network: {item!r}"
+            ) from exc
+        entries.append(item)
+    if len(set(entries)) != len(entries):
+        raise ConfigError(f"{location}.allow contains duplicates")
+    return tuple(entries)
+
+
+def _receiver_list(raw: Mapping[str, Any], location: str) -> tuple[tuple[str, ...], dict[str, str]]:
+    """A certificate's receivers: bare IDs, `{id, format}` mappings, or both.
+
+    The bare ID is the older form and stays the common one - it means `pem`,
+    which is what every receiver registered before B159 gets. The mapping is
+    how a pair asks for a PKCS#12 bundle instead, and it is a per-pair choice
+    rather than a receiver-wide one because the same host can want PEM for
+    HAProxy and a PFX for IIS.
+    """
+
+    value = raw.get("receivers", [])
+    if not isinstance(value, list):
+        raise ConfigError(f"{location}.receivers must be a list")
+    named: list[str] = []
+    formats: dict[str, str] = {}
+    for index, item in enumerate(value):
+        where = f"{location}.receivers[{index}]"
+        if isinstance(item, str):
+            receiver_id, receiver_format = item, DEFAULT_RECEIVER_FORMAT
+        elif isinstance(item, Mapping):
+            _only_keys(item, {"id", "format"}, where)
+            receiver_id = _required_string(item, "id", where)
+            receiver_format = _one_of(
+                item, "format", where, RECEIVER_FORMATS, DEFAULT_RECEIVER_FORMAT
+            )
+        else:
+            raise ConfigError(f"{where} must be a receiver ID or an {{id, format}} mapping")
+        if not RECEIVER_ID.fullmatch(receiver_id):
+            raise ConfigError(f"{location}.receivers contains an invalid ID")
+        if receiver_id in formats:
+            raise ConfigError(f"{location}.receivers contains duplicates")
+        named.append(receiver_id)
+        formats[receiver_id] = receiver_format
+    return tuple(named), formats
 
 
 def _id_list(

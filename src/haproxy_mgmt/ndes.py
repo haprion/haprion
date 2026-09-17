@@ -24,8 +24,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from haproxy_mgmt.cert_import import Material, assemble, check, split_blocks
-from haproxy_mgmt.cert_issue import HOSTNAME
-from haproxy_mgmt.config import CERTIFICATE_ID, NdesPolicy
+from haproxy_mgmt.config import CERTIFICATE_ID, HOSTNAME, NdesPolicy
 from haproxy_mgmt.dns_profiles import ProfileError
 from haproxy_mgmt.ndes_profiles import OpenedProfile, check_challenge, secure_directory
 from haproxy_mgmt.ndes_state import remove_request, request_directory

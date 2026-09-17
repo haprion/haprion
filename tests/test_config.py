@@ -10,7 +10,13 @@ from pathlib import Path
 import yaml
 
 from haproxy_mgmt.cli.cluster_config import main as cluster_config_main
-from haproxy_mgmt.config import ConfigError, load_network, load_policy, load_runtime_config
+from haproxy_mgmt.config import (
+    ConfigError,
+    load_network,
+    load_policy,
+    load_runtime_config,
+    receiver_id_names_a_host,
+)
 
 BASE = Path(__file__).resolve().parents[1]
 
@@ -781,3 +787,138 @@ class TheCertificateRegistry(unittest.TestCase):
         runtime = load_runtime_config(policy, require_secure=False)
         self.assertIsNone(runtime.registry)
         self.assertEqual(runtime.cluster("alpha").certificate_ids, ("example.com", "example.net"))
+
+
+class AReceiverSaysHowItFetches(unittest.TestCase):
+    """C7 step 1: transport, layout and format, with defaults that keep today's file.
+
+    The three receivers registered before C7 state neither transport nor
+    layout, and the sentence the defaults have to make true is that their
+    entries mean exactly what they meant yesterday - `rsync` and `flat`. The
+    test that matters most here is therefore the one that reads the shipped
+    example unchanged; the rest hold the new fields to their own rules.
+    """
+
+    load = TheCertificateRegistry.load
+    setup = TheCertificateRegistry.setup
+
+    def receiver(self, **fields):
+        def mutate(data):
+            data["receivers"]["lb-01.example.net"].update(fields)
+
+        return self.load(mutate_registry=mutate).registry.receivers["lb-01.example.net"]
+
+    def test_an_entry_without_the_new_fields_is_rsync_and_flat(self) -> None:
+        registry = self.load().registry
+        assert registry is not None
+        receiver = registry.receivers["lb-01.example.net"]
+        self.assertEqual(
+            (receiver.transport, receiver.layout, receiver.allow), ("rsync", "flat", ())
+        )
+        entry = registry.certificates["lb-01.example.net"]
+        self.assertEqual(entry.format_for("lb-01.example.net"), "pem")
+
+    def test_transport_and_layout_are_kept_when_stated(self) -> None:
+        receiver = self.receiver(transport="sftp", layout="per-certificate")
+        self.assertEqual((receiver.transport, receiver.layout), ("sftp", "per-certificate"))
+
+    def test_a_transport_or_layout_outside_the_set_is_refused(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "transport must be one of"):
+            self.receiver(transport="scp")
+        with self.assertRaisesRegex(ConfigError, "layout must be one of"):
+            self.receiver(layout="one-big-file")
+
+    def test_an_https_receiver_carries_a_whitelist_and_no_other_one_may(self) -> None:
+        receiver = self.receiver(
+            transport="https", owner="www-data", allow=["192.0.2.10", "198.51.100.0/24"]
+        )
+        self.assertEqual(receiver.allow, ("192.0.2.10", "198.51.100.0/24"))
+
+        with self.assertRaisesRegex(ConfigError, "non-empty list for an https receiver"):
+            self.receiver(transport="https", allow=[])
+        with self.assertRaisesRegex(ConfigError, "non-empty list for an https receiver"):
+            self.receiver(transport="https")
+        with self.assertRaisesRegex(ConfigError, "belongs to an https receiver only"):
+            self.receiver(allow=["192.0.2.10"])
+
+    def test_a_whitelist_entry_must_be_an_address_or_a_network(self) -> None:
+        for bad in ("lb-01.example.net", "192.0.2.1/24", "192.0.2.300"):
+            with self.assertRaisesRegex(ConfigError, "not an address or network"):
+                self.receiver(transport="https", allow=[bad])
+        with self.assertRaisesRegex(ConfigError, "allow contains duplicates"):
+            self.receiver(transport="https", allow=["192.0.2.10", "192.0.2.10"])
+
+
+class ACertificateMaySayWhichFormAReceiverGets(unittest.TestCase):
+    """B159: `{id, format}` beside the bare ID, which keeps meaning `pem`."""
+
+    load = TheCertificateRegistry.load
+    setup = TheCertificateRegistry.setup
+
+    def certificate(self, receivers):
+        def mutate(data):
+            data["certificates"]["lb-01.example.net"]["receivers"] = receivers
+
+        return self.load(mutate_registry=mutate).registry.certificates["lb-01.example.net"]
+
+    def test_a_mapping_element_names_the_format(self) -> None:
+        entry = self.certificate([{"id": "lb-01.example.net", "format": "pkcs12"}])
+        self.assertEqual(entry.receivers, ("lb-01.example.net",))
+        self.assertEqual(entry.format_for("lb-01.example.net"), "pkcs12")
+
+    def test_a_mapping_without_a_format_is_pem(self) -> None:
+        entry = self.certificate([{"id": "lb-01.example.net"}])
+        self.assertEqual(entry.format_for("lb-01.example.net"), "pem")
+
+    def test_an_unknown_format_or_field_is_refused(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "format must be one of"):
+            self.certificate([{"id": "lb-01.example.net", "format": "jks"}])
+        with self.assertRaisesRegex(ConfigError, "unknown field"):
+            self.certificate([{"id": "lb-01.example.net", "sftp": True}])
+
+    def test_an_element_that_is_neither_an_id_nor_a_mapping_is_refused(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "must be a receiver ID or an"):
+            self.certificate([["lb-01.example.net"]])
+
+    def test_the_same_receiver_twice_is_refused_in_either_form(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "contains duplicates"):
+            self.certificate(["lb-01.example.net", {"id": "lb-01.example.net", "format": "pkcs12"}])
+
+    def test_a_mapping_element_is_still_held_to_the_registered_receivers(self) -> None:
+        with self.assertRaisesRegex(ConfigError, "unregistered receiver"):
+            self.certificate([{"id": "lb-02.example.net", "format": "pkcs12"}])
+
+
+class AReceiverIdNamesAHost(unittest.TestCase):
+    """B141: the ID is what `from=` and `allow` bind to, so it is a host."""
+
+    def test_a_dns_name_or_an_ip_address_is_a_host(self) -> None:
+        for value in ("lb-01.example.net", "192.0.2.10", "2001:db8::1"):
+            self.assertTrue(receiver_id_names_a_host(value), value)
+
+    def test_anything_else_is_not(self) -> None:
+        for value in ("lb-01", "pve-cluster", "192.0.2.0/24", "lb-01.example.net."):
+            self.assertFalse(receiver_id_names_a_host(value), value)
+
+
+class TheReceiverRoot(unittest.TestCase):
+    """Where `haproxy-cert-receiver` will create directories (C7, §9 choice 2)."""
+
+    def policy(self, value=None):
+        with tempfile.TemporaryDirectory() as raw:
+            data = yaml.safe_load((BASE / "examples" / "runtime-policy.yaml").read_text())
+            if value is not None:
+                data["receiver_root"] = value
+            path = Path(raw) / "runtime-policy.yaml"
+            path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+            return load_policy(path, require_secure=False)
+
+    def test_it_is_optional_and_absent_in_the_example(self) -> None:
+        self.assertIsNone(self.policy().receiver_root)
+
+    def test_it_is_an_absolute_path_when_stated(self) -> None:
+        self.assertEqual(
+            self.policy("/srv/certdist/receivers").receiver_root, Path("/srv/certdist/receivers")
+        )
+        with self.assertRaisesRegex(ConfigError, "must be absolute"):
+            self.policy("srv/certdist/receivers")

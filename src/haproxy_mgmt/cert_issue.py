@@ -37,7 +37,6 @@ created" is what the operator needs to read, not "exit status 1".
 
 from __future__ import annotations
 
-import re
 import subprocess
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -58,6 +57,7 @@ from haproxy_mgmt.cert_publish import (
 from haproxy_mgmt.config import (
     CERTIFICATE_ID,
     CLUSTER_ID,
+    HOSTNAME,
     RECEIVER_ID,
     PathPolicy,
     RuntimeConfig,
@@ -70,16 +70,6 @@ KEY_TYPE = "ecdsa"
 
 type Method = Literal["dns-01", "http-01"]
 METHODS: tuple[Method, ...] = ("dns-01", "http-01")
-
-#
-# A DNS label sequence, lowercase, no trailing dot. Deliberately narrower
-# than what DNS allows: this name becomes a certbot lineage name, a file
-# name under the distribution root and a registry key, and all three are
-# happier without anything outside this class.
-#
-HOSTNAME = re.compile(
-    r"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$"
-)
 
 
 class IssueError(Exception):

@@ -155,6 +155,24 @@ class RemovingFromATarget(RetargetFixture):
         self.assertTrue((self.dist / "example.com.pem").exists())
         self.assertEqual(self.deployed, [])
 
+    def test_the_last_cluster_takes_the_distribution_copy_with_it(self) -> None:
+        """Off its last cluster the PEM under the certificate root is a key
+        pair no entry owns, in a directory the nodes may read; the deletion
+        removes it and so does this (review 2026-09-17, finding 5)."""
+
+        self.assertTrue((self.dist / "shop.example.pem").exists())
+        report = self.retarget(self.policy_path, "remove", "shop.example", clusters=("alpha",))
+
+        self.assertEqual(report.changed, ("shop.example",))
+        self.assertEqual(self.targets("shop.example")["clusters"], [])
+        self.assertFalse((self.dist / "shop.example.pem").exists())
+        self.assertIn(
+            (str(self.dist / "shop.example.pem"), "removed"),
+            [(layer.name, layer.state) for layer in report.outcomes[0].layers],
+        )
+        # The receiver it still publishes to keeps its pair.
+        self.assertTrue((self.receiver_dir / FULLCHAIN).exists())
+
     def test_a_node_that_keeps_its_copy_makes_the_row_incomplete_not_the_registry(self) -> None:
         self.node_answers["node-b.example.com"] = (1, "unknown request: cert-remove")
 

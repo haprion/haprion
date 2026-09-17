@@ -71,6 +71,7 @@ from haproxy_mgmt.cert_publish import (
     publish,
     publish_lock,
 )
+from haproxy_mgmt.certificates import certificate_path
 from haproxy_mgmt.config import ConfigError, PathPolicy, RuntimeConfig, load_runtime_config
 
 OPERATION = "cert_target"
@@ -512,6 +513,15 @@ def _remove(
             outcomes.append(CertificateOutcome(certificate_id, "refused", str(exc), exc.code))
             continue
         layers = _clear_receivers(certificate_id, dropped_receivers, runtime)
+        #
+        # The cluster PEM is one shared file for every cluster, so it stays
+        # while any cluster still names the certificate. Off the last one it
+        # is a key pair no entry owns, in a directory the nodes may read - the
+        # deletion removes it, and so does this (review 2026-09-17, finding 5).
+        #
+        remaining_clusters = tuple(c for c in before_clusters if c not in change.clusters)
+        if dropped_clusters and not remaining_clusters and policy.certificate_root is not None:
+            layers += (_unlink(certificate_path(policy.certificate_root, certificate_id)),)
         clusters = [runtime.clusters[c] for c in dropped_clusters if c in runtime.clusters]
         nodes = remove_node_copies(
             clusters, certificate_id, policy.cert_deploy_identity, node_remover

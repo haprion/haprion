@@ -258,7 +258,7 @@ def _matches(expression: _Expression, text: str) -> bool:
 
 def _search_sql(expression: _Expression, parameters: list[Any]) -> sql.Composable:
     # Keep this expression byte-for-byte aligned with the per-partition
-    # pg_trgm index created by migration 0030.
+    # pg_trgm index created by migration 0030 (and, since 0031, the only per-partition index beside the primary key).
     searchable = sql.SQL("(host || ' ' || path || ' ' || backend)")
     if isinstance(expression, _Term):
         if not expression.value:

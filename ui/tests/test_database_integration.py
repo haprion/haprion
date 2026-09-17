@@ -36,7 +36,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0030",))
+            self.assertEqual(cursor.fetchone(), ("0031",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -146,7 +146,10 @@ class ARealDatabase(unittest.TestCase):
                 (f"traffic_log_{suffix}",),
             )
             indexes = {row[0] for row in cursor.fetchall()}
-        self.assertIn(f"traffic_log_{suffix}_occurred_at", indexes)
+        # The primary key orders by occurred_at already; a second index on it
+        # cost a fifth of the index bytes for nothing (migration 0031).
+        self.assertNotIn(f"traffic_log_{suffix}_occurred_at", indexes)
+        self.assertIn(f"traffic_log_{suffix}_pkey", indexes)
         self.assertIn(f"traffic_log_{suffix}_search", indexes)
 
     def test_collector_copy_is_checkpointed_and_safe_to_repeat(self) -> None:

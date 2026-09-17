@@ -26,6 +26,7 @@ MAX_SEND = 8 * 1024 * 1024
 MAX_STDERR = 64 * 1024
 MAX_RECORD_BYTES = 16 * 1024
 DATABASE_BATCH_ROWS = 1000
+MAX_TIMESTAMP = 253402300799  # 9999-12-31T23:59:59Z, the last second datetime holds
 #
 # What the manager keeps when it has no database to ask. The number is B125's:
 # it was the product's history window back when the mirror was the store and the
@@ -654,11 +655,21 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
 
     def text(name: str, maximum: int) -> str:
         item = value.get(name)
-        if not isinstance(item, str) or len(item) > maximum:
+        #
+        # A NUL is legal JSON and illegal in a PostgreSQL text column; letting
+        # it through makes COPY refuse the whole batch, which is the permanent
+        # stop this function exists to prevent. The record is unusable here.
+        #
+        if not isinstance(item, str) or len(item) > maximum or "\0" in item:
             raise CollectorError(f"traffic record {name} is invalid")
         return item
 
-    stamp = number("at", low=0)
+    #
+    # Bounded to what `datetime` can hold, so an absurd stamp is this
+    # function's refusal and not an OSError or ValueError two lines later,
+    # which nothing above catches per record.
+    #
+    stamp = number("at", low=0, high=MAX_TIMESTAMP)
     request = value.get("request", 0)
     if not isinstance(request, int) or isinstance(request, bool) or request < 0:
         raise CollectorError("traffic record request is invalid")
@@ -794,6 +805,17 @@ def _database_days(connection: psycopg.Connection[Any]) -> frozenset[str]:
     return days
 
 
+def _within_margin(day: str, days: frozenset[str]) -> bool:
+    """Whether a staging day is the margin the mirror keeps below the oldest partition."""
+
+    try:
+        oldest = datetime.strptime(min(days), "%Y%m%d").date()
+        part_day = datetime.strptime(day, "%Y-%m-%d").date()
+    except ValueError:
+        return False
+    return oldest - timedelta(days=MIRROR_MARGIN_DAYS) <= part_day < oldest
+
+
 def _mirror_window(config: CollectorConfig, *, now: datetime) -> int:
     """How many days the manager keeps, taken from what the database keeps.
 
@@ -852,7 +874,15 @@ def _ingest_database(config: CollectorConfig) -> tuple[int, int]:
                 for part in sorted(config.staging.glob(f"{prefix}*.jsonl")):
                     day = part.name[len(prefix) : -len(".jsonl")]
                     if day.replace("-", "") not in days:
-                        expired += 1
+                        #
+                        # The margin day the mirror keeps on purpose (see
+                        # `_mirror_window`) is not an anomaly and is not
+                        # counted; saying so every minute would drown the day
+                        # it is one - a part older than that, or newer than any
+                        # partition, which the retention timer should have made.
+                        #
+                        if not _within_margin(day, days):
+                            expired += 1
                         continue
                     skipped += _ingest_part(config, connection, target, part)
     except psycopg.Error as exc:

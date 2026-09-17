@@ -206,11 +206,11 @@ class ARealDatabase(unittest.TestCase):
 
         now = datetime.now(UTC).replace(microsecond=0)
 
-        def record(host: str) -> str:
+        def record(host: str, at: int | None = None) -> str:
             return json.dumps(
                 {
                     "schema": 1,
-                    "at": int(now.timestamp()),
+                    "at": int(now.timestamp()) if at is None else at,
                     "request": 91,
                     "client": "192.0.2.21",
                     "method": "GET",
@@ -233,9 +233,22 @@ class ARealDatabase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             part = root / f"alpha--node-a--{now:%Y-%m-%d}.jsonl"
+            #
+            # Two more shapes the guard has to own, both found in the review of
+            # 2026-09-17: a stamp datetime cannot hold (OSError, ValueError) and
+            # a NUL a text column cannot hold (psycopg.DataError for the whole
+            # batch). Neither is a CollectorError on its own, and either would
+            # stop the import for good.
+            #
             part.write_text(
                 '{"schema":1,"probe":true}\n'
                 + "{not json at all\n"
+                + record("stamp.example.com", at=2**62)
+                + "\n"
+                + record("stamp.example.com", at=10**12)
+                + "\n"
+                + record("nul\u0000.example.com")
+                + "\n"
                 + record("skipped.example.com")
                 + "\n"
             )
@@ -250,7 +263,7 @@ class ARealDatabase(unittest.TestCase):
             )
             with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
                 skipped = _ingest_part(config, connection, target, part)
-            self.assertEqual(skipped, 2)
+            self.assertEqual(skipped, 5)
             checkpoint = root / f".{part.name}.database-offset"
             self.assertEqual(int(checkpoint.read_text()), part.stat().st_size)
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:

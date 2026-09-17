@@ -23,10 +23,12 @@ from haproxy_mgmt.traffic_collector import (
     ProtocolError,
     Response,
     SSHError,
+    _database_row,
     _entry,
     _failure_outcome,
     _parse_response,
     _replace,
+    _within_margin,
     collect,
     collect_node,
     load_config,
@@ -64,6 +66,53 @@ class TrafficCollectorTests(unittest.TestCase):
             skipped_bytes=int(flags.get("skipped_bytes", 0)),
             payload=payload,
         )
+
+    def test_a_record_the_database_cannot_take_is_the_row_parser_s_refusal(self) -> None:
+        """One exception type for everything a record can be, so `_ingest_part`
+        can step over it. A stamp past the year 9999 raised OSError or
+        ValueError and a NUL in a text field reached PostgreSQL, which refused
+        the whole batch - each a permanent stop, since the checkpoint never
+        passes the record that raised (review 2026-09-17, finding 3)."""
+
+        base = {
+            "schema": 1,
+            "at": 1_700_000_000,
+            "request": 1,
+            "client": "192.0.2.1",
+            "method": "GET",
+            "host": "a.example.test",
+            "path": "/",
+            "frontend": "f",
+            "backend": "b",
+            "server": "s1",
+            "status": 200,
+            "request_time": 0,
+            "queue_time": 0,
+            "connect_time": 0,
+            "response_time": 0,
+            "total_time": 0,
+            "bytes": 0,
+        }
+        row = _database_row("alpha", "node-a", json.dumps(base).encode())
+        self.assertEqual(row[7], "a.example.test")
+        for change in ({"at": 2**62}, {"at": 10**12}, {"path": "/a\0b"}, {"host": "\0"}):
+            with self.subTest(change=change), self.assertRaises(CollectorError):
+                _database_row("alpha", "node-a", json.dumps(base | change).encode())
+        self.assertEqual(
+            _database_row("alpha", "node-a", json.dumps(base | {"at": 253402300799}).encode())[3],
+            datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC),
+        )
+
+    def test_the_margin_day_is_not_reported_as_older_than_the_database_keeps(self) -> None:
+        """The mirror keeps one day below the oldest partition on purpose
+        (B155); that day is not an anomaly and is not counted every minute.
+        A day older than the margin, or newer than every partition, is."""
+
+        days = frozenset({"20260910", "20260911", "20260917"})
+        self.assertTrue(_within_margin("2026-09-09", days))
+        self.assertFalse(_within_margin("2026-09-08", days))
+        self.assertFalse(_within_margin("2026-09-18", days))
+        self.assertFalse(_within_margin("not-a-day", days))
 
     def test_new_data_is_fsynced_to_a_part_then_atomically_assembled(self) -> None:
         calls: list[tuple[date, int]] = []

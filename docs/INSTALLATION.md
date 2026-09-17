@@ -2496,9 +2496,9 @@ page's own query. Three checkpoints, `analyze` before each:
 
 | Rows | Table | Indexes | Per row | Newest 500 | Substring, one word | Substring, two words | Status 5xx | One day | One cluster, one day |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 M | 230 MiB | 193 MiB | 444 B | 3 ms | 3 ms | 10 ms | 3 ms | 2 ms | 2 ms |
-| 10 M | 2 299 MiB | 1 804 MiB | 430 B | 3 ms | 4 ms | 9 ms | 4 ms | 3 ms | 3 ms |
-| 30 M | 6 897 MiB | 4 841 MiB | 410 B | 3 ms | 3 ms | 11 ms | 3 ms | 2 ms | 2 ms |
+| 1 M | 230 MiB | 161 MiB | 411 B | 3 ms | 3 ms | 10 ms | 3 ms | 2 ms | 2 ms |
+| 10 M | 2 299 MiB | 1 678 MiB | 417 B | 3 ms | 4 ms | 11 ms | 4 ms | 2 ms | 3 ms |
+| 30 M | 6 897 MiB | 4 562 MiB | 401 B | 3 ms | 3 ms | 13 ms | 4 ms | 2 ms | 2 ms |
 
 **Plan on 410 bytes per record, indexes included**, and on the page staying
 fast: every query form the interface issues answered in about ten milliseconds

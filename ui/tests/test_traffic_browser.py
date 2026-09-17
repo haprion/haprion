@@ -116,7 +116,7 @@ class TheChartInABrowser(ReadingACluster):
             page.fill("input[name=password]", PASSWORD)
             page.click("button[type=submit]")
             page.wait_for_url(f"http://127.0.0.1:{self.port}/")
-            page.goto(f"http://127.0.0.1:{self.port}/clusters/edge-demo/traffic")
+            page.goto(f"http://127.0.0.1:{self.port}/clusters/edge-demo/metrics")
             page.wait_for_selector(".traffic-pick")
             yield page
         finally:

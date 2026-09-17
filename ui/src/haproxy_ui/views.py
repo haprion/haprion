@@ -1483,7 +1483,7 @@ def build_router(config: Config) -> APIRouter:
                 "username": session.username,
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
-                "section": "traffic",
+                "section": "metrics",
                 "clusters": drawn,
                 "one_cluster": only,
                 "traffic_window": chosen.label,
@@ -1507,11 +1507,11 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
-    @router.get("/traffic", response_class=HTMLResponse)
+    @router.get("/metrics", response_class=HTMLResponse)
     def all_traffic(request: Request) -> Response:
         return _cluster_traffic(request, config, None)
 
-    @router.get("/clusters/{cluster}/traffic", response_class=HTMLResponse)
+    @router.get("/clusters/{cluster}/metrics", response_class=HTMLResponse)
     def cluster_traffic(request: Request, cluster: str) -> Response:
         return _cluster_traffic(request, config, cluster)
 

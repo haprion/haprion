@@ -110,7 +110,7 @@ class ReadingACluster(LoginTestCase):
         return client
 
     def page(self, query: str = "") -> object:
-        return self.admin().get(f"/clusters/edge-demo/traffic{query}")  # type: ignore[attr-defined]
+        return self.admin().get(f"/clusters/edge-demo/metrics{query}")  # type: ignore[attr-defined]
 
 
 class WhoMayCompare(ReadingACluster):
@@ -119,7 +119,7 @@ class WhoMayCompare(ReadingACluster):
 
     def test_a_signed_out_visitor_is_sent_to_the_login(self) -> None:
         client = self.client(replace(configuration(), demo_fixture=True))
-        answer = client.get("/clusters/edge-demo/traffic", follow_redirects=False)
+        answer = client.get("/clusters/edge-demo/metrics", follow_redirects=False)
 
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(answer.headers["location"], "/login")
@@ -131,10 +131,10 @@ class WhoMayCompare(ReadingACluster):
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)
 
-        self.assertEqual(client.get("/clusters/edge-demo/traffic").status_code, 403)
+        self.assertEqual(client.get("/clusters/edge-demo/metrics").status_code, 403)
 
     def test_a_cluster_that_does_not_exist_is_not_a_page(self) -> None:
-        answer = self.admin().get("/clusters/nowhere/traffic")  # type: ignore[attr-defined]
+        answer = self.admin().get("/clusters/nowhere/metrics")  # type: ignore[attr-defined]
 
         self.assertEqual(answer.status_code, 404)
 
@@ -380,17 +380,17 @@ class TheWayBackAndForth(ReadingACluster):
     def test_it_is_its_own_page_rather_than_something_behind_a_proxy(self) -> None:
         """Traffic is a cluster's reading; reaching it through one proxy is odd."""
 
-        page = self.admin().get("/traffic")  # type: ignore[attr-defined]
+        page = self.admin().get("/metrics")  # type: ignore[attr-defined]
 
         self.assertEqual(page.status_code, 200)
-        self.assertIn('href="/traffic"', page.text)
+        self.assertIn('href="/metrics"', page.text)
 
     def test_the_listing_no_longer_repeats_the_tab(self) -> None:
         """A link beside the inventory line is redundant once there is a tab."""
 
         page = self.admin().get("/proxies")  # type: ignore[attr-defined]
 
-        self.assertNotIn("/clusters/edge-demo/traffic", page.text)
+        self.assertNotIn("/clusters/edge-demo/metrics", page.text)
 
     def test_an_object_with_traffic_offers_the_comparison_it_cannot_make(self) -> None:
         """The card can only draw the backend somebody already guessed right."""
@@ -399,7 +399,7 @@ class TheWayBackAndForth(ReadingACluster):
             Path(__file__).resolve().parents[1] / "src" / "haproxy_ui" / "templates" / "object.html"
         ).read_text()
 
-        self.assertIn("/clusters/{{ object.cluster }}/traffic", source)
+        self.assertIn("/clusters/{{ object.cluster }}/metrics", source)
 
 
 if __name__ == "__main__":

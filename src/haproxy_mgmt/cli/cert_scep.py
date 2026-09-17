@@ -7,13 +7,14 @@ import json
 import os
 import shutil
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
 from haproxy_mgmt import cert_import, ndes, ndes_profiles
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
+from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.cli.cert_import import result_envelope
 from haproxy_mgmt.cli.cert_publish import default_deployer
 from haproxy_mgmt.config import (
@@ -25,7 +26,13 @@ from haproxy_mgmt.config import (
 )
 from haproxy_mgmt.dns_profiles import ProfileError
 from haproxy_mgmt.envelope import Message, envelope, failure, new_request_id
-from haproxy_mgmt.ndes_state import request_record, request_targets, write_targets
+from haproxy_mgmt.helper_protocol import HelperProtocolError
+from haproxy_mgmt.ndes_state import (
+    request_formats,
+    request_record,
+    request_targets,
+    write_targets,
+)
 
 OPERATION = "cert_scep"
 
@@ -52,6 +59,7 @@ def enroll(
     receivers: Sequence[str],
     resume: bool,
     request_id: str,
+    formats: Mapping[str, str] | None = None,
     policy_path: Path = DEFAULT_POLICY_PATH,
     require_secure: bool = True,
     deployer: Deployer,
@@ -96,6 +104,9 @@ def enroll(
             # registry, which names a certificate only once it exists.
             #
             clusters, receivers = request_targets(policy.ndes.state_root, certificate_id)
+            formats = request_formats(policy.ndes.state_root, certificate_id)
+        if any(name not in receivers for name in formats or ()):
+            raise ScepRefusal("bad_input", "a format names a receiver that is not targeted", 65)
         requested = ndes.names(domains)
         runtime = load_runtime_config(policy, require_secure=require_secure)
         if any(name not in runtime.clusters for name in clusters):
@@ -137,6 +148,7 @@ def enroll(
                     certificate_id,
                     clusters=tuple(clusters),
                     receivers=tuple(receivers),
+                    formats=formats,
                 )
                 doc = envelope(
                     operation=OPERATION,
@@ -186,6 +198,7 @@ def enroll(
                 lock_path=lock_path,
                 require_secure=require_secure,
                 ndes_profile=profile.profile_id,
+                formats=formats,
             )
             doc, exit_code = result_envelope(imported, request_id=request_id)
             doc["operation"] = OPERATION
@@ -273,6 +286,13 @@ def main(
     )
     parser.add_argument("--cluster", action="append", default=[])
     parser.add_argument("--receiver", action="append", default=[])
+    parser.add_argument(
+        "--format",
+        action="append",
+        default=[],
+        metavar="RECEIVER=FORMAT",
+        help="how a --receiver is written: pem (default) or pkcs12",
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
         "--abandon",
@@ -311,6 +331,10 @@ def main(
     ):
         return refuse("bad_input", "--abandon takes only --id", 65)
     try:
+        formats = cert_job.format_flags(args.format, args.receiver)
+    except HelperProtocolError as exc:
+        return refuse("bad_input", str(exc), 65)
+    try:
         if args.abandon:
             doc, exit_code = abandon(
                 certificate_id=args.id,
@@ -327,6 +351,7 @@ def main(
                 receivers=args.receiver,
                 resume=args.resume,
                 request_id=request_id,
+                formats=formats,
                 policy_path=policy_path,
                 require_secure=require_secure,
                 deployer=deployer or default_deployer(errors),

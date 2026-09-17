@@ -72,6 +72,7 @@ class RetargetRouteTestCase(DeleteRouteTestCase):
         *ids: str,
         clusters: tuple[str, ...] = (),
         receivers: tuple[str, ...] = (),
+        formats: tuple[str, ...] = (),
     ) -> Any:
         token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
         return client.post(
@@ -80,6 +81,7 @@ class RetargetRouteTestCase(DeleteRouteTestCase):
                 "certificate": list(ids),
                 "cluster": list(clusters),
                 "receiver": list(receivers),
+                "format": list(formats),
                 "idempotency_key": str(uuid4()),
                 auth.CSRF_FIELD: token,
             },
@@ -169,6 +171,36 @@ class Confirming(RetargetRouteTestCase):
             },
         )
         self.assertIn("queue_job", self.audit)
+
+    def test_an_added_receiver_carries_its_format_and_a_removal_never_does(self) -> None:
+        response = self.confirm(
+            self.writing_client(),
+            "add",
+            "example.com",
+            receivers=("lb-01",),
+            formats=("lb-01=pkcs12",),
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+        (job,) = self.queued
+        self.assertEqual(job["payload"]["formats"], {"lb-01": "pkcs12"})
+        self.queued.clear()
+
+        response = self.confirm(
+            self.writing_client(),
+            "remove",
+            "imported.example",
+            receivers=("lb-01",),
+            formats=("lb-01=pkcs12",),
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+        (job,) = self.queued
+        self.assertNotIn("formats", job["payload"])
+
+    def test_the_question_offers_the_format_beside_an_added_receiver_only(self) -> None:
+        page = self.review(self.writing_client(), "add", "example.com").text
+        self.assertIn('aria-label="Format for lb-01"', page)
+        page = self.review(self.writing_client(), "remove", "imported.example").text
+        self.assertNotIn('aria-label="Format for', page)
 
     def test_a_target_not_offered_is_dropped_and_an_empty_choice_asks_again(self) -> None:
         # alpha is on every chosen certificate, so an add to it is not offered.
@@ -286,5 +318,12 @@ class TheSelectionModel(unittest.TestCase):
         body = certificate_retarget.payload(picked, ("beta", "gamma", "../x", "beta"), ("lb-01",))
         self.assertEqual(body["clusters"], ["beta"])
         self.assertEqual(body["receivers"], ["lb-01"])
+        self.assertNotIn("formats", body)
+        body = certificate_retarget.payload(
+            picked, (), ("lb-01",), ("lb-01=pkcs12", "lb-02=pkcs12")
+        )
+        self.assertEqual(body["formats"], {"lb-01": "pkcs12"})
+        with self.assertRaises(certificate_retarget.SelectionProblem):
+            certificate_retarget.payload(picked, (), ("lb-01",), ("lb-01=der",))
         with self.assertRaises(certificate_retarget.SelectionProblem):
             certificate_retarget.payload(picked, ("gamma",), ())

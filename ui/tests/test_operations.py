@@ -234,6 +234,53 @@ class DeletingCertificates(unittest.TestCase):
 class RetargetingCertificates(unittest.TestCase):
     """Publish to… and Remove from… (2026-09-15): a list of IDs and one delta."""
 
+    def test_a_receiver_s_format_rides_in_the_delta_and_is_checked_here(self) -> None:
+        prepared = operations.prepare(
+            operation="cert_target",
+            cluster=None,
+            request_id=REQUEST,
+            payload={
+                "certificates": ["a.example"],
+                "action": "add",
+                "receivers": ["lb-01"],
+                "formats": {"lb-01": "pkcs12"},
+            },
+        )
+        self.assertEqual(
+            json.loads(prepared.request)["parameters"]["add"],
+            {"clusters": [], "receivers": ["lb-01"], "formats": {"lb-01": "pkcs12"}},
+        )
+        for payload in (
+            {
+                "certificates": ["a.example"],
+                "action": "add",
+                "receivers": ["lb-01"],
+                "formats": {"lb-02": "pkcs12"},
+            },
+            {
+                "certificates": ["a.example"],
+                "action": "add",
+                "receivers": ["lb-01"],
+                "formats": {"lb-01": "der"},
+            },
+            {
+                "certificates": ["a.example"],
+                "action": "add",
+                "receivers": ["lb-01"],
+                "formats": ["lb-01"],
+            },
+            {
+                "certificates": ["a.example"],
+                "action": "remove",
+                "receivers": ["lb-01"],
+                "formats": {"lb-01": "pkcs12"},
+            },
+        ):
+            with self.subTest(payload=payload), self.assertRaises(operations.BadPayload):
+                operations.prepare(
+                    operation="cert_target", cluster=None, request_id=REQUEST, payload=payload
+                )
+
     def test_the_request_carries_the_ids_and_the_delta(self) -> None:
         prepared = operations.prepare(
             operation="cert_target",

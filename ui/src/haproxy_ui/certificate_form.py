@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from haproxy_mgmt.cert_issue import METHODS, IssueError, parse_domain
+from haproxy_mgmt.config import DEFAULT_RECEIVER_FORMAT, RECEIVER_FORMATS
 
 
 class FormProblem(Exception):
@@ -47,10 +48,21 @@ class IssueForm:
     receivers: tuple[str, ...]
     dns_profile: str = ""
     ndes_profile: str = ""
+    formats: tuple[str, ...] = ()
+    """The page's `format` fields as submitted, `<receiver>=<format>` each (B159)."""
 
     @property
     def wildcard(self) -> bool:
         return self.domain.strip().startswith("*.")
+
+    def format_of(self, receiver_id: str) -> str:
+        """What the page should show selected for a receiver when drawn again."""
+
+        for value in self.formats:
+            name, _, form = value.partition("=")
+            if name.strip() == receiver_id and form.strip() in RECEIVER_FORMATS:
+                return form.strip()
+        return DEFAULT_RECEIVER_FORMAT
 
 
 #
@@ -95,7 +107,31 @@ def normalise(form: IssueForm) -> IssueForm:
         ndes_profile=form.ndes_profile.strip(),
         clusters=tuple(dict.fromkeys(name.strip() for name in form.clusters if name.strip())),
         receivers=tuple(dict.fromkeys(name.strip() for name in form.receivers if name.strip())),
+        formats=tuple(value.strip() for value in form.formats if value.strip()),
     )
+
+
+def formats_from_fields(values: Iterable[str], receivers: Iterable[str]) -> dict[str, str]:
+    """The `format` fields as the page submits them: `<receiver>=<format>`, one per select.
+
+    Every receiver's select is submitted whether or not its box is ticked, so
+    a value for a receiver that was not chosen is dropped rather than refused;
+    `pem` is the default and is not carried. A format that is not one the
+    engine writes is a refusal: the page offered only the two.
+    """
+
+    chosen = set(receivers)
+    formats: dict[str, str] = {}
+    for value in values:
+        receiver_id, separator, form = value.partition("=")
+        receiver_id, form = receiver_id.strip(), form.strip()
+        if not separator or receiver_id not in chosen:
+            continue
+        if form not in RECEIVER_FORMATS:
+            raise FormProblem("A receiver's format must be PEM or PKCS#12.")
+        if form != DEFAULT_RECEIVER_FORMAT:
+            formats[receiver_id] = form
+    return formats
 
 
 def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
@@ -164,20 +200,24 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             "One of the chosen receivers is not registered. A receiver is registered "
             "on the manager, not from this form."
         )
+    formats = formats_from_fields(form.formats, form.receivers)
     if form.method == NDES_METHOD:
         #
         # The engine's own reading of the name: the base name is the ID and
         # the CN, the wildcard a SAN beside it - the CN is never a wildcard.
         #
         name, names, _ = parse_domain(form.domain)
-        return {
+        enrollment: dict[str, Any] = {
             "id": name,
             "profile": form.ndes_profile,
             "domains": [name, *[n for n in names if n != name]],
             "clusters": list(form.clusters),
             "receivers": list(form.receivers),
         }
-    payload = {
+        if formats:
+            enrollment["formats"] = formats
+        return enrollment
+    payload: dict[str, Any] = {
         "domain": form.domain,
         "method": form.method,
         "clusters": list(form.clusters),
@@ -185,6 +225,8 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
     }
     if form.dns_profile:
         payload["dns_profile"] = form.dns_profile
+    if formats:
+        payload["formats"] = formats
     return payload
 
 

@@ -46,7 +46,7 @@ batch.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -106,6 +106,8 @@ class Change:
 
     clusters: tuple[str, ...] = ()
     receivers: tuple[str, ...] = ()
+    formats: Mapping[str, str] = field(default_factory=dict)
+    """How an added receiver is written (B159); only `add` carries it."""
 
     @property
     def targets(self) -> tuple[str, ...]:
@@ -433,6 +435,7 @@ def _add(
                 clusters=clusters,
                 receivers=receivers,
                 runtime=runtime,
+                formats=change.formats,
                 require_secure=require_secure,
             )
         except cert_registry.RegistryError as exc:

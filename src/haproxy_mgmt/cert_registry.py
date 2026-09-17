@@ -333,6 +333,8 @@ class TargetChange:
     added: tuple[str, ...]
     abandoned: tuple[str, ...]
     changed: bool
+    reformatted: tuple[str, ...] = ()
+    """Receivers kept and written in another format than before (B159)."""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -340,6 +342,7 @@ class TargetChange:
             "targets": {"clusters": list(self.clusters), "receivers": list(self.receivers)},
             "added": list(self.added),
             "abandoned": list(self.abandoned),
+            "reformatted": list(self.reformatted),
             "changed": self.changed,
         }
 
@@ -367,7 +370,7 @@ def _named_receivers(entry: Mapping[str, Any]) -> tuple[tuple[str, ...], dict[st
     return tuple(named), formats
 
 
-def _receiver_elements(
+def receiver_elements(
     receivers: Sequence[str], formats: Mapping[str, str]
 ) -> list[str | dict[str, str]]:
     """The receiver list as it is written back: a bare ID unless a format is stated."""
@@ -457,7 +460,7 @@ def set_targets(
     if after_clusters:
         updated["clusters"] = list(after_clusters)
     if after_receivers:
-        updated["receivers"] = _receiver_elements(
+        updated["receivers"] = receiver_elements(
             after_receivers,
             {k: v for k, v in after_formats.items() if v is not None},
         )
@@ -465,13 +468,26 @@ def set_targets(
 
     before = set(before_clusters) | set(before_receivers)
     after = set(after_clusters) | set(after_receivers)
+    #
+    # A kept receiver whose format changed is a change too: the publisher
+    # writes a different file for it, and a retarget that only compared the
+    # names would have recorded the new format and never written it.
+    #
+    reformatted = tuple(
+        receiver_id
+        for receiver_id in after_receivers
+        if receiver_id in before
+        and (after_formats.get(receiver_id) or DEFAULT_RECEIVER_FORMAT)
+        != (before_formats.get(receiver_id) or DEFAULT_RECEIVER_FORMAT)
+    )
     change = TargetChange(
         certificate_id=certificate_id,
         clusters=after_clusters,
         receivers=after_receivers,
         added=tuple(sorted(after - before)),
         abandoned=tuple(sorted(before - after)),
-        changed=before != after,
+        reformatted=reformatted,
+        changed=before != after or bool(reformatted),
     )
     if not change.changed:
         #

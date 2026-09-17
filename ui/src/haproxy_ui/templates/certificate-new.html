@@ -108,11 +108,17 @@
           anything, so the page offers the ones that exist and says where a
           missing one is made.
         #}
-        <small>Hosts outside the clusters that fetch this certificate. Receiver setup is described in the installation guide, 1.4.1.</small>
+        <small>Hosts outside the clusters that fetch this certificate. Receiver setup is described in the installation guide, 1.4.9. A PKCS#12 receiver gets a <code>.pfx</code> bundle and a <code>.password</code> file beside it, for a service that imports its certificate that way.</small>
         {% if choices.receivers | length > 8 %}<label class="receiver-search" data-receiver-search hidden><span class="visually-hidden">Search receivers</span><input type="search" placeholder="Search receivers…" autocomplete="off" spellcheck="false"></label>{% endif %}
         <div class="form-checks form-checks-stacked receiver-options{% if choices.receivers | length > 8 %} receiver-options-many{% endif %}" data-receiver-options>
           {% for name in choices.receivers %}
-          <label class="check" data-receiver-option><input type="checkbox" name="receiver" value="{{ name }}"{% if name in form.receivers %} checked{% endif %}> <span>{{ name }}</span></label>
+          {#
+            The format select beside each box (B159): PEM pair, or a PKCS#12
+            bundle with its password beside it for a Windows service. Named
+            `format` with the receiver in the value, so the page needs no
+            script to pair them; shown only while the box is ticked.
+          #}
+          <label class="check receiver-choice" data-receiver-option><input type="checkbox" name="receiver" value="{{ name }}"{% if name in form.receivers %} checked{% endif %}> <span>{{ name }}</span><select name="format" class="receiver-format" aria-label="Format for {{ name }}"><option value="{{ name }}=pem"{% if form.format_of(name) == 'pem' %} selected{% endif %}>PEM pair</option><option value="{{ name }}=pkcs12"{% if form.format_of(name) == 'pkcs12' %} selected{% endif %}>PKCS#12 + password</option></select></label>
           {% else %}
           <span class="optional">No receiver is registered.</span>
           {% endfor %}

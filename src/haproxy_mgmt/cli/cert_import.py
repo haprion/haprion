@@ -29,18 +29,22 @@ from haproxy_mgmt.cert_import import (
 )
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
+from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.cli.cert_publish import EXIT_NOT_ROOT, default_deployer
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haproxy_mgmt.envelope import Message, envelope, failure, new_request_id
+from haproxy_mgmt.helper_protocol import HelperProtocolError
 
 EXIT_USAGE = 64
 
 USAGE = (
     "Usage:\n"
     "  haproxy-cert-import --id <id> --certificate <pem> --key <pem> [--chain <pem>]\n"
-    "                      [--cluster <id>]... [--receiver <id>]... [--json]\n"
+    "                      [--cluster <id>]... [--receiver <id>]...\n"
+    "                      [--format <id>=<form>]... [--json]\n"
     "  haproxy-cert-import --id <id> --pkcs12 <file> [--password-file <path>]\n"
-    "                      [--cluster <id>]... [--receiver <id>]... [--json]\n"
+    "                      [--cluster <id>]... [--receiver <id>]...\n"
+    "                      [--format <id>=<form>]... [--json]\n"
     "\n"
     "Imports a certificate issued elsewhere: writes it to the import store,\n"
     "registers it, publishes it to the named targets and rolls out the named\n"
@@ -57,6 +61,7 @@ USAGE = (
     "                        Never on the command line.\n"
     "  --cluster <id>        A cluster to publish to and roll out. May be repeated.\n"
     "  --receiver <id>       A registered receiver to publish to. May be repeated.\n"
+    "  --format <id>=<form>  How that receiver is written: pem (default) or pkcs12.\n"
     "  --json                Print the result envelope on stdout.\n"
 )
 
@@ -71,6 +76,7 @@ class Arguments:
         self.password_file: Path | None = None
         self.clusters: list[str] = []
         self.receivers: list[str] = []
+        self.formats: list[str] = []
         self.json_mode = False
 
 
@@ -104,6 +110,9 @@ def _parse(argv: list[str], writer: TextIO) -> Arguments:
             index += 2
         elif argument == "--receiver":
             parsed.receivers.append(value())
+            index += 2
+        elif argument == "--format":
+            parsed.formats.append(value())
             index += 2
         elif argument == "--json":
             parsed.json_mode = True
@@ -206,6 +215,10 @@ def main(
 
     if require_root and os.geteuid() != 0:
         return refuse("not_root", "haproxy-cert-import must run as root", EXIT_NOT_ROOT)
+    try:
+        formats = cert_job.format_flags(arguments.formats, arguments.receivers)
+    except HelperProtocolError as exc:
+        return refuse("bad_input", str(exc), EXIT_USAGE)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -231,6 +244,7 @@ def main(
             material=material,
             clusters=arguments.clusters,
             receivers=arguments.receivers,
+            formats=formats,
             policy=policy,
             runtime=runtime,
             deployer=deployer or default_deployer(errors),

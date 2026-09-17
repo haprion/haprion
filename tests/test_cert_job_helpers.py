@@ -20,8 +20,9 @@ from typing import Any
 import yaml
 
 from haproxy_mgmt.cert_delete import Guards
-from haproxy_mgmt.cli import cert_issue_helper, cert_publish_helper, cert_target_helper
+from haproxy_mgmt.cli import cert_issue_helper, cert_job, cert_publish_helper, cert_target_helper
 from haproxy_mgmt.envelope import new_request_id
+from haproxy_mgmt.helper_protocol import HelperProtocolError
 from tests.test_cert_issue import FakeCertbot
 from tests.test_cert_publish import Fixture, issue
 from tests.test_cert_registry import KEEPERS
@@ -32,6 +33,12 @@ class HelperFixture(Fixture):
 
     def setUp(self) -> None:
         super().setUp()
+        self.configure()
+        self.deployed: list[str] = []
+
+    def configure(self) -> None:
+        """The policy and registry, rewritten so a receiver registered later is in them."""
+
         self.policy_path = self.write_config(
             KEEPERS | {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
         )
@@ -47,7 +54,6 @@ class HelperFixture(Fixture):
         }
         self.policy_path.write_text(yaml.safe_dump(document), encoding="utf-8")
         (self.root / "certificates.yaml").chmod(0o640)
-        self.deployed: list[str] = []
 
     def deployer(self, cluster: str) -> int:
         self.deployed.append(cluster)
@@ -215,6 +221,49 @@ class WhatIssuingAnswers(HelperFixture):
         self.assertEqual(document["result"]["targets"]["clusters"], ["alpha"])
         self.assertEqual(self.deployed, ["alpha"])
 
+    def test_a_receiver_s_format_is_registered_with_the_new_certificate(self) -> None:
+        certbot = FakeCertbot(self.live)
+        for name in KEEPERS:
+            issue(self.live / name, name)
+        self.register("certserver1.example.net", layout="per-certificate")
+        self.configure()
+
+        code, document, err = self.run_helper(
+            cert_issue_helper,
+            self.request(
+                "cert_issue",
+                {
+                    "domain": "new.example",
+                    "method": "dns-01",
+                    "receivers": ["certserver1.example.net"],
+                    "formats": {"certserver1.example.net": "pkcs12"},
+                },
+            ),
+            certbot=certbot,
+        )
+
+        self.assertEqual(code, 0, err)
+        assert document is not None
+        self.assertEqual(document["outcome"], "done")
+        raw = yaml.safe_load((self.root / "certificates.yaml").read_text())
+        self.assertEqual(
+            raw["certificates"]["new.example"]["receivers"],
+            [{"id": "certserver1.example.net", "format": "pkcs12"}],
+        )
+        self.assertTrue(
+            (self.receiver_path("certserver1.example.net") / "new.example" / "new.example.pfx").exists()
+        )
+
+    def test_the_terminal_flag_is_receiver_equals_format_and_nothing_else(self) -> None:
+        self.assertEqual(cert_job.format_flags(["lb-01=pkcs12"], ["lb-01"]), {"lb-01": "pkcs12"})
+        for flags, receivers in (
+            (["lb-01"], ["lb-01"]),
+            (["lb-01=der"], ["lb-01"]),
+            (["lb-02=pkcs12"], ["lb-01"]),
+        ):
+            with self.subTest(flags=flags), self.assertRaises(HelperProtocolError):
+                cert_job.format_flags(flags, receivers)
+
     def test_a_wildcard_over_http_01_is_refused_before_certbot_runs(self) -> None:
         certbot = FakeCertbot(self.live)
 
@@ -318,6 +367,80 @@ class WhatRetargetingAnswers(HelperFixture):
                 self.assertEqual(code, 65)
                 assert document is not None
                 self.assertEqual(document["error"]["code"], "bad_input")
+
+    def test_a_format_travels_with_the_added_receiver(self) -> None:
+        for name in ("example.com", *KEEPERS):
+            issue(self.live / name, name)
+        self.register("certserver1.example.net", layout="per-certificate")
+        self.configure()
+
+        code, document, err = self.run_helper(
+            cert_target_helper,
+            self.request(
+                "cert_target",
+                {
+                    "certificates": ["example.com"],
+                    "add": {
+                        "receivers": ["certserver1.example.net"],
+                        "formats": {"certserver1.example.net": "pkcs12"},
+                    },
+                    "deploy": False,
+                },
+            ),
+        )
+
+        self.assertEqual(code, 0, err)
+        assert document is not None
+        self.assertEqual(document["outcome"], "done")
+        raw = yaml.safe_load((self.root / "certificates.yaml").read_text())
+        self.assertEqual(
+            raw["certificates"]["example.com"]["receivers"],
+            [{"id": "certserver1.example.net", "format": "pkcs12"}],
+        )
+        bundle = self.receiver_path("certserver1.example.net") / "example.com" / "example.com.pfx"
+        self.assertTrue(bundle.exists())
+
+    def test_a_format_for_a_receiver_not_added_or_under_remove_is_the_request_s_fault(self) -> None:
+        for parameters in (
+            {
+                "certificates": ["example.com"],
+                "add": {"receivers": ["lb-01"], "formats": {"lb-02": "pkcs12"}},
+            },
+            {
+                "certificates": ["example.com"],
+                "add": {"receivers": ["lb-01"], "formats": {"lb-01": "der"}},
+            },
+            {
+                "certificates": ["example.com"],
+                "remove": {"receivers": ["lb-01"], "formats": {"lb-01": "pkcs12"}},
+            },
+        ):
+            with self.subTest(parameters=parameters):
+                code, document, _ = self.run_helper(
+                    cert_target_helper, self.request("cert_target", parameters)
+                )
+                self.assertEqual(code, 65)
+                assert document is not None
+                self.assertEqual(document["error"]["code"], "bad_input")
+
+    def test_the_request_the_interface_builds_carries_formats_only_when_stated(self) -> None:
+        bare = json.loads(
+            cert_target_helper.build_request(
+                "r1", certificates=("a.example",), action="add", receivers=("lb-01",)
+            )
+        )
+        stated = json.loads(
+            cert_target_helper.build_request(
+                "r1",
+                certificates=("a.example",),
+                action="add",
+                receivers=("lb-01",),
+                formats={"lb-01": "pkcs12"},
+            )
+        )
+
+        self.assertNotIn("formats", bare["parameters"]["add"])
+        self.assertEqual(stated["parameters"]["add"]["formats"], {"lb-01": "pkcs12"})
 
     def test_removing_a_cluster_asks_its_nodes_and_never_the_deployer(self) -> None:
         asked: list[str] = []

@@ -12,11 +12,12 @@ import json
 import os
 import shutil
 import stat
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt.config import CERTIFICATE_ID, CLUSTER_ID, RECEIVER_ID
+from haproxy_mgmt.config import CERTIFICATE_ID, CLUSTER_ID, RECEIVER_FORMATS, RECEIVER_ID
 
 MAX_RECORD_BYTES = 64 * 1024
 TARGETS_FILE = "targets.json"
@@ -75,6 +76,7 @@ def write_targets(
     *,
     clusters: tuple[str, ...],
     receivers: tuple[str, ...],
+    formats: Mapping[str, str] | None = None,
 ) -> None:
     """Where the certificate goes once the CA answers, kept beside the request.
 
@@ -92,7 +94,14 @@ def write_targets(
     temporary = directory / (TARGETS_FILE + ".new")
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump({"clusters": list(clusters), "receivers": list(receivers)}, handle)
+        json.dump(
+            {
+                "clusters": list(clusters),
+                "receivers": list(receivers),
+                "formats": dict(formats or {}),
+            },
+            handle,
+        )
     os.replace(temporary, path)
 
 
@@ -106,6 +115,26 @@ def request_targets(
     if not isinstance(loaded, dict):
         return (), ()
     return _ids(loaded.get("clusters"), CLUSTER_ID), _ids(loaded.get("receivers"), RECEIVER_ID)
+
+
+def request_formats(state_root: Path, certificate_id: str) -> dict[str, str]:
+    """The receiver formats a request was made with (B159); a file older than
+    the key, or a format not in the list, reads as `pem` by saying nothing."""
+
+    directory = request_directory(state_root, certificate_id)
+    loaded = _bounded_json(directory / TARGETS_FILE, MAX_RECORD_BYTES)
+    if not isinstance(loaded, dict):
+        return {}
+    raw = loaded.get("formats")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(receiver_id): str(form)
+        for receiver_id, form in raw.items()
+        if isinstance(receiver_id, str)
+        and RECEIVER_ID.fullmatch(receiver_id)
+        and form in RECEIVER_FORMATS
+    }
 
 
 def _ids(value: Any, pattern: Any) -> tuple[str, ...]:

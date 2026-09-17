@@ -1738,6 +1738,7 @@ def build_router(config: Config) -> APIRouter:
         method: str = Form(default="", max_length=16),
         cluster: Sequence[str] = Form(default=()),
         receiver: Sequence[str] = Form(default=()),
+        format: Sequence[str] = Form(default=()),
         dns_profile: str = Form(default="", max_length=32),
         ndes_profile: str = Form(default="", max_length=32),
         idempotency_key: str = Form(default="", max_length=64),
@@ -1759,6 +1760,7 @@ def build_router(config: Config) -> APIRouter:
             ndes_profile=ndes_profile,
             clusters=tuple(cluster),
             receivers=tuple(receiver),
+            formats=tuple(format),
         )
         session = current_session(request)
         if session is None:
@@ -2104,6 +2106,7 @@ def build_router(config: Config) -> APIRouter:
         certificate: Sequence[str] = Form(default=()),
         cluster: Sequence[str] = Form(default=()),
         receiver: Sequence[str] = Form(default=()),
+        format: Sequence[str] = Form(default=()),
         idempotency_key: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
@@ -2136,7 +2139,9 @@ def build_router(config: Config) -> APIRouter:
             picked = certificate_retarget.selection(
                 action, tuple(certificate), registry, choices.clusters, choices.receivers, drafts
             )
-            payload = certificate_retarget.payload(picked, tuple(cluster), tuple(receiver))
+            payload = certificate_retarget.payload(
+                picked, tuple(cluster), tuple(receiver), tuple(format)
+            )
             operations.prepare(
                 operation="cert_target",
                 cluster=None,

@@ -83,6 +83,42 @@ class WhatTheFormAccepts(unittest.TestCase):
         self.assertEqual(payload["clusters"], [])
         self.assertEqual(payload["receivers"], ["lb-01.example.net"])
 
+    def test_a_receiver_s_format_travels_beside_the_receivers(self) -> None:
+        """B159: PKCS#12 is stated per receiver; PEM is the default and is not carried."""
+
+        payload = certificate_form.payload_from_form(
+            form(
+                clusters=(),
+                receivers=("lb-01.example.net",),
+                formats=("lb-01.example.net=pkcs12",),
+            ),
+            CHOICES,
+        )
+        self.assertEqual(payload["formats"], {"lb-01.example.net": "pkcs12"})
+
+        payload = certificate_form.payload_from_form(
+            form(clusters=(), receivers=("lb-01.example.net",), formats=("lb-01.example.net=pem",)),
+            CHOICES,
+        )
+        self.assertNotIn("formats", payload)
+
+    def test_a_format_for_an_unticked_receiver_is_dropped_and_a_bad_one_refused(self) -> None:
+        # Every receiver's select is submitted; only the ticked ones count.
+        payload = certificate_form.payload_from_form(
+            form(formats=("lb-01.example.net=pkcs12",)), CHOICES
+        )
+        self.assertNotIn("formats", payload)
+        self.assertIn(
+            "PEM or PKCS#12",
+            problem_of(
+                form(
+                    clusters=(),
+                    receivers=("lb-01.example.net",),
+                    formats=("lb-01.example.net=der",),
+                )
+            ),
+        )
+
     def test_a_target_ticked_twice_is_one_target(self) -> None:
         payload = certificate_form.payload_from_form(form(clusters=("alpha", "alpha")), CHOICES)
 
@@ -219,6 +255,13 @@ class TheFormPage(CertificateFormRouteTestCase):
         #
         self.assertNotIn('name="receiver" type="text"', page)
         self.assertIn("Receiver setup is described in the installation guide", page)
+        # The format select beside the box, PEM selected until chosen otherwise.
+        self.assertIn(
+            '<select name="format" class="receiver-format" aria-label="Format for lb-01.example.net">'
+            '<option value="lb-01.example.net=pem" selected>PEM pair</option>'
+            '<option value="lb-01.example.net=pkcs12">PKCS#12 + password</option></select>',
+            page,
+        )
         self.assertIn("0 selected", page)
         self.assertNotIn("data-receiver-search", page)
         self.assertIn("Request the certificate", page)
@@ -414,6 +457,29 @@ class SendingTheFormOverNdes(CertificateFormRouteTestCase):
         )
         self.sign_in(client)
         return client
+
+    def test_a_pkcs12_receiver_is_in_the_job_and_kept_on_a_redrawn_form(self) -> None:
+        response = self.post(
+            self.ndes_client(),
+            method="ndes",
+            ndes_profile="certserver1",
+            cluster=[],
+            receiver=["lb-01.example.net"],
+            format=["lb-01.example.net=pkcs12"],
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+        (job,) = self.queued
+        self.assertEqual(job["payload"]["formats"], {"lb-01.example.net": "pkcs12"})
+
+        page = self.post(
+            self.ndes_client(),
+            domain="",
+            method="ndes",
+            ndes_profile="certserver1",
+            receiver=["lb-01.example.net"],
+            format=["lb-01.example.net=pkcs12"],
+        ).text
+        self.assertIn('<option value="lb-01.example.net=pkcs12" selected>', page)
 
     def test_a_wildcard_over_ndes_becomes_one_cert_scep_job(self) -> None:
         response = self.post(

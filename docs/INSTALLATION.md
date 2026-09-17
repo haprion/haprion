@@ -669,6 +669,12 @@ a bare ID, and then that pair - this certificate, this receiver - is published a
 with a password beside it rather than as a PEM pair. A bare ID means `pem`. The choice belongs to
 the pair, because one host can want PEM for HAProxy and a `.pfx` for IIS.
 
+The choice is made where the receiver is chosen: `--format <receiver>=pkcs12` beside `--receiver`
+on `haproxy-cert-issue`, `haproxy-cert-import` and `haproxy-cert-scep`, and a select beside the
+receiver's box on the interface's certificate form and in *Publish to…*. A receiver kept at a
+target change keeps its format unless a new one is stated; stating a different one rewrites that
+receiver's files in the new format at once.
+
 `source.kind` is `acme` for a certificate certbot renews and `import` for one signed elsewhere. An
 ACME certificate's `lineage` is its certbot lineage name; left out, it is the certificate ID, which
 is what a certificate issued from the interface gets. State it only where an existing lineage was
@@ -760,6 +766,8 @@ number: a certificate on its targets in minutes, from one line.
 sudo haproxy-cert-issue --domain www.example.com --method dns-01 --cluster alpha
 sudo haproxy-cert-issue --domain '*.example.net' --method dns-01 --dns-profile cf-main \
   --cluster alpha --receiver lb-01.example.net
+sudo haproxy-cert-issue --domain intranet.example.com --method dns-01 --dns-profile cf-main \
+  --receiver certserver1.example.net --format certserver1.example.net=pkcs12
 ```
 
 What the caller supplies is a domain, a method and target names the registry already knows.

@@ -26,6 +26,7 @@ from typing import Any
 
 from haproxy_mgmt.config import CERTIFICATE_ID, CLUSTER_ID, RECEIVER_ID
 
+from haproxy_ui import certificate_form
 from haproxy_ui.certificate_delete import draft_references
 from haproxy_ui.certificates import RegistryCertificateView
 from haproxy_ui.db import ProxyDraft
@@ -137,8 +138,17 @@ def selection(
     return Selection(action, rows, tuple(choices))
 
 
-def payload(picked: Selection, clusters: Sequence[str], receivers: Sequence[str]) -> dict[str, Any]:
-    """The job's payload for the targets ticked on the page: only offered ones count."""
+def payload(
+    picked: Selection,
+    clusters: Sequence[str],
+    receivers: Sequence[str],
+    formats: Sequence[str] = (),
+) -> dict[str, Any]:
+    """The job's payload for the targets ticked on the page: only offered ones count.
+
+    `formats` is the page's `<receiver>=<format>` selects (B159), read only
+    for an add and only for receivers that were ticked.
+    """
 
     offered_clusters = {c.name for c in picked.choices if c.kind == "cluster"}
     offered_receivers = {c.name for c in picked.choices if c.kind == "receiver"}
@@ -160,4 +170,11 @@ def payload(picked: Selection, clusters: Sequence[str], receivers: Sequence[str]
         "clusters": list(chosen_clusters),
         "receivers": list(chosen_receivers),
     }
+    if picked.action == "add":
+        try:
+            chosen_formats = certificate_form.formats_from_fields(formats, chosen_receivers)
+        except certificate_form.FormProblem as refused:
+            raise SelectionProblem(str(refused)) from refused
+        if chosen_formats:
+            body["formats"] = chosen_formats
     return body

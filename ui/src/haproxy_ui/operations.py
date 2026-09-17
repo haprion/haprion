@@ -33,7 +33,7 @@ from haproxy_mgmt.cli import (
     managed_objects_publish,
     revert,
 )
-from haproxy_mgmt.config import CERTIFICATE_ID
+from haproxy_mgmt.config import CERTIFICATE_ID, RECEIVER_FORMATS
 from haproxy_mgmt.proxy_model import NAME
 
 #
@@ -113,6 +113,30 @@ def _targets(payload: Mapping[str, Any]) -> tuple[tuple[str, ...], tuple[str, ..
     return lists[0], lists[1]
 
 
+def _formats(payload: Mapping[str, Any], receivers: tuple[str, ...]) -> dict[str, str]:
+    """How each chosen receiver is written (B159), checked like the targets are.
+
+    An object beside `receivers`, `{receiver_id: "pem" | "pkcs12"}`, and only
+    for receivers the payload names: a format for a receiver the request does
+    not have is a request that disagrees with itself, refused here with a
+    sentence rather than in the helper as a failed job.
+    """
+
+    raw = payload.get("formats")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise BadPayload("formats must be an object of receiver to format")
+    checked: dict[str, str] = {}
+    for receiver_id, form in raw.items():
+        if receiver_id not in receivers:
+            raise BadPayload(f"formats names {receiver_id!r}, which is not a chosen receiver")
+        if form not in RECEIVER_FORMATS:
+            raise BadPayload(f"the format for {receiver_id} must be pem or pkcs12")
+        checked[str(receiver_id)] = str(form)
+    return checked
+
+
 CERTIFICATE_OPERATIONS = frozenset(
     {
         "cert_issue",
@@ -188,7 +212,7 @@ def _certificate_operation(
     """
 
     if operation == "cert_issue":
-        _only(payload, "domain", "method", "dns_profile", "clusters", "receivers")
+        _only(payload, "domain", "method", "dns_profile", "clusters", "receivers", "formats")
         domain = payload.get("domain")
         if not isinstance(domain, str) or not domain:
             raise BadPayload("domain must be a non-empty string")
@@ -210,6 +234,7 @@ def _certificate_operation(
             if method != "dns-01":
                 raise BadPayload("dns_profile belongs to dns-01 only")
         clusters, receivers = _targets(payload)
+        formats = _formats(payload, receivers)
         return Prepared(
             argv=(cert_issue_helper.SUDO, *SUDO_FLAGS, cert_issue_helper.HELPER),
             request=cert_issue_helper.build_request(
@@ -219,11 +244,12 @@ def _certificate_operation(
                 clusters=clusters,
                 receivers=receivers,
                 dns_profile=dns_profile,
+                formats=formats,
             ),
         )
 
     if operation == "cert_scep":
-        _only(payload, "id", "profile", "domains", "clusters", "receivers", "resume")
+        _only(payload, "id", "profile", "domains", "clusters", "receivers", "formats", "resume")
         certificate_id = payload.get("id")
         if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
             raise BadPayload("id must be a certificate ID")
@@ -259,6 +285,7 @@ def _certificate_operation(
         if domains[0].startswith("*."):
             raise BadPayload("the first name is the CN and cannot be a wildcard")
         clusters, receivers = _targets(payload)
+        formats = _formats(payload, receivers)
         return Prepared(
             argv=(cert_scep_helper.SUDO, *SUDO_FLAGS, cert_scep_helper.HELPER),
             request=cert_scep_helper.build_request(
@@ -269,6 +296,7 @@ def _certificate_operation(
                 clusters=clusters,
                 receivers=receivers,
                 resume=resume,
+                formats=formats,
             ),
         )
 
@@ -399,7 +427,7 @@ def _certificate_operation(
         # certificate, the way a deletion is: the draft lives in this
         # database and the helper cannot see it.
         #
-        _only(payload, "certificates", "action", "clusters", "receivers", "deploy")
+        _only(payload, "certificates", "action", "clusters", "receivers", "formats", "deploy")
         certificates = payload.get("certificates")
         if (
             not isinstance(certificates, list)
@@ -417,6 +445,9 @@ def _certificate_operation(
         if action not in {"add", "remove"}:
             raise BadPayload("action must be add or remove")
         clusters, receivers = _targets(payload)
+        formats = _formats(payload, receivers)
+        if action == "remove" and formats:
+            raise BadPayload("a removal does not take formats")
         if action == "remove" and clusters and draft_references is not None:
             referenced = {
                 certificate: tuple(row for row in rows if row.split("/", 1)[0] in clusters)
@@ -438,6 +469,7 @@ def _certificate_operation(
                 clusters=clusters,
                 receivers=receivers,
                 deploy=_flag(payload, "deploy", default=True),
+                formats=formats,
             ),
         )
 

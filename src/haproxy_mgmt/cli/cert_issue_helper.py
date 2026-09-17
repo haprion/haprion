@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-from typing import BinaryIO, TextIO
+from typing import Any, BinaryIO, TextIO
 
 from haproxy_mgmt import dns_profiles
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
@@ -32,7 +33,7 @@ from haproxy_mgmt.helper_protocol import (
 )
 
 OPERATION = "cert_issue"
-PARAMETERS = frozenset({"domain", "method", "clusters", "receivers", "dns_profile"})
+PARAMETERS = frozenset({"domain", "method", "clusters", "receivers", "formats", "dns_profile"})
 MAX_DOMAIN_BYTES = 255
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper"
 SUDO = "/usr/bin/sudo"
@@ -45,23 +46,27 @@ def build_request(
     method: str,
     clusters: tuple[str, ...] = (),
     receivers: tuple[str, ...] = (),
+    formats: Mapping[str, str] | None = None,
     dns_profile: str | None = None,
 ) -> str:
     """The exact bounded request the worker sends. Null cluster, by contract."""
 
+    parameters: dict[str, Any] = {
+        "domain": domain,
+        "method": method,
+        "clusters": list(clusters),
+        "receivers": list(receivers),
+        "dns_profile": dns_profile,
+    }
+    if formats:
+        parameters["formats"] = dict(formats)
     return json.dumps(
         {
             "schema_version": 1,
             "operation": OPERATION,
             "cluster": None,
             "request_id": request_id,
-            "parameters": {
-                "domain": domain,
-                "method": method,
-                "clusters": list(clusters),
-                "receivers": list(receivers),
-                "dns_profile": dns_profile,
-            },
+            "parameters": parameters,
         },
         separators=(",", ":"),
     )
@@ -113,6 +118,7 @@ def main(
             raise HelperProtocolError("parameters.method must be a string", exit_code=65)
         clusters = cert_job.clusters(request.parameters)
         receivers = cert_job.receivers(request.parameters)
+        formats = cert_job.formats(request.parameters, receivers)
         dns_profile_value = request.parameters.get("dns_profile")
         dns_profile = None
         if dns_profile_value is not None:
@@ -139,6 +145,7 @@ def main(
             clusters=clusters,
             receivers=receivers,
             dns_profile=dns_profile,
+            formats=formats,
             policy=policy,
             runtime=runtime,
             certbot=certbot,

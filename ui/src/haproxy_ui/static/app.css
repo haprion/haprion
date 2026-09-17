@@ -1055,6 +1055,12 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .certificate-form .receiver-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); width: 100%; }
 .certificate-form .receiver-options-many { max-height: 218px; padding: 10px 12px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); }
 .certificate-form .receiver-options .check { min-width: 0; overflow-wrap: anywhere; }
+/* The format select beside a receiver's box (B159): a PEM pair by default,
+   a PKCS#12 bundle for a service that imports one. Visible only while the box
+   is ticked, so an unticked receiver shows one thing to read, not two. */
+.receiver-choice { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.receiver-choice .receiver-format { margin-left: auto; font-size: 0.86rem; padding: 2px 6px; }
+.receiver-choice:has(input:not(:checked)) .receiver-format { visibility: hidden; }
 .certificate-form .receiver-no-results { display: block; padding-top: 3px; }
 .certificate-form .receiver-no-results[hidden] { display: none; }
 .certificate-form .challenge-warning { display: flex; align-items: flex-start; gap: 7px; margin: 9px 0 0; color: var(--text-secondary); font-size: 12px; font-weight: var(--font-weight-regular); line-height: 1.45; }

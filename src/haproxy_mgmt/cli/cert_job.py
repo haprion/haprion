@@ -22,7 +22,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import Any, BinaryIO, TextIO
 
-from haproxy_mgmt.config import CERTIFICATE_ID, CLUSTER_ID, RECEIVER_ID
+from haproxy_mgmt.config import CERTIFICATE_ID, CLUSTER_ID, RECEIVER_FORMATS, RECEIVER_ID
 from haproxy_mgmt.envelope import failure
 from haproxy_mgmt.helper_protocol import (
     ClusterlessRequest,
@@ -140,6 +140,56 @@ def clusters(parameters: Mapping[str, JsonValue], key: str = "clusters") -> tupl
 
 def receivers(parameters: Mapping[str, JsonValue], key: str = "receivers") -> tuple[str, ...]:
     return _identifiers(parameters, key, RECEIVER_ID, "receiver ID")
+
+
+def formats(
+    parameters: Mapping[str, JsonValue],
+    receivers: Sequence[str],
+    key: str = "formats",
+) -> dict[str, str]:
+    """How each named receiver is written, `{receiver_id: format}`, beside `receivers`.
+
+    An object beside the list rather than a richer list element, so every
+    payload that carries receivers is unchanged until it states a format
+    (B159). A receiver named here and not in the list is refused: a format
+    for a target the request does not have is a request that disagrees with
+    itself.
+    """
+
+    raw = parameters.get(key)
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise HelperProtocolError(f"parameters.{key} must be an object", exit_code=65)
+    checked: dict[str, str] = {}
+    for receiver_id, form in raw.items():
+        if receiver_id not in receivers:
+            raise HelperProtocolError(
+                f"parameters.{key} names {receiver_id!r}, which is not in receivers",
+                exit_code=65,
+            )
+        if not isinstance(form, str) or form not in RECEIVER_FORMATS:
+            raise HelperProtocolError(
+                f"parameters.{key}[{receiver_id!r}] must be one of {', '.join(RECEIVER_FORMATS)}",
+                exit_code=65,
+            )
+        checked[receiver_id] = form
+    return checked
+
+
+def format_flags(values: Sequence[str], receivers: Sequence[str]) -> dict[str, str]:
+    """`--format <receiver>=<format>` as the commands take it, checked like `formats`."""
+
+    parsed: dict[str, JsonValue] = {}
+    for value in values:
+        receiver_id, separator, form = value.partition("=")
+        if not separator or not receiver_id or not form:
+            raise HelperProtocolError(
+                f"--format takes <receiver>=<{'|'.join(RECEIVER_FORMATS)}>, not {value!r}",
+                exit_code=64,
+            )
+        parsed[receiver_id] = form
+    return formats({"formats": parsed}, receivers)
 
 
 def certificates(parameters: Mapping[str, JsonValue], key: str = "certificates") -> tuple[str, ...]:

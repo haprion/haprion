@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-from typing import BinaryIO, TextIO
+from typing import Any, BinaryIO, TextIO
 
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
@@ -28,7 +29,7 @@ from haproxy_mgmt.config import DEFAULT_POLICY_PATH
 from haproxy_mgmt.dns_profiles import ProfileError, check_profile_id
 from haproxy_mgmt.helper_protocol import HelperProtocolError, write_document
 
-PARAMETERS = frozenset({"id", "profile", "domains", "clusters", "receivers", "resume"})
+PARAMETERS = frozenset({"id", "profile", "domains", "clusters", "receivers", "formats", "resume"})
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper"
 SUDO = "/usr/bin/sudo"
 MAX_DOMAINS = 32
@@ -44,23 +45,27 @@ def build_request(
     clusters: tuple[str, ...] = (),
     receivers: tuple[str, ...] = (),
     resume: bool = False,
+    formats: Mapping[str, str] | None = None,
 ) -> str:
     """The exact bounded request the worker sends. Null cluster, by contract."""
 
+    parameters: dict[str, Any] = {
+        "id": certificate_id,
+        "profile": profile_id,
+        "domains": list(domains),
+        "clusters": list(clusters),
+        "receivers": list(receivers),
+        "resume": resume,
+    }
+    if formats:
+        parameters["formats"] = dict(formats)
     return json.dumps(
         {
             "schema_version": 1,
             "operation": OPERATION,
             "cluster": None,
             "request_id": request_id,
-            "parameters": {
-                "id": certificate_id,
-                "profile": profile_id,
-                "domains": list(domains),
-                "clusters": list(clusters),
-                "receivers": list(receivers),
-                "resume": resume,
-            },
+            "parameters": parameters,
         },
         separators=(",", ":"),
     )
@@ -121,6 +126,7 @@ def main(
         domains = tuple(str(name) for name in raw_domains)
         clusters = cert_job.clusters(request.parameters)
         receivers = cert_job.receivers(request.parameters)
+        formats = cert_job.formats(request.parameters, receivers)
     except (HelperProtocolError, ProfileError) as exc:
         return refuse("bad_input", str(exc), 65)
 
@@ -133,6 +139,7 @@ def main(
             receivers=receivers,
             resume=resume,
             request_id=request.request_id,
+            formats=formats,
             policy_path=policy_path,
             require_secure=require_secure,
             deployer=deployer if deployer is not None else default_deployer(errors),

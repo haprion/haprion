@@ -402,3 +402,35 @@ class AFormatSurvivesARetarget(RegistryFixture):
         self.retarget(self.policy_path, self.registry, "one.example", receivers=["lb-01"])
 
         self.assertEqual(self.entries(self.registry)["one.example"]["receivers"], ["lb-01"])
+
+    def test_a_changed_form_on_a_kept_receiver_is_a_change_and_is_written(self) -> None:
+        change = cert_registry.set_targets(
+            self.registry,
+            certificate_id="one.example",
+            clusters=[],
+            receivers=["certserver1.example.net"],
+            formats={"certserver1.example.net": "pem"},
+            runtime=self.runtime(self.policy_path),
+            require_secure=False,
+        )
+
+        self.assertTrue(change.changed)
+        self.assertEqual(change.reformatted, ("certserver1.example.net",))
+        self.assertEqual(change.added, ())
+        self.assertEqual(
+            self.entries(self.registry)["one.example"]["receivers"], ["certserver1.example.net"]
+        )
+
+    def test_restating_the_same_form_changes_nothing(self) -> None:
+        change = cert_registry.set_targets(
+            self.registry,
+            certificate_id="one.example",
+            clusters=[],
+            receivers=["certserver1.example.net"],
+            formats={"certserver1.example.net": "pkcs12"},
+            runtime=self.runtime(self.policy_path),
+            require_secure=False,
+        )
+
+        self.assertFalse(change.changed)
+        self.assertEqual(change.reformatted, ())

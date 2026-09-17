@@ -45,7 +45,7 @@
       #}
       <div class="form-checks form-checks-stacked retarget-choices">
         {% for choice in selection.choices %}
-        <label class="check"><input type="checkbox" name="{{ choice.kind }}" value="{{ choice.name }}" data-target-pick> <span>{{ choice.name }} <span class="target-kind">{{ choice.kind }}</span>{% if adding and choice.holding %} <span class="optional">· {{ choice.holding }} of {{ selection.rows | length }} already there</span>{% elif not adding and choice.holding < selection.rows | length %} <span class="optional">· {{ choice.holding }} of {{ selection.rows | length }} are on it</span>{% endif %}</span></label>
+        <label class="check{% if adding and choice.kind == 'receiver' %} receiver-choice{% endif %}"><input type="checkbox" name="{{ choice.kind }}" value="{{ choice.name }}" data-target-pick> <span>{{ choice.name }} <span class="target-kind">{{ choice.kind }}</span>{% if adding and choice.holding %} <span class="optional">· {{ choice.holding }} of {{ selection.rows | length }} already there</span>{% elif not adding and choice.holding < selection.rows | length %} <span class="optional">· {{ choice.holding }} of {{ selection.rows | length }} are on it</span>{% endif %}</span>{% if adding and choice.kind == 'receiver' %}<select name="format" class="receiver-format" aria-label="Format for {{ choice.name }}"><option value="{{ choice.name }}=pem">PEM pair</option><option value="{{ choice.name }}=pkcs12">PKCS#12 + password</option></select>{% endif %}</label>
         {% else %}
         <span class="optional">{% if adding %}Every selected certificate is already on every target.{% else %}No selected certificate is on any target.{% endif %}</span>
         {% endfor %}
@@ -54,7 +54,7 @@
     <ul class="removal-consequences">
       {% if adding %}
       <li>Each added cluster is rolled out once: its nodes pull the certificate and <strong>reload HAProxy</strong>. A receiver fetches on its own schedule.</li>
-      <li>A certificate already on a chosen target is left as it is and reported unchanged.</li>
+      <li>A certificate already on a chosen target is left as it is and reported unchanged — unless the receiver's format changed, in which case its files are rewritten in the new format.</li>
       {% else %}
       <li>Each node of a removed cluster is asked to drop its copy. No reload: a file nothing names is not loaded. A node that cannot be reached keeps it and says so; running the removal again asks it again.</li>
       <li>A removed receiver stops receiving new versions and its pair on the manager is removed; what the receiver host already fetched stays there. A receiver another certificate also publishes to keeps its pair.</li>

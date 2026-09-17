@@ -14,7 +14,12 @@ from haproxy_mgmt import ndes, ndes_profiles
 from haproxy_mgmt.cli import cert_scep, cert_scep_helper
 from haproxy_mgmt.config import NdesPolicy, load_policy
 from haproxy_mgmt.dns_profile_keys import generate, render_private_key
-from haproxy_mgmt.ndes_state import request_directory, request_targets, write_targets
+from haproxy_mgmt.ndes_state import (
+    request_directory,
+    request_formats,
+    request_targets,
+    write_targets,
+)
 from tests.test_cert_import import ImportFixture
 
 ENDPOINT = "https://ca.example.com/certsrv/mscep/mscep.dll"
@@ -184,6 +189,66 @@ class HelperBoundary(ScepFixture):
         self.assertEqual(self.deployed, ["alpha"])
         # The request is over: its directory goes with it.
         self.assertFalse(directory.exists())
+
+    def test_a_format_waits_beside_the_request_and_is_registered_on_resume(self) -> None:
+        """B159: the form chosen at the request survives the CA's wait."""
+
+        directory = request_directory(self.ndes_policy.state_root, "web.example.com")
+        pending = ndes.Enrollment("pending", directory)
+        with mock.patch.object(ndes, "enroll") as engine:
+            directory.mkdir(mode=0o700)
+            engine.return_value.__enter__.return_value = pending
+            code, doc, errors = self.helper(
+                {
+                    "id": "web.example.com",
+                    "profile": "certserver1",
+                    "domains": ["web.example.com"],
+                    "receivers": ["lb-01"],
+                    "formats": {"lb-01": "pkcs12"},
+                }
+            )
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(
+            request_formats(self.ndes_policy.state_root, "web.example.com"), {"lb-01": "pkcs12"}
+        )
+
+        record = {
+            "certificate": "web.example.com",
+            "profile": "certserver1",
+            "revision": 1,
+            "key_id": self.public.key_id,
+            "endpoint": ENDPOINT,
+            "domains": ["web.example.com"],
+        }
+        (directory / "request.json").write_text(json.dumps(record))
+        os.chmod(directory / "request.json", 0o600)
+        issued = ndes.Enrollment("issued", directory, self.material())
+        with (
+            mock.patch.object(ndes, "enroll") as engine,
+            mock.patch.object(ndes, "validate_certificate"),
+        ):
+            engine.return_value.__enter__.return_value = issued
+            code, doc, errors = self.helper({"id": "web.example.com", "resume": True})
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(
+            self.registered()["web.example.com"]["receivers"],
+            [{"id": "lb-01", "format": "pkcs12"}],
+        )
+
+    def test_a_format_for_a_receiver_not_named_is_refused(self) -> None:
+        with mock.patch.object(cert_scep, "enroll") as engine:
+            code, doc, _ = self.helper(
+                {
+                    "id": "a.example.com",
+                    "profile": "certserver1",
+                    "domains": ["a.example.com"],
+                    "receivers": ["lb-01"],
+                    "formats": {"lb-02": "pkcs12"},
+                }
+            )
+        self.assertEqual(code, 65)
+        self.assertEqual(doc["error"]["code"], "bad_input")
+        engine.assert_not_called()
 
     def test_abandon_removes_a_request_the_ca_never_answered(self) -> None:
         self.pending("web.example.com")

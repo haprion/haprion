@@ -55,9 +55,13 @@ def build_request(
     clusters: tuple[str, ...] = (),
     receivers: tuple[str, ...] = (),
     deploy: bool = True,
+    formats: Mapping[str, str] | None = None,
 ) -> str:
     """The exact bounded request the worker sends. Null cluster, by contract."""
 
+    block: dict[str, JsonValue] = {"clusters": list(clusters), "receivers": list(receivers)}
+    if formats:
+        block["formats"] = dict(formats)
     return json.dumps(
         {
             "schema_version": 1,
@@ -66,7 +70,7 @@ def build_request(
             "request_id": request_id,
             "parameters": {
                 "certificates": list(certificates),
-                action: {"clusters": list(clusters), "receivers": list(receivers)},
+                action: block,
                 "deploy": deploy,
             },
         },
@@ -86,15 +90,19 @@ def read_change(parameters: Mapping[str, JsonValue]) -> Change:
     block = parameters.get(action)
     if not isinstance(block, dict):
         raise HelperProtocolError(f"parameters.{action} must be an object", exit_code=65)
-    unknown = sorted(set(block) - {"clusters", "receivers"})
+    unknown = sorted(set(block) - {"clusters", "receivers", "formats"})
     if unknown:
         raise HelperProtocolError(
             f"parameters.{action} has unknown key(s): {', '.join(unknown)}", exit_code=65
         )
+    if action == "remove" and "formats" in block:
+        raise HelperProtocolError("parameters.remove does not take formats", exit_code=65)
+    receivers = cert_job.receivers(block)
     change = Change(
         action,
         clusters=cert_job.clusters(block),
-        receivers=cert_job.receivers(block),
+        receivers=receivers,
+        formats=cert_job.formats(block, receivers),
     )
     if not change.targets:
         raise HelperProtocolError(f"parameters.{action} names no target", exit_code=65)

@@ -43,7 +43,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -69,6 +69,7 @@ from haproxy_mgmt.certificates import (
 )
 from haproxy_mgmt.config import (
     CERTIFICATE_ID,
+    RECEIVER_FORMATS,
     ConfigError,
     PathPolicy,
     RuntimeConfig,
@@ -392,6 +393,7 @@ def register(
     receivers: Sequence[str],
     require_secure: bool,
     ndes_profile: str | None = None,
+    formats: Mapping[str, str] | None = None,
 ) -> None:
     """The entry, through the one writer the registry has.
 
@@ -424,7 +426,7 @@ def register(
         if clusters:
             entry["clusters"] = list(clusters)
         if receivers:
-            entry["receivers"] = list(receivers)
+            entry["receivers"] = cert_registry.receiver_elements(receivers, formats or {})
         certificates[certificate_id] = entry
         cert_registry.write(
             path,
@@ -457,6 +459,7 @@ def import_certificate(
     require_secure: bool = True,
     now: datetime | None = None,
     ndes_profile: str | None = None,
+    formats: Mapping[str, str] | None = None,
 ) -> ImportResult:
     """Steps 3-6: check, write, register, publish."""
 
@@ -499,6 +502,11 @@ def import_certificate(
             "unknown receiver(s): " + ", ".join(unknown_receivers) + ". Register a receiver "
             "during installation before publishing to it.",
         )
+    for receiver_id, form in (formats or {}).items():
+        if receiver_id not in receivers:
+            raise ImportError_("bad_input", f"format for a receiver not targeted: {receiver_id!r}")
+        if form not in RECEIVER_FORMATS:
+            raise ImportError_("bad_input", f"invalid receiver format: {form!r}")
     replaced = write_store(store, certificate_id, material)
     register(
         policy.certificate_registry,
@@ -508,6 +516,7 @@ def import_certificate(
         receivers=receivers,
         require_secure=require_secure,
         ndes_profile=ndes_profile,
+        formats=formats,
     )
     try:
         refreshed = load_runtime_config(policy, require_secure=require_secure)

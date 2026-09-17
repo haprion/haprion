@@ -20,9 +20,11 @@ from typing import Any, TextIO
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_issue import Certbot, IssueError, IssueResult, issue, run_certbot
 from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
+from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.cli.cert_publish import EXIT_NOT_ROOT, default_deployer
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haproxy_mgmt.envelope import Message, envelope, failure, new_request_id
+from haproxy_mgmt.helper_protocol import HelperProtocolError
 
 OPERATION = "cert_issue"
 EXIT_USAGE = 64
@@ -31,7 +33,7 @@ USAGE = (
     "Usage:\n"
     "  haproxy-cert-issue --domain <name> --method dns-01|http-01\n"
     "                     [--dns-profile <id>] [--cluster <id>]...\n"
-    "                     [--receiver <id>]... [--json]\n"
+    "                     [--receiver <id>]... [--format <id>=<form>]... [--json]\n"
     "\n"
     "Obtains a certificate from the ACME account this host already has, adds it\n"
     "to the certificate registry, publishes it to the named targets and rolls\n"
@@ -49,15 +51,17 @@ USAGE = (
     "                        wildcards.\n"
     "  --cluster <id>        A cluster to publish to and roll out. May be repeated.\n"
     "  --receiver <id>       A registered receiver to publish to. May be repeated.\n"
+    "  --format <id>=<form>  How that receiver is written: pem (default) or pkcs12.\n"
     "  --json                Print the result envelope on stdout.\n"
 )
 
 
 def _parse(
     argv: list[str], writer: TextIO
-) -> tuple[str, str, str | None, list[str], list[str], bool]:
+) -> tuple[str, str, str | None, list[str], list[str], list[str], bool]:
     domain: str | None = None
     method: str | None = None
+    formats: list[str] = []
     dns_profile: str | None = None
     clusters: list[str] = []
     receivers: list[str] = []
@@ -87,6 +91,9 @@ def _parse(
         elif argument == "--receiver":
             receivers.append(value())
             index += 2
+        elif argument == "--format":
+            formats.append(value())
+            index += 2
         elif argument == "--json":
             json_mode = True
             index += 1
@@ -96,7 +103,7 @@ def _parse(
     if domain is None or method is None:
         writer.write(USAGE)
         raise SystemExit(EXIT_USAGE)
-    return domain, method, dns_profile, clusters, receivers, json_mode
+    return domain, method, dns_profile, clusters, receivers, formats, json_mode
 
 
 def _summary(result: IssueResult, writer: TextIO) -> None:
@@ -176,7 +183,9 @@ def main(
     request_id = new_request_id()
 
     try:
-        domain, method, dns_profile, clusters, receivers, json_mode = _parse(argv, writer)
+        domain, method, dns_profile, clusters, receivers, format_flags, json_mode = _parse(
+            argv, writer
+        )
     except SystemExit as exc:
         return int(exc.code or 0)
 
@@ -208,6 +217,10 @@ def main(
 
     if require_root and os.geteuid() != 0:
         return refuse("not_root", "haproxy-cert-issue must run as root", EXIT_NOT_ROOT)
+    try:
+        formats = cert_job.format_flags(format_flags, receivers)
+    except HelperProtocolError as exc:
+        return refuse("bad_input", str(exc), EXIT_USAGE)
 
     try:
         policy = load_policy(policy_path, require_secure=require_secure)
@@ -226,6 +239,7 @@ def main(
             clusters=clusters,
             receivers=receivers,
             dns_profile=dns_profile,
+            formats=formats,
             policy=policy,
             runtime=runtime,
             deployer=deployer or default_deployer(errors),

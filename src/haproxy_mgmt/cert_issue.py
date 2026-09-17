@@ -40,7 +40,7 @@ from __future__ import annotations
 import subprocess
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -58,6 +58,7 @@ from haproxy_mgmt.config import (
     CERTIFICATE_ID,
     CLUSTER_ID,
     HOSTNAME,
+    RECEIVER_FORMATS,
     RECEIVER_ID,
     PathPolicy,
     RuntimeConfig,
@@ -105,6 +106,8 @@ class IssueRequest:
     clusters: tuple[str, ...]
     receivers: tuple[str, ...]
     dns_profile: str | None = None
+    formats: Mapping[str, str] = field(default_factory=dict)
+    """How each receiver is written; a receiver not named here gets `pem` (B159)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +174,7 @@ def build_request(
     receivers: Sequence[str],
     runtime: RuntimeConfig,
     dns_profile: str | None = None,
+    formats: Mapping[str, str] | None = None,
 ) -> IssueRequest:
     certificate_id, domains, wildcard = parse_domain(domain)
     if method not in METHODS:
@@ -219,7 +223,21 @@ def build_request(
         clusters=tuple(dict.fromkeys(clusters)),
         receivers=tuple(dict.fromkeys(receivers)),
         dns_profile=dns_profile,
+        formats=check_formats(formats, receivers),
     )
+
+
+def check_formats(formats: Mapping[str, str] | None, receivers: Sequence[str]) -> dict[str, str]:
+    """A format per receiver the request names, and only those (B159)."""
+
+    checked: dict[str, str] = {}
+    for receiver_id, form in (formats or {}).items():
+        if receiver_id not in receivers:
+            raise IssueError("bad_input", f"format for a receiver not targeted: {receiver_id!r}")
+        if form not in RECEIVER_FORMATS:
+            raise IssueError("bad_input", f"invalid receiver format: {form!r}")
+        checked[receiver_id] = form
+    return checked
 
 
 #
@@ -371,7 +389,7 @@ def add_to_registry(
         if request.clusters:
             entry["clusters"] = list(request.clusters)
         if request.receivers:
-            entry["receivers"] = list(request.receivers)
+            entry["receivers"] = cert_registry.receiver_elements(request.receivers, request.formats)
         certificates[request.certificate_id] = entry
         cert_registry.write(
             path,
@@ -408,6 +426,7 @@ def issue(
     clusters: Sequence[str],
     receivers: Sequence[str],
     dns_profile: str | None = None,
+    formats: Mapping[str, str] | None = None,
     policy: PathPolicy,
     runtime: RuntimeConfig,
     certbot: Certbot = run_certbot,
@@ -426,6 +445,7 @@ def issue(
         receivers=receivers,
         runtime=runtime,
         dns_profile=dns_profile,
+        formats=formats,
     )
     if (live / request.certificate_id).exists():
         raise IssueError(

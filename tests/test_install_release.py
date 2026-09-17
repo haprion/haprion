@@ -82,6 +82,63 @@ class InstallReleaseTests(unittest.TestCase):
                     path.chmod(0o755)
             release.chmod(0o755)
 
+    def test_old_releases_are_pruned_after_activation_but_never_the_rollback_path(self) -> None:
+        """B156: ten stay by default; the new release and the one it replaced
+        always stay, whatever their age, and nothing is removed before the
+        link has moved."""
+
+        import os
+        import time
+
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw).resolve()
+            wheel, digest = self.make_wheel(work)
+            target = work / "target"
+            releases = target / "releases"
+            releases.mkdir(parents=True)
+            #
+            # Six frozen-looking old releases, oldest first, the oldest of
+            # them being the one `current` points at.
+            #
+            for index in range(6):
+                old = releases / f"0.0.{index}-old"
+                (old / "lib").mkdir(parents=True)
+                (old / "lib" / "x").write_text("x")
+                (old / "lib").chmod(0o555)
+                old.chmod(0o555)
+                os.utime(old, (1_000_000 + index, 1_000_000 + index))
+            (target / "current").symlink_to(Path("releases") / "0.0.0-old")
+            time.sleep(0.01)
+
+            release_id = install_release_module.install_release(
+                wheel=wheel,
+                expected_sha256=digest,
+                target=target,
+                python=Path(sys.executable),
+                require_root=False,
+                keep=3,
+            )
+            left = sorted(p.name for p in releases.iterdir())
+            # The newest three by time are the new release and the two newest
+            # old ones; the predecessor 0.0.0-old stays although it is oldest.
+            self.assertEqual(left, ["0.0.0-old", "0.0.4-old", "0.0.5-old", release_id])
+            self.assertEqual((target / "current").readlink(), Path("releases") / release_id)
+
+            with self.assertRaises(install_release_module.InstallError):
+                install_release_module.install_release(
+                    wheel=wheel,
+                    expected_sha256=digest,
+                    target=target,
+                    python=Path(sys.executable),
+                    require_root=False,
+                    keep=1,
+                )
+            for path in sorted(releases.rglob("*"), reverse=True):
+                if path.is_dir():
+                    path.chmod(0o755)
+            for path in releases.iterdir():
+                path.chmod(0o755)
+
     def test_rejects_hash_mismatch_and_unsafe_wheel_member(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             work = Path(raw).resolve()

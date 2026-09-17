@@ -1817,9 +1817,14 @@ silently treat an unknown old engine as compatible with a newer UI.
 ### Rollback
 
 Re-run the same installer with the retained previous wheel and its recorded digest. An already
-installed matching release is verified and `current` is atomically switched back. Releases are not
-deleted automatically, which keeps rollback independent of the source checkout and application
-storage.
+installed matching release is verified and `current` is atomically switched back.
+
+**Ten releases stay on disk; older ones go when a new one activates.** The installer prunes after
+a successful activation and never before it - a failed activation is exactly when nothing may be
+removed - and it always keeps the release it just activated and the one that was current before,
+whatever their age, so the rollback path is never the one pruned. Ten is enough because a release
+is reproducible from its commit: the wheel is built from `git archive <commit>`, so removing an
+old directory loses nothing Git holds. `--keep N` changes the number (at least two).
 
 ### Order of operations
 
@@ -2226,6 +2231,13 @@ rollback reported as done, is the worst outcome available.
 Releases are offered oldest-last by build time rather than by name: an id ends
 in a commit hash, which sorts alphabetically and says nothing about when it was
 built.
+
+How far back that list reaches is bounded: `update-platform-release` keeps the
+ten newest releases on a production platform and three on a development one,
+pruning the rest only after the update has been proved, and always keeping the
+release just activated and the one it replaced. A release is reproducible from
+its commit, so nothing older is lost with the directory. `RELEASES_KEPT` in the
+answers file changes the number (at least two).
 
 ### 4.7 Backups, and proving they restore
 

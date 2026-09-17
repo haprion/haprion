@@ -105,7 +105,10 @@ installed CLI, helpers and node bundles, proves that the running UI can tolerate
 the candidate's target schema, migrates from the candidate's own bundle, verifies
 database privileges, activates, and checks the real processes. A failure after
 the symlink moves invokes the installed rollback command and proves the restored
-installation before it reports failure.
+installation before it reports failure. After a proved update it prunes old
+releases: ten stay on a production platform, three on a development one
+(`RELEASES_KEPT` in the answers file overrides, minimum two), always including
+the release just activated and the one it replaced.
 
 ## Step 1 — the filesystem
 

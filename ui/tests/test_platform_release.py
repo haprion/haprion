@@ -94,6 +94,22 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertIn('"$rollback" --to "$previous_id"', self.update)
         self.assertIn("was restored but the installation is not compatible", self.update)
 
+    def test_old_releases_are_pruned_only_after_the_update_is_proved(self) -> None:
+        """B156: retention runs after the final compatibility check, keeps ten
+        (three on a development platform), and never the release just
+        activated or the one it replaced."""
+
+        final_check = self.update.index('if ! ./check-compatibility "$answers"; then')
+        prune = self.update.index('step "Pruning old releases"')
+        self.assertLess(final_check, prune)
+        self.assertIn('keep="${RELEASES_KEPT:-10}"', self.update)
+        self.assertIn('keep="${RELEASES_KEPT:-3}"', self.update)
+        self.assertIn(
+            '[[ "$old_release" == "$release_id" || "$old_release" == "$previous_id" ]] && continue',
+            self.update,
+        )
+        self.assertIn("-printf '%T@ %f\\n'", self.update)
+
     def test_it_never_installs_the_independent_cli_or_node_bundle(self) -> None:
         self.assertNotIn("install-release.py", self.update)
         self.assertNotIn("04-node-prepare", self.update)

@@ -20,6 +20,15 @@ from pathlib import Path, PurePosixPath
 
 DEFAULT_TARGET = Path("/opt/haproxy-mgmt")
 DEFAULT_PYTHON = Path("/usr/bin/python3")
+#
+# How many releases stay on disk after a successful activation (B156). Ten is
+# about a day of an intensive development day, and enough because a release is
+# reproducible from its commit: both this wheel and the UI release are built
+# from `git archive <commit>`, so removing an old directory loses nothing Git
+# holds. The release just activated and the one it replaced are always kept,
+# whatever the number - the rollback path must never be the one pruned.
+#
+DEFAULT_KEEP = 10
 EXPECTED_PROJECT = "haproxy-manager"
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 VERSION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
@@ -240,9 +249,12 @@ def install_release(
     target: Path,
     python: Path,
     require_root: bool = True,
+    keep: int = DEFAULT_KEEP,
 ) -> str:
     if require_root and os.geteuid() != 0:
         raise InstallError("installer must run as root")
+    if keep < 2:
+        raise InstallError("at least two releases must be kept: the new one and its predecessor")
     if not SHA256_PATTERN.fullmatch(expected_sha256):
         raise InstallError("expected SHA-256 must be 64 lowercase hexadecimal characters")
     wheel = require_safe_absolute_path(wheel, label="wheel path")
@@ -308,6 +320,7 @@ def install_release(
     current = target / "current"
     if current.exists() and not current.is_symlink():
         raise InstallError("current exists but is not a symlink")
+    previous_id = Path(os.readlink(current)).name if current.is_symlink() else None
     temporary_link = target / f".current.{os.getpid()}"
     try:
         temporary_link.symlink_to(Path("releases") / release_id)
@@ -316,7 +329,41 @@ def install_release(
         temporary_link.unlink(missing_ok=True)
     if require_root:
         os.lchown(current, 0, 0)
+    #
+    # Only now, after the link moved: a new release has been added, and a
+    # failed activation is exactly when nothing may be removed.
+    #
+    prune_releases(releases, keep=keep, always={release_id, previous_id})
     return release_id
+
+
+def prune_releases(releases: Path, *, keep: int, always: set[str | None]) -> list[str]:
+    """Remove all but the `keep` newest release directories; answer what went.
+
+    Newest by modification time, not by name: a release id ends in a commit
+    hash, which sorts alphabetically and says nothing about when it was built.
+    Names in `always` stay whatever their age. A directory that cannot be
+    removed is left and reported, never fatal - the release is installed.
+    """
+
+    candidates = sorted(
+        (path for path in releases.iterdir() if path.is_dir() and not path.name.startswith(".")),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    removed: list[str] = []
+    for path in candidates[keep:]:
+        if path.name in always:
+            continue
+        try:
+            for directory in [path, *(p for p in path.rglob("*") if p.is_dir())]:
+                directory.chmod(0o700)
+            shutil.rmtree(path)
+        except OSError as exc:
+            print(f"install-release: WARNING: could not remove {path}: {exc}", file=sys.stderr)
+            continue
+        removed.append(path.name)
+    return removed
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -327,6 +374,13 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--sha256", required=True)
     parser.add_argument("--target", type=Path, default=DEFAULT_TARGET)
     parser.add_argument("--python", type=Path, default=DEFAULT_PYTHON)
+    parser.add_argument(
+        "--keep",
+        type=int,
+        default=DEFAULT_KEEP,
+        help=f"releases left on disk after activation (default {DEFAULT_KEEP}; "
+        "the new release and its predecessor always stay)",
+    )
     return parser.parse_args(argv)
 
 
@@ -338,6 +392,7 @@ def main(argv: list[str] | None = None) -> int:
             expected_sha256=args.sha256,
             target=args.target,
             python=args.python,
+            keep=args.keep,
         )
     except InstallError as exc:
         print(f"install-release: ERROR: {exc}", file=sys.stderr)

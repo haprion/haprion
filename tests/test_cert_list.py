@@ -504,6 +504,79 @@ class RegistryListingTests(unittest.TestCase):
             )
             self.assertNotIn("request_state", result["certificates"][0])
 
+    def test_a_request_the_ca_is_holding_is_listed_without_a_registry_entry(self) -> None:
+        #
+        # Review 2026-09-17, finding 1: a request the CA holds is not in the
+        # registry any more - an entry without material refused every rollout
+        # to its clusters - so the listing reads the request itself, with the
+        # targets kept beside it, and shows it in the row shape the interface
+        # already knows. The frozen schema must take the row.
+        #
+        from haproxy_mgmt.envelope import envelope
+        from haproxy_mgmt.ndes_state import request_directory, write_targets
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            requests = root / "requests"
+            pending = request_directory(requests, "waiting.example")
+            pending.mkdir(parents=True)
+            (pending / "request.json").write_text(
+                json.dumps(
+                    {
+                        "certificate": "waiting.example",
+                        "profile": "certserver1",
+                        "domains": ["waiting.example", "*.waiting.example"],
+                    }
+                )
+            )
+            write_targets(requests, "waiting.example", clusters=("beta",), receivers=("lb-01",))
+            # Noise the listing must not turn into rows: a directory whose
+            # record names another ID, and one the CA has answered.
+            stray = requests / ("0" * 24)
+            stray.mkdir()
+            (stray / "request.json").write_text('{"certificate": "waiting.example"}')
+            answered = request_directory(requests, "done.example")
+            answered.mkdir()
+            (answered / "request.json").write_text('{"certificate": "done.example"}')
+            (answered / "cert.pem").write_text("issued")
+            registry = self._registry(
+                root,
+                receiver_names=("lb-01",),
+                certificates={"other": self._entry("other", kind="import", clusters=("beta",))},
+            )
+            result = cert_inventory.registry_result(
+                registry,
+                certificate_root=root / "certdist",
+                renewed=frozenset(),
+                now=datetime.now(UTC),
+                live=root / "live",
+                store=root / "import",
+                request_root=requests,
+            )
+            by_id = {entry["id"]: entry for entry in result["certificates"]}
+            self.assertEqual(set(by_id), {"other", "waiting.example"})
+            row = by_id["waiting.example"]
+            self.assertEqual(row["request_state"], "pending")
+            self.assertFalse(row["readable"])
+            self.assertEqual(
+                row["source"], {"kind": "import", "lineage": None, "ndes_profile": "certserver1"}
+            )
+            self.assertEqual(row["targets"]["clusters"], ["beta"])
+            self.assertEqual(
+                row["targets"]["receivers"],
+                [{"id": "lb-01", "published_at": None, "current": None}],
+            )
+            self.assertIsNone(row["distribution"])
+            _validator().validate(
+                envelope(
+                    operation="cert_list",
+                    outcome="done",
+                    cluster="alpha",
+                    request_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    result={"certificates": [], "registry": result},
+                )
+            )
+
     def test_an_import_with_an_empty_source_is_measured_at_its_published_copy(self) -> None:
         #
         # The maintainer's own case, seen on the page 2026-09-12: a certificate

@@ -9,10 +9,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
+import stat
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from haproxy_mgmt.config import CERTIFICATE_ID, CLUSTER_ID, RECEIVER_ID
+
 MAX_RECORD_BYTES = 64 * 1024
+TARGETS_FILE = "targets.json"
 
 
 def request_directory(state_root: Path, certificate_id: str) -> Path:
@@ -60,6 +67,140 @@ def request_record(state_root: Path, certificate_id: str) -> dict[str, Any] | No
     except (OSError, ValueError, UnicodeError):
         return None
     return loaded if isinstance(loaded, dict) else None
+
+
+def write_targets(
+    state_root: Path,
+    certificate_id: str,
+    *,
+    clusters: tuple[str, ...],
+    receivers: tuple[str, ...],
+) -> None:
+    """Where the certificate goes once the CA answers, kept beside the request.
+
+    Until 2026-09-17 a request the CA was holding was registered at once,
+    without material and with these targets, so the listing could show it.
+    But the registry's readers assume every entry has a file: the cluster's
+    certificate list is built from it and the deploy preflight reads each
+    file, so one waiting request refused every rollout to the clusters it
+    named (review 2026-09-17, finding 1). The targets live here instead, and
+    the registry names the certificate only once it exists.
+    """
+
+    directory = request_directory(state_root, certificate_id)
+    path = directory / TARGETS_FILE
+    temporary = directory / (TARGETS_FILE + ".new")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump({"clusters": list(clusters), "receivers": list(receivers)}, handle)
+    os.replace(temporary, path)
+
+
+def request_targets(
+    state_root: Path, certificate_id: str
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The targets a request was made with; empty when none were kept."""
+
+    directory = request_directory(state_root, certificate_id)
+    loaded = _bounded_json(directory / TARGETS_FILE, MAX_RECORD_BYTES)
+    if not isinstance(loaded, dict):
+        return (), ()
+    return _ids(loaded.get("clusters"), CLUSTER_ID), _ids(loaded.get("receivers"), RECEIVER_ID)
+
+
+def _ids(value: Any, pattern: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(
+        dict.fromkeys(item for item in value if isinstance(item, str) and pattern.fullmatch(item))
+    )
+
+
+def _bounded_json(path: Path, maximum: int) -> Any:
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > maximum:
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeError):
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class PendingRequest:
+    """One request the CA is still holding, as the listing shows it."""
+
+    certificate_id: str
+    profile_id: str
+    domains: tuple[str, ...]
+    clusters: tuple[str, ...]
+    receivers: tuple[str, ...]
+
+
+def pending_requests(state_root: Path) -> tuple[PendingRequest, ...]:
+    """Every request still waiting on the CA, read as root by the listing helper.
+
+    The registry does not name these (see `write_targets`), so the listing
+    has to ask here to show them at all. A directory whose record cannot be
+    read, or whose certificate ID is not one, is not a request - "pending" is
+    a claim, and an unreadable directory cannot make it.
+    """
+
+    found: list[PendingRequest] = []
+    try:
+        entries = sorted(state_root.iterdir())
+    except OSError:
+        return ()
+    for entry in entries:
+        try:
+            if entry.is_symlink() or not entry.is_dir() or (entry / "cert.pem").exists():
+                continue
+        except OSError:
+            continue
+        record = _bounded_json(entry / "request.json", MAX_RECORD_BYTES)
+        if not isinstance(record, dict):
+            continue
+        certificate_id = record.get("certificate")
+        profile_id = record.get("profile")
+        domains = record.get("domains")
+        if (
+            not isinstance(certificate_id, str)
+            or not CERTIFICATE_ID.fullmatch(certificate_id)
+            or request_directory(state_root, certificate_id) != entry
+            or not isinstance(profile_id, str)
+            or not isinstance(domains, list)
+        ):
+            continue
+        clusters, receivers = request_targets(state_root, certificate_id)
+        found.append(
+            PendingRequest(
+                certificate_id,
+                profile_id,
+                tuple(name for name in domains if isinstance(name, str)),
+                clusters,
+                receivers,
+            )
+        )
+    return tuple(found)
+
+
+def remove_request(state_root: Path, certificate_id: str) -> bool:
+    """Remove one request's directory, key and all. True when there was one.
+
+    A request the CA rejected, one that never reached Certmonger, or one
+    whose certificate is being deleted has nothing left to resume; leaving
+    the directory made the ID unusable and the profile unremovable (review
+    2026-09-17, finding 2).
+    """
+
+    directory = request_directory(state_root, certificate_id)
+    try:
+        info = directory.lstat()
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISDIR(info.st_mode):
+        raise OSError(f"NDES request path is not a directory: {directory}")
+    shutil.rmtree(directory)
+    return True
 
 
 #

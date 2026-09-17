@@ -180,6 +180,37 @@ class ThePassInCertRenew(RenewFixture):
         self.assertFalse(request["resume"])
         self.assertIn("web.example.com: renewed", errors.getvalue())
 
+    def test_a_request_the_ca_still_holds_is_resumed_not_asked_again(self) -> None:
+        """Asking anew was refused as `already_exists`, and the row went from
+        "Renewal pending" to "Renewal failed" the day after (review
+        2026-09-17, finding 2)."""
+
+        self.pending("web.example.com")
+        asked: list[dict[str, Any]] = []
+
+        def fake_enroll(**kwargs: Any) -> tuple[dict[str, Any], int]:
+            asked.append(kwargs)
+            return {"outcome": "partial", "result": {"state": "pending"}}, 0
+
+        original = cert_scep.enroll
+        cert_scep.enroll = fake_enroll  # type: ignore[assignment]
+        try:
+            cert_renew.renew_ndes(
+                self.policy,
+                self.runtime,
+                now=self.not_after - timedelta(days=5),
+                errors=io.StringIO(),
+                policy_path=self.policy_path,
+                live=self.live,
+                store=self.store,
+            )
+        finally:
+            cert_scep.enroll = original  # type: ignore[assignment]
+        (request,) = asked
+        self.assertTrue(request["resume"])
+        record = ndes_state.renewal_record(self.ndes_policy.state_root, "web.example.com")
+        self.assertEqual(record["outcome"], "pending")  # type: ignore[index]
+
     def test_a_dry_run_says_who_would_renew_and_touches_nothing(self) -> None:
         errors = io.StringIO()
         failed = cert_renew.renew_ndes(

@@ -1,4 +1,4 @@
-"""The SCEP job helper and the engine's resume-by-ID and pending registration."""
+"""The SCEP job helper and the engine's resume-by-ID and pending requests."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from haproxy_mgmt import ndes, ndes_profiles
 from haproxy_mgmt.cli import cert_scep, cert_scep_helper
 from haproxy_mgmt.config import NdesPolicy, load_policy
 from haproxy_mgmt.dns_profile_keys import generate, render_private_key
-from haproxy_mgmt.ndes_state import request_directory
+from haproxy_mgmt.ndes_state import request_directory, request_targets, write_targets
 from tests.test_cert_import import ImportFixture
 
 ENDPOINT = "https://ca.example.com/certsrv/mscep/mscep.dll"
@@ -127,11 +127,17 @@ class HelperBoundary(ScepFixture):
                     self.assertEqual(doc["outcome"], "failed")
         engine.assert_not_called()
 
-    def test_a_pending_request_is_registered_and_answered_as_partial(self) -> None:
-        pending = ndes.Enrollment("pending", self.ndes_root / "requests" / "x")
+    def test_a_pending_request_keeps_its_targets_beside_it_and_is_not_registered(self) -> None:
+        """Review 2026-09-17, finding 1: an entry without material refused
+        every rollout to the clusters it named, so a request the CA holds is
+        not in the registry. Its targets wait beside the request instead."""
+
+        directory = request_directory(self.ndes_policy.state_root, "web.example.com")
+        pending = ndes.Enrollment("pending", directory)
 
         @mock.patch.object(ndes, "enroll")
         def run(enroll_mock: Any) -> tuple[int, dict[str, Any], str]:
+            directory.mkdir(mode=0o700)
             enroll_mock.return_value.__enter__.return_value = pending
             return self.helper(
                 {
@@ -139,6 +145,7 @@ class HelperBoundary(ScepFixture):
                     "profile": "certserver1",
                     "domains": ["web.example.com", "*.web.example.com"],
                     "clusters": ["alpha"],
+                    "receivers": ["lb-01"],
                 }
             )
 
@@ -147,10 +154,70 @@ class HelperBoundary(ScepFixture):
         self.assertEqual(doc["outcome"], "partial")
         self.assertEqual(doc["result"]["state"], "pending")
         self.assertEqual(doc["warnings"][0]["code"], "request_pending")
+        self.assertNotIn("web.example.com", self.registered())
+        self.assertEqual(
+            request_targets(self.ndes_policy.state_root, "web.example.com"),
+            (("alpha",), ("lb-01",)),
+        )
+        self.assertNotIn("example-challenge", json.dumps(doc) + errors)
+
+    def test_a_resume_that_is_issued_registers_with_the_targets_the_request_kept(self) -> None:
+        self.pending("web.example.com")
+        write_targets(
+            self.ndes_policy.state_root, "web.example.com", clusters=("alpha",), receivers=()
+        )
+        directory = request_directory(self.ndes_policy.state_root, "web.example.com")
+        # The fixture's leaf is shop.example; validation is the engine's own
+        # test, so it is stood aside here and the material is what matters.
+        issued = ndes.Enrollment("issued", directory, self.material())
+        with (
+            mock.patch.object(ndes, "enroll") as engine,
+            mock.patch.object(ndes, "validate_certificate"),
+        ):
+            engine.return_value.__enter__.return_value = issued
+            code, doc, errors = self.helper({"id": "web.example.com", "resume": True})
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(doc["result"]["state"], "issued")
         entry = self.registered()["web.example.com"]
         self.assertEqual(entry["source"], {"kind": "import", "ndes_profile": "certserver1"})
         self.assertEqual(entry["clusters"], ["alpha"])
-        self.assertNotIn("example-challenge", json.dumps(doc) + errors)
+        self.assertEqual(self.deployed, ["alpha"])
+        # The request is over: its directory goes with it.
+        self.assertFalse(directory.exists())
+
+    def test_abandon_removes_a_request_the_ca_never_answered(self) -> None:
+        self.pending("web.example.com")
+        directory = request_directory(self.ndes_policy.state_root, "web.example.com")
+        output = io.StringIO()
+        code = cert_scep.main(
+            ["--id", "web.example.com", "--abandon", "--json"],
+            policy_path=self.policy_path,
+            output_stream=output,
+            error_stream=io.StringIO(),
+            require_secure=False,
+            require_root=False,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output.getvalue())["result"]["state"], "abandoned")
+        self.assertFalse(directory.exists())
+        code = cert_scep.main(
+            ["--id", "web.example.com", "--abandon", "--json"],
+            policy_path=self.policy_path,
+            output_stream=io.StringIO(),
+            error_stream=io.StringIO(),
+            require_secure=False,
+            require_root=False,
+        )
+        self.assertEqual(code, 65)
+        code = cert_scep.main(
+            ["--id", "web.example.com", "--abandon", "--resume"],
+            policy_path=self.policy_path,
+            output_stream=io.StringIO(),
+            error_stream=io.StringIO(),
+            require_secure=False,
+            require_root=False,
+        )
+        self.assertEqual(code, 65)
 
     def test_a_resume_names_only_the_certificate_and_takes_the_rest_from_the_record(
         self,

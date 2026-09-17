@@ -1139,12 +1139,21 @@ After installation, root policy configuration and provider application, the pilo
 haproxy-cert-scep --id example-cert --profile internal-ca --domain example.test --domain '*.example.test' --json
 ```
 
-A CA approval wait returns `state: pending` and envelope outcome `partial`; the certificate is
-registered at once, without material, so the listing shows it as **Request pending**. Resume with
-`haproxy-cert-scep --id <id> --resume` - the request's root-only record holds the profile and
-the names, the original key is retained, and a resume that disagrees with the record is refused.
-Returned certificates must pass chain, names, usages and key validation before the existing
-import/publication path is called.
+A CA approval wait returns `state: pending` and envelope outcome `partial`. The certificate is
+**not** registered yet: the registry names only certificates that exist, because the cluster's
+certificate list and the deploy preflight are built from it and an entry without material would
+refuse every rollout to the clusters it names. The request's root-only state holds the key, the
+profile, the names and the chosen targets, and the listing helper reads it there, so the row shows
+as **Request pending** all the same. Resume with `haproxy-cert-scep --id <id> --resume` - the
+original key is retained, the targets are the ones the request was made with, and a resume that
+disagrees with the record is refused. Returned certificates must pass chain, names, usages and key
+validation before the existing import/publication path is called; only then is the certificate
+registered and published.
+
+A request the CA rejects, or one Certmonger never took, removes its own state so the same ID can
+be asked for again. A request that is neither answered nor rejected - the approval is not coming,
+or the process died on it - is given up with `haproxy-cert-scep --id <id> --abandon`, which
+discards the key; deleting the certificate removes its request state too.
 
 **Scheduled renewal.** `haproxy-cert-renew` - the command the daily `haproxy-certbot-renew.timer`
 runs - makes an NDES pass after certbot's: every registered certificate whose source names an
@@ -1153,7 +1162,7 @@ enrolled again under the same ID, with the same profile, the names the current c
 carries (CN first) and the targets the registry holds. It is the same request as a first
 enrollment: a fresh key, and the published material replaced only once the new certificate has
 been validated; a request the CA holds is **Renewal pending** on the row, with the same *Resume
-enrollment* button. One record per certificate under `<state_root>/renewals/` says what the last
+enrollment* button, and the next day's pass resumes that request rather than asking anew. One record per certificate under `<state_root>/renewals/` says what the last
 attempt did, and the listing shows a failure as **Renewal failed** with the CA's sentence rather
 than an expiry creeping closer. `haproxy-cert-renew --ndes-now <id>` renews one certificate at
 once, threshold or not, and skips certbot's pass: the way to prove the path on a template whose

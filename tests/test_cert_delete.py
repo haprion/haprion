@@ -292,6 +292,58 @@ class WhatGoes(DeleteFixture):
         self.assertFalse((self.store / "imported.example").exists())
         self.assertEqual(self.certbot_calls, [])
 
+    def test_an_ndes_request_goes_with_the_certificate_registered_or_not(self) -> None:
+        """The request directory holds a key and the targets; left behind it
+        made the ID unusable and the profile unremovable (review 2026-09-17,
+        finding 2). With an NDES block in the policy it is a layer of its
+        own; a request the CA still holds is deletable by name alone."""
+
+        from haproxy_mgmt.ndes_state import request_directory
+
+        policy_path = self.prepared(
+            {
+                "enrolled.example": {
+                    "source": {"kind": "import", "ndes_profile": "certserver1"},
+                    "clusters": ["alpha"],
+                }
+            }
+        )
+        policy = yaml.safe_load(policy_path.read_text())
+        state = self.root / "ndes-requests"
+        state.mkdir(mode=0o700)
+        ca = self.root / "ndes-ca.pem"
+        ca.write_text("ca\n")
+        policy["ndes"] = {
+            "endpoint": "https://ca.example.com/certsrv/mscep/mscep.dll",
+            "tls_ca": str(ca),
+            "issuing_ca": str(ca),
+            "client_root": str(self.root / "scep"),
+            "state_root": str(state),
+            "profiles": {
+                "directory": str(self.root / "ndes-profiles"),
+                "private_keys": [str(self.root / "ndes-profile.key")],
+            },
+        }
+        policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
+        for certificate_id in ("enrolled.example", "waiting.example"):
+            directory = request_directory(state, certificate_id)
+            directory.mkdir(mode=0o700)
+            (directory / "request.json").write_text(f'{{"certificate": "{certificate_id}"}}')
+            (directory / "privkey.pem").write_text("key\n")
+
+        report = self.run_delete(policy_path, "enrolled.example")
+        self.assertEqual(report.removed, ("enrolled.example",))
+        self.assertFalse(request_directory(state, "enrolled.example").exists())
+        self.assertIn(
+            ("NDES request enrolled.example", "removed"),
+            [(layer.name, layer.state) for layer in report.outcomes[0].layers],
+        )
+
+        self.nodes_have_nothing()
+        report = self.run_delete(policy_path, "waiting.example")
+        self.assertEqual(report.removed, ("waiting.example",))
+        self.assertFalse(request_directory(state, "waiting.example").exists())
+
     def test_a_missing_lineage_or_file_is_absent_not_failed(self) -> None:
         policy_path = self.prepared(
             {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}

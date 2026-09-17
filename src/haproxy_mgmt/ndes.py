@@ -28,7 +28,7 @@ from haproxy_mgmt.cert_issue import HOSTNAME
 from haproxy_mgmt.config import CERTIFICATE_ID, NdesPolicy
 from haproxy_mgmt.dns_profiles import ProfileError
 from haproxy_mgmt.ndes_profiles import OpenedProfile, check_challenge, secure_directory
-from haproxy_mgmt.ndes_state import request_directory
+from haproxy_mgmt.ndes_state import remove_request, request_directory
 
 MAX_BYTES = 1024 * 1024
 COMMAND_TIMEOUT = 15
@@ -36,10 +36,18 @@ ENROLL_TIMEOUT = 90
 
 
 class NdesError(Exception):
-    def __init__(self, code: str, message: str, *, exit_code: int = 65):
+    def __init__(self, code: str, message: str, *, exit_code: int = 65, discard: bool = False):
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code
+        #
+        # True when the request this failed has nothing left to resume: the
+        # CA said no, or Certmonger never took the request. `enroll` then
+        # removes the request directory, so the ID can be asked for again
+        # and the profile removed (review 2026-09-17, finding 2). A timeout
+        # in a state that may still complete keeps it.
+        #
+        self.discard = discard
 
 
 def names(values: Sequence[str]) -> tuple[str, ...]:
@@ -210,7 +218,9 @@ def status(policy: NdesPolicy, directory: Path) -> str:
     text = command(policy, directory, ["list", "-i", "enrollment"])
     match = re.search(r"^\s*status: ([A-Z_]+)$", text, re.MULTILINE)
     if match is None:
-        raise NdesError("scep_failed", "Certmonger returned no request status", exit_code=1)
+        raise NdesError(
+            "scep_failed", "Certmonger returned no request status", exit_code=1, discard=True
+        )
     return match.group(1)
 
 
@@ -306,7 +316,11 @@ def _enroll(
                         str(directory / "issuing-ca.pem"),
                     ]
                 )
-                command(policy, directory, ["add-ca", "-c", "ndes", "-e", helper])
+                try:
+                    command(policy, directory, ["add-ca", "-c", "ndes", "-e", helper])
+                except NdesError as exc:
+                    exc.discard = True
+                    raise
                 arguments = [
                     "request",
                     "-c",
@@ -337,7 +351,16 @@ def _enroll(
                 ]
                 for domain in requested:
                     arguments.extend(["-D", domain])
-                command(policy, directory, arguments)
+                try:
+                    command(policy, directory, arguments)
+                except NdesError as exc:
+                    #
+                    # No request reached Certmonger, so there is nothing to
+                    # resume; a directory left here would refuse the next
+                    # attempt with "resume it instead".
+                    #
+                    exc.discard = True
+                    raise
             deadline = time.monotonic() + timeout
             while True:
                 state = status(policy, directory)
@@ -374,7 +397,10 @@ def _enroll(
                     "NEED_KEY_GEN_PIN",
                 }:
                     raise NdesError(
-                        "scep_failed", "Certmonger enrollment stopped: " + state, exit_code=1
+                        "scep_failed",
+                        "Certmonger enrollment stopped: " + state,
+                        exit_code=1,
+                        discard=True,
                     )
                 if time.monotonic() >= deadline:
                     if state == "CA_WORKING":
@@ -414,15 +440,53 @@ def enroll(
         fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            yield _enroll(
-                policy,
-                certificate_id=certificate_id,
-                profile=profile,
-                domains=domains,
-                resume=resume,
-                require_secure=require_secure,
-                timeout=timeout,
-            )
+            try:
+                yield _enroll(
+                    policy,
+                    certificate_id=certificate_id,
+                    profile=profile,
+                    domains=domains,
+                    resume=resume,
+                    require_secure=require_secure,
+                    timeout=timeout,
+                )
+            except NdesError as exc:
+                if exc.discard:
+                    remove_request(policy.state_root, certificate_id)
+                raise
+        finally:
+            os.close(fd)
+    except BlockingIOError:
+        raise NdesError(
+            "busy", "another enrollment is running for this certificate", exit_code=75
+        ) from None
+    except OSError:
+        raise NdesError(
+            "dependency_unavailable", "protected NDES state is unavailable", exit_code=78
+        ) from None
+
+
+def abandon(policy: NdesPolicy, certificate_id: str, *, require_secure: bool = True) -> bool:
+    """Give up a request the CA has not answered, key and all, under its lock.
+
+    For the request that is neither finished nor rejected - one the process
+    died on, or one whose approval will never come. True when there was one.
+    """
+
+    if not CERTIFICATE_ID.fullmatch(certificate_id):
+        raise NdesError("bad_input", "invalid certificate ID")
+    try:
+        secure_directory(policy.state_root, require_secure=require_secure)
+    except ProfileError as exc:
+        raise NdesError("dependency_unavailable", str(exc), exit_code=78) from None
+    lock_path = policy.state_root / (
+        hashlib.sha256(certificate_id.encode()).hexdigest()[:24] + ".lock"
+    )
+    try:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return remove_request(policy.state_root, certificate_id)
         finally:
             os.close(fd)
     except BlockingIOError:

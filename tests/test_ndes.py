@@ -72,16 +72,73 @@ class EnrollmentStaging(unittest.TestCase):
         self.assertIn("-R", calls[1].args[2])
         self.assertNotIn("example-challenge", repr(calls))
 
-    def test_unreachable_and_rejected_are_failures_not_pending(self) -> None:
-        for state in ("CA_REJECTED", "CA_UNREACHABLE"):
-            with (
-                self.subTest(state=state),
-                mock.patch.object(ndes, "command"),
-                mock.patch.object(ndes, "status", return_value=state),
-                self.assertRaises(ndes.NdesError),
-            ):
-                self.enroll(resume=(self.directory / "request.json").exists())
+    def test_a_rejected_request_takes_its_directory_with_it(self) -> None:
+        """Nothing is left to resume once the CA has said no; the directory
+        would only refuse the next attempt with "resume it instead" and
+        hold the profile in use (review 2026-09-17, finding 2). A new
+        request for the same ID is possible straight after."""
+
+        with (
+            mock.patch.object(ndes, "command"),
+            mock.patch.object(ndes, "status", return_value="CA_REJECTED"),
+            self.assertRaises(ndes.NdesError) as caught,
+        ):
+            self.enroll()
+        self.assertTrue(caught.exception.discard)
+        self.assertFalse(self.directory.exists())
+        with (
+            mock.patch.object(ndes, "command") as command,
+            mock.patch.object(ndes, "status", return_value="CA_WORKING"),
+        ):
+            self.assertEqual(self.enroll().state, "pending")  # type: ignore[attr-defined]
+        self.assertEqual(command.call_args_list[1].args[2][0], "request")
+        self.assertTrue((self.directory / "request.json").exists())
+
+    def test_a_request_certmonger_did_not_take_leaves_nothing_behind(self) -> None:
+        """`add-ca` or `request` failing means no request exists to resume."""
+
+        with (
+            mock.patch.object(
+                ndes, "command", side_effect=ndes.NdesError("scep_failed", "no", exit_code=1)
+            ),
+            self.assertRaises(ndes.NdesError) as caught,
+        ):
+            self.enroll()
+        self.assertTrue(caught.exception.discard)
+        self.assertFalse(self.directory.exists())
+
+    def test_a_timeout_in_a_state_that_may_still_finish_keeps_the_request(self) -> None:
+        with (
+            mock.patch.object(ndes, "command"),
+            mock.patch.object(ndes, "status", return_value="SUBMITTING"),
+            self.assertRaises(ndes.NdesError) as caught,
+        ):
+            self.enroll()
+        self.assertEqual(caught.exception.code, "scep_timeout")
+        self.assertFalse(caught.exception.discard)
+        self.assertTrue((self.directory / "request.json").exists())
         self.assertFalse((self.directory / "challenge").exists())
+
+    def test_unreachable_is_a_failure_not_pending_and_the_request_stays(self) -> None:
+        with (
+            mock.patch.object(ndes, "command"),
+            mock.patch.object(ndes, "status", return_value="CA_UNREACHABLE"),
+            self.assertRaises(ndes.NdesError),
+        ):
+            self.enroll()
+        self.assertFalse((self.directory / "challenge").exists())
+
+    def test_abandon_removes_a_request_under_its_lock_and_says_whether_there_was_one(
+        self,
+    ) -> None:
+        with (
+            mock.patch.object(ndes, "command"),
+            mock.patch.object(ndes, "status", return_value="CA_WORKING"),
+        ):
+            self.enroll()
+        self.assertTrue(ndes.abandon(self.policy, "service.example.com", require_secure=False))
+        self.assertFalse(self.directory.exists())
+        self.assertFalse(ndes.abandon(self.policy, "service.example.com", require_secure=False))
 
     def test_resume_does_not_submit_a_new_key_or_request(self) -> None:
         with (

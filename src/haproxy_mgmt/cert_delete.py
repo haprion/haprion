@@ -90,6 +90,7 @@ from haproxy_mgmt.config import (
 )
 from haproxy_mgmt.git_command import GitError
 from haproxy_mgmt.managed_publish import managed_proxies
+from haproxy_mgmt.ndes_state import remove_request
 from haproxy_mgmt.proxy_model import ModelError
 from haproxy_mgmt.repo_snapshot import PublishError, read_tree_files, resolve_head
 
@@ -442,6 +443,26 @@ def remove_source(
     return Layer(f"source {kind}", "kept", "unknown source kind; nothing removed")
 
 
+def remove_request_state(policy: PathPolicy, certificate_id: str) -> Layer | None:
+    """The NDES request directory, when the policy has an NDES block.
+
+    A request the CA is still holding has a key and its targets there and
+    nothing in the registry; a deletion that left it would leave the ID
+    unusable and the profile unremovable (review 2026-09-17, finding 2).
+    None where the installation has no NDES - not a layer that is absent,
+    but a layer that does not exist.
+    """
+
+    if policy.ndes is None:
+        return None
+    name = f"NDES request {certificate_id}"
+    try:
+        removed = remove_request(policy.ndes.state_root, certificate_id)
+    except OSError as exc:
+        return Layer(name, "failed", exc.strerror or str(exc))
+    return Layer(name, "removed" if removed else "absent")
+
+
 def ask_node(identity: DeployIdentity, mgmt_host: str, certificate_id: str) -> tuple[int, str]:
     """The same call `cert-deploy` makes, with a different verb."""
 
@@ -598,6 +619,9 @@ def _delete_locked(
                 run=lineage_remover,
             )
         )
+        request_layer = remove_request_state(policy, certificate_id)
+        if request_layer is not None:
+            layers.append(request_layer)
 
         #
         # Layer three, only once nothing above it stayed. `cert_registry.write`
@@ -709,6 +733,9 @@ def _sweep(
             run=lineage_remover,
         )
     )
+    request_layer = remove_request_state(policy, certificate_id)
+    if request_layer is not None:
+        layers.append(request_layer)
     nodes = remove_node_copies(
         [runtime.clusters[key] for key in sorted(runtime.clusters)],
         certificate_id,

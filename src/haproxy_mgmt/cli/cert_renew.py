@@ -34,6 +34,7 @@ from haproxy_mgmt.config import (
     load_runtime_config,
 )
 from haproxy_mgmt.envelope import new_request_id
+from haproxy_mgmt.ndes_state import request_is_pending
 
 RENEWAL_DIRECTORY = Path("/etc/letsencrypt/renewal")
 FIXED_ENVIRONMENT = {
@@ -175,6 +176,13 @@ def renew_ndes(
         return any(p.certificate_id in only for p in problems)
 
     def enroll_again(candidate: ndes_renew.Candidate) -> tuple[dict[str, Any], int]:
+        #
+        # A request the CA is still holding from an earlier pass is resumed,
+        # not replaced: asking anew was refused as `already_exists` and the
+        # row went from "Renewal pending" to "Renewal failed" the next day
+        # (review 2026-09-17, finding 2).
+        #
+        assert policy.ndes is not None  # noqa: S101 - checked above
         try:
             return cert_scep.enroll(
                 certificate_id=candidate.certificate_id,
@@ -182,7 +190,7 @@ def renew_ndes(
                 domains=candidate.domains,
                 clusters=candidate.clusters,
                 receivers=candidate.receivers,
-                resume=False,
+                resume=request_is_pending(policy.ndes.state_root, candidate.certificate_id),
                 request_id=new_request_id(),
                 policy_path=policy_path,
                 deployer=default_deployer(errors),

@@ -42,7 +42,7 @@ from haproxy_mgmt.certificates import (
     leaf_fingerprint,
 )
 from haproxy_mgmt.config import Cluster, RegisteredCertificate, Registry
-from haproxy_mgmt.ndes_state import renewal_record, request_is_pending
+from haproxy_mgmt.ndes_state import pending_requests, renewal_record, request_is_pending
 
 OPENSSL = "/usr/bin/openssl"
 LETSENCRYPT_ROOT = Path("/etc/letsencrypt")
@@ -468,6 +468,48 @@ def registry_result(
             else None
         )
         entries.append(row)
+
+    #
+    # Requests the CA is still holding are not in the registry - an entry
+    # without material refused every rollout to the clusters it named
+    # (review 2026-09-17, finding 1) - so they are read from the request
+    # state itself, with the targets kept beside each request. Same row
+    # shape as an unreadable entry, with `request_state` saying why.
+    #
+    if request_root is not None:
+        listed = {row["id"] for row in entries}
+        for pending in pending_requests(request_root):
+            if pending.certificate_id in listed:
+                continue
+            entries.append(
+                {
+                    "id": pending.certificate_id,
+                    "source": {
+                        "kind": "import",
+                        "lineage": None,
+                        "ndes_profile": pending.profile_id,
+                    },
+                    "readable": False,
+                    "validation_error": "no material at its source yet",
+                    "request_state": "pending",
+                    "measured_at": None,
+                    **_unmeasured(now),
+                    "targets": {
+                        "clusters": list(pending.clusters),
+                        "receivers": [
+                            {
+                                "id": receiver_id,
+                                **_published(
+                                    registry.receivers[receiver_id].path / FULLCHAIN, None
+                                ),
+                            }
+                            for receiver_id in pending.receivers
+                            if receiver_id in registry.receivers
+                        ],
+                    },
+                    "distribution": None,
+                }
+            )
 
     return {"certificates": entries, "receivers": sorted(registry.receivers)}
 

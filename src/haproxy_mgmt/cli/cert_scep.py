@@ -25,7 +25,7 @@ from haproxy_mgmt.config import (
 )
 from haproxy_mgmt.dns_profiles import ProfileError
 from haproxy_mgmt.envelope import Message, envelope, failure, new_request_id
-from haproxy_mgmt.ndes_state import request_record
+from haproxy_mgmt.ndes_state import request_record, request_targets, write_targets
 
 OPERATION = "cert_scep"
 
@@ -90,6 +90,12 @@ def enroll(
                 raise ScepRefusal("bad_input", "no NDES request to resume for this ID", 65)
             domains = [str(name) for name in recorded]
             profile_id = profile_id or recorded_profile
+        if resume and not clusters and not receivers:
+            #
+            # The targets too: kept beside the request rather than in the
+            # registry, which names a certificate only once it exists.
+            #
+            clusters, receivers = request_targets(policy.ndes.state_root, certificate_id)
         requested = ndes.names(domains)
         runtime = load_runtime_config(policy, require_secure=require_secure)
         if any(name not in runtime.clusters for name in clusters):
@@ -118,18 +124,19 @@ def enroll(
         ) as enrolled:
             if enrolled.state == "pending":
                 #
-                # Registered now, without material, so the listing shows the
-                # request as pending and the targets are kept for the resume.
-                # The publisher skips an entry whose source holds nothing.
+                # Not registered: the registry's readers - the cluster's
+                # certificate list, the deploy preflight - take every entry
+                # to have a file, and an entry without one refused every
+                # rollout to the clusters it named (review 2026-09-17,
+                # finding 1). The targets wait beside the request, the
+                # listing helper reads the request itself, and the registry
+                # names the certificate once the CA has answered.
                 #
-                cert_import.register(
-                    policy.certificate_registry,
+                write_targets(
+                    policy.ndes.state_root,
                     certificate_id,
-                    runtime,
-                    clusters=clusters,
-                    receivers=receivers,
-                    require_secure=require_secure,
-                    ndes_profile=profile.profile_id,
+                    clusters=tuple(clusters),
+                    receivers=tuple(receivers),
                 )
                 doc = envelope(
                     operation=OPERATION,
@@ -154,7 +161,18 @@ def enroll(
                 raise ndes.NdesError(
                     "scep_failed", "issued request has no certificate material", exit_code=1
                 )
-            ndes.validate_certificate(enrolled.material, requested, enrolled.directory)
+            #
+            # Issued is the end of the request either way: a certificate that
+            # fails validation is not going to pass it on a resume, and an
+            # import that fails has its material in the store or a refusal
+            # to fix first. The directory goes so the ID can be asked for
+            # again; only a successful import kept it until now.
+            #
+            try:
+                ndes.validate_certificate(enrolled.material, requested, enrolled.directory)
+            except ndes.NdesError:
+                shutil.rmtree(enrolled.directory, ignore_errors=True)
+                raise
             imported = cert_import.import_certificate(
                 certificate_id=certificate_id,
                 material=enrolled.material,
@@ -178,8 +196,13 @@ def enroll(
                 "state": "issued",
                 "publication": doc["result"],
             }
-            if exit_code == 0:
-                shutil.rmtree(enrolled.directory)
+            #
+            # Imported and registered: the request is over whatever the
+            # publication's exit code says, and `haproxy-cert-publish` is
+            # the way to finish that - not a resume of a request the CA has
+            # already answered.
+            #
+            shutil.rmtree(enrolled.directory, ignore_errors=True)
             return doc, exit_code
     except ConfigError as exc:
         raise ScepRefusal("dependency_unavailable", str(exc), exc.exit_code) from exc
@@ -187,6 +210,41 @@ def enroll(
         raise ScepRefusal("profile_unavailable", str(exc), 78) from exc
     except (ndes.NdesError, cert_import.ImportError_) as exc:
         raise ScepRefusal(exc.code, str(exc), exc.exit_code) from exc
+
+
+def abandon(
+    *,
+    certificate_id: str,
+    request_id: str,
+    policy_path: Path = DEFAULT_POLICY_PATH,
+    require_secure: bool = True,
+) -> tuple[dict[str, Any], int]:
+    """Give up a request the CA has not answered: its key, its state, its targets.
+
+    For the request that neither finished nor was rejected - the process died
+    on it, or the approval is never coming. A rejected request removes itself.
+    """
+
+    try:
+        if not CERTIFICATE_ID.fullmatch(certificate_id):
+            raise ScepRefusal("bad_input", "invalid certificate ID", 65)
+        policy = load_policy(policy_path, require_secure=require_secure)
+        if policy.ndes is None:
+            raise ScepRefusal("dependency_unavailable", "NDES policy must be configured", 78)
+        removed = ndes.abandon(policy.ndes, certificate_id, require_secure=require_secure)
+    except ConfigError as exc:
+        raise ScepRefusal("dependency_unavailable", str(exc), exc.exit_code) from exc
+    except ndes.NdesError as exc:
+        raise ScepRefusal(exc.code, str(exc), exc.exit_code) from exc
+    if not removed:
+        raise ScepRefusal("bad_input", "no NDES request to abandon for this ID", 65)
+    return envelope(
+        operation=OPERATION,
+        outcome="done",
+        cluster=None,
+        request_id=request_id,
+        result={"id": certificate_id, "state": "abandoned"},
+    ), 0
 
 
 def main(
@@ -216,6 +274,11 @@ def main(
     parser.add_argument("--cluster", action="append", default=[])
     parser.add_argument("--receiver", action="append", default=[])
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--abandon",
+        action="store_true",
+        help="give up a request the CA has not answered; its key is discarded",
+    )
     parser.add_argument("--json", action="store_true")
     try:
         args = parser.parse_args(sys.argv[1:] if argv is None else argv)
@@ -243,22 +306,34 @@ def main(
 
     if require_root and os.geteuid() != 0:
         return refuse("not_root", "haproxy-cert-scep must run as root", 77)
+    if args.abandon and (
+        args.resume or args.profile or args.domain or args.cluster or args.receiver
+    ):
+        return refuse("bad_input", "--abandon takes only --id", 65)
     try:
-        doc, exit_code = enroll(
-            certificate_id=args.id,
-            profile_id=args.profile,
-            domains=args.domain,
-            clusters=args.cluster,
-            receivers=args.receiver,
-            resume=args.resume,
-            request_id=request_id,
-            policy_path=policy_path,
-            require_secure=require_secure,
-            deployer=deployer or default_deployer(errors),
-            live=live,
-            store=store,
-            lock_path=lock_path,
-        )
+        if args.abandon:
+            doc, exit_code = abandon(
+                certificate_id=args.id,
+                request_id=request_id,
+                policy_path=policy_path,
+                require_secure=require_secure,
+            )
+        else:
+            doc, exit_code = enroll(
+                certificate_id=args.id,
+                profile_id=args.profile,
+                domains=args.domain,
+                clusters=args.cluster,
+                receivers=args.receiver,
+                resume=args.resume,
+                request_id=request_id,
+                policy_path=policy_path,
+                require_secure=require_secure,
+                deployer=deployer or default_deployer(errors),
+                live=live,
+                store=store,
+                lock_path=lock_path,
+            )
     except ScepRefusal as exc:
         return refuse(exc.code, str(exc), exc.exit_code)
     if args.json:

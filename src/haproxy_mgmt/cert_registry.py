@@ -101,13 +101,17 @@ def write(
     document: Mapping[str, Any],
     certificates: Mapping[str, Any],
     runtime: RuntimeConfig,
+    receivers: Mapping[str, Any] | None = None,
     require_secure: bool = True,
 ) -> None:
     """Replace the registry with `certificates`, keeping everything else.
 
     `document` is what `read_document` returned, so the receiver block and any
     field a later version adds travel through untouched. Only the certificate
-    half is the caller's to decide.
+    half is the caller's to decide - except for `haproxy-cert-receiver`, root
+    work with its own command, which passes `receivers` and is the only caller
+    that may: a receiver that could be introduced by a job payload would be a
+    directory key material lands in that nobody registered.
     """
 
     try:
@@ -120,7 +124,9 @@ def write(
     rendered = HEADER + yaml.safe_dump(
         {
             "schema_version": 1,
-            "receivers": document.get("receivers") or {},
+            "receivers": (document.get("receivers") or {})
+            if receivers is None
+            else dict(receivers),
             "certificates": dict(certificates),
         },
         sort_keys=False,
@@ -239,6 +245,58 @@ def check_receiver_rules(registry: Registry) -> None:
                 f"holds one certificate at a time, and {', '.join(sorted(certificates))} "
                 "would share it. Take the other one away first.",
             )
+
+
+def set_receiver(
+    path: Path,
+    *,
+    receiver_id: str,
+    fields: Mapping[str, Any],
+    runtime: RuntimeConfig,
+    require_secure: bool = True,
+) -> None:
+    """Put one receiver into the registry, through the same checked write as the rest.
+
+    Registration is root work with its own command (C7), and this is its last
+    layer: by the time it runs, the account, the directory and the lock exist,
+    so the entry names something real. The write goes through `write`, which
+    loads the candidate back through the reader before renaming it into place
+    - a receiver block the engine would refuse is never the file on disk.
+    """
+
+    document = read_document(path)
+    receivers = dict(document.get("receivers") or {})
+    receivers[receiver_id] = dict(fields)
+    write(
+        path,
+        document=document,
+        certificates=document.get("certificates") or {},
+        receivers=receivers,
+        runtime=runtime,
+        require_secure=require_secure,
+    )
+
+
+def drop_receiver(
+    path: Path,
+    *,
+    receiver_id: str,
+    runtime: RuntimeConfig,
+    require_secure: bool = True,
+) -> None:
+    """Take one receiver out. Refused by the reader while a certificate names it."""
+
+    document = read_document(path)
+    receivers = dict(document.get("receivers") or {})
+    receivers.pop(receiver_id, None)
+    write(
+        path,
+        document=document,
+        certificates=document.get("certificates") or {},
+        receivers=receivers,
+        runtime=runtime,
+        require_secure=require_secure,
+    )
 
 
 def receiver_in_use(registry: Registry, receiver_id: str) -> tuple[str, ...]:

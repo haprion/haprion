@@ -52,6 +52,7 @@ import os
 import pwd
 import secrets
 import stat
+import string
 import subprocess
 import tempfile
 import time
@@ -110,11 +111,6 @@ MIN_REMAINING = timedelta(days=7)
 ROOT_UID = 0
 CLUSTER_MODE = 0o640
 RECEIVER_MODE = 0o600
-#
-# The variable openssl reads the bundle password from. An environment
-# variable rather than an argument: `ps` shows everyone the argument list.
-#
-BUNDLE_PASSWORD_VARIABLE = "HAPROXY_MGMT_PKCS12_PASSWORD"  # noqa: S105 - a variable name
 
 type SourceStatus = Literal["published", "unchanged", "skipped", "failed"]
 
@@ -584,13 +580,12 @@ def _memfd(name: str, content: bytes) -> int:
     return handle
 
 
-def _openssl(argv: Sequence[str], password: str, *, pass_fds: Sequence[int] = ()) -> bytes | None:
-    """Run openssl with the password in the environment, never in the argument list.
+def _openssl(argv: Sequence[str], *, pass_fds: Sequence[int] = ()) -> bytes | None:
+    """Run openssl and return what it wrote, or None if it could not.
 
-    The environment of a root process is readable by root alone, while the
-    argument list of any process is readable by everyone with `ps`. This is
-    the one difference that matters here, and it is why `-passout pass:` is
-    not used.
+    The password is never in `argv`: `ps` shows everyone the argument list,
+    so openssl is pointed at the password file that is published beside the
+    bundle anyway (B159), and reads the first line of it itself.
     """
 
     try:
@@ -600,7 +595,6 @@ def _openssl(argv: Sequence[str], password: str, *, pass_fds: Sequence[int] = ()
             timeout=OPENSSL_TIMEOUT,
             check=False,
             pass_fds=tuple(pass_fds),
-            env={"PATH": "/usr/bin", BUNDLE_PASSWORD_VARIABLE: password},
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -609,7 +603,20 @@ def _openssl(argv: Sequence[str], password: str, *, pass_fds: Sequence[int] = ()
     return completed.stdout
 
 
-def bundle_bytes(material: Material, password: str) -> bytes:
+def new_password() -> str:
+    """A bundle's password: letters and digits, long enough to be one (B159).
+
+    No punctuation, deliberately. This string is read back out of a file by
+    whatever script the receiver's operator wrote, and every character that
+    needs quoting somewhere is a way for that script to install the wrong
+    password and report success.
+    """
+
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(32))
+
+
+def bundle_bytes(material: Material, password_path: Path) -> bytes:
     """The PKCS#12 bundle, built without the key ever reaching a file.
 
     The key and the chain are handed to openssl as anonymous memory the child
@@ -633,9 +640,8 @@ def bundle_bytes(material: Material, password: str) -> bytes:
                 "-name",
                 material.certificate_id,
                 "-passout",
-                f"env:{BUNDLE_PASSWORD_VARIABLE}",
+                f"file:{password_path}",
             ],
-            password,
             pass_fds=(key_fd, chain_fd),
         )
     finally:
@@ -646,7 +652,7 @@ def bundle_bytes(material: Material, password: str) -> bytes:
     return bundle
 
 
-def bundle_fingerprint(path: Path, password: str) -> str | None:
+def bundle_fingerprint(path: Path, password_path: Path) -> str | None:
     """The leaf fingerprint inside a bundle already on disk, or None.
 
     This is what makes a PKCS#12 target idempotent. The bundle's own bytes
@@ -664,9 +670,8 @@ def bundle_fingerprint(path: Path, password: str) -> str | None:
             str(path),
             "-nokeys",
             "-passin",
-            f"env:{BUNDLE_PASSWORD_VARIABLE}",
+            f"file:{password_path}",
         ],
-        password,
     )
     if certificates is None:
         return None
@@ -676,8 +681,8 @@ def bundle_fingerprint(path: Path, password: str) -> str | None:
         return None
 
 
-def _bundle_password(path: Path, *, uid: int, gid: int) -> tuple[str, bool]:
-    """The password for this pair, made once and kept (B159).
+def _bundle_password(path: Path, *, uid: int, gid: int) -> bool:
+    """Make this pair's password if it has none, and say whether it is new (B159).
 
     Kept, not regenerated: a receiver that imported the bundle into a
     certificate store did so with the password it fetched, and a renewal that
@@ -687,30 +692,38 @@ def _bundle_password(path: Path, *, uid: int, gid: int) -> tuple[str, bool]:
     """
 
     try:
-        existing = path.read_text(encoding="ascii").strip()
+        if path.read_text(encoding="ascii").strip():
+            return False
     except (OSError, UnicodeDecodeError):
-        existing = ""
-    if existing:
-        return existing, False
-    password = secrets.token_urlsafe(24)
+        pass
     try:
-        write_file(path, (password + "\n").encode("ascii"), uid=uid, gid=gid, mode=RECEIVER_MODE)
+        write_file(
+            path,
+            (new_password() + "\n").encode("ascii"),
+            uid=uid,
+            gid=gid,
+            mode=RECEIVER_MODE,
+            compare=False,
+        )
     except OSError as exc:
         raise PublishError("write_failed", f"{path}: {exc}") from exc
-    return password, True
+    return True
 
 
 def publish_bundle(target: Target, material: Material) -> bool:
     """Write this pair's bundle unless the one already there holds the same certificate."""
 
     bundle_path, password_path = receiver_bundle_paths(target, material.certificate_id)
-    password, password_written = _bundle_password(password_path, uid=target.uid, gid=target.gid)
-    if not password_written and bundle_fingerprint(bundle_path, password) == material.fingerprint:
+    password_written = _bundle_password(password_path, uid=target.uid, gid=target.gid)
+    if (
+        not password_written
+        and bundle_fingerprint(bundle_path, password_path) == material.fingerprint
+    ):
         return False
     try:
         write_file(
             bundle_path,
-            bundle_bytes(material, password),
+            bundle_bytes(material, password_path),
             uid=target.uid,
             gid=target.gid,
             mode=RECEIVER_MODE,

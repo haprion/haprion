@@ -76,6 +76,20 @@
       "message": "Overly permissive mask in chmod sets file to group readable.",
       "decided": "2026-09-17",
       "reason": "The per-certificate directory a receiver fetches from (C7, B138). Group read and execute is what lets the receiver's own account reach the 0600 files inside it; the directory itself stays owned by root and not writable by the account, which is the point - a receiver reads what it was given and cannot replace it. The group is the account's own, created with it by haproxy-cert-receiver, so group read reaches one receiver and no other. Re-check if a receiver account is ever given a shared group."
+    },
+    {
+      "rule": "py/overly-permissive-file",
+      "path": "src/haproxy_mgmt/cert_receiver.py",
+      "message": "Overly permissive mask in chmod sets file to group readable.",
+      "decided": "2026-09-17",
+      "reason": "The directory a receiver fetches from, made 0750 root with the fetch account's own group. Group read and execute is how that one account reaches the 0600 files inside; root ownership is what stops it replacing them. The same contract the publisher's per-certificate directory carries, decided in the same C7 pass."
+    },
+    {
+      "rule": "py/overly-permissive-file",
+      "path": "src/haproxy_mgmt/cert_receiver.py",
+      "message": "Overly permissive mask in chmod sets file to world readable.",
+      "decided": "2026-09-17",
+      "reason": "Four root-owned things that hold no secret: the fetch account's home and its .ssh directory (0755), the authorized_keys line in it (0644), and the sshd drop-in or nginx site the command writes (0644). The modes are B131's, proven on the node accounts in production - sshd reads the lock as root, and an account that owned or could write any of these could replace its own restrictions. A public key, a chroot path and an address whitelist are not material worth hiding from a machine's own users; what matters is that none of them is writable, which these modes state."
     }
   ]
 }

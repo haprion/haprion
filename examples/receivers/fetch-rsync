@@ -1,0 +1,57 @@
+#!/bin/sh
+#
+# Fetch this host's certificates from the manager over rsync, and reload the
+# service only if something changed. For a receiver registered with
+# `haproxy-cert-receiver add <id> --transport rsync`.
+#
+# The key on this host is the private half of what was given to the manager.
+# The manager's lock allows exactly one command - rrsync -ro over the
+# receiver's own directory - so there is nothing to name on the far side but
+# the directory itself.
+#
+set -eu
+
+MANAGER=${MANAGER:-manager.example.net}
+IDENTITY=${IDENTITY:-/etc/ssl/haproxy/id_ed25519}
+ACCOUNT=${ACCOUNT:-crx-lb-01}
+CERTIFICATE=${CERTIFICATE:-lb-01.example.net}
+TARGET=${TARGET:-/etc/ssl/haproxy}
+RELOAD=${RELOAD:-systemctl reload haproxy}
+
+staging=$(mktemp -d)
+trap 'rm -rf -- "$staging"' EXIT INT TERM
+
+# The forced command already restricts this to one directory; the path names
+# which certificate inside it, which is the per-certificate layout.
+rsync -a -e "ssh -i ${IDENTITY} -o IdentitiesOnly=yes" \
+    "${ACCOUNT}@${MANAGER}:${CERTIFICATE}/" "${staging}/"
+
+[ -s "${staging}/fullchain.pem" ] && [ -s "${staging}/privkey.pem" ] || {
+    echo "fetch-rsync: the pair is incomplete; leaving the installed one alone" >&2
+    exit 1
+}
+
+#
+# The manager writes the two files as two renames. A fetch that landed between
+# them has a key that does not belong to the certificate, and installing that
+# takes the service down. Compared as public keys, which is what both openssl
+# subcommands print.
+#
+certificate_key=$(openssl x509 -in "${staging}/fullchain.pem" -pubkey -noout)
+private_key=$(openssl pkey -in "${staging}/privkey.pem" -pubout)
+[ "$certificate_key" = "$private_key" ] || {
+    echo "fetch-rsync: the key does not belong to the certificate; not installed" >&2
+    exit 1
+}
+
+changed=0
+for name in fullchain.pem privkey.pem; do
+    if ! cmp -s "${staging}/${name}" "${TARGET}/${name}"; then
+        install -o root -g root -m 600 "${staging}/${name}" "${TARGET}/${name}"
+        changed=1
+    fi
+done
+
+[ "$changed" -eq 1 ] || exit 0
+chmod 644 "${TARGET}/fullchain.pem"
+$RELOAD

@@ -622,6 +622,10 @@ receivers:
   lb-01.example.net:
     path: /srv/certificates/receivers/lb-01.example.net
     owner: svc-app
+    transport: sftp            # rsync | sftp | https; left out, rsync
+    layout: per-certificate    # flat | per-certificate; left out, flat
+    allow:                     # https only, and required there
+      - 192.0.2.0/24
 
 certificates:
   example.com:
@@ -644,11 +648,26 @@ anything noticing. Declaring the registry and moving the lists out of `clusters.
 one edit. `default_certificate` stays in `clusters.yaml` and must still be one the cluster carries.
 
 A **receiver** is somewhere other than a cluster that certificates are published to: a directory
-under the distribution root and the account whose fetch key is locked to it. Receivers are
-registered here by whoever administers the host, because an account, a key and a directory are what
-let anyone fetch key material at all. Which certificate goes to which already-registered receiver
-is the part the interface is allowed to change, and it does so through a helper that accepts only
-targets registered in this file.
+under the distribution root and the account whose fetch key is locked to it. A receiver is
+registered with `haproxy-cert-receiver` (1.4.3), not by hand, because an account, a key and a
+directory are what let anyone fetch key material at all and none of the three is safe without the
+others. Which certificate goes to which already-registered receiver is the part the interface is
+allowed to change, and it does so through a helper that accepts only targets registered in this
+file.
+
+`transport` says how the receiver fetches, `layout` how its directory is arranged, and `allow` -
+`https` only - which addresses may fetch at all. Both defaults describe the receivers registered
+before this command existed, so an older file means exactly what it meant before: `rsync` and
+`flat`. `flat` puts `fullchain.pem` and `privkey.pem` straight into the directory, which is why
+such a receiver holds **one** certificate at a time and a second is refused; `per-certificate`
+gives each certificate a directory of its own, and is the only form a new receiver is registered
+in. Neither field is edited afterwards: a receiver finds out about a moved path or a changed
+transport at its next fetch, which is a renewal away, so a change is `remove` and `add` again.
+
+A certificate's `receivers` list may name a receiver as `{id: <id>, format: pkcs12}` instead of as
+a bare ID, and then that pair - this certificate, this receiver - is published as a PKCS#12 bundle
+with a password beside it rather than as a PEM pair. A bare ID means `pem`. The choice belongs to
+the pair, because one host can want PEM for HAProxy and a `.pfx` for IIS.
 
 `source.kind` is `acme` for a certificate certbot renews and `import` for one signed elsewhere. An
 ACME certificate's `lineage` is its certbot lineage name; left out, it is the certificate ID, which
@@ -674,7 +693,9 @@ for all three: which certificates exist, where each comes from, and where each g
 | Target | Written as | Owner and mode |
 |---|---|---|
 | a cluster | `<certificate_root>/<id>.pem`, the private key followed by the full chain - HAProxy's own format | `root`, the group that owns `certificate_root`, `640` |
-| a receiver | `<path>/fullchain.pem` and `<path>/privkey.pem` | the receiver's `owner`, `600`; the directory itself belongs to root or to the owner and is writable by nobody else |
+| a receiver, `layout: flat` | `<path>/fullchain.pem` and `<path>/privkey.pem` | the receiver's `owner`, `600`; the directory itself belongs to root or to the owner and is writable by nobody else |
+| a receiver, `layout: per-certificate` | `<path>/<id>/fullchain.pem` and `<path>/<id>/privkey.pem` | the same, and the per-certificate directory is `root` with the account's group, `750`, made by the publisher |
+| a receiver, `format: pkcs12` | `<path>/<id>/<id>.pfx` and `<path>/<id>/<id>.password` | the receiver's `owner`, `600` |
 
 Every certificate is checked before its first file is written - it parses, its private key
 belongs to it, and it has at least seven days left - and all of its targets are resolved first, so
@@ -684,6 +705,16 @@ old file or the new one, never a partial one. A file whose bytes already match i
 which is what lets the command run after every renewal, or by hand at any time, without cost.
 The run holds one lock and waits for a concurrent run rather than refusing: the publisher is
 idempotent, so the second run does exactly the right thing after the first.
+
+A PKCS#12 bundle is compared by the certificate inside it rather than by its bytes, which are
+salted and differ every time the same material is exported. The password is made once per pair and
+kept across renewals - the receiver imported the bundle into a certificate store with the password
+it fetched, and a new one at every renewal would make every renewal a manual re-import.
+
+Two refusals belong to the publisher rather than to the registry, because only the material shows
+them: a **wildcard** is never published to an `https` receiver, which fetches with no key at all;
+and a certificate a cluster carries is never published to an `https` receiver either, which the
+registry refuses from both directions.
 
 An `import` entry whose directory does not exist yet is reported as skipped, not failed, and its
 published copy is left as it is. That is what a certificate published by hand before the import
@@ -1277,6 +1308,78 @@ alone does not prove enrollment. Application acceptance will also cover verified
 The integration automates issuance requested through CLI/UI and renews on schedule (above).
 CEP/CES/WSTEP, template discovery and automatic password retrieval from `mscep_admin` are outside
 this integration.
+
+### 1.4.9 Registering a receiver
+
+A receiver is a machine outside this installation that fetches certificates from the manager. It
+is four things at once - an account, a directory only that account may read, a lock binding its key
+to that directory, and the registry entry - and `haproxy-cert-receiver` makes all four, or none:
+
+```bash
+# The receiver makes its own key pair and sends you the public half.
+sudo haproxy-cert-receiver add lb-02.example.net --transport rsync \
+  --public-key /tmp/lb-02.pub
+
+sudo haproxy-cert-receiver add lb-03.example.net --transport sftp \
+  --public-key /tmp/lb-03.pub --owner crx-lb-03
+
+sudo haproxy-cert-receiver add 192.0.2.40 --transport https --allow 192.0.2.0/24
+
+sudo haproxy-cert-receiver list
+sudo haproxy-cert-receiver remove lb-02.example.net
+```
+
+**The ID is the fetching host**: its DNS name or its IP address, and nothing else. That is what the
+lock binds to - `from="<id>"` in `authorized_keys`, `allow <id>` in nginx - so a name whose **PTR
+record does not resolve back to it is refused at registration**. sshd matches `from=` by reverse
+lookup, and a key that would never be accepted is worth refusing while the name can still be
+changed.
+
+**The private key is never given to the manager.** The pair is made on the receiver
+(`ssh-keygen -t ed25519`), and `--public-key` takes the `.pub` file. A private key that passed
+through the manager has passed through one machine too many.
+
+| Transport | How it fetches | What holds it there |
+|---|---|---|
+| `rsync` | `rsync` over ssh | `restrict,from="<id>",command="/usr/bin/rrsync -ro <path>"` - one directory, read-only, no shell |
+| `sftp` | `sftp`, read-only | the same key line without the forced command, plus a `Match User` block with `ChrootDirectory <path>` and `ForceCommand internal-sftp -R` |
+| `https` | plain `GET`, no key at all | an address whitelist in nginx, and nothing else |
+
+`https` is a deliberate lowering of the trust level, and it is fenced in rather than trusted: such
+a receiver may not hold a certificate any cluster carries, may not be given a wildcard, and reaches
+nothing but its own directory. It is served from its own nginx server block on **port 8443** under
+the interface's own certificate and hostname - its own port because nginx serves the first server
+block for a name and port and ignores the rest, so a second block on 443 would test clean and never
+answer.
+
+Every change to sshd's drop-in or nginx's site is followed by `sshd -t` or `nginx -t`, and a
+refusal puts the previous file back before reporting: a broken sshd locks out everyone, not only
+the receiver being registered.
+
+**Removing** is refused while any certificate still names the receiver - `Remove from...` in the
+interface, or `haproxy-cert-target`, is what lets a certificate go of a target, and it is the
+operation that also says what that costs. Once nothing names it, the registry entry, the lock, the
+directory and the account go in that order.
+
+**Migrating the receivers registered before this command** (the ones `list` shows as `legacy`,
+sharing one account and a `flat` directory) is two steps with the receiver's own change in between:
+
+```bash
+sudo haproxy-cert-receiver migrate pve-01.example.net --public-key /tmp/pve-01.pub
+# ... the host changes account, path and key, and fetches once ...
+sudo haproxy-cert-receiver migrate pve-01.example.net --finish
+```
+
+The first builds the new account, directory and lock **beside** the old ones and points the
+registry at the new path; nothing is taken away, so the host goes on fetching as before until it is
+changed. `--finish` removes the old layer, and keeps the old account if another receiver still
+fetches as it. A migration is refused while any certificate on that receiver has less than seven
+days left: the new directory is empty until the next publish, and the publisher will not write a
+certificate that close to expiry.
+
+Reference fetch scripts for each transport are in
+[`../examples/receivers/`](../examples/receivers/). They are what a receiver's own operator
+adapts; the manager never pushes.
 
 ### 1.5 Validation certificate
 

@@ -1,0 +1,50 @@
+#!/bin/sh
+#
+# The same, over sftp. For a receiver registered with `--transport sftp`.
+#
+# The manager chroots this account into its own directory, so `/` on the far
+# side is one directory per certificate and there is nothing else to reach.
+# The server is started with -R, so every write is refused before it is tried.
+#
+set -eu
+
+MANAGER=${MANAGER:-manager.example.net}
+IDENTITY=${IDENTITY:-/etc/ssl/haproxy/id_ed25519}
+ACCOUNT=${ACCOUNT:-crx-lb-03}
+CERTIFICATE=${CERTIFICATE:-lb-03.example.net}
+TARGET=${TARGET:-/etc/ssl/haproxy}
+RELOAD=${RELOAD:-systemctl reload haproxy}
+
+staging=$(mktemp -d)
+trap 'rm -rf -- "$staging"' EXIT INT TERM
+
+sftp -q -i "$IDENTITY" -o IdentitiesOnly=yes "${ACCOUNT}@${MANAGER}" <<SFTP
+lcd ${staging}
+get /${CERTIFICATE}/fullchain.pem
+get /${CERTIFICATE}/privkey.pem
+bye
+SFTP
+
+[ -s "${staging}/fullchain.pem" ] && [ -s "${staging}/privkey.pem" ] || {
+    echo "fetch-sftp: the pair is incomplete; leaving the installed one alone" >&2
+    exit 1
+}
+
+certificate_key=$(openssl x509 -in "${staging}/fullchain.pem" -pubkey -noout)
+private_key=$(openssl pkey -in "${staging}/privkey.pem" -pubout)
+[ "$certificate_key" = "$private_key" ] || {
+    echo "fetch-sftp: the key does not belong to the certificate; not installed" >&2
+    exit 1
+}
+
+changed=0
+for name in fullchain.pem privkey.pem; do
+    if ! cmp -s "${staging}/${name}" "${TARGET}/${name}"; then
+        install -o root -g root -m 600 "${staging}/${name}" "${TARGET}/${name}"
+        changed=1
+    fi
+done
+
+[ "$changed" -eq 1 ] || exit 0
+chmod 644 "${TARGET}/fullchain.pem"
+$RELOAD

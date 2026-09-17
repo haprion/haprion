@@ -1,0 +1,45 @@
+#!/bin/sh
+#
+# For a receiver registered with `--transport https`: no key, an address
+# whitelist, and nothing else. Whoever can reach the manager from a whitelisted
+# address can read this certificate and its private key, which is why the
+# manager refuses to publish a wildcard, or anything a cluster carries, here.
+#
+# The manager's certificate is verified against a CA file: without that, an
+# address whitelist protects the manager from strangers and does nothing at all
+# for this host.
+#
+set -eu
+
+URL=${URL:-https://manager.example.net:8443/certificates/192.0.2.40}
+CA=${CA:-/etc/ssl/certs/internal-root.pem}
+TARGET=${TARGET:-/etc/ssl/haproxy}
+CERTIFICATE=${CERTIFICATE:-app.example.net}
+RELOAD=${RELOAD:-systemctl reload nginx}
+
+staging=$(mktemp -d)
+trap 'rm -rf -- "$staging"' EXIT INT TERM
+
+for name in fullchain.pem privkey.pem; do
+    curl --fail --silent --show-error --cacert "$CA" \
+        --output "${staging}/${name}" "${URL}/${CERTIFICATE}/${name}"
+done
+
+certificate_key=$(openssl x509 -in "${staging}/fullchain.pem" -pubkey -noout)
+private_key=$(openssl pkey -in "${staging}/privkey.pem" -pubout)
+[ "$certificate_key" = "$private_key" ] || {
+    echo "fetch-https: the key does not belong to the certificate; not installed" >&2
+    exit 1
+}
+
+changed=0
+for name in fullchain.pem privkey.pem; do
+    if ! cmp -s "${staging}/${name}" "${TARGET}/${name}"; then
+        install -o root -g root -m 600 "${staging}/${name}" "${TARGET}/${name}"
+        changed=1
+    fi
+done
+
+[ "$changed" -eq 1 ] || exit 0
+chmod 644 "${TARGET}/fullchain.pem"
+$RELOAD

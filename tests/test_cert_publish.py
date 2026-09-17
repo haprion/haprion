@@ -186,6 +186,7 @@ class Fixture(unittest.TestCase):
             "validation_certs_root": str(validation),
             "certificate_root": str(self.dist),
             "certificate_registry": str(self.root / "certificates.yaml"),
+            "receiver_root": str(self.root / "receivers"),
         }
         policy_path = self.root / "runtime-policy.yaml"
         policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")

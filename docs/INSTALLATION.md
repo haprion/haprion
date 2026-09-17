@@ -1347,19 +1347,30 @@ through the manager has passed through one machine too many.
 
 `https` is a deliberate lowering of the trust level, and it is fenced in rather than trusted: such
 a receiver may not hold a certificate any cluster carries, may not be given a wildcard, and reaches
-nothing but its own directory. It is served from its own nginx server block on **port 8443** under
-the interface's own certificate and hostname - its own port because nginx serves the first server
-block for a name and port and ignores the rest, so a second block on 443 would test clean and never
-answer.
+nothing but its own directory. It is served from the interface's own server block, on 443 under the
+interface's certificate and hostname, at `https://<server name>/certdist/<id>/<certificate>/`.
+The `location` blocks live in `/etc/nginx/snippets/haproxy-manager-receivers.conf`, which only this
+command writes and which the interface's site pulls in with one `include` line; the interface's
+block itself is never edited by a receiver. Not a server block of its own beside the interface's:
+nginx serves the first server block for a name and port and silently ignores a second one, so that
+block would test clean and never answer. **An installation set up before this line existed must
+rerun `install/platform/05-platform-nginx`**, which adds the include and creates the empty
+snippet; until then `add --transport https` refuses with `dependency_unavailable` rather than
+registering a receiver nothing serves.
 
 Every change to sshd's drop-in or nginx's site is followed by `sshd -t` or `nginx -t`, and a
 refusal puts the previous file back before reporting: a broken sshd locks out everyone, not only
 the receiver being registered.
 
+The account's home is the receiver's directory - one directory per receiver, root-owned, with the
+lock in a root-owned `.ssh` inside it. An `sftp` receiver therefore sees `.ssh` in its chroot beside
+its certificates: its own public key, readable and not writable, and nothing else.
+
 **Removing** is refused while any certificate still names the receiver - `Remove from...` in the
 interface, or `haproxy-cert-target`, is what lets a certificate go of a target, and it is the
 operation that also says what that costs. Once nothing names it, the registry entry, the lock, the
-directory and the account go in that order.
+directory and the account go in that order; an account another receiver still fetches as (the
+`legacy` ones share one) is kept, and only the key line naming this directory is taken out.
 
 **Migrating the receivers registered before this command** (the ones `list` shows as `legacy`,
 sharing one account and a `flat` directory) is two steps with the receiver's own change in between:
@@ -2110,7 +2121,10 @@ rollback command and checks the restored processes before returning failure.
 `install/platform/05-platform-nginx` puts nginx in front of the web service and
 terminates HTTPS there. The web service itself listens only on
 `127.0.0.1:8080`, in plain HTTP, and that leg stays plain deliberately: it never
-leaves the host.
+leaves the host. The rendered site also includes
+`/etc/nginx/snippets/haproxy-manager-receivers.conf`, created empty by this
+step and written afterwards only by `haproxy-cert-receiver` (1.4.9); a rerun of
+the step leaves an existing snippet alone.
 
 **This is the direct address, and it does not go through the HAProxy pair.**
 That is the whole point of it. The UI is the tool used to repair that pair, so

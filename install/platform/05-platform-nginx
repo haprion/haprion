@@ -50,6 +50,21 @@ step "The command that owns the certificate"
 install -o root -g root -m 755 bin/haproxy-ui-tls /usr/local/sbin/haproxy-ui-tls
 log "  installed /usr/local/sbin/haproxy-ui-tls"
 
+#
+# The receivers' snippet, included by the site below. Created empty only when
+# absent: once haproxy-cert-receiver has written it, a rerun of this step must
+# not take the receivers with it. nginx refuses a site that includes a file
+# which does not exist, which is why the site is not rendered before this.
+#
+step "Receivers' snippet"
+ensure_dir /etc/nginx/snippets root:root 755
+if [[ -f /etc/nginx/snippets/haproxy-manager-receivers.conf ]]; then
+    log "  ok       /etc/nginx/snippets/haproxy-manager-receivers.conf"
+else
+    install_file /etc/nginx/snippets/haproxy-manager-receivers.conf root:root 644 \
+        "# Written by haproxy-cert-receiver from the certificate registry. Empty until the first https receiver."
+fi
+
 step "Site"
 rendered="$(sed -e "s|SERVER_NAME|${SERVER_NAME}|g" \
                 -e "s|TLS_CERT|${TLS_CERT}|g" \

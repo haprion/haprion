@@ -53,6 +53,17 @@ server {
     access_log /var/log/nginx/haproxy-ui.access.log;
     error_log  /var/log/nginx/haproxy-ui.error.log;
 
+    #
+    # Certificate receivers that fetch over https (INSTALLATION 1.4.9). The
+    # file holds one whitelisted `location /certdist/<receiver>/` per such
+    # receiver and is written by haproxy-cert-receiver alone; 05-platform-nginx
+    # creates it empty. It lives in this block because nginx serves the first
+    # server block for a name and port and silently ignores a second one, so
+    # a block of its own beside this one would never answer. The interface
+    # does not route /certdist/.
+    #
+    include /etc/nginx/snippets/haproxy-manager-receivers.conf;
+
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;

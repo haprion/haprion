@@ -88,15 +88,14 @@ MAX_OWNER = 32
 HTTPS_OWNER = "www-data"
 
 #
-# Where an `https` receiver is served from. Its own server block, as B157
-# decided, but on its own port rather than beside the interface on 443:
-# nginx picks the first server block for a name and port and ignores the
-# rest, with a warning `nginx -t` does not fail on - so the block B157
-# describes would have been configuration that tests clean and never answers.
-# Same certificate, same hostname, one port along. Measured 2026-09-17.
+# Where an `https` receiver is served from: the interface's own server block
+# on 443, through one `include` of a file only this command writes (B160).
+# Not a second server block - nginx serves the first block for a name and
+# port and ignores the rest, with a warning `nginx -t` does not fail on, so
+# a block beside the interface's would test clean and never answer. The
+# prefix is one the interface does not route: it owns `/certificates/...`.
 #
-HTTPS_PORT = 8443
-HTTPS_PREFIX = "/certificates"
+HTTPS_PREFIX = "/certdist"
 
 type Runner = Callable[[Sequence[str]], tuple[int, str]]
 
@@ -127,10 +126,9 @@ class Locations:
     """The files this command owns outside the registry, injectable for the tests."""
 
     sshd_dropin: Path = Path("/etc/ssh/sshd_config.d/haproxy-manager-receivers.conf")
-    nginx_site: Path = Path("/etc/nginx/sites-available/haproxy-manager-receivers")
-    nginx_enabled: Path = Path("/etc/nginx/sites-enabled/haproxy-manager-receivers")
+    nginx_snippet: Path = Path("/etc/nginx/snippets/haproxy-manager-receivers.conf")
+    ui_site: Path = Path("/etc/nginx/sites-available/haproxy-ui")
     ui_tls: Path = Path("/etc/haproxy-manager/ui-tls.conf")
-    home_root: Path = Path("/home")
 
 
 def run_command(argv: Sequence[str]) -> tuple[int, str]:
@@ -165,6 +163,15 @@ def resolve_reverse(address: str) -> tuple[str, ...]:
     return tuple(name.rstrip(".").lower() for name in (host, *aliases))
 
 
+def account_home(owner: str) -> Path | None:
+    """Where sshd will look for the account's lock: its home, as the system has it."""
+
+    try:
+        return Path(pwd.getpwnam(owner).pw_dir)
+    except KeyError:
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class Tools:
     """Everything that reaches outside this process, so a test can hold it still."""
@@ -173,6 +180,7 @@ class Tools:
     forward: Callable[[str], tuple[str, ...]] = resolve_forward
     reverse: Callable[[str], tuple[str, ...]] = resolve_reverse
     now: Callable[[], datetime] = lambda: datetime.now(UTC)
+    home: Callable[[str], Path | None] = account_home
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,8 +335,10 @@ def create_account(owner: str, home: Path, tools: Tools) -> None:
 
     `nologin` because nothing here runs a shell: rrsync and internal-sftp are
     started by sshd itself, and an `https` receiver has no account at all. The
-    home directory is root's, like the node accounts B131 settled, so the
-    account cannot replace the `.ssh` that holds its own lock.
+    home is the receiver's own directory (B160): one directory per receiver,
+    root-owned like the node accounts B131 settled, so the account cannot
+    replace the `.ssh` that holds its own lock. An `sftp` receiver sees that
+    `.ssh` inside its chroot - its own public key, readable and nothing else.
     """
 
     code, output = tools.run(
@@ -390,31 +400,19 @@ def create_directory(path: Path, owner: str) -> Layer:
     return Layer("directory", "created", str(path))
 
 
-def create_home(home: Path, owner: str) -> None:
-    """Root's home for the account, and the `.ssh` its lock lives in (B131).
+def write_authorized_keys(home: Path, line: str) -> Layer:
+    """The lock itself: one root-owned line the account cannot change.
 
-    Kept apart from the receiver's own directory although the account has no
-    other use for it: the receiver's directory is what an `sftp` receiver is
-    chrooted into, and a chroot that also held `.ssh` would show the receiver
-    its own lock and nothing this project gains from that.
+    `.ssh` sits inside the receiver's directory, which is the account's home
+    (B160). Root-owned and traversable, the shape B131 gave the node accounts:
+    sshd reads the lock as root, and the account may reach nothing but read it.
     """
 
-    home.mkdir(parents=True, exist_ok=True)
-    os.chown(home, ROOT_UID, ROOT_GID)
-    # Root-owned and traversable, the shape B131 gave the node accounts: sshd
-    # reads the lock as root, and the account may reach nothing but read it.
-    os.chmod(home, 0o755)  # noqa: S103 - root-owned; the account owns nothing here
     ssh_directory = home / ".ssh"
-    ssh_directory.mkdir(exist_ok=True)
+    ssh_directory.mkdir(parents=True, exist_ok=True)
     os.chown(ssh_directory, ROOT_UID, ROOT_GID)
     os.chmod(ssh_directory, 0o755)  # noqa: S103 - root-owned, as B131 left the nodes
-
-
-def write_authorized_keys(home: Path, line: str) -> Layer:
-    """The lock itself: one root-owned line the account cannot change."""
-
-    create_home(home, "root")
-    keys = home / ".ssh" / "authorized_keys"
+    keys = ssh_directory / "authorized_keys"
     content = f"# Written by haproxy-cert-receiver. One receiver, one key, one directory.\n{line}\n"
     keys.write_text(content, encoding="ascii")
     os.chown(keys, ROOT_UID, ROOT_GID)
@@ -490,44 +488,59 @@ def read_ui_tls(locations: Locations) -> dict[str, str]:
     return values
 
 
-def render_nginx_site(registry: Registry, locations: Locations) -> str:
-    """One server block, one location per `https` receiver, whitelisted per line."""
+def render_nginx_snippet(registry: Registry) -> str:
+    """One location per `https` receiver, whitelisted per line, for the interface's block.
 
-    tls = read_ui_tls(locations)
+    Rendered whole from the registry like the sshd drop-in, and holding only
+    `location` blocks: the server block - port, certificate, hostname - is the
+    interface's own, and this file reaches it through one `include` line that
+    `05-platform-nginx` puts there. A receiver never edits that block (B157).
+    """
+
     lines = [
         "# Written by haproxy-cert-receiver from the certificate registry.",
-        "# Hand edits are lost at the next change.",
-        "#",
-        "# Its own port rather than the interface's: nginx serves the first server",
-        "# block for a name and port and ignores the rest, so a second block on 443",
-        "# would test clean and never answer.",
-        "",
-        "server {",
-        f"    listen {HTTPS_PORT} ssl;",
-        f"    listen [::]:{HTTPS_PORT} ssl;",
-        f"    server_name {tls['SERVER_NAME']};",
-        "",
-        f"    ssl_certificate     {tls['TLS_CERT']};",
-        f"    ssl_certificate_key {tls['TLS_KEY']};",
-        "    ssl_protocols       TLSv1.2 TLSv1.3;",
-        "",
-        "    access_log /var/log/nginx/haproxy-manager-receivers.access.log;",
-        "    error_log  /var/log/nginx/haproxy-manager-receivers.error.log;",
-        "",
-        "    location / { deny all; }",
+        "# Included by the interface's server block. Hand edits are lost at the next change.",
         "",
     ]
     for receiver in _https_receivers(registry):
-        lines.append(f"    location {HTTPS_PREFIX}/{receiver.receiver_id}/ {{")
-        lines.append(f"        alias {receiver.path}/;")
-        lines.append("        autoindex off;")
+        lines.append(f"location {HTTPS_PREFIX}/{receiver.receiver_id}/ {{")
+        lines.append(f"    alias {receiver.path}/;")
+        lines.append("    autoindex off;")
         for entry in receiver.allow:
-            lines.append(f"        allow {entry};")
-        lines.append("        deny all;")
-        lines.append("    }")
+            lines.append(f"    allow {entry};")
+        lines.append("    deny all;")
+        lines.append("}")
         lines.append("")
-    lines.append("}")
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def check_snippet_included(locations: Locations) -> None:
+    """Refuse an `https` receiver whose locations nothing would serve.
+
+    The same failure Ö21 measured, from the other side: a snippet nginx never
+    includes tests clean and never answers. So the interface's site is read,
+    and a site without the include line - an installation older than B160 that
+    has not rerun `05-platform-nginx` - is a refusal, not a silent receiver.
+    """
+
+    try:
+        site = locations.ui_site.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ReceiverError(
+            "dependency_unavailable",
+            f"{locations.ui_site} could not be read; an https receiver is served from the "
+            "interface's own server block, and that is the file it lives in.",
+            exit_code=78,
+        ) from exc
+    wanted = f"include {locations.nginx_snippet};"
+    if not any(line.strip() == wanted for line in site.splitlines()):
+        raise ReceiverError(
+            "dependency_unavailable",
+            f"{locations.ui_site} does not include {locations.nginx_snippet}, so nginx would "
+            "never serve the receiver. Rerun install/platform/05-platform-nginx, which adds "
+            "the include line to the interface's server block.",
+            exit_code=78,
+        )
 
 
 def _write_checked(
@@ -739,13 +752,12 @@ def add(
         layout=layout,
         allow=tuple(allow),
     )
-    home = locations.home_root / account
 
     undo: list[Callable[[], None]] = []
     layers: list[Layer] = []
     try:
         if transport != "https" and not account_exists(account):
-            create_account(account, home, tools)
+            create_account(account, directory, tools)
             undo.append(lambda: _discard(tools.run([USERDEL, account])))
             layers.append(Layer("account", "created", account))
         else:
@@ -756,7 +768,7 @@ def add(
         if not existed:
             undo.append(lambda: shutil.rmtree(directory, ignore_errors=True))
 
-        layers.append(_write_lock(receiver, key_line, registry, locations, tools, undo, home))
+        layers.append(_write_lock(receiver, key_line, registry, locations, tools, undo))
 
         cert_registry.set_receiver(
             _registry_path(policy),
@@ -793,31 +805,28 @@ def _write_lock(
     locations: Locations,
     tools: Tools,
     undo: list[Callable[[], None]],
-    home: Path,
 ) -> Layer:
     """The lock for this transport, with the undo that takes it off again."""
 
     if receiver.transport == "https":
+        check_snippet_included(locations)
         before = (
-            locations.nginx_site.read_text(encoding="utf-8")
-            if locations.nginx_site.exists()
+            locations.nginx_snippet.read_text(encoding="utf-8")
+            if locations.nginx_snippet.exists()
             else None
         )
         layer = _write_checked(
-            locations.nginx_site,
-            render_nginx_site(_candidate(registry, receiver), locations),
+            locations.nginx_snippet,
+            render_nginx_snippet(_candidate(registry, receiver)),
             check=[NGINX, "-t"],
             reload=[SYSTEMCTL, "reload", "nginx"],
             tools=tools,
             what="nginx",
         )
-        if not locations.nginx_enabled.exists():
-            locations.nginx_enabled.parent.mkdir(parents=True, exist_ok=True)
-            locations.nginx_enabled.symlink_to(locations.nginx_site)
-            undo.append(lambda: locations.nginx_enabled.unlink(missing_ok=True))
-        undo.append(lambda: _restore(locations.nginx_site, before))
+        undo.append(lambda: _restore(locations.nginx_snippet, before))
         return layer
 
+    home = receiver.path
     keys_layer = write_authorized_keys(home, authorized_keys_line(receiver, key_line))
     undo.append(lambda: shutil.rmtree(home / ".ssh", ignore_errors=True))
     if receiver.transport == "sftp":
@@ -854,9 +863,10 @@ def instructions(receiver: Receiver, locations: Locations) -> tuple[str, ...]:
 
     host = socket.gethostname()
     if receiver.transport == "https":
+        server_name = read_ui_tls(locations)["SERVER_NAME"]
         return (
             f"transport: https (no key; the whitelist is {', '.join(receiver.allow)})",
-            f"url: https://{host}:{HTTPS_PORT}{HTTPS_PREFIX}/{receiver.receiver_id}/"
+            f"url: https://{server_name}{HTTPS_PREFIX}/{receiver.receiver_id}/"
             "<certificate>/fullchain.pem",
             "the private key is beside it as privkey.pem, under the same whitelist",
         )
@@ -960,8 +970,8 @@ def remove(
     if receiver.transport == "https":
         layers.append(
             _write_checked(
-                locations.nginx_site,
-                render_nginx_site(remaining, locations),
+                locations.nginx_snippet,
+                render_nginx_snippet(remaining),
                 check=[NGINX, "-t"],
                 reload=[SYSTEMCTL, "reload", "nginx"],
                 tools=tools,
@@ -969,13 +979,8 @@ def remove(
             )
         )
     else:
-        home = locations.home_root / receiver.owner
-        keys = home / ".ssh" / "authorized_keys"
-        if keys.exists():
-            keys.unlink()
-            layers.append(Layer("lock", "removed", str(keys)))
-        else:
-            layers.append(Layer("lock", "absent", str(keys)))
+        home = tools.home(receiver.owner) or receiver.path
+        layers.append(_remove_lock(home, receiver.path, shared=_shared(receiver.owner, remaining)))
         if receiver.transport == "sftp":
             _write_checked(
                 locations.sshd_dropin,
@@ -988,9 +993,55 @@ def remove(
 
     layers.append(_remove_directory(receiver.path))
     if receiver.transport != "https":
-        layers.append(remove_account(receiver.owner, tools))
-        shutil.rmtree(locations.home_root / receiver.owner, ignore_errors=True)
+        layers.append(_remove_account_unless_shared(receiver.owner, remaining, home, tools))
     return Result(receiver_id, "removed", tuple(layers))
+
+
+def _shared(owner: str, registry: Registry) -> bool:
+    """Whether another receiver still fetches as this account.
+
+    True only of the receivers registered before this command, which share
+    one account and one `authorized_keys` with a line per host (the `legacy`
+    ones `list` shows). Taking the account or the file with the first of them
+    would stop the others fetching without a word.
+    """
+
+    return any(other.owner == owner for other in registry.receivers.values())
+
+
+def _remove_lock(home: Path, path: Path, *, shared: bool) -> Layer:
+    """The lock goes; with a shared account, only the line that names this directory."""
+
+    keys = home / ".ssh" / "authorized_keys"
+    if not keys.exists():
+        return Layer("lock", "absent", str(keys))
+    if not shared:
+        keys.unlink()
+        return Layer("lock", "removed", str(keys))
+    lines = keys.read_text(encoding="utf-8").splitlines()
+    kept = [line for line in lines if str(path) not in line]
+    if len(kept) == len(lines):
+        return Layer("lock", "absent", f"no line in {keys} names {path}")
+    keys.write_text("".join(f"{line}\n" for line in kept), encoding="utf-8")
+    return Layer("lock", "removed", f"the line naming {path} in {keys}")
+
+
+def _remove_account_unless_shared(
+    owner: str, registry: Registry, home: Path, tools: Tools
+) -> Layer:
+    """The account goes with its last receiver, and its home with the account.
+
+    A home that is the receiver's directory (B160) is already gone by now; an
+    older account's separate home goes here, and only once nothing fetches
+    as it.
+    """
+
+    if _shared(owner, registry):
+        return Layer("account", "kept", f"{owner} still fetches for another")
+    layer = remove_account(owner, tools)
+    if layer.state == "removed":
+        shutil.rmtree(home, ignore_errors=True)
+    return layer
 
 
 def _remove_directory(path: Path) -> Layer:
@@ -1087,13 +1138,13 @@ def migrate(
         allow=receiver.allow,
     )
     key_line = read_public_key(public_key)
-    home = locations.home_root / account
+    old_home = tools.home(receiver.owner) or receiver.path
 
     undo: list[Callable[[], None]] = []
     layers: list[Layer] = []
     try:
         if not account_exists(account):
-            create_account(account, home, tools)
+            create_account(account, directory, tools)
             undo.append(lambda: _discard(tools.run([USERDEL, account])))
             layers.append(Layer("account", "created", account))
         else:
@@ -1101,9 +1152,7 @@ def migrate(
         layers.append(create_directory(directory, account))
         undo.append(lambda: shutil.rmtree(directory, ignore_errors=True))
         layers.append(
-            _write_lock(
-                moved, key_line, _without(registry, receiver_id), locations, tools, undo, home
-            )
+            _write_lock(moved, key_line, _without(registry, receiver_id), locations, tools, undo)
         )
         cert_registry.set_receiver(
             _registry_path(policy),
@@ -1121,6 +1170,7 @@ def migrate(
                     "id": receiver_id,
                     "old_owner": receiver.owner,
                     "old_path": str(receiver.path),
+                    "old_home": str(old_home),
                     "started": tools.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
                 },
                 indent=2,
@@ -1199,28 +1249,16 @@ def finish(
     layers: list[Layer] = []
     old_owner = str(held.get("old_owner", ""))
     old_path = Path(str(held.get("old_path", "")))
-    keys = locations.home_root / old_owner / ".ssh" / "authorized_keys"
-    if keys.exists():
-        keys.unlink()
-        layers.append(Layer("lock", "removed", str(keys)))
-    else:
-        layers.append(Layer("lock", "absent", str(keys)))
-    layers.append(_remove_directory(old_path))
+    old_home = Path(str(held.get("old_home", old_path)))
+    registry = runtime.registry
+    remaining = registry if registry is not None else Registry(receivers={}, certificates={})
     if old_owner and old_owner != HTTPS_OWNER:
-        #
-        # Only if nothing else fetches as it: the three PVE hosts share one
-        # account today, and finishing the first migration must not take the
-        # account the other two still use.
-        #
-        registry = runtime.registry
-        still_used = registry is not None and any(
-            other.owner == old_owner for other in registry.receivers.values()
-        )
-        if still_used:
-            layers.append(Layer("account", "kept", f"{old_owner} still fetches for another"))
-        else:
-            layers.append(remove_account(old_owner, tools))
-            shutil.rmtree(locations.home_root / old_owner, ignore_errors=True)
+        shared = _shared(old_owner, remaining)
+        layers.append(_remove_lock(old_home, old_path, shared=shared))
+        layers.append(_remove_directory(old_path))
+        layers.append(_remove_account_unless_shared(old_owner, remaining, old_home, tools))
+    else:
+        layers.append(_remove_directory(old_path))
     record.unlink(missing_ok=True)
     layers.append(Layer("migration", "removed", str(record)))
     return Result(receiver_id, "finished", tuple(layers))

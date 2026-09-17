@@ -44,12 +44,19 @@ class Runner:
     def __init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []
         self.failures: dict[str, tuple[int, str]] = {}
+        # What `useradd --home-dir` was told, so `Tools.home` answers as the
+        # system would once the account exists.
+        self.homes: dict[str, Path] = {}
 
     def __call__(self, argv):  # type: ignore[no-untyped-def]
         self.calls.append(tuple(argv))
         for fragment, answer in self.failures.items():
             if fragment in " ".join(argv):
                 return answer
+        if argv[0].endswith("useradd"):
+            self.homes[argv[-1]] = Path(argv[argv.index("--home-dir") + 1])
+        if argv[0].endswith("userdel"):
+            self.homes.pop(argv[-1], None)
         return 0, ""
 
     def ran(self, fragment: str) -> bool:
@@ -75,10 +82,18 @@ class ReceiverFixture(Fixture):
         )
         self.locations = Locations(
             sshd_dropin=self.etc / "ssh" / "sshd_config.d" / "haproxy-manager-receivers.conf",
-            nginx_site=self.etc / "nginx" / "sites-available" / "haproxy-manager-receivers",
-            nginx_enabled=self.etc / "nginx" / "sites-enabled" / "haproxy-manager-receivers",
+            nginx_snippet=self.etc / "nginx" / "snippets" / "haproxy-manager-receivers.conf",
+            ui_site=self.etc / "nginx" / "sites-available" / "haproxy-ui",
             ui_tls=self.etc / "haproxy-manager" / "ui-tls.conf",
-            home_root=self.root / "home",
+        )
+        # The interface's site as 05-platform-nginx renders it: with the line
+        # that makes the snippet reachable at all.
+        self.locations.ui_site.parent.mkdir(parents=True, exist_ok=True)
+        self.locations.ui_site.write_text(
+            "server {\n    listen 443 ssl;\n"
+            f"    include {self.locations.nginx_snippet};\n"
+            "    location / { proxy_pass http://127.0.0.1:8080; }\n}\n",
+            encoding="utf-8",
         )
         self.key_file = self.root / "receiver.pub"
         self.key_file.write_text(KEY + "\n", encoding="ascii")
@@ -86,10 +101,16 @@ class ReceiverFixture(Fixture):
         # Every receiver ID in these tests resolves to itself, so B141's check
         # is exercised without asking the network anything.
         #
+        #
+        # An account this run created answers with the home it was given; the
+        # test's own account (a `legacy` receiver's) answers with a separate
+        # home under the fixture, as the old shared account has on a machine.
+        #
         self.tools = Tools(
             run=self.runner,
             forward=lambda name: ("192.0.2.10",),
             reverse=lambda address: (self.resolving,),
+            home=lambda owner: self.runner.homes.get(owner, self.root / "home" / owner),
         )
         self.resolving = "lb-02.example.net"
         self.policy_path = self.write_config(dict(KEEPER))
@@ -130,8 +151,10 @@ class ReceiverFixture(Fixture):
     def registered(self) -> dict[str, Any]:
         return yaml.safe_load((self.root / "certificates.yaml").read_text())["receivers"]
 
-    def keys_file(self, owner: str = ME) -> Path:
-        return self.locations.home_root / owner / ".ssh" / "authorized_keys"
+    def keys_file(self, receiver_id: str = "lb-02.example.net") -> Path:
+        """The lock, inside the receiver's own directory (B160)."""
+
+        return self.root / "receivers" / receiver_id / ".ssh" / "authorized_keys"
 
 
 class AddingAReceiver(ReceiverFixture):
@@ -145,6 +168,9 @@ class AddingAReceiver(ReceiverFixture):
         self.assertTrue(directory.is_dir())
         self.assertEqual(directory.stat().st_mode & 0o777, 0o750)
         self.assertEqual(directory.stat().st_gid, pwd.getpwnam(ME).pw_gid)
+        # One directory per receiver: the lock sits in a root-owned `.ssh`
+        # inside the directory the receiver fetches from (B160).
+        self.assertEqual((directory / ".ssh").stat().st_mode & 0o777, 0o755)
 
         line = self.keys_file().read_text(encoding="ascii").splitlines()[-1]
         self.assertTrue(line.startswith('restrict,from="lb-02.example.net",command="'))
@@ -158,6 +184,28 @@ class AddingAReceiver(ReceiverFixture):
         self.assertEqual(entry["path"], str(directory))
         self.assertNotIn("allow", entry)
         self.assertFalse(self.runner.ran("sshd"))
+
+    def test_a_new_account_gets_the_receiver_directory_as_its_home(self) -> None:
+        with (
+            mock.patch.object(cert_receiver, "account_exists", return_value=False),
+            mock.patch.object(cert_receiver, "_own"),
+        ):
+            self.add(owner="crx-lb-02")
+
+        directory = self.root / "receivers" / "lb-02.example.net"
+        self.assertIn(
+            (
+                "/usr/sbin/useradd",
+                "--system",
+                "--home-dir",
+                str(directory),
+                "--shell",
+                "/usr/sbin/nologin",
+                "crx-lb-02",
+            ),
+            self.runner.calls,
+        )
+        self.assertEqual(self.runner.homes["crx-lb-02"], directory)
 
     def test_sftp_also_writes_a_chrooted_match_block_sshd_accepted(self) -> None:
         result = self.add(transport="sftp")
@@ -176,25 +224,50 @@ class AddingAReceiver(ReceiverFixture):
     def test_https_gets_a_whitelisted_location_and_no_key_at_all(self) -> None:
         # www-data's directory cannot be chowned by a test that is not root.
         with mock.patch.object(cert_receiver, "_own"):
-            self.add(
+            result = self.add(
                 transport="https",
                 public_key=None,
                 owner=None,
                 allow=["192.0.2.0/24", "198.51.100.7"],
             )
 
-        site = self.locations.nginx_site.read_text(encoding="utf-8")
-        self.assertIn("listen 8443 ssl;", site)
-        self.assertIn("server_name mgr.example.net;", site)
-        self.assertIn("location /certificates/lb-02.example.net/ {", site)
-        self.assertIn("allow 192.0.2.0/24;", site)
-        self.assertIn("allow 198.51.100.7;", site)
-        self.assertIn("deny all;", site)
-        self.assertTrue(self.locations.nginx_enabled.is_symlink())
+        snippet = self.locations.nginx_snippet.read_text(encoding="utf-8")
+        # Locations only: the server block - port, certificate, name - is the
+        # interface's, and this file is what its include line pulls in.
+        self.assertNotIn("server {", snippet)
+        self.assertNotIn("listen", snippet)
+        self.assertIn("location /certdist/lb-02.example.net/ {", snippet)
+        self.assertIn(f"alias {self.root / 'receivers' / 'lb-02.example.net'}/;", snippet)
+        self.assertIn("allow 192.0.2.0/24;", snippet)
+        self.assertIn("allow 198.51.100.7;", snippet)
+        self.assertIn("deny all;", snippet)
         self.assertTrue(self.runner.ran("/usr/sbin/nginx -t"))
         self.assertTrue(self.runner.ran("systemctl reload nginx"))
-        self.assertFalse(self.keys_file("www-data").exists())
+        self.assertFalse(self.keys_file().exists())
         self.assertEqual(self.registered()["lb-02.example.net"]["owner"], "www-data")
+        self.assertTrue(
+            any(
+                line.startswith("url: https://mgr.example.net/certdist/lb-02.example.net/")
+                for line in result.instructions
+            ),
+            result.instructions,
+        )
+
+    def test_https_is_refused_while_the_interface_does_not_include_the_snippet(self) -> None:
+        self.locations.ui_site.write_text(
+            "server {\n    listen 443 ssl;\n    location / { }\n}\n", encoding="utf-8"
+        )
+
+        with (
+            mock.patch.object(cert_receiver, "_own"),
+            self.assertRaises(ReceiverError) as caught,
+        ):
+            self.add(transport="https", public_key=None, owner=None, allow=["192.0.2.0/24"])
+
+        self.assertEqual(caught.exception.code, "dependency_unavailable")
+        self.assertIn("05-platform-nginx", str(caught.exception))
+        self.assertFalse(self.locations.nginx_snippet.exists())
+        self.assertNotIn("lb-02.example.net", self.registered())
 
     def test_the_instructions_name_what_the_receiver_needs(self) -> None:
         result = self.add()
@@ -275,7 +348,7 @@ class WhenALayerRefuses(ReceiverFixture):
             self.add(transport="https", public_key=None, owner=None, allow=["192.0.2.0/24"])
 
         self.assertNotIn("lb-02.example.net", self.registered())
-        self.assertFalse(self.locations.nginx_site.exists())
+        self.assertFalse(self.locations.nginx_snippet.exists())
 
 
 class RemovingAReceiver(ReceiverFixture):
@@ -357,8 +430,15 @@ class MigratingTheOldOnes(ReceiverFixture):
         (self.root / "certificates.yaml").write_text(yaml.safe_dump(document), encoding="utf-8")
         (self.root / "old" / "pve-01").mkdir(parents=True)
         (self.root / "old" / "pve-01" / "fullchain.pem").write_text("chain\n", encoding="utf-8")
-        self.keys_file().parent.mkdir(parents=True, exist_ok=True)
-        self.keys_file().write_text("old key\n", encoding="ascii")
+        # The old shared account keeps its lock under a home of its own, as
+        # the accounts made before this command do on a machine.
+        self.old_keys = self.root / "home" / ME / ".ssh" / "authorized_keys"
+        self.old_keys.parent.mkdir(parents=True, exist_ok=True)
+        self.old_keys.write_text(
+            f'restrict,command="/usr/bin/rrsync -ro {self.root / "old" / "pve-01"}/" {KEY}\n'
+            f'restrict,command="/usr/bin/rrsync -ro {self.root / "old" / "pve-02"}/" {KEY}\n',
+            encoding="ascii",
+        )
         self.resolving = "pve-01.example.net"
 
     def migrate(self, **options: Any):  # type: ignore[no-untyped-def]
@@ -387,11 +467,14 @@ class MigratingTheOldOnes(ReceiverFixture):
         self.assertEqual(entry["owner"], "crx-pve-01")
         self.assertEqual(entry["path"], str(self.root / "receivers" / "pve-01.example.net"))
         self.assertTrue((self.root / "old" / "pve-01" / "fullchain.pem").exists())
+        self.assertTrue(self.old_keys.exists())
+        self.assertTrue(self.keys_file("pve-01.example.net").exists())
         self.assertIn("kept", [layer.state for layer in result.layers])
         record = json.loads(
             (self.root / "receivers" / ".migrations" / "pve-01.example.net.json").read_text()
         )
         self.assertEqual(record["old_path"], str(self.root / "old" / "pve-01"))
+        self.assertEqual(record["old_home"], str(self.root / "home" / ME))
 
     def test_a_second_migration_while_one_is_under_way(self) -> None:
         with (
@@ -439,6 +522,9 @@ class MigratingTheOldOnes(ReceiverFixture):
 
         self.assertEqual(result.action, "finished")
         self.assertFalse((self.root / "old" / "pve-01").exists())
+        self.assertFalse(self.old_keys.exists())
+        self.assertFalse((self.root / "home" / ME).exists())
+        self.assertTrue(self.runner.ran(f"userdel {ME}"))
         self.assertFalse(
             (self.root / "receivers" / ".migrations" / "pve-01.example.net.json").exists()
         )
@@ -469,6 +555,11 @@ class MigratingTheOldOnes(ReceiverFixture):
         kept = [layer for layer in result.layers if layer.name == "account"]
         self.assertEqual([layer.state for layer in kept], ["kept"])
         self.assertFalse(self.runner.ran("userdel"))
+        # The shared file loses one line, the one naming pve-01's directory;
+        # pve-02 goes on fetching with the other.
+        remaining = self.old_keys.read_text(encoding="ascii")
+        self.assertNotIn("pve-01", remaining)
+        self.assertIn("pve-02", remaining)
 
 
 class TheCommand(ReceiverFixture):

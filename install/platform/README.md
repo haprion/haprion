@@ -360,6 +360,11 @@ The step is also where the packaged nginx default site is disabled — as a
 symlink removal, not a file deletion. It answers on port 80 for any name, which
 includes this one.
 
+The site includes `/etc/nginx/snippets/haproxy-manager-receivers.conf`, the
+file `haproxy-cert-receiver` writes its `https` receivers' `location` blocks
+into. The step creates it empty when it is absent and never touches an existing
+one, so a rerun does not take the receivers with it.
+
 **If no certificate pair exists it generates a self-signed one**, so the UI is
 encrypted from the first login. The session cookie is `Secure` and is therefore
 never sent over plain HTTP; running without TLS is not a weaker setup here, it is

@@ -11,7 +11,7 @@
 #
 set -eu
 
-URL=${URL:-https://manager.example.net:8443/certificates/192.0.2.40}
+URL=${URL:-https://manager.example.net/certdist/192.0.2.40}
 CA=${CA:-/etc/ssl/certs/internal-root.pem}
 TARGET=${TARGET:-/etc/ssl/haproxy}
 CERTIFICATE=${CERTIFICATE:-app.example.net}

@@ -42,7 +42,13 @@ from typing import Any
 
 import yaml
 
-from haproxy_mgmt.config import ConfigError, RuntimeConfig, load_registry
+from haproxy_mgmt.config import (
+    DEFAULT_RECEIVER_FORMAT,
+    ConfigError,
+    Registry,
+    RuntimeConfig,
+    load_registry,
+)
 
 #
 # Kept here, next to the writer that stamps it, rather than in the modules that
@@ -141,6 +147,7 @@ def write(
             unknown = sorted(set(certificate.clusters) - set(runtime.clusters))
             if unknown:
                 raise ConfigError(f"unknown cluster(s): {', '.join(unknown)}")
+        check_receiver_rules(candidate)
         #
         # The check that is not obvious from this file, and the one that cost an
         # installation in testing: `load_runtime_config` refuses a cluster that
@@ -176,6 +183,80 @@ def write(
         ) from exc
 
 
+def check_receiver_rules(registry: Registry) -> None:
+    """The two rules B138 states, checked on the whole registry rather than on a delta.
+
+    Here rather than in `set_targets` because four paths write this file -
+    issuing, importing, retargeting and deleting - and a rule enforced in one
+    of them is a rule three others can break. What the candidate registry says
+    is the whole truth about targets, so both rules are answerable from it
+    alone, and both are refused before the file is renamed into place.
+
+    Both are stated as properties of the end state, which is why each is
+    refused from either direction on its own: giving a `flat` receiver a
+    second certificate and giving a second certificate that receiver are the
+    same registry, and so is adding a cluster to an `https` certificate or an
+    `https` receiver to a certificate that has clusters.
+    """
+
+    holders: dict[str, list[str]] = {}
+    for certificate in registry.certificates.values():
+        for receiver_id in certificate.receivers:
+            receiver = registry.receivers.get(receiver_id)
+            if receiver is None:
+                continue
+            holders.setdefault(receiver_id, []).append(certificate.certificate_id)
+            #
+            # Spärr 2 (B138). An `https` receiver fetches with an address list
+            # instead of a key, and what keeps that bearable is that such a
+            # receiver is alone with a certificate of its own. A certificate
+            # that also serves clusters is the installation's own traffic, and
+            # it does not go out that way.
+            #
+            if receiver.transport == "https" and certificate.clusters:
+                raise RegistryError(
+                    "https_receiver_isolated",
+                    f"{certificate.certificate_id} is carried by "
+                    f"{', '.join(certificate.clusters)} and receiver {receiver_id} fetches "
+                    "over https, which has no key of its own. A certificate that a cluster "
+                    "carries is not published that way.",
+                )
+
+    #
+    # Spärr 1 (B138). A `flat` receiver reads `fullchain.pem` and
+    # `privkey.pem` straight out of its directory, so a second certificate
+    # there is not a second certificate - it is the first one overwritten,
+    # silently, at whichever publish ran last. New receivers are
+    # `per-certificate` for exactly this reason; the older ones are refused a
+    # second certificate instead.
+    #
+    for receiver_id, certificates in sorted(holders.items()):
+        receiver = registry.receivers[receiver_id]
+        if receiver.layout == "flat" and len(certificates) > 1:
+            raise RegistryError(
+                "receiver_full",
+                f"receiver {receiver_id} keeps its files directly in its directory, so it "
+                f"holds one certificate at a time, and {', '.join(sorted(certificates))} "
+                "would share it. Take the other one away first.",
+            )
+
+
+def receiver_in_use(registry: Registry, receiver_id: str) -> tuple[str, ...]:
+    """Spärr 4 (B138): the certificates that name this receiver, in registry order.
+
+    Asked by `haproxy-cert-receiver remove`, which may not take an account,
+    a directory and a key out from under a certificate that still publishes
+    there. Answered here, beside the rules, rather than counted again at the
+    call site.
+    """
+
+    return tuple(
+        certificate.certificate_id
+        for certificate in registry.certificates.values()
+        if receiver_id in certificate.receivers
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class TargetChange:
     """What retargeting one certificate did, in the terms the caller reports.
@@ -205,6 +286,44 @@ class TargetChange:
         }
 
 
+def _named_receivers(entry: Mapping[str, Any]) -> tuple[tuple[str, ...], dict[str, str]]:
+    """The receiver IDs in a raw entry, and the formats stated beside them.
+
+    The raw document, not the typed registry: this is the half that gets
+    written back, and an element it does not understand is an element it must
+    not drop. Reading it here is what keeps a retarget from quietly turning a
+    receiver's PKCS#12 bundle back into a PEM pair at the next target change.
+    """
+
+    named: list[str] = []
+    formats: dict[str, str] = {}
+    for item in entry.get("receivers") or ():
+        if isinstance(item, Mapping):
+            receiver_id = str(item.get("id"))
+            stated = item.get("format")
+            if isinstance(stated, str):
+                formats[receiver_id] = stated
+        else:
+            receiver_id = str(item)
+        named.append(receiver_id)
+    return tuple(named), formats
+
+
+def _receiver_elements(
+    receivers: Sequence[str], formats: Mapping[str, str]
+) -> list[str | dict[str, str]]:
+    """The receiver list as it is written back: a bare ID unless a format is stated."""
+
+    elements: list[str | dict[str, str]] = []
+    for receiver_id in receivers:
+        form = formats.get(receiver_id, DEFAULT_RECEIVER_FORMAT)
+        if form == DEFAULT_RECEIVER_FORMAT:
+            elements.append(receiver_id)
+        else:
+            elements.append({"id": receiver_id, "format": form})
+    return elements
+
+
 def set_targets(
     path: Path,
     *,
@@ -212,6 +331,7 @@ def set_targets(
     clusters: Sequence[str],
     receivers: Sequence[str],
     runtime: RuntimeConfig,
+    formats: Mapping[str, str] | None = None,
     require_secure: bool = True,
 ) -> TargetChange:
     """Replace one certificate's targets with exactly these, and say what moved.
@@ -260,15 +380,29 @@ def set_targets(
         )
 
     before_clusters = tuple(entry.get("clusters") or ())
-    before_receivers = tuple(entry.get("receivers") or ())
+    before_receivers, before_formats = _named_receivers(entry)
     after_clusters = tuple(sorted(set(clusters)))
     after_receivers = tuple(sorted(set(receivers)))
+    #
+    # A format the caller did not mention is the format the pair already had.
+    # The interface changes which targets a certificate has far more often
+    # than it changes how one of them is written, and a caller that had to
+    # restate every format to move an unrelated target would lose one the day
+    # it forgot.
+    #
+    after_formats = {
+        receiver_id: (formats or {}).get(receiver_id, before_formats.get(receiver_id))
+        for receiver_id in after_receivers
+    }
 
-    updated = {"source": entry["source"]}
+    updated: dict[str, Any] = {"source": entry["source"]}
     if after_clusters:
         updated["clusters"] = list(after_clusters)
     if after_receivers:
-        updated["receivers"] = list(after_receivers)
+        updated["receivers"] = _receiver_elements(
+            after_receivers,
+            {k: v for k, v in after_formats.items() if v is not None},
+        )
     certificates[certificate_id] = updated
 
     before = set(before_clusters) | set(before_receivers)

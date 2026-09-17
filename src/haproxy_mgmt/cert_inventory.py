@@ -41,7 +41,13 @@ from haproxy_mgmt.certificates import (
     leaf_block,
     leaf_fingerprint,
 )
-from haproxy_mgmt.config import Cluster, RegisteredCertificate, Registry
+from haproxy_mgmt.config import (
+    DEFAULT_RECEIVER_FORMAT,
+    Cluster,
+    Receiver,
+    RegisteredCertificate,
+    Registry,
+)
 from haproxy_mgmt.ndes_state import pending_requests, renewal_record, request_is_pending
 
 OPENSSL = "/usr/bin/openssl"
@@ -55,6 +61,53 @@ LETSENCRYPT_LIVE = LETSENCRYPT_ROOT / "live"
 IMPORT_STORE = Path("/etc/haproxy-manager/certificates")
 FULLCHAIN = "fullchain.pem"
 PRIVKEY = "privkey.pem"
+#
+# The PKCS#12 pair (B159): one bundle and the password that opens it, named
+# after the certificate so a `flat` directory could hold several - which it
+# may not, but the name is what a receiver's script looks for either way.
+#
+PKCS12_SUFFIX = ".pfx"
+PASSWORD_SUFFIX = ".password"  # noqa: S105 - a file name, not a password
+
+
+def receiver_directory(receiver: Receiver, certificate_id: str) -> Path:
+    """Where this certificate's files live for this receiver (B138 layout).
+
+    One function rather than five, because five readers ask it: the publisher
+    that writes, the retarget and delete paths that unlink, the listing that
+    reports when the manager last wrote, and the registration command that
+    creates the directory. A reader that guessed `flat` while the registry
+    said `per-certificate` would unlink a file that is not there and report a
+    receiver as never published.
+    """
+
+    if receiver.layout == "per-certificate":
+        return receiver.path / certificate_id
+    return receiver.path
+
+
+def receiver_files(
+    receiver: Receiver, certificate_id: str, *, form: str = DEFAULT_RECEIVER_FORMAT
+) -> tuple[Path, ...]:
+    """The files this receiver holds for this certificate, in this form."""
+
+    directory = receiver_directory(receiver, certificate_id)
+    if form == "pkcs12":
+        return (
+            directory / f"{certificate_id}{PKCS12_SUFFIX}",
+            directory / f"{certificate_id}{PASSWORD_SUFFIX}",
+        )
+    return (directory / FULLCHAIN, directory / PRIVKEY)
+
+
+def receiver_witness(
+    receiver: Receiver, certificate_id: str, *, form: str = DEFAULT_RECEIVER_FORMAT
+) -> Path:
+    """The file whose timestamp says when the manager last published here."""
+
+    return receiver_files(receiver, certificate_id, form=form)[0]
+
+
 SAN_DNS = re.compile(r"DNS:([^,\s]+)")
 OPENSSL_TIMEOUT = 10
 
@@ -301,7 +354,9 @@ def _measure(path: Path) -> tuple[str, Facts]:
     return leaf_fingerprint(pem), describe(leaf_block(pem))
 
 
-def _published(path: Path, source_fingerprint: str | None) -> dict[str, Any]:
+def _published(
+    path: Path, source_fingerprint: str | None, *, measurable: bool = True
+) -> dict[str, Any]:
     """Whether one target holds this certificate, and since when.
 
     Two facts and no third. `published_at` is the file's own timestamp, which
@@ -313,22 +368,50 @@ def _published(path: Path, source_fingerprint: str | None) -> dict[str, Any]:
     `current` is null rather than false where it could not be decided: an
     unreadable source and an out-of-date target are different facts, and the
     one thing worse than not knowing is saying the wrong one confidently.
+
+    `measurable` is false for a PKCS#12 bundle (B159), which cannot be read
+    without the password that opens it. The bundle's timestamp still says when
+    the manager wrote it, and `current` stays null - not knowing, said as not
+    knowing, rather than a listing that opens key material to decorate a
+    column.
     """
 
     try:
         stat = path.stat()
     except OSError:
         return {"published_at": None, "current": None if source_fingerprint is None else False}
-    try:
-        fingerprint, _ = _measure(path)
-    except (OSError, UnicodeDecodeError, CertificateError):
-        fingerprint = None
+    fingerprint: str | None = None
+    if measurable:
+        try:
+            fingerprint, _ = _measure(path)
+        except (OSError, UnicodeDecodeError, CertificateError):
+            fingerprint = None
     current = None
     if source_fingerprint is not None and fingerprint is not None:
         current = fingerprint == source_fingerprint
     return {
         "published_at": _timestamp(datetime.fromtimestamp(stat.st_mtime, UTC)),
         "current": current,
+    }
+
+
+def _receiver_row(
+    receiver: Receiver, certificate_id: str, form: str, fingerprint: str | None
+) -> dict[str, Any]:
+    """One receiver's line in a certificate's targets: where it goes and how.
+
+    The form is reported even when it is the default, so a caller reading the
+    listing never has to know what the default was on the day it was written.
+    """
+
+    return {
+        "id": receiver.receiver_id,
+        "format": form,
+        **_published(
+            receiver_witness(receiver, certificate_id, form=form),
+            fingerprint,
+            measurable=form != "pkcs12",
+        ),
     }
 
 
@@ -448,10 +531,12 @@ def registry_result(
         row["targets"] = {
             "clusters": list(entry.clusters),
             "receivers": [
-                {
-                    "id": receiver_id,
-                    **_published(registry.receivers[receiver_id].path / FULLCHAIN, fingerprint),
-                }
+                _receiver_row(
+                    registry.receivers[receiver_id],
+                    entry.certificate_id,
+                    entry.format_for(receiver_id),
+                    fingerprint,
+                )
                 for receiver_id in entry.receivers
                 if receiver_id in registry.receivers
             ],
@@ -497,12 +582,12 @@ def registry_result(
                     "targets": {
                         "clusters": list(pending.clusters),
                         "receivers": [
-                            {
-                                "id": receiver_id,
-                                **_published(
-                                    registry.receivers[receiver_id].path / FULLCHAIN, None
-                                ),
-                            }
+                            _receiver_row(
+                                registry.receivers[receiver_id],
+                                pending.certificate_id,
+                                DEFAULT_RECEIVER_FORMAT,
+                                None,
+                            )
                             for receiver_id in pending.receivers
                             if receiver_id in registry.receivers
                         ],

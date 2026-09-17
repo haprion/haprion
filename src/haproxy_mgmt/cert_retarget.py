@@ -63,16 +63,23 @@ from haproxy_mgmt.cert_delete import (
     read_guards,
     remove_node_copies,
 )
-from haproxy_mgmt.cert_inventory import FULLCHAIN, IMPORT_STORE, LETSENCRYPT_LIVE, PRIVKEY
+from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE, receiver_files
 from haproxy_mgmt.cert_publish import (
     DEFAULT_LOCK_PATH,
     Deployer,
     PublishError,
+    prune_receiver_directory,
     publish,
     publish_lock,
 )
 from haproxy_mgmt.certificates import certificate_path
-from haproxy_mgmt.config import ConfigError, PathPolicy, RuntimeConfig, load_runtime_config
+from haproxy_mgmt.config import (
+    DEFAULT_RECEIVER_FORMAT,
+    ConfigError,
+    PathPolicy,
+    RuntimeConfig,
+    load_runtime_config,
+)
 
 OPERATION = "cert_target"
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-target-helper"
@@ -261,15 +268,27 @@ def _clear_receivers(
 
     registry = runtime.registry
     assert registry is not None  # noqa: S101
+    entry = registry.certificates.get(certificate_id)
     layers: list[Layer] = []
     for receiver_id in receiver_ids:
         receiver = registry.receivers.get(receiver_id)
         if receiver is None:
             continue
-        sharing = sorted(
-            other.certificate_id
-            for other in registry.certificates.values()
-            if other.certificate_id != certificate_id and receiver_id in other.receivers
+        #
+        # Only a `flat` receiver can have someone else's copy in the same
+        # place. Under `per-certificate` every certificate has its own
+        # directory, so another certificate publishing to this receiver is
+        # not a reason to keep this one's files - and keeping them would
+        # leave a private key in a directory no entry names any more.
+        #
+        sharing = (
+            sorted(
+                other.certificate_id
+                for other in registry.certificates.values()
+                if other.certificate_id != certificate_id and receiver_id in other.receivers
+            )
+            if receiver.layout == "flat"
+            else []
         )
         if sharing:
             layers.append(
@@ -280,8 +299,10 @@ def _clear_receivers(
                 )
             )
             continue
-        layers.append(_unlink(receiver.path / FULLCHAIN))
-        layers.append(_unlink(receiver.path / PRIVKEY))
+        form = entry.format_for(receiver_id) if entry is not None else DEFAULT_RECEIVER_FORMAT
+        for path in receiver_files(receiver, certificate_id, form=form):
+            layers.append(_unlink(path))
+        prune_receiver_directory(receiver, certificate_id)
     return tuple(layers)
 
 

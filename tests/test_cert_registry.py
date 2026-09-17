@@ -256,3 +256,149 @@ class WhatRetargetingDoes(RegistryFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheRulesThatMakeB138True(RegistryFixture):
+    """Spärrarna 1, 2 and 4, checked on the whole registry rather than on a delta.
+
+    They live in the writer every path goes through - issuing, importing,
+    retargeting, deleting - so each is refused from either direction: it is
+    the same end state either way, and the end state is what is refused.
+    """
+
+    def test_a_flat_receiver_takes_one_certificate_at_a_time(self) -> None:
+        policy_path, registry = self.prepared(
+            {
+                "one.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]},
+                "two.example": {"source": {"kind": "acme"}},
+            }
+        )
+        before = registry.read_bytes()
+
+        with self.assertRaises(RegistryError) as caught:
+            self.retarget(policy_path, registry, "two.example", receivers=["lb-01"])
+
+        self.assertEqual(caught.exception.code, "receiver_full")
+        self.assertIn("one certificate at a time", str(caught.exception))
+        self.assertEqual(registry.read_bytes(), before)
+
+    def test_a_per_certificate_receiver_takes_as_many_as_it_is_given(self) -> None:
+        policy_path, registry = self.prepared(
+            {
+                "one.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]},
+                "two.example": {"source": {"kind": "acme"}},
+            },
+        )
+        raw = yaml.safe_load(registry.read_text())
+        raw["receivers"]["lb-01"]["layout"] = "per-certificate"
+        registry.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+        change = self.retarget(policy_path, registry, "two.example", receivers=["lb-01"])
+
+        self.assertEqual(change.receivers, ("lb-01",))
+        self.assertEqual(self.entries(registry)["one.example"]["receivers"], ["lb-01"])
+
+    def test_an_https_receiver_and_a_cluster_refuse_each_other(self) -> None:
+        self.register(
+            "web-01.example.net",
+            transport="https",
+            layout="per-certificate",
+            allow=["192.0.2.0/24"],
+        )
+        policy_path, registry = self.prepared(
+            {
+                "public.example": {
+                    "source": {"kind": "acme"},
+                    "receivers": ["web-01.example.net"],
+                }
+            }
+        )
+        before = registry.read_bytes()
+
+        # A cluster onto a certificate an https receiver already fetches.
+        with self.assertRaises(RegistryError) as caught:
+            self.retarget(
+                policy_path,
+                registry,
+                "public.example",
+                clusters=["alpha"],
+                receivers=["web-01.example.net"],
+            )
+        self.assertEqual(caught.exception.code, "https_receiver_isolated")
+
+        # And the other direction: the receiver onto a certificate a cluster carries.
+        with self.assertRaises(RegistryError) as second:
+            self.retarget(
+                policy_path,
+                registry,
+                "keeper-alpha.example",
+                clusters=["alpha"],
+                receivers=["web-01.example.net"],
+            )
+        self.assertEqual(second.exception.code, "https_receiver_isolated")
+        self.assertEqual(registry.read_bytes(), before)
+
+    def test_a_receiver_that_a_certificate_names_is_in_use(self) -> None:
+        policy_path, registry = self.prepared(
+            {"one.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]}}
+        )
+        runtime = self.runtime(policy_path)
+        assert runtime.registry is not None
+
+        self.assertEqual(cert_registry.receiver_in_use(runtime.registry, "lb-01"), ("one.example",))
+
+        self.retarget(policy_path, registry, "one.example", receivers=[])
+        runtime = self.runtime(policy_path)
+        assert runtime.registry is not None
+        self.assertEqual(cert_registry.receiver_in_use(runtime.registry, "lb-01"), ())
+
+
+class AFormatSurvivesARetarget(RegistryFixture):
+    """B159: the pair's form is not restated at every target change, so it is kept."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.register("certserver1.example.net", layout="per-certificate")
+        self.policy_path, self.registry = self.prepared(
+            {
+                "one.example": {
+                    "source": {"kind": "acme"},
+                    "receivers": [{"id": "certserver1.example.net", "format": "pkcs12"}],
+                }
+            }
+        )
+
+    def test_moving_another_target_leaves_the_form_alone(self) -> None:
+        self.retarget(
+            self.policy_path,
+            self.registry,
+            "one.example",
+            clusters=["alpha"],
+            receivers=["certserver1.example.net"],
+        )
+
+        self.assertEqual(
+            self.entries(self.registry)["one.example"]["receivers"],
+            [{"id": "certserver1.example.net", "format": "pkcs12"}],
+        )
+
+    def test_a_stated_form_replaces_the_one_before_it(self) -> None:
+        cert_registry.set_targets(
+            self.registry,
+            certificate_id="one.example",
+            clusters=[],
+            receivers=["certserver1.example.net", "lb-01"],
+            formats={"certserver1.example.net": "pem"},
+            runtime=self.runtime(self.policy_path),
+            require_secure=False,
+        )
+
+        self.assertEqual(
+            self.entries(self.registry)["one.example"]["receivers"],
+            ["certserver1.example.net", "lb-01"],
+        )
+
+    def test_a_receiver_taken_away_takes_its_form_with_it(self) -> None:
+        self.retarget(self.policy_path, self.registry, "one.example", receivers=["lb-01"])
+
+        self.assertEqual(self.entries(self.registry)["one.example"]["receivers"], ["lb-01"])

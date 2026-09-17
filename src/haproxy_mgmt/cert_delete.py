@@ -75,12 +75,13 @@ from pathlib import Path
 from typing import Any
 
 from haproxy_mgmt import cert_registry
-from haproxy_mgmt.cert_inventory import FULLCHAIN, IMPORT_STORE, PRIVKEY
-from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, publish_lock
+from haproxy_mgmt.cert_inventory import IMPORT_STORE, receiver_files
+from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, prune_receiver_directory, publish_lock
 from haproxy_mgmt.cert_publish import PublishError as LockError
 from haproxy_mgmt.certificates import certificate_path
 from haproxy_mgmt.config import (
     CERTIFICATE_ID,
+    DEFAULT_RECEIVER_FORMAT,
     Cluster,
     ConfigError,
     DeployIdentity,
@@ -377,12 +378,15 @@ def remove_material(
     layers: list[Layer] = []
     if entry_clusters and policy.certificate_root is not None:
         layers.append(_unlink(certificate_path(policy.certificate_root, certificate_id)))
+    entry = registry.certificates.get(certificate_id)
     for receiver_id in entry_receivers:
         receiver = registry.receivers.get(receiver_id)
         if receiver is None:
             continue
-        layers.append(_unlink(receiver.path / FULLCHAIN))
-        layers.append(_unlink(receiver.path / PRIVKEY))
+        form = entry.format_for(receiver_id) if entry is not None else DEFAULT_RECEIVER_FORMAT
+        for path in receiver_files(receiver, certificate_id, form=form):
+            layers.append(_unlink(path))
+        prune_receiver_directory(receiver, certificate_id)
     return tuple(layers)
 
 

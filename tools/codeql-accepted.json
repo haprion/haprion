@@ -69,6 +69,13 @@
       "message": "This expression stores [sensitive data (secret)](1) as clear text.\nThis expression stores [sensitive data (secret)](2) as clear text.",
       "decided": "2026-09-13",
       "reason": "A certbot DNS plugin reads its credentials from a 0o600 INI file and nothing else; the rendered file is the interface, and this verifier proves the catalogue's rendering against the installed plugin by writing one into a private temporary directory and handing it to the plugin's own credential setup. The values are the verifier's fixed integration-test constants, named as such, never a real credential; the root helper that writes real ones (P5) writes them the same way because that is what certbot reads."
+    },
+    {
+      "rule": "py/overly-permissive-file",
+      "path": "src/haproxy_mgmt/cert_publish.py",
+      "message": "Overly permissive mask in chmod sets file to group readable.",
+      "decided": "2026-09-17",
+      "reason": "The per-certificate directory a receiver fetches from (C7, B138). Group read and execute is what lets the receiver's own account reach the 0600 files inside it; the directory itself stays owned by root and not writable by the account, which is the point - a receiver reads what it was given and cannot replace it. The group is the account's own, created with it by haproxy-cert-receiver, so group read reaches one receiver and no other. Re-check if a receiver account is ever given a shared group."
     }
   ]
 }

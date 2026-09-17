@@ -409,7 +409,7 @@ class RegistryListingTests(unittest.TestCase):
         self.assertIsNotNone(by_id["current"]["published_at"])
         self.assertFalse(by_id["stale"]["current"])
         self.assertIsNone(by_id["never"]["published_at"])
-        self.assertEqual(set(by_id["current"]), {"id", "published_at", "current"})
+        self.assertEqual(set(by_id["current"]), {"id", "format", "published_at", "current"})
 
     def test_an_unreadable_source_leaves_current_unknown_rather_than_false(self) -> None:
         #
@@ -564,7 +564,7 @@ class RegistryListingTests(unittest.TestCase):
             self.assertEqual(row["targets"]["clusters"], ["beta"])
             self.assertEqual(
                 row["targets"]["receivers"],
-                [{"id": "lb-01", "published_at": None, "current": None}],
+                [{"id": "lb-01", "format": "pem", "published_at": None, "current": None}],
             )
             self.assertIsNone(row["distribution"])
             _validator().validate(

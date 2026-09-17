@@ -302,3 +302,61 @@ class WhatTheRequestMustSay(RetargetFixture):
         with self.assertRaises(cert_retarget.RetargetError) as caught:
             self.retarget(policy_path, "replace", "example.com", clusters=("alpha",))
         self.assertEqual(caught.exception.code, "bad_input")
+
+
+class WhatALayoutChangesAboutRemoval(RetargetFixture):
+    """Spärr 5 (B138): every reader follows the layout, or it unlinks nothing.
+
+    Under `per-certificate` two certificates on one receiver are two
+    directories, so taking one away is not a reason to keep the other's files
+    - which is exactly the opposite of the `flat` case one test above.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.policy_path = self.prepared(
+            {
+                "shop.example": {
+                    "source": {"kind": "acme"},
+                    "clusters": ["alpha"],
+                    "receivers": ["lb-01"],
+                },
+                "other.example": {
+                    "source": {"kind": "acme"},
+                    "clusters": ["alpha"],
+                    "receivers": ["lb-01"],
+                },
+            }
+        )
+        registry = self.root / "certificates.yaml"
+        raw = yaml.safe_load(registry.read_text())
+        raw["receivers"]["lb-01"]["layout"] = "per-certificate"
+        raw["certificates"]["other.example"]["receivers"] = [{"id": "lb-01", "format": "pkcs12"}]
+        registry.write_text(yaml.safe_dump(raw), encoding="utf-8")
+        registry.chmod(0o640)
+        #
+        # The files as a publish would have left them: a PEM pair for one, a
+        # bundle and its password for the other, each under its own directory.
+        #
+        (self.receiver_dir / "shop.example").mkdir()
+        (self.receiver_dir / "shop.example" / FULLCHAIN).write_text("chain\n", encoding="utf-8")
+        (self.receiver_dir / "shop.example" / PRIVKEY).write_text("key\n", encoding="utf-8")
+        (self.receiver_dir / "other.example").mkdir()
+        (self.receiver_dir / "other.example" / "other.example.pfx").write_bytes(b"bundle")
+        (self.receiver_dir / "other.example" / "other.example.password").write_text("pw\n")
+        for stale in (FULLCHAIN, PRIVKEY):
+            (self.receiver_dir / stale).unlink(missing_ok=True)
+
+    def test_one_certificate_leaves_and_the_other_keeps_its_directory(self) -> None:
+        report = self.retarget(self.policy_path, "remove", "shop.example", receivers=("lb-01",))
+
+        self.assertEqual(report.changed, ("shop.example",))
+        self.assertFalse((self.receiver_dir / "shop.example").exists())
+        self.assertTrue((self.receiver_dir / "other.example" / "other.example.pfx").exists())
+
+    def test_a_bundle_is_taken_away_under_the_names_it_was_written_with(self) -> None:
+        report = self.retarget(self.policy_path, "remove", "other.example", receivers=("lb-01",))
+
+        self.assertEqual(report.changed, ("other.example",))
+        self.assertFalse((self.receiver_dir / "other.example").exists())
+        self.assertTrue((self.receiver_dir / "shop.example" / FULLCHAIN).exists())

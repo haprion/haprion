@@ -87,6 +87,10 @@
       "required": ["id", "published_at", "current"],
       "properties": {
         "id": { "type": "string", "maxLength": 63 },
+        "format": {
+          "description": "Additive (C7, B159): the form this certificate is written in for this receiver. Absent from an older producer, where it means pem. current is null for pkcs12, which cannot be read without the password that opens it.",
+          "enum": ["pem", "pkcs12"]
+        },
         "published_at": { "type": ["string", "null"], "format": "date-time" },
         "current": { "type": ["boolean", "null"] }
       },

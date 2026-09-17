@@ -24,6 +24,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -31,6 +32,7 @@ from unittest import mock
 import yaml
 
 from haproxy_mgmt import cert_publish
+from haproxy_mgmt.cert_inventory import registry_result
 from haproxy_mgmt.cert_publish import PublishError, publish
 from haproxy_mgmt.cli import cert_publish as command
 from haproxy_mgmt.config import load_policy, load_runtime_config
@@ -87,11 +89,48 @@ class Fixture(unittest.TestCase):
             directory.mkdir(parents=True)
         # As registration makes it: writable by nobody but its owner.
         self.receiver_dir.chmod(0o700)
+        self.extra_receivers: dict[str, dict[str, Any]] = {}
         patcher = mock.patch.object(cert_publish, "ROOT_UID", os.getuid())
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def write_config(self, certificates: dict[str, dict[str, Any]]) -> Path:
+    def keeper(self) -> dict[str, dict[str, Any]]:
+        """One cluster certificate, because a configuration with no cluster is refused.
+
+        Issued, so it publishes cleanly and the tests that follow can read the
+        result of the certificate they are actually about.
+        """
+
+        issue(self.live / "keeper.example", "keeper.example")
+        return {"keeper.example": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+
+    def status(self, report: cert_publish.Report, certificate_id: str) -> str:
+        return next(
+            entry.status for entry in report.certificates if entry.certificate_id == certificate_id
+        )
+
+    def register(self, receiver_id: str, **fields: Any) -> dict[str, Any]:
+        """A second receiver beside `lb-01`, with its own directory as registration makes it."""
+
+        directory = self.root / "receivers" / receiver_id
+        directory.mkdir(parents=True, exist_ok=True)
+        directory.chmod(0o700)
+        self.extra_receivers[receiver_id] = {
+            "path": str(directory),
+            "owner": ME,
+            **fields,
+        }
+        return self.extra_receivers[receiver_id]
+
+    def receiver_path(self, receiver_id: str) -> Path:
+        return Path(self.extra_receivers[receiver_id]["path"])
+
+    def write_config(
+        self,
+        certificates: dict[str, dict[str, Any]],
+        *,
+        receiver_fields: dict[str, Any] | None = None,
+    ) -> Path:
         config_root = self.root / "config"
         publish_root = self.root / "published"
         validation = self.root / "validation"
@@ -127,7 +166,14 @@ class Fixture(unittest.TestCase):
 
         registry = {
             "schema_version": 1,
-            "receivers": {"lb-01": {"path": str(self.receiver_dir), "owner": ME}},
+            "receivers": {
+                "lb-01": {
+                    "path": str(self.receiver_dir),
+                    "owner": ME,
+                    **(receiver_fields or {}),
+                },
+                **self.extra_receivers,
+            },
             "certificates": certificates,
         }
         (self.root / "certificates.yaml").write_text(yaml.safe_dump(registry), encoding="utf-8")
@@ -578,3 +624,258 @@ class TheCommand(Fixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PerCertificateLayout(Fixture):
+    """B138: a receiver's files live under a directory named for the certificate.
+
+    What this buys is the thing `flat` cannot do: one receiver, several
+    certificates, without the second publish overwriting the first. The
+    publisher makes the directory - which certificates a registered receiver
+    holds is what the interface may change - inside a directory registration
+    already decided on.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        issue(self.live / "one.example", "one.example")
+        issue(self.live / "two.example", "two.example")
+
+    def test_the_pair_lands_under_the_certificate_id(self) -> None:
+        policy_path = self.write_config(
+            self.keeper()
+            | {
+                "one.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]},
+                "two.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]},
+            },
+            receiver_fields={"layout": "per-certificate"},
+        )
+
+        report = self.run_publish(policy_path)
+
+        self.assertEqual(self.status(report, "one.example"), "published")
+        self.assertEqual(self.status(report, "two.example"), "published")
+        self.assertEqual(
+            sorted(path.name for path in self.receiver_dir.iterdir()),
+            ["one.example", "two.example"],
+        )
+        for certificate_id in ("one.example", "two.example"):
+            directory = self.receiver_dir / certificate_id
+            self.assertEqual(
+                sorted(path.name for path in directory.iterdir()),
+                ["fullchain.pem", "privkey.pem"],
+            )
+            self.assertEqual((directory / "privkey.pem").stat().st_mode & 0o777, 0o600)
+            self.assertEqual(directory.stat().st_mode & 0o777, 0o750)
+            self.assertIn(
+                f"CN={certificate_id}",
+                subprocess.run(
+                    [
+                        "/usr/bin/openssl",
+                        "x509",
+                        "-noout",
+                        "-subject",
+                        "-in",
+                        str(directory / "fullchain.pem"),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                ).stdout,
+            )
+
+    def test_a_flat_receiver_still_reads_its_own_directory(self) -> None:
+        """The three receivers registered before C7 are not moved by this."""
+
+        policy_path = self.write_config(
+            self.keeper() | {"one.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]}}
+        )
+
+        self.run_publish(policy_path)
+
+        self.assertEqual(
+            sorted(path.name for path in self.receiver_dir.iterdir()),
+            ["fullchain.pem", "privkey.pem"],
+        )
+
+    def test_a_second_run_changes_nothing(self) -> None:
+        policy_path = self.write_config(
+            self.keeper() | {"one.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]}},
+            receiver_fields={"layout": "per-certificate"},
+        )
+        self.run_publish(policy_path)
+        before = {
+            path: path.stat().st_mtime_ns for path in (self.receiver_dir / "one.example").iterdir()
+        }
+
+        report = self.run_publish(policy_path)
+
+        self.assertEqual(self.status(report, "one.example"), "unchanged")
+        self.assertEqual({path: path.stat().st_mtime_ns for path in before}, before)
+
+
+class Pkcs12Bundles(Fixture):
+    """B159: a receiver that reads a PFX gets one, with a password kept per pair."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        issue(self.live / "certserver1.example", "certserver1.example")
+        self.bundle = self.receiver_dir / "certserver1.example" / "certserver1.example.pfx"
+        self.password_file = self.receiver_dir / "certserver1.example" / "certserver1.example.password"
+
+    def configure(self) -> Path:
+        return self.write_config(
+            self.keeper()
+            | {
+                "certserver1.example": {
+                    "source": {"kind": "acme"},
+                    "receivers": [{"id": "lb-01", "format": "pkcs12"}],
+                }
+            },
+            receiver_fields={"layout": "per-certificate"},
+        )
+
+    def contents(self, password: str) -> str:
+        completed = subprocess.run(
+            [
+                "/usr/bin/openssl",
+                "pkcs12",
+                "-in",
+                str(self.bundle),
+                "-nokeys",
+                "-passin",
+                "env:PFXPASS",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"PATH": "/usr/bin", "PFXPASS": password},
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout
+
+    def test_the_bundle_opens_with_the_password_beside_it(self) -> None:
+        report = self.run_publish(self.configure())
+
+        self.assertEqual(self.status(report, "certserver1.example"), "published")
+        self.assertEqual(
+            sorted(path.name for path in (self.receiver_dir / "certserver1.example").iterdir()),
+            ["certserver1.example.password", "certserver1.example.pfx"],
+        )
+        self.assertEqual(self.password_file.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.bundle.stat().st_mode & 0o777, 0o600)
+        password = self.password_file.read_text(encoding="ascii").strip()
+        self.assertGreaterEqual(len(password), 16)
+        self.assertIn("subject=CN=certserver1.example", self.contents(password).replace(" = ", "="))
+
+    def test_the_same_certificate_is_not_rewritten_although_pkcs12_is_salted(self) -> None:
+        #
+        # The point of comparing the certificate inside the bundle rather than
+        # the bundle's bytes: exporting the same material twice gives two
+        # different files, and a publisher that compared bytes would give every
+        # receiver a new file, and a new fetch, on every run of the timer.
+        #
+        policy_path = self.configure()
+        self.run_publish(policy_path)
+        before = self.bundle.read_bytes(), self.bundle.stat().st_mtime_ns
+
+        report = self.run_publish(policy_path)
+
+        self.assertEqual(self.status(report, "certserver1.example"), "unchanged")
+        self.assertEqual((self.bundle.read_bytes(), self.bundle.stat().st_mtime_ns), before)
+
+    def test_a_renewal_rewrites_the_bundle_and_keeps_the_password(self) -> None:
+        #
+        # The receiver imported the bundle into a certificate store with the
+        # password it fetched. A renewal that changed the password would make
+        # every renewal a manual re-import.
+        #
+        policy_path = self.configure()
+        self.run_publish(policy_path)
+        password = self.password_file.read_text(encoding="ascii")
+        issue(self.live / "certserver1.example", "certserver1.example", days=60)
+
+        report = self.run_publish(policy_path)
+
+        self.assertEqual(self.status(report, "certserver1.example"), "published")
+        self.assertEqual(self.password_file.read_text(encoding="ascii"), password)
+        self.assertIn("BEGIN CERTIFICATE", self.contents(password.strip()))
+
+    def test_the_listing_says_the_form_and_does_not_guess_at_current(self) -> None:
+        policy_path = self.configure()
+        self.run_publish(policy_path)
+        policy = load_policy(policy_path, require_secure=False)
+        runtime = load_runtime_config(policy, require_secure=False)
+        assert runtime.registry is not None
+
+        listing = registry_result(
+            runtime.registry,
+            certificate_root=self.dist,
+            renewed=frozenset(),
+            now=datetime.now(UTC),
+            live=self.live,
+            store=self.store,
+        )
+
+        row = next(r for r in listing["certificates"] if r["id"] == "certserver1.example")
+        receiver = row["targets"]["receivers"][0]
+        self.assertEqual(receiver["id"], "lb-01")
+        self.assertEqual(receiver["format"], "pkcs12")
+        self.assertIsNotNone(receiver["published_at"])
+        self.assertIsNone(receiver["current"])
+
+
+class WildcardIsNotPublishedOverHttps(Fixture):
+    """Spärr 3 (B138): the one refusal only the material can justify."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        issue(self.live / "wild.example", "*.wild.example")
+        issue(self.live / "plain.example", "plain.example")
+        self.register(
+            "web-01.example.net",
+            transport="https",
+            layout="per-certificate",
+            allow=["192.0.2.0/24"],
+        )
+
+    def test_a_wildcard_to_an_https_receiver_is_refused_and_nothing_is_written(self) -> None:
+        policy_path = self.write_config(
+            self.keeper()
+            | {
+                "wild.example": {
+                    "source": {"kind": "acme"},
+                    "receivers": ["web-01.example.net"],
+                }
+            }
+        )
+
+        report = self.run_publish(policy_path)
+
+        failed = next(e for e in report.certificates if e.certificate_id == "wild.example")
+        self.assertEqual(failed.status, "failed")
+        assert failed.error is not None
+        self.assertEqual(failed.error[0], "wildcard_over_https")
+        self.assertEqual(list(self.receiver_path("web-01.example.net").iterdir()), [])
+
+    def test_a_certificate_that_is_not_a_wildcard_is_published_there(self) -> None:
+        policy_path = self.write_config(
+            self.keeper()
+            | {
+                "plain.example": {
+                    "source": {"kind": "acme"},
+                    "receivers": ["web-01.example.net"],
+                }
+            }
+        )
+
+        report = self.run_publish(policy_path)
+
+        self.assertEqual(self.status(report, "plain.example"), "published")
+        self.assertEqual(
+            sorted(
+                path.name
+                for path in (self.receiver_path("web-01.example.net") / "plain.example").iterdir()
+            ),
+            ["fullchain.pem", "privkey.pem"],
+        )

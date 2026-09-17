@@ -1887,6 +1887,48 @@ the job table and no `update` at all, so a queued job is immutable to the role
 that queued it and there is no path from "I asked for this" to "this is what
 happened". State, request ID and timestamps come from column defaults.
 
+#### Where the data lives
+
+Put the cluster's storage on the volume that holds the platform, and keep the
+package's path. The reference host mounts the platform volume at `/apps`, and
+`/var/lib/postgresql` is a bind mount onto a directory there — not a cluster
+reconfigured with a different `data_directory`:
+
+```text
+# /etc/fstab
+/apps/postgresql  /var/lib/postgresql  none  bind,x-systemd.requires-mounts-for=/apps  0 0
+
+# /etc/systemd/system/postgresql@.service.d/10-apps-mount.conf
+[Unit]
+RequiresMountsFor=/var/lib/postgresql
+```
+
+The directory behind the mount is owned by `postgres` (`755`), because a bind
+mount shows the target's top level as the mount point. The drop-in is what makes
+the arrangement safe rather than merely working: without it a boot on which the
+platform volume comes up late would start the server on an empty directory,
+and it would run — initdb-fresh, with no databases — until somebody noticed.
+
+Two things sit behind this shape. The traffic-log table (4.8b) is the one part
+of the installation whose growth is set by the nodes' visitors rather than by
+the administrator, so it belongs on the volume that was given room for exactly
+that, next to the dumps and the mirror; the root filesystem stays predictable.
+And the path stays the package's because a cluster at its own path turns every
+distribution upgrade into a special case for years, while a mount point leaves
+`pg_upgradecluster` and the package tooling looking at the layout they expect.
+The price is one ordering condition, proved once at installation:
+
+```bash
+findmnt /var/lib/postgresql        # SOURCE must name the platform volume
+sudo systemctl restart postgresql  # and the cluster must come back on it
+```
+
+Moving an existing cluster is a stop, an `rsync -aHAX --numeric-ids`, a second
+dry run that finds nothing left to copy, the mount, and the start — with a
+verified dump (4.7) taken first, and the old tree kept beside the mount until the
+new one has served a day. The backup step's 85 % warning watches the filesystem
+holding the dumps, which is now also the one holding the database.
+
 ### 4.4 Verifying it
 
 `install/platform/03-verify` is read-only and can be run at any time. It is
@@ -2419,6 +2461,39 @@ its own mirror old. The page therefore names every
 node and how old its mirror is **before** the records, because a node that
 stopped answering renders an empty table that otherwise reads as calm. Log text
 is written by whoever made the request and is escaped as text, never as markup.
+
+#### Sizing the traffic table
+
+The numbers below were measured, not estimated, on a management host at the
+reference size — 2 vCPU, 4 GiB, PostgreSQL with stock `shared_buffers` of
+128 MB, the production services running beside the test. A throwaway cluster on
+the platform volume took the real migrations, was filled through the collector's
+own `COPY` path with realistic cardinality (twenty hostnames, three hundred
+paths, ten proxies, weighted methods and status codes, seven days of
+time-ordered records as the collector writes them), and was read through the
+page's own query. Three checkpoints, `analyze` before each:
+
+| Rows | Table | Indexes | Per row | Newest 500 | Substring, one word | Substring, two words | Status 5xx | One day | One cluster, one day |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 M | 230 MiB | 193 MiB | 444 B | 3 ms | 3 ms | 10 ms | 3 ms | 2 ms | 2 ms |
+| 10 M | 2 299 MiB | 1 804 MiB | 430 B | 3 ms | 4 ms | 9 ms | 4 ms | 3 ms | 3 ms |
+| 30 M | 6 897 MiB | 4 841 MiB | 410 B | 3 ms | 3 ms | 11 ms | 3 ms | 2 ms | 2 ms |
+
+**Plan on 410 bytes per record, indexes included**, and on the page staying
+fast: every query form the interface issues answered in about ten milliseconds
+or less at thirty million rows, with the trigram indexes carrying the
+substring searches. The write side is not the limit either — the collector's
+path sustained about 30 000 records per second throughout the load, flat with
+table size, and a run imports a minute's worth of traffic.
+
+So the disk a retention window needs is `records per day × retention_days ×
+410 bytes`, plus the mirror's copy of the same days (one more, the replay
+margin), plus WAL. At the default seven days that is close to **3 GB per
+million records a day**. A pair of nodes serving ten thousand requests a day
+uses tens of megabytes; an installation nearing a million a day should have that
+volume sized for it and the 85 % warning above heeded. The number that grows
+without the administrator's say-so is this one, which is why the database sits
+on the platform volume (4.3) rather than on the root filesystem.
 
 ### 4.9 The worker and the poller
 

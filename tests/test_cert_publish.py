@@ -668,21 +668,13 @@ class PerCertificateLayout(Fixture):
             )
             self.assertEqual((directory / "privkey.pem").stat().st_mode & 0o777, 0o600)
             self.assertEqual(directory.stat().st_mode & 0o777, 0o750)
-            self.assertIn(
-                f"CN={certificate_id}",
-                subprocess.run(
-                    [
-                        "/usr/bin/openssl",
-                        "x509",
-                        "-noout",
-                        "-subject",
-                        "-in",
-                        str(directory / "fullchain.pem"),
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                ).stdout,
+            self.assertEqual(
+                (directory / "fullchain.pem").read_bytes(),
+                (self.live / certificate_id / "fullchain.pem").read_bytes(),
+            )
+            self.assertEqual(
+                (directory / "privkey.pem").read_bytes(),
+                (self.live / certificate_id / "privkey.pem").read_bytes(),
             )
 
     def test_a_flat_receiver_still_reads_its_own_directory(self) -> None:

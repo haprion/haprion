@@ -438,9 +438,10 @@ def receiver_target(
             # mode decides who may see that the certificate is there at all.
             #
             directory.mkdir(mode=0o750)
-            os.chown(directory, registered.st_uid, gid)
             # mkdir() is subject to the umask; this is the mode that is meant.
+            # Mode before owner, as in write_file: the directory is still ours.
             os.chmod(directory, 0o750)  # noqa: S103 - root:fetch-account, files stay 0600
+            os.chown(directory, registered.st_uid, gid)
         except OSError as exc:
             raise PublishError(
                 "write_failed",
@@ -538,10 +539,17 @@ def write_file(
     anything changed, and by then the answer is yes.
 
     The temporary is created in the target directory so the rename is within
-    one filesystem, owned and moded before it has any content a reader could
+    one filesystem, moded and owned before it has any content a reader could
     want, and fsynced before the rename so a crash leaves either the old file
     or the complete new one. The directory is fsynced after, so the rename
     itself is durable.
+
+    Mode first, then owner. Changing the mode of a file needs ownership of it
+    or CAP_FOWNER, and the worker's sandbox grants root CAP_CHOWN alone: once
+    the file belongs to a receiver's fetch account, root inside that sandbox
+    may no longer chmod it. Found on the machine when the first receiver file
+    ended `write_failed: Operation not permitted`; a cluster file never showed
+    it because its owner stays root.
     """
 
     if compare and _current(path) == content:
@@ -549,8 +557,8 @@ def write_file(
 
     handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
-        os.fchown(handle, uid, gid)
         os.fchmod(handle, mode)
+        os.fchown(handle, uid, gid)
         with os.fdopen(handle, "wb") as stream:
             stream.write(content)
             stream.flush()

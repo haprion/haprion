@@ -35,7 +35,7 @@ from haproxy_mgmt import cert_publish
 from haproxy_mgmt.cert_inventory import registry_result
 from haproxy_mgmt.cert_publish import PublishError, publish
 from haproxy_mgmt.cli import cert_publish as command
-from haproxy_mgmt.config import load_policy, load_runtime_config
+from haproxy_mgmt.config import Receiver, load_policy, load_runtime_config
 
 BASE = Path(__file__).resolve().parents[1]
 ME = pwd.getpwuid(os.getuid()).pw_name
@@ -905,3 +905,44 @@ class TheWorkerCanLookWhereItPublishes(unittest.TestCase):
         text = self.UNIT.read_text(encoding="utf-8")
         line = next(line for line in text.splitlines() if line.startswith("ReadWritePaths="))
         self.assertIn("/srv/certdist", line.split())
+
+
+class TheFileIsModedWhileItIsStillOurs(unittest.TestCase):
+    """`write_file` sets the mode before it hands the file to the fetch account.
+
+    Root inside the worker's sandbox holds CAP_CHOWN and not CAP_FOWNER, so a
+    chmod after the chown is an EPERM there and nowhere a test can run. The
+    order is what can be pinned: the mode goes on first, while the file is
+    ours.
+    """
+
+    def test_fchmod_comes_before_fchown(self) -> None:
+        calls: list[str] = []
+        with tempfile.TemporaryDirectory() as scratch:
+            target = Path(scratch) / "fullchain.pem"
+            with (
+                mock.patch.object(os, "fchmod", side_effect=lambda *a: calls.append("fchmod")),
+                mock.patch.object(os, "fchown", side_effect=lambda *a: calls.append("fchown")),
+            ):
+                changed = cert_publish.write_file(
+                    target, b"pem", uid=os.getuid(), gid=os.getgid(), mode=0o600
+                )
+        self.assertTrue(changed)
+        self.assertEqual(calls, ["fchmod", "fchown"])
+
+    def test_the_per_certificate_directory_is_moded_before_it_is_owned(self) -> None:
+        calls: list[str] = []
+        with tempfile.TemporaryDirectory() as scratch:
+            receiver = Receiver(
+                receiver_id="lb-02.example.net",
+                path=Path(scratch),
+                owner=pwd.getpwuid(os.getuid()).pw_name,
+                transport="rsync",
+                layout="per-certificate",
+            )
+            with (
+                mock.patch.object(os, "chmod", side_effect=lambda *a: calls.append("chmod")),
+                mock.patch.object(os, "chown", side_effect=lambda *a: calls.append("chown")),
+            ):
+                cert_publish.receiver_target(receiver, "one.example")
+        self.assertEqual(calls, ["chmod", "chown"])

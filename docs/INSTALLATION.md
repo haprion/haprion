@@ -1337,11 +1337,19 @@ sudo haproxy-cert-receiver list
 sudo haproxy-cert-receiver remove lb-02.example.net
 ```
 
-**The ID is the fetching host**: its DNS name or its IP address, and nothing else. That is what the
+**The ID is the fetching host**: its DNS name or its IPv4 address, and nothing else. That is what the
 lock binds to - `from="<id>"` in `authorized_keys`, `allow <id>` in nginx - so a name whose **PTR
 record does not resolve back to it is refused at registration**. sshd matches `from=` by reverse
 lookup, and a key that would never be accepted is worth refusing while the name can still be
-changed.
+changed. An IPv6 address is not accepted as an ID (the ID is also a directory name and a URL
+path segment, and `:` is neither); a host that fetches over IPv6 is registered under its DNS
+name.
+
+**Where the directory goes** is `receiver_root` in the runtime policy: a new receiver's
+directory is `<receiver_root>/<id>` unless `--path` names another, and a migration's record
+lives there too. The registry, not the root, says where each receiver actually is - one
+registered before this command existed may be elsewhere - so the root is optional until the
+first `add` or `migrate`, which refuse with `dependency_unavailable` until it is declared.
 
 **The private key is never given to the manager.** The pair is made on the receiver
 (`ssh-keygen -t ed25519`), and `--public-key` takes the `.pub` file. A private key that passed
@@ -1381,8 +1389,10 @@ lock in a root-owned `.ssh` inside it. An `sftp` receiver therefore sees `.ssh` 
 its certificates: its own public key, readable and not writable, and nothing else.
 
 **Removing** is refused while any certificate still names the receiver - `Remove from...` in the
-interface, or `haproxy-cert-target`, is what lets a certificate go of a target, and it is the
-operation that also says what that costs. Once nothing names it, the registry entry, the lock, the
+interface (1.4.6) is what lets a certificate go of a target, and it is the operation that also
+says what that costs. There is no operator command for that step: the interface queues a
+`cert_target` job and the worker runs `haproxy-cert-target-helper`, which takes its request on
+stdin and is not meant to be typed. Once nothing names it, the registry entry, the lock, the
 directory and the account go in that order; an account another receiver still fetches as (the
 `legacy` ones share one) is kept, and only the key line naming this directory is taken out.
 
@@ -1945,6 +1955,23 @@ Release directories are `root:root`, directories and launchers are mode `555`, a
 mode `444`. The `current` link is replaced atomically only after the new release passes validation.
 Short stable wrappers and exact sudoers rules may point into `current/bin`; they must never point
 into a source checkout.
+
+**`current/bin` is not on `sudo`'s path.** `sudo` resets `PATH` to its `secure_path`, which does
+not include `/opt/haproxy-mgmt/current/bin`, so `sudo haproxy-cert-receiver ...` answers
+`command not found` on a fresh installation even though the command is installed. The examples
+in this manual assume one short wrapper per operator command in `/usr/local/bin`, each of the
+shape
+
+```bash
+#!/usr/bin/env bash
+exec /opt/haproxy-mgmt/current/bin/haproxy-cert-receiver "$@"
+```
+
+so that a release switch moves every command at once and nothing points at a release
+directory by name. The installer does not write them - which commands an operator types is
+the installation's choice, and a helper the worker runs through an exact sudoers rule must
+**not** get one. Until a wrapper exists, the full path works the same:
+`sudo /opt/haproxy-mgmt/current/bin/haproxy-cert-receiver ...`.
 
 `INSTALLATION.json` also records the engine compatibility API carried by the
 wheel. A wheel from before that metadata existed remains installable for

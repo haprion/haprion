@@ -15,6 +15,13 @@ deploy_identity:
 # named, that list must have moved here.
 # certificate_registry: /srv/haproxy-manager/config/certificates.yaml
 
+# Where haproxy-cert-receiver puts a new receiver's directory (<root>/<id>)
+# unless --path says otherwise, and where it keeps a migration's record. The
+# registry, not this root, says where each receiver actually is; one made
+# before the command existed may live elsewhere. Optional until the first
+# receiver is registered; `add` and `migrate` refuse without it.
+# receiver_root: /srv/haproxy-manager/receivers
+
 # How haproxy-cert-issue answers ACME challenges. Each method needs one
 # installation-specific path that the caller must never supply: the
 # credential file for DNS-01, the webroot for HTTP-01. Leave a method out and

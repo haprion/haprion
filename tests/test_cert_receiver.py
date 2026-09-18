@@ -99,8 +99,8 @@ class ReceiverFixture(Fixture):
         self.key_file = self.root / "receiver.pub"
         self.key_file.write_text(KEY + "\n", encoding="ascii")
         #
-        # Every receiver ID in these tests resolves to itself, so B141's check
-        # is exercised without asking the network anything.
+        # Every name in these tests resolves to one address, so the lock is
+        # written without asking the network anything.
         #
         #
         # An account this run created answers with the home it was given; the
@@ -110,10 +110,8 @@ class ReceiverFixture(Fixture):
         self.tools = Tools(
             run=self.runner,
             forward=lambda name: ("192.0.2.10",),
-            reverse=lambda address: (self.resolving,),
             home=lambda owner: self.runner.homes.get(owner, self.root / "home" / owner),
         )
-        self.resolving = "lb-02.example.net"
         self.policy_path = self.write_config(dict(KEEPER))
         #
         # The publisher's fixture always registers `lb-01` to the test's own
@@ -321,7 +319,12 @@ class AddingAReceiver(ReceiverFixture):
         result = self.add()
 
         self.assertTrue(any("rsync" in line for line in result.instructions))
-        self.assertTrue(any("PTR" in line for line in result.instructions))
+        self.assertTrue(
+            any(
+                "bound to lb-02.example.net and its addresses" in line
+                for line in result.instructions
+            )
+        )
 
 
 class WhatRegistrationRefuses(ReceiverFixture):
@@ -333,11 +336,11 @@ class WhatRegistrationRefuses(ReceiverFixture):
     def test_an_id_that_is_not_a_host(self) -> None:
         self.assertEqual(self.refusal(receiver_id="pve-cluster").code, "bad_input")
 
-    def test_a_name_whose_reverse_lookup_does_not_agree(self) -> None:
-        self.resolving = "somebody-else.example.net"
+    def test_a_name_that_does_not_resolve(self) -> None:
+        self.tools = dataclasses.replace(self.tools, forward=lambda name: ())
         error = self.refusal()
         self.assertEqual(error.code, "receiver_unresolvable")
-        self.assertIn("PTR", str(error))
+        self.assertIn("does not resolve", str(error))
 
     def test_a_second_registration_of_the_same_id(self) -> None:
         self.add()
@@ -366,7 +369,6 @@ class WhatRegistrationRefuses(ReceiverFixture):
 
     def test_an_account_that_already_fetches_for_another_receiver(self) -> None:
         self.add()
-        self.resolving = "lb-03.example.net"
         error = self.refusal(receiver_id="lb-03.example.net")
         self.assertEqual(error.code, "already_exists")
         self.assertIn("One account per receiver", str(error))
@@ -487,7 +489,6 @@ class MigratingTheOldOnes(ReceiverFixture):
             f'restrict,command="/usr/bin/rrsync -ro {self.root / "old" / "pve-02"}/" {KEY}\n',
             encoding="ascii",
         )
-        self.resolving = "pve-01.example.net"
 
     def migrate(self, **options: Any):  # type: ignore[no-untyped-def]
         policy, runtime = self.loaded()

@@ -1344,12 +1344,13 @@ default, and then `from=` matches addresses only - a lock naming the host alone 
 host it was issued for, and the log says *correct key but not from a permitted host*. The
 address is what sshd always has; the name is what an operator reads, and what `UseDNS yes` would
 match. The addresses are resolved once, at registration, so a host that changes address is
-`remove` and `add` again. A name whose **PTR record does not resolve back to it is refused at
-registration** all the same: under `UseDNS yes` that is what the name half is matched by, and a
-key that would never be accepted is worth refusing while the name can still be changed. An IPv6
-address is not accepted as an ID (the ID is also a directory name and a URL path segment, and
-`:` is neither); a host that fetches over IPv6 is registered under its DNS name, and its IPv6
-address goes into `from=` with the rest.
+`remove` and `add` again. A name that does not resolve is refused, because there would be
+nothing to write into the lock; its PTR record is not looked at. One address commonly carries
+several names in a zone - the host's own and one per service it serves - and whichever of them
+the reverse lookup answers with, the address half of the lock admits the host. An IPv6 address
+is not accepted as an ID (the ID is also a directory name and a URL path segment, and `:` is
+neither); a host that fetches over IPv6 is registered under its DNS name, and its IPv6 address
+goes into `from=` with the rest.
 
 **Where the directory goes** is `receiver_root` in the runtime policy: a new receiver's
 directory is `<receiver_root>/<id>` unless `--path` names another, and a migration's record

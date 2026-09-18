@@ -156,14 +156,6 @@ def resolve_forward(name: str) -> tuple[str, ...]:
     return tuple(sorted({str(answer[4][0]) for answer in answers}))
 
 
-def resolve_reverse(address: str) -> tuple[str, ...]:
-    try:
-        host, aliases, _ = socket.gethostbyaddr(address)
-    except OSError:
-        return ()
-    return tuple(name.rstrip(".").lower() for name in (host, *aliases))
-
-
 def account_home(owner: str) -> Path | None:
     """Where sshd will look for the account's lock: its home, as the system has it."""
 
@@ -179,7 +171,6 @@ class Tools:
 
     run: Runner = run_command
     forward: Callable[[str], tuple[str, ...]] = resolve_forward
-    reverse: Callable[[str], tuple[str, ...]] = resolve_reverse
     now: Callable[[], datetime] = lambda: datetime.now(UTC)
     home: Callable[[str], Path | None] = account_home
 
@@ -230,13 +221,14 @@ def check_identity(receiver_id: str, tools: Tools) -> None:
     """B141: the ID is the fetching host, because the lock binds to it.
 
     `from=` in `authorized_keys` and `allow <id>` in nginx are what make a
-    stolen key or a guessed address useless. sshd compares `from=` against
-    the peer's address, and against its name only under `UseDNS yes` - off
-    by default - so the lock carries the name and its addresses both
-    (`from_patterns`). A name that does not resolve at all, or whose PTR
-    does not agree, would leave sshd refusing every connection from the
-    host that is supposed to fetch - a failure that looks like a broken key
-    and is not - so it is refused here, where the name can still be changed.
+    stolen key or a guessed address useless. A name has to resolve, because
+    its addresses are what the lock is written with (`from_patterns`, B162);
+    its PTR record is not asked about. sshd compares `from=` against the
+    peer's address unless `UseDNS yes` is set, and against the address as
+    well as the name when it is, so a host whose reverse lookup answers with
+    a sibling name - one address carrying several service names is the
+    common shape of a DNS zone - is accepted by the address half of the
+    lock either way. Refusing it here would refuse ordinary DNS.
     """
 
     if not RECEIVER_ID.fullmatch(receiver_id):
@@ -248,31 +240,7 @@ def check_identity(receiver_id: str, tools: Tools) -> None:
             "by the host that fetches, because that is what its key and its whitelist are "
             "bound to (B141).",
         )
-    try:
-        ipaddress.ip_address(receiver_id)
-    except ValueError:
-        pass
-    else:
-        #
-        # An address is its own reverse lookup: sshd compares `from=` against
-        # the peer address directly, so there is nothing to check.
-        #
-        return
-    addresses = tools.forward(receiver_id)
-    if not addresses:
-        raise ReceiverError(
-            "receiver_unresolvable", f"{receiver_id} does not resolve; sshd could not match from="
-        )
-    for address in addresses:
-        if receiver_id in tools.reverse(address):
-            return
-    raise ReceiverError(
-        "receiver_unresolvable",
-        f"{receiver_id} resolves to {', '.join(addresses)}, and none of those resolves back "
-        f"to {receiver_id}. The lock names the host as well as its addresses, and sshd "
-        "matches the name by reverse lookup, so the PTR record has to agree before the "
-        "name half of the lock would ever be accepted.",
-    )
+    from_patterns(receiver_id, tools)
 
 
 def from_patterns(receiver_id: str, tools: Tools) -> tuple[str, ...]:
@@ -282,9 +250,9 @@ def from_patterns(receiver_id: str, tools: Tools) -> tuple[str, ...]:
     only - a lock naming the host alone refuses the very host it was issued
     for, with a log line about a correct key from an unpermitted host. The
     address is what sshd always has, and the name is what an operator reads
-    and what `UseDNS yes` would match, so the lock carries both. A host that
-    changes address is `remove` and `add` again, as for any other field of a
-    receiver (B138).
+    and what `UseDNS yes` would match, so the lock carries both (B162). A host
+    that changes address is `remove` and `add` again, as for any other field
+    of a receiver (B138).
     """
 
     try:
@@ -908,13 +876,13 @@ def instructions(receiver: Receiver, locations: Locations) -> tuple[str, ...]:
             "transport: sftp, read-only, chrooted into its own directory",
             f"user: {receiver.owner}@{host}",
             "path: / inside the chroot is one directory per certificate",
-            f"the key you gave is bound to {receiver.receiver_id}; its PTR record must agree",
+            f"the key you gave is bound to {receiver.receiver_id} and its addresses; fetch from there",
         )
     return (
         "transport: rsync over ssh, read-only",
         f"user: {receiver.owner}@{host}",
         f"fetch: rsync -a {receiver.owner}@{host}:<certificate>/ /local/path/",
-        f"the key you gave is bound to {receiver.receiver_id}; its PTR record must agree",
+        f"the key you gave is bound to {receiver.receiver_id} and its addresses; fetch from there",
     )
 
 

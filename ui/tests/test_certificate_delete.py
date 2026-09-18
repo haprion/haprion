@@ -239,6 +239,51 @@ class TheJobsPageSaysWhatHappened(unittest.TestCase):
         )
         self.assertIsNone(jobs.deletion_note(queued(operation="cert_issue", cluster=None)))
 
+    def test_a_target_change_says_why_it_refused_and_why_it_stopped(self) -> None:
+        """The helper's reason is the sentence the operator needs; the code alone was not.
+
+        Seen on a machine: a refused target change showed only
+        `(https_receiver_isolated)`, and one that stopped half-way borrowed
+        the deletion's "delete them again", which is not what fixes it.
+        """
+
+        job = replace(
+            queued(operation="cert_target", cluster=None),
+            state="blocked",
+            outcome="blocked",
+            result={
+                "result": {
+                    "certificates": [
+                        {
+                            "certificate": "wild.example",
+                            "state": "refused",
+                            "code": "https_receiver_isolated",
+                            "reason": "receiver 192.0.2.40 fetches over https, and wild.example "
+                            "is carried by a cluster.",
+                        },
+                        {
+                            "certificate": "plain.example",
+                            "state": "incomplete",
+                            "code": "write_failed",
+                            "reason": "registered but not published: /srv/x/fullchain.pem: "
+                            "[Errno 1] Operation not permitted",
+                            "added": ["192.0.2.40"],
+                        },
+                        {"certificate": "other.example", "state": "changed"},
+                    ]
+                }
+            },
+        )
+        self.assertEqual(
+            jobs.deletion_note(job),
+            "Changed: other.example. "
+            "Refused: wild.example (https_receiver_isolated) - receiver 192.0.2.40 fetches "
+            "over https, and wild.example is carried by a cluster. "
+            "Registered but not published; publish again once the cause is fixed: "
+            "plain.example (write_failed) - registered but not published: "
+            "/srv/x/fullchain.pem: [Errno 1] Operation not permitted.",
+        )
+
     def test_a_deletion_where_every_row_went_has_no_note(self) -> None:
         job = replace(
             queued(operation="cert_delete", cluster=None),

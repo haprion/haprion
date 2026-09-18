@@ -1061,6 +1061,16 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .receiver-choice { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .receiver-choice .receiver-format { margin-left: auto; font-size: 0.86rem; padding: 2px 6px; }
 .receiver-choice:has(input:not(:checked)) .receiver-format { visibility: hidden; }
+/*
+ * The target picker on Publish to… / Remove from…: one target per row. A
+ * receiver's row is a box, a name and a format select; a cluster's is a box
+ * and a name. Flowed as a wrapping row those two widths interleave into a
+ * ragged grid (seen 2026-09-18 with three receivers and two clusters), and
+ * the select, pushed to the row's far edge, sat nowhere near its receiver.
+ * Stacked, with the select right after the name, each row reads on its own.
+ */
+.retarget-choices { flex-direction: column; align-items: flex-start; gap: 8px; }
+.retarget-choices .receiver-choice .receiver-format { margin-left: 4px; }
 .certificate-form .receiver-no-results { display: block; padding-top: 3px; }
 .certificate-form .receiver-no-results[hidden] { display: none; }
 .certificate-form .challenge-warning { display: flex; align-items: flex-start; gap: 7px; margin: 9px 0 0; color: var(--text-secondary); font-size: 12px; font-weight: var(--font-weight-regular); line-height: 1.45; }

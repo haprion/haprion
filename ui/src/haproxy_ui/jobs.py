@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from haproxy_mgmt.deploy_run import CERTIFICATES_NOT_DEPLOYED
 
@@ -410,7 +410,8 @@ def deletion_note(job: Job) -> str | None:
     removed: list[str] = []
     refused: list[str] = []
     incomplete: list[str] = []
-    done_word = "Deleted" if job.operation == "cert_delete" else "Changed"
+    deleting = job.operation == "cert_delete"
+    done_word = "Deleted" if deleting else "Changed"
     for entry in body["certificates"]:
         if not isinstance(entry, dict) or not isinstance(entry.get("certificate"), str):
             continue
@@ -419,10 +420,7 @@ def deletion_note(job: Job) -> str | None:
         if state in {"removed", "changed"}:
             removed.append(identifier)
         elif state == "refused":
-            code = entry.get("code")
-            refused.append(
-                f"{identifier} ({code})" if isinstance(code, str) and code else identifier
-            )
+            refused.append(_with_reason(identifier, entry))
         elif state == "incomplete":
             kept = [
                 f"{layer.get('layer')} {layer.get('state')}"
@@ -434,17 +432,48 @@ def deletion_note(job: Job) -> str | None:
                 for node in entry.get("nodes") or []
                 if isinstance(node, dict) and node.get("state") != "removed"
             ]
-            incomplete.append(f"{identifier} ({', '.join(kept)})" if kept else identifier)
+            #
+            # A deletion that stopped half-way says what it left standing; a
+            # target change that stopped half-way has registered the target
+            # and not published to it, and the helper's reason says why. The
+            # reason is the useful half: the operator saw the state already.
+            #
+            if kept:
+                incomplete.append(f"{identifier} ({', '.join(kept)})")
+            else:
+                incomplete.append(_with_reason(identifier, entry))
     if not refused and not incomplete:
         return None
     parts = []
     if removed:
         parts.append(f"{done_word}: " + ", ".join(removed))
     if refused:
-        parts.append("Refused: " + ", ".join(refused))
+        parts.append("Refused: " + "; ".join(refused))
     if incomplete:
-        parts.append("Left; delete them again to finish: " + ", ".join(incomplete))
+        lead = (
+            "Left; delete them again to finish: "
+            if deleting
+            else "Registered but not published; publish again once the cause is fixed: "
+        )
+        parts.append(lead + "; ".join(incomplete))
     return ". ".join(parts) + "."
+
+
+def _with_reason(identifier: str, entry: dict[str, Any]) -> str:
+    """`<id> (<code>) - <reason>`, with whichever halves the row carries.
+
+    The code alone was what the page showed first, and an operator reading
+    `https_receiver_isolated` beside a refused job had to go to the database
+    for the sentence that explains it. The helper wrote that sentence for
+    exactly this reader; it is shown as written.
+    """
+
+    code = entry.get("code")
+    reason = entry.get("reason")
+    text = f"{identifier} ({code})" if isinstance(code, str) and code else identifier
+    if isinstance(reason, str) and reason.strip():
+        text += " - " + reason.strip().rstrip(".")
+    return text
 
 
 def _view(

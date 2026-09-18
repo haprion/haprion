@@ -74,3 +74,6 @@ WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-ndes-prof
 
 # NDES enrollment: the challenge is read from the root-only profile record, never from the request.
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper ""
+
+# Receivers (B142): the public key arrives as text on stdin, never as a path.
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-receiver-helper ""

@@ -6,7 +6,8 @@
       "0028",
       "0029",
       "0030",
-      "0031"
+      "0031",
+      "0032"
     ],
     "engine_api": 2,
     "node_api": 1,
@@ -31,7 +32,8 @@
       "haproxy-dns-profile-apply-helper",
       "haproxy-cert-delete-helper",
       "haproxy-ndes-profile-apply-helper",
-      "haproxy-cert-scep-helper"
+      "haproxy-cert-scep-helper",
+      "haproxy-cert-receiver-helper"
     ]
   }
 }

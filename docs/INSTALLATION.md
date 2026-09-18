@@ -1353,6 +1353,12 @@ through the manager has passed through one machine too many.
 | `sftp` | `sftp`, read-only | the same key line without the forced command, plus a `Match User` block with `ChrootDirectory <path>` and `ForceCommand internal-sftp -R` |
 | `https` | plain `GET`, no key at all | an address whitelist in nginx, and nothing else |
 
+The rsync account has `/bin/sh` as its login shell because OpenSSH runs an
+`authorized_keys command="..."` through that shell with `-c`. The shell does not grant an
+interactive login: the key still carries `restrict`, `from=` and the fixed `rrsync -ro` command,
+and no unrestricted key is installed. An SFTP account keeps `/usr/sbin/nologin` because
+`internal-sftp` is sshd's in-process server and does not need a shell.
+
 `https` is a deliberate lowering of the trust level, and it is fenced in rather than trusted: such
 a receiver may not hold a certificate any cluster carries, may not be given a wildcard, and reaches
 nothing but its own directory. It is served from the interface's own server block, on 443 under the

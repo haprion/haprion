@@ -67,6 +67,7 @@ NGINX = "/usr/sbin/nginx"
 SYSTEMCTL = "/usr/bin/systemctl"
 RRSYNC = "/usr/bin/rrsync"
 NOLOGIN = "/usr/sbin/nologin"
+COMMAND_SHELL = "/bin/sh"
 COMMAND_TIMEOUT = 30
 
 #
@@ -330,19 +331,21 @@ def account_exists(owner: str) -> bool:
     return True
 
 
-def create_account(owner: str, home: Path, tools: Tools) -> None:
-    """A system account that cannot log in and owns nothing it could replace.
+def create_account(owner: str, home: Path, transport: str, tools: Tools) -> None:
+    """Make the account able to run exactly the transport its key permits.
 
-    `nologin` because nothing here runs a shell: rrsync and internal-sftp are
-    started by sshd itself, and an `https` receiver has no account at all. The
-    home is the receiver's own directory (B160): one directory per receiver,
-    root-owned like the node accounts B131 settled, so the account cannot
-    replace the `.ssh` that holds its own lock. An `sftp` receiver sees that
-    `.ssh` inside its chroot - its own public key, readable and nothing else.
+    OpenSSH runs an ``authorized_keys command=`` through the account's login
+    shell with ``-c``. The rsync lock therefore needs a real shell or it can
+    never start rrsync; the key's ``restrict``, ``from=`` and forced command
+    remain the boundary. ``internal-sftp`` is sshd's in-process server and
+    keeps ``nologin``. The root-owned home and key file stop either account
+    changing that boundary.
     """
 
+    shell = COMMAND_SHELL if transport == "rsync" else NOLOGIN
+
     code, output = tools.run(
-        [USERADD, "--system", "--home-dir", str(home), "--shell", NOLOGIN, owner]
+        [USERADD, "--system", "--home-dir", str(home), "--shell", shell, owner]
     )
     if code != 0:
         raise ReceiverError("account_failed", f"useradd {owner} failed: {output}", exit_code=74)
@@ -757,7 +760,7 @@ def add(
     layers: list[Layer] = []
     try:
         if transport != "https" and not account_exists(account):
-            create_account(account, directory, tools)
+            create_account(account, directory, transport, tools)
             undo.append(lambda: _discard(tools.run([USERDEL, account])))
             layers.append(Layer("account", "created", account))
         else:
@@ -1144,7 +1147,7 @@ def migrate(
     layers: list[Layer] = []
     try:
         if not account_exists(account):
-            create_account(account, directory, tools)
+            create_account(account, directory, moved.transport, tools)
             undo.append(lambda: _discard(tools.run([USERDEL, account])))
             layers.append(Layer("account", "created", account))
         else:

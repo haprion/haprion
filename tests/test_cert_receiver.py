@@ -185,7 +185,7 @@ class AddingAReceiver(ReceiverFixture):
         self.assertNotIn("allow", entry)
         self.assertFalse(self.runner.ran("sshd"))
 
-    def test_a_new_account_gets_the_receiver_directory_as_its_home(self) -> None:
+    def test_a_new_rsync_account_gets_a_shell_for_its_forced_command(self) -> None:
         with (
             mock.patch.object(cert_receiver, "account_exists", return_value=False),
             mock.patch.object(cert_receiver, "_own"),
@@ -200,12 +200,33 @@ class AddingAReceiver(ReceiverFixture):
                 "--home-dir",
                 str(directory),
                 "--shell",
-                "/usr/sbin/nologin",
+                "/bin/sh",
                 "crx-lb-02",
             ),
             self.runner.calls,
         )
         self.assertEqual(self.runner.homes["crx-lb-02"], directory)
+
+    def test_a_new_sftp_account_keeps_nologin(self) -> None:
+        with (
+            mock.patch.object(cert_receiver, "account_exists", return_value=False),
+            mock.patch.object(cert_receiver, "_own"),
+        ):
+            self.add(owner="crx-lb-02", transport="sftp")
+
+        directory = self.root / "receivers" / "lb-02.example.net"
+        self.assertIn(
+            (
+                "/usr/sbin/useradd",
+                "--system",
+                "--home-dir",
+                str(directory),
+                "--shell",
+                "/usr/sbin/nologin",
+                "crx-lb-02",
+            ),
+            self.runner.calls,
+        )
 
     def test_sftp_also_writes_a_chrooted_match_block_sshd_accepted(self) -> None:
         result = self.add(transport="sftp")

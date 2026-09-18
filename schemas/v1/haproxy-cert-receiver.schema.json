@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haproxy-cert-receiver.schema.json",
+  "title": "haproxy-cert-receiver JSON result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "cert_receiver" },
+        "cluster": { "type": "null" },
+        "outcome": { "enum": ["done", "partial", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/receiver_result" }, { "type": "null" }] }
+      },
+      "allOf": [{ "if": { "properties": { "outcome": { "const": "done" } } }, "then": { "properties": { "result": { "$ref": "#/$defs/receiver_result" } } } }]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "layer": {
+      "type": "object",
+      "required": ["layer", "state", "detail"],
+      "properties": {
+        "layer": { "type": "string", "maxLength": 32 },
+        "state": { "enum": ["created", "present", "kept", "absent", "removed", "failed"] },
+        "detail": { "type": "string", "maxLength": 4096 }
+      },
+      "additionalProperties": false
+    },
+    "receiver_result": {
+      "description": "What a registration or a removal did, layer by layer, and - after a registration - what the receiving host's operator needs. `partial` is a removal whose account or directory could not be taken away; the registry and the lock are already gone.",
+      "type": "object",
+      "required": ["id", "action", "layers", "instructions"],
+      "properties": {
+        "id": { "type": "string", "maxLength": 63 },
+        "action": { "enum": ["added", "removed"] },
+        "layers": { "type": "array", "items": { "$ref": "#/$defs/layer" } },
+        "instructions": { "type": "array", "items": { "type": "string", "maxLength": 1024 } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

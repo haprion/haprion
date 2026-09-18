@@ -1,0 +1,115 @@
+{% extends "layout.html" %}
+{% block title %}Receivers — HAProxy Manager{% endblock %}
+{% block head_extra %}{% if certificate_job %}<meta http-equiv="refresh" content="3">{% endif %}<script defer src="{{ url_for('static', path='/receiver-page.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block content %}
+{#
+  Who fetches certificates from this manager (B142). A row is a host, how it
+  fetches and what it holds; under each row the exact commands that host
+  runs, with the account and the manager's name filled in. Registering is a
+  job, like everything else that writes as root; the key pair is made on the
+  receiving host and only its public half is pasted here (B157).
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Receivers</h1><p class="page-lede">Hosts outside the clusters that fetch certificates from this manager, each with its own account, directory and key.</p></div>
+  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+{% if certificate_job %}
+<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> The queue runs one certificate job at a time. This page refreshes until it has finished.</p>
+{% endif %}
+
+{% if activity and activity[0].tone != 'healthy' %}{% set item = activity[0] %}
+<p class="preview-notice{% if item.tone == 'critical' %} form-problem{% endif %}"><span class="status-orb status-{{ item.tone }}" aria-hidden="true"></span><strong>{{ item.label }}.</strong> {{ item.message }} <a href="/jobs#job-{{ item.job_id }}">Job {{ item.job_id }}</a>.</p>
+{% endif %}
+
+<section class="cluster-card">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Registered</h3><p>{{ rows | length }} receiver{{ '' if rows | length == 1 else 's' }}. <a href="/certificates?view=registry">Back to certificates</a>.</p></div></div></header>
+  {% if not registry_present %}
+  <p class="table-note">This installation declares no certificate registry, so there are no receivers to list.</p>
+  {% else %}
+  <div class="table-scroll"><table class="node-table receiver-table">
+    <thead><tr><th scope="col">Receiver</th><th scope="col">Transport</th><th scope="col">Account</th><th scope="col">Holds</th><th scope="col"></th></tr></thead>
+    <tbody>
+    {% for row, steps in rows %}
+    <tr class="receiver-row">
+      <td data-label="Receiver"><strong>{{ row.identifier }}</strong>{% if row.legacy %} <span class="warning-text">· legacy layout</span>{% endif %}</td>
+      <td data-label="Transport">{{ row.transport_label }}{% if row.allow %} <span class="optional">· {{ row.allow | join(', ') }}</span>{% endif %}</td>
+      <td data-label="Account"><code>{{ row.owner }}</code></td>
+      <td data-label="Holds">{% if row.holds %}{% for held in row.holds %}{% if not loop.first %}, {% endif %}{{ held.certificate_id }}{% if held.format == 'pkcs12' %} <span class="target-kind">pkcs12</span>{% endif %}{% endfor %}{% else %}<span class="optional">nothing yet</span>{% endif %}</td>
+      <td data-label="Actions">
+        <button type="button" class="link-button" data-receiver-commands="{{ row.identifier }}" aria-expanded="false">Fetch commands</button>
+        {% if row.removable %} · <form method="post" action="/certificates/receivers/remove" class="inline-form" data-receiver-remove>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+          <input type="hidden" name="receiver" value="{{ row.identifier }}">
+          <button type="submit" class="link-button warning-text"{% if certificate_job %} disabled{% endif %}>Remove</button>
+        </form>{% elif row.holds %} <span class="optional" title="Use Remove from… on the certificate first">· in use</span>{% endif %}
+      </td>
+    </tr>
+    <tr class="receiver-commands" id="receiver-commands-{{ row.identifier }}" hidden>
+      <td colspan="5">
+        <p class="table-note">What <code>{{ row.identifier }}</code> runs to fetch{% if not row.holds %} — once a certificate is published to it; <code>&lt;certificate&gt;</code> stands for its name{% endif %}. The fetch is idempotent: run it from a timer.</p>
+        <ol class="receiver-steps">
+          {% for step in steps %}
+          <li><span class="receiver-step-title">{{ step.title }}</span>{% if step.command %}<pre class="receiver-command"><code>{{ step.command }}</code></pre>{% endif %}{% if step.note %}<small>{{ step.note }}</small>{% endif %}</li>
+          {% endfor %}
+        </ol>
+        <p class="table-note">Reference scripts, with the checks a fetch should make before installing: <code>examples/receivers/fetch-{{ row.transport }}</code>{% if row.holds | selectattr('format', 'equalto', 'pkcs12') | list %} and <code>examples/receivers/install-pkcs12.ps1</code>{% endif %} in the repository.</p>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5"><span class="optional">No receiver is registered. Register one below; then publish a certificate to it from the registry.</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="table-note">A receiver in use is removed from the certificate first (<em>Remove from…</em> in the registry); that is the step that says what stops being fetched. A legacy-layout receiver is migrated from the terminal (installation guide, 1.4.9).</p>
+  {% endif %}
+</section>
+
+{% if registry_present %}
+<form method="post" action="/certificates/receivers" class="certificate-form receiver-form" data-receiver-form>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Register a receiver</h3><p>Name the host, choose how it fetches, paste its public key. One job builds the account, the directory and the lock.</p></div></div></header>
+    <div class="form-grid receiver-form-grid">
+      <div class="field">
+        <label class="field-title" for="receiver-id">Receiver</label>
+        <input id="receiver-id" name="receiver" type="text" value="{{ form.receiver }}" required maxlength="63" autocomplete="off" spellcheck="false" placeholder="app-01.example.net" data-receiver-name>
+        <small>The fetching host's DNS name or address. The lock is bound to it: a key used from another host is refused.</small>
+      </div>
+      <div class="field">
+        <span class="field-title">Transport</span>
+        <div class="form-checks form-checks-stacked method-choices">
+          {% for name, help in transports.items() %}
+          <label class="check"><input type="radio" name="transport" value="{{ name }}"{% if form.transport == name %} checked{% endif %} data-transport-choice> <span><strong>{{ name }}</strong> — {{ help }}</span></label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="field" data-key-field>
+        <label class="field-title" for="receiver-key">Public key</label>
+        <ol class="receiver-steps receiver-key-steps">
+          {% for step in key_steps %}
+          <li><span class="receiver-step-title">{{ step.title }}</span><pre class="receiver-command"><code data-key-command>{{ step.command }}</code></pre>{% if step.note %}<small>{{ step.note }}</small>{% endif %}</li>
+          {% endfor %}
+        </ol>
+        <textarea id="receiver-key" name="public_key" rows="3" spellcheck="false" autocomplete="off" placeholder="ssh-ed25519 AAAA… app-01.example.net">{{ form.public_key }}</textarea>
+      </div>
+      <div class="field" data-allow-field hidden>
+        <label class="field-title" for="receiver-allow">Allowed addresses</label>
+        <textarea id="receiver-allow" name="allow" rows="3" spellcheck="false" autocomplete="off" placeholder="192.0.2.10&#10;198.51.100.0/24">{{ form.allow }}</textarea>
+        <small>Addresses or networks, one per line, that may fetch over https. The interface's own certificate and name serve the files; there is no key.</small>
+      </div>
+    </div>
+    <div class="editor-actions editor-submit">
+      <p class="table-note">The job takes a few seconds. The receiver then appears above with its fetch commands; publish a certificate to it from the registry.</p>
+      <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Register the receiver</button></div>
+    </div>
+  </section>
+</form>
+{% endif %}
+{% endblock %}

@@ -34,6 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from haproxy_mgmt.cert_registry import receiver_in_use
 from haproxy_mgmt.certificates import (
     MAX_CERTIFICATE_BYTES,
     CertificateError,
@@ -463,6 +464,7 @@ def registry_result(
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
     request_root: Path | None = None,
+    manager: str | None = None,
 ) -> dict[str, Any]:
     """Every certificate the manager holds, measured at its source.
 
@@ -596,7 +598,32 @@ def registry_result(
                 }
             )
 
-    return {"certificates": entries, "receivers": sorted(registry.receivers)}
+    #
+    # `receivers` stays the list of names the interface has read since C5.
+    # `receiver_records` is what its receivers page shows (B142): the
+    # transport, the layout, the account, the directory and which
+    # certificates name each one. `flat` is the form registered before C7;
+    # the interface calls it legacy, like the command's `list`. `manager` is
+    # the name a receiver reaches this host by, for the fetch commands the
+    # page writes out; the helper reads it, so a test never does.
+    #
+    return {
+        "certificates": entries,
+        "receivers": sorted(registry.receivers),
+        "manager": manager,
+        "receiver_records": [
+            {
+                "id": receiver_id,
+                "transport": receiver.transport,
+                "layout": receiver.layout,
+                "owner": receiver.owner,
+                "path": str(receiver.path),
+                "allow": list(receiver.allow),
+                "certificates": list(receiver_in_use(registry, receiver_id)),
+            }
+            for receiver_id, receiver in sorted(registry.receivers.items())
+        ],
+    }
 
 
 def coverage(root: Path, cluster: Cluster) -> dict[str, tuple[str, ...]]:
@@ -647,6 +674,7 @@ def cert_list_result(
     registry: Registry | None = None,
     import_store: Path = IMPORT_STORE,
     request_root: Path | None = None,
+    manager: str | None = None,
 ) -> dict[str, Any]:
     """The cluster's referenced certificates, then the rest of the directory.
 
@@ -704,5 +732,6 @@ def cert_list_result(
             live=letsencrypt_root / "live",
             store=import_store,
             request_root=request_root,
+            manager=manager,
         )
     return result

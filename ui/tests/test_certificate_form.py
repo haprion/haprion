@@ -254,7 +254,7 @@ class TheFormPage(CertificateFormRouteTestCase):
         # page says so where the boxes are.
         #
         self.assertNotIn('name="receiver" type="text"', page)
-        self.assertIn("Receiver setup is described in the installation guide", page)
+        self.assertIn('<a href="/certificates/receivers">Manage receivers</a>', page)
         # The format select beside the box, PEM selected until chosen otherwise.
         self.assertIn(
             '<select name="format" class="receiver-format" aria-label="Format for lb-01.example.net">'

@@ -96,6 +96,20 @@
       },
       "additionalProperties": false
     },
+    "receiver_record": {
+      "type": "object",
+      "required": ["id", "transport", "layout", "owner", "path", "allow", "certificates"],
+      "properties": {
+        "id": { "type": "string", "maxLength": 63 },
+        "transport": { "enum": ["rsync", "sftp", "https"] },
+        "layout": { "enum": ["flat", "per-certificate"] },
+        "owner": { "type": "string", "maxLength": 32 },
+        "path": { "type": "string", "maxLength": 4096 },
+        "allow": { "type": "array", "items": { "type": "string", "maxLength": 64 } },
+        "certificates": { "type": "array", "items": { "type": "string", "maxLength": 253 } }
+      },
+      "additionalProperties": false
+    },
     "registered_certificate": {
       "description": "One certificate the manager holds, measured at its source rather than at a target. The source is what a renewal writes first, so a target that has not been published yet would otherwise report the previous certificate.",
       "type": "object",
@@ -185,7 +199,17 @@
               "type": "array",
               "items": { "$ref": "#/$defs/registered_certificate" }
             },
-            "receivers": { "type": "array", "items": { "type": "string", "maxLength": 63 } }
+            "receivers": { "type": "array", "items": { "type": "string", "maxLength": 63 } },
+            "manager": {
+              "description": "The name a receiver reaches this manager by - the interface's server name - for the fetch commands the receivers page writes out (B142). Null where the helper could not read it.",
+              "type": ["string", "null"],
+              "maxLength": 253
+            },
+            "receiver_records": {
+              "description": "One record per registered receiver, for the interface's receivers page (B142): how it fetches and which certificates name it. `flat` is the layout of a receiver registered before C7.",
+              "type": "array",
+              "items": { "$ref": "#/$defs/receiver_record" }
+            }
           },
           "additionalProperties": false
         }

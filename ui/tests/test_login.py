@@ -22,7 +22,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from haproxy_ui import auth
+from haproxy_ui import auth, db
 from haproxy_ui.app import create_app
 from haproxy_ui.config import Config, Database, Listen, Poller, Throttle
 from haproxy_ui.config import Session as SessionPolicy
@@ -122,6 +122,17 @@ class LoginTestCase(unittest.TestCase):
             #
             mock.patch("haproxy_ui.db.cluster_drafts", return_value=[]),
             mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
+            #
+            # The profile pages read a profile's own apply jobs. Answered out
+            # of whatever `recent_jobs` a test has patched in, so a test that
+            # queues an apply job the old way is still read the new way.
+            #
+            mock.patch(
+                "haproxy_ui.db.operation_jobs",
+                side_effect=lambda connection, operation, **_: [
+                    job for job in db.recent_jobs(connection) if job.operation == operation
+                ],
+            ),
         ]
         for patch in self.patches:
             patch.start()
@@ -241,7 +252,9 @@ class SigningIn(LoginTestCase):
     def test_the_certificate_page_renders_every_row_it_is_given(self) -> None:
         client = self.client(replace(configuration(), demo_fixture=True))
         self.sign_in(client)
-        page = client.get("/certificates")
+        # The cluster view by name: the fixture carries a registry since
+        # 2026-09-18 (B142), and with one the page opens on the registry view.
+        page = client.get("/certificates?view=clusters")
         self.assertEqual(page.status_code, 200)
         self.assertIn("Certbot", page.text)
         self.assertIn("Imported", page.text)

@@ -270,21 +270,34 @@ def from_patterns(receiver_id: str, tools: Tools) -> tuple[str, ...]:
 
 
 def read_public_key(path: Path) -> str:
-    """The receiver's public key, held to one line of the shapes OpenSSH writes.
-
-    One line and nothing after it, because this text is written into
-    `authorized_keys` in front of a forced command: a second line would be a
-    second key, with no restrictions and nobody's decision behind it.
-    """
+    """The receiver's public key from the `.pub` file its ssh-keygen wrote."""
 
     try:
         text = path.read_text(encoding="ascii")
     except (OSError, UnicodeDecodeError) as exc:
         raise ReceiverError("bad_input", f"the public key could not be read: {exc}") from exc
+    return parse_public_key(text, str(path))
+
+
+def parse_public_key(text: str, source: str) -> str:
+    """One line of the shapes OpenSSH writes, and nothing after it.
+
+    One line, because this text is written into `authorized_keys` in front of
+    a forced command: a second line would be a second key, with no
+    restrictions and nobody's decision behind it. `source` names where the
+    text came from - the file, or the interface's form - in the refusal.
+    """
+
+    try:
+        text.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ReceiverError(
+            "bad_input", f"{source} is not ASCII; a public key in OpenSSH's own form is"
+        ) from exc
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if len(lines) != 1:
         raise ReceiverError(
-            "bad_input", f"{path} holds {len(lines)} keys; a receiver registers exactly one"
+            "bad_input", f"{source} holds {len(lines)} keys; a receiver registers exactly one"
         )
     line = lines[0]
     if not re.fullmatch(
@@ -293,7 +306,7 @@ def read_public_key(path: Path) -> str:
     ):
         raise ReceiverError(
             "bad_input",
-            f"{path} does not hold a public key in OpenSSH's own form. Give the .pub file "
+            f"{source} does not hold a public key in OpenSSH's own form. Give the .pub file "
             "the receiver's ssh-keygen wrote, not a private key and not a certificate.",
         )
     return line
@@ -641,9 +654,13 @@ def check_request(
     transport: str,
     layout: str,
     allow: Sequence[str],
-    public_key: Path | None,
+    public_key: Path | str | None,
 ) -> None:
-    """What the command will not do, said before anything is written."""
+    """What the command will not do, said before anything is written.
+
+    `public_key` is the `.pub` file's path from the command line, or the key
+    text itself from the interface's form; here only its presence matters.
+    """
 
     if transport not in RECEIVER_TRANSPORTS:
         raise ReceiverError(
@@ -681,7 +698,7 @@ def add(
     *,
     receiver_id: str,
     transport: str,
-    public_key: Path | None = None,
+    public_key: Path | str | None = None,
     owner: str | None = None,
     path: Path | None = None,
     allow: Sequence[str] = (),
@@ -690,7 +707,12 @@ def add(
     locations: Locations | None = None,
     require_secure: bool = True,
 ) -> Result:
-    """Make a receiver whole, or leave the machine as it was found."""
+    """Make a receiver whole, or leave the machine as it was found.
+
+    `public_key` is a path to the `.pub` file (the command line) or the key
+    text itself (the interface, which has the operator paste it and never
+    has a file the helper could be pointed at).
+    """
 
     tools = tools or Tools()
     locations = locations or Locations()
@@ -744,7 +766,12 @@ def add(
     if not directory.is_absolute():
         raise ReceiverError("bad_input", "--path must be absolute")
 
-    key_line = read_public_key(public_key) if public_key is not None else ""
+    if public_key is None:
+        key_line = ""
+    elif isinstance(public_key, Path):
+        key_line = read_public_key(public_key)
+    else:
+        key_line = parse_public_key(public_key, "the public key given")
     receiver = Receiver(
         receiver_id=receiver_id,
         path=directory,
@@ -859,10 +886,25 @@ def _restore(path: Path, before: str | None) -> None:
         path.write_text(before, encoding="utf-8")
 
 
+def manager_name(locations: Locations | None = None) -> str:
+    """The name a receiver reaches this manager by.
+
+    The interface's `SERVER_NAME` (05-platform-nginx): it is the name the
+    operator already resolves and pins a certificate to, and the three PVE
+    hosts fetch by it. The bare hostname only where that file is absent,
+    which is an installation without the interface.
+    """
+
+    try:
+        return read_ui_tls(locations or Locations())["SERVER_NAME"]
+    except ReceiverError:
+        return socket.gethostname()
+
+
 def instructions(receiver: Receiver, locations: Locations) -> tuple[str, ...]:
     """What the receiver's operator needs, in the words `04-node-prepare` uses."""
 
-    host = socket.gethostname()
+    host = manager_name(locations)
     if receiver.transport == "https":
         server_name = read_ui_tls(locations)["SERVER_NAME"]
         return (
@@ -1053,6 +1095,21 @@ def _remove_directory(path: Path) -> Layer:
     except OSError as exc:
         return Layer("directory", "failed", f"{path}: {exc}")
     return Layer("directory", "removed", str(path))
+
+
+def _remove_empty_parent(path: Path, receiver_root: Path | None) -> Layer:
+    parent = path.parent
+    if receiver_root is not None and parent == receiver_root:
+        return Layer("parent", "kept", f"{parent} is the receiver root")
+    if not parent.is_dir():
+        return Layer("parent", "absent", str(parent))
+    if any(parent.iterdir()):
+        return Layer("parent", "kept", f"{parent} is not empty")
+    try:
+        parent.rmdir()
+    except OSError as exc:
+        return Layer("parent", "failed", f"{parent}: {exc}")
+    return Layer("parent", "removed", str(parent))
 
 
 def migrate(
@@ -1260,6 +1317,13 @@ def finish(
         layers.append(_remove_account_unless_shared(old_owner, remaining, old_home, tools))
     else:
         layers.append(_remove_directory(old_path))
+    #
+    # The last migration out of a flat layout leaves its parent - the old
+    # `/srv/certdist/pve` - empty and owned by an account that no longer
+    # exists (PVE migration 2026-09-18, finding 4). Taken away when it is
+    # empty and not the receiver root, which is where the new layer lives.
+    #
+    layers.append(_remove_empty_parent(old_path, policy.receiver_root))
     record.unlink(missing_ok=True)
     layers.append(Layer("migration", "removed", str(record)))
     return Result(receiver_id, "finished", tuple(layers))

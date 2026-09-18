@@ -419,6 +419,31 @@ def recent_jobs(
         return cursor.fetchall()
 
 
+def operation_jobs(connection: Connection[Any], operation: str, *, limit: int = 500) -> list[Job]:
+    """Every job of one operation, newest first.
+
+    A profile's state is read from its own apply jobs. Until 2026-09-18 the
+    pages read it out of the newest twenty (the form) or hundred (the list)
+    jobs of every kind, and a day of certificate work pushed the apply job
+    out of the window: the list said "In effect" while the form offered no
+    profile at all. The limit here is a sanity bound, not a window - a
+    profile has a handful of apply jobs in its lifetime.
+    """
+
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key, attempts "
+            "  from job "
+            " where operation = %(operation)s "
+            " order by created_at desc, id desc "
+            " limit %(limit)s",
+            {"operation": operation, "limit": limit},
+        )
+        return cursor.fetchall()
+
+
 def job_state(connection: Connection[Any], job_id: int) -> str | None:
     """One job's state, or None when there is no such job."""
 

@@ -25,7 +25,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from haproxy_ui import metrics
+from haproxy_ui import certificate_receivers, metrics
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterCertificates
@@ -178,6 +178,12 @@ class RegistryView:
     certificate_count: int
     acme_count: int
     attention_count: int
+    #
+    # The receivers page's rows and the name a receiver reaches this manager
+    # by (B142). Empty and None from a helper older than the page.
+    #
+    receiver_rows: tuple[certificate_receivers.ReceiverRow, ...] = ()
+    manager: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -975,6 +981,7 @@ def _registry_view(
 
     certificates = tuple(sorted(parsed, key=lambda entry: entry.identifier))
     receivers = block.get("receivers")
+    manager, receiver_rows = certificate_receivers.parse_receiver_rows(block)
     return RegistryView(
         targets={entry.identifier: entry.targets for entry in certificates},
         certificates=certificates,
@@ -987,6 +994,8 @@ def _registry_view(
             entry.tone in {"critical", "warning"} or entry.state_tone in {"critical", "warning"}
             for entry in certificates
         ),
+        receiver_rows=receiver_rows,
+        manager=manager,
     )
 
 

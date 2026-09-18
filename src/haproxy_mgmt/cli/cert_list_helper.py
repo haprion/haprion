@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import BinaryIO, TextIO
 
 from haproxy_mgmt.cert_inventory import CertInventoryError, cert_list_result
+from haproxy_mgmt.cert_receiver import manager_name
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haproxy_mgmt.envelope import envelope
 from haproxy_mgmt.helper_protocol import (
@@ -105,6 +106,7 @@ def main(
             cluster,
             registry=runtime.registry,
             request_root=ndes_policy.state_root if ndes_policy is not None else None,
+            manager=manager_name(),
         )
     except CertInventoryError as exc:
         return write_failure(

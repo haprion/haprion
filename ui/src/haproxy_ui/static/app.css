@@ -1047,14 +1047,27 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 /* The NDES list shows a URL where the DNS list shows a provider name; a 36ch cell cuts it. */
 .ndes-profile-table th:nth-child(1), .ndes-profile-table td:nth-child(1) { width: 20ch; }
 .ndes-profile-table th:nth-child(2), .ndes-profile-table td:nth-child(2) { width: 60ch; }
-.certificate-target-grid { grid-template-columns: minmax(240px, 0.55fr) minmax(480px, 1.45fr); align-items: start; }
 .certificate-form .receiver-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .certificate-form .receiver-heading .field-title { color: var(--text-secondary); font-weight: 620; }
 .certificate-form .receiver-search { margin-top: 4px; }
 .certificate-form .receiver-search input { width: 100%; }
-.certificate-form .receiver-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); width: 100%; }
-.certificate-form .receiver-options-many { max-height: 218px; padding: 10px 12px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); }
-.certificate-form .receiver-options .check { min-width: 0; overflow-wrap: anywhere; }
+/*
+ * The target lists on the certificate form: clusters first, receivers under
+ * them, each a framed list in two columns. One column of five receivers left
+ * the right half of the card empty (seen 2026-09-18); a three-column grid of
+ * bare boxes, the form before that, read as a ragged block. Two columns of
+ * framed rows keep the list readable at twenty and use the width. The two
+ * frames are one grid gap apart, like every other pair of fields.
+ */
+.certificate-target-stack { grid-template-columns: 1fr; }
+.certificate-form .target-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; width: 100%; margin-top: 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); }
+.certificate-form .receiver-options-many { max-height: 258px; overflow: auto; }
+.certificate-form .target-options .check { min-width: 0; overflow-wrap: anywhere; width: 100%; margin: 0; padding: 8px 12px; border-top: 1px solid var(--line); }
+.certificate-form .target-options .check:nth-child(-n+2) { border-top: 0; }
+.certificate-form .target-options .check:nth-child(2n) { border-left: 1px solid var(--line); }
+.certificate-form .target-options .check[hidden] { display: none; }
+.certificate-form .target-options > .optional, .certificate-form .target-options > .warning-text { grid-column: 1 / -1; padding: 8px 12px; }
+.certificate-form .receiver-options .receiver-transport { color: var(--muted); font-size: 12px; font-weight: var(--font-weight-regular); }
 /* The format select beside a receiver's box (B159): a PEM pair by default,
    a PKCS#12 bundle for a service that imports one. Visible only while the box
    is ticked, so an unticked receiver shows one thing to read, not two. */
@@ -1071,6 +1084,38 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  */
 .retarget-choices { flex-direction: column; align-items: flex-start; gap: 8px; }
 .retarget-choices .receiver-choice .receiver-format { margin-left: 4px; }
+/*
+ * The receivers page (B142). A row is a host; the commands it runs sit in a
+ * second row under it, opened on request, so the table stays a table. The
+ * command blocks are the diagnostics' block, because they are read the same
+ * way: copied, not skimmed.
+ */
+.receiver-table { table-layout: fixed; }
+.receiver-table th:nth-child(1), .receiver-table td:nth-child(1) { width: 26ch; }
+.receiver-table th:nth-child(2), .receiver-table td:nth-child(2) { width: 24ch; }
+.receiver-table th:nth-child(3), .receiver-table td:nth-child(3) { width: 26ch; }
+.receiver-table th:nth-child(4), .receiver-table td:nth-child(4) { width: auto; }
+.receiver-table th:nth-child(5), .receiver-table td:nth-child(5) { width: 27ch; white-space: nowrap; }
+.receiver-table td { overflow-wrap: anywhere; }
+.receiver-table .link-button { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
+.receiver-table .link-button:disabled { color: var(--muted); cursor: default; text-decoration: none; }
+.receiver-table .inline-form { display: inline; }
+.receiver-commands td { padding-top: 4px; padding-bottom: 16px; background: var(--panel-soft); }
+.receiver-commands .table-note { padding-left: 0; padding-right: 0; }
+.receiver-commands .table-note code { font-size: inherit; }
+.receiver-steps { margin: 8px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; }
+.receiver-steps li { max-width: 140ch; }
+.receiver-step-title { display: block; color: var(--text-secondary); font-weight: 620; font-size: 13px; }
+.receiver-steps small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.receiver-command { margin: 6px 0 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); color: var(--muted-strong); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.receiver-form-grid { grid-template-columns: minmax(240px, 1fr) minmax(320px, 1.4fr); align-items: start; }
+.receiver-form .receiver-key-steps { margin: 0 0 8px; padding-left: 20px; }
+.receiver-form .receiver-key-steps .receiver-command { white-space: pre-wrap; overflow-wrap: anywhere; }
+.receiver-form .field[hidden] { display: none; }
+.receiver-form textarea { min-height: 84px; }
+@media (max-width: 900px) {
+  .receiver-form-grid { grid-template-columns: 1fr; }
+}
 .certificate-form .receiver-no-results { display: block; padding-top: 3px; }
 .certificate-form .receiver-no-results[hidden] { display: none; }
 .certificate-form .challenge-warning { display: flex; align-items: flex-start; gap: 7px; margin: 9px 0 0; color: var(--text-secondary); font-size: 12px; font-weight: var(--font-weight-regular); line-height: 1.45; }
@@ -1111,11 +1156,12 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .certificate-form .field > small { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .certificate-form .warning-text { margin: 0; }
 @media (max-width: 900px) {
-  .certificate-target-grid { grid-template-columns: 1fr; }
+  .certificate-form .target-options { grid-template-columns: 1fr; }
+  .certificate-form .target-options .check:nth-child(2) { border-top: 1px solid var(--line); }
+  .certificate-form .target-options .check:nth-child(2n) { border-left: 0; }
 }
 @media (max-width: 600px) {
   .certificate-form .certificate-guidance { margin: 12px 16px 0; }
-  .certificate-form .receiver-options { grid-template-columns: 1fr; }
   .certificate-form .editor-submit { align-items: stretch; flex-direction: column; }
   .certificate-form .editor-submit button { width: 100%; white-space: nowrap; }
 }

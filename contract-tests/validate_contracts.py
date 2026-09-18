@@ -630,6 +630,28 @@ def check_cert_scep_semantics(document: dict[str, object], path: Path) -> None:
     )
 
 
+def check_cert_receiver_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] != "failed":
+            raise AssertionError(f"{path}: a {document['outcome']} cert_receiver carries a result")
+        return
+    assert isinstance(result, dict)
+    layers = result["layers"]
+    assert isinstance(layers, list)
+    failed = [layer for layer in layers if isinstance(layer, dict) and layer["state"] == "failed"]
+    # A layer that failed is what `partial` means; `done` has none.
+    if document["outcome"] == "done" and failed:
+        raise AssertionError(f"{path}: a done cert_receiver has a failed layer")
+    if document["outcome"] == "partial" and not failed:
+        raise AssertionError(f"{path}: a partial cert_receiver names no failed layer")
+    # A removal leaves nothing to instruct; a registration always does.
+    if result["action"] == "removed" and result["instructions"]:
+        raise AssertionError(f"{path}: a removal carries instructions")
+    if result["action"] == "added" and not result["instructions"]:
+        raise AssertionError(f"{path}: a registration carries no instructions")
+
+
 SEMANTIC_CHECKS = {
     "status": check_status_semantics,
     "list": check_list_semantics,
@@ -651,6 +673,7 @@ SEMANTIC_CHECKS = {
     "cert_target": check_cert_target_semantics,
     "cert_delete": check_cert_delete_semantics,
     "cert_scep": check_cert_scep_semantics,
+    "cert_receiver": check_cert_receiver_semantics,
 }
 
 
@@ -698,6 +721,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["removed"] = ["a-certificate-no-row-names"]
     elif operation == "cert_scep":
         result["domains"] = ["*." + str(result["domains"][0])]
+    elif operation == "cert_receiver":
+        result["layers"] = [{"layer": "account", "state": "failed", "detail": "userdel: busy"}]
     else:
         raise AssertionError(f"no semantic mutation defined for {operation}")
 

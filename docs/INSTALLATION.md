@@ -1432,6 +1432,23 @@ interface ends `target_missing` on a directory that `haproxy-cert-publish` run a
 terminal publishes to without complaint. An installation whose worker unit predates this line
 reruns `install/platform/07-platform-services`, which rewrites and restarts the unit.
 
+**From the interface**, *Certificates → Receivers* lists every registered receiver - transport,
+account, what it holds - and registers or removes one. The form takes the receiver's name, the
+transport, and the public key pasted as text (or, for https, the allowed addresses); the job is
+one `cert_receiver` run by `haproxy-cert-receiver-helper` (the thirteenth worker helper; a
+sudoers rule and step 07 are part of its installation, migration `0032` lets the queue accept
+the job). The helper takes the key as text and never as a path, so the interface cannot point it
+at a file. What the page adds over the command is the other half of the contract: under each
+receiver it writes out the exact commands that host runs to fetch - the account, the manager's
+name and each certificate it holds filled in, for Linux and for Windows where the transport
+allows both - together with the `ssh-keygen` line the host runs first. Removal from the page is
+refused while any certificate names the receiver, as at the terminal; a `legacy` receiver is
+migrated from the terminal and not removed from the page.
+
+The receivers page reads its rows from `registry.receiver_records` and the manager's name from
+`registry.manager` in the `cert_list` answer (the interface's `SERVER_NAME`); an installation
+whose CLI release predates those fields shows the page without rows until the CLI is updated.
+
 ### 1.5 Validation certificate
 
 Candidate validation runs a real `haproxy -c` against the candidate. Any configuration that
@@ -2873,11 +2890,15 @@ Ten helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-target-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-dns-profile-apply-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-ndes-profile-apply-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-receiver-helper ""
 ```
 
-The last five are the certificate jobs (1.4.3, 1.4.5, 1.4.6): they belong to no cluster, and the
-queue runs one of them at a time. The last one is the only rule in the file that removes key
-material; 1.4.6 says what bounds it.
+The last eight are the certificate jobs (1.4.3, 1.4.5, 1.4.6, 1.4.9): they belong to no cluster,
+and the queue runs one of them at a time. `cert-delete` is the only rule in the file that removes
+key material; 1.4.6 says what bounds it. `cert-receiver` is the one that makes accounts and edits
+sshd's and nginx's own configuration; 1.4.9 says what bounds it.
 
 Publishing was deliberately absent from that list until the editor existed, on the reasoning that
 it was an operator's decision made at a terminal. What changed is that the interface became where

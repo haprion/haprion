@@ -695,6 +695,7 @@ RUNNING_LABELS = {
     "cert_delete": "Deleting certificates",
     "cert_publish": "Distributing certificates",
     "cert_target": "Changing certificate targets",
+    "cert_receiver": "Changing receivers",
 }
 
 
@@ -727,6 +728,7 @@ FAILURE_LABELS = {
     "cert_delete": "Certificate deletion failed",
     "cert_publish": "Certificate distribution failed",
     "cert_target": "Certificate target change failed",
+    "cert_receiver": "Receiver change failed",
 }
 
 

@@ -327,6 +327,41 @@ class AddingAReceiver(ReceiverFixture):
         )
 
 
+class TheKeyAsText(ReceiverFixture):
+    """B142: the interface pastes the `.pub` line; the same shape rules apply."""
+
+    def test_the_pasted_line_is_written_as_the_lock(self) -> None:
+        with (
+            mock.patch.object(cert_receiver, "account_exists", return_value=False),
+            mock.patch.object(cert_receiver, "_own"),
+        ):
+            self.add(public_key=KEY + "\n", owner=None)
+
+        lock = self.keys_file().read_text(encoding="ascii")
+        self.assertIn(KEY, lock)
+        self.assertEqual(self.registered()["lb-02.example.net"]["owner"], "crx-lb-02-example-net")
+
+    def test_two_pasted_lines_are_refused(self) -> None:
+        with self.assertRaises(ReceiverError) as caught:
+            self.add(public_key=f"{KEY}\n{KEY}\n")
+        self.assertEqual(caught.exception.code, "bad_input")
+        self.assertIn("2 keys", str(caught.exception))
+        self.assertEqual(self.registered(), {})
+
+    def test_a_private_key_pasted_by_mistake_is_refused(self) -> None:
+        with self.assertRaises(ReceiverError) as caught:
+            # The header a private key file starts with, assembled so the
+            # repository's own secret scanner does not read the test as one.
+            header = "-----BEGIN " + "OPENSSH PRIVATE" + " KEY-----"
+            self.add(public_key=f"{header}\nabc\n-----END\n")
+        self.assertEqual(caught.exception.code, "bad_input")
+
+    def test_a_non_ascii_paste_is_refused(self) -> None:
+        with self.assertRaises(ReceiverError) as caught:
+            self.add(public_key=KEY.replace("root", "rööt"))
+        self.assertIn("ASCII", str(caught.exception))
+
+
 class WhatRegistrationRefuses(ReceiverFixture):
     def refusal(self, **options: Any) -> ReceiverError:
         with self.assertRaises(ReceiverError) as caught:
@@ -577,6 +612,50 @@ class MigratingTheOldOnes(ReceiverFixture):
         self.assertFalse(
             (self.root / "receivers" / ".migrations" / "pve-01.example.net.json").exists()
         )
+
+    def test_finish_takes_the_emptied_legacy_parent_with_it(self) -> None:
+        """PVE migration 2026-09-18, finding 4: `/srv/certdist/pve` was left orphaned."""
+
+        with (
+            mock.patch.object(cert_receiver, "account_exists", return_value=False),
+            mock.patch.object(cert_receiver, "_own"),
+        ):
+            self.migrate()
+        policy, runtime = self.loaded()
+
+        result = cert_receiver.finish(
+            policy,
+            runtime,
+            receiver_id="pve-01.example.net",
+            tools=self.tools,
+            locations=self.locations,
+        )
+
+        parents = [layer for layer in result.layers if layer.name == "parent"]
+        self.assertEqual([layer.state for layer in parents], ["removed"])
+        self.assertFalse((self.root / "old").exists())
+        self.assertTrue((self.root / "receivers").exists())
+
+    def test_finish_leaves_a_parent_that_still_holds_a_sibling(self) -> None:
+        (self.root / "old" / "pve-02").mkdir(parents=True)
+        with (
+            mock.patch.object(cert_receiver, "account_exists", return_value=False),
+            mock.patch.object(cert_receiver, "_own"),
+        ):
+            self.migrate()
+        policy, runtime = self.loaded()
+
+        result = cert_receiver.finish(
+            policy,
+            runtime,
+            receiver_id="pve-01.example.net",
+            tools=self.tools,
+            locations=self.locations,
+        )
+
+        parents = [layer for layer in result.layers if layer.name == "parent"]
+        self.assertEqual([layer.state for layer in parents], ["kept"])
+        self.assertTrue((self.root / "old" / "pve-02").exists())
 
     def test_finish_keeps_an_account_another_receiver_still_fetches_as(self) -> None:
         document = yaml.safe_load((self.root / "certificates.yaml").read_text())

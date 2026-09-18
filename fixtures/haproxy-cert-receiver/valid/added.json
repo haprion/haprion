@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cert_receiver",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "id": "lb-02.example.net",
+    "action": "added",
+    "layers": [
+      { "layer": "account", "state": "created", "detail": "crx-lb-02-example-net" },
+      { "layer": "directory", "state": "created", "detail": "/srv/certdist/receivers/lb-02.example.net" },
+      { "layer": "lock", "state": "created", "detail": "/srv/certdist/receivers/lb-02.example.net/.ssh/authorized_keys" },
+      { "layer": "registry", "state": "created", "detail": "lb-02.example.net" }
+    ],
+    "instructions": [
+      "transport: rsync over ssh, read-only",
+      "user: crx-lb-02-example-net@mgr.example.net",
+      "fetch: rsync -a crx-lb-02-example-net@mgr.example.net:<certificate>/ /local/path/",
+      "the key you gave is bound to lb-02.example.net and its addresses; fetch from there"
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

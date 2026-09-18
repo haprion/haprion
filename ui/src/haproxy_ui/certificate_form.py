@@ -21,7 +21,8 @@ their names mean) and says where a missing one is made.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import types
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -92,6 +93,11 @@ class IssueChoices:
     # at least one; the page names the reason otherwise.
     #
     ndes_profiles: tuple[str, ...] = ()
+    #
+    # Each receiver's transport, for the row it gets in the list (B142). A
+    # receiver without one is drawn without a badge.
+    #
+    receiver_transports: Mapping[str, str] = types.MappingProxyType({})
 
 
 EMPTY_FORM = IssueForm(domain="", method="dns-01", dns_profile="", clusters=(), receivers=())

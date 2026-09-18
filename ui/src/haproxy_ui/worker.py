@@ -125,6 +125,13 @@ _OPERATION_OUTCOMES = {
     "cert_delete": frozenset({"done", "partial", "failed", "blocked"}),
     "cert_publish": frozenset({"done", "partial", "failed", "blocked"}),
     "cert_target": frozenset({"done", "partial", "failed", "blocked"}),
+    #
+    # `cert_receiver` registers or removes one receiver. `partial` is a
+    # removal whose account or directory could not be taken away after the
+    # registry and the lock already were; there is no `blocked`, because a
+    # refusal is a `failed` envelope with the command's own code.
+    #
+    "cert_receiver": frozenset({"done", "partial", "failed"}),
 }
 
 

@@ -52,6 +52,7 @@ from haproxy_ui import (
     certificate_activity,
     certificate_delete,
     certificate_form,
+    certificate_receivers,
     certificate_retarget,
     certificates,
     dashboard,
@@ -1908,7 +1909,7 @@ def build_router(config: Config) -> APIRouter:
         if profiles_required:
             with request.app.state.pool.connection() as connection:
                 profile_rows = db.dns_profiles(connection)
-                recent = db.recent_jobs(connection)
+                recent = db.operation_jobs(connection, "dns_profile_apply")
             usable_profiles = tuple(
                 profile.id
                 for profile in profile_rows
@@ -1918,7 +1919,7 @@ def build_router(config: Config) -> APIRouter:
         if profiles_required:
             with request.app.state.pool.connection() as connection:
                 ndes_rows = db.ndes_profiles(connection)
-                recent = db.recent_jobs(connection, limit=100)
+                recent = db.operation_jobs(connection, "ndes_profile_apply")
             usable_ndes = tuple(
                 profile.id
                 for profile in ndes_rows
@@ -1930,6 +1931,11 @@ def build_router(config: Config) -> APIRouter:
             dns_profiles=usable_profiles,
             profiles_required=profiles_required,
             ndes_profiles=usable_ndes,
+            receiver_transports={
+                row.identifier: row.transport_label for row in overview.registry.receiver_rows
+            }
+            if overview.registry
+            else {},
         )
 
     def _certificate_form_page(
@@ -2187,6 +2193,192 @@ def build_router(config: Config) -> APIRouter:
             connection.commit()
         return RedirectResponse("/certificates?view=registry", status_code=303)
 
+    # - Receivers (B142, 2026-09-18) ------------------------------------------
+
+    def _registry_overview(request: Request) -> certificates.RegistryView | None:
+        clusters, certificate_rows, captured_at = read_source(request, config, CERTIFICATE_SOURCE)
+        overview = certificates.build_certificate_overview(
+            clusters,
+            certificate_rows,
+            now=captured_at,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            captured=captured_at is not None,
+        )
+        return overview.registry
+
+    def _receivers_page(
+        request: Request,
+        session: AuthenticatedSession,
+        *,
+        problem: str = "",
+        form: Mapping[str, str] | None = None,
+    ) -> Response:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        registry = _registry_overview(request)
+        rows = registry.receiver_rows if registry else ()
+        manager = registry.manager if registry else None
+        with request.app.state.pool.connection() as connection:
+            recent = db.recent_jobs(connection)
+            own = db.operation_jobs(connection, "cert_receiver", limit=5)
+        entered = {"receiver": "", "transport": "sftp", "public_key": "", "allow": ""}
+        if form:
+            entered.update(form)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "certificate-receivers.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "rows": tuple(
+                    (row, certificate_receivers.fetch_steps(row, manager)) for row in rows
+                ),
+                "manager": manager,
+                "registry_present": registry is not None,
+                "key_steps": certificate_receivers.key_steps(entered["receiver"]),
+                "transports": certificate_receivers.TRANSPORT_HELP,
+                "form": entered,
+                "problem": problem,
+                "activity": certificate_receivers.recent_activity(own),
+                "certificate_job": jobs.certificate_in_flight(recent),
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
+    @router.get("/certificates/receivers", response_class=HTMLResponse)
+    def certificate_receivers_page(request: Request) -> Response:
+        """Who fetches from this manager, and what each host runs to do it."""
+
+        gate = _certificate_delete_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        return _receivers_page(request, gate)
+
+    def _queue_receiver_job(
+        request: Request,
+        session: AuthenticatedSession,
+        payload: Mapping[str, Any],
+        key: UUID,
+        *,
+        form: Mapping[str, str],
+    ) -> Response:
+        try:
+            operations.prepare(
+                operation="cert_receiver", cluster=None, request_id=uuid4(), payload=payload
+            )
+        except operations.BadPayload as refused:
+            return _receivers_page(request, session, problem=str(refused), form=form)
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="cert_receiver",
+                    cluster=None,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.CertificateBusy:
+                connection.rollback()
+                return _receivers_page(
+                    request,
+                    session,
+                    problem="A certificate job is already running. Wait for it to finish, "
+                    "then ask again.",
+                    form=form,
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            #
+            # The audit row names the receiver and the action, never the key:
+            # a public key is not a secret, but the audit log is not where a
+            # reader looks for one either.
+            #
+            db.record_audit_event(
+                connection,
+                actor=session.username,
+                action="queue_job",
+                cluster=None,
+                request_id=job.request_id,
+                detail={
+                    "operation": "cert_receiver",
+                    "job": job.id,
+                    "receiver": payload["receiver"],
+                    "action": payload["action"],
+                },
+            )
+            connection.commit()
+        return RedirectResponse("/certificates/receivers", status_code=303)
+
+    @router.post("/certificates/receivers", response_class=HTMLResponse)
+    def certificate_receiver_add(
+        request: Request,
+        receiver: str = Form(default="", max_length=128),
+        transport: str = Form(default="", max_length=16),
+        public_key: str = Form(default="", max_length=8192),
+        allow: str = Form(default="", max_length=2048),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue one `cert_receiver` add job, or draw the form again saying why not."""
+
+        gate = _certificate_delete_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        entered = {
+            "receiver": receiver,
+            "transport": transport,
+            "public_key": public_key,
+            "allow": allow,
+        }
+        registry = _registry_overview(request)
+        try:
+            payload = certificate_receivers.payload(
+                receiver, transport, public_key, allow, registry.receiver_rows if registry else ()
+            )
+        except certificate_receivers.ReceiverProblem as refused:
+            return _receivers_page(request, gate, problem=str(refused), form=entered)
+        return _queue_receiver_job(request, gate, payload, key, form=entered)
+
+    @router.post("/certificates/receivers/remove", response_class=HTMLResponse)
+    def certificate_receiver_remove(
+        request: Request,
+        receiver: str = Form(default="", max_length=128),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue one `cert_receiver` remove job for a receiver nothing publishes to."""
+
+        gate = _certificate_delete_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        registry = _registry_overview(request)
+        try:
+            payload = certificate_receivers.removal(
+                receiver, registry.receiver_rows if registry else ()
+            )
+        except certificate_receivers.ReceiverProblem as refused:
+            return _receivers_page(request, gate, problem=str(refused))
+        return _queue_receiver_job(request, gate, payload, key, form={})
+
     @router.post("/certificates/delete", response_class=HTMLResponse)
     def certificate_delete_review(
         request: Request,
@@ -2355,7 +2547,7 @@ def build_router(config: Config) -> APIRouter:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         with request.app.state.pool.connection() as connection:
             profiles = db.dns_profiles(connection)
-            recent = db.recent_jobs(connection, limit=100)
+            recent = db.operation_jobs(connection, "dns_profile_apply")
         public_key = _dns_public_key()
         catalogue = {provider.id: provider for provider in dns_profile_form.providers()}
         _, certificate_rows, _ = read_source(request, config, CERTIFICATE_SOURCE)
@@ -2747,7 +2939,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         with request.app.state.pool.connection() as connection:
             profiles = db.ndes_profiles(connection)
-            recent = db.recent_jobs(connection, limit=100)
+            recent = db.operation_jobs(connection, "ndes_profile_apply")
         _, certificate_rows, _ = read_source(request, config, CERTIFICATE_SOURCE)
         references = certificates.profile_references(certificate_rows, field="ndes_profile")
         statuses = {

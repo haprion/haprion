@@ -26,6 +26,7 @@ from haproxy_mgmt.cli import (
     cert_deploy,
     cert_issue_helper,
     cert_publish_helper,
+    cert_receiver_helper,
     cert_scep_helper,
     cert_target_helper,
     deploy,
@@ -33,7 +34,7 @@ from haproxy_mgmt.cli import (
     managed_objects_publish,
     revert,
 )
-from haproxy_mgmt.config import CERTIFICATE_ID, RECEIVER_FORMATS
+from haproxy_mgmt.config import CERTIFICATE_ID, RECEIVER_FORMATS, RECEIVER_ID, RECEIVER_TRANSPORTS
 from haproxy_mgmt.proxy_model import NAME
 
 #
@@ -146,6 +147,7 @@ CERTIFICATE_OPERATIONS = frozenset(
         "ndes_profile_apply",
         "cert_delete",
         "cert_scep",
+        "cert_receiver",
     }
 )
 
@@ -415,6 +417,65 @@ def _certificate_operation(
             argv=(cert_delete_helper.SUDO, *SUDO_FLAGS, cert_delete_helper.HELPER),
             request=cert_delete_helper.build_request(
                 str(request_id), certificates=tuple(certificates)
+            ),
+        )
+
+    if operation == "cert_receiver":
+        #
+        # One receiver and one action (B142). The transport and the pasted
+        # public key, or the https allowlist, are checked for shape here; what
+        # they mean - the account, the directory, the lock - is the helper's,
+        # as when the operator types `haproxy-cert-receiver`. The key is text
+        # from the form and never a path: a helper that took a path would
+        # read any file root can.
+        #
+        _only(payload, "receiver", "action", "transport", "public_key", "allow")
+        receiver = payload.get("receiver")
+        if not isinstance(receiver, str) or not RECEIVER_ID.fullmatch(receiver):
+            raise BadPayload("receiver must be a receiver ID")
+        action = payload.get("action")
+        if action not in {"add", "remove"}:
+            raise BadPayload("action must be add or remove")
+        transport = payload.get("transport")
+        public_key = payload.get("public_key")
+        allow_raw = payload.get("allow", [])
+        if action == "remove":
+            if transport is not None or public_key is not None or allow_raw:
+                raise BadPayload("a removal takes no transport, key or allowlist")
+            return Prepared(
+                argv=(cert_receiver_helper.SUDO, *SUDO_FLAGS, cert_receiver_helper.HELPER),
+                request=cert_receiver_helper.build_request(
+                    str(request_id), receiver=receiver, action="remove"
+                ),
+            )
+        if transport not in RECEIVER_TRANSPORTS:
+            raise BadPayload("transport must be rsync, sftp or https")
+        if not isinstance(allow_raw, list) or not all(
+            isinstance(item, str) and item for item in allow_raw
+        ):
+            raise BadPayload("allow must be a list of addresses or networks")
+        allow = tuple(allow_raw)
+        if transport == "https":
+            if public_key is not None:
+                raise BadPayload("an https receiver has no key")
+            if not allow:
+                raise BadPayload("an https receiver needs at least one address in allow")
+        else:
+            if allow:
+                raise BadPayload("allow belongs to an https receiver only")
+            if not isinstance(public_key, str) or not public_key.strip():
+                raise BadPayload("public_key is required for rsync and sftp")
+            if len(public_key) > cert_receiver_helper.MAX_PUBLIC_KEY:
+                raise BadPayload("public_key is longer than a public key")
+        return Prepared(
+            argv=(cert_receiver_helper.SUDO, *SUDO_FLAGS, cert_receiver_helper.HELPER),
+            request=cert_receiver_helper.build_request(
+                str(request_id),
+                receiver=receiver,
+                action="add",
+                transport=str(transport),
+                public_key=public_key if isinstance(public_key, str) else None,
+                allow=allow,
             ),
         )
 

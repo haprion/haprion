@@ -23,7 +23,33 @@ PAGES = ("/", "/proxies", "/certificates", "/history", "/backups")
 
 
 def only_first(rows: tuple[Any, ...]) -> list[Any]:
-    return [row for row in rows if row.cluster == ONLY]
+    return [only_this(row) for row in rows if row.cluster == ONLY]
+
+
+def only_this(row: Any) -> Any:
+    """The row as a one-cluster installation's helper would answer it.
+
+    The registry block names each certificate's target clusters, and the
+    fixture's registry (B142) names both demo clusters. On a machine with one
+    configured cluster the registry names one; a reading that still named
+    the other would be the fixture leaking, not the interface inventing.
+    """
+
+    result = getattr(row, "result", None)
+    if not isinstance(result, dict) or "registry" not in result:
+        return row
+    registry = dict(result["registry"])
+    registry["certificates"] = [
+        {
+            **entry,
+            "targets": {
+                **entry["targets"],
+                "clusters": [name for name in entry["targets"]["clusters"] if name == ONLY],
+            },
+        }
+        for entry in registry["certificates"]
+    ]
+    return replace(row, result={**result, "registry": registry})
 
 
 class OneConfiguredCluster(LoginTestCase):

@@ -299,13 +299,107 @@ def certificate_rows(now: datetime | None = None) -> tuple[ClusterCertificates, 
         referenced=False,
         now=moment,
     )
+    #
+    # The registry block, as the helper carries it beside the catalogue: the
+    # same certificates with a source and targets, and the receivers the
+    # receivers page lists (B142). Enough rows to see the list's shape, not
+    # a survey of every transport's every state.
+    #
+    stamp = (moment - timedelta(hours=5)).isoformat().replace("+00:00", "Z")
+
+    def _registered(entry: dict[str, Any], **fields: Any) -> dict[str, Any]:
+        return {
+            **{
+                key: entry[key]
+                for key in entry
+                if key not in {"referenced_by_cluster", "deployable"}
+            },
+            "readable": True,
+            "measured_at": "distribution",
+            "source": {"kind": "acme", "lineage": entry["id"]},
+            "targets": {"clusters": [], "receivers": []},
+            "distribution": {"published_at": stamp, "current": True},
+            **fields,
+        }
+
+    receivers = [
+        {
+            "id": "backup-demo.example",
+            "transport": "sftp",
+            "layout": "per-certificate",
+            "owner": "crx-backup-demo-example",
+            "path": "/srv/certdist/receivers/backup-demo.example",
+            "allow": [],
+            "certificates": ["internal.demo.example.pem"],
+        },
+        {
+            "id": "kiosk-demo.example",
+            "transport": "rsync",
+            "layout": "per-certificate",
+            "owner": "crx-kiosk-demo-example",
+            "path": "/srv/certdist/receivers/kiosk-demo.example",
+            "allow": [],
+            "certificates": [],
+        },
+        {
+            "id": "192.0.2.40",
+            "transport": "https",
+            "layout": "per-certificate",
+            "owner": "www-data",
+            "path": "/srv/certdist/receivers/192.0.2.40",
+            "allow": ["192.0.2.40/32"],
+            "certificates": ["demo.example.pem"],
+        },
+    ]
+    registry = {
+        "certificates": [
+            _registered(
+                wildcard,
+                targets={
+                    "clusters": ["edge-demo", "service-demo"],
+                    "receivers": [
+                        {
+                            "id": "192.0.2.40",
+                            "format": "pem",
+                            "published_at": stamp,
+                            "current": True,
+                        }
+                    ],
+                },
+            ),
+            _registered(
+                internal,
+                source={"kind": "import", "lineage": None},
+                targets={
+                    "clusters": ["edge-demo", "service-demo"],
+                    "receivers": [
+                        {
+                            "id": "backup-demo.example",
+                            "format": "pkcs12",
+                            "published_at": stamp,
+                            "current": True,
+                        }
+                    ],
+                },
+            ),
+            _registered(
+                retired,
+                source={"kind": "import", "lineage": None},
+                distribution=None,
+            ),
+        ],
+        "receivers": [row["id"] for row in receivers],
+        "manager": "manager.demo.example",
+        "receiver_records": receivers,
+    }
     return (
         ClusterCertificates(
             cluster="edge-demo",
             observed_at=observed,
             outcome="done",
             result={
-                "certificates": [wildcard, {**internal, "referenced_by_cluster": False}, retired]
+                "certificates": [wildcard, {**internal, "referenced_by_cluster": False}, retired],
+                "registry": registry,
             },
             warnings=[],
             error=None,
@@ -320,7 +414,8 @@ def certificate_rows(now: datetime | None = None) -> tuple[ClusterCertificates, 
                     internal,
                     {**wildcard, "referenced_by_cluster": False},
                     retired,
-                ]
+                ],
+                "registry": registry,
             },
             warnings=[],
             error=None,

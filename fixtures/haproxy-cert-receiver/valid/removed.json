@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cert_receiver",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "id": "lb-02.example.net",
+    "action": "removed",
+    "layers": [
+      { "layer": "registry", "state": "removed", "detail": "lb-02.example.net" },
+      { "layer": "lock", "state": "removed", "detail": "/srv/certdist/receivers/lb-02.example.net/.ssh/authorized_keys" },
+      { "layer": "directory", "state": "removed", "detail": "/srv/certdist/receivers/lb-02.example.net" },
+      { "layer": "account", "state": "removed", "detail": "crx-lb-02-example-net" }
+    ],
+    "instructions": []
+  },
+  "warnings": [],
+  "error": null
+}

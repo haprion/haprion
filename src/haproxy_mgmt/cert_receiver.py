@@ -229,12 +229,14 @@ def default_owner(receiver_id: str) -> str:
 def check_identity(receiver_id: str, tools: Tools) -> None:
     """B141: the ID is the fetching host, because the lock binds to it.
 
-    `from="<id>"` in `authorized_keys` and `allow <id>` in nginx are what
-    make a stolen key or a guessed address useless, and both are the ID
-    itself. A name that does not resolve back to itself would leave sshd
-    refusing every connection from the host that is supposed to fetch - a
-    failure that looks like a broken key and is not - so it is refused here,
-    where the name can still be changed.
+    `from=` in `authorized_keys` and `allow <id>` in nginx are what make a
+    stolen key or a guessed address useless. sshd compares `from=` against
+    the peer's address, and against its name only under `UseDNS yes` - off
+    by default - so the lock carries the name and its addresses both
+    (`from_patterns`). A name that does not resolve at all, or whose PTR
+    does not agree, would leave sshd refusing every connection from the
+    host that is supposed to fetch - a failure that looks like a broken key
+    and is not - so it is refused here, where the name can still be changed.
     """
 
     if not RECEIVER_ID.fullmatch(receiver_id):
@@ -267,9 +269,36 @@ def check_identity(receiver_id: str, tools: Tools) -> None:
     raise ReceiverError(
         "receiver_unresolvable",
         f"{receiver_id} resolves to {', '.join(addresses)}, and none of those resolves back "
-        f'to {receiver_id}. sshd matches from="{receiver_id}" by reverse lookup, so the '
-        "PTR record has to agree before the key would ever be accepted.",
+        f"to {receiver_id}. The lock names the host as well as its addresses, and sshd "
+        "matches the name by reverse lookup, so the PTR record has to agree before the "
+        "name half of the lock would ever be accepted.",
     )
+
+
+def from_patterns(receiver_id: str, tools: Tools) -> tuple[str, ...]:
+    """What `from=` may hold for this receiver: the ID, and its addresses.
+
+    sshd's `UseDNS` is off by default, and then `from=` matches addresses
+    only - a lock naming the host alone refuses the very host it was issued
+    for, with a log line about a correct key from an unpermitted host. The
+    address is what sshd always has, and the name is what an operator reads
+    and what `UseDNS yes` would match, so the lock carries both. A host that
+    changes address is `remove` and `add` again, as for any other field of a
+    receiver (B138).
+    """
+
+    try:
+        ipaddress.ip_address(receiver_id)
+    except ValueError:
+        pass
+    else:
+        return (receiver_id,)
+    addresses = tools.forward(receiver_id)
+    if not addresses:
+        raise ReceiverError(
+            "receiver_unresolvable", f"{receiver_id} does not resolve; sshd could not match from="
+        )
+    return (receiver_id, *addresses)
 
 
 def read_public_key(path: Path) -> str:
@@ -302,17 +331,18 @@ def read_public_key(path: Path) -> str:
     return line
 
 
-def authorized_keys_line(receiver: Receiver, public_key: str) -> str:
+def authorized_keys_line(receiver: Receiver, public_key: str, tools: Tools) -> str:
     """The one line that is the whole of what a receiver may do over ssh.
 
     `restrict` first, which is OpenSSH's own way of saying "everything off",
     so a future option this project has not heard of is off as well.
-    `from=` binds the key to the host it was issued for, and for `rsync` the
-    forced `rrsync -ro` binds it to one directory, read-only - the key cannot
-    run a shell, cannot write, and cannot read a neighbour's certificate.
+    `from=` binds the key to the host it was issued for - by name and by
+    address, see `from_patterns` - and for `rsync` the forced `rrsync -ro`
+    binds it to one directory, read-only - the key cannot run a shell,
+    cannot write, and cannot read a neighbour's certificate.
     """
 
-    options = ["restrict", f'from="{receiver.receiver_id}"']
+    options = ["restrict", f'from="{",".join(from_patterns(receiver.receiver_id, tools))}"']
     if receiver.transport == "rsync":
         options.append(f'command="{RRSYNC} -ro {receiver.path}"')
     return ",".join(options) + " " + public_key
@@ -830,7 +860,7 @@ def _write_lock(
         return layer
 
     home = receiver.path
-    keys_layer = write_authorized_keys(home, authorized_keys_line(receiver, key_line))
+    keys_layer = write_authorized_keys(home, authorized_keys_line(receiver, key_line, tools))
     undo.append(lambda: shutil.rmtree(home / ".ssh", ignore_errors=True))
     if receiver.transport == "sftp":
         before = (

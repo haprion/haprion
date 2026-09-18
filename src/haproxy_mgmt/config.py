@@ -399,7 +399,7 @@ def receiver_id_names_a_host(receiver_id: str) -> bool:
     not a regular expression anyone should write twice, and because two places
     ask the question for the same reason: `haproxy-cert-receiver` refuses a
     registration whose ID is not a host, and the lock it writes -
-    `from="<id>"` in `authorized_keys`, `allow <id>` in nginx - is what makes
+    `from="<id>,<its addresses>"` in `authorized_keys`, `allow <id>` in nginx - is what makes
     the answer matter. Existing entries are not held to it (§3 of the C7
     design); the check belongs at registration, where a name can still be
     chosen.

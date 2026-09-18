@@ -1338,12 +1338,18 @@ sudo haproxy-cert-receiver remove lb-02.example.net
 ```
 
 **The ID is the fetching host**: its DNS name or its IPv4 address, and nothing else. That is what the
-lock binds to - `from="<id>"` in `authorized_keys`, `allow <id>` in nginx - so a name whose **PTR
-record does not resolve back to it is refused at registration**. sshd matches `from=` by reverse
-lookup, and a key that would never be accepted is worth refusing while the name can still be
-changed. An IPv6 address is not accepted as an ID (the ID is also a directory name and a URL
-path segment, and `:` is neither); a host that fetches over IPv6 is registered under its DNS
-name.
+lock binds to - `from=` in `authorized_keys`, `allow <id>` in nginx. **The key line carries the
+name and its addresses both**, `from="lb-02.example.net,192.0.2.10"`: sshd's `UseDNS` is off by
+default, and then `from=` matches addresses only - a lock naming the host alone refuses the very
+host it was issued for, and the log says *correct key but not from a permitted host*. The
+address is what sshd always has; the name is what an operator reads, and what `UseDNS yes` would
+match. The addresses are resolved once, at registration, so a host that changes address is
+`remove` and `add` again. A name whose **PTR record does not resolve back to it is refused at
+registration** all the same: under `UseDNS yes` that is what the name half is matched by, and a
+key that would never be accepted is worth refusing while the name can still be changed. An IPv6
+address is not accepted as an ID (the ID is also a directory name and a URL path segment, and
+`:` is neither); a host that fetches over IPv6 is registered under its DNS name, and its IPv6
+address goes into `from=` with the rest.
 
 **Where the directory goes** is `receiver_root` in the runtime policy: a new receiver's
 directory is `<receiver_root>/<id>` unless `--path` names another, and a migration's record
@@ -1357,7 +1363,7 @@ through the manager has passed through one machine too many.
 
 | Transport | How it fetches | What holds it there |
 |---|---|---|
-| `rsync` | `rsync` over ssh | `restrict,from="<id>",command="/usr/bin/rrsync -ro <path>"` - one directory, read-only, no shell |
+| `rsync` | `rsync` over ssh | `restrict,from="<id>,<addresses>",command="/usr/bin/rrsync -ro <path>"` - one directory, read-only, no shell |
 | `sftp` | `sftp`, read-only | the same key line without the forced command, plus a `Match User` block with `ChrootDirectory <path>` and `ForceCommand internal-sftp -R` |
 | `https` | plain `GET`, no key at all | an address whitelist in nginx, and nothing else |
 

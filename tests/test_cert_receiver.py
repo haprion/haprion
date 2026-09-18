@@ -14,6 +14,7 @@ needs root and a second host.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import pwd
@@ -173,7 +174,10 @@ class AddingAReceiver(ReceiverFixture):
         self.assertEqual((directory / ".ssh").stat().st_mode & 0o777, 0o755)
 
         line = self.keys_file().read_text(encoding="ascii").splitlines()[-1]
-        self.assertTrue(line.startswith('restrict,from="lb-02.example.net",command="'))
+        # The lock names the host and its address both: sshd matches `from=`
+        # against the address unless `UseDNS yes` is set, and against the name
+        # only then, so a lock naming the host alone would refuse it.
+        self.assertTrue(line.startswith('restrict,from="lb-02.example.net,192.0.2.10",command="'))
         self.assertIn(f"/usr/bin/rrsync -ro {directory}", line)
         self.assertTrue(line.endswith(KEY))
         self.assertEqual(self.keys_file().stat().st_mode & 0o777, 0o644)
@@ -241,6 +245,29 @@ class AddingAReceiver(ReceiverFixture):
         self.assertNotIn("command=", self.keys_file().read_text(encoding="ascii"))
         self.assertEqual(self.registered()["lb-02.example.net"]["transport"], "sftp")
         self.assertEqual(result.action, "added")
+
+    def test_an_address_id_is_its_own_lock(self) -> None:
+        # An address is what sshd compares against directly, so it stands
+        # alone in `from=` and no lookup is asked for.
+        def refuse(name: str) -> tuple[str, ...]:
+            raise AssertionError(f"looked up {name}")
+
+        self.tools = dataclasses.replace(self.tools, forward=refuse)
+        self.add(receiver_id="192.0.2.40", transport="sftp")
+
+        line = self.keys_file("192.0.2.40").read_text(encoding="ascii").splitlines()[-1]
+        self.assertTrue(line.startswith('restrict,from="192.0.2.40" '))
+
+    def test_a_name_with_several_addresses_locks_to_all_of_them(self) -> None:
+        self.tools = dataclasses.replace(
+            self.tools, forward=lambda name: ("192.0.2.10", "2001:db8::10")
+        )
+        self.add(transport="sftp")
+
+        line = self.keys_file().read_text(encoding="ascii").splitlines()[-1]
+        self.assertTrue(
+            line.startswith('restrict,from="lb-02.example.net,192.0.2.10,2001:db8::10" ')
+        )
 
     def test_https_gets_a_whitelisted_location_and_no_key_at_all(self) -> None:
         # www-data's directory cannot be chowned by a test that is not root.

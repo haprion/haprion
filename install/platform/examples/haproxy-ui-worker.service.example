@@ -38,8 +38,18 @@ RestartSec=5
 # and setting that group is a chown - which root cannot do with an empty
 # bounding set. Found by running the gate: the revert reached install_release
 # and failed there with EPERM, one step past the write paths.
+#
+# CAP_DAC_READ_SEARCH is the publish step's as well, and the poller already
+# carries it. Root inside this sandbox is only uid 0: without it the mode bits
+# are the law, and a receiver's directory is what the publisher must look into
+# while its files belong to the fetch account (0600) and one made before the
+# registry existed may belong to that account outright (0700). Found on the
+# machine: a target change from the interface ended `target_missing` on a
+# directory the same command, run as root from a terminal, published to. Read
+# and traverse only - what may be written is still the write paths above, and
+# what may be run is still the sudoers file.
 NoNewPrivileges=no
-CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_AUDIT_WRITE CAP_CHOWN
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SETPCAP CAP_AUDIT_WRITE CAP_CHOWN CAP_DAC_READ_SEARCH
 
 # @privileged carries setuid/setgid and @resources carries the setrlimit calls
 # sudo makes while building the target environment. Denying either denies sudo.

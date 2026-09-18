@@ -872,3 +872,36 @@ class WildcardIsNotPublishedOverHttps(Fixture):
             ),
             ["fullchain.pem", "privkey.pem"],
         )
+
+
+class TheWorkerCanLookWhereItPublishes(unittest.TestCase):
+    """The unit that runs the publisher as root must let root look into a receiver.
+
+    Found on the machine, 2026-09-18: a target change from the interface ended
+    `target_missing` on a directory that the same command, run as root from a
+    terminal, published to. Root inside the worker's sandbox is only uid 0;
+    the bounding set decides whether the mode bits bind it. Pinned here rather
+    than remembered, like the other lists that live outside the code.
+    """
+
+    UNIT = BASE / "install" / "platform" / "examples" / "haproxy-ui-worker.service.example"
+
+    def bounding_set(self) -> list[str]:
+        for line in self.UNIT.read_text(encoding="utf-8").splitlines():
+            if line.startswith("CapabilityBoundingSet="):
+                return line.partition("=")[2].split()
+        self.fail("the worker unit declares no CapabilityBoundingSet")
+
+    def test_root_may_traverse_and_read_what_the_fetch_account_owns(self) -> None:
+        self.assertIn("CAP_DAC_READ_SEARCH", self.bounding_set())
+
+    def test_root_may_hand_a_file_to_the_fetch_account(self) -> None:
+        self.assertIn("CAP_CHOWN", self.bounding_set())
+
+    def test_the_sandbox_does_not_get_to_write_past_the_mode_bits(self) -> None:
+        self.assertNotIn("CAP_DAC_OVERRIDE", self.bounding_set())
+
+    def test_the_distribution_root_is_writable(self) -> None:
+        text = self.UNIT.read_text(encoding="utf-8")
+        line = next(line for line in text.splitlines() if line.startswith("ReadWritePaths="))
+        self.assertIn("/srv/certdist", line.split())

@@ -1406,6 +1406,15 @@ Reference fetch scripts for each transport are in
 [`../examples/receivers/`](../examples/receivers/). They are what a receiver's own operator
 adapts; the manager never pushes.
 
+**The worker's sandbox must be able to look into a receiver's directory.** A receiver's files
+belong to its fetch account (`0600`), and a directory made before this command existed may belong
+to that account outright. Root inside the worker's unit is only uid 0 - the mode bits are the law
+there unless the bounding set says otherwise - so the worker unit carries `CAP_DAC_READ_SEARCH`,
+the read-and-traverse capability the poller already has. Without it a target change from the
+interface ends `target_missing` on a directory that `haproxy-cert-publish` run as root from a
+terminal publishes to without complaint. An installation whose worker unit predates this line
+reruns `install/platform/07-platform-services`, which rewrites and restarts the unit.
+
 ### 1.5 Validation certificate
 
 Candidate validation runs a real `haproxy -c` against the candidate. Any configuration that

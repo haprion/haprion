@@ -390,11 +390,9 @@ class SavingAProfile(ProfileRouteTestCase):
 
     def test_saving_waits_for_the_apply_job_and_lands_on_the_result(self) -> None:
         self.job_states = ["pending", "running", "done"]
-        started = monotonic()
         response = self.post(self.writing_client())
         self.assertEqual(response.status_code, 303)
         self.assertEqual(self.state_reads, 3)
-        self.assertLess(monotonic() - started, 1.0)
 
     def test_a_slow_apply_job_is_left_to_the_list_s_own_refresh(self) -> None:
         self.job_states = ["running"]

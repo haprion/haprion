@@ -228,6 +228,28 @@ class WhatRetargetingDoes(RegistryFixture):
         self.assertIn("alpha", str(caught.exception))
         self.assertEqual(registry.read_bytes(), before)
 
+    def test_a_cluster_s_default_certificate_cannot_be_taken_from_it(self) -> None:
+        """clusters.yaml names a default; the loader refuses a registry that moved it away.
+
+        2026-09-19: an enrollment dropped the clusters from the default
+        certificate's entry, and every command on the manager refused its
+        configuration until the file was edited by hand. Refused here, before
+        the rename, with the cluster and the certificate named.
+        """
+
+        policy_path, registry = self.prepared(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        before = registry.read_bytes()
+
+        # alpha keeps a certificate (example.com), so this is not `cluster_uncovered`.
+        with self.assertRaises(RegistryError) as caught:
+            self.retarget(policy_path, registry, "keeper-alpha.example", receivers=["lb-01"])
+
+        self.assertEqual(caught.exception.code, "default_certificate_unassigned")
+        self.assertIn("alpha (keeper-alpha.example)", str(caught.exception))
+        self.assertEqual(registry.read_bytes(), before)
+
     def test_a_registry_the_engine_would_refuse_never_reaches_the_path(self) -> None:
         """The load-back happens before the rename, so a bad write is never the file."""
 

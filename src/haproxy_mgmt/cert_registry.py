@@ -176,6 +176,27 @@ def write(
                 "that no certificate names cannot be loaded. Give the cluster another "
                 "certificate first.",
             )
+        #
+        # The same refusal one step further: a cluster's `default_certificate`
+        # (clusters.yaml) must be one the registry gives that cluster, or the
+        # loader refuses the whole configuration - `default_certificate is not
+        # allowlisted` - for every command, not just this one. Seen 2026-09-19:
+        # an enrollment dropped the clusters from the default certificate's
+        # entry, the registry was renamed into place, and the manager was
+        # blind until the file was edited by hand.
+        #
+        undefaulted = sorted(
+            f"{cluster_id} ({cluster.default_certificate})"
+            for cluster_id, cluster in runtime.clusters.items()
+            if cluster.default_certificate not in candidate.for_cluster(cluster_id)
+        )
+        if undefaulted:
+            raise RegistryError(
+                "default_certificate_unassigned",
+                f"this would take a cluster's default certificate away from it: {', '.join(undefaulted)}. "
+                "The default certificate in clusters.yaml must stay assigned to its cluster; "
+                "change the default first.",
+            )
         os.replace(temporary, path)
     except RegistryError:
         with contextlib.suppress(OSError):
@@ -332,7 +353,7 @@ class TargetChange:
         }
 
 
-def _named_receivers(entry: Mapping[str, Any]) -> tuple[tuple[str, ...], dict[str, str]]:
+def named_receivers(entry: Mapping[str, Any]) -> tuple[tuple[str, ...], dict[str, str]]:
     """The receiver IDs in a raw entry, and the formats stated beside them.
 
     The raw document, not the typed registry: this is the half that gets
@@ -426,7 +447,7 @@ def set_targets(
         )
 
     before_clusters = tuple(entry.get("clusters") or ())
-    before_receivers, before_formats = _named_receivers(entry)
+    before_receivers, before_formats = named_receivers(entry)
     after_clusters = tuple(sorted(set(clusters)))
     after_receivers = tuple(sorted(set(receivers)))
     #

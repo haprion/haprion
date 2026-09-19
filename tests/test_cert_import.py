@@ -369,6 +369,16 @@ class WhatAnImportIs(ImportFixture):
         self.assertEqual([p.name for p in self.store.iterdir()], ["shop.example"])
         self.assertEqual(self.deployed, ["alpha"])
 
+    def test_a_second_import_naming_a_target_adds_it_and_keeps_the_rest(self) -> None:
+        """Targets named on a re-import are added, never a replacement (2026-09-19)."""
+
+        self.run_import("shop.example", self.material(), clusters=["alpha"])
+
+        self.run_import("shop.example", self.material(), receivers=["lb-01"])
+
+        self.assertEqual(self.registered()["shop.example"]["clusters"], ["alpha"])
+        self.assertEqual(self.registered()["shop.example"]["receivers"], ["lb-01"])
+
     def test_a_receiver_only_import_publishes_the_pair(self) -> None:
         self.run_import("pve.example", self.material(), receivers=["lb-01"])
         self.assertTrue((self.receiver_dir / FULLCHAIN).exists())

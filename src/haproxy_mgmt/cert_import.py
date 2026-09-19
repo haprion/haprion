@@ -397,11 +397,17 @@ def register(
 ) -> None:
     """The entry, through the one writer the registry has.
 
-    An entry that exists already keeps its targets unless new ones are
-    named, so re-importing a rotated certificate is the material and nothing
-    else. An entry of another kind is refused: an ACME certificate's
-    material belongs to certbot, and importing over it would give the
-    publisher two sources for one ID.
+    An entry that exists already keeps every target it has, and the targets
+    named here are added to them: re-importing a rotated certificate - or
+    enrolling it again over NDES with one more receiver - is the material and
+    an addition, never a replacement. Taking a target away is a retarget's
+    job (Remove from...), which is the operation that says what that costs.
+    It used to replace: an enrollment of an installation's default
+    certificate named one receiver and no cluster, the clusters were dropped,
+    and every command on the manager refused its configuration (2026-09-19).
+    An entry of another kind is refused: an ACME certificate's material
+    belongs to certbot, and importing over it would give the publisher two
+    sources for one ID.
     """
 
     try:
@@ -411,6 +417,9 @@ def register(
         entry: dict[str, Any] = {"source": {"kind": "import"}}
         if ndes_profile is not None:
             entry["source"]["ndes_profile"] = ndes_profile
+        kept_clusters: list[str] = []
+        kept_receivers: tuple[str, ...] = ()
+        kept_formats: dict[str, str] = {}
         if isinstance(existing, dict):
             kind = (existing.get("source") or {}).get("kind")
             if kind != "import":
@@ -419,14 +428,19 @@ def register(
                     f"{certificate_id!r} is registered as {kind!r}; its material is not "
                     "imported. Choose another ID.",
                 )
-            if not clusters and not receivers:
-                for key in ("clusters", "receivers"):
-                    if existing.get(key):
-                        entry[key] = list(existing[key])
-        if clusters:
-            entry["clusters"] = list(clusters)
-        if receivers:
-            entry["receivers"] = cert_registry.receiver_elements(receivers, formats or {})
+            kept_clusters = [str(item) for item in existing.get("clusters") or ()]
+            kept_receivers, kept_formats = cert_registry.named_receivers(existing)
+        all_clusters = kept_clusters + [c for c in clusters if c not in kept_clusters]
+        all_receivers = list(kept_receivers) + [r for r in receivers if r not in kept_receivers]
+        #
+        # A format named now wins over the one on file: the operator chose it
+        # on this request, and a receiver kept from before keeps its own.
+        #
+        all_formats = {**kept_formats, **(formats or {})}
+        if all_clusters:
+            entry["clusters"] = all_clusters
+        if all_receivers:
+            entry["receivers"] = cert_registry.receiver_elements(all_receivers, all_formats)
         certificates[certificate_id] = entry
         cert_registry.write(
             path,

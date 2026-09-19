@@ -422,8 +422,9 @@ def payload(
     registered = next((row for row in existing if row.identifier == name), None)
     if registered is not None:
         raise ReceiverProblem(
-            f"{name} already fetches over {registered.transport}. Publish more "
-            "certificates to it from the registry; to change the transport, remove it first."
+            f"{name} already fetches over {registered.transport}. Publish more certificates "
+            f"to it using the existing {registered.transport} way from the registry. To change "
+            "the transport mode, remove it first."
         )
     if transport not in RECEIVER_TRANSPORTS:
         raise ReceiverProblem("Choose a transport.")

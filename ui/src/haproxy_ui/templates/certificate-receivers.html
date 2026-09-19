@@ -62,7 +62,7 @@
           <li><span class="receiver-step-title">{{ step.title }}</span>{% if step.command %}<pre class="receiver-command"><code>{{ step.command }}</code></pre>{% endif %}{% if step.note %}<small>{{ step.note }}</small>{% endif %}</li>
           {% endfor %}
         </ol>
-        <p class="table-note">Reference scripts, with the checks a fetch should make before installing: <code>examples/receivers/fetch-{{ row.transport }}</code>{% if row.holds | selectattr('format', 'equalto', 'pkcs12') | list %} and <code>examples/receivers/install-pkcs12.ps1</code>{% endif %} in the repository.</p>
+        <p class="table-note"><strong>Or use the ready-made script:</strong> <code>examples/receivers/fetch-{{ row.transport }}</code> in the repository does the steps above, checks that the key matches the certificate before installing it, and reloads the service only when something changed. Copy it to the host and run it from a timer.{% if row.holds | selectattr('format', 'equalto', 'pkcs12') | list %} On Windows, <code>examples/receivers/install-pkcs12.ps1</code> imports the PKCS#12 pair into the certificate store.{% endif %}</p>
       </td>
     </tr>
     {% else %}

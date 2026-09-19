@@ -203,8 +203,8 @@ class TheFormRefuses(unittest.TestCase):
             self.payload(receiver_id="lb-01")
         self.assertEqual(
             str(caught.exception),
-            "lb-01 already fetches over rsync. Publish more certificates to it from the "
-            "registry; to change the transport, remove it first.",
+            "lb-01 already fetches over rsync. Publish more certificates to it using the "
+            "existing rsync way from the registry. To change the transport mode, remove it first.",
         )
 
     def test_a_removal_needs_a_registered_receiver_nothing_names(self) -> None:
@@ -393,6 +393,11 @@ class ThePage(ReceiverRouteTestCase):
         self.assertIn('app.example.com <span class="target-kind">pkcs12</span>', page)
         self.assertIn("get /app.example.com/app.example.com.pfx", page)
         self.assertIn("crx-lb-02-example-net@mgr.example.net:&lt;certificate&gt;/", page)
+        self.assertIn(
+            "Or use the ready-made script:</strong> <code>examples/receivers/fetch-sftp</code>",
+            page,
+        )
+        self.assertIn("install-pkcs12.ps1</code> imports the PKCS#12 pair", page)
         # In use: no Remove; nothing yet: Remove.
         self.assertIn('title="Use Remove from… on the certificate first"', page)
         self.assertIn('name="receiver" value="lb-02.example.net"', page)

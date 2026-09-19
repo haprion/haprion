@@ -1109,8 +1109,9 @@ holds, so the publisher and the listing read both sources the same way. Then the
 rollout of its clusters, exactly as after an issue.
 
 **Importing again.** The same ID imported a second time replaces the material - a rotated key, a
-renewed certificate from the same CA - and keeps the targets the entry has unless new ones are
-named. The manager does not renew an imported certificate; its expiry is on the registry view,
+renewed certificate from the same CA - and keeps every target the entry has; targets named on the
+second import are added to them, never a replacement (taking a target away is *Remove from…*, 1.4.6).
+The manager does not renew an imported certificate; its expiry is on the registry view,
 and a new import before that date is the maintainer's job. A certificate registered as `import`
 before this command existed, with its material placed by hand, is replaced the same way.
 

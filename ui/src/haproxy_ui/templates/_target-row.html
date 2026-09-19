@@ -1,0 +1,17 @@
+{#
+  One target as a row in the target list (2026-09-19): the box and the name,
+  what kind of target it is, the format select for a receiver - always there,
+  greyed until the box is ticked, so the choice is visible before it is
+  made - and what happens to it. One component for the certificate form and
+  for Publish to… / Remove from…, so the two read alike. `held` is a target
+  every selected certificate already goes to: ticked and locked, and not
+  submitted (a disabled input never is).
+#}
+{% macro target_row(kind, name, checked=False, held=False, transport='', format_value='pem', show_format=False, effect='', note='', attrs='') -%}
+<label class="check target-row{% if held %} target-held{% endif %}"{% if held %} title="Already published to every selected certificate"{% endif %}{% if attrs %} {{ attrs | safe }}{% endif %}>
+  <span class="target-name"><input type="checkbox"{% if not held %} name="{{ kind }}" value="{{ name }}"{% endif %}{% if checked or held %} checked{% endif %}{% if held %} disabled{% endif %}{% if not held %} data-target-pick{% endif %}> <span>{{ name }}</span></span>
+  <span class="target-what">{{ kind }}{% if transport %} · {{ transport }}{% endif %}{% if note %} <span class="optional">· {{ note }}</span>{% endif %}</span>
+  <span class="target-format">{% if show_format and not held %}<select name="format" class="receiver-format" aria-label="Format for {{ name }}"><option value="{{ name }}=pem"{% if format_value == 'pem' %} selected{% endif %}>PEM pair</option><option value="{{ name }}=pkcs12"{% if format_value == 'pkcs12' %} selected{% endif %}>PKCS#12 + password</option></select>{% endif %}</span>
+  <span class="target-effect optional">{% if held %}already published{% else %}{{ effect }}{% endif %}</span>
+</label>
+{%- endmacro %}

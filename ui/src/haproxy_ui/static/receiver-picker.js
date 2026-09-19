@@ -6,13 +6,16 @@
   const search = document.querySelector("[data-receiver-search]");
   const empty = document.querySelector("[data-receiver-empty]");
 
+  // Every ticked row in the list, clusters included: the list is one list now.
+  const list = document.querySelector("[data-receiver-options]");
+  const inputs = Array.from((list || document).querySelectorAll('input[type="checkbox"]'));
   const updateCount = () => {
     if (!count) return;
-    const selected = options.filter((option) => option.querySelector("input").checked).length;
+    const selected = inputs.filter((input) => input.checked).length;
     count.textContent = `${selected} selected`;
   };
 
-  options.forEach((option) => option.querySelector("input").addEventListener("change", updateCount));
+  inputs.forEach((input) => input.addEventListener("change", updateCount));
   updateCount();
 
   if (!search) return;

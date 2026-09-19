@@ -27,6 +27,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from haproxy_mgmt.config import RECEIVER_ID, RECEIVER_TRANSPORTS
@@ -291,6 +292,7 @@ class Activity:
     label: str
     tone: str
     message: str
+    finished_at: datetime | None = None
 
     @property
     def busy(self) -> bool:
@@ -310,19 +312,30 @@ class Activity:
         return "Registration failed" if registering else "Removal failed"
 
 
+# How long a finished job's verdict stays on a row - the certificate rows'
+# rule (certificate_activity.VERDICT_LIFETIME), applied here too. A failure
+# from this morning is history, and the jobs page keeps it.
+VERDICT_LIFETIME = timedelta(hours=1)
+
+
 def on_the_rows(
-    rows: Sequence[ReceiverRow], activity: Sequence[Activity]
+    rows: Sequence[ReceiverRow],
+    activity: Sequence[Activity],
+    *,
+    now: datetime | None = None,
 ) -> tuple[dict[str, Activity], tuple[Activity, ...]]:
     """Which rows carry a job's state, and which jobs have no row yet.
 
     A job that is running is always on its row. A job that failed is shown
-    only while it is the newest receiver job: a failure from last week is on
-    the jobs page, not a badge the row wears forever. A registration has no
-    row in the registry until it succeeds, so its state is a row of its own
-    at the top of the table - the second value - and a failed registration
-    is there for as long as the same rule keeps it.
+    only while it is the newest receiver job and for an hour after it ended:
+    a failure from last week is on the jobs page, not a badge the row wears
+    forever. A registration has no row in the registry until it succeeds,
+    so its state is a row of its own at the top of the table - the second
+    value - and a failed registration is there for as long as the same rule
+    keeps it (and can be dismissed from the page before that).
     """
 
+    moment = now or datetime.now(UTC)
     registered = {row.identifier for row in rows}
     on_rows: dict[str, Activity] = {}
     ghosts: list[Activity] = []
@@ -330,6 +343,12 @@ def on_the_rows(
         if item.tone == "healthy" or item.receiver in on_rows:
             continue
         if not item.busy and index != 0:
+            continue
+        if (
+            not item.busy
+            and item.finished_at is not None
+            and moment - item.finished_at > VERDICT_LIFETIME
+        ):
             continue
         if item.receiver in registered:
             on_rows[item.receiver] = item
@@ -351,6 +370,7 @@ def recent_activity(rows: Sequence[Any]) -> tuple[Activity, ...]:
         receiver = _text(payload.get("receiver"))
         action = _text(payload.get("action")) or "add"
         verb = "Registering" if action == "add" else "Removing"
+        finished = getattr(job, "finished_at", None)
         if job.state in {"pending", "running"}:
             activity.append(Activity(job.id, receiver, action, f"{verb} {receiver}", "info", ""))
             continue
@@ -359,7 +379,7 @@ def recent_activity(rows: Sequence[Any]) -> tuple[Activity, ...]:
         message = _text(error.get("message"))
         if job.state == "done" and job.outcome == "done":
             label = f"{'Registered' if action == 'add' else 'Removed'} {receiver}"
-            activity.append(Activity(job.id, receiver, action, label, "healthy", ""))
+            activity.append(Activity(job.id, receiver, action, label, "healthy", "", finished))
         elif job.state == "done" and job.outcome == "partial":
             failed = [
                 _text(layer.get("detail"))
@@ -374,6 +394,7 @@ def recent_activity(rows: Sequence[Any]) -> tuple[Activity, ...]:
                     f"{verb} {receiver}: a layer was left",
                     "warning",
                     "; ".join(item for item in failed if item),
+                    finished,
                 )
             )
         else:
@@ -385,6 +406,7 @@ def recent_activity(rows: Sequence[Any]) -> tuple[Activity, ...]:
                     f"{verb} {receiver} failed",
                     "critical",
                     message or _text(job.stderr_excerpt),
+                    finished,
                 )
             )
     return tuple(activity)

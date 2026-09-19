@@ -318,6 +318,21 @@ class WhatTheRowsCarry(unittest.TestCase):
         on_rows, ghosts = certificate_receivers.on_the_rows(self.rows(), older_failed)
         self.assertEqual((on_rows, ghosts), ({}, ()))
 
+    def test_a_verdict_older_than_an_hour_is_history(self) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        now = datetime.now(UTC)
+        fresh = certificate_receivers.Activity(
+            1, "lb-03.example.net", "add", "", "critical", "", now - timedelta(minutes=50)
+        )
+        stale = certificate_receivers.Activity(
+            2, "lb-03.example.net", "add", "", "critical", "", now - timedelta(minutes=70)
+        )
+        _, ghosts = certificate_receivers.on_the_rows(self.rows(), (fresh,), now=now)
+        self.assertEqual([g.job_id for g in ghosts], [1])
+        _, ghosts = certificate_receivers.on_the_rows(self.rows(), (stale,), now=now)
+        self.assertEqual(ghosts, ())
+
     def test_a_row_carries_its_newest_job_only(self) -> None:
         on_rows, _ = certificate_receivers.on_the_rows(
             self.rows(),
@@ -448,7 +463,7 @@ class ThePage(ReceiverRouteTestCase):
             self.writing_client(role="reader").get("/certificates/receivers/new").status_code,
             403,
         )
-        self.assertIn('<span class="receiver-transport">· sftp</span>', page)
+        self.assertIn('<span class="target-what">receiver · sftp</span>', page)
         self.assertIn('href="/certificates?view=registry">Cancel</a>', page)
 
     def test_the_registry_page_offers_the_button(self) -> None:
@@ -530,8 +545,9 @@ class TheJobs(ReceiverRouteTestCase):
 
         page = self.writing_client().get("/certificates/receivers").text
 
-        self.assertIn('<tr class="receiver-row receiver-ghost">', page)
+        self.assertIn('<tr class="receiver-row receiver-ghost" data-receiver-ghost="7">', page)
         self.assertIn("<strong>lb-03.example.net</strong>", page)
+        self.assertIn('data-receiver-dismiss="7"', page)
         self.assertIn(
             '<span>Registration failed</span><span aria-hidden="true">·</span>'
             '<a href="/jobs#job-7">Job 7</a></span> '

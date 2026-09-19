@@ -2072,6 +2072,7 @@ def build_router(config: Config) -> APIRouter:
             request,
             "certificate-retarget.html",
             {
+                "receiver_transports": choices.receiver_transports,
                 "username": session.username,
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),

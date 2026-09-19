@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% from "_target-row.html" import target_row %}
 {% block title %}{{ selection.label if selection else 'Certificate targets' }} — HAProxy Manager{% endblock %}
 {% block content %}
 {#
@@ -43,13 +44,10 @@
         certificate is not on yet, a remove what some chosen certificate is
         on. The count says how many of the selection already have it.
       #}
-      <div class="form-checks form-checks-stacked retarget-choices">
+      <div class="target-list retarget-choices">
         {% for choice in selection.choices %}
-        {% if choice.held %}
-        <label class="check target-held" title="Already published to every selected certificate"><input type="checkbox" checked disabled> <span>{{ choice.name }} <span class="target-kind">{{ choice.kind }}</span> <span class="optional">· already published</span></span></label>
-        {% else %}
-        <label class="check{% if adding and choice.kind == 'receiver' %} receiver-choice{% endif %}"><input type="checkbox" name="{{ choice.kind }}" value="{{ choice.name }}" data-target-pick> <span>{{ choice.name }} <span class="target-kind">{{ choice.kind }}</span>{% if adding and choice.holding %} <span class="optional">· {{ choice.holding }} of {{ selection.rows | length }} already there</span>{% elif not adding and choice.holding < selection.rows | length %} <span class="optional">· {{ choice.holding }} of {{ selection.rows | length }} are on it</span>{% endif %}</span>{% if adding and choice.kind == 'receiver' %}<select name="format" class="receiver-format" aria-label="Format for {{ choice.name }}"><option value="{{ choice.name }}=pem">PEM pair</option><option value="{{ choice.name }}=pkcs12">PKCS#12 + password</option></select>{% endif %}</label>
-        {% endif %}
+        {% if adding %}{% set note = (choice.holding ~ ' of ' ~ (selection.rows | length) ~ ' already there') if choice.holding and not choice.held else '' %}{% else %}{% set note = (choice.holding ~ ' of ' ~ (selection.rows | length) ~ ' are on it') if choice.holding < selection.rows | length else '' %}{% endif %}
+        {{ target_row(choice.kind, choice.name, held=choice.held, transport=receiver_transports.get(choice.name, '') if choice.kind == 'receiver' else '', show_format=adding and choice.kind == 'receiver', note=note, effect=('Nodes pull it and reload HAProxy' if adding else 'Nodes drop their copy, no reload') if choice.kind == 'cluster' else ('Fetches on its own schedule' if adding else 'Its pair on the manager is removed')) }}
         {% endfor %}
         {% if not selection.offered %}
         <span class="optional">{% if adding %}Every selected certificate is already on every target.{% else %}No selected certificate is on any target.{% endif %}</span>

@@ -11,6 +11,34 @@
     });
   });
 
+  // A failed registration's row can be dismissed: it is a verdict, not a
+  // receiver, and the jobs page keeps it. Remembered per browser and per
+  // job, so a new failure is never hidden by an old dismissal. Storage can
+  // be absent or refuse (private windows); the row then simply stays.
+  const DISMISSED = "receiver-dismissed-jobs";
+  const dismissed = () => {
+    try {
+      return JSON.parse(window.localStorage.getItem(DISMISSED) || "[]");
+    } catch {
+      return [];
+    }
+  };
+  document.querySelectorAll("[data-receiver-ghost]").forEach((row) => {
+    if (dismissed().includes(row.dataset.receiverGhost)) row.hidden = true;
+  });
+  document.querySelectorAll("[data-receiver-dismiss]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.receiverDismiss;
+      try {
+        window.localStorage.setItem(DISMISSED, JSON.stringify([...dismissed(), id].slice(-20)));
+      } catch {
+        // Nothing to remember it in; hiding it for now is still right.
+      }
+      const row = button.closest("[data-receiver-ghost]");
+      if (row) row.hidden = true;
+    });
+  });
+
   const form = document.querySelector("[data-receiver-form]");
   if (!form) return;
   const keyField = form.querySelector("[data-key-field]");

@@ -24,7 +24,7 @@
 {% endfor %}
 
 <section class="cluster-card">
-  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Profiles</h3><p>{{ profiles | length }} profile{{ '' if profiles | length == 1 else 's' }}. <a href="/certificates">Back to certificates</a>.</p></div></div></header>
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Profiles</h3><p>{{ profiles | length }} profile{{ '' if profiles | length == 1 else 's' }}.</p></div></div></header>
   <div class="table-scroll"><table class="node-table dns-profile-table ndes-profile-table">
     <thead><tr><th scope="col">Profile</th><th scope="col">Endpoint</th><th scope="col">Status</th><th scope="col"></th></tr></thead>
     <tbody>
@@ -41,5 +41,6 @@
     </tbody>
   </table></div>
   <p class="table-note">The challenge is never shown again after saving. To change it, replace the profile - the new challenge is sealed as the next revision and applied by a job.<br>Removal is refused while a certificate enrolled through the profile is still registered or an enrollment is still waiting on the CA.</p>
+  <div class="editor-actions editor-submit list-actions"><div class="form-buttons"><a class="secondary-button" href="/certificates">Back to certificates</a></div></div>
 </section>
 {% endblock %}

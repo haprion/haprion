@@ -24,7 +24,7 @@
 {%- endmacro %}
 
 <section class="cluster-card">
-  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Registered</h3><p>{{ rows | length }} receiver{{ '' if rows | length == 1 else 's' }}. <a href="/certificates?view=registry">Back to certificates</a>.</p></div></div></header>
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Registered</h3><p>{{ rows | length }} receiver{{ '' if rows | length == 1 else 's' }}.</p></div></div></header>
   {% if not registry_present %}
   <p class="table-note">This installation declares no certificate registry, so there are no receivers to list.</p>
   {% else %}
@@ -32,10 +32,10 @@
     <thead><tr><th scope="col">Receiver</th><th scope="col">Transport</th><th scope="col">Account</th><th scope="col">Holds</th><th scope="col"></th></tr></thead>
     <tbody>
     {% for item in ghosts %}
-    <tr class="receiver-row receiver-ghost">
+    <tr class="receiver-row receiver-ghost" data-receiver-ghost="{{ item.job_id }}">
       <td data-label="Receiver"><strong>{{ item.receiver }}</strong></td>
       <td data-label="Transport" colspan="3">{{ job_badge(item) }}</td>
-      <td data-label="Actions"></td>
+      <td data-label="Actions">{% if not item.busy %}<button type="button" class="link-button" data-receiver-dismiss="{{ item.job_id }}" title="Hide this row here; the job stays on the jobs page">Dismiss</button>{% endif %}</td>
     </tr>
     {% endfor %}
     {% for row, steps in rows %}{% set item = on_rows.get(row.identifier) %}
@@ -72,5 +72,6 @@
   </table></div>
   <p class="table-note">A receiver in use is removed from the certificate first (<em>Remove from…</em> in the registry); that is the step that says what stops being fetched.</p>
   {% endif %}
+  <div class="editor-actions editor-submit list-actions"><div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Back to certificates</a></div></div>
 </section>
 {% endblock %}

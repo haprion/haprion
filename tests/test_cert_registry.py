@@ -298,7 +298,9 @@ class TheRulesThatMakeB138True(RegistryFixture):
         self.assertEqual(change.receivers, ("lb-01",))
         self.assertEqual(self.entries(registry)["one.example"]["receivers"], ["lb-01"])
 
-    def test_an_https_receiver_and_a_cluster_refuse_each_other(self) -> None:
+    def test_an_https_receiver_and_a_cluster_may_share_a_certificate(self) -> None:
+        """B164: the registry no longer fences an https receiver off from the clusters."""
+
         self.register(
             "web-01.example.net",
             transport="https",
@@ -313,30 +315,20 @@ class TheRulesThatMakeB138True(RegistryFixture):
                 }
             }
         )
-        before = registry.read_bytes()
 
-        # A cluster onto a certificate an https receiver already fetches.
-        with self.assertRaises(RegistryError) as caught:
-            self.retarget(
-                policy_path,
-                registry,
-                "public.example",
-                clusters=["alpha"],
-                receivers=["web-01.example.net"],
-            )
-        self.assertEqual(caught.exception.code, "https_receiver_isolated")
+        change = self.retarget(
+            policy_path,
+            registry,
+            "public.example",
+            clusters=["alpha"],
+            receivers=["web-01.example.net"],
+        )
 
-        # And the other direction: the receiver onto a certificate a cluster carries.
-        with self.assertRaises(RegistryError) as second:
-            self.retarget(
-                policy_path,
-                registry,
-                "keeper-alpha.example",
-                clusters=["alpha"],
-                receivers=["web-01.example.net"],
-            )
-        self.assertEqual(second.exception.code, "https_receiver_isolated")
-        self.assertEqual(registry.read_bytes(), before)
+        self.assertEqual(change.clusters, ("alpha",))
+        self.assertEqual(self.entries(registry)["public.example"]["clusters"], ["alpha"])
+        self.assertEqual(
+            self.entries(registry)["public.example"]["receivers"], ["web-01.example.net"]
+        )
 
     def test_a_receiver_that_a_certificate_names_is_in_use(self) -> None:
         policy_path, registry = self.prepared(

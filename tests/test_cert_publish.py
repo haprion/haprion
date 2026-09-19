@@ -832,7 +832,9 @@ class WildcardIsNotPublishedOverHttps(Fixture):
             allow=["192.0.2.0/24"],
         )
 
-    def test_a_wildcard_to_an_https_receiver_is_refused_and_nothing_is_written(self) -> None:
+    def test_a_wildcard_goes_to_an_https_receiver_like_any_other_certificate(self) -> None:
+        """B164: what an https receiver holds is the operator's call, not a refusal."""
+
         policy_path = self.write_config(
             self.keeper()
             | {
@@ -845,13 +847,16 @@ class WildcardIsNotPublishedOverHttps(Fixture):
 
         report = self.run_publish(policy_path)
 
-        failed = next(e for e in report.certificates if e.certificate_id == "wild.example")
-        self.assertEqual(failed.status, "failed")
-        assert failed.error is not None
-        self.assertEqual(failed.error[0], "wildcard_over_https")
-        self.assertEqual(list(self.receiver_path("web-01.example.net").iterdir()), [])
+        self.assertEqual(self.status(report, "wild.example"), "published")
+        self.assertEqual(
+            sorted(
+                path.name
+                for path in (self.receiver_path("web-01.example.net") / "wild.example").iterdir()
+            ),
+            ["fullchain.pem", "privkey.pem"],
+        )
 
-    def test_a_certificate_that_is_not_a_wildcard_is_published_there(self) -> None:
+    def test_a_plain_certificate_is_published_there_too(self) -> None:
         policy_path = self.write_config(
             self.keeper()
             | {

@@ -145,11 +145,10 @@ class Target:
     gid: int
     mode: int
     #
-    # Receivers only (B138, B159). `transport` is here so the publisher can
-    # refuse what the registry alone cannot judge - a wildcard certificate to
-    # an `https` receiver, which is a private key behind an address list -
-    # and `form` so a target that wants a PKCS#12 bundle is one field rather
-    # than a second kind of Target.
+    # Receivers only (B138, B159). `transport` says how the receiver fetches,
+    # and `form` makes a target that wants a PKCS#12 bundle one field rather
+    # than a second kind of Target. Neither refuses anything: what an https
+    # receiver may hold is the operator's call (B164).
     #
     transport: str | None = None
     form: str = DEFAULT_RECEIVER_FORMAT
@@ -751,34 +750,6 @@ def receiver_bundle_paths(target: Target, certificate_id: str) -> tuple[Path, Pa
     )
 
 
-def refuse_wildcard_over_https(
-    entry: RegisteredCertificate, registry: Registry, material: Material
-) -> None:
-    """Spärr 3 (B138): a wildcard is not published to an `https` receiver.
-
-    An `https` receiver fetches with no key at all - an address list is the
-    whole of its identity - and B138 admits that as a sinking of the trust
-    level, made bearable by how little any one such receiver can reach. A
-    wildcard is the opposite of little: one private key for every name under
-    a domain, including names the receiver has nothing to do with. The
-    registry cannot see this, because what makes a certificate a wildcard is
-    in the material; so the publisher is where it is refused.
-    """
-
-    names = (*material.facts.sans, material.facts.common_name or "")
-    if not any(name.startswith("*.") for name in names):
-        return
-    for receiver_id in entry.receivers:
-        receiver = registry.receivers.get(receiver_id)
-        if receiver is not None and receiver.transport == "https":
-            raise PublishError(
-                "wildcard_over_https",
-                f"receiver {receiver_id} fetches over https, which has no key of its own, "
-                f"and {material.certificate_id} is a wildcard. Publish it to a receiver "
-                "that fetches with a key, or give this receiver a certificate of its own.",
-            )
-
-
 def publish_to(targets: Sequence[Target], material: Material) -> tuple[TargetResult, ...]:
     """Write every file the targets read, each path once, and say which targets changed.
 
@@ -915,14 +886,11 @@ def publish(
                 continue
             try:
                 #
-                # The material first, then what it may not reach, and only
-                # then the targets: resolving a target makes its
-                # per-certificate directory, and a certificate that is refused
-                # must not leave one behind.
+                # The material first and only then the targets: resolving a
+                # target makes its per-certificate directory, and a certificate
+                # whose material is refused must not leave one behind.
                 #
                 material = read_material(entry, live=live, store=store, now=now)
-                assert runtime.registry is not None  # noqa: S101 - _select checked it
-                refuse_wildcard_over_https(entry, runtime.registry, material)
                 targets = targets_for(entry, runtime, policy)
                 outcomes = publish_to(targets, material)
             except PublishError as exc:

@@ -190,19 +190,19 @@ def write(
 
 
 def check_receiver_rules(registry: Registry) -> None:
-    """The two rules B138 states, checked on the whole registry rather than on a delta.
+    """The rule B138 states for `flat` receivers, checked on the whole registry rather than on a delta.
 
     Here rather than in `set_targets` because four paths write this file -
     issuing, importing, retargeting and deleting - and a rule enforced in one
     of them is a rule three others can break. What the candidate registry says
-    is the whole truth about targets, so both rules are answerable from it
-    alone, and both are refused before the file is renamed into place.
+    is the whole truth about targets, so the rule is answerable from it
+    alone, and refused before the file is renamed into place.
 
-    Both are stated as properties of the end state, which is why each is
+    The rule is stated as a property of the end state, which is why it is
     refused from either direction on its own: giving a `flat` receiver a
     second certificate and giving a second certificate that receiver are the
-    same registry, and so is adding a cluster to an `https` certificate or an
-    `https` receiver to a certificate that has clusters.
+    same registry. An `https` receiver is not fenced here any more: what it
+    may hold is the operator's call (B164).
     """
 
     holders: dict[str, list[str]] = {}
@@ -212,21 +212,6 @@ def check_receiver_rules(registry: Registry) -> None:
             if receiver is None:
                 continue
             holders.setdefault(receiver_id, []).append(certificate.certificate_id)
-            #
-            # Spärr 2 (B138). An `https` receiver fetches with an address list
-            # instead of a key, and what keeps that bearable is that such a
-            # receiver is alone with a certificate of its own. A certificate
-            # that also serves clusters is the installation's own traffic, and
-            # it does not go out that way.
-            #
-            if receiver.transport == "https" and certificate.clusters:
-                raise RegistryError(
-                    "https_receiver_isolated",
-                    f"{certificate.certificate_id} is carried by "
-                    f"{', '.join(certificate.clusters)} and receiver {receiver_id} fetches "
-                    "over https, which has no key of its own. A certificate that a cluster "
-                    "carries is not published that way.",
-                )
 
     #
     # Spärr 1 (B138). A `flat` receiver reads `fullchain.pem` and

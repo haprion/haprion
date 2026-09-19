@@ -974,12 +974,20 @@ def remove(
 ) -> Result:
     """Take the four layers away in the order that never leaves a door open.
 
-    The registry first, so nothing publishes into a directory that is about to
-    go; then the lock, so the key stops working before the material is gone;
-    then the directory and the account. A certificate still naming the
-    receiver refuses the whole thing - Remove from... is how a certificate
+    The lock first, so the key stops working before the material is gone;
+    then the directory and the account; the registry last. The registry is
+    last for the same reason `add()` writes it last: it is the one layer the
+    other three are rebuilt from. A removal that wrote the registry first and
+    then failed at the lock left a receiver nginx still served and nothing
+    named - which is what job 776 did before B163. A certificate still naming
+    the receiver refuses the whole thing - Remove from... is how a certificate
     lets go of a target, and it is the operation that knows what else that
     costs.
+
+    A layer that fails to go is `partial`, not an exception: the layers that
+    did go are gone, and the caller needs to know which. An `OSError` on the
+    way is the same refusal `add()` gives, as an envelope rather than a
+    traceback the worker cannot read.
     """
 
     tools = tools or Tools()
@@ -1001,42 +1009,49 @@ def remove(
         )
 
     layers: list[Layer] = []
-    cert_registry.drop_receiver(
-        _registry_path(policy),
-        receiver_id=receiver_id,
-        runtime=runtime,
-        require_secure=require_secure,
-    )
-    layers.append(Layer("registry", "removed", receiver_id))
     remaining = _without(registry, receiver_id)
-
-    if receiver.transport == "https":
-        layers.append(
-            _write_checked(
-                locations.nginx_snippet,
-                render_nginx_snippet(remaining),
-                check=[NGINX, "-t"],
-                reload=[SYSTEMCTL, "reload", "nginx"],
-                tools=tools,
-                what="nginx",
+    try:
+        if receiver.transport == "https":
+            layers.append(
+                _write_checked(
+                    locations.nginx_snippet,
+                    render_nginx_snippet(remaining),
+                    check=[NGINX, "-t"],
+                    reload=[SYSTEMCTL, "reload", "nginx"],
+                    tools=tools,
+                    what="nginx",
+                )
             )
+        else:
+            home = tools.home(receiver.owner) or receiver.path
+            layers.append(
+                _remove_lock(home, receiver.path, shared=_shared(receiver.owner, remaining))
+            )
+            if receiver.transport == "sftp":
+                _write_checked(
+                    locations.sshd_dropin,
+                    render_sshd_dropin(remaining),
+                    check=[SSHD, "-t"],
+                    reload=[SYSTEMCTL, "reload", "ssh"],
+                    tools=tools,
+                    what="sshd",
+                )
+
+        layers.append(_remove_directory(receiver.path))
+        if receiver.transport != "https":
+            layers.append(_remove_account_unless_shared(receiver.owner, remaining, home, tools))
+
+        cert_registry.drop_receiver(
+            _registry_path(policy),
+            receiver_id=receiver_id,
+            runtime=runtime,
+            require_secure=require_secure,
         )
-    else:
-        home = tools.home(receiver.owner) or receiver.path
-        layers.append(_remove_lock(home, receiver.path, shared=_shared(receiver.owner, remaining)))
-        if receiver.transport == "sftp":
-            _write_checked(
-                locations.sshd_dropin,
-                render_sshd_dropin(remaining),
-                check=[SSHD, "-t"],
-                reload=[SYSTEMCTL, "reload", "ssh"],
-                tools=tools,
-                what="sshd",
-            )
-
-    layers.append(_remove_directory(receiver.path))
-    if receiver.transport != "https":
-        layers.append(_remove_account_unless_shared(receiver.owner, remaining, home, tools))
+        layers.append(Layer("registry", "removed", receiver_id))
+    except ReceiverError:
+        raise
+    except (OSError, cert_registry.RegistryError) as exc:
+        raise ReceiverError("write_failed", str(exc), exit_code=74) from exc
     return Result(receiver_id, "removed", tuple(layers))
 
 

@@ -482,6 +482,30 @@ class RemovingAReceiver(ReceiverFixture):
 
         self.assertEqual(caught.exception.code, "unknown_receiver")
 
+    def test_a_snippet_that_cannot_be_written_keeps_the_registry_entry(self) -> None:
+        """Job 776 (B163): the registry lost the receiver while nginx still served it.
+
+        The snippet is the layer nginx reads; the registry is the layer the
+        others are rebuilt from. So the registry goes last, and a write that
+        fails on the way is a `write_failed` envelope with the entry intact -
+        never a traceback the worker reads as an invalid document.
+        """
+
+        # www-data's directory cannot be chowned by a test that is not root.
+        with mock.patch.object(cert_receiver, "_own"):
+            self.add(transport="https", public_key=None, owner=None, allow=["192.0.2.0/24"])
+        self.locations.nginx_snippet.chmod(0o444)
+        self.locations.nginx_snippet.parent.chmod(0o555)
+        self.addCleanup(self.locations.nginx_snippet.parent.chmod, 0o755)
+        self.addCleanup(self.locations.nginx_snippet.chmod, 0o644)
+
+        with self.assertRaises(ReceiverError) as caught:
+            self.remove()
+
+        self.assertEqual(caught.exception.code, "write_failed")
+        self.assertIn("lb-02.example.net", self.registered())
+        self.assertIn("lb-02.example.net", self.locations.nginx_snippet.read_text(encoding="utf-8"))
+
 
 class Listing(ReceiverFixture):
     def rows(self) -> list[dict[str, Any]]:

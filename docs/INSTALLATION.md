@@ -717,11 +717,6 @@ salted and differ every time the same material is exported. The password is made
 kept across renewals - the receiver imported the bundle into a certificate store with the password
 it fetched, and a new one at every renewal would make every renewal a manual re-import.
 
-Two refusals belong to the publisher rather than to the registry, because only the material shows
-them: a **wildcard** is never published to an `https` receiver, which fetches with no key at all;
-and a certificate a cluster carries is never published to an `https` receiver either, which the
-registry refuses from both directions.
-
 An `import` entry whose directory does not exist yet is reported as skipped, not failed, and its
 published copy is left as it is. That is what a certificate published by hand before the import
 store existed looks like.
@@ -1374,9 +1369,9 @@ interactive login: the key still carries `restrict`, `from=` and the fixed `rrsy
 and no unrestricted key is installed. An SFTP account keeps `/usr/sbin/nologin` because
 `internal-sftp` is sshd's in-process server and does not need a shell.
 
-`https` is a deliberate lowering of the trust level, and it is fenced in rather than trusted: such
-a receiver may not hold a certificate any cluster carries, may not be given a wildcard, and reaches
-nothing but its own directory. It is served from the interface's own server block, on 443 under the
+`https` is a deliberate lowering of the trust level: an address list is not a key, and what such a
+receiver holds - a wildcard, a certificate the clusters serve - is the operator's call, not the
+program's. It reaches nothing but its own directory. It is served from the interface's own server block, on 443 under the
 interface's certificate and hostname, at `https://<server name>/certdist/<id>/<certificate>/`.
 The `location` blocks live in `/etc/nginx/snippets/haproxy-manager-receivers.conf`, which only this
 command writes and which the interface's site pulls in with one `include` line; the interface's

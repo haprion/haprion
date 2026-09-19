@@ -90,29 +90,37 @@ def deletion_states(
 
     moment = now or datetime.now(UTC)
     states: dict[str, DeletionState] = {}
+    #
+    # Newest first, and the newest finished job about a certificate is its
+    # last word even when it has nothing to draw: a Publish to… that went
+    # through must end an older failure's hour, not leave it standing.
+    #
+    settled: set[str] = set()
+
+    def consider(identifier: str, state: DeletionState | None) -> None:
+        if identifier in states or identifier in settled:
+            return
+        if state is not None:
+            states[identifier] = state
+        elif job.state not in {"pending", "running"}:
+            settled.add(identifier)
+
     for job in jobs:
         if job.operation == "cert_scep":
             identifier = job.payload.get("id")
-            if isinstance(identifier, str) and identifier not in states:
-                state = _enrollment_state_of(job, moment)
-                if state is not None:
-                    states[identifier] = state
+            if isinstance(identifier, str):
+                consider(identifier, _enrollment_state_of(job, moment))
             continue
         if job.operation == "cert_issue":
             requested = _issue_placeholder(job.payload)
-            if requested is not None and requested[0] not in states:
-                state = _issue_state_of(job, moment, requested[1])
-                if state is not None:
-                    states[requested[0]] = state
+            if requested is not None:
+                consider(requested[0], _issue_state_of(job, moment, requested[1]))
             continue
         if job.operation == "cert_target":
             named = job.payload.get("certificates")
             for identifier in named if isinstance(named, list) else []:
-                if not isinstance(identifier, str) or identifier in states:
-                    continue
-                state = _target_state_of(job, identifier, moment)
-                if state is not None:
-                    states[identifier] = state
+                if isinstance(identifier, str):
+                    consider(identifier, _target_state_of(job, identifier, moment))
             continue
         if job.operation != "cert_delete":
             continue
@@ -120,11 +128,8 @@ def deletion_states(
         if not isinstance(named, list):
             continue
         for identifier in named:
-            if not isinstance(identifier, str) or identifier in states:
-                continue
-            state = _state_of(job, identifier, moment)
-            if state is not None:
-                states[identifier] = state
+            if isinstance(identifier, str):
+                consider(identifier, _state_of(job, identifier, moment))
     return states
 
 
@@ -313,7 +318,18 @@ def _target_state_of(job: Job, identifier: str, now: datetime) -> DeletionState 
 
 
 def _row(result: Mapping[str, Any], identifier: str) -> Mapping[str, Any] | None:
-    rows = result.get("certificates")
+    """The certificate's row in a job's stored answer.
+
+    The worker stores the whole envelope, so the rows sit under `result`;
+    a bare result document (what the fixtures once passed) is read too.
+    Reading the envelope's top level only, as this did until 2026-09-19,
+    found no row for any finished job - a successful Publish to… never
+    reached the State cell, and an older failure stood there instead.
+    """
+
+    inner = result.get("result")
+    body: Mapping[str, Any] = inner if isinstance(inner, Mapping) else result
+    rows = body.get("certificates")
     if not isinstance(rows, list):
         return None
     for row in rows:

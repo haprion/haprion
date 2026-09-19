@@ -86,6 +86,57 @@ class DeletionStates(unittest.TestCase):
         self.assertEqual(self.states(queued(operation="deploy")), {})
 
 
+class TheNewestJobHasTheLastWord(unittest.TestCase):
+    """Seen 2026-09-19: a Publish to… that went through, and the row still said
+    Enrollment failed about a job forty minutes older."""
+
+    def test_the_stored_envelope_is_read_under_result(self) -> None:
+        # The worker stores the whole envelope; the rows are under `result`.
+        published = queued(
+            operation="cert_target",
+            cluster=None,
+            state="done",
+            payload={"certificates": ["hq.example"], "action": "add"},
+            result={
+                "outcome": "done",
+                "result": {
+                    "certificates": [
+                        {"certificate": "hq.example", "state": "changed", "added": ["lb-01"]}
+                    ]
+                },
+                "error": None,
+            },
+            finished_at=NOW - timedelta(minutes=1),
+        )
+        states = certificate_activity.deletion_states([published], now=NOW)
+        self.assertEqual(states["hq.example"].label, "Published to lb-01")
+
+    def test_a_newer_finished_job_ends_an_older_failure_s_hour(self) -> None:
+        failed = queued(
+            operation="cert_scep",
+            cluster=None,
+            state="failed",
+            payload={"id": "hq.example", "profile": "certserver1", "domains": ["hq.example"]},
+            result={"error": {"code": "x", "message": "not allowlisted"}},
+            finished_at=NOW - timedelta(minutes=40),
+        )
+        # Newer, done, and past the follow-up window: nothing to draw of its own.
+        quiet = queued(
+            operation="cert_target",
+            cluster=None,
+            state="done",
+            payload={"certificates": ["hq.example"], "action": "add"},
+            result={
+                "outcome": "done",
+                "result": {"certificates": [{"certificate": "hq.example", "state": "unchanged"}]},
+                "error": None,
+            },
+            finished_at=NOW - timedelta(minutes=2),
+        )
+        states = certificate_activity.deletion_states([quiet, failed], now=NOW)
+        self.assertNotIn("hq.example", states)
+
+
 class EnrollmentStates(unittest.TestCase):
     def test_a_running_enrollment_and_a_fresh_failure_are_overlays(self) -> None:
         running = queued(

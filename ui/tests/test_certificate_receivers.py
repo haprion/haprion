@@ -109,21 +109,32 @@ class WhatTheHostRuns(unittest.TestCase):
     def test_sftp_gets_the_pkcs12_pair_by_name_on_linux_and_windows(self) -> None:
         (row,) = self.rows(record("lb-01", transport="sftp", certificates=("app.example.com",)))
         steps = certificate_receivers.fetch_steps(row, "mgr.example.net")
-        self.assertEqual(len(steps), 2)
-        linux, windows = steps
-        self.assertIn("sftp -b - -i /root/.ssh/certfetch", linux.command)
-        self.assertIn("get /app.example.com/app.example.com.pfx", linux.command)
-        self.assertIn("get /app.example.com/app.example.com.password", linux.command)
-        self.assertIn('@"', windows.command)
-        self.assertIn("C:\\certs\\app.example.com.pfx", windows.command)
-        self.assertIn("install-pkcs12.ps1", windows.note)
+        self.assertEqual(len(steps), 1)
+        (step,) = steps
+        self.assertIn("sftp -b - -i /root/.ssh/certfetch", step.command)
+        self.assertIn("get /app.example.com/app.example.com.pfx", step.command)
+        self.assertIn("get /app.example.com/app.example.com.password", step.command)
+        self.assertIn('@"', step.windows_command)
+        self.assertIn("C:\\certs\\app.example.com.pfx", step.windows_command)
+        self.assertIn("install-pkcs12.ps1", step.note)
 
     def test_https_pins_the_interface_and_fetches_under_the_allowlist(self) -> None:
         (row,) = self.rows(record("192.0.2.9", transport="https", allow=("192.0.2.9/32",)))
         steps = certificate_receivers.fetch_steps(row, "mgr.example.net")
         self.assertEqual(steps[0].title, "Once: decide what the fetches trust")
-        self.assertIn("openssl s_client -connect mgr.example.net:443", steps[0].command)
+        # No openssl needed: the manager serves its own certificate as a file.
+        self.assertEqual(
+            steps[0].command,
+            "curl -k -o manager-ui.pem https://mgr.example.net/certdist/manager-ui.pem",
+        )
+        self.assertEqual(
+            steps[0].windows_command,
+            "curl.exe -k -o C:\\certs\\manager-ui.pem "
+            "https://mgr.example.net/certdist/manager-ui.pem",
+        )
+        self.assertIn("openssl s_client -connect mgr.example.net:443", steps[0].note)
         self.assertIn("drop --cacert from the fetches", steps[0].note)
+        self.assertIn("--cacert C:\\certs\\manager-ui.pem", steps[1].windows_command)
         self.assertIn(
             "https://mgr.example.net/certdist/192.0.2.9/<certificate>/fullchain.pem",
             steps[1].command,
@@ -410,11 +421,8 @@ class ThePage(ReceiverRouteTestCase):
         self.assertIn('app.example.com <span class="target-kind">pkcs12</span>', page)
         self.assertIn("get /app.example.com/app.example.com.pfx", page)
         self.assertIn("crx-lb-02-example-net@mgr.example.net:&lt;certificate&gt;/", page)
-        self.assertIn(
-            "Or use the ready-made script:</strong> <code>examples/receivers/fetch-sftp</code>",
-            page,
-        )
-        self.assertIn("install-pkcs12.ps1</code> imports the PKCS#12 pair", page)
+        self.assertIn("Ready-made:</strong> <code>examples/receivers/fetch-sftp</code>", page)
+        self.assertIn("install-pkcs12.ps1</code> imports the <code>.pfx</code>", page)
         # In use: no Remove; nothing yet: Remove.
         self.assertIn('title="Use Remove from… on the certificate first"', page)
         self.assertIn('name="receiver" value="lb-02.example.net"', page)

@@ -64,6 +64,18 @@ server {
     #
     include /etc/nginx/snippets/haproxy-manager-receivers.conf;
 
+    #
+    # The interface's own certificate, as a file, for a receiver that fetches
+    # over https to save and pass to --cacert. Public material - it is sent in
+    # every handshake - and a copy (haproxy-ui-tls writes it) because the TLS
+    # directory is root-only and the workers are not. Exact match, so the
+    # receiver locations above, which are prefixes, never shadow it.
+    #
+    location = /certdist/manager-ui.pem {
+        alias /srv/certdist/manager-ui.pem;
+        default_type application/x-pem-file;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:8080;
         proxy_http_version 1.1;

@@ -1389,6 +1389,16 @@ rerun `install/platform/05-platform-nginx`**, which adds the include and creates
 snippet; until then `add --transport https` refuses with `dependency_unavailable` rather than
 registering a receiver nothing serves.
 
+**What the receiver trusts.** The interface's certificate is what the receiver's `curl` must
+verify, and it is served as a file for that purpose at `https://<server name>/certdist/manager-ui.pem`
+(a copy under `/srv/certdist/`, written by `haproxy-ui-tls` at every replacement and by
+`haproxy-ui-tls publish`; the TLS directory itself is root-only, which nginx's workers are not).
+The receiver saves it once - `curl -k -o manager-ui.pem …` on that first contact, or with
+`openssl s_client` where openssl exists - and passes it as `--cacert` to every fetch after, so it
+trusts exactly that certificate. A receiver whose host already trusts the CA that issued the
+interface's certificate needs neither the file nor `--cacert`. An installation whose site
+predates the `manager-ui.pem` location reruns `05-platform-nginx`, which also publishes the copy.
+
 Every change to sshd's drop-in or nginx's site is followed by `sshd -t` or `nginx -t`, and a
 refusal puts the previous file back before reporting: a broken sshd locks out everyone, not only
 the receiver being registered.

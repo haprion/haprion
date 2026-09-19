@@ -95,6 +95,9 @@ step "Certificate"
 if [[ -f "$TLS_CERT" && -f "$TLS_KEY" ]]; then
     log "  ok       a pair is already installed"
     /usr/local/sbin/haproxy-ui-tls show
+    # The public copy the site serves at /certdist/manager-ui.pem, for an
+    # installation whose pair predates it; a new pair writes its own.
+    /usr/local/sbin/haproxy-ui-tls publish
 else
     log "  none installed - generating a self-signed starting point"
     /usr/local/sbin/haproxy-ui-tls self-signed

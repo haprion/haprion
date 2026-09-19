@@ -5,6 +5,7 @@
 #     haproxy-ui-tls [--config /etc/haproxy-manager/ui-tls.conf] show
 #     haproxy-ui-tls [--config /etc/haproxy-manager/ui-tls.conf] install --cert <file> --key <file>
 #     haproxy-ui-tls [--config /etc/haproxy-manager/ui-tls.conf] self-signed [--days <n>]
+#     haproxy-ui-tls [--config /etc/haproxy-manager/ui-tls.conf] publish
 #
 # This certificate is what an operator's browser meets when logging in. It is
 # not the certificate on the HAProxy pair, and it is not used between nginx and
@@ -30,7 +31,7 @@ warn() { echo "WARNING: $*" >&2; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
 
 usage() {
-    sed -n '3,9p' "$0" | sed 's/^# \?//'
+    sed -n '3,10p' "$0" | sed 's/^# \?//'
     exit 64
 }
 
@@ -149,10 +150,26 @@ activate() {
     systemctl reload nginx
     log "  reloaded nginx"
     [[ -n "$backup" ]] && rm -rf "$backup"
+    publish_copy
 
     echo
     log "now serving on ${SERVER_NAME}:"
     describe "$TLS_CERT"
+}
+
+#
+# A public copy of the certificate, served by the interface's own server block
+# at /certdist/manager-ui.pem, so a receiver that fetches over https can save
+# what to trust without openssl on its side (INSTALLATION 1.4.9). Public
+# material: nginx sends it in every handshake. A copy rather than the file
+# itself because the TLS directory is root-only and nginx's workers are not.
+#
+PUBLIC_COPY=${PUBLIC_COPY:-/srv/certdist/manager-ui.pem}
+publish_copy() {
+    install -d -o root -g root -m 755 "$(dirname "$PUBLIC_COPY")"
+    install -o root -g root -m 644 "$TLS_CERT" "${PUBLIC_COPY}.incoming"
+    mv -f "${PUBLIC_COPY}.incoming" "$PUBLIC_COPY"
+    log "  published ${PUBLIC_COPY}  (the certificate, for receivers to trust)"
 }
 
 cmd="${1:-}"
@@ -163,6 +180,11 @@ case "$cmd" in
         [[ -f "$TLS_CERT" ]] || die "no certificate installed at ${TLS_CERT}"
         echo "certificate served for ${SERVER_NAME}:"
         describe "$TLS_CERT"
+        ;;
+
+    publish)
+        [[ -f "$TLS_CERT" ]] || die "no certificate installed at ${TLS_CERT}"
+        publish_copy
         ;;
 
     install)

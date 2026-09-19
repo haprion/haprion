@@ -30,13 +30,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from haproxy_mgmt.cert_receiver import HTTPS_PREFIX
 from haproxy_mgmt.config import RECEIVER_ID, RECEIVER_TRANSPORTS
 
 # The key file the instructions name on the receiving host. A name, not a
 # path the manager decides: the host's operator may keep it elsewhere and
 # edits one line.
 KEY_FILE = "/root/.ssh/certfetch"
-WINDOWS_KEY_FILE = "C:\\certs\\certfetch"
+WINDOWS_CERT_DIR = "C:\\certs"
+WINDOWS_KEY_FILE = WINDOWS_CERT_DIR + "\\certfetch"
+# The interface's own certificate as a file, served by its server block for a
+# receiver that fetches over https to save and trust (05-platform-nginx).
+UI_CERTIFICATE_FILE = "manager-ui.pem"
 
 TRANSPORT_LABELS = {
     "rsync": "rsync over ssh",
@@ -220,24 +225,30 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
         steps.append(
             Step(
                 "Once: decide what the fetches trust",
-                f"openssl s_client -connect {host}:443 -servername {host} </dev/null 2>/dev/null "
-                f"| openssl x509 > manager-ui.pem",
-                "Either save the manager's own certificate like this (or copy it from the "
-                "manager) and pass it as --cacert below, so the fetches trust exactly that "
-                "certificate and nothing else; do it again when the interface's certificate is "
-                "replaced. Or, if the interface's certificate comes from a CA this host already "
-                "trusts (a domain CA, say), skip this step and drop --cacert from the fetches: "
-                "curl then verifies against the host's own trust store.",
+                f"curl -k -o manager-ui.pem https://{host}{HTTPS_PREFIX}/{UI_CERTIFICATE_FILE}",
+                "Saves the manager's own certificate; the fetches below pass it as --cacert and "
+                "trust exactly that certificate, nothing else. -k is for this first contact "
+                "only. Do it again when the interface's certificate is replaced.\n"
+                f"With openssl instead: openssl s_client -connect {host}:443 -servername {host} "
+                "</dev/null | openssl x509 > manager-ui.pem\n"
+                "If the interface's certificate comes from a CA this host already trusts, skip "
+                "this step and drop --cacert from the fetches.",
+                f"curl.exe -k -o {WINDOWS_CERT_DIR}\\manager-ui.pem "
+                f"https://{host}{HTTPS_PREFIX}/{UI_CERTIFICATE_FILE}",
             )
         )
         for held in holds:
             for name in _files(held):
+                url = f"https://{host}{HTTPS_PREFIX}/{row.identifier}/{held.certificate_id}/{name}"
                 steps.append(
                     Step(
                         f"Fetch {name} for {held.certificate_id}",
-                        f"curl --fail --cacert manager-ui.pem -o {name} "
-                        f"https://{host}/certdist/{row.identifier}/{held.certificate_id}/{name}",
-                        "Windows: curl.exe, same arguments." if name.endswith(".pfx") else "",
+                        f"curl --fail --cacert manager-ui.pem -o {name} {url}",
+                        "A PKCS#12 pair is then imported with examples/receivers/install-pkcs12.ps1."
+                        if name.endswith(".pfx")
+                        else "",
+                        f"curl.exe --fail --cacert {WINDOWS_CERT_DIR}\\manager-ui.pem "
+                        f"-o {WINDOWS_CERT_DIR}\\{name} {url}",
                     )
                 )
         return tuple(steps)
@@ -245,25 +256,23 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
     if row.transport == "sftp":
         for held in holds:
             gets = "\n".join(f"get /{held.certificate_id}/{name}" for name in _files(held))
+            windows_gets = "\n".join(
+                f"get /{held.certificate_id}/{name} {WINDOWS_CERT_DIR}\\{name}"
+                for name in _files(held)
+            )
             steps.append(
                 Step(
-                    f"Fetch {held.certificate_id} (Linux)",
+                    f"Fetch {held.certificate_id}",
                     f"sftp -b - -i {KEY_FILE} -o IdentitiesOnly=yes {row.owner}@{host} <<'EOF'\n"
                     f"{gets}\nEOF",
-                    "The commands arrive on stdin, so nothing is typed at a prompt.",
-                )
-            )
-            windows_gets = "\n".join(
-                f"get /{held.certificate_id}/{name} C:\\certs\\{name}" for name in _files(held)
-            )
-            steps.append(
-                Step(
-                    f"Fetch {held.certificate_id} (Windows, PowerShell)",
+                    "The commands arrive on stdin, so nothing is typed at a prompt."
+                    + (
+                        " A PKCS#12 pair is then imported with examples/receivers/install-pkcs12.ps1."
+                        if held.format == "pkcs12"
+                        else ""
+                    ),
                     f'@"\n{windows_gets}\n"@ | sftp -b - -i {WINDOWS_KEY_FILE} '
                     f"-o IdentitiesOnly=yes {row.owner}@{host}",
-                    "A PKCS#12 pair is then imported with examples/receivers/install-pkcs12.ps1."
-                    if held.format == "pkcs12"
-                    else "",
                 )
             )
         return tuple(steps)
@@ -276,8 +285,7 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
                 f'rsync -a -e "ssh -i {KEY_FILE} -o IdentitiesOnly=yes" '
                 f"{row.owner}@{host}:{held.certificate_id}/ {target}/",
                 "The key is locked to this receiver's directory; the path names the "
-                "certificate inside it. examples/receivers/fetch-rsync checks the pair "
-                "before installing it.",
+                "certificate inside it.",
             )
         )
     return tuple(steps)

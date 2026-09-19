@@ -56,13 +56,16 @@
     </tr>
     <tr class="receiver-commands" id="receiver-commands-{{ row.identifier }}" hidden>
       <td colspan="5">
-        <p class="table-note">What <code>{{ row.identifier }}</code> runs to fetch{% if not row.holds %} — once a certificate is published to it; <code>&lt;certificate&gt;</code> stands for its name{% endif %}. The fetch is idempotent: run it from a timer.</p>
+        <p class="table-note">What <code>{{ row.identifier }}</code> runs to fetch{% if not row.holds %} — once a certificate is published to it; <code>&lt;certificate&gt;</code> stands for its name{% endif %}. The fetch is safe to run again and again: run it from a timer.</p>
         <ol class="receiver-steps">
           {% for step in steps %}
-          <li><span class="receiver-step-title">{{ step.title }}</span>{% if step.command %}<pre class="receiver-command"><code>{{ step.command }}</code></pre>{% endif %}{% if step.note %}<small>{{ step.note }}</small>{% endif %}</li>
+          <li><span class="receiver-step-title">{{ step.title }}</span>
+            {% if step.windows_command %}<span class="receiver-os">Linux:</span>{% endif %}{% if step.command %}<pre class="receiver-command"><code>{{ step.command }}</code></pre>{% endif %}
+            {% if step.windows_command %}<span class="receiver-os">Windows (PowerShell):</span><pre class="receiver-command"><code>{{ step.windows_command }}</code></pre>{% endif %}
+            {% if step.note %}<small>{{ step.note }}</small>{% endif %}</li>
           {% endfor %}
         </ol>
-        <p class="table-note"><strong>Or use the ready-made script:</strong> <code>examples/receivers/fetch-{{ row.transport }}</code> in the repository does the steps above, checks that the key matches the certificate before installing it, and reloads the service only when something changed. Copy it to the host and run it from a timer.{% if row.holds | selectattr('format', 'equalto', 'pkcs12') | list %} On Windows, <code>examples/receivers/install-pkcs12.ps1</code> imports the PKCS#12 pair into the certificate store.{% endif %}</p>
+        <p class="table-note"><strong>Ready-made:</strong> <code>examples/receivers/fetch-{{ row.transport }}</code> does all of this, verifies the pair and reloads only on change.{% if row.holds | selectattr('format', 'equalto', 'pkcs12') | list %} Windows: <code>examples/receivers/install-pkcs12.ps1</code> imports the <code>.pfx</code>.{% endif %}</p>
       </td>
     </tr>
     {% else %}

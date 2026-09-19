@@ -1103,16 +1103,18 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .receiver-commands td { padding-top: 4px; padding-bottom: 16px; background: var(--panel-soft); }
 .receiver-commands .table-note { padding-left: 0; padding-right: 0; }
 .receiver-commands .table-note code { font-size: inherit; }
+/* Inside a table cell, `.node-table td strong` is a block; the footnote's lead word is not a heading. */
+.receiver-commands .table-note strong { display: inline; font-size: inherit; }
 .receiver-steps { margin: 8px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; }
 .receiver-steps li { max-width: 140ch; }
 .receiver-step-title { display: block; color: var(--text-secondary); font-weight: 620; font-size: 13px; }
-.receiver-steps small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.receiver-steps small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.5; white-space: pre-line; }
 .receiver-command { margin: 6px 0 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); color: var(--muted-strong); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .receiver-form-grid { grid-template-columns: minmax(240px, 1fr) minmax(320px, 1.4fr); align-items: start; }
 .receiver-form .receiver-key-steps { margin: 0 0 8px; padding-left: 20px; }
 /* Linux and Windows as equals in a key step: a label each, a block each, the
    Windows pair hidden for a transport a Windows host cannot use. */
-.receiver-form .receiver-os { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.receiver-os { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
 .receiver-form .receiver-os[hidden], .receiver-form .receiver-command[hidden] { display: none; }
 /* A job's state on the row it concerns (2026-09-19): the spinner badge the
    proxy rows use, with the job number beside it, and the helper's sentence

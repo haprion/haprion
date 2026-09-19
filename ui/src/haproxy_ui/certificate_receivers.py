@@ -39,6 +39,9 @@ from haproxy_mgmt.config import RECEIVER_ID, RECEIVER_TRANSPORTS
 KEY_FILE = "/root/.ssh/certfetch"
 WINDOWS_CERT_DIR = "C:\\certs"
 WINDOWS_KEY_FILE = WINDOWS_CERT_DIR + "\\certfetch"
+# The first Windows command of a sequence makes the directory the rest write
+# into: a host without it fails on the first -o (seen 2026-09-19, fileserver1).
+WINDOWS_MKDIR = f"mkdir {WINDOWS_CERT_DIR} -Force | Out-Null"
 # The interface's own certificate as a file, served by its server block for a
 # receiver that fetches over https to save and trust (05-platform-nginx).
 UI_CERTIFICATE_FILE = "manager-ui.pem"
@@ -192,7 +195,7 @@ def key_steps(receiver_id: str) -> tuple[Step, ...]:
             "On the receiving host, make a key for fetching and nothing else",
             f"ssh-keygen -t ed25519 -N '' -C {name} -f {KEY_FILE}",
             "",
-            f"ssh-keygen -t ed25519 -N '\"\"' -C {name} -f {WINDOWS_KEY_FILE}",
+            f"{WINDOWS_MKDIR}\nssh-keygen -t ed25519 -N '\"\"' -C {name} -f {WINDOWS_KEY_FILE}",
         ),
         Step(
             "Paste the public half below",
@@ -230,7 +233,7 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
                 "contact); redo it when the interface's certificate changes.\n"
                 "If this host already trusts the CA that issued it, skip this step and drop "
                 "--cacert.",
-                f"curl.exe -k -o {WINDOWS_CERT_DIR}\\manager-ui.pem "
+                f"{WINDOWS_MKDIR}\ncurl.exe -k -o {WINDOWS_CERT_DIR}\\manager-ui.pem "
                 f"https://{host}{HTTPS_PREFIX}/{UI_CERTIFICATE_FILE}",
             )
         )

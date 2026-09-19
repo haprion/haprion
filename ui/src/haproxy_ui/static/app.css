@@ -1109,7 +1109,14 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .receiver-steps li { max-width: 140ch; }
 .receiver-step-title { display: block; color: var(--text-secondary); font-weight: 620; font-size: 13px; }
 .receiver-steps small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.5; white-space: pre-line; }
-.receiver-command { margin: 6px 0 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); color: var(--muted-strong); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.receiver-command { margin: 6px 0 0; position: relative; padding: 10px 44px 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel); color: var(--muted-strong); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Copy to clipboard, at the right end of every command box (2026-09-19).
+   Muted until hovered; a tick for a moment once it has copied. */
+.copy-button { position: absolute; top: 5px; right: 5px; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; }
+.copy-button:hover { border-color: var(--line); background: var(--panel-soft); color: var(--text); }
+.copy-button svg { width: 15px; height: 15px; }
+.copy-button.copied { color: var(--healthy); }
+.copy-button.refused { color: var(--critical); }
 .receiver-form-grid { grid-template-columns: minmax(240px, 1fr) minmax(320px, 1.4fr); align-items: start; }
 .receiver-form .receiver-key-steps { margin: 0 0 8px; padding-left: 20px; }
 /* Linux and Windows as equals in a key step: a label each, a block each, the

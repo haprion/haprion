@@ -129,7 +129,7 @@ class WhatTheHostRuns(unittest.TestCase):
         )
         self.assertEqual(
             steps[0].windows_command,
-            "curl.exe -k -o C:\\certs\\manager-ui.pem "
+            "mkdir C:\\certs -Force | Out-Null\ncurl.exe -k -o C:\\certs\\manager-ui.pem "
             "https://mgr.example.net/certdist/manager-ui.pem",
         )
         self.assertEqual(steps[0].note.count("\n"), 1)
@@ -154,10 +154,13 @@ class WhatTheHostRuns(unittest.TestCase):
         )
         self.assertEqual(
             first.windows_command,
+            "mkdir C:\\certs -Force | Out-Null\n"
             "ssh-keygen -t ed25519 -N '\"\"' -C lb-02.example.net -f C:\\certs\\certfetch",
         )
         self.assertEqual(second.command, "cat /root/.ssh/certfetch.pub")
         self.assertEqual(second.windows_command, "Get-Content C:\\certs\\certfetch.pub")
+        # The first Windows command makes the directory the rest write into.
+        self.assertTrue(first.windows_command.startswith("mkdir C:\\certs -Force | Out-Null\n"))
         self.assertEqual(certificate_receivers.WINDOWS_TRANSPORTS, {"sftp"})
 
 

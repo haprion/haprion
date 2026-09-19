@@ -20,6 +20,7 @@ import unittest
 from collections.abc import Iterator
 from dataclasses import replace
 from typing import Any
+from unittest import mock
 
 import uvicorn
 from playwright.sync_api import sync_playwright
@@ -27,6 +28,7 @@ from playwright.sync_api import sync_playwright
 from haproxy_ui.app import create_app
 from tests.test_certificate_page import TheCertificatePageHasTwoViews
 from tests.test_login import PASSWORD, configuration
+from tests.test_queue_route import queued
 
 
 def free_port() -> int:
@@ -112,6 +114,24 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             page.go_back()
             page.wait_for_selector(".certificate-cluster-list")
             self.assertTrue(page.evaluate("window.__stayed === true"))
+
+    def test_a_job_refresh_keeps_the_view_chosen_in_place(self) -> None:
+        active = queued(
+            operation="cert_issue",
+            cluster=None,
+            state="running",
+            payload={"domain": "new.example.com"},
+        )
+        with (
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=[active]),
+            self.signed_in("?view=registry") as page,
+        ):
+            page.click(".certificate-views a[href='?view=clusters']")
+            page.wait_for_selector(".certificate-cluster-list")
+            page.wait_for_timeout(3500)
+
+            self.assertTrue(page.url.endswith("/certificates?view=clusters"))
+            self.assertEqual(page.locator(".certificate-cluster-list").count(), 1)
 
     def test_clicking_anywhere_on_a_row_opens_its_detail_in_place(self) -> None:
         with self.signed_in("?view=registry") as page:

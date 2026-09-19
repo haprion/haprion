@@ -7,10 +7,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
 
-from haproxy_ui import auth, certificate_activity
+from haproxy_ui import auth, certificate_activity, certificates
 from tests.test_certificate_delete import DeleteRouteTestCase
+from tests.test_certificates import overview, registered, registry_of, with_registry
 from tests.test_certificates import reading as certificate_reading
-from tests.test_certificates import registered, with_registry
 from tests.test_queue_route import queued
 
 NOW = datetime(2026, 9, 15, 14, 0, tzinfo=UTC)
@@ -263,7 +263,8 @@ class TheListingFollowsTheJob(DeleteRouteTestCase):
             "haproxy_ui.db.recent_jobs", return_value=[issue_job("running", "*.brand.example")]
         ):
             page = self.writing_client().get("/certificates?open=brand.example").text
-        self.assertIn('<meta http-equiv="refresh" content="3">', page)
+        self.assertIn('data-certificates-region data-refresh="true"', page)
+        self.assertNotIn('http-equiv="refresh"', page)
         self.assertIn('status-badge-info">Requesting<', page)
         self.assertIn("<strong>brand.example</strong>", page)
         self.assertIn("*.brand.example, brand.example", page)
@@ -291,7 +292,8 @@ class TheListingFollowsTheJob(DeleteRouteTestCase):
             "haproxy_ui.db.recent_jobs", return_value=[delete_job("running", "old.example.com")]
         ):
             page = self.writing_client().get("/certificates").text
-        self.assertIn('<meta http-equiv="refresh" content="3">', page)
+        self.assertIn('data-certificates-region data-refresh="true"', page)
+        self.assertNotIn('http-equiv="refresh"', page)
         self.assertIn('status-badge-info">Deleting<', page)
         self.assertNotIn('status-badge-info">Deleted<', page)
 
@@ -363,3 +365,144 @@ class ResumingAnEnrollment(DeleteRouteTestCase):
         )
         self.assertEqual(response.status_code, 403)
         self.assertEqual(self.queued, [])
+
+
+class PublishingAnUnpublishedCertificate(DeleteRouteTestCase):
+    def unpublished_reading(self) -> Any:
+        entry = registered(
+            "waiting.example.com",
+            clusters=(),
+            receivers=({"id": "lb-01"},),
+        )
+        return with_registry(certificate_reading(), entry, receivers=("lb-01",))
+
+    def test_the_open_row_offers_publish_now_and_the_post_queues_the_existing_operation(
+        self,
+    ) -> None:
+        with mock.patch(
+            "haproxy_ui.db.cluster_certificates", return_value=[self.unpublished_reading()]
+        ):
+            client = self.writing_client()
+            page = client.get("/certificates?view=registry&open=waiting.example.com").text
+            self.assertIn('status-badge-warning">Not published<', page)
+            self.assertIn('action="/certificates/waiting.example.com/publish"', page)
+            self.assertIn(">Publish now<", page)
+
+            token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+            response = client.post(
+                "/certificates/waiting.example.com/publish",
+                data={
+                    "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                    auth.CSRF_FIELD: token,
+                },
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/certificates?view=registry")
+        (job,) = self.queued
+        self.assertEqual(job["operation"], "cert_publish")
+        self.assertIsNone(job["cluster"])
+        self.assertEqual(job["payload"], {"certificates": ["waiting.example.com"], "deploy": True})
+
+    def test_publish_now_is_not_drawn_for_an_already_published_row(self) -> None:
+        client = self.writing_client()
+        page = client.get("/certificates?view=registry&open=example.com").text
+        self.assertNotIn(">Publish now<", page)
+
+        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        response = client.post(
+            "/certificates/example.com/publish",
+            data={
+                "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                auth.CSRF_FIELD: token,
+            },
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.queued, [])
+
+    def test_publish_now_has_the_certificate_form_gates(self) -> None:
+        reader = self.writing_client(role="reader")
+        token = auth.csrf_token(reader.cookies[auth.SESSION_COOKIE])
+        response = reader.post(
+            "/certificates/waiting.example.com/publish",
+            data={
+                "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                auth.CSRF_FIELD: token,
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.queued, [])
+
+        read_only = self.writing_client(writes=False)
+        token = auth.csrf_token(read_only.cookies[auth.SESSION_COOKIE])
+        response = read_only.post(
+            "/certificates/waiting.example.com/publish",
+            data={
+                "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                auth.CSRF_FIELD: token,
+            },
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(self.queued, [])
+
+
+class PublishStates(unittest.TestCase):
+    def test_a_running_publish_replaces_the_state_and_asks_for_a_refresh(self) -> None:
+        state = certificate_activity.deletion_states(
+            [
+                queued(
+                    operation="cert_publish",
+                    cluster=None,
+                    state="running",
+                    payload={"certificates": ["waiting.example.com"], "deploy": True},
+                )
+            ],
+            now=NOW,
+        )["waiting.example.com"]
+        self.assertEqual((state.label, state.tone, state.active), ("Publishing", "info", True))
+
+
+class AFinishedTargetChangeGivesWayToTheRegistry(unittest.TestCase):
+    def state(self) -> certificate_activity.DeletionState:
+        job = queued(
+            operation="cert_target",
+            cluster=None,
+            state="done",
+            payload={
+                "certificates": ["example.com"],
+                "action": "remove",
+                "clusters": ["beta"],
+            },
+            result={
+                "result": {
+                    "certificates": [
+                        {
+                            "certificate": "example.com",
+                            "state": "changed",
+                            "added": [],
+                            "abandoned": ["beta"],
+                        }
+                    ]
+                }
+            },
+            finished_at=NOW - timedelta(seconds=5),
+        )
+        return certificate_activity.deletion_states([job], now=NOW)["example.com"]
+
+    def test_removed_from_disappears_as_soon_as_the_registry_has_caught_up(self) -> None:
+        current = overview(with_registry(certificate_reading(), registered(clusters=("alpha",))))
+        updated = certificates.with_deletion_states(current, {"example.com": self.state()})
+
+        self.assertNotEqual(
+            registry_of(updated).certificates[0].state_label,
+            "Removed from beta",
+        )
+
+    def test_removed_from_stays_while_the_registry_still_has_the_target(self) -> None:
+        stale = overview(
+            with_registry(certificate_reading(), registered(clusters=("alpha", "beta")))
+        )
+        updated = certificates.with_deletion_states(stale, {"example.com": self.state()})
+
+        self.assertEqual(registry_of(updated).certificates[0].state_label, "Removed from beta")

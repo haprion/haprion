@@ -81,6 +81,13 @@ class DeletionState:
     # since a re-request of an existing name is the row being replaced.
     #
     placeholder_only: bool = False
+    #
+    # A successful target change stays visible only until the cached registry
+    # shows the same answer. These fields let the view recognise that moment;
+    # failures and work still in flight leave them empty.
+    #
+    target_action: str | None = None
+    target_names: tuple[str, ...] = ()
 
 
 def deletion_states(
@@ -121,6 +128,12 @@ def deletion_states(
             for identifier in named if isinstance(named, list) else []:
                 if isinstance(identifier, str):
                     consider(identifier, _target_state_of(job, identifier, moment))
+            continue
+        if job.operation == "cert_publish":
+            named = job.payload.get("certificates")
+            for identifier in named if isinstance(named, list) else []:
+                if isinstance(identifier, str):
+                    consider(identifier, _publish_state_of(job, identifier, moment))
             continue
         if job.operation != "cert_delete":
             continue
@@ -281,6 +294,55 @@ def _state_of(job: Job, identifier: str, now: datetime) -> DeletionState | None:
 FOLLOW_UP = timedelta(seconds=90)
 
 
+def _publish_state_of(job: Job, identifier: str, now: datetime) -> DeletionState | None:
+    """A direct Publish now job, until the poller measures its result."""
+
+    if job.state in {"pending", "running"}:
+        return DeletionState("Publishing", "A publish job is running", "info", True)
+    if job.finished_at is None:
+        return None
+    age = now - job.finished_at
+    if age > VERDICT_LIFETIME:
+        return None
+    result = job.result if isinstance(job.result, Mapping) else {}
+    if job.state == "failed":
+        return DeletionState(
+            "Publish failed",
+            _failure(job, "The publish job failed"),
+            "critical",
+            False,
+        )
+    row = _publish_row(result, identifier)
+    status = row.get("status") if row else None
+    if status in {"published", "unchanged"}:
+        if age > FOLLOW_UP:
+            return None
+        return DeletionState(
+            "Published", "Published; the listing follows at the next poll", "info", True
+        )
+    error = row.get("error") if row else None
+    message = error.get("message") if isinstance(error, Mapping) else None
+    if status == "skipped":
+        return DeletionState(
+            "Publish skipped",
+            message
+            if isinstance(message, str) and message
+            else "The certificate was not published",
+            "warning",
+            False,
+        )
+    if status == "failed":
+        return DeletionState(
+            "Publish failed",
+            message
+            if isinstance(message, str) and message
+            else "The certificate was not published",
+            "critical",
+            False,
+        )
+    return None
+
+
 def _target_state_of(job: Job, identifier: str, now: datetime) -> DeletionState | None:
     """A Publish to… / Remove from… job, on each certificate it names."""
 
@@ -316,6 +378,11 @@ def _target_state_of(job: Job, identifier: str, now: datetime) -> DeletionState 
             "The listing follows at the next poll",
             "info",
             True,
+            target_action="add" if adding else "remove",
+            target_names=tuple(
+                str(name)
+                for name in ((row or {}).get("added") or (row or {}).get("abandoned") or [])
+            ),
         )
     if outcome == "refused":
         return DeletionState("Target change refused", _reason(row), "critical", False)
@@ -341,6 +408,20 @@ def _row(result: Mapping[str, Any], identifier: str) -> Mapping[str, Any] | None
         return None
     for row in rows:
         if isinstance(row, Mapping) and row.get("certificate") == identifier:
+            return row
+    return None
+
+
+def _publish_row(result: Mapping[str, Any], identifier: str) -> Mapping[str, Any] | None:
+    """The named row in a cert_publish result, whose identifier key is `id`."""
+
+    inner = result.get("result")
+    body: Mapping[str, Any] = inner if isinstance(inner, Mapping) else result
+    rows = body.get("certificates")
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        if isinstance(row, Mapping) and row.get("id") == identifier:
             return row
     return None
 

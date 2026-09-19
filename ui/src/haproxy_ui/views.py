@@ -1683,6 +1683,7 @@ def build_router(config: Config) -> APIRouter:
         overview = certificates.with_deletion_states(overview, deleting)
         refresh = any(
             deleting[entry.identifier].active
+            and entry.state_label == deleting[entry.identifier].label
             for entry in (overview.registry.certificates if overview.registry else ())
             if entry.identifier in deleting
         )
@@ -1891,6 +1892,74 @@ def build_router(config: Config) -> APIRouter:
             )
             connection.commit()
         # A fixed address: the listing's State cell follows the job from there.
+        return RedirectResponse("/certificates?view=registry", status_code=303)
+
+    @router.post("/certificates/{certificate_id}/publish")
+    async def publish_certificate(
+        request: Request,
+        certificate_id: str,
+        csrf_token: Annotated[str, Form(max_length=128)],
+        idempotency_key: Annotated[str, Form(max_length=64)],
+    ) -> Response:
+        """Publish one registered certificate to the targets it already has."""
+
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if not config.management_writes:
+            return PlainTextResponse("Not found", status_code=404)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token) or session.role != "admin":
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+
+        row = _registry_views(request, config).get(certificate_id)
+        if row is None:
+            return PlainTextResponse("Certificate is not in the registry", status_code=404)
+        if row.state_label != "Not published":
+            return PlainTextResponse("Certificate does not need publishing", status_code=409)
+
+        payload = {"certificates": [certificate_id], "deploy": True}
+        try:
+            operations.prepare(
+                operation="cert_publish", cluster=None, request_id=uuid4(), payload=payload
+            )
+        except operations.BadPayload:
+            return PlainTextResponse("Invalid operation parameters", status_code=400)
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="cert_publish",
+                    cluster=None,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.CertificateBusy:
+                connection.rollback()
+                return PlainTextResponse(
+                    "A certificate job is already running. Wait for it to finish, then try again.",
+                    status_code=409,
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=session.username,
+                action="queue_job",
+                cluster=None,
+                request_id=job.request_id,
+                detail={
+                    "operation": "cert_publish",
+                    "job": job.id,
+                    "certificate": certificate_id,
+                },
+            )
+            connection.commit()
         return RedirectResponse("/certificates?view=registry", status_code=303)
 
     def _certificate_choices(request: Request, config: Config) -> certificate_form.IssueChoices:

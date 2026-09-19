@@ -17,6 +17,22 @@
   const REGION = "[data-certificates-region]";
 
   //
+  // A certificate job changes this page without a click. The old meta refresh
+  // kept the address the document first loaded at, so switching views in place
+  // and then reaching its timer jumped back to that first view. Reload the
+  // browser's current address instead; history and the visible view now agree.
+  //
+  let refreshTimer = null;
+  const wireRefresh = () => {
+    if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+    refreshTimer = null;
+    const region = document.querySelector(REGION);
+    if (region && region.dataset.refresh === "true") {
+      refreshTimer = window.setTimeout(() => window.location.reload(), 3000);
+    }
+  };
+
+  //
   // The registry's delete button is greyed until something is ticked, and
   // says how many. Wired after every swap as well as on load, because the
   // region the boxes live in is replaced whole by a navigation.
@@ -50,6 +66,7 @@
     if (!fresh || !here) throw new Error("shape");
     here.replaceWith(fresh);
     wireDeletion();
+    wireRefresh();
     const freshRanges = parsed.querySelector(".page-ranges-sticky");
     const hereRanges = document.querySelector(".page-ranges-sticky");
     if (freshRanges && hereRanges) hereRanges.replaceWith(freshRanges);
@@ -98,4 +115,5 @@
   });
 
   wireDeletion();
+  wireRefresh();
 })();

@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}Certificates — HAProxy Manager{% endblock %}
-{% block head_extra %}{% if refresh %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
+{% block head_extra %}{% endblock %}
 {% block content %}
 {#
   One table for both views: the same seven columns, the same words, the same
@@ -43,7 +43,7 @@
           <div><strong>Covers</strong><span>{% if certificate.sans %}{{ certificate.sans | join(', ') }}{% elif certificate.problem %}<span class="warning-text">{{ certificate.problem }}</span>{% else %}{{ certificate.common_name }}{% endif %}</span></div>
           <div><strong>Issuer</strong><span>{{ certificate.issuer }}</span></div>
           {% if certificate.material_note %}<div><strong>Material</strong><span>{{ certificate.material_note }}</span></div>{% endif %}
-          <div><strong>State</strong><span>{{ certificate.state_detail }}{% if certificate.state_label in ('Request pending', 'Renewal pending') and management_writes and role == 'admin' %} <form method="post" action="/certificates/{{ certificate.identifier }}/resume" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button type="submit" class="secondary-button">Resume enrollment</button></form>{% endif %}</span></div>
+          <div><strong>State</strong><span>{{ certificate.state_detail }}{% if certificate.state_label in ('Request pending', 'Renewal pending') and management_writes and role == 'admin' %} <form method="post" action="/certificates/{{ certificate.identifier }}/resume" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button type="submit" class="secondary-button">Resume enrollment</button></form>{% elif certificate.state_label == 'Not published' and management_writes and role == 'admin' %} <form method="post" action="/certificates/{{ certificate.identifier }}/publish" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button type="submit" class="secondary-button">Publish now</button></form>{% endif %}</span></div>
           {#
             Per target, because the two kinds are knowable to different depths.
             A cluster's nodes report what they carry; a receiver fetches on its
@@ -99,7 +99,7 @@
   <article class="metric-card"><span class="metric-icon metric-icon-vip" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 4l9 16H3z"></path><path d="M12 10v4M12 17h.01"></path></svg></span><div><strong>{{ certificates.attention_count }}</strong><span>Need attention</span><small>Expiring or unreadable</small></div></article>
 </section>
 
-<div data-certificates-region>
+<div data-certificates-region{% if refresh %} data-refresh="true"{% endif %}>
 {% if chosen_view == 'registry' %}
 <article class="cluster-card certificate-cluster-card">
   <header class="cluster-header">

@@ -359,6 +359,14 @@ def with_deletion_states(
     if overview.registry is None or not states:
         return overview
     listed = {entry.identifier for entry in overview.registry.certificates}
+
+    def caught_up(entry: RegistryCertificateView, state: Any) -> bool:
+        if state.target_action not in {"add", "remove"} or not state.target_names:
+            return False
+        current = {target.name for target in entry.targets}
+        changed = set(state.target_names)
+        return changed <= current if state.target_action == "add" else current.isdisjoint(changed)
+
     rows = tuple(
         replace(
             entry,
@@ -366,7 +374,9 @@ def with_deletion_states(
             state_detail=states[entry.identifier].detail,
             state_tone=states[entry.identifier].tone,
         )
-        if entry.identifier in states and not states[entry.identifier].placeholder_only
+        if entry.identifier in states
+        and not states[entry.identifier].placeholder_only
+        and not caught_up(entry, states[entry.identifier])
         else entry
         for entry in overview.registry.certificates
     )
@@ -831,7 +841,8 @@ def _registry_state(
             identifier, fingerprint, (carriage.get(cluster) for cluster in clusters)
         )
         if receivers and tone == "healthy":
-            return label, f"and published to {len(receivers)} receiver(s)", tone
+            noun = "receiver" if len(receivers) == 1 else "receivers"
+            return label, f"Published to {len(receivers)} {noun} too", tone
         return label, detail, tone
 
     unpublished = tuple(target for target in receivers if target.published_at is None)

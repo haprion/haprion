@@ -121,7 +121,9 @@ class WhatTheHostRuns(unittest.TestCase):
     def test_https_pins_the_interface_and_fetches_under_the_allowlist(self) -> None:
         (row,) = self.rows(record("192.0.2.9", transport="https", allow=("192.0.2.9/32",)))
         steps = certificate_receivers.fetch_steps(row, "mgr.example.net")
+        self.assertEqual(steps[0].title, "Once: decide what the fetches trust")
         self.assertIn("openssl s_client -connect mgr.example.net:443", steps[0].command)
+        self.assertIn("drop --cacert from the fetches", steps[0].note)
         self.assertIn(
             "https://mgr.example.net/certdist/192.0.2.9/<certificate>/fullchain.pem",
             steps[1].command,

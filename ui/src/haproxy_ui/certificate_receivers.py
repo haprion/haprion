@@ -219,11 +219,15 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
     if row.transport == "https":
         steps.append(
             Step(
-                "Once: pin the interface's certificate",
+                "Once: decide what the fetches trust",
                 f"openssl s_client -connect {host}:443 -servername {host} </dev/null 2>/dev/null "
                 f"| openssl x509 > manager-ui.pem",
-                "Or copy it from the manager. The fetch below verifies against this file, "
-                "not against the system store.",
+                "Either save the manager's own certificate like this (or copy it from the "
+                "manager) and pass it as --cacert below, so the fetches trust exactly that "
+                "certificate and nothing else; do it again when the interface's certificate is "
+                "replaced. Or, if the interface's certificate comes from a CA this host already "
+                "trusts (a domain CA, say), skip this step and drop --cacert from the fetches: "
+                "curl then verifies against the host's own trust store.",
             )
         )
         for held in holds:

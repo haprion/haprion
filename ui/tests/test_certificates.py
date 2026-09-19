@@ -510,8 +510,43 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
             status=(status(node(("example.com", "b" * 64))),),
         )
 
-        self.assertEqual(registry_of(view).certificates[0].state_label, "Nodes hold an older copy")
-        self.assertEqual(registry_of(view).certificates[0].state_tone, "warning")
+        row = registry_of(view).certificates[0]
+        self.assertEqual(row.state_label, "Nodes hold an older copy")
+        self.assertEqual(row.state_detail, "Different certificate bytes reported")
+        self.assertLessEqual(len(row.state_detail.split()), 6)
+        self.assertEqual(row.state_tone, "warning")
+        self.assertEqual(row.older_copy_clusters, ("alpha",))
+
+    def test_only_the_cluster_holding_the_older_copy_is_named_for_deploy(self) -> None:
+        entry = registered(fingerprint="a" * 64, clusters=("alpha", "beta"))
+        view = overview(
+            with_registry(reading(), entry),
+            clusters=("alpha", "beta"),
+            status=(
+                status(node(("example.com", "a" * 64)), cluster="alpha"),
+                status(node(("example.com", "b" * 64)), cluster="beta"),
+            ),
+        )
+
+        row = registry_of(view).certificates[0]
+        self.assertEqual(row.state_label, "Nodes hold an older copy")
+        self.assertEqual(row.older_copy_clusters, ("beta",))
+
+    def test_one_old_node_is_not_hidden_by_another_node_holding_the_current_copy(self) -> None:
+        entry = registered(fingerprint="a" * 64)
+        view = overview(
+            with_registry(reading(), entry),
+            status=(
+                status(
+                    node(("example.com", "a" * 64)),
+                    node(("example.com", "b" * 64)),
+                ),
+            ),
+        )
+
+        row = registry_of(view).certificates[0]
+        self.assertEqual(row.state_label, "Nodes hold an older copy")
+        self.assertEqual(row.older_copy_clusters, ("alpha",))
 
     def test_a_receiver_certificate_reports_publication_and_never_arrival(self) -> None:
         entry = registered(

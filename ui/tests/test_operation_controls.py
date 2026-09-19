@@ -74,6 +74,11 @@ class WhereAnOperationSendsYou(LoginTestCase):
         self.assertEqual(answer.status_code, 303)
         self.assertEqual(answer.headers["location"], "/")
 
+    def test_the_certificate_page_returns_to_its_registry_view(self) -> None:
+        answer = self.queue(return_to="certificates")
+
+        self.assertEqual(answer.headers["location"], "/certificates?view=registry")
+
     def test_a_form_that_says_nothing_still_lands_somewhere_useful(self) -> None:
         answer = self.queue()
 

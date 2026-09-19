@@ -757,7 +757,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    next. */
 .registry-detail td { padding: 4px 0 14px; white-space: normal; }
 .registry-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 28px; padding: 2px 2px 0; }
-.registry-detail-grid > div { display: grid; gap: 3px; min-width: 0; }
+.registry-detail-grid > div { display: grid; align-content: start; gap: 3px; min-width: 0; }
 .registry-detail-grid strong { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
 .registry-detail-grid span { color: var(--text-primary); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
 .registry-detail-targets { grid-column: 1 / -1; }
@@ -1670,3 +1670,4 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 @media (max-width: 680px) { .log-pagination { flex-wrap: wrap; } }
 /* A one-button form inside a detail cell: sits on the line, no block of its own. */
 .registry-detail .inline-form { display: inline-flex; margin-left: 12px; vertical-align: middle; }
+.registry-detail .certificate-state-action { display: flex; width: fit-content; margin: 6px 0 0; }

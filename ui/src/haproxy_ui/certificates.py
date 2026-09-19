@@ -144,6 +144,12 @@ class RegistryCertificateView:
     state_detail: str
     state_tone: Tone
     #
+    # The cluster operation is one job per cluster. Keep the measured subset
+    # on the row so the UI never offers a deploy for a receiver, a current
+    # cluster, or every cluster merely because one of them is behind.
+    #
+    older_copy_clusters: tuple[str, ...] = ()
+    #
     # Where the facts were read from, when that was not the certificate's own
     # source. An import registered before the import helper exists has nothing
     # at its source, and its facts come from the published cluster copy - the
@@ -636,7 +642,7 @@ def _node_state(
         if nodes is None:
             continue
         held = nodes.fingerprints.get(identifier, frozenset())
-        if fingerprint and held and fingerprint not in held:
+        if fingerprint and any(value != fingerprint for value in held):
             wrong = True
         on += nodes.holders.get(identifier, 0)
         total += nodes.reporting
@@ -645,7 +651,7 @@ def _node_state(
     if wrong:
         return (
             "Nodes hold an older copy",
-            "A node carries this certificate ID with different bytes",
+            "Different certificate bytes reported",
             "warning",
         )
     if on == 0:
@@ -897,6 +903,15 @@ def _registry_certificate(
         fingerprint=fingerprint,
         carriage=carriage,
     )
+    cluster_targets = tuple(target.name for target in targets if target.kind == "cluster")
+    older_copy_clusters = tuple(
+        cluster
+        for cluster in cluster_targets
+        if (nodes := carriage.get(cluster)) is not None
+        and fingerprint
+        and (held := nodes.fingerprints.get(identifier, frozenset()))
+        and any(value != fingerprint for value in held)
+    )
     return RegistryCertificateView(
         identifier=identifier,
         source_label=_source_label(kind, source),
@@ -915,6 +930,7 @@ def _registry_certificate(
         state_label=state_label,
         state_detail=state_detail,
         state_tone=state_tone,
+        older_copy_clusters=older_copy_clusters,
         material_note=(
             "Read from the published cluster copy; nothing is at its import source yet"
             if readable and entry.get("measured_at") == "distribution"

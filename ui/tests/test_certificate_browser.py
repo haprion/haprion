@@ -27,6 +27,7 @@ from playwright.sync_api import sync_playwright
 
 from haproxy_ui.app import create_app
 from tests.test_certificate_page import TheCertificatePageHasTwoViews
+from tests.test_certificates import node, status
 from tests.test_login import PASSWORD, configuration
 from tests.test_queue_route import queued
 
@@ -147,6 +148,41 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             page.click(".registry-open td[data-label='Expires']")
             page.wait_for_selector(".registry-detail", state="detached")
             self.assertNotIn("open=", page.url)
+
+    def test_the_older_copy_action_is_below_aligned_state_text_and_owns_its_form(self) -> None:
+        with (
+            mock.patch(
+                "haproxy_ui.db.cluster_statuses",
+                return_value=[status(node(("example.com", "b" * 64)))],
+            ),
+            self.signed_in("?view=registry&open=example.com") as page,
+        ):
+            values = page.locator(".registry-detail-grid > div > span")
+            covers = values.nth(0).bounding_box()
+            issuer = values.nth(1).bounding_box()
+            state = values.nth(2).bounding_box()
+            button = page.get_by_role("button", name="Deploy to nodes")
+            button_box = button.bounding_box()
+            if covers is None or issuer is None or state is None or button_box is None:
+                self.fail("the three detail values and deploy action must have layout boxes")
+
+            self.assertAlmostEqual(covers["y"], issuer["y"], delta=1)
+            self.assertAlmostEqual(covers["y"], state["y"], delta=1)
+            self.assertGreater(button_box["y"], state["y"])
+            self.assertAlmostEqual(button_box["x"], state["x"], delta=1)
+            self.assertTrue(button.evaluate("button => button.form.action.endsWith('/operations')"))
+
+    def test_registry_selection_controls_keep_their_external_form_owner(self) -> None:
+        with self.signed_in("?view=registry") as page:
+            pick = page.locator("[data-delete-pick]").first
+            submit = page.get_by_role("button", name="Delete selected…")
+            self.assertEqual(pick.evaluate("pick => pick.form.id"), "certificate-selection")
+            self.assertEqual(submit.evaluate("button => button.form.id"), "certificate-selection")
+
+            pick.check()
+
+            self.assertFalse(submit.is_disabled())
+            self.assertEqual(page.locator("[data-delete-count]").inner_text(), "1 selected")
 
     def test_the_switch_stays_on_screen_while_the_page_scrolls(self) -> None:
         with self.signed_in("?view=registry") as page:

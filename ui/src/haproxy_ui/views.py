@@ -4829,7 +4829,7 @@ def _settled_drafts(
 RETURN_PATHS = {
     "dashboard": "/",
     "proxies": "/proxies",
-    "certificates": "/certificates",
+    "certificates": "/certificates?view=registry",
     "history": "/history",
     "network": "/network",
     "jobs": "/jobs",

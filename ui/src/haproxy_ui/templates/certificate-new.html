@@ -120,7 +120,7 @@
           #}
           <label class="check receiver-choice" data-receiver-option><input type="checkbox" name="receiver" value="{{ name }}"{% if name in form.receivers %} checked{% endif %}> <span>{{ name }}{% if choices.receiver_transports.get(name) %} <span class="receiver-transport">· {{ choices.receiver_transports[name] }}</span>{% endif %}</span><select name="format" class="receiver-format" aria-label="Format for {{ name }}"><option value="{{ name }}=pem"{% if form.format_of(name) == 'pem' %} selected{% endif %}>PEM pair</option><option value="{{ name }}=pkcs12"{% if form.format_of(name) == 'pkcs12' %} selected{% endif %}>PKCS#12 + password</option></select></label>
           {% else %}
-          <span class="optional">No receiver is registered. <a href="/certificates/receivers">Register one</a>.</span>
+          <span class="optional">No receiver is registered. <a href="/certificates/receivers/new">Register one</a>.</span>
           {% endfor %}
         </div>
         {% if choices.receivers | length > 8 %}<span class="optional receiver-no-results" data-receiver-empty hidden>No receivers match.</span>{% endif %}

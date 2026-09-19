@@ -1,12 +1,20 @@
-"""The receivers page: who fetches from this manager, and what each host runs.
+"""The receivers pages: who fetches from this manager, and what each host runs.
 
-B142. A receiver is registered from here - its name, its transport, the
-public key its own `ssh-keygen` wrote or, for https, the addresses allowed
-to fetch - and removed from here once nothing publishes to it. The page's
-other half is the part a terminal cannot give: for every receiver, the exact
-commands its host runs to fetch, written out with the account, the manager's
-name and each certificate it holds, in the form each transport takes. The
-operator copies them; nothing here is typed from memory.
+B142. Two pages, split by when the operator needs what. The list is the
+*after*: every registered receiver and, under each, the exact commands its
+host runs to fetch - the account, the manager's name and each certificate it
+holds filled in, in the form each transport takes. The form at
+`/certificates/receivers/new` is the *before*: the name, the transport, and
+the key its own `ssh-keygen` wrote (or, for https, the addresses allowed to
+fetch), with the key-making commands for the transport chosen. One page that
+was both read backwards: the fetch commands stood above a form that had not
+been sent yet (seen 2026-09-19). The operator copies; nothing here is typed
+from memory. A receiver is removed from the list once nothing publishes to it.
+
+A job's progress is said on the row it concerns - a spinner while it runs,
+a badge with the job number when it fails - and a receiver that is being
+registered has a row before the registry knows it. Not a notice at the top
+of the page: the row is where the reader is looking.
 
 The rows come from the registry block the poller already carries
 (`receiver_records`, `manager`), so the page costs no new source. The
@@ -40,8 +48,8 @@ TRANSPORT_LABELS = {
 TRANSPORT_HELP = {
     "rsync": "Linux hosts with rsync. The key is locked to one read-only directory.",
     "sftp": "Any host with an OpenSSH client, Windows included. Chrooted, read-only.",
-    "https": "No key at all: an address allowlist under the interface's own certificate. "
-    "For certificates no cluster carries and no wildcard.",
+    "https": "No key: an address allowlist under the interface's own certificate. "
+    "Can hold any certificate, wildcards included.",
 }
 
 
@@ -82,11 +90,17 @@ class ReceiverRow:
 
 @dataclass(frozen=True, slots=True)
 class Step:
-    """One thing the receiving host's operator runs or does."""
+    """One thing the receiving host's operator runs or does.
+
+    `windows_command` is the same step on Windows, where the transport allows
+    Windows at all; the page shows the two as equals, not one as a footnote
+    to the other.
+    """
 
     title: str
     command: str = ""
     note: str = ""
+    windows_command: str = ""
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -152,21 +166,33 @@ def parse_receiver_rows(block: Mapping[str, Any]) -> tuple[str | None, tuple[Rec
 # --- what the host runs ------------------------------------------------------
 
 
+# The transports whose receiver may be a Windows host. There is no rsync on
+# Windows; sftp is the Windows transport, and the transport's own help says so.
+WINDOWS_TRANSPORTS = frozenset({"sftp"})
+
+
 def key_steps(receiver_id: str) -> tuple[Step, ...]:
-    """Before registering: the key pair is made on the receiver (B157)."""
+    """Before registering: the key pair is made on the receiver (B157).
+
+    Linux and Windows as equals in each step. Which of the two the page
+    shows is the transport's (`WINDOWS_TRANSPORTS`), decided where the
+    transport is chosen, so the steps follow the radio without a round trip;
+    https has no key and shows none of this.
+    """
 
     name = receiver_id or "<receiver>"
     return (
         Step(
             "On the receiving host, make a key for fetching and nothing else",
             f"ssh-keygen -t ed25519 -N '' -C {name} -f {KEY_FILE}",
-            "Linux. On Windows (PowerShell, OpenSSH client installed): "
+            "",
             f"ssh-keygen -t ed25519 -N '\"\"' -C {name} -f {WINDOWS_KEY_FILE}",
         ),
         Step(
             "Paste the public half below",
             f"cat {KEY_FILE}.pub",
             "One line, starting with ssh-ed25519. The private half never leaves the host.",
+            f"Get-Content {WINDOWS_KEY_FILE}.pub",
         ),
     )
 
@@ -266,6 +292,51 @@ class Activity:
     tone: str
     message: str
 
+    @property
+    def busy(self) -> bool:
+        return self.tone == "info"
+
+    @property
+    def badge(self) -> str:
+        """The label on the row, where the receiver's name is already there."""
+
+        registering = self.action == "add"
+        if self.busy:
+            return "Registering" if registering else "Removing"
+        if self.tone == "healthy":
+            return "Registered" if registering else "Removed"
+        if self.tone == "warning":
+            return "A layer was left"
+        return "Registration failed" if registering else "Removal failed"
+
+
+def on_the_rows(
+    rows: Sequence[ReceiverRow], activity: Sequence[Activity]
+) -> tuple[dict[str, Activity], tuple[Activity, ...]]:
+    """Which rows carry a job's state, and which jobs have no row yet.
+
+    A job that is running is always on its row. A job that failed is shown
+    only while it is the newest receiver job: a failure from last week is on
+    the jobs page, not a badge the row wears forever. A registration has no
+    row in the registry until it succeeds, so its state is a row of its own
+    at the top of the table - the second value - and a failed registration
+    is there for as long as the same rule keeps it.
+    """
+
+    registered = {row.identifier for row in rows}
+    on_rows: dict[str, Activity] = {}
+    ghosts: list[Activity] = []
+    for index, item in enumerate(activity):
+        if item.tone == "healthy" or item.receiver in on_rows:
+            continue
+        if not item.busy and index != 0:
+            continue
+        if item.receiver in registered:
+            on_rows[item.receiver] = item
+        elif item.action == "add" and not any(g.receiver == item.receiver for g in ghosts):
+            ghosts.append(item)
+    return on_rows, tuple(ghosts)
+
 
 def recent_activity(rows: Sequence[Any]) -> tuple[Activity, ...]:
     """The newest receiver jobs, newest first, with the helper's own sentence.
@@ -348,8 +419,12 @@ def payload(
             "A receiver is named by the fetching host's DNS name or address: lowercase "
             "letters, digits, dots and dashes."
         )
-    if any(row.identifier == name for row in existing):
-        raise ReceiverProblem(f"{name} is already registered. Remove it first to change it.")
+    registered = next((row for row in existing if row.identifier == name), None)
+    if registered is not None:
+        raise ReceiverProblem(
+            f"{name} already fetches over {registered.transport}. Publish more "
+            "certificates to it from the registry; to change the transport, remove it first."
+        )
     if transport not in RECEIVER_TRANSPORTS:
         raise ReceiverProblem("Choose a transport.")
     result: dict[str, Any] = {"receiver": name, "action": "add", "transport": transport}

@@ -2206,46 +2206,82 @@ def build_router(config: Config) -> APIRouter:
         )
         return overview.registry
 
-    def _receivers_page(
-        request: Request,
-        session: AuthenticatedSession,
-        *,
-        problem: str = "",
-        form: Mapping[str, str] | None = None,
-    ) -> Response:
+    def _page_context(
+        request: Request, session: AuthenticatedSession
+    ) -> tuple[str, certificates.RegistryView | None, dict[str, Any]]:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         registry = _registry_overview(request)
-        rows = registry.receiver_rows if registry else ()
-        manager = registry.manager if registry else None
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
-            own = db.operation_jobs(connection, "cert_receiver", limit=5)
-        entered = {"receiver": "", "transport": "sftp", "public_key": "", "allow": ""}
-        if form:
-            entered.update(form)
-        return TEMPLATES.TemplateResponse(
-            request,
-            "certificate-receivers.html",
+        return (
+            token,
+            registry,
             {
                 "username": session.username,
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
-                "rows": tuple(
-                    (row, certificate_receivers.fetch_steps(row, manager)) for row in rows
-                ),
-                "manager": manager,
                 "registry_present": registry is not None,
-                "key_steps": certificate_receivers.key_steps(entered["receiver"]),
-                "transports": certificate_receivers.TRANSPORT_HELP,
-                "form": entered,
-                "problem": problem,
-                "activity": certificate_receivers.recent_activity(own),
                 "certificate_job": jobs.certificate_in_flight(recent),
                 "section": "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
                 "snapshot_age": "",
+            },
+        )
+
+    def _receivers_page(
+        request: Request, session: AuthenticatedSession, *, problem: str = ""
+    ) -> Response:
+        """The list: every receiver, its fetch commands, and the job on its row."""
+
+        _token, registry, context = _page_context(request, session)
+        rows = registry.receiver_rows if registry else ()
+        manager = registry.manager if registry else None
+        with request.app.state.pool.connection() as connection:
+            own = db.operation_jobs(connection, "cert_receiver", limit=5)
+        on_rows, ghosts = certificate_receivers.on_the_rows(
+            rows, certificate_receivers.recent_activity(own)
+        )
+        return TEMPLATES.TemplateResponse(
+            request,
+            "certificate-receivers.html",
+            {
+                **context,
+                "rows": tuple(
+                    (row, certificate_receivers.fetch_steps(row, manager)) for row in rows
+                ),
+                "manager": manager,
+                "on_rows": on_rows,
+                "ghosts": ghosts,
+                "problem": problem,
+            },
+        )
+
+    def _receiver_form_page(
+        request: Request,
+        session: AuthenticatedSession,
+        *,
+        problem: str = "",
+        form: Mapping[str, str] | None = None,
+    ) -> Response:
+        """The form: what is needed before the job, and nothing from after it."""
+
+        _token, _registry, context = _page_context(request, session)
+        entered = {"receiver": "", "transport": "sftp", "public_key": "", "allow": ""}
+        if form:
+            entered.update(form)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "certificate-receiver-new.html",
+            {
+                **context,
+                "key_steps": certificate_receivers.key_steps(entered["receiver"]),
+                "transports": certificate_receivers.TRANSPORT_HELP,
+                "windows_transports": certificate_receivers.WINDOWS_TRANSPORTS,
+                "windows": entered["transport"] in certificate_receivers.WINDOWS_TRANSPORTS,
+                "form": entered,
+                "problem": problem,
             },
         )
 
@@ -2258,20 +2294,36 @@ def build_router(config: Config) -> APIRouter:
             return gate
         return _receivers_page(request, gate)
 
+    @router.get("/certificates/receivers/new", response_class=HTMLResponse)
+    def certificate_receiver_form(request: Request) -> Response:
+        """Register a receiver: its own page, like a new certificate is."""
+
+        gate = _certificate_delete_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        if _registry_overview(request) is None:
+            return RedirectResponse("/certificates/receivers", status_code=303)
+        return _receiver_form_page(request, gate)
+
     def _queue_receiver_job(
         request: Request,
         session: AuthenticatedSession,
         payload: Mapping[str, Any],
         key: UUID,
         *,
-        form: Mapping[str, str],
+        form: Mapping[str, str] | None,
     ) -> Response:
+        def again(problem: str) -> Response:
+            if form is None:
+                return _receivers_page(request, session, problem=problem)
+            return _receiver_form_page(request, session, problem=problem, form=form)
+
         try:
             operations.prepare(
                 operation="cert_receiver", cluster=None, request_id=uuid4(), payload=payload
             )
         except operations.BadPayload as refused:
-            return _receivers_page(request, session, problem=str(refused), form=form)
+            return again(str(refused))
         with request.app.state.pool.connection() as connection:
             try:
                 job = db.queue_job(
@@ -2283,12 +2335,8 @@ def build_router(config: Config) -> APIRouter:
                 )
             except db.CertificateBusy:
                 connection.rollback()
-                return _receivers_page(
-                    request,
-                    session,
-                    problem="A certificate job is already running. Wait for it to finish, "
-                    "then ask again.",
-                    form=form,
+                return again(
+                    "A certificate job is already running. Wait for it to finish, then ask again."
                 )
             except db.RequestConflict:
                 connection.rollback()
@@ -2314,7 +2362,7 @@ def build_router(config: Config) -> APIRouter:
             connection.commit()
         return RedirectResponse("/certificates/receivers", status_code=303)
 
-    @router.post("/certificates/receivers", response_class=HTMLResponse)
+    @router.post("/certificates/receivers/new", response_class=HTMLResponse)
     def certificate_receiver_add(
         request: Request,
         receiver: str = Form(default="", max_length=128),
@@ -2348,7 +2396,7 @@ def build_router(config: Config) -> APIRouter:
                 receiver, transport, public_key, allow, registry.receiver_rows if registry else ()
             )
         except certificate_receivers.ReceiverProblem as refused:
-            return _receivers_page(request, gate, problem=str(refused), form=entered)
+            return _receiver_form_page(request, gate, problem=str(refused), form=entered)
         return _queue_receiver_job(request, gate, payload, key, form=entered)
 
     @router.post("/certificates/receivers/remove", response_class=HTMLResponse)
@@ -2377,7 +2425,7 @@ def build_router(config: Config) -> APIRouter:
             )
         except certificate_receivers.ReceiverProblem as refused:
             return _receivers_page(request, gate, problem=str(refused))
-        return _queue_receiver_job(request, gate, payload, key, form={})
+        return _queue_receiver_job(request, gate, payload, key, form=None)
 
     @router.post("/certificates/delete", response_class=HTMLResponse)
     def certificate_delete_review(

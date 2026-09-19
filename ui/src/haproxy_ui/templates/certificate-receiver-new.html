@@ -1,0 +1,68 @@
+{% extends "layout.html" %}
+{% block title %}Register a receiver — HAProxy Manager{% endblock %}
+{% block head_extra %}<script defer src="{{ url_for('static', path='/receiver-page.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block content %}
+{#
+  The half that comes before the job (B142): name the host, choose how it
+  fetches, make the key on it and paste the public half. Only what is
+  needed before registering is here; what the host runs afterwards is on
+  its row in the list. The key pair is made on the receiving host and only
+  its public half is pasted (B157).
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Register a receiver</h1><p class="page-lede">A host outside the clusters that will fetch certificates from this manager. One job builds its account, directory and lock.</p></div>
+  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+{% if certificate_job %}
+<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> The queue runs one certificate job at a time; this form can be sent once it has finished. Its row on the <a href="/certificates/receivers">receiver list</a> shows how it is going.</p>
+{% endif %}
+
+<form method="post" action="/certificates/receivers/new" class="preview-form certificate-form receiver-form" data-receiver-form>
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Receiver</h3><p>Name the host, choose how it fetches, paste its public key.</p></div></div></header>
+    <div class="form-grid receiver-form-grid">
+      <div class="field">
+        <label class="field-title" for="receiver-id">Receiver</label>
+        <input id="receiver-id" name="receiver" type="text" value="{{ form.receiver }}" required maxlength="63" autocomplete="off" spellcheck="false" placeholder="app-01.example.net" data-receiver-name autofocus>
+        <small>The fetching host's DNS name or address. The lock is bound to it: a key used from another host is refused.</small>
+      </div>
+      <div class="field">
+        <span class="field-title">Transport</span>
+        <div class="form-checks form-checks-stacked method-choices">
+          {% for name, help in transports.items() %}
+          <label class="check"><input type="radio" name="transport" value="{{ name }}"{% if form.transport == name %} checked{% endif %} data-transport-choice{% if name in windows_transports %} data-windows{% endif %}> <span><strong>{{ name }}</strong> — {{ help }}</span></label>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="field" data-key-field>
+        <label class="field-title" for="receiver-key">Public key</label>
+        <ol class="receiver-steps receiver-key-steps">
+          {% for step in key_steps %}
+          <li><span class="receiver-step-title">{{ step.title }}</span>
+            <span class="receiver-os" data-os="linux">Linux:</span><pre class="receiver-command" data-os="linux"><code data-key-command>{{ step.command }}</code></pre>
+            <span class="receiver-os" data-os="windows"{% if not windows %} hidden{% endif %}>Windows (PowerShell, OpenSSH client installed):</span><pre class="receiver-command" data-os="windows"{% if not windows %} hidden{% endif %}><code data-key-command>{{ step.windows_command }}</code></pre>
+            {% if step.note %}<small>{{ step.note }}</small>{% endif %}</li>
+          {% endfor %}
+        </ol>
+        <textarea id="receiver-key" name="public_key" rows="3" spellcheck="false" autocomplete="off" placeholder="ssh-ed25519 AAAA… app-01.example.net">{{ form.public_key }}</textarea>
+      </div>
+      <div class="field" data-allow-field hidden>
+        <label class="field-title" for="receiver-allow">Allowed addresses</label>
+        <textarea id="receiver-allow" name="allow" rows="3" spellcheck="false" autocomplete="off" placeholder="192.0.2.10&#10;198.51.100.0/24">{{ form.allow }}</textarea>
+        <small>Addresses or networks, one per line, that may fetch over https. The interface's own certificate and name serve the files; there is no key. The URL each certificate is fetched from is on the receiver's row once it is registered.</small>
+      </div>
+    </div>
+    <div class="editor-actions editor-submit">
+      <p class="table-note">The job takes a few seconds. The receiver then appears in the list with the commands its host runs to fetch; publish a certificate to it from the registry.</p>
+      <div class="form-buttons"><a class="secondary-button" href="/certificates/receivers">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Register the receiver</button></div>
+    </div>
+  </section>
+</form>
+{% endblock %}

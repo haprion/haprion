@@ -133,11 +133,19 @@ class WhatTheHostRuns(unittest.TestCase):
         steps = certificate_receivers.fetch_steps(row, None)
         self.assertIn("crx-lb-02-example-net@<manager>:<certificate>/", steps[0].command)
 
-    def test_the_key_is_made_on_the_receiver_and_named_after_it(self) -> None:
+    def test_the_key_is_made_on_the_receiver_and_named_after_it_on_both_systems(self) -> None:
         first, second = certificate_receivers.key_steps("lb-02.example.net")
-        self.assertIn("ssh-keygen -t ed25519 -N '' -C lb-02.example.net", first.command)
-        self.assertIn("C:\\certs\\certfetch", first.note)
+        self.assertEqual(
+            first.command,
+            "ssh-keygen -t ed25519 -N '' -C lb-02.example.net -f /root/.ssh/certfetch",
+        )
+        self.assertEqual(
+            first.windows_command,
+            "ssh-keygen -t ed25519 -N '\"\"' -C lb-02.example.net -f C:\\certs\\certfetch",
+        )
         self.assertEqual(second.command, "cat /root/.ssh/certfetch.pub")
+        self.assertEqual(second.windows_command, "Get-Content C:\\certs\\certfetch.pub")
+        self.assertEqual(certificate_receivers.WINDOWS_TRANSPORTS, {"sftp"})
 
 
 class TheFormRefuses(unittest.TestCase):
@@ -189,6 +197,15 @@ class TheFormRefuses(unittest.TestCase):
         for name, fields in cases.items():
             with self.subTest(name), self.assertRaises(certificate_receivers.ReceiverProblem):
                 self.payload(**fields)
+
+    def test_a_registered_name_says_its_transport_and_what_to_do_instead(self) -> None:
+        with self.assertRaises(certificate_receivers.ReceiverProblem) as caught:
+            self.payload(receiver_id="lb-01")
+        self.assertEqual(
+            str(caught.exception),
+            "lb-01 already fetches over rsync. Publish more certificates to it from the "
+            "registry; to change the transport, remove it first.",
+        )
 
     def test_a_removal_needs_a_registered_receiver_nothing_names(self) -> None:
         rows = certificate_receivers.parse_receiver_rows(
@@ -251,6 +268,65 @@ class TheActivityLine(unittest.TestCase):
                 ("warning", "Removing lb-02.example.net: a layer was left", "busy"),
             ],
         )
+        self.assertEqual(
+            [item.badge for item in activity],
+            ["Registering", "Registered", "Registration failed", "A layer was left"],
+        )
+        self.assertEqual([item.busy for item in activity], [True, False, False, False])
+
+
+class WhatTheRowsCarry(unittest.TestCase):
+    """A job's state sits on the row it concerns, or on a row of its own."""
+
+    def activity(self, *jobs: tuple[str, str, str]) -> tuple[Any, ...]:
+        items = []
+        for index, (receiver, action, tone) in enumerate(jobs):
+            items.append(certificate_receivers.Activity(index + 1, receiver, action, "", tone, ""))
+        return tuple(items)
+
+    def rows(self) -> tuple[Any, ...]:
+        return certificate_receivers.parse_receiver_rows(
+            block(record("lb-01"), record("lb-02.example.net"))
+        )[1]
+
+    def test_a_running_job_is_always_on_its_row_and_a_registration_has_a_row_of_its_own(
+        self,
+    ) -> None:
+        on_rows, ghosts = certificate_receivers.on_the_rows(
+            self.rows(),
+            self.activity(
+                ("lb-03.example.net", "add", "info"),
+                ("lb-02.example.net", "remove", "info"),
+            ),
+        )
+        self.assertEqual(set(on_rows), {"lb-02.example.net"})
+        self.assertEqual([g.receiver for g in ghosts], ["lb-03.example.net"])
+
+    def test_a_failure_is_shown_only_while_it_is_the_newest_job(self) -> None:
+        newest_failed = self.activity(
+            ("lb-03.example.net", "add", "critical"),
+            ("lb-02.example.net", "remove", "critical"),
+        )
+        on_rows, ghosts = certificate_receivers.on_the_rows(self.rows(), newest_failed)
+        self.assertEqual(on_rows, {})
+        self.assertEqual([g.receiver for g in ghosts], ["lb-03.example.net"])
+
+        older_failed = self.activity(
+            ("lb-01", "add", "healthy"),
+            ("lb-02.example.net", "remove", "critical"),
+        )
+        on_rows, ghosts = certificate_receivers.on_the_rows(self.rows(), older_failed)
+        self.assertEqual((on_rows, ghosts), ({}, ()))
+
+    def test_a_row_carries_its_newest_job_only(self) -> None:
+        on_rows, _ = certificate_receivers.on_the_rows(
+            self.rows(),
+            self.activity(
+                ("lb-02.example.net", "remove", "info"),
+                ("lb-02.example.net", "remove", "critical"),
+            ),
+        )
+        self.assertEqual(on_rows["lb-02.example.net"].job_id, 1)
 
 
 class ReceiverRouteTestCase(DeleteRouteTestCase):
@@ -297,7 +373,7 @@ class ReceiverRouteTestCase(DeleteRouteTestCase):
             auth.CSRF_FIELD: token,
         }
         data.update(fields)
-        return client.post("/certificates/receivers", data=data, follow_redirects=False)
+        return client.post("/certificates/receivers/new", data=data, follow_redirects=False)
 
     def remove(self, client: Any, receiver: str, *, token: str | None = None) -> Any:
         token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE]) if token is None else token
@@ -309,7 +385,7 @@ class ReceiverRouteTestCase(DeleteRouteTestCase):
 
 
 class ThePage(ReceiverRouteTestCase):
-    def test_it_lists_the_rows_with_their_commands_and_the_form(self) -> None:
+    def test_it_lists_the_rows_with_their_commands_and_links_to_the_form(self) -> None:
         page = self.writing_client().get("/certificates/receivers").text
 
         self.assertIn("<h1>Receivers</h1>", page)
@@ -320,9 +396,35 @@ class ThePage(ReceiverRouteTestCase):
         # In use: no Remove; nothing yet: Remove.
         self.assertIn('title="Use Remove from… on the certificate first"', page)
         self.assertIn('name="receiver" value="lb-02.example.net"', page)
+        self.assertIn('href="/certificates/receivers/new">Register a receiver</a>', page)
+        # The form is its own page: nothing from before the job is here.
+        self.assertNotIn("Register the receiver", page)
+        self.assertNotIn("ssh-keygen", page)
+        self.assertNotIn("legacy-layout receiver is migrated", page)
+
+    def test_the_form_is_its_own_page_with_the_key_steps_for_both_systems(self) -> None:
+        page = self.writing_client().get("/certificates/receivers/new").text
+
+        self.assertIn("<h1>Register a receiver</h1>", page)
         self.assertIn("Register the receiver", page)
-        self.assertIn('href="/certificates?view=registry">Cancel', page)
-        self.assertIn("ssh-keygen -t ed25519", page)
+        self.assertIn('href="/certificates/receivers">Cancel', page)
+        self.assertIn('data-os="linux">Linux:</span>', page)
+        self.assertIn("Windows (PowerShell, OpenSSH client installed):", page)
+        self.assertIn(
+            "ssh-keygen -t ed25519 -N &#39;&#34;&#34;&#39; -C &lt;receiver&gt; -f C:\\certs\\certfetch",
+            page,
+        )
+        self.assertIn("Get-Content C:\\certs\\certfetch.pub", page)
+        self.assertIn('value="sftp" checked data-transport-choice data-windows>', page)
+        self.assertIn('value="rsync" data-transport-choice>', page)
+        # sftp is preset, so the Windows pair is visible; the transport help says why.
+        self.assertNotIn('data-os="windows" hidden', page)
+        self.assertIn("Can hold any certificate, wildcards included", page)
+        self.assertNotIn("Fetch commands", page)
+
+    def test_the_form_hides_windows_for_rsync_before_any_script_runs(self) -> None:
+        response = self.add(self.writing_client(), public_key="not a key")
+        self.assertIn('data-os="windows" hidden', response.text)
 
     def test_the_gates_are_the_registry_s(self) -> None:
         self.assertEqual(
@@ -337,6 +439,10 @@ class ThePage(ReceiverRouteTestCase):
     def test_the_certificate_form_links_here_and_lists_receivers_one_per_row(self) -> None:
         page = self.writing_client().get("/certificates/new").text
         self.assertIn('href="/certificates/receivers">Manage receivers</a>', page)
+        self.assertEqual(
+            self.writing_client(role="reader").get("/certificates/receivers/new").status_code,
+            403,
+        )
         self.assertIn('<span class="receiver-transport">· sftp</span>', page)
         self.assertIn('href="/certificates?view=registry">Cancel</a>', page)
 
@@ -397,22 +503,58 @@ class TheJobs(ReceiverRouteTestCase):
         self.assertIn("still receives app.example.com", response.text)
         self.assertEqual(self.queued, [])
 
-    def test_a_failed_job_is_said_at_the_top_with_the_helper_s_words(self) -> None:
-        self.activity = [
-            replace(
-                queued(
-                    operation="cert_receiver",
-                    cluster=None,
-                    state="done",
-                    payload={"receiver": "lb-03.example.net", "action": "add"},
-                ),
-                outcome="failed",
-                result={
-                    "outcome": "failed",
-                    "result": None,
-                    "error": {"code": "receiver_unresolvable", "message": "does not resolve"},
-                },
-            )
-        ]
+    def failed(self, receiver: str, action: str, *, job_id: int = 7) -> Any:
+        return replace(
+            queued(
+                operation="cert_receiver",
+                cluster=None,
+                state="done",
+                payload={"receiver": receiver, "action": action},
+            ),
+            id=job_id,
+            outcome="failed",
+            result={
+                "outcome": "failed",
+                "result": None,
+                "error": {"code": "receiver_unresolvable", "message": "does not resolve"},
+            },
+        )
+
+    def test_a_failed_registration_is_a_row_of_its_own_with_the_helper_s_words(self) -> None:
+        self.activity = [self.failed("lb-03.example.net", "add")]
+
         page = self.writing_client().get("/certificates/receivers").text
-        self.assertIn("Registering lb-03.example.net failed.</strong> does not resolve", page)
+
+        self.assertIn('<tr class="receiver-row receiver-ghost">', page)
+        self.assertIn("<strong>lb-03.example.net</strong>", page)
+        self.assertIn(
+            '<span>Registration failed</span><span aria-hidden="true">·</span>'
+            '<a href="/jobs#job-7">Job 7</a></span> '
+            '<small class="receiver-job-message">does not resolve</small>',
+            page,
+        )
+        self.assertNotIn("preview-notice", page)
+
+    def test_a_running_removal_spins_on_its_row_and_a_failed_one_is_a_badge_there(self) -> None:
+        running = queued(
+            operation="cert_receiver",
+            cluster=None,
+            state="running",
+            payload={"receiver": "lb-02.example.net", "action": "remove"},
+        )
+        self.activity = [replace(running, id=8)]
+        page = self.writing_client().get("/certificates/receivers").text
+        self.assertIn('data-busy="lb-02.example.net"><span class="badge-spinner"', page)
+        self.assertIn(
+            '<span>Removing</span><span aria-hidden="true">·</span><a href="/jobs#job-8">Job 8</a>',
+            page,
+        )
+        self.assertNotIn("receiver-ghost", page)
+
+        self.activity = [self.failed("lb-02.example.net", "remove", job_id=9)]
+        page = self.writing_client().get("/certificates/receivers").text
+        self.assertIn(
+            '<span>Removal failed</span><span aria-hidden="true">·</span><a href="/jobs#job-9">Job 9</a>',
+            page,
+        )
+        self.assertNotIn("receiver-ghost", page)

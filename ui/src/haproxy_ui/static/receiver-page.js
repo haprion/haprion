@@ -18,17 +18,22 @@
   const name = form.querySelector("[data-receiver-name]");
   const commands = Array.from(form.querySelectorAll("[data-key-command]"));
   const originals = commands.map((node) => node.textContent);
+  const windowsBlocks = Array.from(form.querySelectorAll('[data-os="windows"]'));
 
   // The key and the allowlist are the two halves of one choice: an ssh
-  // transport has a key, https has an allowlist, never both.
-  const showFor = (transport) => {
-    const https = transport === "https";
+  // transport has a key, https has an allowlist, never both. And the key
+  // steps follow the transport: Windows is shown for the transports a
+  // Windows host can use (the radio says which), never for rsync.
+  const showFor = (radio) => {
+    const https = radio.value === "https";
     if (keyField) keyField.hidden = https;
     if (allowField) allowField.hidden = !https;
+    const windows = radio.hasAttribute("data-windows");
+    windowsBlocks.forEach((node) => { node.hidden = !windows; });
   };
   form.querySelectorAll("[data-transport-choice]").forEach((radio) => {
-    radio.addEventListener("change", () => showFor(radio.value));
-    if (radio.checked) showFor(radio.value);
+    radio.addEventListener("change", () => showFor(radio));
+    if (radio.checked) showFor(radio);
   });
 
   // The key-making command names the receiver, so it can be copied as is.

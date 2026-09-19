@@ -109,8 +109,15 @@ class TheQuestion(RetargetRouteTestCase):
         self.assertIn('name="cluster" value="beta"', page)
         self.assertIn("1 of 2 already there", page)
         self.assertIn('name="receiver" value="lb-01"', page)
-        # Every chosen certificate is on alpha already: not offered.
+        # Every chosen certificate is on alpha already: shown ticked and locked, not offered.
         self.assertNotIn('name="cluster" value="alpha"', page)
+        self.assertIn(
+            '<label class="check target-held" title="Already published to every selected '
+            'certificate"><input type="checkbox" checked disabled> <span>alpha '
+            '<span class="target-kind">cluster</span> <span class="optional">· already '
+            "published</span></span></label>",
+            page,
+        )
         self.assertIn("reload HAProxy", page)
 
     def test_remove_offers_only_what_some_chosen_certificate_is_on(self) -> None:

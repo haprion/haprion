@@ -45,10 +45,15 @@
       #}
       <div class="form-checks form-checks-stacked retarget-choices">
         {% for choice in selection.choices %}
-        <label class="check{% if adding and choice.kind == 'receiver' %} receiver-choice{% endif %}"><input type="checkbox" name="{{ choice.kind }}" value="{{ choice.name }}" data-target-pick> <span>{{ choice.name }} <span class="target-kind">{{ choice.kind }}</span>{% if adding and choice.holding %} <span class="optional">· {{ choice.holding }} of {{ selection.rows | length }} already there</span>{% elif not adding and choice.holding < selection.rows | length %} <span class="optional">· {{ choice.holding }} of {{ selection.rows | length }} are on it</span>{% endif %}</span>{% if adding and choice.kind == 'receiver' %}<select name="format" class="receiver-format" aria-label="Format for {{ choice.name }}"><option value="{{ choice.name }}=pem">PEM pair</option><option value="{{ choice.name }}=pkcs12">PKCS#12 + password</option></select>{% endif %}</label>
+        {% if choice.held %}
+        <label class="check target-held" title="Already published to every selected certificate"><input type="checkbox" checked disabled> <span>{{ choice.name }} <span class="target-kind">{{ choice.kind }}</span> <span class="optional">· already published</span></span></label>
         {% else %}
-        <span class="optional">{% if adding %}Every selected certificate is already on every target.{% else %}No selected certificate is on any target.{% endif %}</span>
+        <label class="check{% if adding and choice.kind == 'receiver' %} receiver-choice{% endif %}"><input type="checkbox" name="{{ choice.kind }}" value="{{ choice.name }}" data-target-pick> <span>{{ choice.name }} <span class="target-kind">{{ choice.kind }}</span>{% if adding and choice.holding %} <span class="optional">· {{ choice.holding }} of {{ selection.rows | length }} already there</span>{% elif not adding and choice.holding < selection.rows | length %} <span class="optional">· {{ choice.holding }} of {{ selection.rows | length }} are on it</span>{% endif %}</span>{% if adding and choice.kind == 'receiver' %}<select name="format" class="receiver-format" aria-label="Format for {{ choice.name }}"><option value="{{ choice.name }}=pem">PEM pair</option><option value="{{ choice.name }}=pkcs12">PKCS#12 + password</option></select>{% endif %}</label>
+        {% endif %}
         {% endfor %}
+        {% if not selection.offered %}
+        <span class="optional">{% if adding %}Every selected certificate is already on every target.{% else %}No selected certificate is on any target.{% endif %}</span>
+        {% endif %}
       </div>
     </div>
     <ul class="removal-consequences">
@@ -63,7 +68,7 @@
     </ul>
     {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish first.</p>{% endif %}
     <div class="editor-actions">
-      <button class="{{ 'secondary-button deploy-button' if adding else 'danger-button' }}" type="submit" data-target-submit{% if certificate_job or not selection.choices %} disabled{% endif %}>{{ selection.label }} the chosen targets</button>
+      <button class="{{ 'secondary-button deploy-button' if adding else 'danger-button' }}" type="submit" data-target-submit{% if certificate_job or not selection.offered %} disabled{% endif %}>{{ selection.label }} the chosen targets</button>
       <a class="secondary-button" href="/certificates?view=registry">Cancel</a>
     </div>
   </form>

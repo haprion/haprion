@@ -1333,6 +1333,12 @@ sudo haproxy-cert-receiver list
 sudo haproxy-cert-receiver remove lb-02.example.net
 ```
 
+**The account is `crx-` and the ID** with its dots turned into dashes (`crx-lb-02-example-net`):
+*crx* for *certificate receiver*, a prefix nothing else on the machine uses, so `ls -l` under the
+receiver root names the receiver. Linux holds an account name to 32 characters; an ID that would
+not fit is refused rather than cut, and `--owner` names the account instead - two long IDs must
+never quietly become one account. An `https` receiver has no account of its own: nginx serves it.
+
 **The ID is the fetching host**: its DNS name or its IPv4 address, and nothing else. That is what the
 lock binds to - `from=` in `authorized_keys`, `allow <id>` in nginx. **The key line carries the
 name and its addresses both**, `from="lb-02.example.net,192.0.2.10"`: sshd's `UseDNS` is off by

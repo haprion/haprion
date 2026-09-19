@@ -59,11 +59,18 @@ class Row:
 
 @dataclass(frozen=True, slots=True)
 class Choice:
-    """One target the page offers, and how many of the selection already have it."""
+    """One target the page shows, and how many of the selection already have it.
+
+    `held` is a target every chosen certificate is on already: drawn ticked
+    and locked, not offered. It used to be left out, and a reader looking for
+    a receiver the certificate already went to found it missing from the
+    list and read that as "not registered" (2026-09-19).
+    """
 
     name: str
     kind: str
     holding: int
+    held: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +87,12 @@ class Selection:
     def label(self) -> str:
         return ACTIONS[self.action]
 
+    @property
+    def offered(self) -> tuple[Choice, ...]:
+        """The choices that can be ticked: what the job would actually change."""
+
+        return tuple(choice for choice in self.choices if not choice.held)
+
 
 def selection(
     action: str,
@@ -91,11 +104,11 @@ def selection(
 ) -> Selection:
     """The rows and the offered targets, in the order the registry lists them.
 
-    For an add, every cluster and receiver that exists is offered; for a
-    remove, only the ones some chosen certificate is actually on. A target
-    every chosen certificate already has (add) or none has (remove) is not
-    offered - the job would report it unchanged, and the page can say so
-    without asking.
+    For an add, every cluster and receiver that exists is shown, and one
+    every chosen certificate already has is shown ticked and locked rather
+    than offered - the job would report it unchanged, and the page says so
+    without asking. For a remove, only the ones some chosen certificate is
+    actually on.
     """
 
     if action not in ACTIONS:
@@ -130,11 +143,11 @@ def selection(
             holding = sum(
                 1 for row in rows if name in (row.clusters if kind == "cluster" else row.receivers)
             )
-            if action == "add" and holding == len(rows):
-                continue
             if action == "remove" and holding == 0:
                 continue
-            choices.append(Choice(name, kind, holding))
+            choices.append(
+                Choice(name, kind, holding, held=action == "add" and holding == len(rows))
+            )
     return Selection(action, rows, tuple(choices))
 
 
@@ -150,8 +163,8 @@ def payload(
     for an add and only for receivers that were ticked.
     """
 
-    offered_clusters = {c.name for c in picked.choices if c.kind == "cluster"}
-    offered_receivers = {c.name for c in picked.choices if c.kind == "receiver"}
+    offered_clusters = {c.name for c in picked.offered if c.kind == "cluster"}
+    offered_receivers = {c.name for c in picked.offered if c.kind == "receiver"}
     chosen_clusters = tuple(
         name
         for name in dict.fromkeys(clusters)

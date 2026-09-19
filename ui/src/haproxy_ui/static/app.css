@@ -1084,6 +1084,9 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
  */
 .retarget-choices { flex-direction: column; align-items: flex-start; gap: 8px; }
 .retarget-choices .receiver-choice .receiver-format { margin-left: 4px; }
+/* A target every selected certificate already goes to: shown so the list is
+   complete, ticked and locked so it cannot be asked for again. */
+.retarget-choices .target-held { color: var(--muted); }
 /*
  * The receivers page (B142). A row is a host; the commands it runs sit in a
  * second row under it, opened on request, so the table stays a table. The

@@ -11,7 +11,8 @@
     const submit = document.querySelector("[data-target-submit]");
     if (!submit || !picks.length) return;
     const update = () => {
-      submit.disabled = !picks.some((pick) => pick.checked);
+      // A locked, pre-ticked target (already published) is not a choice.
+      submit.disabled = !picks.some((pick) => pick.checked && !pick.disabled);
     };
     picks.forEach((pick) => pick.addEventListener("change", update));
     update();

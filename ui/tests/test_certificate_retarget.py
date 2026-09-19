@@ -298,17 +298,23 @@ class TheStateCellFollowsTheJob(unittest.TestCase):
         self.assertIn("default certificate of beta", done["b.example"].detail)
         self.assertFalse(done["b.example"].active)
 
-    def test_a_changed_row_stops_refreshing_after_the_poller_has_had_its_turn(self) -> None:
+    def test_a_changed_row_gives_way_to_the_measured_state_after_the_poller_s_turn(self) -> None:
+        """A success is an overlay for the follow-up window only (2026-09-19).
+
+        It used to stay an hour, like a failure, and stood on top of the
+        measured "On all N nodes" the whole time.
+        """
+
         result = {
             "certificates": [
                 {"certificate": "a.example", "state": "changed", "added": [], "abandoned": ["beta"]}
             ]
         }
-        later = self.states(self.job("done", "remove", result=result, age=120))["a.example"]
-        self.assertEqual(later.label, "Removed from beta")
-        self.assertFalse(later.active)
+        fresh = self.states(self.job("done", "remove", result=result, age=60))["a.example"]
+        self.assertEqual(fresh.label, "Removed from beta")
+        self.assertTrue(fresh.active)
         self.assertNotIn(
-            "a.example", self.states(self.job("done", "remove", result=result, age=3700))
+            "a.example", self.states(self.job("done", "remove", result=result, age=120))
         )
 
 

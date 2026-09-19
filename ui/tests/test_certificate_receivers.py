@@ -132,8 +132,8 @@ class WhatTheHostRuns(unittest.TestCase):
             "curl.exe -k -o C:\\certs\\manager-ui.pem "
             "https://mgr.example.net/certdist/manager-ui.pem",
         )
-        self.assertIn("openssl s_client -connect mgr.example.net:443", steps[0].note)
-        self.assertIn("drop --cacert from the fetches", steps[0].note)
+        self.assertEqual(steps[0].note.count("\n"), 1)
+        self.assertIn("skip this step and drop --cacert", steps[0].note)
         self.assertIn("--cacert C:\\certs\\manager-ui.pem", steps[1].windows_command)
         self.assertIn(
             "https://mgr.example.net/certdist/192.0.2.9/<certificate>/fullchain.pem",

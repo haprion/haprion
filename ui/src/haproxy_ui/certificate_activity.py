@@ -259,6 +259,8 @@ def _state_of(job: Job, identifier: str, now: datetime) -> DeletionState | None:
     row = _row(result, identifier)
     outcome = row.get("state") if row else None
     if outcome == "removed":
+        if job.finished_at is not None and now - job.finished_at > FOLLOW_UP:
+            return None
         return DeletionState(
             "Deleted", "Removed; the listing drops it at the next poll", "info", True
         )
@@ -270,8 +272,11 @@ def _state_of(job: Job, identifier: str, now: datetime) -> DeletionState | None:
 
 
 #
-# How long a finished target change keeps the page refreshing: the "Used by"
-# column follows the poller's next read of the registry, not the job.
+# How long a finished job that *succeeded* stays on the row: the "Used by"
+# column and the State column follow the poller's next read of the registry,
+# not the job, and this covers that gap. Then the measured state has the row
+# back - "On all 4 nodes" is worth more than "Published to lb-01" an hour
+# later (2026-09-19). A failure keeps VERDICT_LIFETIME: it has to be seen.
 #
 FOLLOW_UP = timedelta(seconds=90)
 
@@ -304,11 +309,13 @@ def _target_state_of(job: Job, identifier: str, now: datetime) -> DeletionState 
         str(n) for n in ((row or {}).get("added") or (row or {}).get("abandoned") or [])
     )
     if outcome == "changed":
+        if age > FOLLOW_UP:
+            return None
         return DeletionState(
             "Published to " + moved if adding else "Removed from " + moved,
             "The listing follows at the next poll",
             "info",
-            age <= FOLLOW_UP,
+            True,
         )
     if outcome == "refused":
         return DeletionState("Target change refused", _reason(row), "critical", False)

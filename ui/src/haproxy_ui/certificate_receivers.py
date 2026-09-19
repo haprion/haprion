@@ -226,13 +226,10 @@ def fetch_steps(row: ReceiverRow, manager: str | None) -> tuple[Step, ...]:
             Step(
                 "Once: decide what the fetches trust",
                 f"curl -k -o manager-ui.pem https://{host}{HTTPS_PREFIX}/{UI_CERTIFICATE_FILE}",
-                "Saves the manager's own certificate; the fetches below pass it as --cacert and "
-                "trust exactly that certificate, nothing else. -k is for this first contact "
-                "only. Do it again when the interface's certificate is replaced.\n"
-                f"With openssl instead: openssl s_client -connect {host}:443 -servername {host} "
-                "</dev/null | openssl x509 > manager-ui.pem\n"
-                "If the interface's certificate comes from a CA this host already trusts, skip "
-                "this step and drop --cacert from the fetches.",
+                "Saves the manager's certificate for --cacert below (-k only on this first "
+                "contact); redo it when the interface's certificate changes.\n"
+                "If this host already trusts the CA that issued it, skip this step and drop "
+                "--cacert.",
                 f"curl.exe -k -o {WINDOWS_CERT_DIR}\\manager-ui.pem "
                 f"https://{host}{HTTPS_PREFIX}/{UI_CERTIFICATE_FILE}",
             )

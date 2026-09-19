@@ -64,8 +64,12 @@ class DeletionStates(unittest.TestCase):
         self.assertEqual(states["shop.example.com"].label, "Delete refused")
         self.assertIn("alpha/shop", states["shop.example.com"].detail)
         self.assertFalse(states["shop.example.com"].active)
-        stale = delete_job("done", "x", result=verdict("x", "removed"), age=61)
+        # A success gives way to the listing after the follow-up window; a
+        # refusal is kept for the hour.
+        stale = delete_job("done", "x", result=verdict("x", "removed"), age=2)
         self.assertEqual(self.states(stale), {})
+        refused = delete_job("done", "x", result=verdict("x", "refused", "in use"), age=59)
+        self.assertEqual(self.states(refused)["x"].label, "Delete refused")
 
     def test_partial_and_failed_jobs_keep_their_reason(self) -> None:
         partial = delete_job(

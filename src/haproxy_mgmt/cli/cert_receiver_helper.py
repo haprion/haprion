@@ -13,6 +13,11 @@ The public key arrives as text, not as a path: the interface has the
 operator paste the `.pub` line, and a helper that took a path would be a
 helper that reads any file root can. Migration is not offered here. It has a
 step on the receiving host in the middle, which is a terminal's operation.
+
+Not run through sudo (B163). It writes `/etc`, and the worker's sandbox keeps
+`/etc` read-only for anything the worker starts; so it answers on
+`/run/haproxy-mgmt/cert-receiver.sock` from a unit of its own, and the worker
+sends the request there with `haproxy-cert-receiver-ask`.
 """
 
 from __future__ import annotations
@@ -43,7 +48,6 @@ from haproxy_mgmt.helper_protocol import (
 
 OPERATION = "cert_receiver"
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-receiver-helper"
-SUDO = "/usr/bin/sudo"
 
 PARAMETERS = frozenset({"receiver", "action", "transport", "public_key", "allow"})
 ACTIONS = frozenset({"add", "remove"})
@@ -52,7 +56,7 @@ ACTIONS = frozenset({"add", "remove"})
 MAX_PUBLIC_KEY = 4096
 MAX_ALLOW = 32
 
-__all__ = ["HELPER", "OPERATION", "SUDO", "build_request", "main"]
+__all__ = ["HELPER", "OPERATION", "build_request", "main"]
 
 # EX_CONFIG: the installation has no registry, which is not the request's fault.
 EXIT_NO_REGISTRY = 78

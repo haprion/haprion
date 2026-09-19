@@ -1430,10 +1430,10 @@ reruns `install/platform/07-platform-services`, which rewrites and restarts the 
 **From the interface**, *Certificates → Receivers* lists every registered receiver - transport,
 account, what it holds - and registers or removes one. The form takes the receiver's name, the
 transport, and the public key pasted as text (or, for https, the allowed addresses); the job is
-one `cert_receiver` run by `haproxy-cert-receiver-helper` (the thirteenth worker helper; a
-sudoers rule and step 07 are part of its installation, migration `0032` lets the queue accept
-the job). The helper takes the key as text and never as a path, so the interface cannot point it
-at a file. What the page adds over the command is the other half of the contract: under each
+one `cert_receiver` run by `haproxy-cert-receiver-helper` - not through `sudo` but on a socket,
+`/run/haproxy-mgmt/cert-receiver.sock`, from a unit of its own that step 07 installs (see *The
+worker's way to the receiver helper* below; migration `0032` lets the queue accept the job). The
+helper takes the key as text and never as a path, so the interface cannot point it at a file. What the page adds over the command is the other half of the contract: under each
 receiver it writes out the exact commands that host runs to fetch - the account, the manager's
 name and each certificate it holds filled in, for Linux and for Windows where the transport
 allows both - together with the `ssh-keygen` line the host runs first. Removal from the page is
@@ -2872,7 +2872,7 @@ rollback rather than a pause.
 
 #### What the worker may run
 
-Ten helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
+Twelve helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 
 ```
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-helper ""
@@ -2887,13 +2887,13 @@ Ten helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-ndes-profile-apply-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper ""
-<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-receiver-helper ""
 ```
 
-The last eight are the certificate jobs (1.4.3, 1.4.5, 1.4.6, 1.4.9): they belong to no cluster,
-and the queue runs one of them at a time. `cert-delete` is the only rule in the file that removes
-key material; 1.4.6 says what bounds it. `cert-receiver` is the one that makes accounts and edits
-sshd's and nginx's own configuration; 1.4.9 says what bounds it.
+The last seven are the certificate jobs (1.4.3, 1.4.5, 1.4.6): they belong to no cluster, and
+the queue runs one of them at a time. `cert-delete` is the only rule in the file that removes
+key material; 1.4.6 says what bounds it. The receiver helper (1.4.9), which makes accounts and
+edits sshd's and nginx's own configuration, is deliberately not in this file: it is reached over
+a socket instead, for the reason given under *The worker's way to the receiver helper*.
 
 Publishing was deliberately absent from that list until the editor existed, on the reasoning that
 it was an operator's decision made at a terminal. What changed is that the interface became where
@@ -2953,6 +2953,42 @@ differently.
 **A development platform must not get this socket.** It reaches the real nodes.
 `PROBE_SOCKET=no` in its answers file is the default, and its interface then says
 the probe is unavailable rather than showing an empty result.
+
+#### The worker's way to the receiver helper
+
+The worker *can* `sudo` - twelve of its helpers go that way. The receiver helper
+does not, for a reason on the other side of the boundary: a helper the worker
+starts inherits the worker unit's mount namespace, and that unit has
+`ProtectSystem=strict` with a short `ReadWritePaths` list. Registering a
+receiver writes `/etc` - `useradd` rewrites `/etc/passwd` and its neighbours
+through a rename, so the whole directory has to be writable, and the helper
+rewrites `/etc/ssh/sshd_config.d/` and `/etc/nginx/snippets/` besides. A
+`ReadWritePaths=/etc` on the job runner would end the sandbox for every helper
+in order to serve one; a rule that stays fails at the first write.
+
+So this helper, too, sits still and the request travels:
+
+```
+/run/haproxy-mgmt/cert-receiver.sock    root:<worker> 0660, created by haproxy-cert-receiver-helper.socket
+haproxy-cert-receiver-helper@.service   runs the helper as root, one instance per connection
+```
+
+The worker runs `haproxy-cert-receiver-ask` from its own environment, as
+itself: no arguments, the request on stdin, the answer on stdout - the same
+shape every other helper is run in, so the queue, the lease and the output cap
+are unchanged. The client connects to the socket, writes the request, closes its
+write side and passes the answer through untouched. When nothing listens, the
+answer is an envelope that says so (`dependency_unavailable`), never `unknown`.
+The helper's own stderr goes to the journal (`journalctl -u
+'haproxy-cert-receiver-helper@*'`), not to the job.
+
+The service's sandbox is `ProtectSystem=yes` - `/usr`, `/boot` and `/efi`
+read-only, `/etc` writable - because writing `/etc` is the job. `full` and
+`strict` would both take `/etc` away, which is the failure this unit ends.
+`haproxy-cert-receiver` at the terminal does not go this way; root runs it
+directly.
+
+Step 07 installs the socket wherever it installs a worker. It reaches no node.
 
 #### Which clusters get polled
 

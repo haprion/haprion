@@ -203,12 +203,17 @@ class TheBoundary(HelperFixture):
         assert document is not None
         self.assertEqual(document["error"]["code"], "bad_input")
 
-    def test_the_sudoers_example_grants_exactly_the_helper_path(self) -> None:
-        rules = (
-            Path(__file__).resolve().parents[1]
-            / "install/platform/examples/haproxy-ui-worker.sudoers.example"
-        ).read_text(encoding="utf-8")
-        self.assertIn(f'NOPASSWD: {cert_receiver_helper.HELPER} ""', rules)
+    def test_the_sudoers_example_grants_nothing_and_the_socket_unit_runs_the_helper(self) -> None:
+        """B163: reached over a socket, so the rule is absent and the unit names the path."""
+
+        examples = Path(__file__).resolve().parents[1] / "install/platform/examples"
+        rules = (examples / "haproxy-ui-worker.sudoers.example").read_text(encoding="utf-8")
+        service = (examples / "haproxy-cert-receiver-helper@.service.example").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn(cert_receiver_helper.HELPER, rules)
+        self.assertIn(f"ExecStart={cert_receiver_helper.HELPER}\n", service)
+        self.assertIn("StandardInput=socket", service)
 
     def test_build_request_is_what_the_helper_accepts(self) -> None:
         request = cert_receiver_helper.build_request(

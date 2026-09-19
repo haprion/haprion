@@ -89,7 +89,6 @@ from haproxy_mgmt.config import (
     PathPolicy,
     Receiver,
     RegisteredCertificate,
-    Registry,
     RuntimeConfig,
 )
 

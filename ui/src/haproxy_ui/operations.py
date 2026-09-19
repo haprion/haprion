@@ -15,6 +15,7 @@ the one that was asked for.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -26,6 +27,7 @@ from haproxy_mgmt.cli import (
     cert_deploy,
     cert_issue_helper,
     cert_publish_helper,
+    cert_receiver_ask,
     cert_receiver_helper,
     cert_scep_helper,
     cert_target_helper,
@@ -50,6 +52,14 @@ TIMEOUT_SECONDS = 900.0
 # come from the engine modules rather than being written again here.
 #
 SUDO_FLAGS = ("-n", "--")
+
+#
+# The receiver client runs in this service's own venv, as this account: the
+# interpreter that runs the worker also has `haproxy_mgmt`, and `-m` names the
+# module rather than a script whose path would have to be found. What it talks
+# to is root, on the other side of a socket (B163).
+#
+RECEIVER_CLIENT = (sys.executable, "-m", cert_receiver_ask.__name__)
 
 
 class UnknownOperation(Exception):
@@ -429,6 +439,12 @@ def _certificate_operation(
         # from the form and never a path: a helper that took a path would
         # read any file root can.
         #
+        # Not through sudo (B163). The helper writes /etc - useradd, an sshd
+        # drop-in, an nginx snippet - and a helper this unit starts inherits
+        # its ProtectSystem=strict. So it answers on a socket from a unit of
+        # its own, and what runs here is the client that carries the request
+        # there and the answer back, in the same stdin/stdout shape.
+        #
         _only(payload, "receiver", "action", "transport", "public_key", "allow")
         receiver = payload.get("receiver")
         if not isinstance(receiver, str) or not RECEIVER_ID.fullmatch(receiver):
@@ -443,7 +459,7 @@ def _certificate_operation(
             if transport is not None or public_key is not None or allow_raw:
                 raise BadPayload("a removal takes no transport, key or allowlist")
             return Prepared(
-                argv=(cert_receiver_helper.SUDO, *SUDO_FLAGS, cert_receiver_helper.HELPER),
+                argv=RECEIVER_CLIENT,
                 request=cert_receiver_helper.build_request(
                     str(request_id), receiver=receiver, action="remove"
                 ),
@@ -468,7 +484,7 @@ def _certificate_operation(
             if len(public_key) > cert_receiver_helper.MAX_PUBLIC_KEY:
                 raise BadPayload("public_key is longer than a public key")
         return Prepared(
-            argv=(cert_receiver_helper.SUDO, *SUDO_FLAGS, cert_receiver_helper.HELPER),
+            argv=RECEIVER_CLIENT,
             request=cert_receiver_helper.build_request(
                 str(request_id),
                 receiver=receiver,

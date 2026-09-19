@@ -23,8 +23,10 @@
 # registry already lists, and target changes which registered targets a
 # registered certificate goes to, and DNS profile apply materialises or removes
 # one database-bound profile in its fixed policy directory. None can name an arbitrary path, account
-# or a directory, and none can register a receiver - that is an installation
-# step, deliberately kept out of reach of anything a request can ask for.
+# or a directory. Registering a receiver - an account, a directory, a lock - is
+# not here either: that helper writes /etc, which this unit's sandbox keeps
+# read-only, so it answers on a socket from a unit of its own (B163) rather
+# than through a rule that could not work.
 #
 # The tenth, cert-delete, is the one rule here that removes key material, and
 # it is bounded the same way: the request names registered certificate IDs
@@ -74,6 +76,3 @@ WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-ndes-prof
 
 # NDES enrollment: the challenge is read from the root-only profile record, never from the request.
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper ""
-
-# Receivers (B142): the public key arrives as text on stdin, never as a path.
-WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-receiver-helper ""

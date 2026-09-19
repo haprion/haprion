@@ -42,6 +42,14 @@ class Requirements:
     database_revisions: tuple[str, ...]
     worker_helpers: tuple[str, ...]
     poller_helpers: tuple[str, ...]
+    #
+    # Helpers the worker reaches over a socket rather than through sudo (B163):
+    # `{helper: socket path}`. The CLI release must carry them like any other
+    # helper; the sudoers file must not name them, because a rule for a helper
+    # the worker's sandbox cannot run is a rule that grants a failure. What has
+    # to exist instead is the socket, and that is checked where sudoers is.
+    #
+    socket_helpers: dict[str, str]
 
 
 class Report:
@@ -83,6 +91,15 @@ def load_requirements(path: Path, *, allow_legacy_database_head: bool = False) -
             raise CompatibilityError(f"{name} must be a non-empty string list")
         return tuple(values)
 
+    def sockets(name: str) -> dict[str, str]:
+        values = required.get(name, {})
+        if not isinstance(values, dict) or not all(
+            isinstance(helper, str) and helper and isinstance(path, str) and path.startswith("/")
+            for helper, path in values.items()
+        ):
+            raise CompatibilityError(f"{name} must map helper names to absolute socket paths")
+        return dict(values)
+
     revisions = strings("database_revisions")
     database_head = required.get("database_head")
     if database_head is None and allow_legacy_database_head and len(revisions) == 1:
@@ -102,6 +119,7 @@ def load_requirements(path: Path, *, allow_legacy_database_head: bool = False) -
         database_revisions=revisions,
         worker_helpers=strings("worker_helpers"),
         poller_helpers=strings("poller_helpers"),
+        socket_helpers=sockets("socket_helpers"),
     )
 
 
@@ -226,6 +244,27 @@ def check_sudoers(
         if not secure:
             detail += f"; owner/mode is {status.st_uid}:{stat.S_IMODE(status.st_mode):o}"
         report.fail(label, detail)
+
+
+def check_socket(report: Report, *, helper: str, socket_path: Path) -> None:
+    """The socket a helper answers on is there, and is a socket.
+
+    The sudoers check's counterpart for a helper reached this way: the worker
+    has no rule for it, so nothing else on this list would notice the unit
+    missing until the first job said `dependency_unavailable`.
+    """
+
+    try:
+        status = socket_path.stat()
+    except OSError as exc:
+        report.fail(
+            f"{helper} socket", f"{socket_path}: {exc.strerror}; is its .socket unit active?"
+        )
+        return
+    if stat.S_ISSOCK(status.st_mode):
+        report.pass_(f"{helper} socket", f"{socket_path}")
+    else:
+        report.fail(f"{helper} socket", f"{socket_path} is not a socket")
 
 
 def _command(argv: list[str], *, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -448,7 +487,11 @@ def main(argv: list[str] | None = None) -> int:
                 f"requires {requirements.engine_api}",
             )
         installed_helpers = installed_entry_points(installed_cli)
-        required_helpers = set(requirements.worker_helpers + requirements.poller_helpers)
+        required_helpers = set(
+            requirements.worker_helpers
+            + requirements.poller_helpers
+            + tuple(requirements.socket_helpers)
+        )
         missing = sorted(required_helpers - installed_helpers)
         if missing:
             report.fail("CLI helpers", f"missing: {', '.join(missing)}")
@@ -558,6 +601,9 @@ def main(argv: list[str] | None = None) -> int:
         report.fail("web sudoers", f"unexpected rule file {web_rule}")
     else:
         report.pass_("web sudoers", "no rule file")
+    if args.environment == "prod":
+        for helper_name, socket_path in sorted(requirements.socket_helpers.items()):
+            check_socket(report, helper=helper_name, socket_path=Path(socket_path))
 
     print("\n== Nodes")
     if args.runtime_policy is not None and args.collector_config is not None:

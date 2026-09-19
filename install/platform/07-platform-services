@@ -114,6 +114,30 @@ else
     log "  skipped: PROBE_SOCKET is not yes, so this platform cannot probe"
 fi
 
+step "The worker's way to the receiver helper"
+#
+# Not a sudoers rule either, for a different reason (B163). The worker can
+# sudo, but a helper it starts inherits its ProtectSystem=strict mount
+# namespace, and registering a receiver writes /etc: useradd, an sshd drop-in,
+# an nginx snippet. So the helper answers on a root-owned socket, group the
+# worker's account, from a short-lived unit outside that sandbox. The worker's
+# client, haproxy-cert-receiver-ask, carries the request there.
+#
+# Installed wherever the worker is: a platform with a worker has a receivers
+# page, and a page whose job fails with "not installed" is worse than one that
+# works. Nothing here reaches the nodes.
+#
+install_file "/etc/systemd/system/haproxy-cert-receiver-helper@.service" root:root 644 \
+    "$(cat 'examples/haproxy-cert-receiver-helper@.service.example')"
+install_file "/etc/systemd/system/haproxy-cert-receiver-helper.socket" root:root 644 \
+    "$(sed "s|WORKER_USER|${WORKER_USER}|g" examples/haproxy-cert-receiver-helper.socket.example)"
+systemctl daemon-reload
+systemctl enable --quiet haproxy-cert-receiver-helper.socket
+systemctl restart haproxy-cert-receiver-helper.socket
+systemctl is-active --quiet haproxy-cert-receiver-helper.socket \
+    || die "haproxy-cert-receiver-helper.socket did not start"
+log "  listening on /run/haproxy-mgmt/cert-receiver.sock  (group ${WORKER_USER})"
+
 #
 # A rule from before the socket existed is worse than no rule: it cannot work,
 # and it says in /etc/sudoers.d that this account may become root.

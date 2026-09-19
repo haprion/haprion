@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 from haproxy_mgmt.cli import (
     cert_deploy,
+    cert_receiver_helper,
     deploy,
     managed_network_publish,
     managed_objects_publish,
@@ -532,6 +533,44 @@ class TheWorkerMustBeAllowedToRunWhatItIsGiven(unittest.TestCase):
         for rule in self.rules():
             with self.subTest(rule=rule):
                 self.assertTrue(rule.startswith("WORKER_USER "), rule)
+
+
+class TheReceiverHelperIsNotReachedThroughSudo(unittest.TestCase):
+    """B163: the one helper that writes /etc answers on a socket instead.
+
+    A sudoers rule for it would be worse than none: the worker's unit keeps
+    /etc read-only for everything it starts, so the rule would grant a helper
+    that fails at its first write while saying in /etc/sudoers.d that it may
+    run. What the worker runs is its own client, as itself.
+    """
+
+    def test_the_prepared_command_is_the_client_and_not_sudo(self) -> None:
+        for payload in (
+            {"receiver": "lb-02.example.net", "action": "remove"},
+            {
+                "receiver": "lb-02.example.net",
+                "action": "add",
+                "transport": "sftp",
+                "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample lb-02",
+            },
+        ):
+            with self.subTest(action=payload["action"]):
+                prepared = operations.prepare(
+                    operation="cert_receiver",
+                    cluster=None,
+                    request_id=uuid4(),
+                    payload=payload,
+                )
+
+                self.assertEqual(prepared.argv, operations.RECEIVER_CLIENT)
+                self.assertNotIn("/usr/bin/sudo", prepared.argv)
+                self.assertEqual(prepared.argv[1:], ("-m", "haproxy_mgmt.cli.cert_receiver_ask"))
+                self.assertEqual(json.loads(prepared.request)["operation"], "cert_receiver")
+
+    def test_the_sudoers_example_grants_it_nothing(self) -> None:
+        granted = TheWorkerMustBeAllowedToRunWhatItIsGiven().example()
+
+        self.assertNotIn(cert_receiver_helper.HELPER, granted)
 
 
 class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):

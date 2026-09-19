@@ -32,8 +32,10 @@
       "haproxy-dns-profile-apply-helper",
       "haproxy-cert-delete-helper",
       "haproxy-ndes-profile-apply-helper",
-      "haproxy-cert-scep-helper",
-      "haproxy-cert-receiver-helper"
-    ]
+      "haproxy-cert-scep-helper"
+    ],
+    "socket_helpers": {
+      "haproxy-cert-receiver-helper": "/run/haproxy-mgmt/cert-receiver.sock"
+    }
   }
 }

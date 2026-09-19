@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from haproxy_mgmt.cli import cert_receiver_ask, cert_receiver_helper
+
 from haproxy_ui import compatibility
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +32,20 @@ class CompatibilityMetadataTests(unittest.TestCase):
                 "svc-app", requirements.poller_helpers, Path("/opt/haproxy-mgmt")
             ),
         )
+
+    def test_the_receiver_helper_is_a_socket_helper_and_the_paths_agree(self) -> None:
+        """B163: the manifest, the client and the socket unit name one socket."""
+
+        requirements = compatibility.load_requirements(MANIFEST)
+        helper = Path(cert_receiver_helper.HELPER).name
+        unit = (
+            ROOT / "install/platform/examples/haproxy-cert-receiver-helper.socket.example"
+        ).read_text()
+
+        self.assertNotIn(helper, requirements.worker_helpers)
+        self.assertEqual(requirements.socket_helpers, {helper: cert_receiver_ask.SOCKET_PATH})
+        self.assertIn(f"ListenStream={cert_receiver_ask.SOCKET_PATH}\n", unit)
+        self.assertIn("SocketGroup=WORKER_USER", unit)
 
     def test_invalid_metadata_is_refused_instead_of_defaulted(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -132,6 +148,7 @@ class UpgradeFailureTests(unittest.TestCase):
             database_revisions=accepts,
             worker_helpers=("worker-helper",),
             poller_helpers=("poller-helper",),
+            socket_helpers={},
         )
 
     def test_a_new_schema_needs_a_bridge_release_before_it_can_be_migrated(self) -> None:

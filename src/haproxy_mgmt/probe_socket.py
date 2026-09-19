@@ -22,9 +22,9 @@ socket. A reader who is shown neither will look for the fault in the pool.
 
 from __future__ import annotations
 
-import json
-import socket
 from typing import Any
+
+from haproxy_mgmt import helper_socket
 
 #
 # `/run` is tmpfs and cleared at boot on purpose - a socket must not outlive the
@@ -81,44 +81,12 @@ def ask(
 ) -> str:
     """Send one request to the probe service and return what it answered.
 
-    The write side is shut down after the request because the helper reads its
-    stdin to end of file - the same protocol it follows when a person pipes a
-    request into it. Without the half-close both sides wait for the other.
+    The mechanics are `helper_socket`'s, shared with the receiver helper's
+    client (B163); what is this module's is the socket, the bound and the
+    name a refusal carries.
     """
 
-    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    connection.settimeout(timeout)
     try:
-        try:
-            connection.connect(path)
-        except FileNotFoundError as error:
-            raise ProbeUnavailable(
-                "The probe service is not installed here. It answers on a socket "
-                "this service could not find."
-            ) from error
-        except ConnectionRefusedError as error:
-            raise ProbeUnavailable("The probe service is not running here.") from error
-        except PermissionError as error:
-            raise ProbeUnavailable(
-                "This service is not allowed to reach the probe service."
-            ) from error
-        except OSError as error:
-            raise ProbeUnavailable(f"The probe service could not be reached: {error}.") from error
-
-        try:
-            connection.sendall(json.dumps(request, separators=(",", ":")).encode("utf-8"))
-            connection.shutdown(socket.SHUT_WR)
-            chunks = []
-            while True:
-                chunk = connection.recv(65536)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-        except TimeoutError as error:
-            raise ProbeUnavailable("The probe service did not answer in time.") from error
-        except OSError as error:
-            raise ProbeUnavailable(f"The probe service stopped answering: {error}.") from error
-    finally:
-        connection.close()
-
-    return b"".join(chunks).decode("utf-8", "replace")
+        return helper_socket.ask(request, path=path, timeout=timeout, what="the probe service")
+    except helper_socket.HelperUnavailable as error:
+        raise ProbeUnavailable(str(error)) from error

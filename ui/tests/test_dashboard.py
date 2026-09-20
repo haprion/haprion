@@ -10,7 +10,7 @@ from typing import Any
 
 from haproxy_ui import dashboard
 from haproxy_ui.dashboard import build_dashboard, relative_age
-from haproxy_ui.db import ClusterStatus
+from haproxy_ui.db import ClusterNetwork, ClusterStatus
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "haproxy-status" / "valid"
 NOW = datetime(2026, 8, 28, 12, 0, tzinfo=UTC)
@@ -135,6 +135,54 @@ class DashboardShape(unittest.TestCase):
         self.assertFalse(dashboard.clusters[1].configured)
         self.assertEqual(dashboard.clusters[1].label, "Not configured")
         self.assertEqual(dashboard.healthy_clusters, 0)
+
+    def test_active_vips_counts_addresses_not_clusters(self) -> None:
+        #
+        # Seen on the maintainer's dashboard 2026-09-20: two clusters, three
+        # VIPs, a card saying 2. A cluster's VRRP instance carries every VIP
+        # in its network description as one address list, so the status
+        # helper's single owner answers for all of them and the count is
+        # the description's.
+        #
+        alpha = reading("done-single-owner.json")
+        beta = reading("partial-unreachable.json")
+        beta = ClusterStatus(
+            cluster="beta",
+            observed_at=beta.observed_at,
+            outcome=beta.outcome,
+            result=beta.result,
+            warnings=beta.warnings,
+            error=beta.error,
+            poll_error=beta.poll_error,
+        )
+
+        def network(cluster: str, *names: str) -> ClusterNetwork:
+            return ClusterNetwork(
+                cluster=cluster,
+                observed_at=NOW,
+                outcome="done",
+                result={"vips": [{"name": name, "address": "192.0.2.1"} for name in names]},
+                warnings=[],
+                error=None,
+                poll_error=None,
+            )
+
+        view = build_dashboard(
+            ("alpha", "beta"),
+            (alpha, beta),
+            now=NOW,
+            stale_after=timedelta(seconds=120),
+            network_readings=(network("alpha", "vip-a", "vip-a2"), network("beta", "vip-b")),
+        )
+        # alpha's two addresses have a single owner; beta's one is `incomplete`.
+        self.assertEqual((view.active_vips, view.total_vips), (2, 3))
+
+        # Without a network description a cluster counts its status VIP, and
+        # nothing more, so an older cache never makes the card say 0.
+        bare = build_dashboard(
+            ("alpha", "beta"), (alpha, beta), now=NOW, stale_after=timedelta(seconds=120)
+        )
+        self.assertEqual((bare.active_vips, bare.total_vips), (1, 2))
 
     def test_relative_age_is_compact_and_never_negative(self) -> None:
         self.assertEqual(relative_age(NOW - timedelta(seconds=4), NOW), "Just now")

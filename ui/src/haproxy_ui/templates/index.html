@@ -28,7 +28,7 @@
     <span class="metric-icon metric-icon-vip" aria-hidden="true">
       <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"></circle><circle cx="19" cy="6" r="2"></circle><circle cx="19" cy="18" r="2"></circle><path d="M7 12h4a4 4 0 0 0 4-4V6M11 12a4 4 0 0 1 4 4v2"></path></svg>
     </span>
-    <div><strong>{{ dashboard.active_vips }}</strong><span>Active VIPs</span><small>Single owner</small></div>
+    <div><strong>{{ dashboard.active_vips }}<small>/{{ dashboard.total_vips }}</small></strong><span>Active VIPs</span><small>{% if dashboard.active_vips == dashboard.total_vips %}Single owner{% else %}{{ dashboard.total_vips - dashboard.active_vips }} without a single owner{% endif %}</small></div>
   </article>
   <article class="metric-card">
     <span class="metric-icon metric-icon-release" aria-hidden="true">

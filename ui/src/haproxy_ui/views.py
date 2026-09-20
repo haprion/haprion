@@ -449,6 +449,7 @@ def build_router(config: Config) -> APIRouter:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         clusters, status_rows, captured_at = read_source(request, config, STATUS_SOURCE)
+        _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
         dashboard_view = dashboard.build_dashboard(
             clusters,
             status_rows,
@@ -460,6 +461,7 @@ def build_router(config: Config) -> APIRouter:
             # clock. Staleness is still judged the same way.
             #
             captured=captured_at is not None,
+            network_readings=network_rows,
         )
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)

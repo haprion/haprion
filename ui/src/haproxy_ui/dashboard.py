@@ -9,7 +9,7 @@ derive the same health state from the node contract.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -59,6 +59,15 @@ class ClusterView:
     vip: str
     version: str
     release_state: str
+    #
+    # How many addresses the cluster's VRRP instance carries. They move as
+    # one - the nodes include one generated address list in one instance - so
+    # the status helper's single `vip` answers for all of them, and the count
+    # comes from the network description (`managed/network.yaml`). 1 where
+    # that description is not cached: the status VIP is then the only one
+    # known, and a card that said 0 would be wrong the other way.
+    #
+    vip_count: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +78,13 @@ class DashboardView:
     attention_clusters: int
     online_nodes: int
     total_nodes: int
+    #
+    # Addresses, not clusters. The card said 2 for an installation with three
+    # VIPs until 2026-09-20, because it counted clusters whose VRRP state was
+    # healthy; the number a person checks it against is the VIPs they know.
+    #
     active_vips: int
+    total_vips: int
     converged_clusters: int
 
 
@@ -79,6 +94,14 @@ class DashboardView:
 # by comparing against it.
 #
 BEHIND = "Not on the latest version"
+
+
+def _vip_count(reading: Any) -> int:
+    """How many VIPs the network helper listed for a cluster; 1 when it listed none."""
+
+    rows = _mapping(getattr(reading, "result", None)).get("vips")
+    listed = [row for row in rows if isinstance(row, Mapping)] if isinstance(rows, list) else []
+    return len(listed) or 1
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -381,6 +404,11 @@ def build_dashboard(
     # `dashboard.observation_label`.
     #
     captured: bool = False,
+    #
+    # The cached network descriptions, for the VIP count per cluster. Left
+    # out by the callers that only need a cluster's serving state.
+    #
+    network_readings: Iterable[Any] = (),
 ) -> DashboardView:
     """Build one deterministic view from configuration and cached status rows."""
 
@@ -388,14 +416,18 @@ def build_dashboard(
     configured = tuple(configured_clusters)
     configured_set = frozenset(configured)
     by_cluster = {reading.cluster: reading for reading in readings}
+    vip_counts = {reading.cluster: _vip_count(reading) for reading in network_readings}
     order = configured + tuple(sorted(set(by_cluster) - configured_set))
     clusters = tuple(
-        _cluster_view(
-            by_cluster[cluster],
-            configured=cluster in configured_set,
-            now=clock,
-            stale_after=stale_after,
-            captured=captured,
+        replace(
+            _cluster_view(
+                by_cluster[cluster],
+                configured=cluster in configured_set,
+                now=clock,
+                stale_after=stale_after,
+                captured=captured,
+            ),
+            vip_count=vip_counts.get(cluster, 1),
         )
         if cluster in by_cluster
         else _empty_cluster(cluster, configured=True)
@@ -423,9 +455,11 @@ def build_dashboard(
         ),
         total_nodes=sum(cluster.configured_nodes for cluster in configured_views),
         active_vips=sum(
-            cluster.vip not in {"Unknown", "unknown", "incomplete", "no_owner", "split_brain"}
+            cluster.vip_count
             for cluster in configured_views
+            if cluster.vip not in {"Unknown", "unknown", "incomplete", "no_owner", "split_brain"}
         ),
+        total_vips=sum(cluster.vip_count for cluster in configured_views),
         converged_clusters=sum(
             cluster.release_state == "Converged" for cluster in configured_views
         ),

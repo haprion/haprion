@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
 from uuid import uuid4
@@ -232,6 +232,57 @@ class DeployingAnOlderCopy(DeleteRouteTestCase):
         self.assertIn("Deploying certificates to beta", page)
         self.assertNotIn(">Deploy to nodes<", page)
         self.assertIn('data-refresh="true"', page)
+
+    def test_a_finished_deploy_keeps_its_word_until_the_nodes_are_measured_again(self) -> None:
+        #
+        # The reading the page holds predates the deploy, so without this the
+        # row said "older copy" and offered the button again the moment the
+        # job ended; the maintainer pressed it twice (2026-09-20).
+        #
+        done = queued(
+            operation="cert_deploy",
+            cluster="beta",
+            state="done",
+            outcome="done",
+            finished_at=datetime.now(UTC) - timedelta(seconds=5),
+        )
+        with (
+            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=self.stale_statuses()),
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=[done]),
+        ):
+            client = self.writing_client(clusters=("alpha", "beta"))
+            page = client.get("/certificates?view=registry&open=example.com").text
+        self.assertIn('<span class="badge-spinner" aria-hidden="true"></span>Deployed<', page)
+        self.assertNotIn(">Deploy to nodes<", page)
+        self.assertIn('data-refresh="true"', page)
+
+        # Once the nodes report the current bytes, the measured row is back.
+        current = [status(node(("example.com", "a" * 64)), cluster="beta")]
+        with (
+            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=current),
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=[done]),
+        ):
+            page = client.get("/certificates?view=registry&open=example.com").text
+        self.assertNotIn(">Deployed<", page)
+        self.assertNotIn('data-refresh="true"', page)
+
+        # A deploy that failed says so, and offers the button again.
+        failed = queued(
+            operation="cert_deploy",
+            cluster="beta",
+            state="failed",
+            outcome="failed",
+            finished_at=datetime.now(UTC) - timedelta(seconds=5),
+        )
+        with (
+            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=self.stale_statuses()),
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=[failed]),
+        ):
+            page = client.get("/certificates?view=registry&open=example.com").text
+        self.assertIn('status-badge-critical">Deploy failed<', page)
 
     def test_multiple_stale_clusters_are_named_on_their_own_actions(self) -> None:
         stale = [

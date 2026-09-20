@@ -265,7 +265,10 @@ class TheListingFollowsTheJob(DeleteRouteTestCase):
             page = self.writing_client().get("/certificates?open=brand.example").text
         self.assertIn('data-certificates-region data-refresh="true"', page)
         self.assertNotIn('http-equiv="refresh"', page)
-        self.assertIn('status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>Requesting<', page)
+        self.assertIn(
+            'status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>Requesting<',
+            page,
+        )
         self.assertIn("<strong>brand.example</strong>", page)
         self.assertIn("*.brand.example, brand.example", page)
         # No box to tick and no expiry badge: there is nothing yet.
@@ -294,7 +297,10 @@ class TheListingFollowsTheJob(DeleteRouteTestCase):
             page = self.writing_client().get("/certificates").text
         self.assertIn('data-certificates-region data-refresh="true"', page)
         self.assertNotIn('http-equiv="refresh"', page)
-        self.assertIn('status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>Deleting<', page)
+        self.assertIn(
+            'status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>Deleting<',
+            page,
+        )
         self.assertNotIn('status-badge-info">Deleted<', page)
 
     def test_an_idle_listing_does_not_refresh(self) -> None:

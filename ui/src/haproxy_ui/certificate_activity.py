@@ -440,23 +440,58 @@ def _reason(row: Mapping[str, Any] | None) -> str:
     return reason if isinstance(reason, str) and reason else "See the jobs page"
 
 
-def deploy_states(rows: Iterable[Any], running: Mapping[str, str]) -> dict[str, DeletionState]:
-    """Rows whose behind clusters a deploy is being run for, said as Deploying.
+def deploy_states(
+    rows: Iterable[Any], jobs: Iterable[Job], *, now: datetime | None = None
+) -> dict[str, DeletionState]:
+    """Rows whose behind clusters a deploy was asked for, said from the newest deploy job.
 
-    `running` is the dashboard's in-flight map, cluster to label. Only the
-    rows a deploy will change - those measuring an older copy on one of the
-    busy clusters - are overlaid; the rest of the cluster's rows are being
+    Only the rows a deploy will change - those measuring an older copy on the
+    job's cluster - are overlaid; the rest of the cluster's rows are being
     re-checked too, but nothing about them will change, and a page where
     every row spins says less than one where the pressed row does.
+
+    A finished deploy keeps its word until the poller has measured the nodes
+    again, the way a finished publish does: the reading the page holds was
+    taken before the deploy, so the row would otherwise say "older copy" and
+    offer the button a second time (the maintainer pressed it twice,
+    2026-09-20). The overlay is drawn only while the reading still shows the
+    older copy, so it leaves by itself the moment the measurement catches up,
+    and after the follow-up window at the latest.
     """
+
+    moment = now or datetime.now(UTC)
+    newest: dict[str, Job] = {}
+    for job in jobs:
+        if job.operation == "cert_deploy" and job.cluster and job.cluster not in newest:
+            newest[job.cluster] = job
 
     states: dict[str, DeletionState] = {}
     for row in rows:
-        busy = [
-            cluster for cluster in getattr(row, "older_copy_clusters", ()) if cluster in running
-        ]
-        if busy:
-            states[row.identifier] = DeletionState(
-                "Deploying", f"Deploying certificates to {', '.join(busy)}", "info", True
-            )
+        for cluster in getattr(row, "older_copy_clusters", ()):
+            latest = newest.get(cluster)
+            if latest is None:
+                continue
+            state = _deploy_state_of(latest, cluster, moment)
+            if state is not None:
+                states[row.identifier] = state
+                break
     return states
+
+
+def _deploy_state_of(job: Job, cluster: str, now: datetime) -> DeletionState | None:
+    if job.state in {"pending", "running"}:
+        return DeletionState("Deploying", f"Deploying certificates to {cluster}", "info", True)
+    if job.finished_at is None:
+        return None
+    age = now - job.finished_at
+    if job.state == "failed" or job.outcome in {"failed", "refused"}:
+        if age > VERDICT_LIFETIME:
+            return None
+        return DeletionState(
+            "Deploy failed", _failure(job, f"The deploy to {cluster} failed"), "critical", False
+        )
+    if age > FOLLOW_UP:
+        return None
+    return DeletionState(
+        "Deployed", f"Deployed to {cluster}; the listing follows at the next poll", "info", True
+    )

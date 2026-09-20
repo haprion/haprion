@@ -1690,7 +1690,7 @@ def build_router(config: Config) -> APIRouter:
         #
         if overview.registry is not None:
             for identifier, state in certificate_activity.deploy_states(
-                overview.registry.certificates, running
+                overview.registry.certificates, recent
             ).items():
                 deleting.setdefault(identifier, state)
         overview = certificates.with_deletion_states(overview, deleting)

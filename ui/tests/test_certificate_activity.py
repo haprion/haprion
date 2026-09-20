@@ -9,7 +9,7 @@ from unittest import mock
 
 from haproxy_ui import auth, certificate_activity, certificates
 from tests.test_certificate_delete import DeleteRouteTestCase
-from tests.test_certificates import overview, registered, registry_of, with_registry
+from tests.test_certificates import node, overview, registered, registry_of, status, with_registry
 from tests.test_certificates import reading as certificate_reading
 from tests.test_queue_route import queued
 
@@ -490,6 +490,54 @@ class PublishStates(unittest.TestCase):
             now=NOW,
         )["waiting.example.com"]
         self.assertEqual((state.label, state.tone, state.active), ("Publishing", "info", True))
+
+
+class AFinishedPublishGivesWayToTheRegistry(unittest.TestCase):
+    """Publish now: the overlay lasts until the poller has measured, not a fixed 90 s."""
+
+    def state(self) -> certificate_activity.DeletionState:
+        job = queued(
+            operation="cert_publish",
+            cluster=None,
+            state="done",
+            payload={"certificates": ["example.com"], "deploy": True},
+            result={"result": {"certificates": [{"id": "example.com", "status": "published"}]}},
+            finished_at=NOW - timedelta(seconds=5),
+        )
+        return certificate_activity.deletion_states([job], now=NOW)["example.com"]
+
+    def test_published_stays_while_the_reading_still_lacks_a_copy(self) -> None:
+        stale = overview(
+            with_registry(
+                certificate_reading(),
+                registered(receivers=({"id": "lb-01", "published_at": None},)),
+                receivers=("lb-01",),
+            )
+        )
+        updated = certificates.with_deletion_states(stale, {"example.com": self.state()})
+        self.assertEqual(registry_of(updated).certificates[0].state_label, "Published")
+
+    def test_published_gives_way_as_soon_as_every_copy_is_current(self) -> None:
+        #
+        # The worker wakes the poller when the job finishes (`notify
+        # cluster_changed`), so "as soon as" is seconds; the overlay used to
+        # stand its whole 90 s regardless.
+        #
+        current = overview(
+            with_registry(
+                certificate_reading(),
+                registered(
+                    fingerprint="a" * 64,
+                    receivers=(
+                        {"id": "lb-01", "published_at": "2026-08-29T10:00:00Z", "current": True},
+                    ),
+                ),
+                receivers=("lb-01",),
+            ),
+            status=(status(node(("example.com", "a" * 64)), node(("example.com", "a" * 64))),),
+        )
+        updated = certificates.with_deletion_states(current, {"example.com": self.state()})
+        self.assertEqual(registry_of(updated).certificates[0].state_label, "On nodes & published")
 
 
 class AFinishedTargetChangeGivesWayToTheRegistry(unittest.TestCase):

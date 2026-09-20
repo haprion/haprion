@@ -372,6 +372,13 @@ def with_deletion_states(
     listed = {entry.identifier for entry in overview.registry.certificates}
 
     def caught_up(entry: RegistryCertificateView, state: Any) -> bool:
+        #
+        # A publish has caught up when the measured row no longer needs one.
+        # A reading taken before the job ran still says it does, so the
+        # overlay stays exactly until the poller has been round.
+        #
+        if state.target_action == "publish":
+            return not entry.needs_publish
         if state.target_action not in {"add", "remove"} or not state.target_names:
             return False
         current = {target.name for target in entry.targets}

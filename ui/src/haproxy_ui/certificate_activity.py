@@ -317,8 +317,17 @@ def _publish_state_of(job: Job, identifier: str, now: datetime) -> DeletionState
     if status in {"published", "unchanged"}:
         if age > FOLLOW_UP:
             return None
+        #
+        # `target_action="publish"` lets the listing drop this overlay as
+        # soon as the cached registry shows every copy current - the next
+        # poll, not the whole follow-up window (maintainer, 2026-09-20).
+        #
         return DeletionState(
-            "Published", "Published; the listing follows at the next poll", "info", True
+            "Published",
+            "Published; the listing follows at the next poll",
+            "info",
+            True,
+            target_action="publish",
         )
     error = row.get("error") if row else None
     message = error.get("message") if isinstance(error, Mapping) else None

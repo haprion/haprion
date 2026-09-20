@@ -98,6 +98,13 @@ class IssueChoices:
     # receiver without one is drawn without a badge.
     #
     receiver_transports: Mapping[str, str] = types.MappingProxyType({})
+    #
+    # The certificate IDs the registry already holds. The engine refuses a
+    # name it has (`already_exists`), but as a failed job on another page;
+    # the form says it here and names the action that does what the person
+    # most likely wanted - another target for the certificate that exists.
+    #
+    registered: tuple[str, ...] = ()
 
 
 EMPTY_FORM = IssueForm(domain="", method="dns-01", dns_profile="", clusters=(), receivers=())
@@ -152,12 +159,23 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
     if not form.domain:
         raise FormProblem("A domain name is required.")
     try:
-        _, _, wildcard = parse_domain(form.domain)
+        name, _, wildcard = parse_domain(form.domain)
     except IssueError as problem:
         raise FormProblem(
             "That is not a domain name the engine can issue for: lowercase labels "
             "separated by dots, optionally starting with *. for a wildcard."
         ) from problem
+    if name in choices.registered:
+        #
+        # The ID is the base name, so *.example.com and example.com are the
+        # same certificate. A second one is not what New certificate is for:
+        # another target for it is Publish to… on its row, a fresh one is a
+        # renewal at its source.
+        #
+        raise FormProblem(
+            f"A certificate named {name} is already in the registry. To send it to "
+            "another cluster or receiver, use Publish to… on its row."
+        )
     if form.method == NDES_METHOD:
         if not choices.ndes_profiles:
             raise FormProblem(

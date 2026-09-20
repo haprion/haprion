@@ -2005,6 +2005,9 @@ def build_router(config: Config) -> APIRouter:
             }
             if overview.registry
             else {},
+            registered=tuple(entry.identifier for entry in overview.registry.certificates)
+            if overview.registry
+            else (),
         )
 
     def _certificate_form_page(

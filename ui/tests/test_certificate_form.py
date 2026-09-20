@@ -147,6 +147,22 @@ class WhatTheFormRefuses(unittest.TestCase):
                 self.assertIn("not a domain name", sentence)
                 self.assertNotIn(bad, sentence)
 
+    def test_a_name_the_registry_already_holds_is_sent_to_publish_to(self) -> None:
+        #
+        # The engine would refuse it too (`already_exists`), as a failed job
+        # on the Jobs page. Here it is a sentence on the form, and the sentence
+        # names the action that adds a target to the certificate that exists.
+        # The ID is the base name, so the wildcard spelling is the same one.
+        #
+        choices = replace(CHOICES, registered=("app.example.com",))
+        for spelling in ("app.example.com", "*.app.example.com", " App.Example.COM. "):
+            with self.subTest(spelling=spelling):
+                with self.assertRaises(certificate_form.FormProblem) as refused:
+                    certificate_form.payload_from_form(form(domain=spelling), choices)
+                self.assertIn("app.example.com is already in the registry", str(refused.exception))
+                self.assertIn("Publish to…", str(refused.exception))
+        certificate_form.payload_from_form(form(domain="other.example.com"), choices)
+
     def test_a_wildcard_over_http(self) -> None:
         #
         # The one rule a reader can act on before pressing the button, said
@@ -483,7 +499,7 @@ class SendingTheFormOverNdes(CertificateFormRouteTestCase):
 
     def test_a_wildcard_over_ndes_becomes_one_cert_scep_job(self) -> None:
         response = self.post(
-            self.ndes_client(), domain="*.example.com", method="ndes", ndes_profile="certserver1"
+            self.ndes_client(), domain="*.example.org", method="ndes", ndes_profile="certserver1"
         )
         self.assertEqual(response.status_code, 303, response.text)
         self.assertEqual(response.headers["location"], "/certificates?view=registry")
@@ -493,9 +509,9 @@ class SendingTheFormOverNdes(CertificateFormRouteTestCase):
         self.assertEqual(
             job["payload"],
             {
-                "id": "example.com",
+                "id": "example.org",
                 "profile": "certserver1",
-                "domains": ["example.com", "*.example.com"],
+                "domains": ["example.org", "*.example.org"],
                 "clusters": ["alpha"],
                 "receivers": [],
             },
@@ -559,14 +575,23 @@ class SendingTheForm(CertificateFormRouteTestCase):
 
     def test_a_refused_submission_is_the_form_again_with_the_typed_values(self) -> None:
         response = self.post(
-            self.writing_client(), domain="*.example.com", method="http-01", cluster=["beta"]
+            self.writing_client(), domain="*.example.org", method="http-01", cluster=["beta"]
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("wildcard certificate needs DNS-01", response.text)
-        self.assertIn('value="*.example.com"', response.text)
+        self.assertIn('value="*.example.org"', response.text)
         self.assertIn('value="http-01" checked', response.text)
         self.assertIn('value="beta" checked', response.text)
+        self.assertEqual(self.queued, [])
+
+    def test_a_registered_name_is_refused_on_the_form_and_queues_nothing(self) -> None:
+        response = self.post(self.writing_client(), domain="example.com")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("example.com is already in the registry", response.text)
+        self.assertIn("Publish to…", response.text)
+        self.assertIn('value="example.com"', response.text)
         self.assertEqual(self.queued, [])
 
     def test_a_receiver_typed_rather_than_ticked_queues_nothing(self) -> None:

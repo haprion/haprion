@@ -253,7 +253,7 @@ class DeployingAnOlderCopy(DeleteRouteTestCase):
         ):
             client = self.writing_client(clusters=("alpha", "beta"))
             page = client.get("/certificates?view=registry&open=example.com").text
-        self.assertIn('<span class="badge-spinner" aria-hidden="true"></span>Deployed<', page)
+        self.assertIn('<span class="badge-spinner" aria-hidden="true"></span>Deploying<', page)
         self.assertNotIn(">Deploy to nodes<", page)
         self.assertIn('data-refresh="true"', page)
 
@@ -265,7 +265,7 @@ class DeployingAnOlderCopy(DeleteRouteTestCase):
             mock.patch("haproxy_ui.db.recent_jobs", return_value=[done]),
         ):
             page = client.get("/certificates?view=registry&open=example.com").text
-        self.assertNotIn(">Deployed<", page)
+        self.assertNotIn(">Deploying<", page)
         self.assertNotIn('data-refresh="true"', page)
 
         # A deploy that failed says so, and offers the button again.

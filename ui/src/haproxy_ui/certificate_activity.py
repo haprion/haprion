@@ -323,8 +323,8 @@ def _publish_state_of(job: Job, identifier: str, now: datetime) -> DeletionState
         # poll, not the whole follow-up window (maintainer, 2026-09-20).
         #
         return DeletionState(
-            "Published",
-            "Published; the listing follows at the next poll",
+            "Publishing",
+            "Done; waiting for the copies to be read again",
             "info",
             True,
             target_action="publish",
@@ -492,6 +492,11 @@ def _deploy_state_of(job: Job, cluster: str, now: datetime) -> DeletionState | N
         )
     if age > FOLLOW_UP:
         return None
+    #
+    # Still "Deploying", not "Deployed": to the person watching, the action is
+    # over when the row shows the measured state, and a spinner beside a past
+    # tense contradicts itself (maintainer, 2026-09-20).
+    #
     return DeletionState(
-        "Deployed", f"Deployed to {cluster}; the listing follows at the next poll", "info", True
+        "Deploying", f"Done on {cluster}; waiting for the nodes to be read again", "info", True
     )

@@ -525,7 +525,7 @@ class AFinishedPublishGivesWayToTheRegistry(unittest.TestCase):
             )
         )
         updated = certificates.with_deletion_states(stale, {"example.com": self.state()})
-        self.assertEqual(registry_of(updated).certificates[0].state_label, "Published")
+        self.assertEqual(registry_of(updated).certificates[0].state_label, "Publishing")
 
     def test_published_gives_way_as_soon_as_every_copy_is_current(self) -> None:
         #

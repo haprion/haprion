@@ -20,7 +20,7 @@ threshold would either shout about the first or stay quiet about the second.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
@@ -149,6 +149,11 @@ class RegistryCertificateView:
     # cluster, or every cluster merely because one of them is behind.
     #
     older_copy_clusters: tuple[str, ...] = ()
+    #
+    # Whether Publish now has anything to do: some target lacks a current
+    # copy. Measured from the targets, not read off the State label.
+    #
+    needs_publish: bool = False
     #
     # Where the facts were read from, when that was not the certificate's own
     # source. An import registered before the import helper exists has nothing
@@ -757,6 +762,13 @@ def _target_views(entry: Mapping[str, Any]) -> tuple[TargetView, ...]:
             continue
         published_at = _expiry(receiver.get("published_at"))
         current = receiver.get("current")
+        #
+        # The helper says `current: false` for a copy it could not stat as
+        # well as for one it read and found behind, and the page drew both as
+        # "(older version)". A copy that is not there is not an older one.
+        #
+        if published_at is None:
+            current = None
         views.append(
             TargetView(
                 name=name,
@@ -846,23 +858,76 @@ def _registry_state(
         label, detail, tone = _node_state(
             identifier, fingerprint, (carriage.get(cluster) for cluster in clusters)
         )
+        #
+        # The receivers are judged even when the certificate goes to a
+        # cluster. Until 2026-09-20 this branch said "Published to N
+        # receivers too" from the count alone, so a receiver whose copy had
+        # been removed stood behind "On all 2 nodes" with no button to put
+        # it back - seen on the maintainer's screen with a throwaway import.
+        #
+        missing = _receivers_without_copy(receivers)
+        if missing and tone in {"healthy", "warning", "unknown"}:
+            return "Not published", f"{label}, but {missing}", "warning"
+        stale = _receivers_with_older_copy(receivers)
+        if stale and tone in {"healthy", "warning", "unknown"}:
+            return "Older version published", f"{label}, but {stale}", "warning"
         if receivers and tone == "healthy":
             noun = "receiver" if len(receivers) == 1 else "receivers"
             return label, f"Published to {len(receivers)} {noun} too", tone
         return label, detail, tone
 
-    unpublished = tuple(target for target in receivers if target.published_at is None)
-    if unpublished:
-        return (
-            "Not published",
-            f"{len(unpublished)} of {len(receivers)} receiver(s) have no copy yet",
-            "warning",
-        )
+    missing = _receivers_without_copy(receivers)
+    if missing:
+        return "Not published", missing, "warning"
+    stale = _receivers_with_older_copy(receivers)
+    if stale:
+        return "Older version published", stale, "warning"
     newest = max(target.published_at for target in receivers if target.published_at is not None)
     return (
         _published_label(newest),
         "Whether the receiver fetched it is not reported back here",
         "healthy",
+    )
+
+
+def _receivers_without_copy(receivers: Sequence[TargetView]) -> str:
+    """How many receivers have no copy at all, as the State detail says it; empty if none."""
+
+    unpublished = [target for target in receivers if target.published_at is None]
+    if not unpublished:
+        return ""
+    return f"{len(unpublished)} of {len(receivers)} receiver(s) have no copy yet"
+
+
+def _receivers_with_older_copy(receivers: Sequence[TargetView]) -> str:
+    """How many receivers hold a copy the source has moved past; empty if none."""
+
+    stale = [target for target in receivers if target.current is False]
+    if not stale:
+        return ""
+    return f"{len(stale)} of {len(receivers)} receiver(s) hold an older copy"
+
+
+def needs_publishing(entry: Mapping[str, Any], targets: Sequence[TargetView]) -> bool:
+    """Whether a publish run would write something for this certificate.
+
+    True when any target lacks a current copy: the distribution directory the
+    clusters read has none or an older one, or a receiver has none or an
+    older one. The interface offers Publish now on this and nothing else -
+    not on the State label, which since 2026-09-20 may say the same words
+    for a receiver's missing copy behind a healthy cluster, and before that
+    could not say them at all.
+    """
+
+    clusters = [target for target in targets if target.kind == "cluster"]
+    if clusters:
+        distribution = _mapping(entry.get("distribution"))
+        if distribution.get("published_at") is None or distribution.get("current") is False:
+            return True
+    return any(
+        target.published_at is None or target.current is False
+        for target in targets
+        if target.kind == "receiver"
     )
 
 
@@ -931,6 +996,7 @@ def _registry_certificate(
         state_detail=state_detail,
         state_tone=state_tone,
         older_copy_clusters=older_copy_clusters,
+        needs_publish=readable and needs_publishing(entry, targets),
         material_note=(
             "Read from the published cluster copy; nothing is at its import source yet"
             if readable and entry.get("measured_at") == "distribution"

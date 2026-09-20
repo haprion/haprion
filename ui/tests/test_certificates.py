@@ -577,6 +577,54 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
 
         self.assertEqual(registry_of(view).certificates[0].state_label, "Not published")
 
+    def test_a_receiver_without_a_copy_is_said_behind_a_healthy_cluster(self) -> None:
+        #
+        # Seen 2026-09-20 with a throwaway import to a cluster and a receiver:
+        # the receiver's copy removed, the row still said "On all 2 nodes -
+        # Published to 1 receiver too", the detail said "(older version)" of
+        # a file that was not there, and nothing offered to publish it.
+        #
+        entry = registered(
+            "example.com",
+            fingerprint="a" * 64,
+            receivers=({"id": "lb-01", "published_at": None, "current": False},),
+        )
+        nodes = status(node(("example.com", "a" * 64)), node(("example.com", "a" * 64)))
+        row = registry_of(
+            overview(with_registry(reading(), entry, receivers=("lb-01",)), status=(nodes,))
+        ).certificates[0]
+
+        self.assertEqual((row.state_label, row.state_tone), ("Not published", "warning"))
+        self.assertEqual(
+            row.state_detail, "On all 2 nodes, but 1 of 1 receiver(s) have no copy yet"
+        )
+        self.assertTrue(row.needs_publish)
+        receiver = next(target for target in row.targets if target.kind == "receiver")
+        self.assertEqual(receiver.published_label, "Not published")
+        self.assertIsNone(receiver.current)
+
+        # A copy the source has moved past is the other thing a publish fixes.
+        entry["targets"]["receivers"][0].update(published_at="2026-08-29T10:00:00Z", current=False)
+        row = registry_of(
+            overview(with_registry(reading(), entry, receivers=("lb-01",)), status=(nodes,))
+        ).certificates[0]
+        self.assertEqual(row.state_label, "Older version published")
+        self.assertEqual(
+            row.state_detail, "On all 2 nodes, but 1 of 1 receiver(s) hold an older copy"
+        )
+        self.assertTrue(row.needs_publish)
+        receiver = next(target for target in row.targets if target.kind == "receiver")
+        self.assertIs(receiver.current, False)
+
+        # And a current copy is what it was: the cluster's word, plus the count.
+        entry["targets"]["receivers"][0].update(current=True)
+        row = registry_of(
+            overview(with_registry(reading(), entry, receivers=("lb-01",)), status=(nodes,))
+        ).certificates[0]
+        self.assertEqual(row.state_label, "On all 2 nodes")
+        self.assertEqual(row.state_detail, "Published to 1 receiver too")
+        self.assertFalse(row.needs_publish)
+
     def test_an_unreadable_certificate_never_renders_its_placeholder_fields(self) -> None:
         #
         # Schema v1 fills the measured fields of an unreadable entry with inert

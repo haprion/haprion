@@ -405,6 +405,35 @@ class PublishingAnUnpublishedCertificate(DeleteRouteTestCase):
         self.assertIsNone(job["cluster"])
         self.assertEqual(job["payload"], {"certificates": ["waiting.example.com"], "deploy": True})
 
+    def test_publish_now_is_offered_for_a_receiver_copy_missing_behind_a_cluster(self) -> None:
+        entry = registered(
+            "example.com",
+            fingerprint="a" * 64,
+            receivers=({"id": "lb-01", "published_at": None, "current": False},),
+        )
+        with mock.patch(
+            "haproxy_ui.db.cluster_certificates",
+            return_value=[with_registry(certificate_reading(), entry, receivers=("lb-01",))],
+        ):
+            client = self.writing_client()
+            page = client.get("/certificates?view=registry&open=example.com").text
+            self.assertIn('action="/certificates/example.com/publish"', page)
+            self.assertIn(">Publish now<", page)
+            self.assertNotIn("(older version)", page)
+
+            token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+            response = client.post(
+                "/certificates/example.com/publish",
+                data={
+                    "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                    auth.CSRF_FIELD: token,
+                },
+                follow_redirects=False,
+            )
+        self.assertEqual(response.status_code, 303)
+        (job,) = self.queued
+        self.assertEqual(job["payload"], {"certificates": ["example.com"], "deploy": True})
+
     def test_publish_now_is_not_drawn_for_an_already_published_row(self) -> None:
         client = self.writing_client()
         page = client.get("/certificates?view=registry&open=example.com").text

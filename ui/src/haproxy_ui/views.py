@@ -1921,7 +1921,7 @@ def build_router(config: Config) -> APIRouter:
         row = _registry_views(request, config).get(certificate_id)
         if row is None:
             return PlainTextResponse("Certificate is not in the registry", status_code=404)
-        if row.state_label != "Not published":
+        if not row.needs_publish:
             return PlainTextResponse("Certificate does not need publishing", status_code=409)
 
         payload = {"certificates": [certificate_id], "deploy": True}

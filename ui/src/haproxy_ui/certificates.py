@@ -892,7 +892,7 @@ def _registry_state(
     newest = max(target.published_at for target in receivers if target.published_at is not None)
     return (
         _published_label(newest),
-        "Whether the receiver fetched it is not reported back here",
+        "Whether it was fetched is not reported",
         "healthy",
     )
 

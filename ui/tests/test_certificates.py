@@ -595,9 +595,7 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
         ).certificates[0]
 
         self.assertEqual((row.state_label, row.state_tone), ("Not published", "warning"))
-        self.assertEqual(
-            row.state_detail, "On all 2 nodes, but 1 of 1 receiver(s) have no copy yet"
-        )
+        self.assertEqual(row.state_detail, "On all 2 nodes; 1 receiver has no copy")
         self.assertTrue(row.needs_publish)
         receiver = next(target for target in row.targets if target.kind == "receiver")
         self.assertEqual(receiver.published_label, "Not published")
@@ -609,9 +607,7 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
             overview(with_registry(reading(), entry, receivers=("lb-01",)), status=(nodes,))
         ).certificates[0]
         self.assertEqual(row.state_label, "Older version published")
-        self.assertEqual(
-            row.state_detail, "On all 2 nodes, but 1 of 1 receiver(s) hold an older copy"
-        )
+        self.assertEqual(row.state_detail, "On all 2 nodes; 1 receiver holds an older copy")
         self.assertTrue(row.needs_publish)
         receiver = next(target for target in row.targets if target.kind == "receiver")
         self.assertIs(receiver.current, False)

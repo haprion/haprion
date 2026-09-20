@@ -867,10 +867,10 @@ def _registry_state(
         #
         missing = _receivers_without_copy(receivers)
         if missing and tone in {"healthy", "warning", "unknown"}:
-            return "Not published", f"{label}, but {missing}", "warning"
+            return "Not published", f"{label}; {missing}", "warning"
         stale = _receivers_with_older_copy(receivers)
         if stale and tone in {"healthy", "warning", "unknown"}:
-            return "Older version published", f"{label}, but {stale}", "warning"
+            return "Older version published", f"{label}; {stale}", "warning"
         if receivers and tone == "healthy":
             #
             # Both halves in the label (maintainer, 2026-09-20): a row that
@@ -901,18 +901,25 @@ def _receivers_without_copy(receivers: Sequence[TargetView]) -> str:
     """How many receivers have no copy at all, as the State detail says it; empty if none."""
 
     unpublished = [target for target in receivers if target.published_at is None]
-    if not unpublished:
-        return ""
-    return f"{len(unpublished)} of {len(receivers)} receiver(s) have no copy yet"
+    return _receiver_count(unpublished, len(receivers), "has no copy", "have no copy")
 
 
 def _receivers_with_older_copy(receivers: Sequence[TargetView]) -> str:
     """How many receivers hold a copy the source has moved past; empty if none."""
 
     stale = [target for target in receivers if target.current is False]
-    if not stale:
+    return _receiver_count(stale, len(receivers), "holds an older copy", "hold an older copy")
+
+
+def _receiver_count(affected: Sequence[TargetView], total: int, one: str, many: str) -> str:
+    """`1 receiver has no copy`, `2 of 3 receivers have no copy`; short, because the State
+    cell is the detail grid's last column and the action button stands under the sentence."""
+
+    if not affected:
         return ""
-    return f"{len(stale)} of {len(receivers)} receiver(s) hold an older copy"
+    if total == 1:
+        return f"1 receiver {one}"
+    return f"{len(affected)} of {total} receivers {many}"
 
 
 def needs_publishing(entry: Mapping[str, Any], targets: Sequence[TargetView]) -> bool:

@@ -194,6 +194,37 @@ class WhatIsRefused(DeleteFixture):
         self.assert_untouched(report, "one.example", "shared_receiver")
         self.assertTrue((self.receiver_dir / FULLCHAIN).exists())
 
+    def test_a_per_certificate_receiver_is_not_shared_by_its_certificates(self) -> None:
+        #
+        # Seen 2026-09-20: a throwaway import to a per-certificate receiver
+        # was refused as `shared_receiver` because two other certificates go
+        # to the same receiver. They share the receiver, not a directory -
+        # each has its own - so nothing the deletion removes is theirs.
+        #
+        policy_path = self.prepared(
+            {
+                "one.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]},
+                "two.example": {"source": {"kind": "acme"}, "receivers": ["lb-01"]},
+            }
+        )
+        registry = self.root / "certificates.yaml"
+        raw = yaml.safe_load(registry.read_text())
+        raw["receivers"]["lb-01"]["layout"] = "per-certificate"
+        registry.write_text(yaml.safe_dump(raw), encoding="utf-8")
+        registry.chmod(0o640)
+        for name in ("one.example", "two.example"):
+            directory = self.receiver_dir / name
+            directory.mkdir()
+            (directory / FULLCHAIN).write_text("chain\n", encoding="utf-8")
+            (directory / PRIVKEY).write_text("key\n", encoding="utf-8")
+
+        report = self.run_delete(policy_path, "one.example")
+
+        (outcome,) = report.outcomes
+        self.assertEqual(outcome.state, "removed", outcome)
+        self.assertFalse((self.receiver_dir / "one.example").exists())
+        self.assertTrue((self.receiver_dir / "two.example" / FULLCHAIN).exists())
+
     def test_a_certificate_a_committed_object_names(self) -> None:
         guards = Guards(referenced={"example.com": ("alpha/shop",)})
         report = self.run_delete(self.policy_path, "example.com", guards=guards)

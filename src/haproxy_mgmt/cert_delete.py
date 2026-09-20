@@ -75,7 +75,7 @@ from pathlib import Path
 from typing import Any
 
 from haproxy_mgmt import cert_registry
-from haproxy_mgmt.cert_inventory import IMPORT_STORE, receiver_files
+from haproxy_mgmt.cert_inventory import IMPORT_STORE, receiver_directory, receiver_files
 from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, prune_receiver_directory, publish_lock
 from haproxy_mgmt.cert_publish import PublishError as LockError
 from haproxy_mgmt.certificates import certificate_path
@@ -337,11 +337,23 @@ def refusal(certificate_id: str, runtime: RuntimeConfig, guards: Guards) -> tupl
                 + ", ".join(sharing)
                 + "; deleting it would stop their renewal too",
             )
+    #
+    # Shared means the same directory, not the same receiver. A
+    # `per-certificate` receiver (C7) gives every certificate a directory of
+    # its own, so two entries naming it share nothing that a deletion
+    # removes; only a `flat` receiver, which keeps one pair straight in its
+    # directory, is one entry's to clear. Compared by ID until 2026-09-20,
+    # which refused the deletion of any certificate whose receiver held
+    # another one - every receiver after C7.
+    #
     shared_receivers = sorted(
         f"{receiver_id} (also {other.certificate_id})"
         for other in others
         for receiver_id in entry.receivers
         if receiver_id in other.receivers
+        and receiver_id in registry.receivers
+        and receiver_directory(registry.receivers[receiver_id], certificate_id)
+        == receiver_directory(registry.receivers[receiver_id], other.certificate_id)
     )
     if shared_receivers:
         return (

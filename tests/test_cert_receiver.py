@@ -24,7 +24,7 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cert_receiver
+from haproxy_mgmt import cert_receiver, cert_registry
 from haproxy_mgmt.cert_receiver import Locations, ReceiverError, Tools
 from haproxy_mgmt.cli import cert_receiver as command
 from haproxy_mgmt.config import load_policy, load_runtime_config
@@ -144,6 +144,7 @@ class ReceiverFixture(Fixture):
             tools=self.tools,
             locations=self.locations,
             require_secure=False,
+            lock_path=self.root / "cert-publish.lock",
             **arguments,
         )
 
@@ -315,6 +316,52 @@ class AddingAReceiver(ReceiverFixture):
         self.assertFalse(self.locations.nginx_snippet.exists())
         self.assertNotIn("lb-02.example.net", self.registered())
 
+    def test_an_allow_entry_that_is_not_an_address_is_refused_before_nginx_is_touched(
+        self,
+    ) -> None:
+        #
+        # `allow all;` is valid nginx. Until the review of 2026-09-20 the
+        # registry loader was the first thing to judge the entry, and by then
+        # the snippet had been written, tested and reloaded; the undo put the
+        # file back without a reload. Now the loader's rule runs first.
+        #
+        for bad in (["all"], ["192.0.2.1/24"], ["192.0.2.9", "192.0.2.9"]):
+            with self.subTest(allow=bad):
+                self.runner.calls.clear()
+                with (
+                    mock.patch.object(cert_receiver, "_own"),
+                    self.assertRaises(ReceiverError) as caught,
+                ):
+                    self.add(transport="https", public_key=None, owner=None, allow=bad)
+                self.assertEqual(caught.exception.code, "bad_input")
+                self.assertIn("--allow", str(caught.exception))
+                self.assertFalse(self.runner.ran("/usr/sbin/nginx -t"))
+                self.assertFalse(self.runner.ran("systemctl reload nginx"))
+                self.assertFalse(self.locations.nginx_snippet.exists())
+                self.assertFalse((self.root / "receivers" / "lb-02.example.net").exists())
+                self.assertNotIn("lb-02.example.net", self.registered())
+
+    def test_a_refused_registration_reloads_the_service_it_had_reloaded(self) -> None:
+        #
+        # The registry can still refuse after nginx or sshd has taken the
+        # candidate - here, the registry file is made unwritable - and then
+        # the service must run the restored configuration, not the refused
+        # one. One reload for the candidate, one for the restore.
+        #
+        registry_file = self.root / "certificates.yaml"
+        with (
+            mock.patch.object(cert_receiver, "_own"),
+            mock.patch.object(
+                cert_registry, "set_receiver", side_effect=OSError("registry is read-only")
+            ),
+            self.assertRaises(ReceiverError),
+        ):
+            self.add(transport="https", public_key=None, owner=None, allow=["192.0.2.0/24"])
+        reloads = [call for call in self.runner.calls if "reload nginx" in " ".join(call)]
+        self.assertEqual(len(reloads), 2, self.runner.calls)
+        self.assertFalse(self.locations.nginx_snippet.exists())
+        self.assertTrue(registry_file.exists())
+
     def test_the_instructions_name_what_the_receiver_needs(self) -> None:
         result = self.add()
 
@@ -446,6 +493,7 @@ class RemovingAReceiver(ReceiverFixture):
             tools=self.tools,
             locations=self.locations,
             require_secure=False,
+            lock_path=self.root / "cert-publish.lock",
         )
 
     def test_a_receiver_a_certificate_still_names_is_refused(self) -> None:
@@ -560,6 +608,7 @@ class MigratingTheOldOnes(ReceiverFixture):
             tools=self.tools,
             locations=self.locations,
             require_secure=False,
+            lock_path=self.root / "cert-publish.lock",
             **options,
         )
 
@@ -728,6 +777,7 @@ class TheCommand(ReceiverFixture):
             require_root=False,
             tools=self.tools,
             locations=self.locations,
+            lock_path=self.root / "cert-publish.lock",
         )
         return code, out.getvalue(), err.getvalue()
 

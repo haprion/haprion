@@ -31,7 +31,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from haproxy_mgmt.cert_receiver import HTTPS_PREFIX
-from haproxy_mgmt.config import RECEIVER_ID, RECEIVER_TRANSPORTS
+from haproxy_mgmt.config import RECEIVER_ID, RECEIVER_TRANSPORTS, check_allow_entries
 
 # The key file the instructions name on the receiving host. A name, not a
 # path the manager decides: the host's operator may keep it elsewhere and
@@ -472,6 +472,17 @@ def payload(
                 "An https receiver fetches with no key, so the allowed addresses are what "
                 "stands between its directory and everyone. Name at least one."
             )
+        #
+        # The engine's rule, said on the form: an entry that is not an address
+        # or a network was a job failure about the registry until 2026-09-20.
+        #
+        try:
+            check_allow_entries(allow)
+        except ValueError as problem:
+            raise ReceiverProblem(
+                f"Allowed addresses{problem}. Each one is an IP address or a network "
+                "in CIDR form, such as 192.0.2.7 or 192.0.2.0/24."
+            ) from None
         result["allow"] = list(allow)
         return result
     if allow_text.strip():

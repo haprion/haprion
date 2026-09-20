@@ -48,6 +48,7 @@ from typing import Any
 
 from haproxy_mgmt import cert_registry
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE, measure_registered
+from haproxy_mgmt.cert_lock import DEFAULT_LOCK_PATH
 from haproxy_mgmt.config import (
     RECEIVER_ID,
     RECEIVER_TRANSPORTS,
@@ -56,6 +57,7 @@ from haproxy_mgmt.config import (
     Receiver,
     Registry,
     RuntimeConfig,
+    check_allow_entries,
     receiver_id_names_a_host,
 )
 
@@ -679,6 +681,15 @@ def check_request(
                 "an https receiver fetches with no key at all, so --allow is what stands "
                 "between its directory and everyone. Name at least one address or network.",
             )
+        #
+        # The loader's rule, before the first side effect. Until 2026-09-20
+        # the registry write was the first thing to judge an entry, and by
+        # then nginx had been reloaded with it: `allow all;` is valid nginx.
+        #
+        try:
+            check_allow_entries(allow)
+        except ValueError as exc:
+            raise ReceiverError("bad_input", f"--allow{exc}") from None
         if public_key is not None:
             raise ReceiverError("bad_input", "an https receiver has no key; leave out --public-key")
         return
@@ -706,6 +717,7 @@ def add(
     tools: Tools | None = None,
     locations: Locations | None = None,
     require_secure: bool = True,
+    lock_path: Path = DEFAULT_LOCK_PATH,
 ) -> Result:
     """Make a receiver whole, or leave the machine as it was found.
 
@@ -804,6 +816,7 @@ def add(
             fields=_entry_fields(receiver),
             runtime=runtime,
             require_secure=require_secure,
+            lock_path=lock_path,
         )
         layers.append(Layer("registry", "created", receiver_id))
     except (ReceiverError, OSError, cert_registry.RegistryError) as exc:
@@ -851,7 +864,9 @@ def _write_lock(
             tools=tools,
             what="nginx",
         )
-        undo.append(lambda: _restore(locations.nginx_snippet, before))
+        undo.append(
+            lambda: _restore(locations.nginx_snippet, before, [SYSTEMCTL, "reload", "nginx"], tools)
+        )
         return layer
 
     home = receiver.path
@@ -871,7 +886,9 @@ def _write_lock(
             tools=tools,
             what="sshd",
         )
-        undo.append(lambda: _restore(locations.sshd_dropin, before))
+        undo.append(
+            lambda: _restore(locations.sshd_dropin, before, [SYSTEMCTL, "reload", "ssh"], tools)
+        )
     return keys_layer
 
 
@@ -879,11 +896,20 @@ def _discard(_result: tuple[int, str]) -> None:
     """An undo step's answer is not a report: the failure it undoes is."""
 
 
-def _restore(path: Path, before: str | None) -> None:
+def _restore(path: Path, before: str | None, reload: Sequence[str], tools: Tools) -> None:
+    """Put the service's previous configuration back, and make the service run it.
+
+    The reload is the point: a file put back without one leaves sshd or nginx
+    running the configuration that was just refused, until something else
+    reloads it (review 2026-09-20). Its answer is discarded like every undo
+    step's - the failure being undone is the report.
+    """
+
     if before is None:
         path.unlink(missing_ok=True)
     else:
         path.write_text(before, encoding="utf-8")
+    _discard(tools.run(reload))
 
 
 def manager_name(locations: Locations | None = None) -> str:
@@ -971,6 +997,7 @@ def remove(
     tools: Tools | None = None,
     locations: Locations | None = None,
     require_secure: bool = True,
+    lock_path: Path = DEFAULT_LOCK_PATH,
 ) -> Result:
     """Take the four layers away in the order that never leaves a door open.
 
@@ -1046,6 +1073,7 @@ def remove(
             receiver_id=receiver_id,
             runtime=runtime,
             require_secure=require_secure,
+            lock_path=lock_path,
         )
         layers.append(Layer("registry", "removed", receiver_id))
     except ReceiverError:
@@ -1141,6 +1169,7 @@ def migrate(
     min_remaining_days: int = 7,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
+    lock_path: Path = DEFAULT_LOCK_PATH,
 ) -> Result:
     """Build the new layer beside the old one and point the registry at it (B158).
 
@@ -1233,6 +1262,7 @@ def migrate(
             fields=_entry_fields(moved),
             runtime=runtime,
             require_secure=require_secure,
+            lock_path=lock_path,
         )
         layers.append(Layer("registry", "created", receiver_id))
         record.parent.mkdir(parents=True, exist_ok=True)

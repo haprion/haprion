@@ -4,7 +4,7 @@ import ipaddress
 import re
 import stat
 import types
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
@@ -1231,10 +1231,28 @@ def _allow_list(raw: Mapping[str, Any], location: str, transport: str) -> tuple[
         return ()
     if not isinstance(value, list) or not value:
         raise ConfigError(f"{location}.allow must be a non-empty list for an https receiver")
-    entries: list[str] = []
     for index, item in enumerate(value):
         if not isinstance(item, str):
             raise ConfigError(f"{location}.allow[{index}] must be a string")
+    try:
+        return check_allow_entries(value)
+    except ValueError as exc:
+        raise ConfigError(f"{location}.allow{exc}") from exc
+
+
+def check_allow_entries(entries: Sequence[str]) -> tuple[str, ...]:
+    """The one rule for an `https` whitelist entry, or a `ValueError` naming the entry.
+
+    Stated once, here, because two callers must agree on it before anything is
+    written: the loader when it reads the registry, and `haproxy-cert-receiver`
+    before it renders the entries into nginx's configuration - the rule used
+    to live in the loader alone, so an entry the loader would refuse reached
+    nginx, and a reload, first (review 2026-09-20). The message starts with
+    what the loader appends to its location, `[index] ...`.
+    """
+
+    checked: list[str] = []
+    for index, item in enumerate(entries):
         try:
             #
             # Strict: `192.0.2.1/24` is a typo for either the host or the
@@ -1242,14 +1260,12 @@ def _allow_list(raw: Mapping[str, Any], location: str, transport: str) -> tuple[
             # 255 addresses more than whoever wrote the line meant.
             #
             ipaddress.ip_network(item, strict=True)
-        except ValueError as exc:
-            raise ConfigError(
-                f"{location}.allow[{index}] is not an address or network: {item!r}"
-            ) from exc
-        entries.append(item)
-    if len(set(entries)) != len(entries):
-        raise ConfigError(f"{location}.allow contains duplicates")
-    return tuple(entries)
+        except ValueError:
+            raise ValueError(f"[{index}] is not an address or network: {item!r}") from None
+        checked.append(item)
+    if len(set(checked)) != len(checked):
+        raise ValueError(" contains duplicates")
+    return tuple(checked)
 
 
 def _receiver_list(raw: Mapping[str, Any], location: str) -> tuple[tuple[str, ...], dict[str, str]]:

@@ -371,33 +371,24 @@ def run_certbot(command: Sequence[str], environment: Mapping[str, str]) -> Certb
 
 
 def add_to_registry(
-    path: Path, request: IssueRequest, runtime: RuntimeConfig, *, require_secure: bool = True
+    path: Path,
+    request: IssueRequest,
+    runtime: RuntimeConfig,
+    *,
+    require_secure: bool = True,
+    lock_path: Path = DEFAULT_LOCK_PATH,
 ) -> None:
     """Add the entry through the one writer the registry has.
 
     The atomic rewrite, the load-back and the cluster cross-check all live in
     `cert_registry`, which the registry helper uses too. This function is the
-    shape of an issued entry and nothing else.
+    shape of an issued entry and nothing else. Read and written under the
+    certificate lock, so a renewal writing at the same moment cannot lose it.
     """
 
     try:
-        document = cert_registry.read_document(path)
-        certificates = dict(document.get("certificates") or {})
-        entry: dict[str, Any] = {"source": {"kind": "acme"}}
-        if request.dns_profile is not None:
-            entry["source"]["dns_profile"] = request.dns_profile
-        if request.clusters:
-            entry["clusters"] = list(request.clusters)
-        if request.receivers:
-            entry["receivers"] = cert_registry.receiver_elements(request.receivers, request.formats)
-        certificates[request.certificate_id] = entry
-        cert_registry.write(
-            path,
-            document=document,
-            certificates=certificates,
-            runtime=runtime,
-            require_secure=require_secure,
-        )
+        with cert_registry.locked(lock_path):
+            _add_entry(path, request, runtime, require_secure=require_secure)
     except cert_registry.RegistryError as exc:
         #
         # The one failure that leaves something behind: certbot has issued the
@@ -412,6 +403,28 @@ def add_to_registry(
             f"{exc} Register the lineage by hand, then publish it.",
             exit_code=exc.exit_code,
         ) from exc
+
+
+def _add_entry(
+    path: Path, request: IssueRequest, runtime: RuntimeConfig, *, require_secure: bool
+) -> None:
+    document = cert_registry.read_document(path)
+    certificates = dict(document.get("certificates") or {})
+    entry: dict[str, Any] = {"source": {"kind": "acme"}}
+    if request.dns_profile is not None:
+        entry["source"]["dns_profile"] = request.dns_profile
+    if request.clusters:
+        entry["clusters"] = list(request.clusters)
+    if request.receivers:
+        entry["receivers"] = cert_registry.receiver_elements(request.receivers, request.formats)
+    certificates[request.certificate_id] = entry
+    cert_registry.write(
+        path,
+        document=document,
+        certificates=certificates,
+        runtime=runtime,
+        require_secure=require_secure,
+    )
 
 
 #
@@ -481,7 +494,13 @@ def issue(
         )
 
     assert policy.certificate_registry is not None  # noqa: S101 - build_request checked it
-    add_to_registry(policy.certificate_registry, request, runtime, require_secure=require_secure)
+    add_to_registry(
+        policy.certificate_registry,
+        request,
+        runtime,
+        require_secure=require_secure,
+        lock_path=lock_path,
+    )
     #
     # Re-read rather than patched in memory: the publisher must see exactly
     # what the next renewal's hook will see.

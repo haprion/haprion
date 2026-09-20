@@ -209,10 +209,18 @@ class TheFormRefuses(unittest.TestCase):
             "https with key": dict(transport="https", allow_text="192.0.2.9"),
             "https without allow": dict(transport="https", public_key=""),
             "rsync with allow": dict(allow_text="192.0.2.9"),
+            "allow all": dict(transport="https", public_key="", allow_text="all"),
+            "allow host bits": dict(transport="https", public_key="", allow_text="192.0.2.1/24"),
         }
         for name, fields in cases.items():
             with self.subTest(name), self.assertRaises(certificate_receivers.ReceiverProblem):
                 self.payload(**fields)
+
+    def test_an_allow_entry_that_is_not_an_address_is_said_on_the_form(self) -> None:
+        with self.assertRaises(certificate_receivers.ReceiverProblem) as caught:
+            self.payload(transport="https", public_key="", allow_text="192.0.2.9, all")
+        self.assertIn("[1] is not an address or network: 'all'", str(caught.exception))
+        self.assertIn("192.0.2.0/24", str(caught.exception))
 
     def test_a_registered_name_says_its_transport_and_what_to_do_instead(self) -> None:
         with self.assertRaises(certificate_receivers.ReceiverProblem) as caught:

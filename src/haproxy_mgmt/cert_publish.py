@@ -47,7 +47,6 @@ fingerprints and outcomes, never contents.
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import os
 import pwd
 import secrets
@@ -55,7 +54,6 @@ import stat
 import string
 import subprocess
 import tempfile
-import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -77,6 +75,9 @@ from haproxy_mgmt.cert_inventory import (
     receiver_directory,
     source_directory,
 )
+from haproxy_mgmt.cert_lock import DEFAULT_LOCK_PATH as DEFAULT_LOCK_PATH
+from haproxy_mgmt.cert_lock import LOCK_WAIT_SECONDS as LOCK_WAIT_SECONDS
+from haproxy_mgmt.cert_lock import hold
 from haproxy_mgmt.certificates import (
     MAX_CERTIFICATE_BYTES,
     CertificateError,
@@ -91,9 +92,6 @@ from haproxy_mgmt.config import (
     RegisteredCertificate,
     RuntimeConfig,
 )
-
-DEFAULT_LOCK_PATH = Path("/run/haproxy-mgmt/locks/cert-publish.lock")
-LOCK_WAIT_SECONDS = 120
 
 #
 # The same margin the hand-built publishers used: a certificate this close to
@@ -798,27 +796,18 @@ def publish_to(targets: Sequence[Target], material: Material) -> tuple[TargetRes
 
 @contextmanager
 def publish_lock(path: Path = DEFAULT_LOCK_PATH, *, wait: int | None = None) -> Iterator[None]:
-    """Hold the publisher's lock, waiting a bounded time for another run to finish."""
+    """Hold the publisher's lock, waiting a bounded time for another run to finish.
 
-    wait = LOCK_WAIT_SECONDS if wait is None else wait
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
-    handle = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
-    try:
-        deadline = datetime.now(UTC) + timedelta(seconds=wait)
-        while True:
-            try:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError:
-                if datetime.now(UTC) >= deadline:
-                    raise PublishError(
-                        "operation_locked",
-                        f"another publish has held {path} for more than {wait} seconds",
-                    ) from None
-                time.sleep(0.5)
+    The lock itself is `cert_lock.hold`, shared with every registry writer;
+    only the refusal is the publisher's.
+    """
+
+    with hold(
+        path,
+        wait=LOCK_WAIT_SECONDS if wait is None else wait,
+        refuse=lambda message: PublishError("operation_locked", message),
+    ):
         yield
-    finally:
-        os.close(handle)
 
 
 def _select(runtime: RuntimeConfig, only: Sequence[str] | None) -> list[RegisteredCertificate]:

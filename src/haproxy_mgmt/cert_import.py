@@ -394,8 +394,9 @@ def register(
     require_secure: bool,
     ndes_profile: str | None = None,
     formats: Mapping[str, str] | None = None,
+    lock_path: Path = DEFAULT_LOCK_PATH,
 ) -> None:
-    """The entry, through the one writer the registry has.
+    """The entry, through the one writer the registry has, under the certificate lock.
 
     An entry that exists already keeps every target it has, and the targets
     named here are added to them: re-importing a rotated certificate - or
@@ -411,44 +412,17 @@ def register(
     """
 
     try:
-        document = cert_registry.read_document(path)
-        certificates = dict(document.get("certificates") or {})
-        existing = certificates.get(certificate_id)
-        entry: dict[str, Any] = {"source": {"kind": "import"}}
-        if ndes_profile is not None:
-            entry["source"]["ndes_profile"] = ndes_profile
-        kept_clusters: list[str] = []
-        kept_receivers: tuple[str, ...] = ()
-        kept_formats: dict[str, str] = {}
-        if isinstance(existing, dict):
-            kind = (existing.get("source") or {}).get("kind")
-            if kind != "import":
-                raise ImportError_(
-                    "not_import",
-                    f"{certificate_id!r} is registered as {kind!r}; its material is not "
-                    "imported. Choose another ID.",
-                )
-            kept_clusters = [str(item) for item in existing.get("clusters") or ()]
-            kept_receivers, kept_formats = cert_registry.named_receivers(existing)
-        all_clusters = kept_clusters + [c for c in clusters if c not in kept_clusters]
-        all_receivers = list(kept_receivers) + [r for r in receivers if r not in kept_receivers]
-        #
-        # A format named now wins over the one on file: the operator chose it
-        # on this request, and a receiver kept from before keeps its own.
-        #
-        all_formats = {**kept_formats, **(formats or {})}
-        if all_clusters:
-            entry["clusters"] = all_clusters
-        if all_receivers:
-            entry["receivers"] = cert_registry.receiver_elements(all_receivers, all_formats)
-        certificates[certificate_id] = entry
-        cert_registry.write(
-            path,
-            document=document,
-            certificates=certificates,
-            runtime=runtime,
-            require_secure=require_secure,
-        )
+        with cert_registry.locked(lock_path):
+            _register_entry(
+                path,
+                certificate_id,
+                runtime,
+                clusters=clusters,
+                receivers=receivers,
+                require_secure=require_secure,
+                ndes_profile=ndes_profile,
+                formats=formats,
+            )
     except cert_registry.RegistryError as exc:
         raise ImportError_(
             exc.code,
@@ -456,6 +430,57 @@ def register(
             f"{exc} Fix the targets and import again.",
             exit_code=exc.exit_code,
         ) from exc
+
+
+def _register_entry(
+    path: Path,
+    certificate_id: str,
+    runtime: RuntimeConfig,
+    *,
+    clusters: Sequence[str],
+    receivers: Sequence[str],
+    require_secure: bool,
+    ndes_profile: str | None,
+    formats: Mapping[str, str] | None,
+) -> None:
+    document = cert_registry.read_document(path)
+    certificates = dict(document.get("certificates") or {})
+    existing = certificates.get(certificate_id)
+    entry: dict[str, Any] = {"source": {"kind": "import"}}
+    if ndes_profile is not None:
+        entry["source"]["ndes_profile"] = ndes_profile
+    kept_clusters: list[str] = []
+    kept_receivers: tuple[str, ...] = ()
+    kept_formats: dict[str, str] = {}
+    if isinstance(existing, dict):
+        kind = (existing.get("source") or {}).get("kind")
+        if kind != "import":
+            raise ImportError_(
+                "not_import",
+                f"{certificate_id!r} is registered as {kind!r}; its material is not "
+                "imported. Choose another ID.",
+            )
+        kept_clusters = [str(item) for item in existing.get("clusters") or ()]
+        kept_receivers, kept_formats = cert_registry.named_receivers(existing)
+    all_clusters = kept_clusters + [c for c in clusters if c not in kept_clusters]
+    all_receivers = list(kept_receivers) + [r for r in receivers if r not in kept_receivers]
+    #
+    # A format named now wins over the one on file: the operator chose it
+    # on this request, and a receiver kept from before keeps its own.
+    #
+    all_formats = {**kept_formats, **(formats or {})}
+    if all_clusters:
+        entry["clusters"] = all_clusters
+    if all_receivers:
+        entry["receivers"] = cert_registry.receiver_elements(all_receivers, all_formats)
+    certificates[certificate_id] = entry
+    cert_registry.write(
+        path,
+        document=document,
+        certificates=certificates,
+        runtime=runtime,
+        require_secure=require_secure,
+    )
 
 
 def import_certificate(
@@ -531,6 +556,7 @@ def import_certificate(
         require_secure=require_secure,
         ndes_profile=ndes_profile,
         formats=formats,
+        lock_path=lock_path,
     )
     try:
         refreshed = load_runtime_config(policy, require_secure=require_secure)

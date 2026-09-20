@@ -47,6 +47,7 @@ class HelperFixture(ReceiverFixture):
             require_root=False,
             tools=self.tools,
             locations=self.locations,
+            lock_path=self.root / "cert-publish.lock",
         )
         raw = out.getvalue()
         if raw.strip():

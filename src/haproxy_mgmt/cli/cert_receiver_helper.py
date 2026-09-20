@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import BinaryIO, TextIO
 
 from haproxy_mgmt import cert_receiver
+from haproxy_mgmt.cert_lock import DEFAULT_LOCK_PATH
 from haproxy_mgmt.cert_receiver import Locations, ReceiverError, Result, Tools
 from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.config import (
@@ -130,6 +131,7 @@ def main(
     require_root: bool = True,
     tools: Tools | None = None,
     locations: Locations | None = None,
+    lock_path: Path = DEFAULT_LOCK_PATH,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = output_stream or sys.stdout
@@ -197,6 +199,7 @@ def main(
                 tools=tools,
                 locations=locations,
                 require_secure=require_secure,
+                lock_path=lock_path,
             )
         else:
             result = cert_receiver.remove(
@@ -206,6 +209,7 @@ def main(
                 tools=tools,
                 locations=locations,
                 require_secure=require_secure,
+                lock_path=lock_path,
             )
     except ReceiverError as exc:
         return refuse(exc.code, str(exc), exc.exit_code)

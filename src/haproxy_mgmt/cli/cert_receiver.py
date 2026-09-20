@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from typing import Any, TextIO
 
+from haproxy_mgmt.cert_lock import DEFAULT_LOCK_PATH
 from haproxy_mgmt.cert_receiver import (
     Locations,
     ReceiverError,
@@ -169,6 +170,7 @@ def main(
     require_root: bool = True,
     tools: Tools | None = None,
     locations: Locations | None = None,
+    lock_path: Path = DEFAULT_LOCK_PATH,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = output_stream or sys.stdout
@@ -242,6 +244,7 @@ def main(
                 tools=tools,
                 locations=locations,
                 require_secure=require_secure,
+                lock_path=lock_path,
             )
         elif arguments.action == "remove":
             result = remove(
@@ -251,6 +254,7 @@ def main(
                 tools=tools,
                 locations=locations,
                 require_secure=require_secure,
+                lock_path=lock_path,
             )
         elif arguments.finish:
             result = finish(
@@ -274,6 +278,7 @@ def main(
                 tools=tools,
                 locations=locations,
                 require_secure=require_secure,
+                lock_path=lock_path,
             )
     except ReceiverError as exc:
         return refuse(exc.code, str(exc), exc.exit_code)

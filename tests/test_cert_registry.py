@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import os
 import stat
+import threading
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -58,6 +61,67 @@ class RegistryFixture(Fixture):
 
     def entries(self, registry: Path) -> dict[str, dict[str, object]]:
         return yaml.safe_load(registry.read_text())["certificates"]
+
+
+class TheRegistryIsWrittenUnderTheLock(RegistryFixture):
+    """Six commands change the registry; a second writer in the gap is a lost update."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.policy_path, self.registry = self.prepared({})
+        self.lock = self.root / "cert-publish.lock"
+
+    def test_set_receiver_waits_for_the_lock_and_both_writers_land(self) -> None:
+        runtime = self.runtime(self.policy_path)
+
+        def register(receiver_id: str) -> None:
+            cert_registry.set_receiver(
+                self.registry,
+                receiver_id=receiver_id,
+                fields={
+                    "path": str(self.root / "receivers" / receiver_id),
+                    "owner": "crx-" + receiver_id,
+                    "transport": "sftp",
+                    "layout": "per-certificate",
+                },
+                runtime=runtime,
+                require_secure=False,
+                lock_path=self.lock,
+            )
+
+        #
+        # The first writer holds the lock across its read and write; the
+        # second is started in the middle and must wait rather than write
+        # over it. Without the lock the second's read predates the first's
+        # write and one receiver is gone.
+        #
+        original_write = cert_registry.write
+        started: list[threading.Thread] = []
+
+        def write_then_let_the_other_in(*args: object, **kwargs: object) -> None:
+            if not started:
+                other = threading.Thread(target=register, args=("lb-02",))
+                started.append(other)
+                other.start()
+                time.sleep(0.3)
+            original_write(*args, **kwargs)  # type: ignore[arg-type]
+
+        with mock.patch.object(cert_registry, "write", side_effect=write_then_let_the_other_in):
+            register("lb-01")
+        started[0].join(timeout=10)
+
+        receivers = yaml.safe_load(self.registry.read_text())["receivers"]
+        self.assertEqual(sorted(receivers), ["lb-01", "lb-02"])
+
+    def test_a_held_lock_is_a_refusal_with_the_contract_s_code(self) -> None:
+        with (
+            cert_registry.locked(self.lock),
+            self.assertRaises(RegistryError) as caught,
+            cert_registry.locked(self.lock, wait=0),
+        ):
+            pass
+        self.assertEqual(caught.exception.code, "operation_locked")
+        self.assertEqual(caught.exception.exit_code, 75)
 
 
 class WhatRetargetingRefuses(RegistryFixture):

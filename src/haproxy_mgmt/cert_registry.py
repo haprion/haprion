@@ -35,13 +35,15 @@ from __future__ import annotations
 import contextlib
 import os
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from haproxy_mgmt.cert_lock import DEFAULT_LOCK_PATH, LOCK_WAIT_SECONDS, hold
 from haproxy_mgmt.config import (
     DEFAULT_RECEIVER_FORMAT,
     ConfigError,
@@ -93,6 +95,25 @@ def read_document(path: Path) -> dict[str, Any]:
     if not isinstance(loaded, dict):
         raise RegistryError("dependency_unavailable", "the registry is not a mapping", exit_code=78)
     return loaded
+
+
+@contextmanager
+def locked(path: Path = DEFAULT_LOCK_PATH, *, wait: int | None = None) -> Iterator[None]:
+    """Hold the certificate lock around a read-modify-write of the registry.
+
+    `read_document` and `write` are two calls with the caller's change between
+    them, and a second writer in that gap - the renewal timer, an operator's
+    command - is a lost update the loader cannot see. Every writer that is not
+    already inside `cert_publish.publish_lock` takes this; it is the same lock
+    on the same path, so a caller that holds one must not take the other.
+    """
+
+    with hold(
+        path,
+        wait=LOCK_WAIT_SECONDS if wait is None else wait,
+        refuse=lambda message: RegistryError("operation_locked", message, exit_code=75),
+    ):
+        yield
 
 
 def write(
@@ -260,6 +281,7 @@ def set_receiver(
     fields: Mapping[str, Any],
     runtime: RuntimeConfig,
     require_secure: bool = True,
+    lock_path: Path = DEFAULT_LOCK_PATH,
 ) -> None:
     """Put one receiver into the registry, through the same checked write as the rest.
 
@@ -270,17 +292,18 @@ def set_receiver(
     - a receiver block the engine would refuse is never the file on disk.
     """
 
-    document = read_document(path)
-    receivers = dict(document.get("receivers") or {})
-    receivers[receiver_id] = dict(fields)
-    write(
-        path,
-        document=document,
-        certificates=document.get("certificates") or {},
-        receivers=receivers,
-        runtime=runtime,
-        require_secure=require_secure,
-    )
+    with locked(lock_path):
+        document = read_document(path)
+        receivers = dict(document.get("receivers") or {})
+        receivers[receiver_id] = dict(fields)
+        write(
+            path,
+            document=document,
+            certificates=document.get("certificates") or {},
+            receivers=receivers,
+            runtime=runtime,
+            require_secure=require_secure,
+        )
 
 
 def drop_receiver(
@@ -289,20 +312,22 @@ def drop_receiver(
     receiver_id: str,
     runtime: RuntimeConfig,
     require_secure: bool = True,
+    lock_path: Path = DEFAULT_LOCK_PATH,
 ) -> None:
     """Take one receiver out. Refused by the reader while a certificate names it."""
 
-    document = read_document(path)
-    receivers = dict(document.get("receivers") or {})
-    receivers.pop(receiver_id, None)
-    write(
-        path,
-        document=document,
-        certificates=document.get("certificates") or {},
-        receivers=receivers,
-        runtime=runtime,
-        require_secure=require_secure,
-    )
+    with locked(lock_path):
+        document = read_document(path)
+        receivers = dict(document.get("receivers") or {})
+        receivers.pop(receiver_id, None)
+        write(
+            path,
+            document=document,
+            certificates=document.get("certificates") or {},
+            receivers=receivers,
+            runtime=runtime,
+            require_secure=require_secure,
+        )
 
 
 def receiver_in_use(registry: Registry, receiver_id: str) -> tuple[str, ...]:

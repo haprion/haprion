@@ -687,6 +687,14 @@ ACME certificate's `lineage` is its certbot lineage name; left out, it is the ce
 is what a certificate issued from the interface gets. State it only where an existing lineage was
 named before that convention - renaming a lineage moves certbot's archive, and is not worth it.
 
+Every command that changes the file - issue, import, delete, a target change, a receiver's
+registration or removal, the scheduled renewal - reads it, changes it and writes it back under one
+lock, the publisher's (`/run/haproxy-mgmt/locks/cert-publish.lock`). The interface queues one
+certificate job at a time, but the renewal timer and an operator's command run outside that queue,
+and two writers in the same second would otherwise be a lost update the loader cannot see: the
+file that wins is valid, it just lacks what the other one wrote. A command that finds the lock held
+for longer than two minutes refuses with `operation_locked` rather than waiting on.
+
 `haproxy-cert-list` reports `source` and `targets` for every certificate the registry names, and
 `null` for both on a file in the distribution directory that no entry names: that is what a
 certificate published before the registry existed looks like, and it is listed so it can be

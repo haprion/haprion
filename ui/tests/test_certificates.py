@@ -621,8 +621,8 @@ class TheRegistryViewSaysOnlyWhatIsMeasured(unittest.TestCase):
         row = registry_of(
             overview(with_registry(reading(), entry, receivers=("lb-01",)), status=(nodes,))
         ).certificates[0]
-        self.assertEqual(row.state_label, "On all 2 nodes")
-        self.assertEqual(row.state_detail, "Published to 1 receiver too")
+        self.assertEqual(row.state_label, "On nodes & published")
+        self.assertEqual(row.state_detail, "On all 2 nodes; published to 1 receiver")
         self.assertFalse(row.needs_publish)
 
     def test_an_unreadable_certificate_never_renders_its_placeholder_fields(self) -> None:
@@ -727,7 +727,7 @@ class TheTwoViewsShareTheirColumns(unittest.TestCase):
             [(t.name, t.kind) for t in row.targets], [("alpha", "cluster"), ("lb-01", "receiver")]
         )
 
-    def test_a_registry_row_says_its_receiver_state_in_five_words(self) -> None:
+    def test_a_registry_row_says_both_halves_when_it_goes_to_nodes_and_receivers(self) -> None:
         fingerprint = "c" * 64
         entry = registered(
             fingerprint=fingerprint,
@@ -738,10 +738,9 @@ class TheTwoViewsShareTheirColumns(unittest.TestCase):
             status=(status(node(("example.com", fingerprint))),),
         )
 
-        self.assertEqual(
-            registry_of(view).certificates[0].state_detail,
-            "Published to 1 receiver too",
-        )
+        row = registry_of(view).certificates[0]
+        self.assertEqual(row.state_label, "On nodes & published")
+        self.assertEqual(row.state_detail, "On the node; published to 1 receiver")
 
     def test_without_a_registry_the_cluster_itself_is_the_only_known_target(self) -> None:
         row = overview(reading()).clusters[0].certificates[0]

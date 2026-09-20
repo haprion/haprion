@@ -872,8 +872,15 @@ def _registry_state(
         if stale and tone in {"healthy", "warning", "unknown"}:
             return "Older version published", f"{label}, but {stale}", "warning"
         if receivers and tone == "healthy":
+            #
+            # Both halves in the label (maintainer, 2026-09-20): a row that
+            # goes to nodes and to receivers said only the nodes' half, and
+            # the receivers' half was a detail nobody opened. Short, because
+            # the State column is the last one and the longest label already
+            # reaches its edge at 1400 px.
+            #
             noun = "receiver" if len(receivers) == 1 else "receivers"
-            return label, f"Published to {len(receivers)} {noun} too", tone
+            return "On nodes & published", f"{label}; published to {len(receivers)} {noun}", tone
         return label, detail, tone
 
     missing = _receivers_without_copy(receivers)

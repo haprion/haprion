@@ -164,6 +164,7 @@ class Confirming(RetargetRouteTestCase):
             receivers=("lb-01",),
         )
         self.assertEqual(response.status_code, 303)
+        # Two certificates changed: no single row to land on.
         self.assertEqual(response.headers["location"], "/certificates?view=registry")
         (job,) = self.queued
         self.assertEqual(job["operation"], "cert_target")

@@ -155,6 +155,11 @@ class RegistryCertificateView:
     #
     needs_publish: bool = False
     #
+    # True while the State cell shows a job that is still running - the row's
+    # badge then carries a spinner, on every action a button can start.
+    #
+    state_active: bool = False
+    #
     # Where the facts were read from, when that was not the certificate's own
     # source. An import registered before the import helper exists has nothing
     # at its source, and its facts come from the published cluster copy - the
@@ -391,6 +396,7 @@ def with_deletion_states(
             state_label=states[entry.identifier].label,
             state_detail=states[entry.identifier].detail,
             state_tone=states[entry.identifier].tone,
+            state_active=states[entry.identifier].active,
         )
         if entry.identifier in states
         and not states[entry.identifier].placeholder_only
@@ -433,6 +439,7 @@ def _placeholder_row(identifier: str, state: Any) -> RegistryCertificateView:
         state_label=state.label,
         state_detail=state.detail,
         state_tone=state.tone,
+        state_active=state.active,
         placeholder=True,
     )
 

@@ -183,6 +183,56 @@ class DeployingAnOlderCopy(DeleteRouteTestCase):
         self.assertEqual(job["cluster"], "beta")
         self.assertEqual(job["payload"], {"allow_vip_unknown": False})
 
+    def test_the_action_returns_to_the_row_it_was_pressed_on(self) -> None:
+        with (
+            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=self.stale_statuses()),
+        ):
+            client = self.writing_client(clusters=("alpha", "beta"))
+            page = client.get("/certificates?view=registry&open=example.com").text
+            self.assertIn('name="return_open" value="example.com"', page)
+
+            token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+            for opened, expected in (
+                ("example.com", "/certificates?view=registry&open=example.com"),
+                # Not a certificate ID: the address is not built from it.
+                ("../login", "/certificates?view=registry"),
+            ):
+                response = client.post(
+                    "/operations",
+                    data={
+                        "operation": "cert_deploy",
+                        "cluster": "beta",
+                        "return_to": "certificates",
+                        "return_open": opened,
+                        "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                        auth.CSRF_FIELD: token,
+                    },
+                    follow_redirects=False,
+                )
+                self.assertEqual(response.status_code, 303)
+                self.assertEqual(response.headers["location"], expected)
+
+    def test_a_running_deploy_is_said_on_the_row_and_the_page_refreshes(self) -> None:
+        #
+        # The person who pressed Deploy to nodes is looking at the row, not
+        # at the jobs page: the row spins and the page reloads until the
+        # deploy ends and the measured state takes over (2026-09-20).
+        #
+        running = queued(operation="cert_deploy", cluster="beta", state="running")
+        with (
+            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=self.stale_statuses()),
+            mock.patch("haproxy_ui.db.recent_jobs", return_value=[running]),
+        ):
+            client = self.writing_client(clusters=("alpha", "beta"))
+            page = client.get("/certificates?view=registry&open=example.com").text
+
+        self.assertIn('<span class="badge-spinner" aria-hidden="true"></span>Deploying<', page)
+        self.assertIn("Deploying certificates to beta", page)
+        self.assertNotIn(">Deploy to nodes<", page)
+        self.assertIn('data-refresh="true"', page)
+
     def test_multiple_stale_clusters_are_named_on_their_own_actions(self) -> None:
         stale = [
             status(node(("example.com", "b" * 64)), cluster="alpha"),
@@ -201,22 +251,6 @@ class DeployingAnOlderCopy(DeleteRouteTestCase):
         self.assertIn(">Deploy alpha<", page)
         self.assertIn(">Deploy beta<", page)
         self.assertNotIn(">Deploy to nodes<", page)
-
-    def test_a_running_cluster_job_replaces_the_action(self) -> None:
-        running = queued(operation="cert_deploy", cluster="beta", state="running")
-        with (
-            mock.patch("haproxy_ui.db.cluster_certificates", return_value=[self.stale_reading()]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=self.stale_statuses()),
-            mock.patch("haproxy_ui.db.recent_jobs", return_value=[running]),
-        ):
-            page = (
-                self.writing_client(clusters=("alpha", "beta"))
-                .get("/certificates?view=registry&open=example.com")
-                .text
-            )
-
-        self.assertNotIn(">Deploy to nodes<", page)
-        self.assertIn('data-busy="beta"', page)
 
 
 class TheConfirmationPage(DeleteRouteTestCase):

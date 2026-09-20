@@ -438,3 +438,25 @@ def _publish_row(result: Mapping[str, Any], identifier: str) -> Mapping[str, Any
 def _reason(row: Mapping[str, Any] | None) -> str:
     reason = row.get("reason") if row else None
     return reason if isinstance(reason, str) and reason else "See the jobs page"
+
+
+def deploy_states(rows: Iterable[Any], running: Mapping[str, str]) -> dict[str, DeletionState]:
+    """Rows whose behind clusters a deploy is being run for, said as Deploying.
+
+    `running` is the dashboard's in-flight map, cluster to label. Only the
+    rows a deploy will change - those measuring an older copy on one of the
+    busy clusters - are overlaid; the rest of the cluster's rows are being
+    re-checked too, but nothing about them will change, and a page where
+    every row spins says less than one where the pressed row does.
+    """
+
+    states: dict[str, DeletionState] = {}
+    for row in rows:
+        busy = [
+            cluster for cluster in getattr(row, "older_copy_clusters", ()) if cluster in running
+        ]
+        if busy:
+            states[row.identifier] = DeletionState(
+                "Deploying", f"Deploying certificates to {', '.join(busy)}", "info", True
+            )
+    return states

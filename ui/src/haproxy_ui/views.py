@@ -37,6 +37,7 @@ from fastapi import APIRouter, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from haproxy_mgmt import proxy_model
+from haproxy_mgmt.config import CERTIFICATE_ID
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haproxy_mgmt.proxy_model import (
     DEFAULT_FALL,
@@ -1682,6 +1683,16 @@ def build_router(config: Config) -> APIRouter:
         # refreshes itself while that is going on.
         #
         deleting = certificate_activity.deletion_states(recent)
+        #
+        # A cluster deploy asked for from a row is said on that row too, with
+        # the page refreshing until it ends: the person who pressed Deploy to
+        # nodes was looking at the row, not at the jobs page (2026-09-20).
+        #
+        if overview.registry is not None:
+            for identifier, state in certificate_activity.deploy_states(
+                overview.registry.certificates, running
+            ).items():
+                deleting.setdefault(identifier, state)
         overview = certificates.with_deletion_states(overview, deleting)
         refresh = any(
             deleting[entry.identifier].active
@@ -1893,8 +1904,11 @@ def build_router(config: Config) -> APIRouter:
                 detail={"operation": "cert_scep", "job": job.id, "resume": certificate_id},
             )
             connection.commit()
-        # A fixed address: the listing's State cell follows the job from there.
-        return RedirectResponse("/certificates?view=registry", status_code=303)
+        # A fixed address, with the row still open: the listing's State cell
+        # follows the job from there, on the row the button was pressed on.
+        return RedirectResponse(
+            f"/certificates?view=registry&open={certificate_id}", status_code=303
+        )
 
     @router.post("/certificates/{certificate_id}/publish")
     async def publish_certificate(
@@ -1962,7 +1976,9 @@ def build_router(config: Config) -> APIRouter:
                 },
             )
             connection.commit()
-        return RedirectResponse("/certificates?view=registry", status_code=303)
+        return RedirectResponse(
+            f"/certificates?view=registry&open={certificate_id}", status_code=303
+        )
 
     def _certificate_choices(request: Request, config: Config) -> certificate_form.IssueChoices:
         """The targets the form may offer, read the way the listing reads them."""
@@ -2266,7 +2282,18 @@ def build_router(config: Config) -> APIRouter:
                 detail={"operation": "cert_target", "job": job.id, **payload},
             )
             connection.commit()
-        return RedirectResponse("/certificates?view=registry", status_code=303)
+        #
+        # Back on the row when one certificate was changed; a selection of
+        # several has no single row to stand on.
+        #
+        named = payload.get("certificates")
+        opened = named[0] if isinstance(named, list) and len(named) == 1 else ""
+        return RedirectResponse(
+            f"/certificates?view=registry&open={opened}"
+            if opened
+            else "/certificates?view=registry",
+            status_code=303,
+        )
 
     # - Receivers (B142, 2026-09-18) ------------------------------------------
 
@@ -3616,6 +3643,7 @@ def build_router(config: Config) -> APIRouter:
         comment: str = Form(default="", max_length=4096),
         default_vip_confirmation: str = Form(default=""),
         return_to: str = Form(default="", max_length=64),
+        return_open: str = Form(default="", max_length=255),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
         """Ask for an operation. Say nothing about what happened to it.
@@ -3765,7 +3793,7 @@ def build_router(config: Config) -> APIRouter:
         # the interface moved them to one that could. The page says it now, so
         # it can keep them.
         #
-        return RedirectResponse(_return_path(return_to), status_code=303)
+        return RedirectResponse(_return_path(return_to, open=return_open), status_code=303)
 
     @router.post("/logout")
     def logout(
@@ -4841,14 +4869,20 @@ RETURN_PATHS = {
 }
 
 
-def _return_path(name: str) -> str:
+def _return_path(name: str, *, open: str = "") -> str:
     """The page an operation returns to, or the jobs page.
 
     The jobs page is the fallback rather than the default, so a form that has
     not been told where it lives still lands somewhere that shows what happened.
+    `open` names the registry row the button was on, so the person lands on
+    it still unfolded; only a certificate ID is accepted, and only for the
+    registry, since that is the one page with rows to unfold.
     """
 
-    return RETURN_PATHS.get(name, "/jobs")
+    path = RETURN_PATHS.get(name, "/jobs")
+    if name == "certificates" and open and CERTIFICATE_ID.fullmatch(open):
+        return f"{path}&open={open}"
+    return path
 
 
 def _refusal_page(

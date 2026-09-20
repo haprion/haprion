@@ -34,6 +34,15 @@ Write-Host "imported: $thumbprint"
 
 # Bind it. IIS keeps the binding by thumbprint, so this is what the renewal
 # actually changes.
+#
+# -SslFlags 0 binds the certificate to the address: one site per IP and port.
+# For several sites on one address the binding needs SNI, made with the
+# site's host name and -SslFlags 1 instead:
+#
+#     New-WebBinding -Name $SiteName -Protocol https -Port 443 `
+#         -HostHeader app.example.net -SslFlags 1
+#
+# and the certificate must carry that name.
 Import-Module WebAdministration
 $binding = Get-WebBinding -Name $SiteName -Protocol https
 if ($null -eq $binding) {

@@ -18,7 +18,10 @@ RELOAD=${RELOAD:-systemctl reload haproxy}
 staging=$(mktemp -d)
 trap 'rm -rf -- "$staging"' EXIT INT TERM
 
-sftp -q -i "$IDENTITY" -o IdentitiesOnly=yes "${ACCOUNT}@${MANAGER}" <<SFTP
+# -b - reads the commands from stdin as a batch: no prompt, the first command
+# that fails aborts the rest, and the exit status says so. Without -b, sftp
+# reads stdin as if typed and reports success whatever the gets did.
+sftp -q -b - -i "$IDENTITY" -o IdentitiesOnly=yes "${ACCOUNT}@${MANAGER}" <<SFTP
 lcd ${staging}
 get /${CERTIFICATE}/fullchain.pem
 get /${CERTIFICATE}/privkey.pem

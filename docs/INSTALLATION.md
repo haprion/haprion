@@ -675,6 +675,13 @@ receiver's box on the interface's certificate form and in *Publish to…*. A rec
 target change keeps its format unless a new one is stated; stating a different one rewrites that
 receiver's files in the new format at once.
 
+The bundle's password is not a protection. It is published beside the bundle, in the same
+directory with the same owner and mode, so whoever can read the one can read the other; it exists
+because a PKCS#12 import asks for one, and it is made once per pair and kept across renewals so
+the receiver's import script need not change. What protects the key is the same thing that
+protects a PEM pair: the receiver's account, its directory and the transport's lock. Publishing
+a `.pfx` to a receiver is exactly as sensitive as publishing `privkey.pem` to it.
+
 `source.kind` is `acme` for a certificate certbot renews and `import` for one signed elsewhere. An
 ACME certificate's `lineage` is its certbot lineage name; left out, it is the certificate ID, which
 is what a certificate issued from the interface gets. State it only where an existing lineage was

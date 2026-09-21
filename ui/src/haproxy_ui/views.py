@@ -2543,9 +2543,11 @@ def build_router(config: Config) -> APIRouter:
                 },
             )
             connection.commit()
-        return RedirectResponse(
-            f"/certificates?view=registry&open={renewal.identifier}", status_code=303
-        )
+        #
+        # Back to the list, the row closed: its State cell says "Renewing"
+        # from the table, and the detail was not asked for (2026-09-21).
+        #
+        return RedirectResponse("/certificates?view=registry", status_code=303)
 
     def _certificate_delete_gate(request: Request) -> AuthenticatedSession | Response:
         session = current_session(request)

@@ -120,9 +120,7 @@ class TheRoutes(DeleteRouteTestCase):
 
         response = self.renew(client, "example.com", confirm=True)
         self.assertEqual(response.status_code, 303, response.text)
-        self.assertEqual(
-            response.headers["location"], "/certificates?view=registry&open=example.com"
-        )
+        self.assertEqual(response.headers["location"], "/certificates?view=registry")
         (job,) = self.queued
         self.assertEqual(job["operation"], "cert_issue")
         self.assertIsNone(job["cluster"])

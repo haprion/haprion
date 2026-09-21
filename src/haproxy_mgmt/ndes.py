@@ -252,6 +252,17 @@ def _enroll(
     directory = request_directory(policy.state_root, certificate_id)
     if directory.is_symlink() or policy.state_root.is_symlink():
         raise NdesError("bad_input", "NDES state directories cannot be symlinks")
+    #
+    # A request the CA has answered is over: its certificate was imported
+    # and the directory should have gone with it, but one that stayed - an
+    # older run, a death between import and cleanup - is not a request to
+    # resume. Asking anew is a new key and a new request, which is what a
+    # renewal is; only a directory *without* the certificate is a request
+    # the CA still holds, and that one is refused below (2026-09-21, job
+    # 925: "resume it instead" about a certificate issued two days before).
+    #
+    if not resume and (directory / "request.json").exists() and (directory / "cert.pem").exists():
+        remove_request(policy.state_root, certificate_id)
     directory.mkdir(mode=0o700, exist_ok=True)
     info = directory.stat()
     if require_secure and (info.st_uid != 0 or info.st_mode & 0o077):

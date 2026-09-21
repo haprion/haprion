@@ -155,6 +155,26 @@ class EnrollmentStaging(unittest.TestCase):
         with self.assertRaises(ndes.NdesError):
             self.enroll()
 
+    def test_a_finished_request_left_behind_gives_way_to_a_new_one(self) -> None:
+        """Only a request the CA still holds is resumed; an answered one is over (job 925)."""
+
+        with (
+            mock.patch.object(ndes, "command"),
+            mock.patch.object(ndes, "status", return_value="CA_WORKING"),
+        ):
+            self.enroll()
+        (self.directory / "cert.pem").write_text("issued, and the cleanup never ran")
+        (self.directory / "privkey.pem").write_text("the old key")
+        with (
+            mock.patch.object(ndes, "command") as command,
+            mock.patch.object(ndes, "status", return_value="CA_WORKING"),
+        ):
+            enrolled = self.enroll()
+        self.assertEqual(enrolled.state, "pending")
+        self.assertEqual(command.call_args_list[1].args[2][0], "request")
+        self.assertFalse((self.directory / "cert.pem").exists())
+        self.assertFalse((self.directory / "privkey.pem").exists())
+
     def test_wrong_names_and_trust_are_refused_before_a_process_starts(self) -> None:
         with (
             mock.patch.object(ndes, "command"),

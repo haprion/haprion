@@ -547,6 +547,26 @@ def check_cert_issue_semantics(document: dict[str, object], path: Path) -> None:
     )
 
 
+def check_cert_import_semantics(document: dict[str, object], path: Path) -> None:
+    """An import is a leaf's facts and the publish that followed; held to the same rules."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done cert_import carries a result")
+        return
+    if not result["publish"]["certificates"]:
+        raise AssertionError(f"{path}: an import publishes the certificate it wrote")
+    for entry in result["publish"]["certificates"]:
+        if entry["id"] != result["certificate"]:
+            raise AssertionError(f"{path}: an import publishes exactly the certificate it wrote")
+    if result["not_after"] <= result["not_before"]:
+        raise AssertionError(f"{path}: a certificate expires after it starts")
+    check_cert_publish_semantics(
+        {"outcome": document["outcome"], "result": result["publish"]}, path
+    )
+
+
 def check_cert_target_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -667,6 +687,7 @@ SEMANTIC_CHECKS = {
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
     "cert_issue": check_cert_issue_semantics,
+    "cert_import": check_cert_import_semantics,
     "dns_profile_apply": check_dns_profile_apply_semantics,
     "ndes_profile_apply": check_dns_profile_apply_semantics,
     "cert_publish": check_cert_publish_semantics,
@@ -713,6 +734,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
     elif operation == "cert_issue":
         result["method"] = "http-01"
         result["domains"] = ["*." + str(result["id"])]
+    elif operation == "cert_import":
+        result["publish"]["certificates"][0]["id"] = "a-certificate-the-import-did-not-write"
     elif operation in {"dns_profile_apply", "ndes_profile_apply"}:
         result["plugin"] = "dns_example_login = leaked-example"
     elif operation == "cert_target":

@@ -1130,12 +1130,24 @@ The manager does not renew an imported certificate; its expiry is on the registr
 and a new import before that date is the maintainer's job. A certificate registered as `import`
 before this command existed, with its material placed by hand, is replaced the same way.
 
-**What the interface offers instead.** The interface has no key upload, by design: a private key
-pasted into a browser has been in a clipboard, a page and a request log. The planned CSR/SCEP
-flow creates the key on the manager and keeps it there; the returned certificate is public.
-Server preparation for that integration is described in 1.4.8; enrollment from the interface is
-not implemented yet. `haproxy-cert-import` is for the case where the key already exists
-somewhere else.
+**From the interface.** *Certificates → Import certificate* takes the same material as a file:
+PEM (certificate, key and chain in any order), PKCS#12 with its password, a DER certificate or a
+PKCS#7 bundle, at most 32 kB, plus the name and the targets. The web process seals the file
+against the installation's public key - the pair step 15 creates for DNS provider profiles -
+inside the request that carries it, and queues a `cert_import` job whose payload is the
+ciphertext. `haproxy-cert-import-helper`, run by the worker through its sudoers rule, opens the
+box with the private key and imports the material exactly as the command does. So the key is in
+clear in the web process for the length of one request and in the root helper; it is never in
+the database, the job row, the audit or the snapshot to a development platform, none of which
+the private key can reach. That is a narrower promise than *the web never sees a key*, and it is
+stated here because until this feature the interface refused a key on purpose; the command-line
+import remains the way in for whoever wants the key to stay off the web entirely.
+
+A file without a key is accepted for a name whose key the manager already holds: an imported
+certificate's renewal on the same key, or the certificate a CA returned for a request made here.
+On an imported certificate's row, *Upload certificate* takes exactly that - only the certificate;
+a file holding a key is refused there and pointed at the import page, where replacing the key is
+the stated intent. Enrollment from a Microsoft CA needs no file at all (1.4.8).
 
 ### 1.4.8 Preparing Microsoft AD CS / NDES for CSR enrollment
 
@@ -2904,7 +2916,7 @@ rollback rather than a pause.
 
 #### What the worker may run
 
-Twelve helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
+Thirteen helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 
 ```
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-helper ""
@@ -2919,9 +2931,10 @@ Twelve helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-delete-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-ndes-profile-apply-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-import-helper ""
 ```
 
-The last seven are the certificate jobs (1.4.3, 1.4.5, 1.4.6): they belong to no cluster, and
+The last eight are the certificate jobs (1.4.3, 1.4.5, 1.4.6): they belong to no cluster, and
 the queue runs one of them at a time. `cert-delete` is the only rule in the file that removes
 key material; 1.4.6 says what bounds it. The receiver helper (1.4.9), which makes accounts and
 edits sshd's and nginx's own configuration, is deliberately not in this file: it is reached over
@@ -2988,7 +3001,7 @@ the probe is unavailable rather than showing an empty result.
 
 #### The worker's way to the receiver helper
 
-The worker *can* `sudo` - twelve of its helpers go that way. The receiver helper
+The worker *can* `sudo` - thirteen of its helpers go that way. The receiver helper
 does not, for a reason on the other side of the boundary: a helper the worker
 starts inherits the worker unit's mount namespace, and that unit has
 `ProtectSystem=strict` with a short `ReadWritePaths` list. Registering a

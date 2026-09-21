@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cert_import",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "certificate": "shop.example.net",
+    "fingerprint_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "common_name": "shop.example.net",
+    "sans": ["shop.example.net", "www.example.net"],
+    "issuer": "CN=Example Issuing CA",
+    "not_before": "2026-08-01T00:00:00Z",
+    "not_after": "2026-12-01T00:00:00Z",
+    "chain_length": 1,
+    "replaced": false,
+    "publish": {
+      "certificates": [
+        {
+          "id": "shop.example.net",
+          "status": "published",
+          "fingerprint_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "not_after": "2026-12-01T00:00:00Z",
+          "targets": [
+            { "kind": "cluster", "name": "alpha", "changed": true },
+            { "kind": "receiver", "name": "lb-01", "changed": true }
+          ],
+          "error": null
+        }
+      ],
+      "changed_clusters": ["alpha"],
+      "deployments": [{ "cluster": "alpha", "exit_code": 0 }]
+    }
+  },
+  "warnings": [],
+  "error": null
+}

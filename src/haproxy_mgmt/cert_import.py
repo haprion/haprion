@@ -279,6 +279,139 @@ def read_pkcs12(path: Path, password_file: Path | None) -> str:
     raise ImportError_("bad_input", f"openssl could not read the PKCS#12: {last}")
 
 
+#
+# One file from the interface (C9, B165): whatever the operator was handed.
+# Bounded here as well as in the form, because the form is not the only
+# caller and a root-run parser is the last place to read an unbounded file.
+#
+MAX_UPLOAD_BYTES = 32 * 1024
+_PEM_MARK = (DELIMITER + "BEGIN ").encode("ascii")
+_PKCS7 = "PKCS7"
+
+
+def _pkcs7_certificates(text: str) -> list[str]:
+    """The certificates inside a PEM PKCS#7 block (`.p7b`), as blocks."""
+
+    printed = _openssl(["pkcs7", "-print_certs"], stdin=text, what="read the PKCS#7 bundle")
+    certificates, _keys = split_blocks(printed)
+    return certificates
+
+
+def _openssl_file(arguments: Sequence[str], *, what: str) -> str | None:
+    """Like `_openssl` for a file the caller named, or None when openssl refuses it.
+
+    None rather than an error because the caller is trying forms in turn and
+    the refusal of one is not the answer; a missing binary still raises.
+    """
+
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed binary, a private temporary file
+            [OPENSSL, *arguments],
+            capture_output=True,
+            text=True,
+            timeout=OPENSSL_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ImportError_(
+            "dependency_unavailable", f"openssl could not {what}: {exc}", exit_code=78
+        ) from exc
+    return completed.stdout if completed.returncode == 0 else None
+
+
+def read_bytes(data: bytes, *, password: str | None = None) -> tuple[list[str], list[str]]:
+    """Steps 1 from one uploaded file: every certificate and key block in it.
+
+    Four forms, told apart by what is in the bytes rather than by a name the
+    browser sent: PEM (any mix of certificate, key and PKCS#7 blocks), and
+    three binary DER forms tried in turn - PKCS#12 (`.pfx`/`.p12`, the only
+    one that can carry a key and the only one that takes a password), a
+    single X.509 certificate (`.cer`/`.crt`/`.der`), and a PKCS#7 bundle
+    (`.p7b`). The bytes touch the disk once, in a private 0600 file that is
+    gone before this returns, because `openssl pkcs12` reads a file and a key
+    in argv or a pipe name is a key somebody else can read.
+    """
+
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise ImportError_(
+            "bad_input", f"the file is larger than {MAX_UPLOAD_BYTES // 1024} kB; nothing was read"
+        )
+    if not data.strip():
+        raise ImportError_("bad_input", "the file is empty")
+    if _PEM_MARK in data:
+        try:
+            text = data.decode("ascii")
+        except UnicodeDecodeError:
+            raise ImportError_("bad_input", "the PEM file holds bytes that are not text") from None
+        certificates, keys = split_blocks(text)
+        for match in _BLOCK.finditer(text):
+            if match.group(1) == _PKCS7:
+                certificates.extend(_pkcs7_certificates(_block(_PKCS7, match.group(2))))
+        if not certificates and not keys:
+            raise ImportError_("bad_input", "no certificate or key block was found in the file")
+        return certificates, keys
+
+    directory = tempfile.mkdtemp(prefix="haproxy-cert-upload-")
+    try:
+        path = Path(directory) / "upload"
+        with open(path, "wb", opener=lambda p, f: os.open(p, f, 0o600)) as handle:
+            handle.write(data)
+        password_file: Path | None = None
+        if password:
+            password_file = Path(directory) / "password"
+            with open(password_file, "w", opener=lambda p, f: os.open(p, f, 0o600)) as handle:
+                handle.write(password + "\n")
+        try:
+            return split_blocks(read_pkcs12(path, password_file))
+        except ImportError_ as pkcs12_refusal:
+            if pkcs12_refusal.code != "bad_input":
+                raise
+            if password:
+                #
+                # A password was given, so PKCS#12 was meant: say what openssl
+                # said rather than sliding on to forms that take no password.
+                #
+                raise
+        for arguments, what in (
+            (["x509", "-inform", "DER", "-in", str(path)], "read the DER certificate"),
+            (
+                ["pkcs7", "-inform", "DER", "-in", str(path), "-print_certs"],
+                "read the PKCS#7 bundle",
+            ),
+        ):
+            printed = _openssl_file(arguments, what=what)
+            if printed is not None:
+                certificates, keys = split_blocks(printed)
+                if certificates:
+                    return certificates, keys
+        raise ImportError_(
+            "bad_input",
+            "the file is not PEM, PKCS#12, a DER certificate or a PKCS#7 bundle "
+            "(a PKCS#12 with a password needs the password)",
+        )
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def stored_key(store: Path, certificate_id: str) -> str | None:
+    """The key an earlier import of this ID left in the store, or None.
+
+    For the upload that carries no key - a renewal on the key the manager
+    already holds, or the certificate a CA returned for a CSR made here. Read
+    as root, returned to be matched, never reported.
+    """
+
+    path = store / certificate_id / PRIVKEY
+    if not path.is_file():
+        return None
+    try:
+        return path.read_text(encoding="ascii")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ImportError_(
+            "dependency_unavailable", f"the stored key could not be read: {exc}", exit_code=78
+        ) from exc
+
+
 # - Assembling and checking ------------------------------------------------
 
 

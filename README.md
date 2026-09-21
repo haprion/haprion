@@ -62,7 +62,10 @@ Privileged operations cross narrow, allowlisted helper interfaces. See
 [`docs/PRIVILEGE.md`](docs/PRIVILEGE.md) for the frozen target contract.
 
 Certificate issuance runs through an exact root helper around Certbot; DNS provider credentials
-entered in the web interface are sealed against a host key the web process cannot open. Renewal
+entered in the web interface are sealed against a host key the web process cannot open. A
+certificate file uploaded in the interface - with or without its private key - is sealed the same
+way inside the request that carries it, so the web process holds the key only for the duration of
+that request and stores nothing it can read back; only the root helper opens the file. Renewal
 stays Certbot's own timer; certificates the manager enrolls from a Microsoft CA over NDES/SCEP
 are renewed by the same daily run through the same enrollment path. Disaster recovery and VM rebuild workflows are deliberately outside the
 application scope.

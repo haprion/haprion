@@ -8,14 +8,21 @@ and sudoers output remain private deployment data.
 
 | Role | Production config group | sudo helpers | Private keys | Database write scope |
 |---|---|---|---|---|
-| web | no | none | none | validate requests and insert allowlisted jobs only |
+| web | no | none | none stored; a key in an upload is sealed before the request ends | validate requests and insert allowlisted jobs only |
 | worker | yes, read-only | exact mutation/completion helpers | none | claim, lease, state, result, audit |
 | poller | no | exact read-only metadata helpers | none | poll/cache/metrics only |
 | traffic collector | no | none | one node-log forced-command key | none |
 | human operator | deployment policy | explicit wrappers and `sudoedit` policy | none directly | not used by app |
 
 No app identity owns or can read SSH private keys, certificate private keys, validation dummy-key
-material, secret files, or raw backup archives.
+material, secret files, or raw backup archives. The one qualification is the certificate upload:
+the web process receives the file a person chose, seals it against the installation's public key
+inside that request, and hands the ciphertext to a job. The plaintext exists in the web process
+for the duration of the request and nowhere the web can read afterwards - not the job row, not
+the audit, not the snapshot to the development platform, whose own key pair cannot open it. The
+root helper is the only thing that opens the box. The promise is therefore *never stored, never
+readable back*, not *never seen*; it is the same exposure DNS provider credentials carry, and the
+command-line import remains for whoever wants the key to stay off the web entirely.
 
 Three separate node identities exist, one per thing the manager may ask a node to do: read status,
 pull a configuration release, pull a certificate. The status identity is the only one of the three
@@ -179,7 +186,8 @@ at all, which is a broken system reading as a secured one.
 Run these tests as the real installed identities, not only through mocks:
 
 1. web cannot read config, published releases, cluster configuration, certificate material,
-   backup archives, secrets, or any management SSH key
+   backup archives, secrets, or any management SSH key; a certificate file it receives in an
+   upload is sealed for root within the request and never stored in clear
 2. web cannot execute any management helper through sudo
 3. poller cannot read private trees or keys and cannot invoke a mutation helper
 4. worker cannot read any private key, PEM, secret, or raw backup archive

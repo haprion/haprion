@@ -33,7 +33,7 @@ from typing import Annotated, Any
 from urllib.parse import quote
 from uuid import UUID, uuid4, uuid5
 
-from fastapi import APIRouter, Form, HTTPException, Request, Response
+from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from haproxy_mgmt import proxy_model
@@ -53,6 +53,7 @@ from haproxy_ui import (
     certificate_activity,
     certificate_delete,
     certificate_form,
+    certificate_import_form,
     certificate_receivers,
     certificate_retarget,
     certificates,
@@ -88,6 +89,12 @@ logger = logging.getLogger("haproxy_ui")
 # request. Named here so there is exactly one, and it is never mutated.
 #
 NETWORK_SELECTION = Form(default=[])
+#
+# The one file input the interface has (B165): optional at the parameter so a
+# submission without a file is the form's refusal, not a 422 from the
+# framework. Named here for the reason the multi-select is.
+#
+UPLOADED_FILE = File(default=None)
 
 STATIC_DIRECTORY = Path(__file__).parent / "static"
 
@@ -1845,6 +1852,257 @@ def build_router(config: Config) -> APIRouter:
         #
         return RedirectResponse("/certificates?view=registry", status_code=303)
 
+    #
+    # A certificate somebody already has (C9, B165): a file, a name, the
+    # targets. Its own page and its own button, because "import" and "new"
+    # are different questions - one is a thing that exists, the other a
+    # thing to be made - and the same page with a different middle.
+    #
+    @router.get("/certificates/import", response_class=HTMLResponse)
+    def import_certificate_form(request: Request) -> Response:
+        return _certificate_import_page(request, config, certificate_import_form.EMPTY_FORM)
+
+    @router.post("/certificates/import", response_class=HTMLResponse)
+    async def import_certificate_submit(
+        request: Request,
+        name: str = Form(default="", max_length=255),
+        password: str = Form(default="", max_length=256),
+        cluster: Sequence[str] = Form(default=()),
+        receiver: Sequence[str] = Form(default=()),
+        format: Sequence[str] = Form(default=()),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+        file: UploadFile | None = UPLOADED_FILE,
+    ) -> Response:
+        """Seal the file and queue one `cert_import` job, or draw the form again saying why not.
+
+        The file is read once, bounded, into memory, sealed against the
+        installation's public key, and dropped: the payload the job carries
+        is the box. The same four refusals `/certificates/new` makes first.
+        """
+
+        data, filename = await _uploaded_bytes(file)
+        form = certificate_import_form.ImportForm(
+            name=name,
+            password=password,
+            clusters=tuple(cluster),
+            receivers=tuple(receiver),
+            formats=tuple(format),
+            filename=filename,
+            data=data,
+        )
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if not config.management_writes:
+            return PlainTextResponse("Not found", status_code=404)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        if session.role != "admin":
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+
+        public_key = _dns_public_key()
+        if public_key is None:
+            return _certificate_import_page(
+                request,
+                config,
+                form,
+                problem="The installation's sealing key is not configured, so a file cannot "
+                "be uploaded. Import it with haproxy-cert-import on the manager.",
+            )
+        choices = _certificate_choices(request, config)
+        try:
+            payload = certificate_import_form.payload_from_form(
+                certificate_import_form.normalise(form),
+                choices,
+                public_key,
+                replaceable=choices.imported,
+            )
+        except certificate_form.FormProblem as problem:
+            return _certificate_import_page(request, config, form, problem=str(problem))
+        return _queue_import(request, session, key, payload, form=form)
+
+    @router.post("/certificates/{certificate_id}/upload")
+    async def upload_certificate(
+        request: Request,
+        certificate_id: str,
+        csrf_token: Annotated[str, Form(max_length=128)],
+        idempotency_key: Annotated[str, Form(max_length=64)],
+        file: UploadFile | None = UPLOADED_FILE,
+    ) -> Response:
+        """A certificate for a row whose key the manager holds: a renewal, or a CSR's answer.
+
+        Only the file. The name is the row's and the targets stay as they
+        are; a key in the file is refused here and pointed at the import
+        page, where replacing the key is the stated intent.
+        """
+
+        data, _filename = await _uploaded_bytes(file)
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if not config.management_writes:
+            return PlainTextResponse("Not found", status_code=404)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token) or session.role != "admin":
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+
+        row = _registry_views(request, config).get(certificate_id)
+        if row is None or row.placeholder:
+            return PlainTextResponse("Certificate is not in the registry", status_code=404)
+        if row.source_kind != "import":
+            return _refusal_page(
+                request,
+                config,
+                f"{certificate_id} is not an imported certificate; its material is not "
+                "replaced by an upload.",
+                back=f"/certificates?view=registry&open={certificate_id}",
+            )
+        public_key = _dns_public_key()
+        if public_key is None:
+            return _refusal_page(
+                request,
+                config,
+                "The installation's sealing key is not configured, so a file cannot be "
+                "uploaded. Import it with haproxy-cert-import on the manager.",
+                back=f"/certificates?view=registry&open={certificate_id}",
+            )
+        try:
+            certificate_import_form.check_file(data, key_allowed=False)
+            payload = certificate_import_form.sealed_payload(
+                public_key,
+                certificate_id=certificate_id,
+                data=data,
+                clusters=[t.name for t in row.targets if t.kind == "cluster"],
+                receivers=[t.name for t in row.targets if t.kind == "receiver"],
+            )
+        except certificate_form.FormProblem as problem:
+            return _refusal_page(
+                request,
+                config,
+                str(problem),
+                back=f"/certificates?view=registry&open={certificate_id}",
+            )
+        return _queue_import(request, session, key, payload, open_row=certificate_id)
+
+    async def _uploaded_bytes(file: UploadFile | None) -> tuple[bytes, str]:
+        """The file's bytes, read once and bounded one byte past the limit.
+
+        One byte past, so the form can say "too large" rather than silently
+        judging a truncated file. Reading stops there; the rest of a large
+        upload is never held.
+        """
+
+        if file is None:
+            return b"", ""
+        data = await file.read(certificate_import_form.MAX_UPLOAD_BYTES + 1)
+        await file.close()
+        return data, file.filename or ""
+
+    def _queue_import(
+        request: Request,
+        session: AuthenticatedSession,
+        key: UUID,
+        payload: dict[str, Any],
+        *,
+        form: certificate_import_form.ImportForm | None = None,
+        open_row: str = "",
+    ) -> Response:
+        """Queue the sealed upload; the same refusals the issue form makes, said the same way."""
+
+        try:
+            operations.prepare(
+                operation="cert_import", cluster=None, request_id=uuid4(), payload=payload
+            )
+        except operations.BadPayload:
+            return PlainTextResponse("Invalid operation parameters", status_code=400)
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="cert_import",
+                    cluster=None,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.CertificateBusy:
+                connection.rollback()
+                busy = (
+                    "A certificate job is already running. Wait for it to finish, then try again."
+                )
+                if form is not None:
+                    return _certificate_import_page(request, config, form, problem=busy)
+                return PlainTextResponse(busy, status_code=409)
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=session.username,
+                action="queue_job",
+                cluster=None,
+                request_id=job.request_id,
+                detail={"operation": "cert_import", "job": job.id, "certificate": payload["id"]},
+            )
+            connection.commit()
+        if open_row:
+            return RedirectResponse(f"/certificates?view=registry&open={open_row}", status_code=303)
+        return RedirectResponse("/certificates?view=registry", status_code=303)
+
+    def _certificate_import_page(
+        request: Request,
+        config: Config,
+        form: certificate_import_form.ImportForm,
+        *,
+        problem: str = "",
+    ) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if not config.management_writes:
+            return PlainTextResponse("Not found", status_code=404)
+        if session.role != "admin":
+            return PlainTextResponse("Refused", status_code=403)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        choices = _certificate_choices(request, config)
+        with request.app.state.pool.connection() as connection:
+            recent = db.recent_jobs(connection)
+        #
+        # The file is never redrawn: a browser will not take a value for a
+        # file input, and the bytes have no business in a page. The person
+        # picks it again; everything typed is kept.
+        #
+        return TEMPLATES.TemplateResponse(
+            request,
+            "certificate-import.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "form": certificate_import_form.normalise(form),
+                "choices": choices,
+                "problem": problem,
+                "accept": certificate_import_form.ACCEPT,
+                "max_kb": certificate_import_form.MAX_UPLOAD_BYTES // 1024,
+                "sealing_available": _dns_public_key() is not None,
+                "certificate_job": jobs.certificate_in_flight(recent),
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
     @router.post("/certificates/{certificate_id}/resume")
     async def resume_enrollment(
         request: Request,
@@ -2024,6 +2282,13 @@ def build_router(config: Config) -> APIRouter:
             if overview.registry
             else {},
             registered=tuple(entry.identifier for entry in overview.registry.certificates)
+            if overview.registry
+            else (),
+            imported=tuple(
+                entry.identifier
+                for entry in overview.registry.certificates
+                if entry.source_kind == "import" and not entry.placeholder
+            )
             if overview.registry
             else (),
         )

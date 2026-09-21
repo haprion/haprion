@@ -767,6 +767,11 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .registry-detail-grid strong { color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
 .registry-detail-grid span { color: var(--text-primary); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
 .registry-detail-targets { grid-column: 1 / -1; }
+/* The row's renewal upload (B165): a file, a button and one sentence, on
+   one line where the row is wide enough and folded where it is not. */
+.registry-detail-upload { grid-column: 1 / -1; }
+.certificate-upload-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.certificate-upload-form input[type="file"] { max-width: 100%; font-size: 12.5px; }
 /* A cluster and a receiver are different kinds of destination, and the word
    says which rather than a separator the reader has to learn. */
 .target-kind { display: inline-block; padding: 1px 6px; border-radius: 999px; background: var(--unknown-soft); color: var(--muted-strong); font-size: 10px; font-weight: 650; letter-spacing: 0.03em; text-transform: uppercase; }

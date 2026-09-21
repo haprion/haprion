@@ -108,6 +108,11 @@ _OPERATION_OUTCOMES = {
     #
     "cert_issue": frozenset({"done", "failed", "blocked"}),
     #
+    # `cert_import` publishes exactly the certificate it has just written,
+    # as `cert_issue` does, so the same narrower set is the true one.
+    #
+    "cert_import": frozenset({"done", "failed", "blocked"}),
+    #
     # `dns_profile_apply` writes one file or refuses to; there is no half.
     #
     "ndes_profile_apply": frozenset({"done", "failed", "blocked"}),

@@ -15,13 +15,16 @@ the one that was asked for.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import re
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from haproxy_mgmt import dns_profiles, ndes_profiles
+from haproxy_mgmt import cert_upload, dns_profiles, ndes_profiles
 from haproxy_mgmt.cli import (
     cert_delete_helper,
     cert_deploy,
@@ -38,6 +41,9 @@ from haproxy_mgmt.cli import (
 )
 from haproxy_mgmt.config import CERTIFICATE_ID, RECEIVER_FORMATS, RECEIVER_ID, RECEIVER_TRANSPORTS
 from haproxy_mgmt.proxy_model import NAME
+
+# The installation key's identifier as `dns_profile_keys.key_id_of` makes it.
+KEY_ID = re.compile(r"^[0-9a-f]{16}$")
 
 #
 # How long an operation may run before the worker stops it. Deliberately
@@ -158,6 +164,7 @@ CERTIFICATE_OPERATIONS = frozenset(
         "cert_delete",
         "cert_scep",
         "cert_receiver",
+        "cert_import",
     }
 )
 
@@ -308,6 +315,45 @@ def _certificate_operation(
                 clusters=clusters,
                 receivers=receivers,
                 resume=resume,
+                formats=formats,
+            ),
+        )
+
+    if operation == "cert_import":
+        #
+        # The file rides sealed in the payload (B165): the web sealed it
+        # against the installation's public key before the job was queued,
+        # and nothing that reads the queue can open it. The ID and key ID
+        # travel beside it so the helper can hold the box to the job before
+        # it looks inside; a job the payload cannot name is refused here.
+        #
+        _only(payload, "id", "key_id", "ciphertext", "clusters", "receivers", "formats")
+        certificate_id = payload.get("id")
+        if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
+            raise BadPayload("id must be a certificate ID")
+        key_id = payload.get("key_id")
+        if not isinstance(key_id, str) or not KEY_ID.fullmatch(key_id):
+            raise BadPayload("key_id must be a key ID")
+        encoded = payload.get("ciphertext")
+        if not isinstance(encoded, str) or len(encoded) > cert_upload.MAX_CIPHERTEXT * 2:
+            raise BadPayload("ciphertext must be base64")
+        try:
+            ciphertext = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise BadPayload("ciphertext must be base64") from exc
+        if not ciphertext or len(ciphertext) > cert_upload.MAX_CIPHERTEXT:
+            raise BadPayload("ciphertext is empty or larger than an upload can be")
+        clusters, receivers = _targets(payload)
+        formats = _formats(payload, receivers)
+        return Prepared(
+            argv=(cert_upload.SUDO, *SUDO_FLAGS, cert_upload.HELPER),
+            request=cert_upload.build_request(
+                str(request_id),
+                certificate_id=certificate_id,
+                key_id=key_id,
+                ciphertext=ciphertext,
+                clusters=clusters,
+                receivers=receivers,
                 formats=formats,
             ),
         )

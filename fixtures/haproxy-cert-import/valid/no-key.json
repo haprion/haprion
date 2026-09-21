@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "failed",
+  "operation": "cert_import",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": null,
+  "error": {
+    "code": "no_key",
+    "message": "the file holds no private key and 'shop.example.net' has none on the manager. Upload the file with its key, or import the pair with haproxy-cert-import.",
+    "details": {}
+  },
+  "warnings": []
+}

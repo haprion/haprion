@@ -1,13 +1,14 @@
 {
   "schema_version": 1,
   "requires": {
-    "database_head": "0032",
+    "database_head": "0033",
     "database_revisions": [
       "0028",
       "0029",
       "0030",
       "0031",
-      "0032"
+      "0032",
+      "0033"
     ],
     "engine_api": 2,
     "node_api": 1,
@@ -32,7 +33,8 @@
       "haproxy-dns-profile-apply-helper",
       "haproxy-cert-delete-helper",
       "haproxy-ndes-profile-apply-helper",
-      "haproxy-cert-scep-helper"
+      "haproxy-cert-scep-helper",
+      "haproxy-cert-import-helper"
     ],
     "socket_helpers": {
       "haproxy-cert-receiver-helper": "/run/haproxy-mgmt/cert-receiver.sock"

@@ -118,6 +118,11 @@ def deletion_states(
             if isinstance(identifier, str):
                 consider(identifier, _enrollment_state_of(job, moment))
             continue
+        if job.operation == "cert_import":
+            identifier = job.payload.get("id")
+            if isinstance(identifier, str):
+                consider(identifier, _import_state_of(job, moment))
+            continue
         if job.operation == "cert_issue":
             requested = _issue_placeholder(job.payload)
             if requested is not None:
@@ -169,6 +174,49 @@ def _enrollment_state_of(job: Job, now: datetime) -> DeletionState | None:
             "critical",
             False,
             placeholder,
+        )
+    return None
+
+
+def _import_state_of(job: Job, now: datetime) -> DeletionState | None:
+    """An uploaded file being imported, just imported, or just refused (B165).
+
+    The payload names the certificate and nothing the page can draw - the
+    file is sealed - so the placeholder carries the ID as its one name and
+    the targets chosen; the row's own reading replaces it at the next poll.
+    """
+
+    identifier = job.payload.get("id")
+    placeholder = Placeholder(
+        "Imported",
+        "import",
+        False,
+        (identifier,) if isinstance(identifier, str) else (),
+        _names(job.payload, "clusters"),
+        _names(job.payload, "receivers"),
+    )
+    if job.state in {"pending", "running"}:
+        return DeletionState(
+            "Importing", "The uploaded file is being imported", "info", True, placeholder
+        )
+    if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
+        return None
+    if job.state == "failed":
+        return DeletionState(
+            "Import failed",
+            _failure(job, "The import job failed"),
+            "critical",
+            False,
+            placeholder,
+        )
+    if job.state == "done":
+        return DeletionState(
+            "Imported",
+            "Imported; the listing lists it at the next poll",
+            "info",
+            True,
+            placeholder,
+            placeholder_only=True,
         )
     return None
 

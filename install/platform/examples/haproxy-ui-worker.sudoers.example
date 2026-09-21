@@ -76,3 +76,6 @@ WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-ndes-prof
 
 # NDES enrollment: the challenge is read from the root-only profile record, never from the request.
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper ""
+
+# Certificate upload (B165): the file, sealed for root, arrives only on stdin.
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-import-helper ""

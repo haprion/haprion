@@ -175,6 +175,13 @@ class RegistryCertificateView:
     # box to tick and nothing to delete.
     #
     placeholder: bool = False
+    #
+    # The registry's own word for where the material comes from (`acme`,
+    # `import`), beside `lifecycle`, which is measured against certbot's
+    # archive. The row's upload (B165) is offered on an import and nothing
+    # else, and that is the source's kind, not the lifecycle's.
+    #
+    source_kind: str = ""
 
     @property
     def lifecycle_label(self) -> str:
@@ -1008,6 +1015,7 @@ def _registry_certificate(
     return RegistryCertificateView(
         identifier=identifier,
         source_label=_source_label(kind, source),
+        source_kind=kind,
         lifecycle=lifecycle if readable else "unknown",
         wildcard=any(name.startswith("*.") for name in sans),
         common_name=_text(entry.get("common_name"), identifier),

@@ -163,7 +163,6 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         #
         self.assertEqual(page.count('class="segment-reserve" aria-hidden="true"'), 2)
 
-
     def test_the_buttons_share_the_pinned_strip_rather_than_the_heading(self) -> None:
         #
         # Asked for on 2026-09-20: `New certificate` and the provider pages
@@ -171,9 +170,7 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         # pinned row as the switch now - one fixed row, not two - and the
         # heading keeps only the badges that say what kind of page this is.
         #
-        client = self.client(
-            replace(configuration(), clusters=("alpha",), management_writes=True)
-        )
+        client = self.client(replace(configuration(), clusters=("alpha",), management_writes=True))
         self.sign_in(client)
         page = client.get("/certificates?view=registry").text
 
@@ -182,7 +179,12 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         strip = strip.split("</nav>", 1)[1].split("</div></div>", 1)[0]
         self.assertNotIn("secondary-button", heading)
         self.assertTrue(strip.startswith('<div class="certificate-actions">'))
-        for href in ("/dns-profiles", "/ndes-profiles", "/certificates/receivers", "/certificates/new"):
+        for href in (
+            "/dns-profiles",
+            "/ndes-profiles",
+            "/certificates/receivers",
+            "/certificates/new",
+        ):
             self.assertIn(f'<a class="secondary-button" href="{href}">', strip)
         self.assertEqual(page.count('class="secondary-button" href="/certificates/new"'), 1)
 
@@ -218,9 +220,7 @@ class WithoutARegistryThePageIsWhatItWas(LoginTestCase):
         # No registry, no strip to pin them in - and no `New certificate`,
         # because the engine would refuse the job.
         #
-        client = self.client(
-            replace(configuration(), clusters=("alpha",), management_writes=True)
-        )
+        client = self.client(replace(configuration(), clusters=("alpha",), management_writes=True))
         self.sign_in(client)
         page = client.get("/certificates").text
 

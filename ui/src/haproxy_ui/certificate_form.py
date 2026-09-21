@@ -105,6 +105,11 @@ class IssueChoices:
     # most likely wanted - another target for the certificate that exists.
     #
     registered: tuple[str, ...] = ()
+    #
+    # Of those, the ones whose material is imported: the import page may
+    # replace them (a rotated key, a renewed certificate), and no other.
+    #
+    imported: tuple[str, ...] = ()
 
 
 EMPTY_FORM = IssueForm(domain="", method="dns-01", dns_profile="", clusters=(), receivers=())

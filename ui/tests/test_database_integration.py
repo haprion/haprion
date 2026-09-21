@@ -36,7 +36,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0032",))
+            self.assertEqual(cursor.fetchone(), ("0033",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -692,6 +692,17 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
         self.assertIsNone(job.cluster)
         with self.assertRaises(psycopg.errors.CheckViolation):
             self.queue("cert_receiver", "alpha", receiver="lb-02.example.net", action="remove")
+
+    def test_an_import_job_is_queued_with_no_cluster(self) -> None:
+        """Migration 0033: `cert_import` is on the list, and clusterless."""
+
+        job = self.queue("cert_import", None, id="shop.example", key_id="0" * 16, ciphertext="AA==")
+
+        self.assertIsNone(job.cluster)
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.queue(
+                "cert_import", "alpha", id="shop.example", key_id="0" * 16, ciphertext="AA=="
+            )
 
     def test_a_cluster_job_without_a_cluster_is_refused(self) -> None:
         with self.assertRaises(psycopg.errors.CheckViolation):

@@ -301,7 +301,13 @@ def run(
     if retention < 1:
         raise BackupRunError("backup retention must be positive")
 
-    version = (now or datetime.now(UTC)).astimezone(UTC).strftime("%Y-%m-%d_%H-%M-%S")
+    #
+    # The archive is named on the manager's clock, like the timer that takes it
+    # and every archive the fleet-wide script left behind. Names sort the
+    # listing and drive retention, so one stamped in another zone would file
+    # itself two hours into the past and be pruned before its elders.
+    #
+    version = (now or datetime.now(UTC)).astimezone().strftime("%Y-%m-%d_%H-%M-%S")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock_path.open("a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)

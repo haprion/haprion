@@ -125,3 +125,45 @@ class TheServiceTemplateCanTakeTheLock(unittest.TestCase):
         )
         line = next(line for line in installer.splitlines() if line.startswith("ReadWritePaths="))
         self.assertIn(str(state_backup.LOCK_PATH.parent), line.split("=", 1)[1].split())
+
+
+class TheArchiveIsNamedOnTheManagersClock(unittest.TestCase):
+    """B169: names sort the listing and drive retention, so they share one clock.
+
+    The first cluster run on a manager (2026-09-21 22:54 CEST) filed itself as
+    `20-54-47`, two hours before the archive the fleet-wide script had just
+    taken - newer, but sorted older, and next in line to be pruned.
+    """
+
+    def test_the_stamp_follows_the_host_zone_not_utc(self) -> None:
+        import os
+        import time
+        from datetime import UTC, datetime
+
+        previous = os.environ.get("TZ")
+        os.environ["TZ"] = "Europe/Stockholm"
+        time.tzset()
+        try:
+            moment = datetime(2026, 9, 21, 20, 54, 47, tzinfo=UTC)
+            self.assertEqual(moment.astimezone().strftime("%H-%M-%S"), "22-54-47")
+            cluster = mock.Mock(nodes=())
+            with (
+                mock.patch.object(state_backup, "_key_is_private", return_value=True),
+                mock.patch.object(state_backup, "_root_is_private", return_value=True),
+                tempfile.TemporaryDirectory() as raw,
+            ):
+                result = state_backup.run(
+                    "alpha",
+                    cluster,
+                    DeployIdentity(user="svc-backup", key=Path("/root/backup-key")),
+                    Path(raw),
+                    now=moment,
+                    lock_path=Path(raw) / "lock",
+                )
+            self.assertEqual(result.version, "2026-09-21_22-54-47")
+        finally:
+            if previous is None:
+                del os.environ["TZ"]
+            else:
+                os.environ["TZ"] = previous
+            time.tzset()

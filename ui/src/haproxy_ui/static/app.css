@@ -679,6 +679,11 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .schedule-facts { color: var(--muted); }
 .schedule-facts code { color: var(--text-primary); font-size: 11px; }
 .schedule-help { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin-left: auto; border-radius: 999px; background: var(--unknown-soft); color: var(--muted); font-size: 11px; font-weight: 700; cursor: help; }
+.backup-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 14px; }
+.backup-schedule-form { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.backup-schedule-form label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.backup-schedule-form input[type="time"] { padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); }
+.backup-schedule-form input[type="checkbox"] { accent-color: var(--text-strong); }
 
 .backup-node-table td, .archive-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .node-detail { margin-left: 8px; color: var(--muted); font-size: 11px; }

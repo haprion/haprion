@@ -90,6 +90,8 @@ _REQUIRED_ENVELOPE_FIELDS = frozenset(
     }
 )
 _OPERATION_OUTCOMES = {
+    "backup_run": frozenset({"done", "partial", "failed"}),
+    "backup_schedule": frozenset({"done", "failed"}),
     "deploy": frozenset({"done", "partial", "failed", "blocked"}),
     "cert_deploy": frozenset({"done", "partial", "failed", "blocked"}),
     "revert": frozenset({"done", "failed", "blocked"}),

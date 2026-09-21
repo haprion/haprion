@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haproxy-backup-run.schema.json",
+  "title": "HAProxy node backup run result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "backup_run" },
+        "outcome": { "enum": ["done", "partial", "failed"] }
+      }
+    }
+  ],
+  "additionalProperties": true
+}

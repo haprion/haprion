@@ -128,8 +128,71 @@ cert_deploy_identity:
   key: \"${KEY_DIR}/${CERT_DEPLOY_KEY}\""
 fi
 
+if [[ -n "${BACKUP_ROOT:-}" ]]; then
+    require_vars BACKUP_USER NODE_BACKUP_KEY
+    valid_abs_path "$BACKUP_ROOT" || die "not an absolute path without '..': ${BACKUP_ROOT}"
+    ensure_dir "$BACKUP_ROOT" "root:root" 700
+    policy+="
+
+# Node state archives contain password hashes and private SSH keys. A separate
+# forced-command identity fetches them, and only root can traverse this root.
+backup_root: ${BACKUP_ROOT}
+backup_identity:
+  user: \"${BACKUP_USER}\"
+  key: \"${KEY_DIR}/${NODE_BACKUP_KEY}\""
+fi
+
 ensure_dir "$(dirname "$POLICY_FILE")" "root:root" 755
 install_file "$POLICY_FILE" "root:root" 644 "$policy"
+
+if [[ -n "${BACKUP_ROOT:-}" ]]; then
+    backup_service="[Unit]
+Description=HAProxy Manager node state backup for cluster %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-state-backup -c %i
+User=root
+Group=root
+UMask=0077
+TimeoutStartSec=12min
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=read-only
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=${BACKUP_ROOT}
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native"
+    install_file /etc/systemd/system/haproxy-state-backup@.service root:root 644 "$backup_service"
+    backup_timer="[Unit]
+Description=Schedule HAProxy Manager node state backup for cluster %i
+
+[Timer]
+Unit=haproxy-state-backup@%i.service
+Persistent=yes
+AccuracySec=1min
+RandomizedDelaySec=5min"
+    backup_timer+="
+
+[Install]
+WantedBy=timers.target"
+    install_file /etc/systemd/system/haproxy-state-backup@.timer root:root 644 "$backup_timer"
+    systemctl daemon-reload
+fi
 
 step "Validation certificate"
 

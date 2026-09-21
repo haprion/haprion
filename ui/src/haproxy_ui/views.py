@@ -3824,6 +3824,8 @@ def build_router(config: Config) -> APIRouter:
             #
             captured=captured_at is not None,
         )
+        with request.app.state.pool.connection() as connection:
+            running = jobs.in_flight(db.recent_jobs(connection))
         return TEMPLATES.TemplateResponse(
             request,
             "backups.html",
@@ -3832,6 +3834,7 @@ def build_router(config: Config) -> APIRouter:
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
                 "backups": overview,
+                "in_flight": running,
                 "section": "backups",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
@@ -4051,6 +4054,8 @@ def build_router(config: Config) -> APIRouter:
         version: str = Form(default="", max_length=16),
         expected_commit: str = Form(default="", max_length=64),
         allow_vip_unknown: str = Form(default=""),
+        backup_time: str = Form(default="", max_length=5),
+        backup_enabled: str = Form(default=""),
         vip_name: Sequence[str] = Form(default=()),
         vip_address: Sequence[str] = Form(default=()),
         vip_source: Sequence[str] = Form(default=()),
@@ -4103,6 +4108,10 @@ def build_router(config: Config) -> APIRouter:
         payload: dict[str, Any] = {}
         if operation in {"deploy", "cert_deploy"}:
             payload["allow_vip_unknown"] = allow_vip_unknown == "on"
+        elif operation == "backup_run":
+            payload = {}
+        elif operation == "backup_schedule":
+            payload = {"time": backup_time, "enabled": backup_enabled == "on"}
         elif operation == "revert":
             if not version.isdigit():
                 return PlainTextResponse("A version is required", status_code=400)
@@ -5288,6 +5297,7 @@ RETURN_PATHS = {
     "proxies": "/proxies",
     "certificates": "/certificates?view=registry",
     "history": "/history",
+    "backups": "/backups",
     "network": "/network",
     "jobs": "/jobs",
 }

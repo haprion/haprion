@@ -24,8 +24,16 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from haproxy_mgmt import cert_request_state, cert_upload, dns_profiles, ndes_profiles
+from haproxy_mgmt import (
+    backup_schedule_write,
+    cert_request_state,
+    cert_upload,
+    dns_profiles,
+    ndes_profiles,
+)
 from haproxy_mgmt.cli import (
+    backup_job_ask,
+    backup_job_helper,
     cert_delete_helper,
     cert_deploy,
     cert_issue_helper,
@@ -67,6 +75,7 @@ SUDO_FLAGS = ("-n", "--")
 # to is root, on the other side of a socket (B163).
 #
 RECEIVER_CLIENT = (sys.executable, "-m", cert_receiver_ask.__name__)
+BACKUP_CLIENT = (sys.executable, "-m", backup_job_ask.__name__)
 
 
 class UnknownOperation(Exception):
@@ -703,6 +712,30 @@ def prepare(
     #
     if cluster is None:
         raise BadPayload(f"{operation} acts on a cluster and this job names none")
+
+    if operation == "backup_run":
+        _only(payload)
+        return Prepared(
+            argv=BACKUP_CLIENT,
+            request=backup_job_helper.build_run_request(cluster, str(request_id)),
+        )
+
+    if operation == "backup_schedule":
+        _only(payload, "time", "enabled")
+        value = payload.get("time")
+        if not isinstance(value, str):
+            raise BadPayload("time must be HH:MM in UTC")
+        try:
+            backup_schedule_write.calendar(value)
+        except backup_schedule_write.ScheduleWriteError as exc:
+            raise BadPayload(str(exc)) from exc
+        enabled = _flag(payload, "enabled", default=False)
+        return Prepared(
+            argv=BACKUP_CLIENT,
+            request=backup_job_helper.build_schedule_request(
+                cluster, str(request_id), time=value, enabled=enabled
+            ),
+        )
 
     if operation == "deploy":
         _only(payload, "allow_vip_unknown")

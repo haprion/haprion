@@ -19,6 +19,7 @@ this page can be believed.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -66,6 +67,7 @@ class NodeBackupsView:
     latest: str
     age_label: str
     count: int
+    shown_count: int
     total_size: str
 
 
@@ -83,7 +85,10 @@ class BackupClusterView:
     stale: bool
     nodes: tuple[NodeBackupsView, ...]
     archives: tuple[ArchiveView, ...]
+    retained_count: int
+    shown_count: int
     truncated: bool
+    schedule: ScheduleView | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +102,8 @@ class ScheduleView:
     last_run: str
     next_run: str
     outcome: str
+    time: str
+    enabled: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,12 +112,6 @@ class BackupOverview:
     cluster_count: int
     node_count: int
     protected_count: int
-    #
-    # One timer takes every node's backup, so this is a manager-wide fact that
-    # every cluster's listing repeats. Shown once, above the cards, rather than
-    # copied onto each of them.
-    #
-    schedule: ScheduleView | None
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -213,6 +214,7 @@ def _node_state(
     available: bool,
     error: str | None,
     archives: tuple[ArchiveView, ...],
+    retained_count: int,
     newest_at: datetime | None,
     now: datetime,
 ) -> tuple[str, Tone, str]:
@@ -231,7 +233,11 @@ def _node_state(
         return "Stale backups", "critical", f"Newest archive is {relative_age(newest_at, now)}"
     if age > BACKUP_WARNING:
         return "Backup overdue", "warning", f"Newest archive is {relative_age(newest_at, now)}"
-    return "Current", "healthy", f"{len(archives)} archive{'' if len(archives) == 1 else 's'} kept"
+    return (
+        "Current",
+        "healthy",
+        f"{retained_count} archive{'' if retained_count == 1 else 's'} kept",
+    )
 
 
 def _node_view(value: Any, *, now: datetime) -> tuple[NodeBackupsView, tuple[ArchiveView, ...]]:
@@ -240,16 +246,25 @@ def _node_view(value: Any, *, now: datetime) -> tuple[NodeBackupsView, tuple[Arc
     raw = node.get("backups")
     listed: list[Any] = raw if isinstance(raw, list) else []
     archives = _archive_views(name, listed, now=now)
+    retained_count = _integer(node.get("retained_count"))
+    if retained_count is None or retained_count < len(archives):
+        # Older cached envelopes predate the explicit retained count.  Their
+        # complete listing remains the best available answer.
+        retained_count = len(archives)
     newest_at = _newest(archives, listed)
     error = _mapping(node.get("error")).get("message")
     label, tone, detail = _node_state(
         available=node.get("available") is True,
         error=_text(error, ""),
         archives=archives,
+        retained_count=retained_count,
         newest_at=newest_at,
         now=now,
     )
-    total = sum((_integer(_mapping(entry).get("size_bytes")) or 0) for entry in listed)
+    listed_size = sum((_integer(_mapping(entry).get("size_bytes")) or 0) for entry in listed)
+    retained_size = _integer(node.get("retained_size_bytes"))
+    if retained_size is None or retained_size < listed_size:
+        retained_size = listed_size
     return (
         NodeBackupsView(
             name=name,
@@ -258,8 +273,9 @@ def _node_view(value: Any, *, now: datetime) -> tuple[NodeBackupsView, tuple[Arc
             detail=detail,
             latest=_text(node.get("latest_version"), "—"),
             age_label="—" if newest_at is None else relative_age(newest_at, now),
-            count=len(archives),
-            total_size=_size(total) if total else "—",
+            count=retained_count,
+            shown_count=len(archives),
+            total_size=_size(retained_size) if retained_size else "—",
         ),
         archives,
     )
@@ -319,11 +335,13 @@ def _schedule_view(value: Any, *, now: datetime) -> ScheduleView | None:
         label, tone = "Scheduled", "healthy"
 
     next_run = _stamp(schedule.get("next_run"))
+    calendar = _text(schedule.get("calendar"), "no calendar")
+    matched = re.search(r"(?<!\d)([0-2][0-9]:[0-5][0-9])(?::[0-5][0-9])?", calendar)
     return ScheduleView(
         unit=unit,
         label=label,
         tone=tone,
-        calendar=_text(schedule.get("calendar"), "no calendar"),
+        calendar=calendar,
         last_run=_elapsed(schedule.get("last_run"), now),
         #
         # A disabled timer still reports the elapse it would have had. Showing
@@ -331,6 +349,8 @@ def _schedule_view(value: Any, *, now: datetime) -> ScheduleView | None:
         #
         next_run=next_run if tone != "critical" else "—",
         outcome=outcome or "—",
+        time=matched.group(1) if matched else "05:00",
+        enabled=schedule.get("enabled") is True,
     )
 
 
@@ -348,7 +368,10 @@ def _empty(cluster: str, *, configured: bool) -> BackupClusterView:
         stale=False,
         nodes=(),
         archives=(),
+        retained_count=0,
+        shown_count=0,
         truncated=False,
+        schedule=None,
     )
 
 
@@ -405,7 +428,6 @@ def _cluster_view(
             nodes.append(node)
             archives.extend(node_archives)
     stale = now - reading.observed_at > stale_after
-    limit = _integer(result.get("limit"))
     label, tone, detail = _state(reading, stale=stale, nodes=tuple(nodes))
 
     return BackupClusterView(
@@ -429,11 +451,13 @@ def _cluster_view(
             sorted(archives, key=lambda entry: (entry.version, entry.node), reverse=True)
         ),
         #
-        # The helper is asked for a fixed number of archives per node. A node
-        # that returned exactly that many probably has older ones the page is
-        # not showing; a shorter listing is the whole retention.
+        # The listing reports both the returned and retained count, so a full
+        # fourteen-at-the-limit list is not mistaken for a truncated one.
         #
-        truncated=any(node.count == limit for node in nodes) if limit else False,
+        retained_count=sum(node.count for node in nodes),
+        shown_count=len(archives),
+        truncated=any(node.shown_count < node.count for node in nodes),
+        schedule=_schedule_view(result.get("schedule"), now=now),
     )
 
 
@@ -455,20 +479,6 @@ def build_backup_overview(
 
     now = now or datetime.now(UTC)
     rows = {reading.cluster: reading for reading in readings}
-    #
-    # One timer takes every node's backup, so every cluster's listing carries
-    # the same schedule. The first one that has it answers for all of them; a
-    # cluster whose own poll failed carries none, and must not blank a fact the
-    # others could still report.
-    #
-    schedule = next(
-        (
-            view
-            for reading in rows.values()
-            if (view := _schedule_view(_mapping(reading.result).get("schedule"), now=now))
-        ),
-        None,
-    )
     clusters: list[BackupClusterView] = []
     for cluster in tuple(configured_clusters):
         reading = rows.pop(cluster, None)
@@ -497,5 +507,4 @@ def build_backup_overview(
         # would report a node whose last backup is from June as covered.
         #
         protected_count=sum(node.tone == "healthy" for node in nodes),
-        schedule=schedule,
     )

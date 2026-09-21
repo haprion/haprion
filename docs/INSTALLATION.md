@@ -340,6 +340,9 @@ probe_identity:
   key: "/root/.ssh/id_ed25519_probe"
 
 backup_root: /srv/state-backups
+backup_identity:
+  user: "svc-backup"
+  key: "/root/.ssh/id_ed25519_node_backup"
 backup_timer: haproxy-state-backup.timer
 ```
 
@@ -360,16 +363,22 @@ modification time. The archives themselves hold password hashes and private SSH 
 stays root-owned and no command opens one; the helper exists precisely so that an unprivileged
 caller can learn a backup exists without being able to read it.
 
-`backup_timer` is the systemd timer that produces those archives, and it is optional. Declaring it
-lets `haproxy-list-backups` answer the question the directory listing cannot: whether anything is
-still taking backups, or whether these are the ones a timer stopped adding to. The command reads
-the unit with `systemctl show`, which reports properties and changes nothing - it never enables,
-starts or edits a unit, and no interface can. Leave it out and the listing simply says nothing
-about a schedule, which is the honest answer for an installation whose backups are produced by
-something this project does not know about.
+`backup_identity` is the separate forced-command SSH identity that fetches the state-export stream
+from a node. It must not reuse the deploy or status key: unlike those responses, this stream holds
+password hashes and private SSH keys. Step 3 creates the key and prints the exact line to install
+for the node's backup account; the private half remains root-only on the manager.
 
-Changing the schedule stays a systemd operation on the manager: `systemctl edit <unit>` followed by
-`systemctl restart <unit>`, as root. Taking one backup right now stays `haproxy-state-backup`.
+Step 2 installs `haproxy-state-backup@.service`. Each instance takes both nodes in exactly one
+configured cluster and writes 14 root-only archives per node. The ordinary list and the backup UI
+show all 14 per node — normally 28 for a two-node cluster — and identify the source node because
+hostnames, network state and SSH identities are not interchangeable between the pair.
+
+`backup_timer` names the legacy fleet-wide timer during migration. With `backup_identity`
+configured, listings instead read the derived `haproxy-state-backup@<cluster>.timer`. An admin can
+set its bounded daily UTC time, enable or disable it, and run an immediate cluster backup on the
+Backups page. The browser supplies no unit name or systemd expression: the root socket helper
+derives both from the configured cluster and reads the effective state back before reporting
+success. The terminal break-glass path remains `sudo haproxy-state-backup [-c <cluster>]`.
 
 `status_identity` is the account `haproxy-status` becomes to read a node, and `haproxy-deploy`
 uses it too: a rollout reads the pair before and after every step, and it reads with the identity
@@ -422,6 +431,18 @@ clusters:
 
 `node_path` is the subdirectory a node fetches from on the management host. It is the only
 per-cluster value the node side needs.
+
+There is **no hard limit on the number of clusters** in the engine, interface configuration or
+database schema. Two is the recommended starting shape - commonly one internal and one external
+trust zone - not a maximum. The interface has four muted cluster accents, but those are only
+visual markers: their stable hash repeats after four colours and does not limit how many clusters
+can be configured.
+
+No numerical capacity ceiling is claimed. The poller currently visits every configured cluster
+and every source sequentially, so adding clusters lengthens a poll pass even though it remains
+valid. An installation growing beyond a small fleet should measure a complete pass against its
+configured poll interval and manager resources; that measured operating limit, not the four-colour
+cycle, is the relevant constraint.
 
 A release directory holds that subdirectory and, beside it, `MANIFEST.json` - the manager's own
 record of what each object in that release amounts to. It is written outside `node_path`

@@ -97,6 +97,8 @@ class NodeBackupsTests(unittest.TestCase):
             [backup["version"] for backup in limited.backups],
             ["2026-08-24_05-00-00", "2026-08-23_05-00-00"],
         )
+        self.assertEqual(limited.retained_count, 5)
+        self.assertEqual(limited.retained_size_bytes, 5 * 4096)
         self.assertEqual(len(everything.backups), 5)
 
     def test_only_archives_are_reported(self) -> None:
@@ -128,6 +130,8 @@ class NodeBackupsTests(unittest.TestCase):
         self.assertEqual(readings[0].error, None)
         self.assertEqual(readings[1].error, "backup_directory_missing")
         self.assertFalse(result["nodes"][1]["available"])
+        self.assertEqual(result["nodes"][0]["retained_count"], 1)
+        self.assertEqual(result["nodes"][1]["retained_count"], 0)
         self.assertEqual(result["nodes"][1]["backups"], [])
         #
         # The readable node still answered. One node's missing directory taking

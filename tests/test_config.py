@@ -204,6 +204,22 @@ class DeployIdentityTests(unittest.TestCase):
                 require_secure=False,
             )
 
+    def test_backup_identity_is_separate_and_optional(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            body = yaml.safe_load(self.policy(root, None).read_text(encoding="utf-8"))
+            body["backup_identity"] = {
+                "user": "svc-backup",
+                "key": "/root/.ssh/id_ed25519_node_backup",
+            }
+            path = root / "runtime-policy.yaml"
+            path.write_text(yaml.safe_dump(body), encoding="utf-8")
+            policy = load_policy(path, require_secure=False)
+
+        assert policy.backup_identity is not None
+        self.assertEqual(policy.backup_identity.user, "svc-backup")
+        self.assertEqual(policy.backup_identity.key, Path("/root/.ssh/id_ed25519_node_backup"))
+
     def test_an_unknown_field_in_the_identity_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw, self.assertRaises(ConfigError):
             load_policy(

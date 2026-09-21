@@ -34,6 +34,10 @@ source "$NODE_CONF"
     echo "ERROR: BACKUP_ACCOUNTS is not set in ${NODE_CONF}" >&2
     exit 78
 }
+[[ -n "${BACKUP_SERVICE_ACCOUNTS:-}" ]] || {
+    echo "ERROR: BACKUP_SERVICE_ACCOUNTS is not set in ${NODE_CONF}. Run install/04-node-prepare." >&2
+    exit 78
+}
 
 TMPDIR="$(mktemp -d /tmp/haproxy-state-export.XXXXXX)"
 trap 'rm -rf "$TMPDIR"' EXIT
@@ -99,7 +103,7 @@ copy_path /etc/sudoers.d
 
 # What this node believes about itself: its cluster, its management host, and
 # the account and key it fetches configuration with.
-copy_path "$NODE_CONF"
+copy_path /etc/haproxy-manager
 
 # ------------------------------------------------------------
 # SSH server and this node's SSH identity
@@ -129,12 +133,35 @@ done
 # Local management and recovery scripts
 # ------------------------------------------------------------
 
-copy_path /usr/local/sbin/haproxy-pull-deploy
-copy_path /usr/local/sbin/haproxy-cert-pull
-copy_path /usr/local/sbin/haproxy-cert-trigger
-copy_path /usr/local/sbin/haproxy-node-status
-copy_path /usr/local/sbin/haproxy-keepalived-state
-copy_path /usr/local/sbin/haproxy-state-export
+DR_SCRIPTS=(
+    haproxy-pull-deploy
+    haproxy-cert-pull
+    haproxy-cert-remove
+    haproxy-cert-trigger
+    haproxy-node-status
+    haproxy-health-probe
+    haproxy-keepalived-state
+    haproxy-state-export
+    haproxy-traffic-log-read
+    haproxy-traffic-log-enable
+    haproxy-traffic-log-prune
+)
+for script in "${DR_SCRIPTS[@]}"; do
+    copy_path "/usr/local/sbin/${script}"
+done
+
+# Optional traffic logging is still node state when it is enabled. The day
+# files themselves are operational history and deliberately stay out of a DR
+# archive; the configuration and retention machinery are what make a rebuilt
+# node resume producing them.
+copy_path /etc/rsyslog.d/48-haproxy-manager-traffic.conf
+copy_path /etc/apparmor.d/rsyslog.d/haproxy-manager-traffic
+copy_path /etc/systemd/system/haproxy-traffic-log-prune.service
+copy_path /etc/systemd/system/haproxy-traffic-log-prune.timer
+
+# The mask is state. Reinstalling a package on a clean node must not silently
+# turn a service the appliance deliberately disabled back on.
+copy_path /etc/systemd/system/ipvsadm.service
 
 # A finished appliance has cloud-init disabled; its absence is itself a finding.
 copy_path /etc/cloud/cloud-init.disabled
@@ -145,8 +172,8 @@ copy_path /etc/cloud/cloud-init.disabled
 
 date --iso-8601=seconds > "$META/backup-created.txt"
 
-hostname > "$META/hostname.txt"
-hostname -f > "$META/fqdn.txt"
+hostname | tr '[:upper:]' '[:lower:]' > "$META/hostname.txt"
+hostname -f | tr '[:upper:]' '[:lower:]' > "$META/fqdn.txt"
 
 cp /etc/os-release "$META/os-release"
 
@@ -205,7 +232,101 @@ dpkg-query -W -f='${binary:Package}\t${Version}\n' \
 } > "$META/services.txt"
 
 # ------------------------------------------------------------
+# DR completeness and tamper-evident manifest
+# ------------------------------------------------------------
+
+require_path() {
+    local path="$1"
+    [[ -e "$path" || -L "$path" ]] || {
+        echo "ERROR: required DR state is missing: ${path}" >&2
+        exit 78
+    }
+}
+
+REQUIRED_DR_PATHS=(
+    /etc/hostname
+    /etc/hosts
+    /etc/netplan
+    /etc/keepalived/keepalived.conf
+    /etc/keepalived/addresses.conf
+    /etc/default/haproxy
+    /etc/sysctl.d/60-haproxy.conf
+    /etc/haproxy-manager/node.conf
+    /etc/haproxy-manager/node-installation.json
+    /etc/ssh/sshd_config
+    /etc/ssh/ssh_host_ed25519_key
+    /etc/ssh/ssh_host_ed25519_key.pub
+)
+for path in "${REQUIRED_DR_PATHS[@]}"; do
+    require_path "$path"
+done
+if ! find /etc/netplan -maxdepth 1 -type f \( -name '*.yaml' -o -name '*.yml' \) -print -quit \
+    | grep -q .; then
+    echo "ERROR: required DR state is missing: a Netplan YAML file" >&2
+    exit 78
+fi
+for script in "${DR_SCRIPTS[@]}"; do
+    require_path "/usr/local/sbin/${script}"
+done
+# Forced-command service accounts must carry an authorized key. Operator
+# accounts are still captured, but a password-only operator is legitimate and
+# must not make every backup fail.
+for user in $BACKUP_SERVICE_ACCOUNTS; do
+    if getent passwd "$user" >/dev/null; then
+        home="$(getent passwd "$user" | cut -d: -f6)"
+        require_path "${home}/.ssh/authorized_keys"
+    fi
+done
+require_path "$CONFIG_PULL_KEY"
+[[ -z "${CERT_PULL_KEY:-}" ]] || require_path "$CERT_PULL_KEY"
+
+# The manifest is the archive's content contract. It records metadata as well
+# as bytes: a private key restored world-readable is not the same state merely
+# because its checksum matches. It excludes itself and is generated only after
+# every other file has reached the staging tree.
+/usr/bin/python3 - "$TMPDIR" > "$META/manifest.json" <<'PY'
+import hashlib
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+entries = []
+for tree in (root / "rootfs", root / "meta"):
+    for path in sorted(tree.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        if relative == "meta/manifest.json":
+            continue
+        info = path.lstat()
+        entry = {
+            "path": relative,
+            "mode": stat.S_IMODE(info.st_mode),
+            "uid": info.st_uid,
+            "gid": info.st_gid,
+            "type": "other",
+        }
+        if stat.S_ISREG(info.st_mode):
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            entry.update(type="file", size=info.st_size, sha256=digest.hexdigest())
+        elif stat.S_ISDIR(info.st_mode):
+            entry["type"] = "directory"
+        elif stat.S_ISLNK(info.st_mode):
+            entry.update(type="symlink", target=os.readlink(path))
+        entries.append(entry)
+
+print(json.dumps({"schema_version": 1, "entries": entries}, sort_keys=True, separators=(",", ":")))
+PY
+
+# ------------------------------------------------------------
 # Write the backup as a gzipped tar stream on stdout
 # ------------------------------------------------------------
 
-tar --numeric-owner -C "$TMPDIR" -czf - rootfs meta
+# A copied tree can contain hard-linked regular files. The manifest describes
+# file contents, not tar's space-saving link representation, so emit every one
+# as a regular member and keep validation/restoration semantics identical.
+tar --hard-dereference --numeric-owner -C "$TMPDIR" -czf - rootfs meta

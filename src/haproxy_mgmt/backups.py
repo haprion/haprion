@@ -48,6 +48,8 @@ class NodeBackups:
     name: str
     available: bool
     latest_version: str | None
+    retained_count: int
+    retained_size_bytes: int
     backups: tuple[dict[str, Any], ...]
     error: str | None
 
@@ -110,9 +112,9 @@ def node_backups(root: Path, node: Node, *, limit: int | None) -> NodeBackups:
     try:
         archives = _archives(directory)
     except FileNotFoundError:
-        return NodeBackups(node.name, False, None, (), "backup_directory_missing")
+        return NodeBackups(node.name, False, None, 0, 0, (), "backup_directory_missing")
     except OSError:
-        return NodeBackups(node.name, False, None, (), "backup_metadata_unavailable")
+        return NodeBackups(node.name, False, None, 0, 0, (), "backup_metadata_unavailable")
 
     latest = _latest_version(directory)
     kept = archives if limit is None else archives[:limit]
@@ -120,6 +122,8 @@ def node_backups(root: Path, node: Node, *, limit: int | None) -> NodeBackups:
         name=node.name,
         available=True,
         latest_version=latest,
+        retained_count=len(archives),
+        retained_size_bytes=sum(size for _, size, _ in archives),
         backups=tuple(
             {
                 "version": version,
@@ -148,6 +152,8 @@ def backup_list_result(
                 "name": reading.name,
                 "available": reading.available,
                 "latest_version": reading.latest_version,
+                "retained_count": reading.retained_count,
+                "retained_size_bytes": reading.retained_size_bytes,
                 "backups": list(reading.backups),
                 "error": None
                 if reading.error is None

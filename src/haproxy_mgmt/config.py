@@ -89,6 +89,12 @@ class PathPolicy:
     #
     probe_identity: DeployIdentity | None = None
     #
+    # The identity that asks a node for its root-produced state archive. Its
+    # own key: the stream contains password hashes and private SSH keys, so a
+    # status or deploy key must not become interchangeable with it.
+    #
+    backup_identity: DeployIdentity | None = None
+    #
     # Where the backup engine writes each node's state archives, one directory
     # per node. Optional like the others: it is read by one command, and a
     # policy every other command rejected until backups were configured would
@@ -980,6 +986,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             "cert_deploy_identity",
             "status_identity",
             "probe_identity",
+            "backup_identity",
             "backup_root",
             "backup_timer",
             "certificate_registry",
@@ -1011,6 +1018,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
         cert_deploy_identity=_deploy_identity(data, "cert_deploy_identity"),
         status_identity=_deploy_identity(data, "status_identity"),
         probe_identity=_deploy_identity(data, "probe_identity"),
+        backup_identity=_deploy_identity(data, "backup_identity"),
         backup_root=_optional_root(data, "backup_root"),
         backup_timer=_optional_timer(data, "backup_timer"),
         certificate_registry=_optional_root(data, "certificate_registry"),

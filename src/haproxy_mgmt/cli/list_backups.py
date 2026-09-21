@@ -26,7 +26,7 @@ from haproxy_mgmt.helper_protocol import write_document
 OPERATION = "list_backups"
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-list-backups-helper"
 SUDO = "/usr/bin/sudo"
-DEFAULT_LIMIT = 10
+DEFAULT_LIMIT = 14
 EXIT_UNAVAILABLE = 68
 USAGE = (
     "Usage:\n"
@@ -36,7 +36,7 @@ USAGE = (
     "  --node  one node, instead of every node in the cluster. A short name is\n"
     "          accepted when it can only mean one node, so --node a02 finds\n"
     "          gateway-a02\n"
-    "  --all   every retained backup, instead of the 10 most recent per node\n"
+    "  --all   every retained backup, instead of the 14 most recent per node\n"
     "  --json  the raw envelope, which is one cluster's answer - so -c is required\n"
 )
 

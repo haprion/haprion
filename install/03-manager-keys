@@ -53,6 +53,10 @@ generate_key "$NODE_STATUS_KEY"   "haproxy-manager node status"
 # probe reports itself as unavailable instead of failing anything else.
 #
 [[ -n "${NODE_PROBE_KEY:-}" ]] && generate_key "$NODE_PROBE_KEY" "haproxy-manager health probe"
+if [[ -n "${BACKUP_ROOT:-}" ]]; then
+    require_vars NODE_BACKUP_KEY BACKUP_USER
+    generate_key "$NODE_BACKUP_KEY" "haproxy-manager node state backup"
+fi
 
 step "Lines to install on the nodes"
 
@@ -99,6 +103,12 @@ for cluster in $(each_cluster); do
         #
         if [[ -n "${NODE_PROBE_KEY:-}" ]]; then
             echo "restrict,command=\"/usr/local/sbin/haproxy-health-probe\" $(pub "$NODE_PROBE_KEY")"
+        fi
+        if [[ -n "${BACKUP_ROOT:-}" ]]; then
+            echo
+            echo "  /home/${BACKUP_USER}/.ssh/authorized_keys     (owner root, mode 644)"
+            echo
+            echo "restrict,command=\"sudo -n /usr/local/sbin/haproxy-state-export\" $(pub "$NODE_BACKUP_KEY")"
         fi
         echo
     done

@@ -138,6 +138,18 @@ systemctl is-active --quiet haproxy-cert-receiver-helper.socket \
     || die "haproxy-cert-receiver-helper.socket did not start"
 log "  listening on /run/haproxy-mgmt/cert-receiver.sock  (group ${WORKER_USER})"
 
+step "The worker's way to backup jobs"
+install_file "/etc/systemd/system/haproxy-backup-job-helper@.service" root:root 644 \
+    "$(cat 'examples/haproxy-backup-job-helper@.service.example')"
+install_file "/etc/systemd/system/haproxy-backup-job-helper.socket" root:root 644 \
+    "$(sed "s|WORKER_USER|${WORKER_USER}|g" examples/haproxy-backup-job-helper.socket.example)"
+systemctl daemon-reload
+systemctl enable --quiet haproxy-backup-job-helper.socket
+systemctl restart haproxy-backup-job-helper.socket
+systemctl is-active --quiet haproxy-backup-job-helper.socket \
+    || die "haproxy-backup-job-helper.socket did not start"
+log "  listening on /run/haproxy-mgmt/backup-job.sock  (group ${WORKER_USER})"
+
 #
 # A rule from before the socket existed is worse than no rule: it cannot work,
 # and it says in /etc/sudoers.d that this account may become root.

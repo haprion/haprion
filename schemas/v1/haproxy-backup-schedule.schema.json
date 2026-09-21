@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haproxy-backup-schedule.schema.json",
+  "title": "HAProxy backup schedule change result",
+  "allOf": [
+    { "$ref": "common.schema.json#/$defs/envelope" },
+    {
+      "properties": {
+        "operation": { "const": "backup_schedule" },
+        "outcome": { "enum": ["done", "failed"] }
+      }
+    }
+  ],
+  "additionalProperties": true
+}

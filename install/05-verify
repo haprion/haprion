@@ -19,6 +19,7 @@ need_not_root
 load_answers "${1:-}"
 require_vars CONFIG_ROOT PUBLISH_ROOT CLUSTER_FILE CLUSTERS KEY_DIR \
              CONFIG_DEPLOY_KEY NODE_STATUS_KEY TRIGGER_USER STATUS_USER
+[[ -z "${BACKUP_ROOT:-}" ]] || require_vars NODE_BACKUP_KEY
 
 PASS=0
 FAIL=0
@@ -46,7 +47,8 @@ done
 
 step "Keys"
 
-for key in "$CONFIG_DEPLOY_KEY" "$NODE_STATUS_KEY" ${CERT_DEPLOY_KEY:+"$CERT_DEPLOY_KEY"}; do
+for key in "$CONFIG_DEPLOY_KEY" "$NODE_STATUS_KEY" ${CERT_DEPLOY_KEY:+"$CERT_DEPLOY_KEY"} \
+           ${BACKUP_ROOT:+"$NODE_BACKUP_KEY"}; do
     if sudo -n test -f "${KEY_DIR}/${key}" 2>/dev/null; then
         pass "${key} exists"
     else
@@ -60,6 +62,11 @@ for key in "$CONFIG_DEPLOY_KEY" "$NODE_STATUS_KEY" ${CERT_DEPLOY_KEY:+"$CERT_DEP
         pass "${key}.pub is readable"
     fi
 done
+
+if [[ -n "${BACKUP_ROOT:-}" ]]; then
+    check "$([[ "$(systemctl show -p LoadState --value haproxy-state-backup@.service 2>/dev/null)" == loaded ]] && echo yes || echo no)" \
+        "cluster backup service template is loaded"
+fi
 
 step "Clusters"
 

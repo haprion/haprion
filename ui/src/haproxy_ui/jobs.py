@@ -133,6 +133,8 @@ def _operation(value: str) -> str:
         "cert_deploy": "Deploy certificates",
         "revert": "Publish reverted version",
         "network_publish": "Publish network description",
+        "backup_run": "Back up cluster nodes",
+        "backup_schedule": "Change backup schedule",
     }.get(value, value.replace("_", " ").capitalize())
 
 
@@ -707,6 +709,8 @@ def build_job_overview(
 NO_CLUSTER = "—"
 
 RUNNING_LABELS = {
+    "backup_run": "Backing up nodes",
+    "backup_schedule": "Changing backup schedule",
     "deploy": "Deploying",
     "cert_deploy": "Deploying certificates",
     "revert": "Reverting",
@@ -742,6 +746,8 @@ FOLLOW_UP_LABELS = {
 # different words for the same operation.
 #
 FAILURE_LABELS = {
+    "backup_run": "Backup failed",
+    "backup_schedule": "Schedule change failed",
     "deploy": "Deploy failed",
     "cert_deploy": "Certificate deploy failed",
     "revert": "Revert failed",

@@ -1,0 +1,15 @@
+[Unit]
+Description=Socket the HAProxy Manager worker uses for backup jobs
+Documentation=file:///opt/haproxy-mgmt/current
+
+[Socket]
+ListenStream=/run/haproxy-mgmt/backup-job.sock
+SocketUser=root
+SocketGroup=WORKER_USER
+SocketMode=0660
+Accept=yes
+MaxConnections=2
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

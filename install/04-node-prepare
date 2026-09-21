@@ -267,6 +267,7 @@ CONFIG_REMOTE_PATH=\"${CLUSTER}/current/${node_path}/\"
 
 # Local accounts and groups a state backup captures. A rebuilt node with no way
 # to log in is not a restored node, so operator accounts belong here too.
+BACKUP_SERVICE_ACCOUNTS=\"${TRIGGER_USER} ${STATUS_USER} ${BACKUP_USER} ${LOGREAD_USER}\"
 BACKUP_ACCOUNTS=\"${TRIGGER_USER} ${STATUS_USER} ${BACKUP_USER} ${LOGREAD_USER}${OPERATOR_ACCOUNTS:+ ${OPERATOR_ACCOUNTS}}\"
 BACKUP_GROUPS=\"${LOGREAD_GROUP}${EXTRA_BACKUP_GROUPS:+ ${EXTRA_BACKUP_GROUPS}}\""
 

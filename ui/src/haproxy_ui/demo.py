@@ -466,21 +466,29 @@ def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
             observed_at=observed,
             outcome="done",
             result={
-                "limit": 10,
+                "limit": 14,
                 "schedule": schedule,
                 "nodes": [
                     {
                         "name": "edge-a",
                         "available": True,
                         "latest_version": _archives(last_run, 1)[0]["version"],
-                        "backups": _archives(last_run, 4),
+                        "retained_count": 14,
+                        "retained_size_bytes": sum(
+                            item["size_bytes"] for item in _archives(last_run, 14)
+                        ),
+                        "backups": _archives(last_run, 14),
                         "error": None,
                     },
                     {
                         "name": "edge-b",
                         "available": True,
                         "latest_version": _archives(last_run, 1)[0]["version"],
-                        "backups": _archives(last_run, 4),
+                        "retained_count": 14,
+                        "retained_size_bytes": sum(
+                            item["size_bytes"] for item in _archives(last_run, 14)
+                        ),
+                        "backups": _archives(last_run, 14),
                         "error": None,
                     },
                 ],
@@ -494,20 +502,29 @@ def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
             observed_at=observed - timedelta(seconds=9),
             outcome="done",
             result={
-                "limit": 10,
+                "limit": 14,
                 "schedule": schedule,
                 "nodes": [
                     {
                         "name": "service-a",
                         "available": True,
                         "latest_version": _archives(last_run, 1)[0]["version"],
-                        "backups": _archives(last_run, 10),
+                        "retained_count": 14,
+                        "retained_size_bytes": sum(
+                            item["size_bytes"] for item in _archives(last_run, 14)
+                        ),
+                        "backups": _archives(last_run, 14),
                         "error": None,
                     },
                     {
                         "name": "service-b",
                         "available": True,
                         "latest_version": _archives(last_run - timedelta(days=3), 1)[0]["version"],
+                        "retained_count": 2,
+                        "retained_size_bytes": sum(
+                            item["size_bytes"]
+                            for item in _archives(last_run - timedelta(days=3), 2)
+                        ),
                         "backups": _archives(last_run - timedelta(days=3), 2),
                         "error": None,
                     },

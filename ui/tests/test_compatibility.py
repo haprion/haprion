@@ -6,7 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from haproxy_mgmt.cli import cert_receiver_ask, cert_receiver_helper
+from haproxy_mgmt.cli import (
+    backup_job_ask,
+    backup_job_helper,
+    cert_receiver_ask,
+    cert_receiver_helper,
+)
 
 from haproxy_ui import compatibility
 
@@ -43,8 +48,20 @@ class CompatibilityMetadataTests(unittest.TestCase):
         ).read_text()
 
         self.assertNotIn(helper, requirements.worker_helpers)
-        self.assertEqual(requirements.socket_helpers, {helper: cert_receiver_ask.SOCKET_PATH})
+        self.assertEqual(requirements.socket_helpers[helper], cert_receiver_ask.SOCKET_PATH)
         self.assertIn(f"ListenStream={cert_receiver_ask.SOCKET_PATH}\n", unit)
+        self.assertIn("SocketGroup=WORKER_USER", unit)
+
+    def test_backup_mutations_are_reached_only_through_their_socket(self) -> None:
+        requirements = compatibility.load_requirements(MANIFEST)
+        helper = Path(backup_job_helper.HELPER).name
+        unit = (
+            ROOT / "install/platform/examples/haproxy-backup-job-helper.socket.example"
+        ).read_text()
+
+        self.assertNotIn(helper, requirements.worker_helpers)
+        self.assertEqual(requirements.socket_helpers[helper], backup_job_ask.SOCKET_PATH)
+        self.assertIn(f"ListenStream={backup_job_ask.SOCKET_PATH}\n", unit)
         self.assertIn("SocketGroup=WORKER_USER", unit)
 
     def test_invalid_metadata_is_refused_instead_of_defaulted(self) -> None:

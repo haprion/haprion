@@ -36,12 +36,15 @@ def node(
     available: bool = True,
     backups: list[dict[str, object]] | None = None,
     error: str | None = None,
+    retained_count: int | None = None,
 ) -> dict[str, object]:
     listed = archives() if backups is None else backups
     return {
         "name": name,
         "available": available,
         "latest_version": listed[0]["version"] if listed else None,
+        "retained_count": len(listed) if retained_count is None else retained_count,
+        "retained_size_bytes": sum(int(item["size_bytes"]) for item in listed),
         "backups": listed,
         "error": {"message": error} if error else None,
     }
@@ -68,7 +71,7 @@ def reading(
     outcome: str = "done",
     poll_error: str | None = None,
     nodes: list[dict[str, object]] | None = None,
-    limit: int | None = 10,
+    limit: int | None = 14,
     timer: dict[str, object] | None = None,
 ) -> ClusterBackups:
     return ClusterBackups(
@@ -90,12 +93,13 @@ def overview(*readings: ClusterBackups, clusters: tuple[str, ...] = ("alpha",)):
     return build_backup_overview(clusters, readings, now=NOW, stale_after=STALE_AFTER)
 
 
-def timer_of(view: BackupOverview) -> ScheduleView:
+def timer_of(view: BackupOverview, index: int = 0) -> ScheduleView:
     """The schedule, or a failure that names what was missing."""
 
-    if view.schedule is None:
+    schedule = view.clusters[index].schedule
+    if schedule is None:
         raise AssertionError("the overview carries no schedule")
-    return view.schedule
+    return schedule
 
 
 class NodeStateTests(unittest.TestCase):
@@ -229,16 +233,20 @@ class ArchiveListingTests(unittest.TestCase):
         self.assertEqual(versions, sorted(versions, reverse=True))
         self.assertEqual(cluster.archives[0].node, "node-b")
 
-    def test_a_node_at_the_limit_marks_the_listing_as_shortened(self) -> None:
-        #
-        # A node that returned exactly the number asked for probably has older
-        # archives; one that returned fewer is showing its whole retention.
-        #
-        full = overview(reading(nodes=[node(backups=archives(10))], limit=10)).clusters[0]
-        partial = overview(reading(nodes=[node(backups=archives(3))], limit=10)).clusters[0]
+    def test_only_a_proven_short_listing_is_marked_as_shortened(self) -> None:
+        full = overview(
+            reading(nodes=[node(backups=archives(14), retained_count=14)], limit=14)
+        ).clusters[0]
+        partial = overview(
+            reading(nodes=[node(backups=archives(10), retained_count=14)], limit=10)
+        ).clusters[0]
 
-        self.assertTrue(full.truncated)
-        self.assertFalse(partial.truncated)
+        self.assertFalse(full.truncated)
+        self.assertTrue(partial.truncated)
+        self.assertEqual(full.retained_count, 14)
+        self.assertEqual(full.shown_count, 14)
+        self.assertEqual(partial.retained_count, 14)
+        self.assertEqual(partial.shown_count, 10)
 
     def test_an_archive_without_a_timestamp_still_lists(self) -> None:
         listing = [{"version": "2026-08-29_05-00-00", "size_bytes": 4096, "latest": True}]
@@ -250,12 +258,7 @@ class ArchiveListingTests(unittest.TestCase):
 
 
 class ScheduleTests(unittest.TestCase):
-    def test_a_running_timer_is_stated_once_for_every_cluster(self) -> None:
-        #
-        # One timer takes every node's backup, so both clusters' listings carry
-        # the same schedule. Rendering it per card would repeat one fact and
-        # invite the reader to compare two copies of it.
-        #
+    def test_each_cluster_carries_its_own_running_timer(self) -> None:
         view = build_backup_overview(
             ("alpha", "beta"),
             (
@@ -266,6 +269,7 @@ class ScheduleTests(unittest.TestCase):
             stale_after=STALE_AFTER,
         )
         schedule_view = timer_of(view)
+        second = timer_of(view, 1)
 
         self.assertEqual(schedule_view.tone, "healthy")
         self.assertEqual(schedule_view.label, "Scheduled")
@@ -276,9 +280,10 @@ class ScheduleTests(unittest.TestCase):
         # the future to "Just now", which would say the next run just did.
         #
         self.assertNotIn("(", schedule_view.next_run)
+        self.assertEqual(second.label, "Scheduled")
 
     def test_an_installation_without_a_timer_shows_no_schedule(self) -> None:
-        self.assertIsNone(overview(reading()).schedule)
+        self.assertIsNone(overview(reading()).clusters[0].schedule)
 
     def test_a_timer_that_fires_into_a_failing_run_is_critical(self) -> None:
         #
@@ -302,7 +307,7 @@ class ScheduleTests(unittest.TestCase):
         #
         self.assertEqual(disabled.next_run, "—")
 
-    def test_a_cluster_whose_poll_failed_does_not_blank_the_schedule(self) -> None:
+    def test_a_cluster_whose_poll_failed_does_not_borrow_another_schedule(self) -> None:
         view = build_backup_overview(
             ("alpha", "beta"),
             (
@@ -312,7 +317,8 @@ class ScheduleTests(unittest.TestCase):
             now=NOW,
             stale_after=STALE_AFTER,
         )
-        self.assertEqual(timer_of(view).label, "Scheduled")
+        self.assertIsNone(view.clusters[0].schedule)
+        self.assertEqual(timer_of(view, 1).label, "Scheduled")
 
 
 class CountTests(unittest.TestCase):

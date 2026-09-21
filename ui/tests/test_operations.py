@@ -631,6 +631,8 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
         #
         schemas = Path(__file__).resolve().parents[2] / "schemas" / "v1"
         for name, path in (
+            ("backup_run", "haproxy-backup-run.schema.json"),
+            ("backup_schedule", "haproxy-backup-schedule.schema.json"),
             ("network_publish", "haproxy-network-publish.schema.json"),
             ("objects_publish", "haproxy-objects-publish.schema.json"),
             ("cert_issue", "haproxy-cert-issue.schema.json"),

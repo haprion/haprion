@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
 from haproxy_mgmt.backup_schedule import ScheduleError, schedule_result
+from haproxy_mgmt.backup_schedule_write import timer_unit
 from haproxy_mgmt.backups import BackupError, backup_list_result
 from haproxy_mgmt.config import (
     DEFAULT_POLICY_PATH,
@@ -39,7 +40,7 @@ from haproxy_mgmt.helper_protocol import (
 
 OPERATION = "list_backups"
 PARAMETERS: frozenset[str] = frozenset({"limit", "node"})
-DEFAULT_LIMIT = 10
+DEFAULT_LIMIT = 14
 MAX_LIMIT = 1000
 EXIT_NOT_ROOT = 77
 
@@ -194,7 +195,11 @@ def main(
         # had to correlate two commands to answer it would eventually show one
         # without the other.
         #
-        result["schedule"] = schedule_result(policy.backup_timer)
+        result["schedule"] = schedule_result(
+            timer_unit(request.cluster)
+            if getattr(policy, "backup_identity", None) is not None
+            else policy.backup_timer
+        )
     except (BackupError, ScheduleError) as exc:
         write_document(
             writer,

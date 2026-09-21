@@ -10,6 +10,13 @@ deploy_identity:
   user: svc-app
   key: /root/.ssh/id_ed25519_example_deploy
 
+# Root-only node DR archives. The backup identity reaches only the node's
+# argumentless state-export forced command and is separate from deploy/status.
+backup_root: /srv/state-backups
+backup_identity:
+  user: svc-backup
+  key: /root/.ssh/id_ed25519_node_backup
+
 # The certificate registry (see certificates.yaml). Optional: without it a
 # cluster's certificates are the `certificate_ids` list in clusters.yaml. Once
 # named, that list must have moved here.

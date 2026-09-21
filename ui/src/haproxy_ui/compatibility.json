@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "requires": {
-    "database_head": "0034",
+    "database_head": "0035",
     "database_revisions": [
       "0028",
       "0029",
@@ -9,7 +9,8 @@
       "0031",
       "0032",
       "0033",
-      "0034"
+      "0034",
+      "0035"
     ],
     "engine_api": 2,
     "node_api": 1,
@@ -39,7 +40,8 @@
       "haproxy-cert-request-helper"
     ],
     "socket_helpers": {
-      "haproxy-cert-receiver-helper": "/run/haproxy-mgmt/cert-receiver.sock"
+      "haproxy-cert-receiver-helper": "/run/haproxy-mgmt/cert-receiver.sock",
+      "haproxy-backup-job-helper": "/run/haproxy-mgmt/backup-job.sock"
     }
   }
 }

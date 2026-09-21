@@ -12,6 +12,8 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haproxy-inventory` | `inventory` | `done`, `failed` | Managed and read-only unmanaged proxy inventory |
 | `haproxy-list` | `list` | `done`, `failed` | Published version history |
 | `haproxy-list-backups` | `list_backups` | `done`, `partial`, `failed` | Backup metadata only |
+| backup job helper | `backup_run` | `done`, `partial`, `failed` | One cluster, separate archive per node |
+| backup job helper | `backup_schedule` | `done`, `failed` | Daily UTC schedule for one cluster |
 | `haproxy-cert-list` | `cert_list` | `done`, `failed` | Deployable certificate metadata only |
 | `haproxy-network` | `network` | `done`, `failed` | Cluster addresses and address groups |
 | `haproxy-network-publish-helper` | `network_publish` | `done`, `failed`, `blocked` | Bounded publication of `managed/network.yaml` |

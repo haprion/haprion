@@ -187,7 +187,9 @@ def validate(path: Path) -> ArchiveFacts:
             raise ArchiveError(f"the state export disagrees with its manifest at {detail}")
         missing_required = sorted(REQUIRED_PATHS - set(declared))
         if missing_required:
-            raise ArchiveError(f"the state export is missing required DR state: {missing_required[0]}")
+            raise ArchiveError(
+                f"the state export is missing required DR state: {missing_required[0]}"
+            )
         netplan_files = {
             name
             for name, entry in declared.items()
@@ -204,7 +206,11 @@ def validate(path: Path) -> ArchiveFacts:
             kind = _type(member)
             if kind != expected["type"]:
                 raise ArchiveError(f"the state export type differs from its manifest at {name}")
-            if member.mode != expected["mode"] or member.uid != expected["uid"] or member.gid != expected["gid"]:
+            if (
+                member.mode != expected["mode"]
+                or member.uid != expected["uid"]
+                or member.gid != expected["gid"]
+            ):
                 raise ArchiveError(f"the state export metadata differs from its manifest at {name}")
             if kind == "symlink":
                 if member.linkname != expected.get("target"):
@@ -226,7 +232,9 @@ def validate(path: Path) -> ArchiveFacts:
 
         hostname_member = indexed["meta/hostname.txt"]
         hostname_stream = archive.extractfile(hostname_member)
-        hostname = "" if hostname_stream is None else hostname_stream.read(256).decode("utf-8").strip()
+        hostname = (
+            "" if hostname_stream is None else hostname_stream.read(256).decode("utf-8").strip()
+        )
         if not hostname or len(hostname) > 253 or any(char.isspace() for char in hostname):
             raise ArchiveError("the state export carries an invalid hostname")
         return ArchiveFacts(

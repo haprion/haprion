@@ -27,7 +27,9 @@ class BackupJobHelperTests(unittest.TestCase):
         output, errors = io.StringIO(), io.StringIO()
         with (
             mock.patch.object(backup_job_helper, "load_policy", return_value=self.Policy()),
-            mock.patch.object(backup_job_helper, "load_runtime_config", return_value=self.Runtime()),
+            mock.patch.object(
+                backup_job_helper, "load_runtime_config", return_value=self.Runtime()
+            ),
         ):
             code = backup_job_helper.main(
                 [],
@@ -49,9 +51,7 @@ class BackupJobHelperTests(unittest.TestCase):
             ),
         )
         with mock.patch.object(backup_job_helper.state_backup, "run", return_value=report):
-            document, code = self.execute(
-                backup_job_helper.build_run_request("alpha", request_id)
-            )
+            document, code = self.execute(backup_job_helper.build_run_request("alpha", request_id))
 
         self.assertEqual(code, 0)
         self.assertEqual(document["operation"], "backup_run")
@@ -72,7 +72,9 @@ class BackupJobHelperTests(unittest.TestCase):
                 "calendar": "*-*-* 04:30:00 UTC",
             },
         )
-        with mock.patch.object(backup_job_helper.backup_schedule_write, "apply", return_value=result):
+        with mock.patch.object(
+            backup_job_helper.backup_schedule_write, "apply", return_value=result
+        ):
             document, code = self.execute(
                 backup_job_helper.build_schedule_request(
                     "alpha", request_id, time="04:30", enabled=True

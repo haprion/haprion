@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "partial",
+  "operation": "backup_run",
+  "cluster": "external",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "version": "2026-09-21_05-00-03",
+    "nodes": [
+      {
+        "name": "node-a",
+        "outcome": "done",
+        "version": "2026-09-21_05-00-03",
+        "size_bytes": 184320,
+        "error": null
+      },
+      {
+        "name": "node-b",
+        "outcome": "failed",
+        "version": null,
+        "size_bytes": null,
+        "error": "node_export_failed"
+      }
+    ]
+  },
+  "warnings": [
+    {
+      "code": "node_export_failed",
+      "message": "The node did not produce a valid state archive",
+      "node": "node-b"
+    }
+  ],
+  "error": null
+}

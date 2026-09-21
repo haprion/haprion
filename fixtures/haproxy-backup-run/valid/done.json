@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "backup_run",
+  "cluster": "external",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "version": "2026-09-21_05-00-03",
+    "nodes": [
+      {
+        "name": "node-a",
+        "outcome": "done",
+        "version": "2026-09-21_05-00-03",
+        "size_bytes": 184320,
+        "error": null
+      },
+      {
+        "name": "node-b",
+        "outcome": "done",
+        "version": "2026-09-21_05-00-03",
+        "size_bytes": 183296,
+        "error": null
+      }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

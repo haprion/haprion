@@ -31,7 +31,9 @@ EXIT_NOT_ROOT = 77
 __all__ = ["HELPER", "RUN", "SCHEDULE", "build_run_request", "build_schedule_request", "main"]
 
 
-def _document(operation: str, cluster: str, request_id: str, parameters: Mapping[str, JsonValue]) -> str:
+def _document(
+    operation: str, cluster: str, request_id: str, parameters: Mapping[str, JsonValue]
+) -> str:
     return json.dumps(
         {
             "schema_version": 1,

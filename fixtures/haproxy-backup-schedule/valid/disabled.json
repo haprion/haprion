@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "backup_schedule",
+  "cluster": "internal",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "cluster": "internal",
+    "time": "05:30",
+    "enabled": false,
+    "schedule": {
+      "unit": "haproxy-state-backup@internal.timer",
+      "known": true,
+      "enabled": false,
+      "active": false,
+      "calendar": "*-*-* 05:30:00 UTC",
+      "next_run": null,
+      "last_run": "2026-09-21T05:30:00Z",
+      "last_result": "success"
+    }
+  },
+  "warnings": [],
+  "error": null
+}

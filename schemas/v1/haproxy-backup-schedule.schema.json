@@ -7,9 +7,30 @@
     {
       "properties": {
         "operation": { "const": "backup_schedule" },
-        "outcome": { "enum": ["done", "failed"] }
-      }
+        "outcome": { "enum": ["done", "failed"] },
+        "result": { "oneOf": [{ "$ref": "#/$defs/schedule_result" }, { "type": "null" }] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "done" } } },
+          "then": { "properties": { "result": { "$ref": "#/$defs/schedule_result" } } }
+        }
+      ]
     }
   ],
-  "additionalProperties": true
+  "additionalProperties": true,
+  "$defs": {
+    "schedule_result": {
+      "description": "The daily UTC time that was asked for and what systemd reports after daemon-reload. `done` means the read-back matched the request; anything else was rolled back and is `failed`.",
+      "type": "object",
+      "required": ["cluster", "time", "enabled", "schedule"],
+      "properties": {
+        "cluster": { "$ref": "common.schema.json#/$defs/cluster_id" },
+        "time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$" },
+        "enabled": { "type": "boolean" },
+        "schedule": { "$ref": "haproxy-list-backups.schema.json#/$defs/backup_schedule" }
+      },
+      "additionalProperties": false
+    }
+  }
 }

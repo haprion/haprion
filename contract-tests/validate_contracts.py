@@ -687,12 +687,67 @@ def check_cert_receiver_semantics(document: dict[str, object], path: Path) -> No
         raise AssertionError(f"{path}: a registration carries no instructions")
 
 
+def check_backup_run_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] != "failed":
+            raise AssertionError(f"{path}: a {document['outcome']} backup_run carries a result")
+        return
+    assert isinstance(result, dict)
+    nodes = result["nodes"]
+    assert isinstance(nodes, list)
+    names = [node["name"] for node in nodes]
+    if len(set(names)) != len(names):
+        raise AssertionError(f"{path}: backup_run node names must be unique")
+    failed = [node for node in nodes if node["outcome"] == "failed"]
+    done = [node for node in nodes if node["outcome"] == "done"]
+    # The outcome is derived from the nodes: all done, none done, or some.
+    expected = "done" if not failed else ("partial" if done else "failed")
+    if document["outcome"] != expected:
+        raise AssertionError(f"{path}: backup_run outcome does not follow its nodes")
+    for node in nodes:
+        if node["outcome"] == "done":
+            if node["version"] != result["version"] or node["size_bytes"] is None or node["error"]:
+                raise AssertionError(f"{path}: a done node carries the run version and a size")
+        elif node["version"] is not None or node["size_bytes"] is not None or not node["error"]:
+            raise AssertionError(f"{path}: a failed node carries only a reason")
+    # A partial run names every failed node in its warnings, so the job row can say which.
+    warned = {warning.get("node") for warning in document["warnings"]}
+    if {node["name"] for node in failed} != warned:
+        raise AssertionError(f"{path}: backup_run warnings do not match the failed nodes")
+
+
+def check_backup_schedule_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] != "failed":
+            raise AssertionError(f"{path}: only a failed backup_schedule may carry no result")
+        return
+    assert isinstance(result, dict)
+    schedule = result["schedule"]
+    assert isinstance(schedule, dict)
+    if result["cluster"] != document["cluster"]:
+        raise AssertionError(f"{path}: backup_schedule result names another cluster")
+    if schedule["unit"] != f"haproxy-state-backup@{result['cluster']}.timer":
+        raise AssertionError(f"{path}: backup_schedule unit is not the cluster's timer instance")
+    # `done` is the read-back: systemd knows the timer, reports the requested
+    # calendar and sits in the requested enabled/active state.
+    if schedule["known"] is not True:
+        raise AssertionError(f"{path}: a done backup_schedule names a timer systemd loaded")
+    if schedule["calendar"] != f"*-*-* {result['time']}:00 UTC":
+        raise AssertionError(f"{path}: backup_schedule calendar does not match the time")
+    if schedule["enabled"] is not result["enabled"] or schedule["active"] is not result["enabled"]:
+        raise AssertionError(f"{path}: backup_schedule timer state does not match the request")
+
+
 SEMANTIC_CHECKS = {
     "status": check_status_semantics,
     "list": check_list_semantics,
     "cert_list": check_cert_list_semantics,
     "network": check_network_semantics,
     "list_backups": check_backup_semantics,
+    "backup_run": check_backup_run_semantics,
+    "backup_schedule": check_backup_schedule_semantics,
     "inventory": check_inventory_semantics,
     "objects": check_objects_semantics,
     "publish": check_publish_semantics,
@@ -762,6 +817,10 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["removed"] = ["a-certificate-no-row-names"]
     elif operation == "cert_scep":
         result["domains"] = ["*." + str(result["domains"][0])]
+    elif operation == "backup_run":
+        result["nodes"][0]["outcome"] = "failed"
+    elif operation == "backup_schedule":
+        result["schedule"]["calendar"] = "*-*-* 00:00:00 UTC"
     elif operation == "cert_receiver":
         result["layers"] = [{"layer": "account", "state": "failed", "detail": "userdel: busy"}]
     else:

@@ -24,9 +24,7 @@ class StateExportContractTests(unittest.TestCase):
 
     def test_every_node_bundle_script_is_required_by_the_archive_validator(self) -> None:
         installer = (BASE / "install/04-node-prepare").read_text(encoding="utf-8")
-        expected = {
-            f"rootfs/usr/local/sbin/{name}" for name in shell_array(installer, "SCRIPTS")
-        }
+        expected = {f"rootfs/usr/local/sbin/{name}" for name in shell_array(installer, "SCRIPTS")}
         self.assertLessEqual(expected, REQUIRED_PATHS)
 
     def test_only_forced_command_accounts_are_required_to_have_authorized_keys(self) -> None:

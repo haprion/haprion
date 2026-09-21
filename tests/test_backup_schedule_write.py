@@ -58,7 +58,9 @@ class BackupScheduleWriteTests(unittest.TestCase):
             path.write_bytes(old)
             with (
                 mock.patch.object(backup_schedule_write, "_private_directory", return_value=True),
-                self.assertRaisesRegex(backup_schedule_write.ScheduleWriteError, "requested timer state"),
+                self.assertRaisesRegex(
+                    backup_schedule_write.ScheduleWriteError, "requested timer state"
+                ),
             ):
                 backup_schedule_write.apply(
                     "alpha",
@@ -76,8 +78,9 @@ class BackupScheduleWriteTests(unittest.TestCase):
 
     def test_only_a_clock_time_and_cluster_id_are_accepted(self) -> None:
         for value in ("5:00", "24:00", "05:60", "daily", "05:00; reboot"):
-            with self.subTest(value=value), self.assertRaises(
-                backup_schedule_write.ScheduleWriteError
+            with (
+                self.subTest(value=value),
+                self.assertRaises(backup_schedule_write.ScheduleWriteError),
             ):
                 backup_schedule_write.calendar(value)
         with self.assertRaises(backup_schedule_write.ScheduleWriteError):

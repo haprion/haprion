@@ -79,3 +79,6 @@ WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-scep
 
 # Certificate upload (B165): the file, sealed for root, arrives only on stdin.
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-import-helper ""
+
+# Signing request (C9b): the key is made in the import store and never leaves it; the CSR comes back.
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-request-helper ""

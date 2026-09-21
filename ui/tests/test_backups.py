@@ -60,6 +60,7 @@ def schedule(**changes: object) -> dict[str, object]:
         "next_run": (NOW + timedelta(hours=19)).isoformat().replace("+00:00", "Z"),
         "last_run": (NOW - timedelta(hours=5)).isoformat().replace("+00:00", "Z"),
         "last_result": "success",
+        "scheduled": True,
         **changes,
     }
 
@@ -298,9 +299,14 @@ class ScheduleTests(unittest.TestCase):
     def test_a_missing_timer_and_a_disabled_one_are_worded_differently(self) -> None:
         missing = timer_of(overview(reading(timer=schedule(known=False, enabled=False))))
         disabled = timer_of(overview(reading(timer=schedule(enabled=False))))
+        fresh = timer_of(
+            overview(reading(timer=schedule(enabled=False, active=False, scheduled=False)))
+        )
 
         self.assertEqual(missing.label, "Timer missing")
         self.assertEqual(disabled.label, "Disabled")
+        # Nobody has set this cluster's time yet: a warning with a form, not a fault.
+        self.assertEqual((fresh.label, fresh.tone), ("Not scheduled", "warning"))
         #
         # A disabled timer still reports the elapse it would have had. Showing
         # it would promise a run that is not going to happen.

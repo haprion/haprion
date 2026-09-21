@@ -182,6 +182,11 @@ SystemCallArchitectures=native"
 Description=Schedule HAProxy Manager node state backup for cluster %i
 
 [Timer]
+# A timer without a calendar is a unit systemd refuses to load, and it says so
+# in the journal every time anything asks. The default is never armed on its
+# own: an instance stays disabled until an administrator sets its schedule,
+# which writes a drop-in that replaces this line.
+OnCalendar=*-*-* 05:00:00
 Unit=haproxy-state-backup@%i.service
 Persistent=yes
 AccuracySec=1min

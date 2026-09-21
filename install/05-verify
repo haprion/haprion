@@ -64,7 +64,7 @@ for key in "$CONFIG_DEPLOY_KEY" "$NODE_STATUS_KEY" ${CERT_DEPLOY_KEY:+"$CERT_DEP
 done
 
 if [[ -n "${BACKUP_ROOT:-}" ]]; then
-    check "$([[ "$(systemctl show -p LoadState --value haproxy-state-backup@.service 2>/dev/null)" == loaded ]] && echo yes || echo no)" \
+    check "$([[ "$(systemctl show -p LoadState --value haproxy-state-backup@verify.service 2>/dev/null)" == loaded ]] && echo yes || echo no)" \
         "cluster backup service template is loaded"
 fi
 

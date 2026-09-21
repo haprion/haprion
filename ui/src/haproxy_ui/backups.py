@@ -321,6 +321,12 @@ def _schedule_view(value: Any, *, now: datetime) -> ScheduleView | None:
     tone: Tone
     if schedule.get("known") is not True:
         label, tone = "Timer missing", "critical"
+    elif schedule.get("scheduled") is False and schedule.get("enabled") is not True:
+        #
+        # A cluster whose timer instance nobody has set yet. Not a fault - the
+        # form on the card is where it becomes one - so it is not shouted.
+        #
+        label, tone = "Not scheduled", "warning"
     elif schedule.get("enabled") is not True:
         label, tone = "Disabled", "critical"
     elif outcome not in ("", "success"):

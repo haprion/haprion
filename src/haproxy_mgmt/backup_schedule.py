@@ -35,6 +35,7 @@ SYSTEMCTL = "/usr/bin/systemctl"
 # exact shape `timer_unit` derives it in: the project's template, an `@`, and
 # a cluster ID that passed the same check the configuration applies.
 #
+SCHEDULE_DROPIN = "schedule.conf"
 TIMER_INSTANCE = re.compile(rf"^haproxy-state-backup@{CLUSTER_ID.pattern[1:-1]}\.timer$")
 
 #
@@ -127,6 +128,7 @@ def schedule_result(unit: str | None, *, show: ShowProperties = _run) -> dict[st
             "NextElapseUSecRealtime",
             "LastTriggerUSec",
             "Unit",
+            "DropInPaths",
         ),
     )
     known = timer.get("LoadState") == "loaded"
@@ -140,6 +142,7 @@ def schedule_result(unit: str | None, *, show: ShowProperties = _run) -> dict[st
             "next_run": None,
             "last_run": None,
             "last_result": None,
+            "scheduled": False,
         }
 
     calendar = CALENDAR.search(timer.get("TimersCalendar", ""))
@@ -159,4 +162,12 @@ def schedule_result(unit: str | None, *, show: ShowProperties = _run) -> dict[st
         "next_run": _moment(timer.get("NextElapseUSecRealtime")),
         "last_run": _moment(timer.get("LastTriggerUSec")),
         "last_result": outcome.get("Result") or None,
+        #
+        # A cluster instance is born with the template's default calendar and
+        # disabled. Only an administrator's schedule writes the drop-in, so its
+        # presence is what separates "never scheduled" from "switched off".
+        #
+        "scheduled": any(
+            path.endswith("/" + SCHEDULE_DROPIN) for path in timer.get("DropInPaths", "").split()
+        ),
     }

@@ -32,6 +32,7 @@ LOADED = {
     "NextElapseUSecRealtime": "@1788058800",
     "LastTriggerUSec": "@1787972440",
     "Unit": "haproxy-state-backup.service",
+    "DropInPaths": "",
 }
 
 
@@ -124,6 +125,22 @@ class ScheduleTests(unittest.TestCase):
 
         self.assertEqual(schedule["unit"], "haproxy-state-backup@alpha.timer")
         self.assertEqual(asked[0][0], "haproxy-state-backup@alpha.timer")
+
+    def test_an_instance_is_scheduled_only_once_its_drop_in_exists(self) -> None:
+        #
+        # The template gives every instance a default calendar so systemd will
+        # load it; what says an administrator chose a time is the drop-in the
+        # schedule helper writes. Without it the card says "Not scheduled".
+        #
+        unit = "haproxy-state-backup@alpha.timer"
+        show, _ = reader({**LOADED, "UnitFileState": "disabled", "ActiveState": "inactive"})
+        fresh = schedule_result(unit, show=show)
+        show, _ = reader({**LOADED, "DropInPaths": f"/etc/systemd/system/{unit}.d/schedule.conf"})
+        chosen = schedule_result(unit, show=show)
+        assert fresh is not None and chosen is not None
+
+        self.assertFalse(fresh["scheduled"])
+        self.assertTrue(chosen["scheduled"])
 
     def test_a_name_that_is_not_a_unit_name_never_reaches_an_argv(self) -> None:
         for unit in (

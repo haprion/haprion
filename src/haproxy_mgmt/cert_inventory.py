@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from haproxy_mgmt.cert_registry import receiver_in_use
+from haproxy_mgmt.cert_request_state import pending_csrs
 from haproxy_mgmt.certificates import (
     MAX_CERTIFICATE_BYTES,
     CertificateError,
@@ -597,6 +598,43 @@ def registry_result(
                     "distribution": None,
                 }
             )
+
+    #
+    # Requests made here and waiting for a signature (C9b) are not in the
+    # registry either, for the same reason, and their key waits in the import
+    # store. Same row shape again, with `request` carrying the CSR - public
+    # by construction, and the one thing the row exists to hand out.
+    #
+    listed = {row["id"] for row in entries}
+    for csr in pending_csrs(store):
+        if csr.certificate_id in listed:
+            continue
+        entries.append(
+            {
+                "id": csr.certificate_id,
+                "source": {"kind": "import", "lineage": None},
+                "readable": False,
+                "validation_error": "no material at its source yet",
+                "request_state": "pending",
+                "request": csr.as_row_fields(),
+                "measured_at": None,
+                **_unmeasured(now),
+                "targets": {
+                    "clusters": list(csr.clusters),
+                    "receivers": [
+                        _receiver_row(
+                            registry.receivers[receiver_id],
+                            csr.certificate_id,
+                            csr.formats.get(receiver_id, DEFAULT_RECEIVER_FORMAT),
+                            None,
+                        )
+                        for receiver_id in csr.receivers
+                        if receiver_id in registry.receivers
+                    ],
+                },
+                "distribution": None,
+            }
+        )
 
     #
     # `receivers` stays the list of names the interface has read since C5.

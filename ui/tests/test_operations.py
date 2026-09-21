@@ -642,6 +642,7 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
             ("cert_scep", "haproxy-cert-scep.schema.json"),
             ("cert_receiver", "haproxy-cert-receiver.schema.json"),
             ("cert_import", "haproxy-cert-import.schema.json"),
+            ("cert_request", "haproxy-cert-request.schema.json"),
         ):
             with self.subTest(operation=name):
                 document = json.loads((schemas / path).read_text(encoding="utf-8"))

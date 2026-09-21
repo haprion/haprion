@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "failed",
+  "operation": "cert_request",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": null,
+  "error": {
+    "code": "already_exists",
+    "message": "'shop.example.net' is already in the registry as 'acme'. Choose another name, or renew the certificate that exists.",
+    "details": {}
+  },
+  "warnings": []
+}

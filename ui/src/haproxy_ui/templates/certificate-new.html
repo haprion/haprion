@@ -32,7 +32,7 @@
 
   <section class="cluster-card">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Certificate</h3></div></div></header>
-    <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of the chosen CA.<br>DNS-01: see the provider plugin's documentation. HTTP-01: the domain must already point here.<br>NDES: the profile holds the CA's challenge; renewed on schedule like the others.</span></p>
+    <p class="challenge-warning certificate-guidance"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 20h18L12 4Z"></path><path d="M12 10v4M12 17h.01"></path></svg><span>Certificate validation requires some knowledge of the chosen CA.<br>DNS-01: see the provider plugin's documentation. HTTP-01: the domain must already point here.<br>NDES: the profile holds the CA's challenge. CSR: any CA signs it; upload the result on the row.</span></p>
     <div class="form-grid">
       <label>Domain<input name="domain" value="{{ form.domain }}" maxlength="255" placeholder="app.example.com or *.example.com" autocomplete="off" spellcheck="false" required autofocus><small>Becomes the certificate's name. <code>*.example.com</code> also covers <code>example.com</code>, the way the existing wildcard does; over NDES the base name is the CN and the wildcard a SAN.</small></label>
       {#
@@ -53,6 +53,12 @@
           <label class="check"><input type="radio" name="method" value="dns-01"{% if form.method not in ('http-01', 'ndes') %} checked{% endif %}> <span><span class="method-name">DNS-01</span> <span class="optional">— Let's Encrypt; DNS record, wildcards</span></span></label>
           <label class="check"><input type="radio" name="method" value="http-01"{% if form.method == 'http-01' %} checked{% endif %}> <span><span class="method-name">HTTP-01</span> <span class="optional">— Let's Encrypt; webroot, single names</span></span></label>
           <label class="check"><input type="radio" name="method" value="ndes"{% if form.method == 'ndes' %} checked{% endif %}{% if not choices.ndes_profiles %} disabled{% endif %}> <span><span class="method-name">NDES</span> <span class="optional">— {% if choices.ndes_profiles %}Microsoft AD CS; wildcards{% else %}Microsoft AD CS; no profile in effect{% endif %}</span></span></label>
+          {#
+            The fourth radio (C9b): no CA the manager talks to. The key is
+            made here and never leaves; the request is downloaded from the
+            row, signed elsewhere, and the certificate uploaded back.
+          #}
+          <label class="check"><input type="radio" name="method" value="csr"{% if form.method == 'csr' %} checked{% endif %}> <span><span class="method-name">CSR</span> <span class="optional">— any CA; key made here, signed elsewhere</span></span></label>
         </div>
       </div>
       {#
@@ -65,8 +71,8 @@
         fields; the reader sees one.
       #}
       <div class="field profile-field" data-profile-field>
-        <span class="field-title" id="profile-field-title">Provider profile</span>
-        <select name="dns_profile" class="dns-only" aria-labelledby="profile-field-title"{% if form.method in ('http-01', 'ndes') %} disabled{% endif %}{% if form.method == 'ndes' %} hidden{% endif %}>
+        <span class="field-title" id="profile-field-title" data-profile-title="Provider profile" data-key-title="Key type">{% if form.method == 'csr' %}Key type{% else %}Provider profile{% endif %}</span>
+        <select name="dns_profile" class="dns-only" aria-labelledby="profile-field-title"{% if form.method in ('http-01', 'ndes', 'csr') %} disabled{% endif %}{% if form.method in ('ndes', 'csr') %} hidden{% endif %}>
           {% if not choices.dns_profiles %}<option value="">No profile in effect</option>{% endif %}
           {% for profile in choices.dns_profiles %}<option value="{{ profile }}"{% if form.dns_profile == profile or (not form.dns_profile and loop.first) %} selected{% endif %}>{{ profile }}</option>{% endfor %}
         </select>
@@ -76,7 +82,11 @@
         </select>
         <small data-profile-hint="dns-01"{% if form.method in ('http-01', 'ndes') %} hidden{% endif %}>Required for DNS-01. <a href="/dns-profiles">Manage DNS profiles</a>.</small>
         <small data-profile-hint="http-01"{% if form.method != 'http-01' %} hidden{% endif %}>Not used with HTTP-01.</small>
+        <select name="key_type" class="csr-only" aria-labelledby="profile-field-title"{% if form.method != 'csr' %} disabled hidden{% endif %}>
+          {% for value, label in key_types.items() %}<option value="{{ value }}"{% if form.key_type == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
         <small data-profile-hint="ndes"{% if form.method != 'ndes' %} hidden{% endif %}>Required for Microsoft AD CS. <a href="/ndes-profiles">Manage NDES profiles</a>.</small>
+        <small data-profile-hint="csr"{% if form.method != 'csr' %} hidden{% endif %}>The key is made on the manager, root-only, and never shown. Choose RSA only if the CA requires it.</small>
       </div>
     </div>
   </section>
@@ -113,7 +123,7 @@
       </div>
     </div>
     <div class="editor-actions editor-submit">
-      <p class="table-note">The job takes a minute or two. The certificate's row shows it being requested, and the CA's own words if it fails.</p>
+      <p class="table-note">The job takes a minute or two. The certificate's row shows it being requested, and the CA's own words if it fails. A CSR is ready in seconds; download it from the row.</p>
       <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Request the certificate</button></div>
     </div>
   </section>

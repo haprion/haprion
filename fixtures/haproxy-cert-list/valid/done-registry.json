@@ -127,6 +127,40 @@
           "issuer": "unknown",
           "lifecycle": "static",
           "valid": false
+        },
+        {
+          "id": "shop.example.net",
+          "source": {
+            "kind": "import",
+            "lineage": null
+          },
+          "targets": {
+            "clusters": [],
+            "receivers": []
+          },
+          "distribution": null,
+          "readable": false,
+          "validation_error": "no material at its source yet",
+          "request_state": "pending",
+          "request": {
+            "kind": "csr",
+            "domains": [
+              "shop.example.net",
+              "*.shop.example.net"
+            ],
+            "key_type": "ec-p256",
+            "requested_at": "2026-09-21T10:30:00+00:00",
+            "csr_pem": "-----BEGIN CERTIFICATE REQUEST-----\nMIIBGTCBvwIBADAbMRkwFwYDVQQDDBBzaG9wLmV4YW1wbGUubmV0MFkwEwYHKoZI\nzj0CAQYIKoZIzj0DAQcDQgAE38FfijZwmrhzLdhJpWwEIm5j6II3w+obEBONv5Xf\nrTnFXO8tKsvbgLFYYMmJBVdBY9c8+lnZcPTnMtKjpMvum6BCMEAGCSqGSIb3DQEJ\nDjEzMDEwLwYDVR0RBCgwJoIQc2hvcC5leGFtcGxlLm5ldIISKi5zaG9wLmV4YW1w\nbGUubmV0MAoGCCqGSM49BAMCA0kAMEYCIQCT9OeNuERSDYDYhTMTiT+AI9WRaI1U\nuUN92ltoaEtpZgIhAM5t9ccLzBqFjU3DbX2krursneINNZmUZlRqSZTChQPw\n-----END CERTIFICATE REQUEST-----\n"
+          },
+          "measured_at": null,
+          "fingerprint_sha256": null,
+          "common_name": null,
+          "sans": [],
+          "not_before": "2026-08-01T00:00:00Z",
+          "not_after": "2026-08-01T00:00:00Z",
+          "issuer": "unknown",
+          "lifecycle": "static",
+          "valid": false
         }
       ],
       "receivers": [

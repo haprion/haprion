@@ -11,6 +11,7 @@ from haproxy_ui import auth, certificate_activity, certificates
 from tests.test_certificate_delete import DeleteRouteTestCase
 from tests.test_certificates import node, overview, registered, registry_of, status, with_registry
 from tests.test_certificates import reading as certificate_reading
+from tests.test_login import configuration
 from tests.test_queue_route import queued
 
 NOW = datetime(2026, 9, 15, 14, 0, tzinfo=UTC)
@@ -593,3 +594,116 @@ class AFinishedTargetChangeGivesWayToTheRegistry(unittest.TestCase):
         updated = certificates.with_deletion_states(stale, {"example.com": self.state()})
 
         self.assertEqual(registry_of(updated).certificates[0].state_label, "Removed from beta")
+
+
+CSR_TEXT = "-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----\n"
+
+
+def csr_pending_row(identifier: str = "csr.example.net") -> dict[str, Any]:
+    row = registered(identifier, kind="import", clusters=("alpha",), readable=False)
+    row["sans"] = []
+    row["validation_error"] = "no material at its source yet"
+    row["request_state"] = "pending"
+    row["request"] = {
+        "kind": "csr",
+        "domains": [identifier, "*." + identifier],
+        "key_type": "ec-p256",
+        "requested_at": "2026-09-21T10:30:00+00:00",
+        "csr_pem": CSR_TEXT,
+    }
+    return row
+
+
+class SigningRequestStates(unittest.TestCase):
+    """A `cert_request` job (C9b): a placeholder until the listing shows the request."""
+
+    def test_running_done_and_failed(self) -> None:
+        def job(state: str, **extra: Any) -> Any:
+            return queued(
+                operation="cert_request",
+                cluster=None,
+                state=state,
+                payload={
+                    "id": "csr.example.net",
+                    "domains": ["csr.example.net", "*.csr.example.net"],
+                    "key_type": "ec-p256",
+                    "clusters": ["alpha"],
+                    "receivers": [],
+                },
+                finished_at=None if state == "running" else NOW - timedelta(minutes=5),
+                **extra,
+            )
+
+        running = certificate_activity.deletion_states([job("running")], now=NOW)
+        state = running["csr.example.net"]
+        self.assertEqual((state.label, state.active), ("Making request", True))
+        self.assertIsNotNone(state.placeholder)
+        placeholder = state.placeholder
+        self.assertEqual(
+            placeholder.sans if placeholder else (), ("csr.example.net", "*.csr.example.net")
+        )
+        self.assertTrue(placeholder.wildcard if placeholder else False)
+
+        done = certificate_activity.deletion_states([job("done")], now=NOW)
+        self.assertEqual(done["csr.example.net"].label, "Request made")
+        self.assertTrue(done["csr.example.net"].placeholder_only)
+
+        failed = certificate_activity.deletion_states(
+            [job("failed", result={"error": {"code": "already_exists", "message": "taken"}})],
+            now=NOW,
+        )
+        self.assertEqual(failed["csr.example.net"].label, "Request failed")
+        self.assertIn("taken", failed["csr.example.net"].detail)
+
+    def test_the_listing_row_carries_the_request(self) -> None:
+        view = overview(with_registry(certificate_reading(), csr_pending_row()))
+        row = registry_of(view).certificates[0]
+        self.assertEqual((row.state_label, row.state_tone), ("Awaiting signature", "info"))
+        self.assertTrue(row.csr_pending)
+        self.assertEqual(row.csr_pem, CSR_TEXT)
+        self.assertEqual(row.sans, ("csr.example.net", "*.csr.example.net"))
+        self.assertTrue(row.wildcard)
+        self.assertEqual(row.source_kind, "import")
+        self.assertFalse(row.placeholder)
+
+
+class ADownloadableSigningRequest(DeleteRouteTestCase):
+    def test_the_row_offers_the_download_and_the_upload_and_the_route_serves_it(self) -> None:
+        with mock.patch(
+            "haproxy_ui.db.cluster_certificates",
+            return_value=[with_registry(certificate_reading(), csr_pending_row())],
+        ):
+            client = self.writing_client()
+            page = client.get("/certificates?view=registry&open=csr.example.net").text
+            self.assertIn('status-badge-info">Awaiting signature<', page)
+            self.assertIn(
+                'href="/certificates/csr.example.net/csr" download="csr.example.net.csr"', page
+            )
+            self.assertIn(">Download CSR<", page)
+            self.assertNotIn(">Resume enrollment<", page)
+            self.assertIn("<strong>Signed certificate</strong>", page)
+            self.assertIn('action="/certificates/csr.example.net/upload"', page)
+            self.assertIn("The key is already here.", page)
+            self.assertIn("csr.example.net, *.csr.example.net", page)
+
+            response = client.get("/certificates/csr.example.net/csr")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.text, CSR_TEXT)
+            self.assertEqual(response.headers["content-type"], "application/pkcs10")
+            self.assertEqual(
+                response.headers["content-disposition"],
+                'attachment; filename="csr.example.net.csr"',
+            )
+            #
+            # A reader may download it: the request is public, and the row
+            # is on a page a reader can see.
+            #
+            reader = self.writing_client(role="reader", writes=False)
+            self.assertEqual(reader.get("/certificates/csr.example.net/csr").status_code, 200)
+            self.assertEqual(reader.get("/certificates/example.com/csr").status_code, 404)
+            self.assertEqual(reader.get("/certificates/Nope/csr").status_code, 404)
+
+    def test_the_route_needs_a_session(self) -> None:
+        client = self.client(configuration())
+        response = client.get("/certificates/csr.example.net/csr", follow_redirects=False)
+        self.assertEqual(response.status_code, 303)

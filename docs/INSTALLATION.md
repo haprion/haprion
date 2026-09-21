@@ -1149,6 +1149,32 @@ On an imported certificate's row, *Upload certificate* takes exactly that - only
 a file holding a key is refused there and pointed at the import page, where replacing the key is
 the stated intent. Enrollment from a Microsoft CA needs no file at all (1.4.8).
 
+**A signing request made here.** For a CA the manager cannot talk to - a purchase, an internal
+PKI without SCEP, whoever signs things - the key can be made on the manager instead of imported:
+
+```bash
+sudo haproxy-cert-request --id intranet.example --domain intranet.example --domain '*.intranet.example' \
+  --cluster alpha [--key-type ec-p256|rsa-2048|rsa-4096]
+```
+
+writes `/etc/haproxy-manager/certificates/<id>/privkey.pem` (root-only, never printed) beside
+`request.csr`, `request.json` and `targets.json`, and prints the CSR. The base name is the CN and
+the certificate's ID, a wildcard a SAN beside it. EC P-256 is the default; RSA for the CA that
+requires it. The request is *not* in the registry - an entry without material would refuse every
+rollout to its clusters - and the listing shows it from the store as **Signing request pending**,
+with the CSR to download from the row. The name is refused while anything else holds it: a
+registry entry, a certbot lineage, imported material, an NDES request in flight.
+
+When the CA has signed, the certificate comes back without a key - `haproxy-cert-import --id <id>
+--certificate <file> [--chain <file>]` with no `--key`, or *Upload certificate* on the row - and is
+matched against the stored key, imported and published to the targets the request named plus any
+named now. A certificate for another key is refused and the request kept. Deleting the row (1.4.6)
+removes the key with it; a request nobody signs is otherwise harmless, and stays until it is
+deleted. On the interface the same thing is the fourth choice on *New certificate*, **CSR**, with
+the key type where the other methods have their profile; it queues a `cert_request` job that
+`haproxy-cert-request-helper` runs, the fourteenth worker helper (its sudoers rule and step 07 are
+part of the release).
+
 ### 1.4.8 Preparing Microsoft AD CS / NDES for CSR enrollment
 
 **Status:** enrollment from the manager is complete: encrypted NDES provider profiles, the
@@ -2932,9 +2958,10 @@ Thirteen helpers, each with no arguments, in `/etc/sudoers.d/<worker>`:
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-ndes-profile-apply-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper ""
 <worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-import-helper ""
+<worker> ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-request-helper ""
 ```
 
-The last eight are the certificate jobs (1.4.3, 1.4.5, 1.4.6): they belong to no cluster, and
+The last nine are the certificate jobs (1.4.3, 1.4.5, 1.4.6, 1.4.7): they belong to no cluster, and
 the queue runs one of them at a time. `cert-delete` is the only rule in the file that removes
 key material; 1.4.6 says what bounds it. The receiver helper (1.4.9), which makes accounts and
 edits sshd's and nginx's own configuration, is deliberately not in this file: it is reached over

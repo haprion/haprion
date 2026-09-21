@@ -123,6 +123,11 @@ def deletion_states(
             if isinstance(identifier, str):
                 consider(identifier, _import_state_of(job, moment))
             continue
+        if job.operation == "cert_request":
+            identifier = job.payload.get("id")
+            if isinstance(identifier, str):
+                consider(identifier, _request_state_of(job, moment))
+            continue
         if job.operation == "cert_issue":
             requested = _issue_placeholder(job.payload)
             if requested is not None:
@@ -213,6 +218,53 @@ def _import_state_of(job: Job, now: datetime) -> DeletionState | None:
         return DeletionState(
             "Imported",
             "Imported; the listing lists it at the next poll",
+            "info",
+            True,
+            placeholder,
+            placeholder_only=True,
+        )
+    return None
+
+
+def _request_state_of(job: Job, now: datetime) -> DeletionState | None:
+    """A signing request being made, just made, or just refused (C9b).
+
+    Making a key takes a moment; the listing then shows the request as
+    pending, from the manager itself, at the next poll. Until then the
+    placeholder stands in with the names and targets the form named.
+    """
+
+    domains = _names(job.payload, "domains")
+    placeholder = Placeholder(
+        "Imported",
+        "import",
+        any(name.startswith("*.") for name in domains),
+        domains,
+        _names(job.payload, "clusters"),
+        _names(job.payload, "receivers"),
+    )
+    if job.state in {"pending", "running"}:
+        return DeletionState(
+            "Making request",
+            "The key and the signing request are being made",
+            "info",
+            True,
+            placeholder,
+        )
+    if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
+        return None
+    if job.state == "failed":
+        return DeletionState(
+            "Request failed",
+            _failure(job, "The signing request job failed"),
+            "critical",
+            False,
+            placeholder,
+        )
+    if job.state == "done":
+        return DeletionState(
+            "Request made",
+            "The signing request is ready; the row shows it at the next poll",
             "info",
             True,
             placeholder,

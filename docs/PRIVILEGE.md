@@ -22,7 +22,10 @@ for the duration of the request and nowhere the web can read afterwards - not th
 the audit, not the snapshot to the development platform, whose own key pair cannot open it. The
 root helper is the only thing that opens the box. The promise is therefore *never stored, never
 readable back*, not *never seen*; it is the same exposure DNS provider credentials carry, and the
-command-line import remains for whoever wants the key to stay off the web entirely.
+command-line import remains for whoever wants the key to stay off the web entirely. A signing
+request made on the manager keeps even that exposure away: the root helper makes the key in the
+import store, and what crosses the boundary in either direction is the CSR and, later, the signed
+certificate - both public.
 
 Three separate node identities exist, one per thing the manager may ask a node to do: read status,
 pull a configuration release, pull a certificate. The status identity is the only one of the three

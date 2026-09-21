@@ -113,6 +113,11 @@ _OPERATION_OUTCOMES = {
     #
     "cert_import": frozenset({"done", "failed", "blocked"}),
     #
+    # `cert_request` makes a key and a CSR or refuses to; nothing is
+    # published, so there is no half.
+    #
+    "cert_request": frozenset({"done", "failed", "blocked"}),
+    #
     # `dns_profile_apply` writes one file or refuses to; there is no half.
     #
     "ndes_profile_apply": frozenset({"done", "failed", "blocked"}),

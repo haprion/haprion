@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from haproxy_mgmt.cert_issue import METHODS, IssueError, parse_domain
+from haproxy_mgmt.cert_request_state import DEFAULT_KEY_TYPE, KEY_TYPES
 from haproxy_mgmt.config import DEFAULT_RECEIVER_FORMAT, RECEIVER_FORMATS
 
 
@@ -51,6 +52,8 @@ class IssueForm:
     ndes_profile: str = ""
     formats: tuple[str, ...] = ()
     """The page's `format` fields as submitted, `<receiver>=<format>` each (B159)."""
+    key_type: str = ""
+    """The CSR method's one setting (C9b); empty means the engine's default."""
 
     @property
     def wildcard(self) -> bool:
@@ -72,12 +75,29 @@ class IssueForm:
 # domain rule, same targets; a different job behind the button.
 #
 NDES_METHOD = "ndes"
+#
+# The fourth answer (C9b): no CA the manager can talk to. The key is made
+# here, the signing request leaves as text, and the signed certificate comes
+# back through the row's upload. Same form, same names, same targets; a
+# key type instead of a profile.
+#
+CSR_METHOD = "csr"
+KEY_TYPE_LABELS = {
+    "ec-p256": "EC P-256 (recommended)",
+    "rsa-2048": "RSA 2048",
+    "rsa-4096": "RSA 4096",
+}
 
 
 def operation_of(form: IssueForm) -> str:
-    """Which job the submission becomes: certbot's, or the NDES enrollment."""
+    """Which job the submission becomes: certbot's, the NDES enrollment, or a CSR."""
 
-    return "cert_scep" if form.method.strip() == NDES_METHOD else "cert_issue"
+    method = form.method.strip()
+    if method == NDES_METHOD:
+        return "cert_scep"
+    if method == CSR_METHOD:
+        return "cert_request"
+    return "cert_issue"
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +130,11 @@ class IssueChoices:
     # replace them (a rotated key, a renewed certificate), and no other.
     #
     imported: tuple[str, ...] = ()
+    #
+    # And the ones that are signing requests still waiting (C9b): the name
+    # is taken, and the action that fits is on the row, not on this form.
+    #
+    waiting: tuple[str, ...] = ()
 
 
 EMPTY_FORM = IssueForm(domain="", method="dns-01", dns_profile="", clusters=(), receivers=())
@@ -126,6 +151,7 @@ def normalise(form: IssueForm) -> IssueForm:
         clusters=tuple(dict.fromkeys(name.strip() for name in form.clusters if name.strip())),
         receivers=tuple(dict.fromkeys(name.strip() for name in form.receivers if name.strip())),
         formats=tuple(value.strip() for value in form.formats if value.strip()),
+        key_type=form.key_type.strip(),
     )
 
 
@@ -170,6 +196,11 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             "That is not a domain name the engine can issue for: lowercase labels "
             "separated by dots, optionally starting with *. for a wildcard."
         ) from problem
+    if name in choices.waiting:
+        raise FormProblem(
+            f"A signing request named {name} is already waiting for its certificate. "
+            "Download it from its row, or delete the row to start over."
+        )
     if name in choices.registered:
         #
         # The ID is the base name, so *.example.com and example.com are the
@@ -190,11 +221,18 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             raise FormProblem("Choose an NDES provider profile that is in effect.")
         if form.dns_profile:
             raise FormProblem("A DNS provider profile belongs to DNS-01 only.")
+    elif form.method == CSR_METHOD:
+        if form.dns_profile or form.ndes_profile:
+            raise FormProblem("A provider profile belongs to a CA the manager talks to.")
+        if form.key_type and form.key_type not in KEY_TYPES:
+            raise FormProblem("Choose a key type from the list.")
     elif form.method not in METHODS:
         raise FormProblem("Choose a challenge method.")
     elif form.ndes_profile:
         raise FormProblem("An NDES provider profile belongs to NDES enrollment only.")
-    if wildcard and form.method not in {"dns-01", NDES_METHOD}:
+    if form.key_type and form.method != CSR_METHOD:
+        raise FormProblem("A key type belongs to a signing request only.")
+    if wildcard and form.method not in {"dns-01", NDES_METHOD, CSR_METHOD}:
         #
         # Said here as well as by the engine: the engine's refusal would arrive
         # as a failed job on another page, and this is the one rule a reader
@@ -204,7 +242,7 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             "A wildcard certificate needs DNS-01. HTTP-01 cannot prove a wildcard, "
             "because no CA issues one against an HTTP challenge."
         )
-    if form.method == NDES_METHOD:
+    if form.method in {NDES_METHOD, CSR_METHOD}:
         pass
     elif form.method == "dns-01":
         if choices.profiles_required and not form.dns_profile:
@@ -230,6 +268,18 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             "on the manager, not from this form."
         )
     formats = formats_from_fields(form.formats, form.receivers)
+    if form.method == CSR_METHOD:
+        name, names, _ = parse_domain(form.domain)
+        request: dict[str, Any] = {
+            "id": name,
+            "domains": [name, *[n for n in names if n != name]],
+            "key_type": form.key_type or DEFAULT_KEY_TYPE,
+            "clusters": list(form.clusters),
+            "receivers": list(form.receivers),
+        }
+        if formats:
+            request["formats"] = formats
+        return request
     if form.method == NDES_METHOD:
         #
         # The engine's own reading of the name: the base name is the ID and

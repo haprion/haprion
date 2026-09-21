@@ -29,6 +29,7 @@ from haproxy_mgmt import cert_upload
 from haproxy_mgmt.cert_import import (
     ImportError_,
     assemble,
+    assemble_for,
     import_certificate,
     read_bytes,
     stored_key,
@@ -150,7 +151,9 @@ def main(
                     "haproxy-cert-import.",
                 )
             keys = [existing]
-        material = assemble(certificates, keys)
+            material = assemble_for(certificates, keys, pending=True)
+        else:
+            material = assemble(certificates, keys)
         result = import_certificate(
             certificate_id=certificate_id,
             material=material,

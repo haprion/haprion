@@ -19,17 +19,31 @@
     if (!methods.length || !field) return;
     const profile = field.querySelector("select[name='dns_profile']");
     const ndesProfile = field.querySelector("select[name='ndes_profile']");
+    const keyType = field.querySelector("select[name='key_type']");
+    const title = field.querySelector("#profile-field-title");
     const hints = Array.from(field.querySelectorAll("[data-profile-hint]"));
     if (!profile) return;
 
+    //
+    // The CSR method (C9b) has no profile: the same field shows the key
+    // type instead, under the same title element, so the page keeps its
+    // height and the reader keeps their place.
+    //
     const apply = () => {
       const chosen = methods.find((method) => method.checked);
       const method = chosen ? chosen.value : "dns-01";
       profile.disabled = method !== "dns-01";
-      profile.hidden = method === "ndes";
+      profile.hidden = method === "ndes" || method === "csr";
       if (ndesProfile) {
         ndesProfile.disabled = method !== "ndes";
         ndesProfile.hidden = method !== "ndes";
+      }
+      if (keyType) {
+        keyType.disabled = method !== "csr";
+        keyType.hidden = method !== "csr";
+      }
+      if (title) {
+        title.textContent = method === "csr" ? title.dataset.keyTitle : title.dataset.profileTitle;
       }
       hints.forEach((hint) => { hint.hidden = hint.dataset.profileHint !== method; });
     };

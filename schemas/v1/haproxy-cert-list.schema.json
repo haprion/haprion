@@ -153,8 +153,21 @@
         "readable": { "type": "boolean" },
         "validation_error": { "type": ["string", "null"], "maxLength": 2048 },
         "request_state": {
-          "description": "Additive (C6): an import whose material has not arrived because an NDES enrollment for it is still waiting on the CA. Absent otherwise.",
+          "description": "Additive (C6): an import whose material has not arrived because an NDES enrollment for it is still waiting on the CA, or (C9b) because a signing request made on the manager is waiting for its signature. Absent otherwise.",
           "const": "pending"
+        },
+        "request": {
+          "description": "Additive (C9b): the signing request a pending row is waiting on, when it was made on the manager. The CSR is public by construction; the key it was made for waits in the import store and is never reported. Absent for an NDES request and for every row with material.",
+          "type": "object",
+          "required": ["kind", "domains", "key_type", "requested_at", "csr_pem"],
+          "properties": {
+            "kind": { "const": "csr" },
+            "domains": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 255 } },
+            "key_type": { "enum": ["ec-p256", "rsa-2048", "rsa-4096"] },
+            "requested_at": { "type": "string", "format": "date-time" },
+            "csr_pem": { "type": "string", "minLength": 1, "maxLength": 16384, "pattern": "^-----BEGIN CERTIFICATE REQUEST-----\\n" }
+          },
+          "additionalProperties": false
         },
         "renewal": {
           "description": "Additive (2026-09-15): what the scheduled NDES renewal last did to this certificate. Absent where it has not tried.",

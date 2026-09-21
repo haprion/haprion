@@ -182,6 +182,17 @@ class RegistryCertificateView:
     # else, and that is the source's kind, not the lifecycle's.
     #
     source_kind: str = ""
+    #
+    # A signing request made on the manager (C9b), waiting for its
+    # signature: the row hands the CSR out and takes the certificate back
+    # on its upload. The text is here so the download route can serve it
+    # from the same cached reading the page is drawn from.
+    #
+    csr_pem: str | None = None
+
+    @property
+    def csr_pending(self) -> bool:
+        return self.csr_pem is not None
 
     @property
     def lifecycle_label(self) -> str:
@@ -823,6 +834,12 @@ def _registry_state(
         # waiting, not breakage; the listing helper says which (C6).
         #
         if entry.get("request_state") == "pending":
+            if _mapping(entry.get("request")).get("kind") == "csr":
+                return (
+                    "Awaiting signature",
+                    "Download the request, have a CA sign it, and upload the certificate here",
+                    "info",
+                )
             return (
                 "Request pending",
                 "The CA is holding the enrollment; resume it from the certificate form",
@@ -982,6 +999,16 @@ def _registry_certificate(
     lifecycle = _text(entry.get("lifecycle"), "unknown")
     readable = entry.get("readable") is True
     sans = _sans(entry.get("sans"))
+    #
+    # A waiting signing request has no measured names, but it has the ones
+    # it asked for, and the Names column is where a reader looks for them.
+    #
+    csr_pem: str | None = None
+    pending_request = _mapping(entry.get("request"))
+    if not readable and pending_request.get("kind") == "csr":
+        sans = _sans(pending_request.get("domains"))
+        text = pending_request.get("csr_pem")
+        csr_pem = text if isinstance(text, str) and text else None
     fingerprint = _text(entry.get("fingerprint_sha256"), "")
     targets = _target_views(entry)
 
@@ -1039,6 +1066,7 @@ def _registry_certificate(
             else None
         ),
         valid_from=_date(entry.get("not_before")) if readable else "—",
+        csr_pem=csr_pem,
     )
 
 

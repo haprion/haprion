@@ -65,7 +65,9 @@ Certificate issuance runs through an exact root helper around Certbot; DNS provi
 entered in the web interface are sealed against a host key the web process cannot open. A
 certificate file uploaded in the interface - with or without its private key - is sealed the same
 way inside the request that carries it, so the web process holds the key only for the duration of
-that request and stores nothing it can read back; only the root helper opens the file. Renewal
+that request and stores nothing it can read back; only the root helper opens the file. A key can
+also be made on the manager, with a signing request for any CA to sign; the key then never exists
+anywhere else, and the signed certificate is uploaded back without one. Renewal
 stays Certbot's own timer; certificates the manager enrolls from a Microsoft CA over NDES/SCEP
 are renewed by the same daily run through the same enrollment path. Disaster recovery and VM rebuild workflows are deliberately outside the
 application scope.

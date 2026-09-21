@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from haproxy_mgmt import cert_upload, dns_profiles, ndes_profiles
+from haproxy_mgmt import cert_request_state, cert_upload, dns_profiles, ndes_profiles
 from haproxy_mgmt.cli import (
     cert_delete_helper,
     cert_deploy,
@@ -32,6 +32,7 @@ from haproxy_mgmt.cli import (
     cert_publish_helper,
     cert_receiver_ask,
     cert_receiver_helper,
+    cert_request_helper,
     cert_scep_helper,
     cert_target_helper,
     deploy,
@@ -165,6 +166,7 @@ CERTIFICATE_OPERATIONS = frozenset(
         "cert_scep",
         "cert_receiver",
         "cert_import",
+        "cert_request",
     }
 )
 
@@ -352,6 +354,44 @@ def _certificate_operation(
                 certificate_id=certificate_id,
                 key_id=key_id,
                 ciphertext=ciphertext,
+                clusters=clusters,
+                receivers=receivers,
+                formats=formats,
+            ),
+        )
+
+    if operation == "cert_request":
+        #
+        # A key made on the manager and a CSR for somebody else to sign
+        # (C9b): the names, the key type from the short list, the targets.
+        # Nothing secret rides in the payload, and nothing secret comes
+        # back - the envelope carries the CSR.
+        #
+        _only(payload, "id", "domains", "key_type", "clusters", "receivers", "formats")
+        certificate_id = payload.get("id")
+        if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
+            raise BadPayload("id must be a certificate ID")
+        domains = payload.get("domains")
+        if (
+            not isinstance(domains, list)
+            or not domains
+            or not all(isinstance(name, str) and name for name in domains)
+        ):
+            raise BadPayload("domains must be a non-empty list of DNS names")
+        if domains[0].startswith("*."):
+            raise BadPayload("the first name is the CN and cannot be a wildcard")
+        key_type = payload.get("key_type", cert_request_state.DEFAULT_KEY_TYPE)
+        if not isinstance(key_type, str) or key_type not in cert_request_state.KEY_TYPES:
+            raise BadPayload("key_type must be one of the offered key types")
+        clusters, receivers = _targets(payload)
+        formats = _formats(payload, receivers)
+        return Prepared(
+            argv=(cert_request_helper.SUDO, *SUDO_FLAGS, cert_request_helper.HELPER),
+            request=cert_request_helper.build_request(
+                str(request_id),
+                certificate_id=certificate_id,
+                domains=tuple(domains),
+                key_type=key_type,
                 clusters=clusters,
                 receivers=receivers,
                 formats=formats,

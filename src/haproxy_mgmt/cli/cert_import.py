@@ -6,10 +6,12 @@ belongs to it - is decided in `cert_import` from the files, and a pair that
 does not fit leaves nothing behind. The clusters named are rolled out at the
 end with the same `haproxy-cert-deploy` the certbot hook uses.
 
-The other way in is the interface's CSR flow (C6), where the key never
-exists anywhere but the manager. This is for the case where it already
-does: a wildcard exported from an internal CA, a purchased certificate, a
-pair handed over from another system.
+The other way in is a signing request made here (`haproxy-cert-request`,
+C9b), where the key never exists anywhere but the manager; the signed
+certificate then comes back through this command without `--key`. With
+`--key` this is for the case where the key already exists elsewhere: a
+wildcard exported from an internal CA, a purchased certificate, a pair
+handed over from another system.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from haproxy_mgmt.cert_import import (
     ImportResult,
     import_certificate,
     read_material,
+    stored_key,
 )
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
@@ -39,7 +42,7 @@ EXIT_USAGE = 64
 
 USAGE = (
     "Usage:\n"
-    "  haproxy-cert-import --id <id> --certificate <pem> --key <pem> [--chain <pem>]\n"
+    "  haproxy-cert-import --id <id> --certificate <pem> [--key <pem>] [--chain <pem>]\n"
     "                      [--cluster <id>]... [--receiver <id>]...\n"
     "                      [--format <id>=<form>]... [--json]\n"
     "  haproxy-cert-import --id <id> --pkcs12 <file> [--password-file <path>]\n"
@@ -54,7 +57,9 @@ USAGE = (
     "  --id <id>             The certificate ID; proxy objects name it. Lower-case\n"
     "                        letters, digits, dots, dashes.\n"
     "  --certificate <pem>   The leaf, or the leaf followed by its chain.\n"
-    "  --key <pem>           The unencrypted private key.\n"
+    "  --key <pem>           The unencrypted private key. Omitted, the key the manager\n"
+    "                        already holds for the ID is used: a signing request made\n"
+    "                        here (haproxy-cert-request), or an earlier import.\n"
     "  --chain <pem>         The issuing CA certificate(s), if not in --certificate.\n"
     "  --pkcs12 <file>       Everything in one PKCS#12 (.pfx/.p12) instead.\n"
     "  --password-file <p>   A file whose first line is the PKCS#12 password.\n"
@@ -231,14 +236,19 @@ def main(
         )
 
     try:
+        assert arguments.certificate_id is not None  # noqa: S101 - _parse required it
         material = read_material(
             certificate=arguments.certificate,
             key=arguments.key,
             chain=arguments.chain,
             pkcs12=arguments.pkcs12,
             password_file=arguments.password_file,
+            stored=(
+                stored_key(store, arguments.certificate_id)
+                if arguments.key is None and arguments.pkcs12 is None
+                else None
+            ),
         )
-        assert arguments.certificate_id is not None  # noqa: S101 - _parse required it
         result = import_certificate(
             certificate_id=arguments.certificate_id,
             material=material,

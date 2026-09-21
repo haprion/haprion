@@ -1763,10 +1763,11 @@ def build_router(config: Config) -> APIRouter:
         format: Sequence[str] = Form(default=()),
         dns_profile: str = Form(default="", max_length=32),
         ndes_profile: str = Form(default="", max_length=32),
+        key_type: str = Form(default="", max_length=16),
         idempotency_key: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        """Queue one `cert_issue` or `cert_scep` job, or draw the form again saying why not.
+        """Queue one certificate job - issue, enrollment or signing request - or say why not.
 
         The same four refusals `/operations` makes, in the same order, and
         then the form's own. Not routed through `/operations`: that route
@@ -1783,6 +1784,7 @@ def build_router(config: Config) -> APIRouter:
             clusters=tuple(cluster),
             receivers=tuple(receiver),
             formats=tuple(format),
+            key_type=key_type,
         )
         session = current_session(request)
         if session is None:
@@ -1851,6 +1853,30 @@ def build_router(config: Config) -> APIRouter:
         # the full record, but it is not where a person expects to land.
         #
         return RedirectResponse("/certificates?view=registry", status_code=303)
+
+    #
+    # The signing request a waiting row exists to hand out (C9b). Served
+    # from the same cached reading the page is drawn from, as a file the
+    # browser saves: what a CA's form asks to be pasted or uploaded. The
+    # CSR is public by construction - it holds the public key and the
+    # names - and the row is on a page a viewer may read, so no role is
+    # checked beyond the session.
+    #
+    @router.get("/certificates/{certificate_id}/csr")
+    def certificate_signing_request(request: Request, certificate_id: str) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        if not CERTIFICATE_ID.fullmatch(certificate_id):
+            return PlainTextResponse("Not found", status_code=404)
+        row = _registry_views(request, config).get(certificate_id)
+        if row is None or row.csr_pem is None:
+            return PlainTextResponse("No signing request is waiting for this name", status_code=404)
+        return PlainTextResponse(
+            row.csr_pem,
+            media_type="application/pkcs10",
+            headers={"Content-Disposition": f'attachment; filename="{certificate_id}.csr"'},
+        )
 
     #
     # A certificate somebody already has (C9, B165): a file, a name, the
@@ -2291,6 +2317,11 @@ def build_router(config: Config) -> APIRouter:
             )
             if overview.registry
             else (),
+            waiting=tuple(
+                entry.identifier for entry in overview.registry.certificates if entry.csr_pending
+            )
+            if overview.registry
+            else (),
         )
 
     def _certificate_form_page(
@@ -2326,6 +2357,7 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "form": certificate_form.normalise(form),
                 "choices": choices,
+                "key_types": certificate_form.KEY_TYPE_LABELS,
                 "problem": problem,
                 "certificate_job": jobs.certificate_in_flight(recent),
                 "section": "certificates",

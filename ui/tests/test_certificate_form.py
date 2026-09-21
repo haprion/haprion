@@ -622,3 +622,89 @@ class SendingTheForm(CertificateFormRouteTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheCsrMethod(unittest.TestCase):
+    """The fourth radio (C9b): a key made here, a request signed elsewhere."""
+
+    def test_a_name_becomes_one_cert_request_payload_with_the_default_key(self) -> None:
+        submission = form(domain="*.example.org", method="csr", receivers=("lb-01.example.net",))
+        self.assertEqual(certificate_form.operation_of(submission), "cert_request")
+        self.assertEqual(
+            certificate_form.payload_from_form(submission, CHOICES),
+            {
+                "id": "example.org",
+                "domains": ["example.org", "*.example.org"],
+                "key_type": "ec-p256",
+                "clusters": ["alpha"],
+                "receivers": ["lb-01.example.net"],
+            },
+        )
+
+    def test_a_chosen_key_type_travels_and_a_wrong_one_is_refused(self) -> None:
+        payload = certificate_form.payload_from_form(
+            form(method="csr", key_type="rsa-4096"), CHOICES
+        )
+        self.assertEqual(payload["key_type"], "rsa-4096")
+        self.assertIn("key type", problem_of(form(method="csr", key_type="dsa-1024")))
+
+    def test_a_name_whose_request_is_waiting_is_sent_to_its_row(self) -> None:
+        choices = replace(CHOICES, registered=("app.example.com",), waiting=("app.example.com",))
+        with self.assertRaises(certificate_form.FormProblem) as caught:
+            certificate_form.payload_from_form(form(method="csr"), choices)
+        self.assertIn("already waiting", str(caught.exception))
+
+    def test_a_profile_or_a_key_type_on_the_wrong_method(self) -> None:
+        self.assertIn("provider profile", problem_of(form(method="csr", dns_profile="cf")))
+        self.assertIn("provider profile", problem_of(form(method="csr", ndes_profile="certserver1")))
+        self.assertIn("signing request", problem_of(form(method="dns-01", key_type="rsa-2048")))
+
+
+class SendingTheFormAsACsr(CertificateFormRouteTestCase):
+    def test_the_page_offers_the_radio_and_the_key_types(self) -> None:
+        page = self.writing_client().get("/certificates/new").text
+        self.assertIn('value="csr"', page)
+        self.assertIn('<select name="key_type" class="csr-only"', page)
+        self.assertIn("EC P-256 (recommended)", page)
+        self.assertIn('data-profile-hint="csr" hidden', page)
+        self.assertIn('data-key-title="Key type"', page)
+
+    def test_a_submission_queues_one_cert_request_job_with_no_cluster(self) -> None:
+        response = self.post(
+            self.writing_client(),
+            domain="*.example.org",
+            method="csr",
+            key_type="rsa-2048",
+            receiver=["lb-01.example.net"],
+            format=["lb-01.example.net=pkcs12"],
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+        self.assertEqual(response.headers["location"], "/certificates?view=registry")
+        (job,) = self.queued
+        self.assertEqual(job["operation"], "cert_request")
+        self.assertIsNone(job["cluster"])
+        self.assertEqual(
+            job["payload"],
+            {
+                "id": "example.org",
+                "domains": ["example.org", "*.example.org"],
+                "key_type": "rsa-2048",
+                "clusters": ["alpha"],
+                "receivers": ["lb-01.example.net"],
+                "formats": {"lb-01.example.net": "pkcs12"},
+            },
+        )
+
+    def test_a_refused_csr_form_is_redrawn_with_the_key_select_shown(self) -> None:
+        page = self.post(self.writing_client(), method="csr", key_type="rsa-4096", cluster=[]).text
+        self.assertIn("Choose at least one target", page)
+        self.assertIn('value="csr" checked', page)
+        self.assertIn(
+            '<select name="key_type" class="csr-only" aria-labelledby="profile-field-title">', page
+        )
+        self.assertIn('<option value="rsa-4096" selected>', page)
+        self.assertIn(
+            'id="profile-field-title" data-profile-title="Provider profile" data-key-title="Key type">Key type<',
+            page,
+        )
+        self.assertEqual(self.queued, [])

@@ -567,6 +567,21 @@ def check_cert_import_semantics(document: dict[str, object], path: Path) -> None
     )
 
 
+def check_cert_request_semantics(document: dict[str, object], path: Path) -> None:
+    """A request is a CSR for the names it asked for; the CN is never a wildcard."""
+
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done cert_request carries a result")
+        return
+    assert isinstance(result, dict)
+    if str(result["domains"][0]).startswith("*."):
+        raise AssertionError(f"{path}: the primary name cannot be a wildcard")
+    if "PRIVATE KEY" in str(result["csr_pem"]):
+        raise AssertionError(f"{path}: a request never carries the key")
+
+
 def check_cert_target_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -688,6 +703,7 @@ SEMANTIC_CHECKS = {
     "cert_deploy": check_reconcile_semantics,
     "cert_issue": check_cert_issue_semantics,
     "cert_import": check_cert_import_semantics,
+    "cert_request": check_cert_request_semantics,
     "dns_profile_apply": check_dns_profile_apply_semantics,
     "ndes_profile_apply": check_dns_profile_apply_semantics,
     "cert_publish": check_cert_publish_semantics,
@@ -736,6 +752,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["domains"] = ["*." + str(result["id"])]
     elif operation == "cert_import":
         result["publish"]["certificates"][0]["id"] = "a-certificate-the-import-did-not-write"
+    elif operation == "cert_request":
+        result["domains"] = ["*." + str(result["domains"][0])]
     elif operation in {"dns_profile_apply", "ndes_profile_apply"}:
         result["plugin"] = "dns_example_login = leaked-example"
     elif operation == "cert_target":

@@ -49,7 +49,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import cert_registry
+from haproxy_mgmt import cert_registry, cert_request_state
 from haproxy_mgmt.cert_inventory import (
     FULLCHAIN,
     IMPORT_STORE,
@@ -519,9 +519,14 @@ def write_store(store: Path, certificate_id: str, material: Material) -> bool:
                 handle.write(content)
                 handle.flush()
                 os.fsync(handle.fileno())
-        replaced = final.is_dir()
+        #
+        # A directory holding a request and no certificate (C9b) is not a
+        # previous import: the signature is the first material under the ID.
+        #
+        present = final.is_dir()
+        replaced = present and (final / FULLCHAIN).exists()
         previous: Path | None = None
-        if replaced:
+        if present:
             previous = store / f".{certificate_id}.replaced"
             shutil.rmtree(previous, ignore_errors=True)
             os.rename(final, previous)
@@ -698,6 +703,26 @@ def import_certificate(
             raise ImportError_("bad_input", f"format for a receiver not targeted: {receiver_id!r}")
         if form not in RECEIVER_FORMATS:
             raise ImportError_("bad_input", f"invalid receiver format: {form!r}")
+    #
+    # The answer to a request made here (C9b): the targets named when the
+    # key was made are the certificate's, and the ones named now are added
+    # to them - as a second import adds to a first. Read before the store is
+    # written, because writing it takes the request's files away.
+    #
+    kept_clusters, kept_receivers, kept_formats = cert_request_state.request_targets(
+        store, certificate_id
+    )
+    #
+    # A target that has gone since the request was made is simply not one
+    # any more; the request may have waited months for its signature.
+    #
+    kept_clusters = tuple(c for c in kept_clusters if c in runtime.clusters)
+    kept_receivers = tuple(r for r in kept_receivers if r in known_receivers)
+    kept_formats = {r: f for r, f in kept_formats.items() if r in kept_receivers}
+    if kept_clusters or kept_receivers:
+        clusters = [*kept_clusters, *(c for c in clusters if c not in kept_clusters)]
+        receivers = [*kept_receivers, *(r for r in receivers if r not in kept_receivers)]
+        formats = {**kept_formats, **(formats or {})}
     replaced = write_store(store, certificate_id, material)
     register(
         policy.certificate_registry,
@@ -734,8 +759,15 @@ def read_material(
     chain: Path | None,
     pkcs12: Path | None,
     password_file: Path | None,
+    stored: str | None = None,
 ) -> Material:
-    """Steps 1-2 from the operator's files, whichever form they come in."""
+    """Steps 1-2 from the operator's files, whichever form they come in.
+
+    `stored` is the key an earlier import - or a signing request made here
+    (C9b) - left in the store for this ID; with it, `--certificate` alone is
+    the answer to that request, or a renewal on the same key, exactly as the
+    interface's keyless upload is.
+    """
 
     if pkcs12 is not None:
         if certificate is not None or key is not None or chain is not None:
@@ -744,9 +776,13 @@ def read_material(
             )
         certificates, keys = split_blocks(read_pkcs12(pkcs12, password_file))
         return assemble(certificates, keys)
-    if certificate is None or key is None:
+    if certificate is None:
+        raise ImportError_("bad_input", "--certificate is required without --pkcs12")
+    if key is None and stored is None:
         raise ImportError_(
-            "bad_input", "--certificate and --key are both required without --pkcs12"
+            "bad_input",
+            "--key is required: no key is stored on the manager for this ID (a signing "
+            "request made here, or an earlier import, would have left one)",
         )
     if password_file is not None:
         raise ImportError_("bad_input", "--password-file belongs to --pkcs12 only")
@@ -758,5 +794,24 @@ def read_material(
         raise ImportError_(
             "bad_input", "the certificate file contains a private key; keep the key in --key"
         )
-    _no_certificates, keys = split_blocks(_read(key, "the private key"))
-    return assemble(certificates, keys)
+    if key is not None:
+        _no_certificates, keys = split_blocks(_read(key, "the private key"))
+    else:
+        keys = [stored] if stored is not None else []
+    return assemble_for(certificates, keys, pending=stored is not None and key is None)
+
+
+def assemble_for(certificates: Sequence[str], keys: Sequence[str], *, pending: bool) -> Material:
+    """`assemble`, with the refusal worded for the key the store already holds."""
+
+    try:
+        return assemble(certificates, keys)
+    except ImportError_ as exc:
+        if exc.code == "key_mismatch" and pending:
+            raise ImportError_(
+                "key_mismatch",
+                "the certificate does not belong to the key the manager holds for this ID. "
+                "For a signing request made here, upload the certificate the CA signed for "
+                "the downloaded request; to replace the key, import the pair.",
+            ) from exc
+        raise

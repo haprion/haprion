@@ -14,7 +14,7 @@
       "known": true,
       "enabled": false,
       "active": false,
-      "calendar": "*-*-* 05:30:00 UTC",
+      "calendar": "*-*-* 05:30:00",
       "next_run": null,
       "last_run": "2026-09-21T05:30:00Z",
       "last_result": "success"

@@ -35,7 +35,7 @@
       </form>
       <form method="post" action="/operations" class="inline-form backup-schedule-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="backup_schedule"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups">
-        <label>Daily at <input type="time" name="backup_time" value="{{ cluster.schedule.time if cluster.schedule else '05:00' }}" required> UTC</label>
+        <label>Daily at <input type="time" name="backup_time" value="{{ cluster.schedule.time if cluster.schedule else '05:00' }}" required> {{ clock }}</label>
         <label><input type="checkbox" name="backup_enabled"{% if cluster.schedule and cluster.schedule.enabled %} checked{% endif %}> Enabled</label>
         <button class="secondary-button" type="submit">Save schedule</button>
       </form>

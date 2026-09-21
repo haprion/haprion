@@ -375,7 +375,7 @@ hostnames, network state and SSH identities are not interchangeable between the 
 
 `backup_timer` names the legacy fleet-wide timer during migration. With `backup_identity`
 configured, listings instead read the derived `haproxy-state-backup@<cluster>.timer`. An admin can
-set its bounded daily UTC time, enable or disable it, and run an immediate cluster backup on the
+set its bounded daily time on the manager's clock, enable or disable it, and run an immediate cluster backup on the
 Backups page. The browser supplies no unit name or systemd expression: the root socket helper
 derives both from the configured cluster and reads the effective state back before reporting
 success. The terminal break-glass path remains `sudo haproxy-state-backup [-c <cluster>]`.

@@ -69,7 +69,7 @@ class BackupJobHelperTests(unittest.TestCase):
                 "known": True,
                 "enabled": True,
                 "active": True,
-                "calendar": "*-*-* 04:30:00 UTC",
+                "calendar": "*-*-* 04:30:00",
             },
         )
         with mock.patch.object(

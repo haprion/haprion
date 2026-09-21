@@ -734,7 +734,7 @@ def check_backup_schedule_semantics(document: dict[str, object], path: Path) -> 
     # calendar and sits in the requested enabled/active state.
     if schedule["known"] is not True:
         raise AssertionError(f"{path}: a done backup_schedule names a timer systemd loaded")
-    if schedule["calendar"] != f"*-*-* {result['time']}:00 UTC":
+    if schedule["calendar"] != f"*-*-* {result['time']}:00":
         raise AssertionError(f"{path}: backup_schedule calendar does not match the time")
     if schedule["enabled"] is not result["enabled"] or schedule["active"] is not result["enabled"]:
         raise AssertionError(f"{path}: backup_schedule timer state does not match the request")
@@ -820,7 +820,7 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
     elif operation == "backup_run":
         result["nodes"][0]["outcome"] = "failed"
     elif operation == "backup_schedule":
-        result["schedule"]["calendar"] = "*-*-* 00:00:00 UTC"
+        result["schedule"]["calendar"] = "*-*-* 00:00:00"
     elif operation == "cert_receiver":
         result["layers"] = [{"layer": "account", "state": "failed", "detail": "userdel: busy"}]
     else:

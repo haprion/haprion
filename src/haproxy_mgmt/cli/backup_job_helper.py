@@ -72,7 +72,9 @@ def _schedule(parameters: Mapping[str, JsonValue]) -> tuple[str, bool]:
     value = parameters.get("time")
     enabled = parameters.get("enabled")
     if not isinstance(value, str):
-        raise HelperProtocolError("parameters.time must be HH:MM in UTC", exit_code=65)
+        raise HelperProtocolError(
+            "parameters.time must be HH:MM on the manager's clock", exit_code=65
+        )
     try:
         backup_schedule_write.calendar(value)
     except backup_schedule_write.ScheduleWriteError as exc:

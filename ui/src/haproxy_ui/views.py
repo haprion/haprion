@@ -3835,6 +3835,11 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "backups": overview,
                 "in_flight": running,
+                #
+                # The zone the schedule form's time is read in: the manager's,
+                # named so an operator on another clock is not left guessing.
+                #
+                "clock": metrics.shown(datetime.now(UTC)).tzname() or "local time",
                 "section": "backups",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,

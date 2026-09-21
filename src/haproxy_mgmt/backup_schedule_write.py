@@ -53,8 +53,14 @@ def timer_unit(cluster_id: str) -> str:
 def calendar(value: str) -> str:
     matched = TIME.fullmatch(value)
     if matched is None:
-        raise ScheduleWriteError("time must be HH:MM in UTC")
-    return f"*-*-* {matched.group('hour')}:{matched.group('minute')}:00 UTC"
+        raise ScheduleWriteError("time must be HH:MM on the manager's clock")
+    #
+    # No zone suffix on purpose: systemd then reads the expression in the
+    # manager's own zone, which is the clock every other timer on the machine
+    # and the journal keep. A schedule in UTC would be the one time on the host
+    # an operator had to convert before comparing it with anything else.
+    #
+    return f"*-*-* {matched.group('hour')}:{matched.group('minute')}:00"
 
 
 def _run(command: tuple[str, ...]) -> int:
@@ -112,7 +118,7 @@ def apply(
     run: Run = _run,
     read: Read = _read,
 ) -> Result:
-    """Commit a daily UTC time, rolling the file and enablement back on any error."""
+    """Commit a daily local time, rolling the file and enablement back on any error."""
 
     expression = calendar(value)
     unit = timer_unit(cluster_id)

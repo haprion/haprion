@@ -724,7 +724,7 @@ def prepare(
         _only(payload, "time", "enabled")
         value = payload.get("time")
         if not isinstance(value, str):
-            raise BadPayload("time must be HH:MM in UTC")
+            raise BadPayload("time must be HH:MM on the manager's clock")
         try:
             backup_schedule_write.calendar(value)
         except backup_schedule_write.ScheduleWriteError as exc:

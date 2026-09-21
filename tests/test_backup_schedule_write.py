@@ -18,7 +18,7 @@ class BackupScheduleWriteTests(unittest.TestCase):
                     "known": True,
                     "enabled": True,
                     "active": True,
-                    "calendar": "*-*-* 04:30:00 UTC",
+                    "calendar": "*-*-* 04:30:00",
                 },
             )
         )
@@ -36,7 +36,7 @@ class BackupScheduleWriteTests(unittest.TestCase):
             content = (root / "haproxy-state-backup@alpha.timer.d/schedule.conf").read_text()
 
         self.assertEqual(result.time, "04:30")
-        self.assertIn("OnCalendar=*-*-* 04:30:00 UTC", content)
+        self.assertIn("OnCalendar=*-*-* 04:30:00", content)
         self.assertEqual(
             [command[1] for command in commands], ["daemon-reload", "enable", "restart"]
         )
@@ -47,14 +47,14 @@ class BackupScheduleWriteTests(unittest.TestCase):
             "known": True,
             "enabled": True,
             "active": True,
-            "calendar": "*-*-* 05:00:00 UTC",
+            "calendar": "*-*-* 05:00:00",
         }
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             dropin = root / "haproxy-state-backup@alpha.timer.d"
             dropin.mkdir()
             path = dropin / "schedule.conf"
-            old = b"[Timer]\nOnCalendar=\nOnCalendar=*-*-* 05:00:00 UTC\n"
+            old = b"[Timer]\nOnCalendar=\nOnCalendar=*-*-* 05:00:00\n"
             path.write_bytes(old)
             with (
                 mock.patch.object(backup_schedule_write, "_private_directory", return_value=True),

@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from haproxy_ui import metrics
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label, relative_age
 from haproxy_ui.db import ClusterBackups
@@ -155,17 +156,17 @@ def _size(total: int) -> str:
 
 
 def _taken(moment: datetime | None, fallback: str) -> str:
-    """When the archive was taken, in UTC like the rest of the interface.
+    """When the archive was taken, on the manager's clock like the command line.
 
-    The command line prints these on the local clock. This is the one place the
-    two deliberately differ, and it differs the same way every other timestamp
-    here does: an operations page that mixes zones is worse than one that picks
-    a zone and stays in it.
+    The archive's own name carries the local time it was taken at, the timers
+    that take them are set on the same clock, and `metrics.shown` says why every
+    page reads that way: a time that cannot be lined up against `journalctl`
+    sends people to the wrong minute.
     """
 
     if moment is None:
         return fallback
-    return moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M")
+    return metrics.shown(moment).strftime("%Y-%m-%d %H:%M")
 
 
 def _archive_views(node: str, value: Any, *, now: datetime) -> tuple[ArchiveView, ...]:
@@ -282,10 +283,10 @@ def _node_view(value: Any, *, now: datetime) -> tuple[NodeBackupsView, tuple[Arc
 
 
 def _stamp(value: Any) -> str:
-    """A scheduled moment, in UTC like every other time in the interface."""
+    """A scheduled moment, on the manager's clock like the schedule it comes from."""
 
     moment = _moment(value)
-    return "—" if moment is None else moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M")
+    return "—" if moment is None else metrics.shown(moment).strftime("%Y-%m-%d %H:%M")
 
 
 def _elapsed(value: Any, now: datetime) -> str:

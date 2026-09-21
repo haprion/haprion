@@ -239,25 +239,45 @@ def _names(certificate: str) -> tuple[str, str]:
     return subject, issuer
 
 
-def read_pkcs12(path: Path, password_file: Path | None) -> str:
+def read_pkcs12(path: Path, password_file: Path | None, *, password: str | None = None) -> str:
     """Everything in a PKCS#12 as PEM: the key unencrypted, the certificates as they are.
 
-    The password is read by openssl from the file - never from argv, where
-    every user on the host could read it. OpenSSL 3 refuses the RC2-40 that
-    older Windows exports use unless told `-legacy`; tried second, so a
-    modern file is read the modern way.
+    The password reaches openssl from the operator's file, or - for the
+    interface's upload, which has it in memory and nowhere on disk - down a
+    pipe as `-passin fd:N`. Never argv, where every user on the host could
+    read it, and never a file this function writes. OpenSSL 3 refuses the
+    RC2-40 that older Windows exports use unless told `-legacy`; tried
+    second, so a modern file is read the modern way.
     """
 
     if not path.is_file():
         raise ImportError_("bad_input", f"the PKCS#12 file does not exist: {path}")
     if path.stat().st_size > MAX_CERTIFICATE_BYTES:
         raise ImportError_("bad_input", f"the PKCS#12 file is implausibly large: {path}")
+    if password_file is not None and password is not None:
+        raise ImportError_("bad_input", "a password file and a password are two passwords")
     if password_file is not None and not password_file.is_file():
         raise ImportError_("bad_input", f"the password file does not exist: {password_file}")
-    passin = f"file:{password_file}" if password_file is not None else "pass:"
-    base = ["pkcs12", "-in", str(path), "-nodes", "-passin", passin]
     last = ""
     for extra in ((), ("-legacy",)):
+        pass_fds: tuple[int, ...] = ()
+        if password_file is not None:
+            passin = f"file:{password_file}"
+        elif password is not None:
+            #
+            # Written before the child starts, so the read never blocks: a
+            # password is bounded far below the pipe's buffer. The write end
+            # is closed here and the read end is closed after the run, so
+            # neither outlives this call.
+            #
+            read_end, write_end = os.pipe()
+            os.write(write_end, password.encode("utf-8") + b"\n")
+            os.close(write_end)
+            pass_fds = (read_end,)
+            passin = f"fd:{read_end}"
+        else:
+            passin = "pass:"
+        base = ["pkcs12", "-in", str(path), "-nodes", "-passin", passin]
         try:
             completed = subprocess.run(  # noqa: S603 - fixed binary, paths from the operator
                 [OPENSSL, *base, *extra],
@@ -265,11 +285,15 @@ def read_pkcs12(path: Path, password_file: Path | None) -> str:
                 text=True,
                 timeout=OPENSSL_TIMEOUT,
                 check=False,
+                pass_fds=pass_fds,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise ImportError_(
                 "dependency_unavailable", f"openssl could not read the PKCS#12: {exc}", exit_code=78
             ) from exc
+        finally:
+            for descriptor in pass_fds:
+                os.close(descriptor)
         if completed.returncode == 0:
             return completed.stdout
         lines = (completed.stderr or "").strip().splitlines()
@@ -328,8 +352,8 @@ def read_bytes(data: bytes, *, password: str | None = None) -> tuple[list[str], 
     one that can carry a key and the only one that takes a password), a
     single X.509 certificate (`.cer`/`.crt`/`.der`), and a PKCS#7 bundle
     (`.p7b`). The bytes touch the disk once, in a private 0600 file that is
-    gone before this returns, because `openssl pkcs12` reads a file and a key
-    in argv or a pipe name is a key somebody else can read.
+    gone before this returns, because `openssl pkcs12` reads a file; the
+    password never does - it goes down a pipe.
     """
 
     if len(data) > MAX_UPLOAD_BYTES:
@@ -356,13 +380,8 @@ def read_bytes(data: bytes, *, password: str | None = None) -> tuple[list[str], 
         path = Path(directory) / "upload"
         with open(path, "wb", opener=lambda p, f: os.open(p, f, 0o600)) as handle:
             handle.write(data)
-        password_file: Path | None = None
-        if password:
-            password_file = Path(directory) / "password"
-            with open(password_file, "w", opener=lambda p, f: os.open(p, f, 0o600)) as handle:
-                handle.write(password + "\n")
         try:
-            return split_blocks(read_pkcs12(path, password_file))
+            return split_blocks(read_pkcs12(path, None, password=password or None))
         except ImportError_ as pkcs12_refusal:
             if pkcs12_refusal.code != "bad_input":
                 raise

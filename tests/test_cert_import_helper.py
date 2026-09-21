@@ -13,13 +13,15 @@ import base64
 import io
 import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cert_upload
+from haproxy_mgmt import cert_import, cert_upload
 from haproxy_mgmt.cert_import import ImportError_, read_bytes
 from haproxy_mgmt.cert_inventory import PRIVKEY
 from haproxy_mgmt.cli import cert_import_helper
@@ -38,8 +40,6 @@ class ReadingOneFile(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        import tempfile
-
         cls._directory = tempfile.TemporaryDirectory()
         cls.pki = Pki(Path(cls._directory.name) / "pki")
 
@@ -64,6 +64,32 @@ class ReadingOneFile(unittest.TestCase):
         bundle = self.pki.pkcs12(PKCS12_PASSWORD)
         certificates, keys = read_bytes(bundle.read_bytes(), password=PKCS12_PASSWORD)
         self.assertEqual((len(certificates), len(keys)), (2, 1))
+
+    def test_the_password_never_touches_the_disk(self) -> None:
+        """B165's promise, at the one place a file is written: only the upload itself.
+
+        The temporary directory is gone when the call returns, and the
+        password reached `read_pkcs12` as a value, not as a file.
+        """
+
+        written: list[str] = []
+        real_mkdtemp = tempfile.mkdtemp
+
+        def watched(*args: Any, **kwargs: Any) -> str:
+            directory = real_mkdtemp(*args, **kwargs)
+            written.append(directory)
+            return directory
+
+        bundle = self.pki.pkcs12(PKCS12_PASSWORD)
+        with (
+            mock.patch.object(cert_import.tempfile, "mkdtemp", side_effect=watched),
+            mock.patch.object(cert_import, "read_pkcs12", wraps=cert_import.read_pkcs12) as spied,
+        ):
+            read_bytes(bundle.read_bytes(), password=PKCS12_PASSWORD)
+        self.assertEqual(len(written), 1)
+        self.assertFalse(Path(written[0]).exists())
+        self.assertIsNone(spied.call_args.args[1])
+        self.assertEqual(spied.call_args.kwargs["password"], PKCS12_PASSWORD)
 
     def test_pkcs12_with_the_wrong_password_says_so(self) -> None:
         bundle = self.pki.pkcs12(PKCS12_PASSWORD)

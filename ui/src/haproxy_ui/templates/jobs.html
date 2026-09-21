@@ -87,7 +87,7 @@
       {% if job.error_code or job.diagnostics %}
       <tr class="job-follow-up job-failure">
         <td colspan="9">
-          {% if job.error_code %}<span class="status-dot status-critical" aria-hidden="true"></span><span>Reason:</span> <code>{{ job.error_code }}</code>{% endif %}
+          {% if job.error_code %}<span class="status-dot status-critical" aria-hidden="true"></span><span>Reason:</span> <code>{{ job.error_code }}</code>{% if job.error_message %} <span class="job-error-message">— {{ job.error_message }}</span>{% endif %}{% endif %}
           {% if job.diagnostics %}<details class="job-diagnostics"><summary>Diagnostics</summary><pre>{{ job.diagnostics }}</pre></details>{% endif %}
         </td>
       </tr>

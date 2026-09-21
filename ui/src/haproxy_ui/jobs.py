@@ -75,6 +75,16 @@ class JobView:
     #
     error_code: str | None = None
     #
+    # The helper's own sentence beside the code, for an admin, as the
+    # diagnostics are: the sentence can name paths and hosts, which is why
+    # the page showed the code alone from 2026-08-31. Until 2026-09-21 that
+    # left a `publish_failed` whose sentence said "the certificate expires in
+    # 3 days" as a word nobody could act on, and the diagnostics panel was
+    # no help - a refusal written as an envelope prints nothing on stderr.
+    # Bounded by the contract (2048).
+    #
+    error_message: str | None = None
+    #
     # Admin only, and empty for everyone else. Not merely hidden in the
     # template: the projection never carries it, so a role that may not see it
     # cannot be shown it by a later change to a page.
@@ -363,6 +373,19 @@ def error_code(job: Job) -> str | None:
     return code if isinstance(code, str) and code else None
 
 
+def error_message(job: Job) -> str | None:
+    """The sentence the envelope's error carries, read as defensively as its code."""
+
+    envelope = job.result
+    if not isinstance(envelope, dict):
+        return None
+    error = envelope.get("error")
+    if not isinstance(error, dict):
+        return None
+    message = error.get("message")
+    return message.strip() if isinstance(message, str) and message.strip() else None
+
+
 def diagnostics_of(job: Job) -> str | None:
     """What the operation said about why, at its most useful.
 
@@ -515,6 +538,7 @@ def _view(
             else FOLLOW_UP_LABELS[follow_up_operation].format(cluster=job.cluster)
         ),
         error_code=error_code(job) if ended_badly else None,
+        error_message=error_message(job) if diagnostics and ended_badly else None,
         #
         # Only for a job that ended badly. A successful operation's stderr is
         # progress output, and putting a diagnostics panel under every green

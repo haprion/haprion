@@ -522,10 +522,16 @@ class TheErrorCodeReachesThePage(LoginTestCase):
 
         self.assertIn("cluster_not_converged", body)
         #
-        # The code, not the helper's prose. The message varies with the
-        # environment and is not part of the frozen vocabulary; the code is.
+        # The code for everyone; the helper's prose beside it for an admin
+        # only, as the diagnostics are (2026-09-21). The message varies with
+        # the environment and is not part of the frozen vocabulary; the code
+        # is, and it is what a reader gets.
         #
-        self.assertNotIn("not converged", body)
+        self.assertIn("— not converged", body)
+        self.account = replace(self.account, role="reader")
+        self.assertNotIn(
+            "not converged", self.page([job(state="blocked", outcome="blocked", result=envelope)])
+        )
 
     def test_a_job_that_worked_carries_no_failure_row(self) -> None:
         body = self.page([job(state="done", outcome="done")])
@@ -782,6 +788,38 @@ class AFailedCertificateIssue(LoginTestCase):
         self.assertIn("certbot_failed", page)
         self.assertIn("Invalid request headers", page)
         self.assertIn("valid Cloudflare API credentials", page)
+
+    def test_the_envelope_s_sentence_stands_beside_the_code(self) -> None:
+        """A refusal written as an envelope prints nothing on stderr (2026-09-21, job 910)."""
+
+        refused = job(
+            state="failed",
+            outcome="failed",
+            operation="cert_import",
+            cluster=None,
+            exit_code=1,
+            result={
+                "schema_version": 1,
+                "ok": False,
+                "outcome": "failed",
+                "operation": "cert_import",
+                "cluster": None,
+                "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                "result": None,
+                "warnings": [],
+                "error": {
+                    "code": "publish_failed",
+                    "message": "not published: the certificate expires 2026-09-24, less than 7 days away",
+                    "details": {},
+                },
+            },
+        )
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[refused]):
+            client = self.client()
+            self.sign_in(client)
+            page = client.get("/jobs").text
+        self.assertIn("<code>publish_failed</code>", page)
+        self.assertIn("— not published: the certificate expires 2026-09-24", page)
 
     def test_a_reader_gets_the_code_and_not_the_output(self) -> None:
         self.account = replace(self.account, role="reader")

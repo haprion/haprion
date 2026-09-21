@@ -233,10 +233,27 @@ def _certificate_operation(
     """
 
     if operation == "cert_issue":
-        _only(payload, "domain", "method", "dns_profile", "clusters", "receivers", "formats")
+        _only(
+            payload, "domain", "method", "dns_profile", "clusters", "receivers", "formats", "renew"
+        )
         domain = payload.get("domain")
         if not isinstance(domain, str) or not domain:
             raise BadPayload("domain must be a non-empty string")
+        if _flag(payload, "renew", default=False):
+            #
+            # The round again for a lineage the registry holds (C9c): the
+            # name and nothing else, because the helper reads the lineage's
+            # names, challenge and targets where they already are.
+            #
+            _only(payload, "domain", "renew")
+            if not CERTIFICATE_ID.fullmatch(domain):
+                raise BadPayload("domain must be a certificate ID")
+            return Prepared(
+                argv=(cert_issue_helper.SUDO, *SUDO_FLAGS, cert_issue_helper.HELPER),
+                request=cert_issue_helper.build_request(
+                    str(request_id), domain=domain, method="", renew=True
+                ),
+            )
         method = payload.get("method")
         #
         # Named here rather than passed through, so an unknown method is a

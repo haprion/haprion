@@ -27,7 +27,8 @@
         "targets": { "$ref": "#/$defs/targets" },
         "certbot_seconds": { "type": "number", "minimum": 0 },
         "total_seconds": { "type": "number", "minimum": 0 },
-        "publish": { "$ref": "haproxy-cert-publish.schema.json#/$defs/publish_result" }
+        "publish": { "$ref": "haproxy-cert-publish.schema.json#/$defs/publish_result" },
+        "renewed": { "description": "Additive (C9c): true when the lineage existed and was asked for again now, forced before its time; the entry is what it was.", "type": "boolean" }
       },
       "additionalProperties": true
     },

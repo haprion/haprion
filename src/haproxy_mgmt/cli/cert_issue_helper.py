@@ -20,7 +20,14 @@ from typing import Any, BinaryIO, TextIO
 
 from haproxy_mgmt import dns_profiles
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
-from haproxy_mgmt.cert_issue import Certbot, IssueError, issue, run_certbot
+from haproxy_mgmt.cert_issue import (
+    RENEWAL_DIRECTORY,
+    Certbot,
+    IssueError,
+    issue,
+    renew,
+    run_certbot,
+)
 from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
 from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.cli.cert_issue import result_envelope
@@ -33,7 +40,9 @@ from haproxy_mgmt.helper_protocol import (
 )
 
 OPERATION = "cert_issue"
-PARAMETERS = frozenset({"domain", "method", "clusters", "receivers", "formats", "dns_profile"})
+PARAMETERS = frozenset(
+    {"domain", "method", "clusters", "receivers", "formats", "dns_profile", "renew"}
+)
 MAX_DOMAIN_BYTES = 255
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper"
 SUDO = "/usr/bin/sudo"
@@ -48,18 +57,27 @@ def build_request(
     receivers: tuple[str, ...] = (),
     formats: Mapping[str, str] | None = None,
     dns_profile: str | None = None,
+    renew: bool = False,
 ) -> str:
-    """The exact bounded request the worker sends. Null cluster, by contract."""
+    """The exact bounded request the worker sends. Null cluster, by contract.
 
-    parameters: dict[str, Any] = {
-        "domain": domain,
-        "method": method,
-        "clusters": list(clusters),
-        "receivers": list(receivers),
-        "dns_profile": dns_profile,
-    }
-    if formats:
-        parameters["formats"] = dict(formats)
+    A renewal (C9c) names the certificate and nothing else: the lineage, its
+    names, its challenge and its targets are what the registry and certbot
+    already hold, and the helper reads them there.
+    """
+
+    if renew:
+        parameters: dict[str, Any] = {"domain": domain, "renew": True}
+    else:
+        parameters = {
+            "domain": domain,
+            "method": method,
+            "clusters": list(clusters),
+            "receivers": list(receivers),
+            "dns_profile": dns_profile,
+        }
+        if formats:
+            parameters["formats"] = dict(formats)
     return json.dumps(
         {
             "schema_version": 1,
@@ -86,6 +104,7 @@ def main(
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
+    renewal_directory: Path = RENEWAL_DIRECTORY,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = output_stream or sys.stdout
@@ -113,7 +132,14 @@ def main(
             or len(domain.encode("utf-8")) > MAX_DOMAIN_BYTES
         ):
             raise HelperProtocolError("parameters.domain must be a domain name", exit_code=65)
-        method = request.parameters.get("method")
+        renew_flag = request.parameters.get("renew", False)
+        if not isinstance(renew_flag, bool):
+            raise HelperProtocolError("parameters.renew must be true or false", exit_code=65)
+        if renew_flag and set(request.parameters) - {"domain", "renew"}:
+            raise HelperProtocolError(
+                "a renewal names the certificate and nothing else", exit_code=65
+            )
+        method = request.parameters.get("method", "renew" if renew_flag else None)
         if not isinstance(method, str) or not method:
             raise HelperProtocolError("parameters.method must be a string", exit_code=65)
         clusters = cert_job.clusters(request.parameters)
@@ -139,22 +165,36 @@ def main(
     # to a certificate that actually answers.
     #
     try:
-        result = issue(
-            domain=domain,
-            method=method,
-            clusters=clusters,
-            receivers=receivers,
-            dns_profile=dns_profile,
-            formats=formats,
-            policy=policy,
-            runtime=runtime,
-            certbot=certbot,
-            deployer=deployer if deployer is not None else default_deployer(errors),
-            live=live,
-            store=store,
-            lock_path=lock_path,
-            require_secure=require_secure,
-        )
+        if renew_flag:
+            result = renew(
+                certificate_id=domain,
+                policy=policy,
+                runtime=runtime,
+                certbot=certbot,
+                deployer=deployer if deployer is not None else default_deployer(errors),
+                live=live,
+                store=store,
+                lock_path=lock_path,
+                renewal_directory=renewal_directory,
+                require_secure=require_secure,
+            )
+        else:
+            result = issue(
+                domain=domain,
+                method=method,
+                clusters=clusters,
+                receivers=receivers,
+                dns_profile=dns_profile,
+                formats=formats,
+                policy=policy,
+                runtime=runtime,
+                certbot=certbot,
+                deployer=deployer if deployer is not None else default_deployer(errors),
+                live=live,
+                store=store,
+                lock_path=lock_path,
+                require_secure=require_secure,
+            )
     except IssueError as exc:
         return refuse(exc.code, str(exc), exc.exit_code, exc.details)
 

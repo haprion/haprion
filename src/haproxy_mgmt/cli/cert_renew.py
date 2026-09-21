@@ -19,9 +19,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
-from haproxy_mgmt import dns_profiles, ndes_renew
+from haproxy_mgmt import cert_issue, ndes_renew
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
-from haproxy_mgmt.cert_issue import CERTBOT_TIMEOUT, certbot_binary
+from haproxy_mgmt.cert_issue import (
+    CERTBOT_TIMEOUT,
+    RENEWAL_DIRECTORY,
+    IssueError,
+    renewal_invocation,
+)
 from haproxy_mgmt.cli import cert_scep
 from haproxy_mgmt.cli.cert_publish import default_deployer
 from haproxy_mgmt.config import (
@@ -35,13 +40,6 @@ from haproxy_mgmt.config import (
 )
 from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.ndes_state import request_is_pending
-
-RENEWAL_DIRECTORY = Path("/etc/letsencrypt/renewal")
-FIXED_ENVIRONMENT = {
-    "HOME": "/root",
-    "LANG": "C.UTF-8",
-    "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,48 +73,23 @@ def invocations(
             f"cannot list certbot renewal configurations: {exc}", exit_code=78
         ) from exc
 
-    if runtime.registry is None:
-        raise ConfigError("no certificate registry is configured", exit_code=78)
-    profiles_by_lineage = {
-        certificate.source.lineage: certificate.source.dns_profile
-        for certificate in runtime.registry.certificates.values()
-        if certificate.source.kind == "acme"
-    }
     commands: list[RenewalInvocation] = []
     for lineage in lineages:
-        arguments = [
-            binary or certbot_binary(policy),
-            "-q",
-            "renew",
-            "--no-random-sleep-on-renew",
-            "--cert-name",
-            lineage,
-        ]
-        if dry_run:
-            arguments.append("--dry-run")
-        if run_deploy_hooks:
-            arguments.append("--run-deploy-hooks")
-        environment = dict(FIXED_ENVIRONMENT)
-        redactions: tuple[str, ...] = ()
-        profile_id = profiles_by_lineage.get(lineage)
-        if profile_id is not None:
-            profile_policy = policy.acme.dns_profiles if policy.acme is not None else None
-            if profile_policy is None:
-                raise ConfigError(
-                    f"lineage {lineage!r} names DNS profile {profile_id!r}, but "
-                    "acme.dns_profiles is not configured",
-                    exit_code=78,
-                )
-            try:
-                materialized = dns_profiles.read_materialized(
-                    profile_policy, profile_id, require_secure=require_secure
-                )
-                redactions = dns_profiles.materialized_secret_values(materialized)
-            except dns_profiles.ProfileError as exc:
-                raise ConfigError(str(exc), exit_code=78) from exc
-            if materialized.provider.credentials_env is not None:
-                environment[materialized.provider.credentials_env] = materialized.credentials_path
-        commands.append(RenewalInvocation(lineage, tuple(arguments), environment, redactions))
+        try:
+            built = renewal_invocation(
+                lineage,
+                policy,
+                runtime,
+                binary=binary,
+                dry_run=dry_run,
+                run_deploy_hooks=run_deploy_hooks,
+                require_secure=require_secure,
+            )
+        except IssueError as exc:
+            raise ConfigError(str(exc), exit_code=exc.exit_code) from exc
+        commands.append(
+            RenewalInvocation(lineage, built.arguments, built.environment, built.redactions)
+        )
     return tuple(commands)
 
 
@@ -229,9 +202,19 @@ def main(argv: list[str] | None = None) -> int:
         metavar="ID",
         help="renew this NDES certificate now, whatever its expiry; certbot's pass is skipped",
     )
+    parser.add_argument(
+        "--acme-now",
+        action="append",
+        default=[],
+        metavar="ID",
+        help="renew this certbot certificate now, whatever its expiry (--force-renewal); "
+        "the ordinary pass is skipped",
+    )
     args = parser.parse_args(argv)
     if os.geteuid() != 0:
         parser.error("must run as root")
+    if any(not CERTIFICATE_ID.fullmatch(item) for item in args.acme_now):
+        parser.error("--acme-now takes a certificate ID")
     if args.certbot is not None and not Path(args.certbot).is_absolute():
         parser.error("--certbot must be an absolute path")
     if any(not CERTIFICATE_ID.fullmatch(item) for item in args.ndes_now):
@@ -241,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         runtime = load_runtime_config(policy)
         commands = (
             ()
-            if args.ndes_now
+            if args.ndes_now or args.acme_now
             else invocations(
                 policy,
                 runtime,
@@ -272,6 +255,32 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, subprocess.TimeoutExpired) as exc:
             print(f"ERROR: renewal of {invocation.lineage!r} could not run: {exc}", file=sys.stderr)
             failed = True
+    #
+    # The forced renewal of one lineage (C9c): the same command as above with
+    # `--force-renewal`, through the engine the interface's button uses.
+    #
+    for certificate_id in args.acme_now:
+        try:
+            result = cert_issue.renew(
+                certificate_id=certificate_id,
+                policy=policy,
+                runtime=runtime,
+                deployer=default_deployer(sys.stderr),
+            )
+        except cert_issue.IssueError as exc:
+            print(f"ERROR: [{exc.code}] {certificate_id}: {exc}", file=sys.stderr)
+            diagnostics = exc.details.get("diagnostics") if exc.details else None
+            if isinstance(diagnostics, str) and diagnostics.strip():
+                print(diagnostics.rstrip(), file=sys.stderr)
+            failed = True
+        else:
+            print(
+                f"acme: {certificate_id}: renewed in {result.certbot_seconds:.0f}s; "
+                f"certificates {len(result.publish.certificates)}, "
+                f"failed {len(result.publish.failed)}",
+                file=sys.stderr,
+            )
+            failed = failed or bool(result.publish.failed)
     #
     # After certbot, not instead of it: a failure in one pass does not spare
     # the other, and the exit code says whether either had one.

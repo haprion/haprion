@@ -187,6 +187,21 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         ):
             self.assertIn(f'<a class="secondary-button" href="{href}">', strip)
         self.assertEqual(page.count('class="secondary-button" href="/certificates/new"'), 1)
+        #
+        # Three groups (C10b, 2026-09-21): providers, receivers, the two
+        # ways in - with New certificate last, where the eye ends.
+        #
+        groups = [
+            part.split("</span>", 1)[0] for part in strip.split('<span class="action-group">')[1:]
+        ]
+        self.assertEqual(len(groups), 3)
+        self.assertIn("/dns-profiles", groups[0])
+        self.assertIn("/ndes-profiles", groups[0])
+        self.assertIn("/certificates/receivers", groups[1])
+        self.assertLess(
+            groups[2].index("/certificates/import"), groups[2].index("/certificates/new")
+        )
+        self.assertTrue(strip.rstrip().endswith("New certificate</a></span>"))
 
     def test_a_reader_gets_the_strip_without_buttons(self) -> None:
         page = self.page("?view=registry")

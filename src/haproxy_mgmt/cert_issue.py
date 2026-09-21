@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from haproxy_mgmt import cert_registry, dns_profiles, dns_provider_catalog
-from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
+from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE, measure_registered
 from haproxy_mgmt.cert_publish import (
     DEFAULT_LOCK_PATH,
     Deployer,
@@ -67,6 +67,12 @@ from haproxy_mgmt.config import (
 
 CERTBOT = "/usr/bin/certbot"
 CERTBOT_TIMEOUT = 600
+RENEWAL_DIRECTORY = Path("/etc/letsencrypt/renewal")
+FIXED_ENVIRONMENT = {
+    "HOME": "/root",
+    "LANG": "C.UTF-8",
+    "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
+}
 KEY_TYPE = "ecdsa"
 
 type Method = Literal["dns-01", "http-01"]
@@ -132,11 +138,18 @@ class IssueResult:
     certbot_seconds: float
     total_seconds: float
     publish: Report
+    #
+    # True for a lineage that existed and was asked for again now (C9c):
+    # the same act on the same names, forced before its time. Reported so
+    # the row can say "renewed" rather than "issued" about it.
+    #
+    renewed: bool = False
+    lineage: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "id": self.request.certificate_id,
-            "lineage": self.request.certificate_id,
+            "lineage": self.lineage or self.request.certificate_id,
             "domains": list(self.request.domains),
             "method": self.request.method,
             "dns_profile": self.request.dns_profile,
@@ -147,6 +160,7 @@ class IssueResult:
             "certbot_seconds": round(self.certbot_seconds, 1),
             "total_seconds": round(self.total_seconds, 1),
             "publish": self.publish.as_dict(),
+            "renewed": self.renewed,
         }
 
 
@@ -332,13 +346,99 @@ def certbot_invocation(
     ]
     for domain in request.domains:
         arguments.extend(["-d", domain])
-    fixed_environment = {
-        "HOME": "/root",
-        "LANG": "C.UTF-8",
-        "PATH": "/usr/sbin:/usr/bin:/sbin:/bin",
-        **environment,
-    }
-    return CertbotInvocation(tuple(arguments), fixed_environment, redactions)
+    return CertbotInvocation(tuple(arguments), {**FIXED_ENVIRONMENT, **environment}, redactions)
+
+
+def renewal_invocation(
+    lineage: str,
+    policy: PathPolicy,
+    runtime: RuntimeConfig,
+    *,
+    binary: str | None = None,
+    dry_run: bool = False,
+    run_deploy_hooks: bool = False,
+    force: bool = False,
+    require_secure: bool = True,
+) -> CertbotInvocation:
+    """One bounded `certbot renew` for one lineage, with the DNS profile's environment.
+
+    The daily timer's command (`cli/cert_renew`), here since C9c so the
+    interface's *Renew…* runs exactly the round the timer runs, with
+    `--force-renewal` added: certbot itself declines a lineage that is not
+    due, and a person pressing the button has decided it is. Most plugins
+    persist their credentials flag in `renewal/<lineage>.conf`; Route53 does
+    not, and only discovers its file through an environment variable, which
+    is why the registry's `source.dns_profile` is materialised here.
+    """
+
+    if runtime.registry is None:
+        raise IssueError(
+            "dependency_unavailable", "no certificate registry is configured", exit_code=78
+        )
+    profile_id = next(
+        (
+            certificate.source.dns_profile
+            for certificate in runtime.registry.certificates.values()
+            if certificate.source.kind == "acme"
+            and (certificate.source.lineage or certificate.certificate_id) == lineage
+        ),
+        None,
+    )
+    arguments = [
+        binary or certbot_binary(policy),
+        "-q",
+        "renew",
+        "--no-random-sleep-on-renew",
+        "--cert-name",
+        lineage,
+    ]
+    if dry_run:
+        arguments.append("--dry-run")
+    if run_deploy_hooks:
+        arguments.append("--run-deploy-hooks")
+    if force:
+        arguments.append("--force-renewal")
+    environment = dict(FIXED_ENVIRONMENT)
+    redactions: tuple[str, ...] = ()
+    if profile_id is not None:
+        profile_policy = policy.acme.dns_profiles if policy.acme is not None else None
+        if profile_policy is None:
+            raise IssueError(
+                "dependency_unavailable",
+                f"lineage {lineage!r} names DNS profile {profile_id!r}, but "
+                "acme.dns_profiles is not configured",
+                exit_code=78,
+            )
+        try:
+            materialized = dns_profiles.read_materialized(
+                profile_policy, profile_id, require_secure=require_secure
+            )
+            redactions = dns_profiles.materialized_secret_values(materialized)
+        except dns_profiles.ProfileError as exc:
+            raise IssueError("dependency_unavailable", str(exc), exit_code=78) from exc
+        if materialized.provider.credentials_env is not None:
+            environment[materialized.provider.credentials_env] = materialized.credentials_path
+    return CertbotInvocation(tuple(arguments), environment, redactions)
+
+
+def renewal_method(conf: Path) -> Method:
+    """Which challenge the lineage renews with, read off certbot's own renewal conf.
+
+    The registry does not keep the method - certbot does, as
+    `authenticator = webroot` or a DNS plugin's name - and the result of a
+    renewal reports what certbot used.
+    """
+
+    try:
+        for line in conf.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == "authenticator":
+                return "http-01" if value.strip() == "webroot" else "dns-01"
+    except OSError as exc:
+        raise IssueError(
+            "dependency_unavailable", f"the renewal conf could not be read: {exc}", exit_code=78
+        ) from exc
+    return "dns-01"
 
 
 def certbot_arguments(request: IssueRequest, policy: PathPolicy) -> list[str]:
@@ -526,4 +626,116 @@ def issue(
         certbot_seconds=certbot_seconds,
         total_seconds=time.monotonic() - started,
         publish=report,
+    )
+
+
+def renew(
+    *,
+    certificate_id: str,
+    policy: PathPolicy,
+    runtime: RuntimeConfig,
+    certbot: Certbot = run_certbot,
+    deployer: Deployer | None = None,
+    live: Path = LETSENCRYPT_LIVE,
+    store: Path = IMPORT_STORE,
+    lock_path: Path = DEFAULT_LOCK_PATH,
+    renewal_directory: Path | None = None,
+    require_secure: bool = True,
+    now: datetime | None = None,
+) -> IssueResult:
+    """The whole round again, now, for a lineage the registry holds (C9c).
+
+    What the daily timer does to a lineage that is due, forced: the same
+    `certbot renew`, the same deploy hook publishing inside it, and then
+    the publisher once more for this certificate alone - a verifying no-op
+    when the hook has done the work, the work itself where the hook is
+    missing. Nothing is added to the registry; the entry is what it was.
+    """
+
+    started = time.monotonic()
+    if not CERTIFICATE_ID.fullmatch(certificate_id):
+        raise IssueError("bad_input", f"invalid certificate ID: {certificate_id!r}")
+    registry = runtime.registry
+    if registry is None or policy.certificate_registry is None or policy.certificate_root is None:
+        raise IssueError(
+            "dependency_unavailable", "no certificate registry is configured", exit_code=78
+        )
+    entry = registry.certificates.get(certificate_id)
+    if entry is None:
+        raise IssueError("not_registered", f"certificate {certificate_id!r} is not in the registry")
+    if entry.source.kind != "acme":
+        raise IssueError(
+            "not_acme",
+            f"certificate {certificate_id!r} is not certbot's ({entry.source.kind!r}); "
+            "renew it where its material comes from",
+        )
+    lineage = entry.source.lineage or certificate_id
+    conf = (renewal_directory or RENEWAL_DIRECTORY) / f"{lineage}.conf"
+    if not conf.is_file():
+        raise IssueError(
+            "no_lineage", f"certbot has no renewal configuration for lineage {lineage!r}"
+        )
+    measured = measure_registered(
+        entry, certificate_root=policy.certificate_root, live=live, store=store
+    )
+    if isinstance(measured, str):
+        raise IssueError("dependency_unavailable", measured, exit_code=78)
+    _fingerprint, facts, _where = measured
+    common = facts.common_name
+    domains = tuple(
+        dict.fromkeys(([common] if common else []) + [n for n in facts.sans if n != common])
+    )
+    request = IssueRequest(
+        certificate_id=certificate_id,
+        domains=domains,
+        wildcard=any(name.startswith("*.") for name in domains),
+        method=renewal_method(conf),
+        clusters=entry.clusters,
+        receivers=entry.receivers,
+        dns_profile=entry.source.dns_profile,
+        formats=dict(entry.formats),
+    )
+    invocation = renewal_invocation(
+        lineage, policy, runtime, force=True, require_secure=require_secure
+    )
+
+    certbot_started = time.monotonic()
+    result = certbot(invocation.arguments, invocation.environment)
+    certbot_seconds = time.monotonic() - certbot_started
+    if result.returncode != 0:
+        diagnostics = result.output
+        for value in sorted(invocation.redactions, key=len, reverse=True):
+            diagnostics = diagnostics.replace(value, "[redacted]")
+        raise IssueError(
+            "certbot_failed",
+            f"certbot exited {result.returncode} after {certbot_seconds:.0f}s",
+            exit_code=1,
+            details={
+                "diagnostics": diagnostics,
+                "certbot_exit_code": result.returncode,
+                "certbot_seconds": round(certbot_seconds, 1),
+            },
+        )
+
+    refreshed = load_runtime_config(policy, require_secure=require_secure)
+    try:
+        report = publish(
+            refreshed,
+            policy,
+            only=[certificate_id],
+            live=live,
+            store=store,
+            lock_path=lock_path,
+            deployer=deployer,
+            now=now or datetime.now(UTC),
+        )
+    except PublishError as exc:
+        raise IssueError(exc.code, str(exc), exit_code=78) from exc
+    return IssueResult(
+        request=request,
+        certbot_seconds=certbot_seconds,
+        total_seconds=time.monotonic() - started,
+        publish=report,
+        renewed=True,
+        lineage=lineage,
     )

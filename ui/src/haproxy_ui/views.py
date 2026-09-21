@@ -55,6 +55,7 @@ from haproxy_ui import (
     certificate_form,
     certificate_import_form,
     certificate_receivers,
+    certificate_renew,
     certificate_retarget,
     certificates,
     dashboard,
@@ -2420,6 +2421,130 @@ def build_router(config: Config) -> APIRouter:
                 "production_snapshot": config.production_snapshot,
                 "snapshot_age": "",
             },
+        )
+
+    # - Renew… (C9c) ------------------------------------------------------
+
+    def _certificate_renew_page(
+        request: Request,
+        session: AuthenticatedSession,
+        *,
+        chosen: Sequence[str],
+        problem: str = "",
+    ) -> Response:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        registry = _registry_views(request, config)
+        with request.app.state.pool.connection() as connection:
+            recent = db.recent_jobs(connection)
+        renewal: certificate_renew.Renewal | None = None
+        try:
+            renewal = certificate_renew.selection(chosen, registry)
+        except certificate_renew.SelectionProblem as refused:
+            problem = problem or str(refused)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "certificate-renew.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "renewal": renewal,
+                "problem": problem,
+                "certificate_job": jobs.certificate_in_flight(recent),
+                "section": "certificates",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
+    @router.post("/certificates/renew", response_class=HTMLResponse)
+    def certificate_renew_review(
+        request: Request,
+        certificate: Sequence[str] = Form(default=()),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """The page behind *Renew…*: one row, renewed the way its source is made."""
+
+        gate = _certificate_delete_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        return _certificate_renew_page(request, gate, chosen=tuple(certificate))
+
+    @router.post("/certificates/renew/confirm", response_class=HTMLResponse)
+    def certificate_renew_confirm(
+        request: Request,
+        certificate: Sequence[str] = Form(default=()),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue the certbot or NDES renewal the page offered; a file goes to the upload route."""
+
+        gate = _certificate_delete_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        registry = _registry_views(request, config)
+        try:
+            renewal = certificate_renew.selection(tuple(certificate), registry)
+            operation, payload = certificate_renew.payload(renewal)
+        except certificate_renew.SelectionProblem as refused:
+            return _certificate_renew_page(
+                request, gate, chosen=tuple(certificate), problem=str(refused)
+            )
+        try:
+            operations.prepare(
+                operation=operation, cluster=None, request_id=uuid4(), payload=payload
+            )
+        except operations.BadPayload:
+            return PlainTextResponse("Invalid operation parameters", status_code=400)
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation=operation,
+                    cluster=None,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.CertificateBusy:
+                connection.rollback()
+                return _certificate_renew_page(
+                    request,
+                    gate,
+                    chosen=tuple(certificate),
+                    problem="A certificate job is already running. Wait for it to finish on "
+                    "the Jobs page, then ask again.",
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="queue_job",
+                cluster=None,
+                request_id=job.request_id,
+                detail={
+                    "operation": operation,
+                    "job": job.id,
+                    "certificate": renewal.identifier,
+                    "renew": True,
+                },
+            )
+            connection.commit()
+        return RedirectResponse(
+            f"/certificates?view=registry&open={renewal.identifier}", status_code=303
         )
 
     def _certificate_delete_gate(request: Request) -> AuthenticatedSession | Response:

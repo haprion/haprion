@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cert_issue",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "id": "example.com",
+    "lineage": "example.com",
+    "domains": [
+      "*.example.com",
+      "example.com"
+    ],
+    "method": "dns-01",
+    "targets": {
+      "clusters": [
+        "alpha"
+      ],
+      "receivers": [
+        "lb-01"
+      ]
+    },
+    "certbot_seconds": 18.2,
+    "total_seconds": 21.4,
+    "publish": {
+      "certificates": [
+        {
+          "id": "example.com",
+          "status": "published",
+          "fingerprint_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "not_after": "2027-01-01T00:00:00Z",
+          "targets": [
+            {
+              "kind": "cluster",
+              "name": "alpha",
+              "changed": true
+            },
+            {
+              "kind": "receiver",
+              "name": "lb-01",
+              "changed": true
+            }
+          ],
+          "error": null
+        }
+      ],
+      "changed_clusters": [
+        "alpha"
+      ],
+      "deployments": [
+        {
+          "cluster": "alpha",
+          "exit_code": 0
+        }
+      ]
+    },
+    "renewed": true
+  },
+  "warnings": [],
+  "error": null
+}

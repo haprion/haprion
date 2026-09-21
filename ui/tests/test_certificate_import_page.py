@@ -255,22 +255,26 @@ class Submitting(ImportPageTestCase):
 
 
 class TheRowUpload(ImportPageTestCase):
-    def test_the_button_is_on_an_imported_row_only(self) -> None:
+    def test_the_file_field_lives_on_the_renew_page_and_not_in_the_row(self) -> None:
+        """C9c: the detail row's field was never found there; *Renew…* is the way."""
+
         client = self.writing_client()
         page = client.get("/certificates?view=registry&open=imported.example.net").text
+        self.assertNotIn("/upload", page)
+        self.assertIn('formaction="/certificates/renew" data-single-submit disabled>Renew…<', page)
+
+        token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+        page = client.post(
+            "/certificates/renew",
+            data={"certificate": ["imported.example.net"], auth.CSRF_FIELD: token},
+        ).text
+        self.assertIn("<h1>Renew imported.example.net</h1>", page)
         self.assertIn('action="/certificates/imported.example.net/upload"', page)
         self.assertIn("Upload certificate", page)
-        self.assertIn('id="upload-registry-imported.example.net"', page)
+        self.assertIn("key the manager holds", page)
 
-        page = client.get("/certificates?view=registry&open=example.com").text
-        self.assertNotIn("/upload", page)
-
-        page = (
-            self.writing_client(role="reader")
-            .get("/certificates?view=registry&open=imported.example.net")
-            .text
-        )
-        self.assertNotIn("/upload", page)
+        page = self.writing_client(role="reader").get("/certificates?view=registry").text
+        self.assertNotIn("Renew…", page)
 
     def test_a_certificate_alone_is_sealed_with_the_row_s_own_targets(self) -> None:
         response = self.upload(self.writing_client(), "imported.example.net", FAKE_CERT)

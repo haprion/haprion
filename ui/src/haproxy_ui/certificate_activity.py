@@ -131,7 +131,10 @@ def deletion_states(
         if job.operation == "cert_issue":
             requested = _issue_placeholder(job.payload)
             if requested is not None:
-                consider(requested[0], _issue_state_of(job, moment, requested[1]))
+                if job.payload.get("renew") is True:
+                    consider(requested[0], _renewal_state_of(job, moment))
+                else:
+                    consider(requested[0], _issue_state_of(job, moment, requested[1]))
             continue
         if job.operation == "cert_target":
             named = job.payload.get("certificates")
@@ -269,6 +272,26 @@ def _request_state_of(job: Job, now: datetime) -> DeletionState | None:
             True,
             placeholder,
             placeholder_only=True,
+        )
+    return None
+
+
+def _renewal_state_of(job: Job, now: datetime) -> DeletionState | None:
+    """A forced renewal of a lineage the row already shows (C9c): overlay, no placeholder.
+
+    The row exists and its material is the old certificate until certbot
+    is through; the cell says so meanwhile, and says certbot's words if it
+    refused. A finished renewal gives way to the row's own reading, which
+    the poller refreshes.
+    """
+
+    if job.state in {"pending", "running"}:
+        return DeletionState("Renewing", "certbot is asked for the certificate again", "info", True)
+    if job.finished_at is not None and now - job.finished_at > VERDICT_LIFETIME:
+        return None
+    if job.state == "failed":
+        return DeletionState(
+            "Renewal failed", _failure(job, "The renewal job failed"), "critical", False
         )
     return None
 

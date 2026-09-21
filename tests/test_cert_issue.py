@@ -20,6 +20,7 @@ import tempfile
 import unittest
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import yaml
@@ -27,7 +28,9 @@ import yaml
 from haproxy_mgmt import cert_issue
 from haproxy_mgmt.cert_issue import CertbotResult, IssueError, certbot_arguments, parse_domain
 from haproxy_mgmt.cli import cert_issue as command
+from haproxy_mgmt.cli import cert_issue_helper, cert_renew
 from haproxy_mgmt.config import load_policy, load_runtime_config
+from tests.contract_schema import assert_contract
 from tests.test_cert_publish import Fixture, issue
 
 
@@ -510,3 +513,195 @@ class WhenCertbotSucceeds(IssueFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RenewingALineage(IssueFixture):
+    """C9c: the round again, forced, for a lineage the registry holds."""
+
+    def renewal_conf(self, lineage: str, authenticator: str = "dns-cloudflare") -> Path:
+        directory = self.root / "renewal"
+        directory.mkdir(exist_ok=True)
+        conf = directory / f"{lineage}.conf"
+        conf.write_text(f"version = 2.0\n[renewalparams]\nauthenticator = {authenticator}\n")
+        return directory
+
+    def test_certbot_renew_is_forced_and_the_certificate_published_again(self) -> None:
+        issue(self.live / "example.net", "example.net")
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        renewal = self.renewal_conf("example.net", "webroot")
+        certbot = FakeCertbot(self.live)
+        deployed: list[str] = []
+        policy = load_policy(policy_path, require_secure=False)
+        runtime = load_runtime_config(policy, require_secure=False)
+
+        result = cert_issue.renew(
+            certificate_id="example.net",
+            policy=policy,
+            runtime=runtime,
+            certbot=certbot,
+            deployer=lambda cluster: (deployed.append(cluster), 0)[1],
+            live=self.live,
+            store=self.store,
+            lock_path=self.lock,
+            renewal_directory=renewal,
+            require_secure=False,
+        )
+
+        [call] = certbot.calls
+        self.assertEqual(
+            call[1:],
+            [
+                "-q",
+                "renew",
+                "--no-random-sleep-on-renew",
+                "--cert-name",
+                "example.net",
+                "--force-renewal",
+            ],
+        )
+        self.assertTrue(result.renewed)
+        self.assertEqual(result.request.method, "http-01")
+        self.assertEqual(result.request.domains, ("example.net",))
+        self.assertEqual(result.request.clusters, ("alpha",))
+        self.assertEqual(deployed, ["alpha"])
+        document = result.as_dict()
+        self.assertTrue(document["renewed"])
+        self.assertEqual(document["lineage"], "example.net")
+        registry = yaml.safe_load(self.registry_path.read_text())
+        self.assertEqual(list(registry["certificates"]), ["example.net"])
+
+    def test_what_is_refused(self) -> None:
+        issue(self.live / "example.net", "example.net")
+        policy_path = self.policy_with_acme(
+            {
+                "example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]},
+                "imported.example": {"source": {"kind": "import"}, "clusters": ["alpha"]},
+            }
+        )
+        (self.store / "imported.example").mkdir()
+        renewal = self.root / "renewal"
+        renewal.mkdir()
+        policy = load_policy(policy_path, require_secure=False)
+        runtime = load_runtime_config(policy, require_secure=False)
+        certbot = FakeCertbot(self.live)
+        for certificate_id, code in (
+            ("nobody.example", "not_registered"),
+            ("imported.example", "not_acme"),
+            ("example.net", "no_lineage"),
+        ):
+            with (
+                self.subTest(certificate_id=certificate_id),
+                self.assertRaises(IssueError) as caught,
+            ):
+                cert_issue.renew(
+                    certificate_id=certificate_id,
+                    policy=policy,
+                    runtime=runtime,
+                    certbot=certbot,
+                    live=self.live,
+                    store=self.store,
+                    lock_path=self.lock,
+                    renewal_directory=renewal,
+                    require_secure=False,
+                )
+            self.assertEqual(caught.exception.code, code)
+        self.assertEqual(certbot.calls, [])
+
+    def test_the_helper_takes_renew_and_nothing_else_beside_the_name(self) -> None:
+        issue(self.live / "example.net", "example.net")
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        renewal = self.renewal_conf("example.net")
+        certbot = FakeCertbot(self.live)
+
+        def helper(parameters: dict[str, Any]) -> tuple[int, str, str]:
+            out, err = io.StringIO(), io.StringIO()
+            request = json.dumps(
+                {
+                    "schema_version": 1,
+                    "operation": "cert_issue",
+                    "cluster": None,
+                    "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                    "parameters": parameters,
+                }
+            )
+            code = cert_issue_helper.main(
+                [],
+                policy_path=policy_path,
+                input_stream=io.BytesIO(request.encode()),
+                output_stream=out,
+                error_stream=err,
+                require_secure=False,
+                require_root=False,
+                certbot=certbot,
+                deployer=lambda cluster: 0,
+                live=self.live,
+                store=self.store,
+                lock_path=self.lock,
+                renewal_directory=renewal,
+            )
+            return code, out.getvalue(), err.getvalue()
+
+        code, out, err = helper({"domain": "example.net", "renew": True})
+        self.assertEqual(code, 0, err)
+        document = assert_contract("haproxy-cert-issue", out)
+        self.assertTrue(document["result"]["renewed"])
+        self.assertEqual(document["result"]["method"], "dns-01")
+        self.assertEqual(
+            json.loads(
+                cert_issue_helper.build_request("r", domain="example.net", method="", renew=True)
+            )["parameters"],
+            {"domain": "example.net", "renew": True},
+        )
+
+        code, out, err = helper({"domain": "example.net", "renew": True, "method": "dns-01"})
+        self.assertEqual(code, 65)
+        self.assertIn("nothing else", err)
+        code, out, err = helper({"domain": "example.net", "renew": "yes"})
+        self.assertEqual(code, 65)
+
+    def test_the_command_renews_one_lineage_now(self) -> None:
+        issue(self.live / "example.net", "example.net")
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        renewal = self.renewal_conf("example.net")
+        certbot = FakeCertbot(self.live)
+        err = io.StringIO()
+        real = cert_issue.renew
+
+        def in_the_fixture(**options: Any) -> Any:
+            """The engine as the command calls it, with the fixture's paths."""
+
+            options["deployer"] = lambda cluster: 0
+            return real(
+                **options,
+                certbot=certbot,
+                live=self.live,
+                store=self.store,
+                lock_path=self.lock,
+                renewal_directory=renewal,
+                require_secure=False,
+            )
+
+        with (
+            mock.patch("haproxy_mgmt.cli.cert_renew.os.geteuid", return_value=0),
+            mock.patch("haproxy_mgmt.cli.cert_renew.cert_issue.renew", in_the_fixture),
+            mock.patch(
+                "haproxy_mgmt.cli.cert_renew.load_policy",
+                lambda p: load_policy(p, require_secure=False),
+            ),
+            mock.patch(
+                "haproxy_mgmt.cli.cert_renew.load_runtime_config",
+                lambda p: load_runtime_config(p, require_secure=False),
+            ),
+            mock.patch("sys.stderr", err),
+        ):
+            code = cert_renew.main(["--policy", str(policy_path), "--acme-now", "example.net"])
+        self.assertIn("acme: example.net:", err.getvalue())
+        self.assertEqual(len(certbot.calls), 1)
+        self.assertIn("--force-renewal", certbot.calls[0])
+        self.assertEqual(code, 0, err.getvalue())

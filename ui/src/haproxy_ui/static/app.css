@@ -719,7 +719,9 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    long registry. Buttons to the right, and the row folds to two lines rather
    than ever overflowing sideways when the screen is narrow. */
 .certificate-strip { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
-.certificate-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.certificate-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+/* Within a group the buttons sit as before; the strip's larger gap is between groups (C10b). */
+.certificate-actions .action-group, .heading-badges .action-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .certificate-views a { padding: 7px 15px; font-size: 13.5px; }
 .certificate-views b { margin-left: 7px; font-variant-numeric: tabular-nums; }
 

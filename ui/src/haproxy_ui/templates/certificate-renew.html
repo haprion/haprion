@@ -1,0 +1,68 @@
+{% extends "layout.html" %}
+{% block title %}{% if renewal %}{{ renewal.title }}{% else %}Renew certificate{% endif %} — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  One row, renewed the way its source is made (C9c): certbot's round again,
+  an NDES enrollment again, or a file for an imported key. The question is
+  drawn here rather than on the row because the answer differs by source,
+  and a file field in a detail nobody opens was the way that was not found
+  (2026-09-21).
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>{% if renewal %}{{ renewal.title }}{% else %}Renew certificate{% endif %}</h1>{% if renewal %}<p class="page-lede">{% if renewal.way == 'certbot' %}Certbot asks Let's Encrypt for the certificate again, now, and the result is published to the same targets.{% elif renewal.way == 'ndes' %}The manager enrolls the certificate again from the same NDES profile, with the same names, to the same targets.{% elif renewal.way == 'signed' %}The key is already on the manager; upload the certificate the CA signed for the request you downloaded.{% else %}Upload the renewed certificate. The key the manager holds is used unless the file brings a new one.{% endif %}</p>{% endif %}</div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+{% if renewal %}
+<div class="refusal-card deletion-card">
+  <div class="table-scroll"><table class="node-table deletion-table">
+    <thead><tr><th>Certificate</th><th>Source</th><th>Names</th><th>Published to</th><th>Expires</th></tr></thead>
+    <tbody><tr class="deletion-row">
+      <td data-label="Certificate"><strong>{{ renewal.identifier }}</strong></td>
+      <td data-label="Source">{{ renewal.row.source_label }}</td>
+      <td data-label="Names">{% if renewal.row.sans %}{{ renewal.row.sans | join(', ') }}{% else %}—{% endif %}</td>
+      <td data-label="Published to">{% if renewal.row.targets %}{% for target in renewal.row.targets %}{% if not loop.first %}, {% endif %}{{ target.name }}{% endfor %}{% else %}—{% endif %}</td>
+      <td data-label="Expires">{{ renewal.row.expires }}</td>
+    </tr></tbody>
+  </table></div>
+  {% if renewal.way in ('certbot', 'ndes') %}
+  <ul class="removal-consequences">
+    {% if renewal.way == 'certbot' %}
+    <li>The same <code>certbot renew</code> the daily timer runs, forced before its time. The DNS or HTTP challenge runs again and can fail for the same reasons a first request can; certbot's own words then stand on the row.</li>
+    <li>Let's Encrypt issues at most five identical certificates per week. Renewing this one now spends one of them.</li>
+    {% else %}
+    <li>The same enrollment the scheduled renewal makes: a new key, a new request to the CA through the profile's challenge. If the CA holds the request for approval, the row says <em>Request pending</em> and the enrollment is resumed from there.</li>
+    {% endif %}
+    <li>The nodes reload once the certificate is published; existing connections finish on the old one.</li>
+  </ul>
+  {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish before renewing.</p>{% endif %}
+  <form method="post" action="/certificates/renew/confirm" class="editor-actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+    <input type="hidden" name="certificate" value="{{ renewal.identifier }}">
+    <button class="secondary-button deploy-button" type="submit"{% if certificate_job %} disabled{% endif %}>Renew now</button>
+    <a class="secondary-button" href="/certificates?view=registry&open={{ renewal.identifier }}">Cancel</a>
+  </form>
+  {% else %}
+  <form method="post" action="/certificates/{{ renewal.identifier }}/upload" enctype="multipart/form-data" class="preview-form certificate-form certificate-renew-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+    <div class="form-grid">
+      <label>Certificate file<input type="file" name="file" accept=".pem,.crt,.cer,.der,.p7b,.p7c,.pfx,.p12" required><small>PEM, DER, PKCS#7 or PKCS#12, at most 32 kB; the chain may be in the same file. {% if renewal.way == 'signed' %}The certificate the CA signed for the downloaded request; a file with a key in it is refused.{% else %}Without a key, the certificate is matched against the key the manager holds. To replace the key as well, use <a href="/certificates/import">Import certificate</a>.{% endif %}</small></label>
+    </div>
+    {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish before uploading.</p>{% endif %}
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry&open={{ renewal.identifier }}">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Upload certificate</button></div>
+    </div>
+  </form>
+  {% endif %}
+</div>
+{% else %}
+<div class="refusal-card">
+  <p class="refusal-hint"><a class="secondary-button" href="/certificates?view=registry">Back to the registry</a></p>
+</div>
+{% endif %}
+{% endblock %}

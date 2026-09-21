@@ -189,6 +189,11 @@ class RegistryCertificateView:
     # from the same cached reading the page is drawn from.
     #
     csr_pem: str | None = None
+    #
+    # The NDES profile the registry binds this certificate to, for the
+    # renewal that enrolls it again (C9c); empty for every other source.
+    #
+    ndes_profile: str = ""
 
     @property
     def csr_pending(self) -> bool:
@@ -1067,6 +1072,7 @@ def _registry_certificate(
         ),
         valid_from=_date(entry.get("not_before")) if readable else "—",
         csr_pem=csr_pem,
+        ndes_profile=_text(source.get("ndes_profile"), ""),
     )
 
 

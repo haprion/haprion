@@ -681,10 +681,19 @@ class ADownloadableSigningRequest(DeleteRouteTestCase):
             )
             self.assertIn(">Download CSR<", page)
             self.assertNotIn(">Resume enrollment<", page)
-            self.assertIn("<strong>Signed certificate</strong>", page)
-            self.assertIn('action="/certificates/csr.example.net/upload"', page)
-            self.assertIn("The key is already here.", page)
             self.assertIn("csr.example.net, *.csr.example.net", page)
+            #
+            # The signed certificate goes through Renew… (C9c), worded for
+            # what the row waits for.
+            #
+            token = auth.csrf_token(client.cookies[auth.SESSION_COOKIE])
+            renew = client.post(
+                "/certificates/renew",
+                data={"certificate": ["csr.example.net"], auth.CSRF_FIELD: token},
+            ).text
+            self.assertIn("<h1>Install the signed certificate for csr.example.net</h1>", renew)
+            self.assertIn('action="/certificates/csr.example.net/upload"', renew)
+            self.assertIn("signed for the downloaded request", renew)
 
             response = client.get("/certificates/csr.example.net/csr")
             self.assertEqual(response.status_code, 200)

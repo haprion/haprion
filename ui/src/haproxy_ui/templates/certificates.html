@@ -57,16 +57,6 @@
             <span class="warning-text">No target is registered for this certificate.</span>
             {% endfor %}
           </div>
-          {#
-            The renewal that keeps the key (B165): a certificate for the key
-            the manager already holds - what a CA returns for an imported
-            certificate's renewal, or for a CSR made here. Only on an
-            imported row, and only the certificate: a file with a key in it
-            is refused and pointed at Import certificate.
-          #}
-          {% if certificate.source_kind == 'import' and not certificate.placeholder and not certificate.state_active and management_writes and role == 'admin' %}
-          <div class="registry-detail-upload"><strong>{% if certificate.csr_pending %}Signed certificate{% else %}Renew{% endif %}</strong><form method="post" action="/certificates/{{ certificate.identifier }}/upload" enctype="multipart/form-data" class="inline-form certificate-upload-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><label class="visually-hidden" for="upload-{{ view }}-{{ certificate.identifier }}">Certificate file for {{ certificate.identifier }}</label><input type="file" id="upload-{{ view }}-{{ certificate.identifier }}" name="file" accept=".pem,.crt,.cer,.der,.p7b,.p7c,.pfx,.p12" required><button type="submit" class="secondary-button">Upload certificate</button><span class="optional">{% if certificate.csr_pending %}The certificate the CA signed for the downloaded request, with its chain if the CA gave one. The key is already here.{% else %}A new certificate on the same key, without the key. To replace the key too, <a href="/certificates/import">import</a>.{% endif %}</span></form></div>
-          {% endif %}
         </div>
       </td></tr>
       {% endif %}
@@ -81,7 +71,12 @@
   write the result into - without one the engine refuses the job, and a
   button that queues a refusal is furniture.
 #}
-{% macro page_actions() %}<a class="secondary-button" href="/dns-profiles">DNS providers</a><a class="secondary-button" href="/ndes-profiles">NDES providers</a>{% if certificates.registry %}<a class="secondary-button" href="/certificates/receivers">Receivers</a><a class="secondary-button" href="/certificates/new">New certificate</a><a class="secondary-button" href="/certificates/import">Import certificate</a>{% endif %}{% endmacro %}
+{#
+  Three groups with a little more air between them than within (C10b,
+  2026-09-21): the providers, the receivers, and the two ways a certificate
+  comes in - with *New* rightmost, where the eye ends.
+#}
+{% macro page_actions() %}<span class="action-group"><a class="secondary-button" href="/dns-profiles">DNS providers</a><a class="secondary-button" href="/ndes-profiles">NDES providers</a></span>{% if certificates.registry %}<span class="action-group"><a class="secondary-button" href="/certificates/receivers">Receivers</a></span><span class="action-group"><a class="secondary-button" href="/certificates/import">Import certificate</a><a class="secondary-button" href="/certificates/new">New certificate</a></span>{% endif %}{% endmacro %}
 
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 <script defer src="{{ url_for('static', path='/certificates.js') }}?v={{ asset_token }}"></script>
@@ -153,6 +148,12 @@
       <span class="deletion-count" data-delete-count aria-live="polite">Nothing selected</span>
       <button class="secondary-button" type="submit" form="certificate-selection" formaction="/certificates/targets/add" data-delete-submit disabled>Publish to…</button>
       <button class="secondary-button" type="submit" form="certificate-selection" formaction="/certificates/targets/remove" data-delete-submit disabled>Remove from…</button>
+      {#
+        The fourth question (C9c): the certificate again, the way its
+        source makes it. One row only - the answer differs by source - so
+        the button wakes at exactly one box, not at one or more.
+      #}
+      <button class="secondary-button" type="submit" form="certificate-selection" formaction="/certificates/renew" data-single-submit disabled>Renew…</button>
       <button class="danger-button" type="submit" form="certificate-selection" data-delete-submit disabled>Delete selected…</button>
     </div>
   </div>

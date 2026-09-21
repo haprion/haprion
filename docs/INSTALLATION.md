@@ -1145,9 +1145,15 @@ import remains the way in for whoever wants the key to stay off the web entirely
 
 A file without a key is accepted for a name whose key the manager already holds: an imported
 certificate's renewal on the same key, or the certificate a CA returned for a request made here.
-On an imported certificate's row, *Upload certificate* takes exactly that - only the certificate;
-a file holding a key is refused there and pointed at the import page, where replacing the key is
-the stated intent. Enrollment from a Microsoft CA needs no file at all (1.4.8).
+*Renew…* under the list, with the imported certificate's row ticked, takes exactly that - only the
+certificate; a file holding a key is refused there and pointed at the import page, where replacing
+the key is the stated intent. Enrollment from a Microsoft CA needs no file at all (1.4.8).
+
+**Renew…** is one button for every source: ticked on a certbot certificate it runs the daily
+timer's `certbot renew --cert-name <lineage>` now with `--force-renewal` (`haproxy-cert-renew
+--acme-now <id>` from the terminal; Let's Encrypt allows five identical certificates a week), on an
+NDES certificate it enrolls again from the same profile with the same names and targets (1.4.8),
+and on an imported one or a waiting signing request it is the page with the file field.
 
 **A signing request made here.** For a CA the manager cannot talk to - a purchase, an internal
 PKI without SCEP, whoever signs things - the key can be made on the manager instead of imported:
@@ -1166,7 +1172,7 @@ with the CSR to download from the row. The name is refused while anything else h
 registry entry, a certbot lineage, imported material, an NDES request in flight.
 
 When the CA has signed, the certificate comes back without a key - `haproxy-cert-import --id <id>
---certificate <file> [--chain <file>]` with no `--key`, or *Upload certificate* on the row - and is
+--certificate <file> [--chain <file>]` with no `--key`, or *Renew…* with the row ticked - and is
 matched against the stored key, imported and published to the targets the request named plus any
 named now. A certificate for another key is refused and the request kept. Deleting the row (1.4.6)
 removes the key with it; a request nobody signs is otherwise harmless, and stays until it is
@@ -1254,7 +1260,8 @@ enrollment* button, and the next day's pass resumes that request rather than ask
 attempt did, and the listing shows a failure as **Renewal failed** with the CA's sentence rather
 than an expiry creeping closer. `haproxy-cert-renew --ndes-now <id>` renews one certificate at
 once, threshold or not, and skips certbot's pass: the way to prove the path on a template whose
-validity cannot be shortened per request, and to rotate a key. `--dry-run` says who would renew.
+validity cannot be shortened per request, and to rotate a key. `--acme-now <id>` is the same for
+a certbot lineage, forced; the interface's *Renew…* runs both. `--dry-run` says who would renew.
 
 
 From the interface, *Certificates → New certificate* offers *Microsoft AD CS · NDES* beside

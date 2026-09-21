@@ -109,3 +109,19 @@ class StateBackupTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheServiceTemplateCanTakeTheLock(unittest.TestCase):
+    """`ProtectSystem=strict` leaves /run read-only unless the unit says otherwise.
+
+    The engine serialises cluster runs on a lock under /run/lock. A template
+    that only opens `backup_root` would fail every timer run on EROFS, and no
+    unit test of the engine itself could notice.
+    """
+
+    def test_the_lock_directory_is_a_read_write_path(self) -> None:
+        installer = (Path(__file__).resolve().parents[1] / "install/02-manager-config").read_text(
+            encoding="utf-8"
+        )
+        line = next(line for line in installer.splitlines() if line.startswith("ReadWritePaths="))
+        self.assertIn(str(state_backup.LOCK_PATH.parent), line.split("=", 1)[1].split())

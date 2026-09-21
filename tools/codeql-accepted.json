@@ -90,6 +90,13 @@
       "message": "Overly permissive mask in chmod sets file to world readable.",
       "decided": "2026-09-17",
       "reason": "Four root-owned things that hold no secret: the fetch account's home and its .ssh directory (0755), the authorized_keys line in it (0644), and the sshd drop-in or nginx site the command writes (0644). The modes are B131's, proven on the node accounts in production - sshd reads the lock as root, and an account that owned or could write any of these could replace its own restrictions. A public key, a chroot path and an address whitelist are not material worth hiding from a machine's own users; what matters is that none of them is writable, which these modes state."
+    },
+    {
+      "rule": "py/url-redirection",
+      "path": "ui/src/haproxy_ui/views.py",
+      "message": "Untrusted URL redirection depends on a [user-provided value](1).",
+      "decided": "2026-09-20",
+      "reason": "Three 303s that land on the registry row the button was pressed on (8632a06): resume_enrollment, publish_certificate and the queue_operation return path. The value is a certificate ID, and both halves of why it cannot leave the origin are checkable. It has passed config.CERTIFICATE_ID.fullmatch - ^[a-z0-9][a-z0-9._-]{0,254}$ - before the redirect is built: in the two handlers through operations.prepare, which raises BadPayload on anything else and answers 400 before a job is queued; in _return_path directly, where a non-matching value is dropped. So it holds no slash, colon, question mark, ampersand, hash or newline. And it is appended to the fixed prefix '/certificates?view=registry&open=', so it cannot begin the target, become '//host', or add a second query parameter. CodeQL does not carry the allowlist check that far. One entry covers all three because the gate keys on message text, not line; re-check every redirect in this file that this message names when CERTIFICATE_ID loosens, or when a redirect appends the value to something other than a literal path."
     }
   ]
 }

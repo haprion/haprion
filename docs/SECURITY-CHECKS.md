@@ -151,8 +151,17 @@ have to be rewritten whenever the file moved a line, and the message text keeps 
 acceptance from covering a world-readable finding in the same file. An entry that matches nothing
 fails the gate: an acceptance whose finding is gone has stopped being a decision and become a hole.
 
-Accepting a finding is a decision about the privilege contract, not a way to reach a green gate.
-Anything that is not the contract working as written is fixed in the code.
+The second kind of entry is a redirect whose value CodeQL calls user-provided. The interface
+answers a form with a 303 back to the page it was on, and some of those carry an identifier the
+person acted on, so the page can land on that row. CodeQL does not follow the allowlist check that
+far. Such an entry is accepted only when both halves are written down and checkable: the value has
+passed a `fullmatch` against a pattern that admits no slash, colon, query or fragment character
+before the redirect is built, and it is appended to a literal path, so it can neither begin the
+target nor add a parameter. The entry names the pattern and the prefix, so a later reader can
+re-check both.
+
+Accepting a finding is a decision about one of those two contracts, not a way to reach a green
+gate. Anything that is not a contract working as written is fixed in the code.
 
 ## GitHub repository settings
 

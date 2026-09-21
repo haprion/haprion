@@ -112,9 +112,26 @@ class ScheduleTests(unittest.TestCase):
         self.assertIsNone(schedule["last_run"])
         self.assertEqual(schedule["next_run"], "2026-08-30T03:00:00Z")
 
+    def test_a_cluster_instance_is_read_in_exactly_the_shape_it_is_derived_in(self) -> None:
+        #
+        # Found on the first policy with `backup_identity` (2026-09-21): the
+        # listing derived `haproxy-state-backup@internal.timer` and its own
+        # name check, written for the policy's plain timer, refused it.
+        #
+        show, asked = reader(LOADED)
+        schedule = schedule_result("haproxy-state-backup@alpha.timer", show=show)
+        assert schedule is not None
+
+        self.assertEqual(schedule["unit"], "haproxy-state-backup@alpha.timer")
+        self.assertEqual(asked[0][0], "haproxy-state-backup@alpha.timer")
+
     def test_a_name_that_is_not_a_unit_name_never_reaches_an_argv(self) -> None:
         for unit in (
             "haproxy-state-backup.service",
+            "other@alpha.timer",
+            "haproxy-state-backup@Alpha.timer",
+            "haproxy-state-backup@../alpha.timer",
+            "haproxy-state-backup@.timer",
             "../../etc/passwd.timer",
             "backup.timer; rm -rf /",
             "backup timer.timer",

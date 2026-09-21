@@ -26,9 +26,16 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from haproxy_mgmt.config import TIMER_UNIT
+from haproxy_mgmt.config import CLUSTER_ID, TIMER_UNIT
 
 SYSTEMCTL = "/usr/bin/systemctl"
+#
+# The policy's own timer name refuses template instances on purpose (see
+# TIMER_UNIT). The per-cluster instance is the one exception, and only in the
+# exact shape `timer_unit` derives it in: the project's template, an `@`, and
+# a cluster ID that passed the same check the configuration applies.
+#
+TIMER_INSTANCE = re.compile(rf"^haproxy-state-backup@{CLUSTER_ID.pattern[1:-1]}\.timer$")
 
 #
 # `systemctl show` never blocks on anything, but a hung dbus would otherwise
@@ -107,7 +114,7 @@ def schedule_result(unit: str | None, *, show: ShowProperties = _run) -> dict[st
 
     if unit is None:
         return None
-    if not TIMER_UNIT.fullmatch(unit):
+    if not (TIMER_UNIT.fullmatch(unit) or TIMER_INSTANCE.fullmatch(unit)):
         raise ScheduleError(f"backup_timer is not a valid systemd timer name: {unit}")
 
     timer = show(

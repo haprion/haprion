@@ -151,7 +151,8 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         self.assertIn("Certificates on clusters <b>1</b>", page)
         self.assertNotIn(">Clusters <b>", page)
         self.assertIn(
-            '<div class="page-ranges-sticky"><nav class="traffic-ranges page-ranges certificate-views"',
+            '<div class="page-ranges-sticky certificate-strip">'
+            '<nav class="traffic-ranges page-ranges certificate-views"',
             page,
         )
         self.assertIn("certificates.js", page)
@@ -161,6 +162,36 @@ class TheCertificatePageHasTwoViews(LoginTestCase):
         # when it becomes current. Every segment carries its label for that.
         #
         self.assertEqual(page.count('class="segment-reserve" aria-hidden="true"'), 2)
+
+
+    def test_the_buttons_share_the_pinned_strip_rather_than_the_heading(self) -> None:
+        #
+        # Asked for on 2026-09-20: `New certificate` and the provider pages
+        # kept scrolling off the top of a long registry. They sit in the same
+        # pinned row as the switch now - one fixed row, not two - and the
+        # heading keeps only the badges that say what kind of page this is.
+        #
+        client = self.client(
+            replace(configuration(), clusters=("alpha",), management_writes=True)
+        )
+        self.sign_in(client)
+        page = client.get("/certificates?view=registry").text
+
+        heading = page.split('<div class="heading-badges">', 1)[1].split("</div>", 1)[0]
+        strip = page.split('<div class="page-ranges-sticky certificate-strip">', 1)[1]
+        strip = strip.split("</nav>", 1)[1].split("</div></div>", 1)[0]
+        self.assertNotIn("secondary-button", heading)
+        self.assertTrue(strip.startswith('<div class="certificate-actions">'))
+        for href in ("/dns-profiles", "/ndes-profiles", "/certificates/receivers", "/certificates/new"):
+            self.assertIn(f'<a class="secondary-button" href="{href}">', strip)
+        self.assertEqual(page.count('class="secondary-button" href="/certificates/new"'), 1)
+
+    def test_a_reader_gets_the_strip_without_buttons(self) -> None:
+        page = self.page("?view=registry")
+
+        self.assertIn('<div class="page-ranges-sticky certificate-strip">', page)
+        self.assertNotIn("certificate-actions", page)
+        self.assertNotIn("secondary-button", page.split("</section>", 1)[0])
 
 
 class WithoutARegistryThePageIsWhatItWas(LoginTestCase):
@@ -181,6 +212,23 @@ class WithoutARegistryThePageIsWhatItWas(LoginTestCase):
 
     def test_no_switch_is_drawn(self) -> None:
         self.assertNotIn("certificate-views", self.page())
+
+    def test_the_provider_buttons_stay_in_the_heading(self) -> None:
+        #
+        # No registry, no strip to pin them in - and no `New certificate`,
+        # because the engine would refuse the job.
+        #
+        client = self.client(
+            replace(configuration(), clusters=("alpha",), management_writes=True)
+        )
+        self.sign_in(client)
+        page = client.get("/certificates").text
+
+        heading = page.split('<div class="heading-badges">', 1)[1].split("</div>", 1)[0]
+        self.assertIn('<a class="secondary-button" href="/dns-profiles">', heading)
+        self.assertIn('<a class="secondary-button" href="/ndes-profiles">', heading)
+        self.assertNotIn("/certificates/new", page)
+        self.assertNotIn("certificate-actions", page)
 
     def test_asking_for_the_registry_view_still_renders_the_cards(self) -> None:
         page = self.page("?view=registry")

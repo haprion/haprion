@@ -64,16 +64,28 @@
     </tbody></table></div>
 {% endmacro %}
 
+{#
+  The page's standing buttons, in one place because they are drawn in one of
+  two: the pinned strip when there is a registry, the heading when there is
+  not. `Receivers` and `New certificate` only where there is a registry to
+  write the result into - without one the engine refuses the job, and a
+  button that queues a refusal is furniture.
+#}
+{% macro page_actions() %}<a class="secondary-button" href="/dns-profiles">DNS providers</a><a class="secondary-button" href="/ndes-profiles">NDES providers</a>{% if certificates.registry %}<a class="secondary-button" href="/certificates/receivers">Receivers</a><a class="secondary-button" href="/certificates/new">New certificate</a>{% endif %}{% endmacro %}
+
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 <script defer src="{{ url_for('static', path='/certificates.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
   <div><h1>Certificates</h1></div>
   {#
-    The one standing button on this page: the form Phase 11 is measured by.
-    Only where there is a registry to write the result into - without one the
-    engine refuses the job, and a button that queues a refusal is furniture.
+    The heading keeps the badges that say what kind of page this is. The
+    buttons that act on it moved into the pinned strip below on 2026-09-21,
+    so they are still there at the bottom of a long registry - the maintainer
+    kept scrolling back up for `New certificate`. Without a registry there is
+    no strip, and the two provider buttons stay here: they need no registry,
+    and a page with nothing to pin needs no pinned row.
   #}
-  <div class="heading-badges">{% if management_writes and role == 'admin' %}<a class="secondary-button" href="/dns-profiles">DNS providers</a><a class="secondary-button" href="/ndes-profiles">NDES providers</a>{% if certificates.registry %}<a class="secondary-button" href="/certificates/receivers">Receivers</a>{% endif %}{% endif %}{% if management_writes and role == 'admin' and certificates.registry %}<a class="secondary-button" href="/certificates/new">New certificate</a>{% endif %}{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
+  <div class="heading-badges">{% if management_writes and role == 'admin' and not certificates.registry %}{{ page_actions() }}{% endif %}{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
 </section>
 
 {#
@@ -88,10 +100,10 @@
   and the detail row opens the same way. See `certificates.js`.
 #}
 {% if certificates.registry %}
-<div class="page-ranges-sticky"><nav class="traffic-ranges page-ranges certificate-views" aria-label="Certificate views">
+<div class="page-ranges-sticky certificate-strip"><nav class="traffic-ranges page-ranges certificate-views" aria-label="Certificate views">
   <a href="?view=registry"{% if chosen_view == 'registry' %} class="is-current" aria-current="true"{% endif %}><span>All certificates <b>{{ certificates.registry.certificate_count }}</b></span><span class="segment-reserve" aria-hidden="true">All certificates <b>{{ certificates.registry.certificate_count }}</b></span></a>
   <a href="?view=clusters"{% if chosen_view == 'clusters' %} class="is-current" aria-current="true"{% endif %}><span>Certificates on clusters <b>{{ certificates.on_clusters_count }}</b></span><span class="segment-reserve" aria-hidden="true">Certificates on clusters <b>{{ certificates.on_clusters_count }}</b></span></a>
-</nav></div>
+</nav>{% if management_writes and role == 'admin' %}<div class="certificate-actions">{{ page_actions() }}</div>{% endif %}</div>
 {% endif %}
 
 <section class="metric-grid certificate-summary" aria-label="Certificate summary">

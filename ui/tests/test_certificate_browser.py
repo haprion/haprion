@@ -197,6 +197,36 @@ class TheSwitchInABrowser(TheCertificatePageHasTwoViews):
             )
             self.assertGreaterEqual(top, 0)
             self.assertLess(top, 300 - header)
+            #
+            # The buttons ride in the same strip (2026-09-21): still on
+            # screen at the bottom of the registry, on the switch's own row,
+            # and the row does not push the page sideways.
+            #
+            button = page.get_by_role("link", name="New certificate").bounding_box()
+            switch = page.locator(".certificate-views").bounding_box()
+            if button is None or switch is None:
+                self.fail("the button and the switch must have layout boxes")
+            self.assertGreaterEqual(button["y"], 0)
+            self.assertLess(button["y"] + button["height"], 300)
+            self.assertAlmostEqual(
+                button["y"] + button["height"] / 2, switch["y"] + switch["height"] / 2, delta=2
+            )
+            self.assertGreater(button["x"], switch["x"] + switch["width"])
+            self.assertEqual(
+                page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), True
+            )
+
+    def test_the_strip_folds_rather_than_overflows_on_a_narrow_screen(self) -> None:
+        with self.signed_in("?view=registry") as page:
+            page.set_viewport_size({"width": 390, "height": 800})
+            button = page.get_by_role("link", name="New certificate").bounding_box()
+            switch = page.locator(".certificate-views").bounding_box()
+            if button is None or switch is None:
+                self.fail("the button and the switch must have layout boxes")
+            self.assertGreater(button["y"], switch["y"] + switch["height"])
+            self.assertEqual(
+                page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), True
+            )
 
     def test_the_new_form_guidance_stays_above_the_fields_and_wraps_without_overflow(self) -> None:
         with self.signed_in(path="/certificates/new") as page:

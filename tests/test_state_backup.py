@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from typing import BinaryIO
 from unittest import mock
 
 from haproxy_mgmt import state_backup
@@ -18,7 +19,9 @@ class StateBackupTests(unittest.TestCase):
         self.identity = DeployIdentity(user="svc-backup", key=Path("/root/backup-key"))
 
     @staticmethod
-    def fetch(node: Node, identity: DeployIdentity, destination) -> state_backup.FetchResult:
+    def fetch(
+        node: Node, identity: DeployIdentity, destination: BinaryIO
+    ) -> state_backup.FetchResult:
         del node, identity
         destination.write(b"complete archive")
         return state_backup.FetchResult(0)
@@ -85,7 +88,9 @@ class StateBackupTests(unittest.TestCase):
             self.assertEqual(kept[-1].name, "2026-09-04_05-00-00.tar.gz")
 
     def test_a_failed_export_never_becomes_a_backup(self) -> None:
-        def failed(node: Node, identity: DeployIdentity, destination) -> state_backup.FetchResult:
+        def failed(
+            node: Node, identity: DeployIdentity, destination: BinaryIO
+        ) -> state_backup.FetchResult:
             del node, identity
             destination.write(b"partial")
             return state_backup.FetchResult(1, "export failed")

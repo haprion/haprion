@@ -42,6 +42,7 @@ class EnrollmentStaging(unittest.TestCase):
         for patch in (
             mock.patch.object(ndes, "validate_policy"),
             mock.patch.object(ndes, "instance", return_value=nullcontext()),
+            mock.patch.object(ndes, "wait_for_ca"),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -175,6 +176,16 @@ class EnrollmentStaging(unittest.TestCase):
         self.assertFalse((self.directory / "cert.pem").exists())
         self.assertFalse((self.directory / "privkey.pem").exists())
 
+    def test_add_ca_is_followed_by_the_wait_before_the_request(self) -> None:
+        order: list[str] = []
+        with (
+            mock.patch.object(ndes, "command", side_effect=lambda p, d, a: order.append(a[0])),
+            mock.patch.object(ndes, "wait_for_ca", side_effect=lambda p, d: order.append("wait")),
+            mock.patch.object(ndes, "status", return_value="CA_WORKING"),
+        ):
+            self.enroll()
+        self.assertEqual(order, ["add-ca", "wait", "request"])
+
     def test_wrong_names_and_trust_are_refused_before_a_process_starts(self) -> None:
         with (
             mock.patch.object(ndes, "command"),
@@ -286,3 +297,33 @@ class IssuedCertificate(unittest.TestCase):
         )
         with self.assertRaises(ndes.NdesError):
             ndes.validate_certificate(material, DOMAINS, self.root)
+
+
+class WaitingForTheCa(unittest.TestCase):
+    def test_the_request_waits_for_the_ca_s_certificates(self) -> None:
+        """Job 932 (2026-09-21): submitted before the RA certificate was fetched, parked for good."""
+
+        answers = iter(
+            [
+                "CA 'ndes':\n\tca-type: EXTERNAL\n",
+                "CA 'ndes':\n\tSCEP CA certificate thumbprint (SHA1): AB\n",
+            ]
+        )
+        with (
+            mock.patch.object(
+                ndes, "command", side_effect=lambda p, d, a: next(answers)
+            ) as command,
+            mock.patch.object(ndes.time, "sleep"),
+        ):
+            ndes.wait_for_ca(mock.Mock(), Path("/nowhere"), timeout=5)
+        self.assertEqual(command.call_count, 2)
+        self.assertEqual(command.call_args.args[2], ["list-cas", "-c", "ndes"])
+
+        with (
+            mock.patch.object(ndes, "command", return_value="CA 'ndes':\n"),
+            mock.patch.object(ndes.time, "sleep"),
+            mock.patch.object(ndes.time, "monotonic", side_effect=[0, 0, 100]),
+            self.assertRaises(ndes.NdesError) as caught,
+        ):
+            ndes.wait_for_ca(mock.Mock(), Path("/nowhere"), timeout=5)
+        self.assertTrue(caught.exception.discard)

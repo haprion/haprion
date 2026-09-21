@@ -213,6 +213,38 @@ def instance(policy: NdesPolicy, directory: Path) -> Iterator[None]:
         (directory / "socket").unlink(missing_ok=True)
 
 
+CA_DATA_TIMEOUT = 30
+CA_DATA_MARK = "SCEP CA certificate thumbprint"
+
+
+def wait_for_ca(policy: NdesPolicy, directory: Path, *, timeout: float = CA_DATA_TIMEOUT) -> None:
+    """Block until Certmonger has fetched the CA's certificates, or give up.
+
+    `add-ca` returns before the daemon has asked the CA for its RA and CA
+    certificates; it fetches them on its own. A request submitted before
+    they are there makes `scep-submit` answer *unconfigured* ("No RA
+    certificate given"), and Certmonger parks the request in
+    `CA_UNCONFIGURED` for good - it never retries that state. The two live
+    enrollments of 2026-09-15 and the one of 2026-09-19 won the race; job
+    932 on 2026-09-21 lost it. `getcert list-cas` prints the CA
+    certificate's thumbprints once the data is in, and that is waited for.
+    """
+
+    deadline = time.monotonic() + timeout
+    while True:
+        text = command(policy, directory, ["list-cas", "-c", "ndes"])
+        if CA_DATA_MARK in text:
+            return
+        if time.monotonic() >= deadline:
+            raise NdesError(
+                "dependency_unavailable",
+                "Certmonger could not fetch the NDES CA certificate",
+                exit_code=78,
+                discard=True,
+            )
+        time.sleep(0.5)
+
+
 def status(policy: NdesPolicy, directory: Path) -> str:
     text = command(policy, directory, ["list", "-i", "enrollment"])
     match = re.search(r"^\s*status: ([A-Z_]+)$", text, re.MULTILINE)
@@ -328,6 +360,7 @@ def _enroll(
                 )
                 try:
                     command(policy, directory, ["add-ca", "-c", "ndes", "-e", helper])
+                    wait_for_ca(policy, directory)
                 except NdesError as exc:
                     exc.discard = True
                     raise

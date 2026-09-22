@@ -29,6 +29,7 @@
     const range = list.querySelector("[data-archive-page-range]");
     const newer = list.querySelector("[data-archive-page-previous]");
     const older = list.querySelector("[data-archive-page-next]");
+    const frame = list.querySelector(".table-scroll");
     if (!newer || !older) return;
     const perPage = Number(list.dataset.archivePerPage) || 10;
     const deepest = Number(list.dataset.archiveDeepest) || 0;
@@ -49,6 +50,12 @@
       show();
     });
     older.addEventListener("click", () => {
+      //
+      // The last page is usually shorter. Holding the first page's height keeps
+      // the buttons where the pointer already is, instead of the list shrinking
+      // under it and the next click landing somewhere else.
+      //
+      if (current === 0 && frame) frame.style.minHeight = `${frame.offsetHeight}px`;
       current = Math.min(current + 1, pages - 1);
       show();
     });

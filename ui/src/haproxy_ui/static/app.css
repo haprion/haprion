@@ -580,16 +580,17 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    they sit directly above one another, and two grids that disagree by a few
    pixels read as a rendering fault rather than as two tables. */
 .backup-node-table, .archive-table { table-layout: fixed; }
-.backup-node-table th:nth-child(1), .backup-node-table td:nth-child(1),
 .archive-table th:nth-child(1), .archive-table td:nth-child(1) { width: 26%; }
-.backup-node-table th:nth-child(2), .backup-node-table td:nth-child(2),
 .archive-table th:nth-child(2), .archive-table td:nth-child(2) { width: 24%; }
-.backup-node-table th:nth-child(3), .backup-node-table td:nth-child(3),
 .archive-table th:nth-child(3), .archive-table td:nth-child(3) { width: 26%; }
-.backup-node-table th:nth-child(4), .backup-node-table td:nth-child(4),
 .archive-table th:nth-child(4), .archive-table td:nth-child(4) { width: 12%; }
-.backup-node-table th:nth-child(5), .backup-node-table td:nth-child(5),
 .archive-table th:nth-child(5), .archive-table td:nth-child(5) { width: 12%; }
+/* Newest backup carries an age and an archive name side by side; it gets the room, Kept needs a number's. */
+.backup-node-table th:nth-child(1), .backup-node-table td:nth-child(1) { width: 20%; }
+.backup-node-table th:nth-child(2), .backup-node-table td:nth-child(2) { width: 26%; }
+.backup-node-table th:nth-child(3), .backup-node-table td:nth-child(3) { width: 34%; }
+.backup-node-table th:nth-child(4), .backup-node-table td:nth-child(4) { width: 8%; }
+.backup-node-table th:nth-child(5), .backup-node-table td:nth-child(5) { width: 12%; }
 /* The native disclosure triangle is drawn by the platform and matches nothing
    else here, so it is replaced by a chevron built from the same borders as the
    rest of the interface. */
@@ -783,6 +784,13 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .selectable-table th:nth-child(6), .selectable-table td:nth-child(6) { width: 105px; }
 .selectable-table th:nth-child(7), .selectable-table td:nth-child(7) { width: 195px; }
 .selectable-table th:nth-child(8), .selectable-table td:nth-child(8) { width: 200px; }
+/*
+   Every column but Names has a fixed width, so below their sum Names took what
+   was left - nothing - and its heading was drawn over Source's. The table stops
+   shrinking where Names still has room, and `.table-scroll` scrolls from there.
+*/
+.registry-table { min-width: 1260px; }
+.registry-table.selectable-table { min-width: 1300px; }
 /* The whole row opens its detail, so the whole row says so. */
 .registry-row { cursor: pointer; }
 .registry-table tbody tr.registry-open { background: var(--panel-soft); }
@@ -874,6 +882,11 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   .node-table td:nth-child(1), .node-table td:nth-child(2) { grid-column: 1 / -1; }
   /* The wide layout's column widths outrank `.node-table td` and would squeeze every card to a quarter of its width. */
   .backup-node-table td:nth-child(n), .archive-table td:nth-child(n), .registry-table td:nth-child(n) { width: 100%; }
+  .registry-table, .registry-table.selectable-table { min-width: 0; }
+  /* "Newest backup" is the longest label on the page; its field is widened rather than the label cut or wrapped. */
+  .backup-node-table td:nth-child(n), .archive-table td:nth-child(n) { padding-left: 116px; }
+  /* The checkbox column's padding would otherwise pull every card's value under its label. */
+  .selectable-table td:nth-child(n) { padding: 9px 8px 9px 88px; }
   /*
    * The follow-up cells carry no data-label, so they need neither the room a
    * label takes nor the centring that placed the button under a column that

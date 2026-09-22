@@ -29,6 +29,40 @@ REQUEST = uuid4()
 
 
 class TheCommandComesFromTheEngine(unittest.TestCase):
+    def test_a_backup_schedule_is_bounded_before_it_is_queued(self) -> None:
+        prepared = operations.prepare(
+            operation="backup_schedule",
+            cluster="alpha",
+            request_id=REQUEST,
+            payload={
+                "time": "22:30",
+                "frequency": "weekly",
+                "weekdays": ["Fri", "Mon"],
+                "day_of_month": "",
+                "retention": 30,
+                "enabled": True,
+            },
+        )
+        parameters = json.loads(prepared.request)["parameters"]
+        self.assertEqual(parameters["weekdays"], ["Mon", "Fri"])
+        self.assertIsNone(parameters["day_of_month"])
+        self.assertEqual(parameters["retention"], 30)
+
+        for payload in (
+            {"time": "5:00", "enabled": True},
+            {"time": "05:00", "frequency": "weekly", "weekdays": [], "enabled": True},
+            {"time": "05:00", "frequency": "monthly", "day_of_month": "x", "enabled": True},
+            {"time": "05:00", "retention": "30", "enabled": True},
+            {"time": "05:00", "enabled": True, "unit": "x.timer"},
+        ):
+            with self.subTest(payload=payload), self.assertRaises(operations.BadPayload):
+                operations.prepare(
+                    operation="backup_schedule",
+                    cluster="alpha",
+                    request_id=REQUEST,
+                    payload=payload,
+                )
+
     def test_a_deploy_sends_the_engines_own_envelope(self) -> None:
         prepared = operations.prepare(
             operation="deploy", cluster="alpha", request_id=REQUEST, payload={}

@@ -18,6 +18,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
+from haproxy_mgmt import backup_retention
 from haproxy_mgmt.backup_schedule import ScheduleError, schedule_result
 from haproxy_mgmt.backup_schedule_write import timer_unit
 from haproxy_mgmt.backups import BackupError, backup_list_result
@@ -200,7 +201,15 @@ def main(
             if getattr(policy, "backup_identity", None) is not None
             else policy.backup_timer
         )
-    except (BackupError, ScheduleError) as exc:
+        #
+        # And how many each node keeps, from the same file the pruning reads.
+        # It is reported beside the schedule because the page shows it there,
+        # and a listing whose count came from the code's default would promise
+        # fourteen on a cluster set to keep sixty.
+        #
+        if result["schedule"] is not None:
+            result["schedule"]["retention"] = backup_retention.read(request.cluster)
+    except (BackupError, ScheduleError, backup_retention.RetentionError) as exc:
         write_document(
             writer,
             envelope(

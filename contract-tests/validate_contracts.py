@@ -11,6 +11,8 @@ from pathlib import Path
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
+from haproxy_mgmt import backup_schedule
+
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_DIR = ROOT / "schemas" / "v1"
 FIXTURE_ROOT = ROOT / "fixtures"
@@ -734,8 +736,11 @@ def check_backup_schedule_semantics(document: dict[str, object], path: Path) -> 
     # calendar and sits in the requested enabled/active state.
     if schedule["known"] is not True:
         raise AssertionError(f"{path}: a done backup_schedule names a timer systemd loaded")
-    if schedule["calendar"] != f"*-*-* {result['time']}:00":
-        raise AssertionError(f"{path}: backup_schedule calendar does not match the time")
+    expected = backup_schedule.parse_schedule(result).calendar()
+    if schedule["calendar"] != expected:
+        raise AssertionError(f"{path}: backup_schedule calendar does not match the request")
+    if schedule.get("retention") != result["retention"]:
+        raise AssertionError(f"{path}: backup_schedule read-back keeps another retention")
     if schedule["enabled"] is not result["enabled"] or schedule["active"] is not result["enabled"]:
         raise AssertionError(f"{path}: backup_schedule timer state does not match the request")
 

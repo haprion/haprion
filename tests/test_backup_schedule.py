@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import unittest
 
+from haproxy_mgmt import backup_schedule
 from haproxy_mgmt.backup_schedule import (
     SYSTEMCTL,
     ScheduleError,
@@ -208,6 +209,32 @@ class CommandShapeTests(unittest.TestCase):
         # An empty reading is "systemd does not know this unit", which is the
         # honest answer when the query itself could not be made.
         self.assertFalse(schedule_result(TIMER, show=lambda *_: {})["known"])  # type: ignore[index]
+
+
+class ScheduleShapeTests(unittest.TestCase):
+    def test_every_shape_the_form_can_say_reads_back_as_itself(self) -> None:
+        for parameters in (
+            {"time": "05:00"},
+            {"time": "23:45", "frequency": "weekly", "weekdays": ["Sun", "Mon", "Thu"]},
+            {"time": "00:00", "frequency": "monthly", "day_of_month": 28, "retention": 90},
+        ):
+            with self.subTest(parameters=parameters):
+                requested = backup_schedule.parse_schedule(parameters)
+                read = backup_schedule.describe(requested.calendar(), retention=requested.retention)
+                self.assertEqual(read, requested)
+
+    def test_a_calendar_the_form_cannot_say_is_not_described(self) -> None:
+        for calendar in (
+            None,
+            "",
+            "Mon..Fri *-*-* 05:00:00",
+            "*-*-* 05:00:00 UTC",
+            "*-*-31 05:00:00",
+            "*-*-* *:00:00",
+            "hourly",
+        ):
+            with self.subTest(calendar=calendar):
+                self.assertIsNone(backup_schedule.describe(calendar))
 
 
 if __name__ == "__main__":

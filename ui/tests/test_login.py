@@ -284,6 +284,52 @@ class SigningIn(LoginTestCase):
         self.assertIn("service-b", page.text)
         self.assertIn("Backup overdue", page.text)
 
+    def test_the_backup_schedule_editor_speaks_the_timer_s_calendar(self) -> None:
+        """An admin with writes sees the schedule in words, and the form pre-filled from it."""
+
+        client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
+        self.sign_in(client)
+        row = db.ClusterBackups(
+            cluster="alpha",
+            observed_at=datetime.now(UTC),
+            outcome="done",
+            result={
+                "limit": 14,
+                "nodes": [],
+                "schedule": {
+                    "unit": "haproxy-state-backup@alpha.timer",
+                    "known": True,
+                    "enabled": True,
+                    "active": True,
+                    "calendar": "Mon,Fri *-*-* 22:30:00",
+                    "next_run": None,
+                    "last_run": None,
+                    "last_result": None,
+                    "scheduled": True,
+                    "retention": 30,
+                },
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        with mock.patch("haproxy_ui.db.cluster_backups", return_value=[row]):
+            page = client.get("/backups")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Every Monday and Friday at 22:30", page.text)
+        self.assertIn("keeps 30 per node", page.text)
+        self.assertNotIn("*-*-* 22:30:00</", page.text)
+        self.assertIn('name="backup_weekday" value="Mon" checked', page.text)
+        self.assertIn('name="backup_weekday" value="Tue">', page.text)
+        self.assertIn('<option value="22" selected>', page.text)
+        self.assertIn('<option value="30" selected>', page.text)
+        self.assertIn('name="backup_retention" value="30"', page.text)
+        self.assertIn('<option value="weekly" selected>', page.text)
+        self.assertIn("Back up now", page.text)
+        # Twenty-four hours, not a browser's locale: the picker is two selects.
+        self.assertNotIn('type="time"', page.text)
+        self.assertIn("waiting.js", page.text)
+
     def test_the_backup_page_requires_a_session(self) -> None:
         page = self.client().get("/backups", follow_redirects=False)
         self.assertEqual(page.status_code, 303)

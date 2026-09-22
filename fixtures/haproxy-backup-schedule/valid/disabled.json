@@ -8,6 +8,10 @@
   "result": {
     "cluster": "internal",
     "time": "05:30",
+    "frequency": "daily",
+    "weekdays": [],
+    "day_of_month": null,
+    "retention": 14,
     "enabled": false,
     "schedule": {
       "unit": "haproxy-state-backup@internal.timer",
@@ -17,7 +21,9 @@
       "calendar": "*-*-* 05:30:00",
       "next_run": null,
       "last_run": "2026-09-21T05:30:00Z",
-      "last_result": "success"
+      "last_result": "success",
+      "scheduled": true,
+      "retention": 14
     }
   },
   "warnings": [],

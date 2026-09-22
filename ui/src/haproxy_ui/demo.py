@@ -455,10 +455,12 @@ def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
         "known": True,
         "enabled": True,
         "active": True,
-        "calendar": "*-*-* 05:00:00",
+        "calendar": "Mon,Wed,Fri *-*-* 05:00:00",
         "next_run": (last_run + timedelta(days=1)).isoformat().replace("+00:00", "Z"),
         "last_run": last_run.isoformat().replace("+00:00", "Z"),
         "last_result": "success",
+        "scheduled": True,
+        "retention": 21,
     }
     return (
         ClusterBackups(

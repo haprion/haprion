@@ -1,4 +1,4 @@
-"""Root socket helper for one cluster backup run or daily schedule change."""
+"""Root socket helper for one cluster backup run or schedule change."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haproxy_mgmt import backup_schedule_write, state_backup
+from haproxy_mgmt import backup_retention, backup_schedule_write, state_backup
+from haproxy_mgmt.backup_schedule import Schedule
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haproxy_mgmt.envelope import Message, envelope, failure
 from haproxy_mgmt.helper_protocol import (
@@ -50,8 +51,13 @@ def build_run_request(cluster: str, request_id: str) -> str:
     return _document(RUN, cluster, request_id, {})
 
 
-def build_schedule_request(cluster: str, request_id: str, *, time: str, enabled: bool) -> str:
-    return _document(SCHEDULE, cluster, request_id, {"time": time, "enabled": enabled})
+SCHEDULE_KEYS = frozenset({"time", "enabled", "frequency", "weekdays", "day_of_month", "retention"})
+
+
+def build_schedule_request(
+    cluster: str, request_id: str, *, schedule: Schedule, enabled: bool
+) -> str:
+    return _document(SCHEDULE, cluster, request_id, {**schedule.as_dict(), "enabled": enabled})
 
 
 def _raw(stream: BinaryIO) -> tuple[bytes, str]:
@@ -68,20 +74,15 @@ def _raw(stream: BinaryIO) -> tuple[bytes, str]:
     return raw, str(operation)
 
 
-def _schedule(parameters: Mapping[str, JsonValue]) -> tuple[str, bool]:
-    value = parameters.get("time")
+def _schedule(parameters: Mapping[str, JsonValue]) -> tuple[Schedule, bool]:
     enabled = parameters.get("enabled")
-    if not isinstance(value, str):
-        raise HelperProtocolError(
-            "parameters.time must be HH:MM on the manager's clock", exit_code=65
-        )
     try:
-        backup_schedule_write.calendar(value)
+        requested = backup_schedule_write.schedule(parameters)
     except backup_schedule_write.ScheduleWriteError as exc:
-        raise HelperProtocolError(str(exc), exit_code=65) from exc
+        raise HelperProtocolError(f"parameters: {exc}", exit_code=65) from exc
     if type(enabled) is not bool:
         raise HelperProtocolError("parameters.enabled must be true or false", exit_code=65)
-    return value, enabled
+    return requested, enabled
 
 
 def _validate_schedule(parameters: Mapping[str, JsonValue]) -> None:
@@ -138,9 +139,7 @@ def main(
         request = read_helper_request(
             io.BytesIO(raw),
             expected_operation=operation,
-            allowed_parameter_keys=(
-                frozenset() if operation == RUN else frozenset({"time", "enabled"})
-            ),
+            allowed_parameter_keys=(frozenset() if operation == RUN else SCHEDULE_KEYS),
             validate_parameters=None if operation == RUN else _validate_schedule,
         )
     except HelperProtocolError as exc:
@@ -164,9 +163,9 @@ def main(
         )
 
     if operation == SCHEDULE:
-        value, enabled = _schedule(request.parameters)
+        requested, enabled = _schedule(request.parameters)
         try:
-            result = backup_schedule_write.apply(request.cluster, value, enabled)
+            result = backup_schedule_write.apply(request.cluster, requested, enabled)
         except backup_schedule_write.ScheduleWriteError as exc:
             return _refuse(
                 writer,
@@ -191,10 +190,15 @@ def main(
         return 0
 
     try:
+        retention = backup_retention.read(request.cluster)
         report = state_backup.run(
-            request.cluster, cluster, policy.backup_identity, policy.backup_root
+            request.cluster,
+            cluster,
+            policy.backup_identity,
+            policy.backup_root,
+            retention=retention,
         )
-    except state_backup.BackupRunError as exc:
+    except (state_backup.BackupRunError, backup_retention.RetentionError) as exc:
         return _refuse(
             writer,
             errors,

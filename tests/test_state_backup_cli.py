@@ -28,10 +28,13 @@ class StateBackupCommandTests(unittest.TestCase):
                     raise AssertionError("unexpected cluster")
                 return selected_cluster
 
-        def runner(cluster_id, selected, identity, root):
+        def runner(cluster_id, selected, identity, root, retention):
             self.assertIs(selected, selected_cluster)
             self.assertEqual(identity, Policy.backup_identity)
             self.assertEqual(root, Policy.backup_root)
+            # The count the Backups page set, read from the same file the
+            # socket helper reads - not the code's default.
+            self.assertEqual(retention, 40)
             seen.append(cluster_id)
             return BackupResult(
                 cluster_id,
@@ -43,6 +46,7 @@ class StateBackupCommandTests(unittest.TestCase):
         with (
             mock.patch.object(state_backup, "load_policy", return_value=Policy()),
             mock.patch.object(state_backup, "load_runtime_config", return_value=Runtime()),
+            mock.patch.object(state_backup, "read_retention", return_value=40),
         ):
             code = state_backup.main(
                 ["-c", "alpha"], output_stream=output, require_root=False, runner=runner
@@ -62,14 +66,15 @@ class StateBackupCommandTests(unittest.TestCase):
         class Runtime:
             clusters = {"alpha": object(), "beta": object()}
 
-        def runner(cluster_id, cluster, identity, root):
-            del cluster, identity, root
+        def runner(cluster_id, cluster, identity, root, retention):
+            del cluster, identity, root, retention
             seen.append(cluster_id)
             return BackupResult(cluster_id, "stamp", ())
 
         with (
             mock.patch.object(state_backup, "load_policy", return_value=Policy()),
             mock.patch.object(state_backup, "load_runtime_config", return_value=Runtime()),
+            mock.patch.object(state_backup, "read_retention", return_value=14),
         ):
             code = state_backup.main(
                 [], output_stream=io.StringIO(), require_root=False, runner=runner
@@ -101,6 +106,7 @@ class StateBackupCommandTests(unittest.TestCase):
         with (
             mock.patch.object(state_backup, "load_policy", return_value=Policy()),
             mock.patch.object(state_backup, "load_runtime_config", return_value=Runtime()),
+            mock.patch.object(state_backup, "read_retention", return_value=14),
         ):
             code = state_backup.main(
                 ["-c", "alpha"],

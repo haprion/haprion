@@ -55,7 +55,9 @@
             { "type": "null" }
           ]
         },
-        "last_result": { "type": ["string", "null"], "maxLength": 64 }
+        "last_result": { "type": ["string", "null"], "maxLength": 64 },
+        "scheduled": { "type": "boolean" },
+        "retention": { "type": "integer", "minimum": 1, "maximum": 365 }
       },
       "additionalProperties": true
     },

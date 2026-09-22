@@ -8,6 +8,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
 
+from haproxy_mgmt.backup_retention import RetentionError
+from haproxy_mgmt.backup_retention import read as read_retention
 from haproxy_mgmt.config import (
     DEFAULT_POLICY_PATH,
     Cluster,
@@ -22,7 +24,7 @@ EXIT_USAGE = 64
 EXIT_NOT_ROOT = 77
 USAGE = "Usage: haproxy-state-backup [-c <cluster>]\n"
 
-type Runner = Callable[[str, Cluster, DeployIdentity | None, Path | None], BackupResult]
+type Runner = Callable[[str, Cluster, DeployIdentity | None, Path | None, int], BackupResult]
 
 
 def _parse(argv: list[str]) -> str | None:
@@ -80,8 +82,16 @@ def main(
     failed = False
     for cluster_id, cluster in clusters:
         try:
-            result = runner(cluster_id, cluster, policy.backup_identity, policy.backup_root)
-        except BackupRunError as exc:
+            #
+            # The count the Backups page set for this cluster, read here and by
+            # the socket helper alike: a terminal run prunes to the same number
+            # the schedule promised.
+            #
+            retention = read_retention(cluster_id)
+            result = runner(
+                cluster_id, cluster, policy.backup_identity, policy.backup_root, retention
+            )
+        except (BackupRunError, RetentionError) as exc:
             errors.write(f"ERROR: {cluster_id}: {exc}\n")
             failed = True
             continue

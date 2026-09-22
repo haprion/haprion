@@ -144,7 +144,12 @@ class NodeBackupsTests(unittest.TestCase):
 
 class HelperTests(unittest.TestCase):
     def _run(
-        self, root: Path | None, parameters: dict[str, object], *, cluster: str = "alpha"
+        self,
+        root: Path | None,
+        parameters: dict[str, object],
+        *,
+        cluster: str = "alpha",
+        timer: str | None = None,
     ) -> tuple[dict, int]:
         request = {
             "schema_version": 1,
@@ -157,7 +162,7 @@ class HelperTests(unittest.TestCase):
 
         class Policy:
             backup_root = root
-            backup_timer = None
+            backup_timer = timer
 
         class Config:
             @staticmethod
@@ -187,6 +192,34 @@ class HelperTests(unittest.TestCase):
             list_backups_helper.load_policy = original_policy  # type: ignore[assignment]
             list_backups_helper.load_runtime_config = original_config  # type: ignore[assignment]
         return (json.loads(out.getvalue()) if out.getvalue() else {}), code
+
+    def test_the_schedule_carries_the_cluster_s_retention(self) -> None:
+        """The count beside the timer comes from the file the pruning reads."""
+
+        timer = {
+            "unit": "haproxy-state-backup@alpha.timer",
+            "known": True,
+            "enabled": True,
+            "active": True,
+            "calendar": "Mon,Fri *-*-* 05:00:00",
+            "next_run": None,
+            "last_run": None,
+            "last_result": None,
+            "scheduled": True,
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(list_backups_helper, "schedule_result", return_value=dict(timer)),
+            mock.patch.object(list_backups_helper.backup_retention, "read", return_value=60),
+        ):
+            root = Path(directory)
+            for node in NODES:
+                _archive(root / node.name, "2026-08-29_05-00-00")
+            document, code = self._run(root, {"limit": 10}, timer="haproxy-state-backup.timer")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(document["result"]["schedule"]["retention"], 60)
+        self.assertEqual(document["result"]["schedule"]["calendar"], "Mon,Fri *-*-* 05:00:00")
 
     def test_a_complete_reading_is_done_and_matches_the_schema(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

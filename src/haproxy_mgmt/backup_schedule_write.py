@@ -1,23 +1,22 @@
-"""Write one cluster's bounded daily backup schedule and verify systemd readback."""
+"""Write one cluster's bounded backup schedule and verify systemd readback."""
 
 from __future__ import annotations
 
 import os
-import re
 import stat
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from haproxy_mgmt.backup_schedule import schedule_result
+from haproxy_mgmt import backup_retention
+from haproxy_mgmt.backup_schedule import Schedule, ScheduleError, parse_schedule, schedule_result
 from haproxy_mgmt.config import CLUSTER_ID
 
 SYSTEMCTL = "/usr/bin/systemctl"
 UNIT_ROOT = Path("/etc/systemd/system")
-TIME = re.compile(r"^(?P<hour>[01][0-9]|2[0-3]):(?P<minute>[0-5][0-9])$")
 
 
 class ScheduleWriteError(RuntimeError):
@@ -27,14 +26,18 @@ class ScheduleWriteError(RuntimeError):
 @dataclass(frozen=True, slots=True)
 class Result:
     cluster: str
-    time: str
+    requested: Schedule
     enabled: bool
     schedule: dict[str, object]
+
+    @property
+    def time(self) -> str:
+        return self.requested.time
 
     def as_dict(self) -> dict[str, object]:
         return {
             "cluster": self.cluster,
-            "time": self.time,
+            **self.requested.as_dict(),
             "enabled": self.enabled,
             "schedule": self.schedule,
         }
@@ -50,17 +53,13 @@ def timer_unit(cluster_id: str) -> str:
     return f"haproxy-state-backup@{cluster_id}.timer"
 
 
-def calendar(value: str) -> str:
-    matched = TIME.fullmatch(value)
-    if matched is None:
-        raise ScheduleWriteError("time must be HH:MM on the manager's clock")
-    #
-    # No zone suffix on purpose: systemd then reads the expression in the
-    # manager's own zone, which is the clock every other timer on the machine
-    # and the journal keep. A schedule in UTC would be the one time on the host
-    # an operator had to convert before comparing it with anything else.
-    #
-    return f"*-*-* {matched.group('hour')}:{matched.group('minute')}:00"
+def schedule(parameters: Mapping[str, object]) -> Schedule:
+    """The bounded request, refused as a write error so callers see one kind."""
+
+    try:
+        return parse_schedule(parameters)
+    except ScheduleError as exc:
+        raise ScheduleWriteError(str(exc)) from exc
 
 
 def _run(command: tuple[str, ...]) -> int:
@@ -111,17 +110,51 @@ def _command(run: Run, *arguments: str) -> None:
 
 def apply(
     cluster_id: str,
-    value: str,
+    requested: Schedule,
     enabled: bool,
     *,
     unit_root: Path = UNIT_ROOT,
+    retention_root: Path = backup_retention.RETENTION_ROOT,
     run: Run = _run,
     read: Read = _read,
 ) -> Result:
-    """Commit a daily local time, rolling the file and enablement back on any error."""
+    """Commit a schedule on the manager's clock, rolling every file and the enablement back on any error."""
 
-    expression = calendar(value)
+    expression = requested.calendar()
     unit = timer_unit(cluster_id)
+    #
+    # The retention count is written first and rolled back last: it has no
+    # readback of its own, so it is only ever left in place when systemd has
+    # confirmed the schedule it was asked for alongside.
+    #
+    try:
+        previous_retention = backup_retention.write(
+            cluster_id, requested.retention, root=retention_root
+        )
+    except (OSError, backup_retention.RetentionError) as exc:
+        raise ScheduleWriteError(str(exc)) from exc
+    try:
+        return _apply_timer(cluster_id, requested, enabled, expression, unit, unit_root, run, read)
+    except ScheduleWriteError as exc:
+        try:
+            backup_retention.restore(
+                backup_retention.path(cluster_id, root=retention_root), previous_retention
+            )
+        except (OSError, backup_retention.RetentionError) as rollback:
+            raise ScheduleWriteError(f"{exc}; retention rollback failed: {rollback}") from exc
+        raise
+
+
+def _apply_timer(
+    cluster_id: str,
+    requested: Schedule,
+    enabled: bool,
+    expression: str,
+    unit: str,
+    unit_root: Path,
+    run: Run,
+    read: Read,
+) -> Result:
     dropin = unit_root / f"{unit}.d"
     dropin.mkdir(mode=0o755, exist_ok=True)
     if not _private_directory(dropin):
@@ -148,7 +181,7 @@ def apply(
             raise ScheduleWriteError("systemd did not enter the requested timer state")
         if observed.get("calendar") != expression:
             raise ScheduleWriteError("systemd did not read back the requested calendar")
-        return Result(cluster_id, value, enabled, observed)
+        return Result(cluster_id, requested, enabled, observed)
     except (OSError, ScheduleWriteError) as exc:
         try:
             if previous is None:

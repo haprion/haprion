@@ -36,7 +36,7 @@ from uuid import UUID, uuid4, uuid5
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from haproxy_mgmt import proxy_model
+from haproxy_mgmt import backup_retention, backup_schedule, proxy_model
 from haproxy_mgmt.config import CERTIFICATE_ID
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haproxy_mgmt.proxy_model import (
@@ -3840,6 +3840,14 @@ def build_router(config: Config) -> APIRouter:
                 # named so an operator on another clock is not left guessing.
                 #
                 "clock": metrics.shown(datetime.now(UTC)).tzname() or "local time",
+                "weekdays": tuple(
+                    (day, backups.WEEKDAY_NAMES[day]) for day in backup_schedule.WEEKDAYS
+                ),
+                "day_of_month_max": backup_schedule.DAY_OF_MONTH_MAX,
+                "retention_bounds": (
+                    backup_retention.RETENTION_MIN,
+                    backup_retention.RETENTION_MAX,
+                ),
                 "section": "backups",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
@@ -4059,7 +4067,12 @@ def build_router(config: Config) -> APIRouter:
         version: str = Form(default="", max_length=16),
         expected_commit: str = Form(default="", max_length=64),
         allow_vip_unknown: str = Form(default=""),
-        backup_time: str = Form(default="", max_length=5),
+        backup_hour: str = Form(default="", max_length=2),
+        backup_minute: str = Form(default="", max_length=2),
+        backup_frequency: str = Form(default="daily", max_length=8),
+        backup_weekday: Sequence[str] = Form(default=()),
+        backup_day_of_month: str = Form(default="", max_length=2),
+        backup_retention: str = Form(default="", max_length=3),
         backup_enabled: str = Form(default=""),
         vip_name: Sequence[str] = Form(default=()),
         vip_address: Sequence[str] = Form(default=()),
@@ -4116,7 +4129,24 @@ def build_router(config: Config) -> APIRouter:
         elif operation == "backup_run":
             payload = {}
         elif operation == "backup_schedule":
-            payload = {"time": backup_time, "enabled": backup_enabled == "on"}
+            #
+            # Numbers arrive as the form's text and go on as numbers; text that
+            # is not a number goes on as it came, so that `prepare` refuses it
+            # the way it refuses any other bad value, rather than this turning
+            # it into a guess.
+            #
+            payload = {
+                "time": f"{backup_hour}:{backup_minute}",
+                "frequency": backup_frequency,
+                "weekdays": list(backup_weekday),
+                "day_of_month": int(backup_day_of_month)
+                if backup_day_of_month.isdigit()
+                else backup_day_of_month,
+                "retention": int(backup_retention)
+                if backup_retention.isdigit()
+                else backup_retention,
+                "enabled": backup_enabled == "on",
+            }
         elif operation == "revert":
             if not version.isdigit():
                 return PlainTextResponse("A version is required", status_code=400)

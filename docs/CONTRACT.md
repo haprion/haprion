@@ -13,7 +13,7 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haproxy-list` | `list` | `done`, `failed` | Published version history |
 | `haproxy-list-backups` | `list_backups` | `done`, `partial`, `failed` | Backup metadata only |
 | backup job helper | `backup_run` | `done`, `partial`, `failed` | One cluster, separate archive per node |
-| backup job helper | `backup_schedule` | `done`, `failed` | Daily schedule for one cluster, on the manager's clock |
+| backup job helper | `backup_schedule` | `done`, `failed` | Daily, weekly or monthly schedule and per-node retention for one cluster, on the manager's clock |
 | `haproxy-cert-list` | `cert_list` | `done`, `failed` | Deployable certificate metadata only |
 | `haproxy-network` | `network` | `done`, `failed` | Cluster addresses and address groups |
 | `haproxy-network-publish-helper` | `network_publish` | `done`, `failed`, `blocked` | Bounded publication of `managed/network.yaml` |

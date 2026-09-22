@@ -1,6 +1,9 @@
 {% extends "layout.html" %}
 {% block title %}Node backups — HAProxy Manager{% endblock %}
 {% block content %}
+{% macro schedule_line(schedule) %}<span class="status-dot status-{{ schedule.tone }}" aria-hidden="true"></span><strong>{{ schedule.label }}</strong><span class="schedule-facts"><span title="{{ schedule.calendar }}">{{ schedule.readable }}</span>{% if schedule.retention %} · keeps {{ schedule.retention }} per node{% endif %} · last run {{ schedule.last_run }}{% if schedule.outcome != '—' %} ({{ schedule.outcome }}){% endif %} · next {{ schedule.next_run }}</span>{% endmacro %}
+<script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
+<script defer src="{{ url_for('static', path='/backups.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
   <div class="heading-title"><h1>Node backups</h1><p class="page-lede">State archives taken from each HAProxy node — its configuration, keys and service state.</p></div>
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
@@ -13,32 +16,47 @@
 
 <div class="cluster-list backup-cluster-list">
 {% for cluster in backups.clusters %}
-  <article class="cluster-card backup-cluster-card cluster-accent-{{ cluster.accent }}">
+  <article class="cluster-card backup-cluster-card cluster-accent-{{ cluster.accent }}" data-observed="{{ cluster.observed_iso or '' }}">
     <header class="cluster-header">
       <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
       <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
-    {% if cluster.schedule %}
-    <section class="schedule-strip" aria-label="Backup schedule for {{ cluster.cluster }}">
-      <span class="status-dot status-{{ cluster.schedule.tone }}" aria-hidden="true"></span>
-      <strong>{{ cluster.schedule.label }}</strong>
-      <span class="schedule-facts"><code>{{ cluster.schedule.calendar }}</code> · last run {{ cluster.schedule.last_run }}{% if cluster.schedule.outcome != '—' %} ({{ cluster.schedule.outcome }}){% endif %} · next {{ cluster.schedule.next_run }}</span>
-    </section>
-    {% endif %}
     {% set running = in_flight.get(cluster.cluster) if in_flight else none %}
-    {% if management_writes and role == 'admin' and not demo_fixture and not production_snapshot %}
-    <div class="backup-actions">
-      {% if running %}<span class="status-badge status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>{{ running }}</span>{% else %}
-      <form method="post" action="/operations" class="inline-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="backup_run"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups">
-        <button class="secondary-button" type="submit">Back up now</button>
-      </form>
-      <form method="post" action="/operations" class="inline-form backup-schedule-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="backup_schedule"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups">
-        <label>Daily at <input type="time" name="backup_time" value="{{ cluster.schedule.time if cluster.schedule else '05:00' }}" required> {{ clock }}</label>
-        <label><input type="checkbox" name="backup_enabled"{% if cluster.schedule and cluster.schedule.enabled %} checked{% endif %}> Enabled</label>
-        <button class="secondary-button" type="submit">Save schedule</button>
-      </form>
+    {% set editable = management_writes and role == 'admin' and not demo_fixture and not production_snapshot %}
+    {% if cluster.schedule or editable %}
+    <div class="schedule-block">
+      {% if cluster.schedule %}{% set schedule = cluster.schedule %}
+      {% if editable and not running %}
+      <details class="schedule-details">
+        <summary class="schedule-strip" aria-label="Backup schedule for {{ cluster.cluster }}">{{ schedule_line(schedule) }}<span class="schedule-edit">Edit</span></summary>
+        <form method="post" action="/operations" class="backup-schedule-form" data-schedule-form>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="backup_schedule"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups">
+          <div class="schedule-row">
+            <label>Run <select name="backup_frequency" data-schedule-frequency>{% for value, name in (('daily', 'every day'), ('weekly', 'on weekdays'), ('monthly', 'monthly')) %}<option value="{{ value }}"{% if schedule.frequency == value %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+            <fieldset class="schedule-weekdays" data-schedule-when="weekly"><legend class="visually-hidden">Weekdays</legend>{% for value, name in weekdays %}<label class="schedule-chip"><input type="checkbox" name="backup_weekday" value="{{ value }}"{% if value in schedule.weekdays %} checked{% endif %}><span title="{{ name }}">{{ value }}</span></label>{% endfor %}</fieldset>
+            <label data-schedule-when="monthly">on day <select name="backup_day_of_month">{% for day in range(1, day_of_month_max + 1) %}<option value="{{ day }}"{% if schedule.day_of_month == day %} selected{% endif %}>{{ day }}</option>{% endfor %}</select></label>
+            <label class="schedule-time">at <select name="backup_hour" aria-label="Hour">{% for hour in range(24) %}{% set text = '%02d' % hour %}<option value="{{ text }}"{% if schedule.time[:2] == text %} selected{% endif %}>{{ text }}</option>{% endfor %}</select><b>:</b><select name="backup_minute" aria-label="Minute">{% for minute in range(0, 60, 5) %}{% set text = '%02d' % minute %}<option value="{{ text }}"{% if schedule.time[3:] == text %} selected{% endif %}>{{ text }}</option>{% endfor %}</select> {{ clock }}</label>
+          </div>
+          <div class="schedule-row">
+            <label>Keep <input type="number" name="backup_retention" value="{{ schedule.retention or 14 }}" min="{{ retention_bounds[0] }}" max="{{ retention_bounds[1] }}" required> archives per node</label>
+            <label><input type="checkbox" name="backup_enabled"{% if schedule.enabled %} checked{% endif %}> Enabled</label>
+            <button class="secondary-button" type="submit">Save schedule</button>
+          </div>
+        </form>
+      </details>
+      {% else %}
+      <section class="schedule-strip" aria-label="Backup schedule for {{ cluster.cluster }}">{{ schedule_line(schedule) }}</section>
+      {% endif %}
+      {% endif %}
+      {% if editable %}
+      <div class="backup-now">
+        {% if running %}<span class="status-badge status-badge-info" data-busy="{{ cluster.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ running }}</span>{% else %}
+        <form method="post" action="/operations" class="inline-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="backup_run"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups">
+          <button class="secondary-button" type="submit">Back up now</button>
+        </form>
+        {% endif %}
+      </div>
       {% endif %}
     </div>
     {% endif %}
@@ -70,7 +88,7 @@
     </tbody></table></div>
     </details>
     {% endif %}
-    <p class="table-note">Retention is 14 archives per node{% if cluster.truncated %}; this view shows only the most recent archives returned per node{% endif %}. Restoring from an archive is currently a command-line recovery procedure.</p>
+    <p class="table-note">Retention is {{ cluster.schedule.retention if cluster.schedule and cluster.schedule.retention else 14 }} archives per node{% if cluster.truncated %}; this view shows only the most recent archives returned per node{% endif %}. Restoring from an archive is currently a command-line recovery procedure.</p>
     {% else %}
     <div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"></ellipse><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"></path></svg><div><strong>{{ cluster.label }}</strong><span>{{ cluster.detail }}</span></div></div>
     {% endif %}

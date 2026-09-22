@@ -674,16 +674,34 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .proxy-link:hover strong { text-decoration: underline; }
 
 /* The schedule, stated once: one timer takes every node's backup. */
-.schedule-strip { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 10px 16px; border-radius: var(--radius); background: var(--panel); color: var(--text-primary); font-size: 12px; }
+.schedule-block { position: relative; border-bottom: 1px solid var(--line); }
+.schedule-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-height: 52px; padding: 10px 150px 10px 20px; color: var(--text-primary); font-size: 12px; }
 .schedule-strip strong { color: var(--text-strong); }
 .schedule-facts { color: var(--muted); }
-.schedule-facts code { color: var(--text-primary); font-size: 11px; }
-.schedule-help { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin-left: auto; border-radius: 999px; background: var(--unknown-soft); color: var(--muted); font-size: 11px; font-weight: 700; cursor: help; }
-.backup-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 14px; }
-.backup-schedule-form { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.schedule-details > summary { list-style: none; cursor: pointer; }
+.schedule-details > summary::-webkit-details-marker { display: none; }
+.schedule-edit { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.schedule-edit::before { display: inline-block; width: 6px; height: 6px; margin: 0 8px 2px 0; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); content: ""; transform: rotate(-45deg); }
+.schedule-details[open] .schedule-edit::before { margin-bottom: 0; transform: rotate(45deg); }
+.schedule-details > summary:hover .schedule-edit { color: var(--text-strong); }
+.schedule-details > summary:hover .schedule-edit::before { border-color: var(--text-strong); }
+.backup-now { position: absolute; top: 9px; right: 20px; }
+.backup-now .status-badge { margin-top: 4px; }
+.backup-schedule-form { display: flex; flex-direction: column; gap: 10px; padding: 4px 20px 16px; }
+.schedule-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .backup-schedule-form label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
-.backup-schedule-form input[type="time"] { padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); }
+.backup-schedule-form select, .backup-schedule-form input[type="number"] { padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--text); font-variant-numeric: tabular-nums; }
+.backup-schedule-form input[type="number"] { width: 64px; }
 .backup-schedule-form input[type="checkbox"] { accent-color: var(--text-strong); }
+.schedule-time select { width: 58px; padding: 6px; }
+.schedule-time b { color: var(--muted); font-weight: 700; }
+.schedule-weekdays { display: inline-flex; gap: 4px; margin: 0; padding: 0; border: 0; }
+.schedule-chip { position: relative; }
+.schedule-chip input { position: absolute; opacity: 0; pointer-events: none; }
+.schedule-chip span { display: inline-block; min-width: 38px; padding: 5px 0; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--muted); font-size: 12px; text-align: center; cursor: pointer; user-select: none; }
+.schedule-chip input:checked + span { border-color: var(--text-strong); background: var(--panel); color: var(--text-strong); }
+.schedule-chip input:focus-visible + span { box-shadow: var(--focus); }
+.schedule-row [hidden] { display: none; }
 
 .backup-node-table td, .archive-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .node-detail { margin-left: 8px; color: var(--muted); font-size: 11px; }
@@ -837,6 +855,9 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   .cluster-state { width: 100%; justify-content: space-between; }
   .cluster-actions { align-items: flex-start; flex-direction: column; }
   .cluster-actions span { white-space: normal; }
+  .schedule-strip { padding: 10px 16px; }
+  .backup-now { position: static; padding: 0 16px 12px; }
+  .backup-schedule-form { padding: 4px 16px 14px; }
   .cluster-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 0; }
   .cluster-facts > div:nth-child(2) { border-right: 0; }
   .cluster-facts > div:nth-child(3) { padding-left: 0; }

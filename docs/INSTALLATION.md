@@ -369,16 +369,25 @@ password hashes and private SSH keys. Step 3 creates the key and prints the exac
 for the node's backup account; the private half remains root-only on the manager.
 
 Step 2 installs `haproxy-state-backup@.service`. Each instance takes both nodes in exactly one
-configured cluster and writes 14 root-only archives per node. The ordinary list and the backup UI
-show all 14 per node — normally 28 for a two-node cluster — and identify the source node because
-hostnames, network state and SSH identities are not interchangeable between the pair.
+configured cluster and keeps a bounded number of root-only archives per node — 14 unless the
+Backups page set another count, which the root socket helper records in
+`/etc/haproxy-manager/backup-retention/<cluster>.json` (root-owned, `0644`, 1–365). Every run
+reads that file, including the terminal `haproxy-state-backup`, so a manual run prunes to the
+same count the schedule promised; a file that is present but unreadable stops the run rather
+than falling back to 14. The ordinary list and the backup UI show every retained archive per node
+and identify the source node because hostnames, network state and SSH identities are not
+interchangeable between the pair.
 
 `backup_timer` names the legacy fleet-wide timer during migration. With `backup_identity`
 configured, listings instead read the derived `haproxy-state-backup@<cluster>.timer`. An admin can
-set its bounded daily time on the manager's clock, enable or disable it, and run an immediate cluster backup on the
-Backups page. The browser supplies no unit name or systemd expression: the root socket helper
-derives both from the configured cluster and reads the effective state back before reporting
-success. The terminal break-glass path remains `sudo haproxy-state-backup [-c <cluster>]`.
+set its schedule on the manager's clock — every day, chosen weekdays, or one day of the month
+(1–28, so no month is skipped) at a given time — enable or disable it, set the retention, and run
+an immediate cluster backup on the Backups page. The browser supplies no unit name or systemd
+expression: the root socket helper derives both from the configured cluster and the bounded
+request (`Mon,Wed,Fri *-*-* 05:00:00`, `*-*-07 05:00:00`), writes them as a drop-in on the
+timer instance, and reads the effective state back before reporting success. A calendar edited
+by hand on the manager is shown verbatim on the page and is not translated into the form's
+shapes. The terminal break-glass path remains `sudo haproxy-state-backup [-c <cluster>]`.
 
 `status_identity` is the account `haproxy-status` becomes to read a node, and `haproxy-deploy`
 uses it too: a rollout reads the pair before and after every step, and it reads with the identity

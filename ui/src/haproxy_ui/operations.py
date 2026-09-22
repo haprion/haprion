@@ -721,19 +721,16 @@ def prepare(
         )
 
     if operation == "backup_schedule":
-        _only(payload, "time", "enabled")
-        value = payload.get("time")
-        if not isinstance(value, str):
-            raise BadPayload("time must be HH:MM on the manager's clock")
+        _only(payload, *backup_job_helper.SCHEDULE_KEYS)
         try:
-            backup_schedule_write.calendar(value)
+            requested = backup_schedule_write.schedule(payload)
         except backup_schedule_write.ScheduleWriteError as exc:
             raise BadPayload(str(exc)) from exc
         enabled = _flag(payload, "enabled", default=False)
         return Prepared(
             argv=BACKUP_CLIENT,
             request=backup_job_helper.build_schedule_request(
-                cluster, str(request_id), time=value, enabled=enabled
+                cluster, str(request_id), schedule=requested, enabled=enabled
             ),
         )
 

@@ -226,6 +226,8 @@ def _backup_result(value: Any) -> dict[str, Any]:
             "next_run": _text(schedule.get("next_run"), limit=40),
             "last_run": _text(schedule.get("last_run"), limit=40),
             "last_result": _text(schedule.get("last_result"), limit=64),
+            "scheduled": _boolean(schedule.get("scheduled")),
+            "retention": _number(schedule.get("retention")),
         }
         if schedule
         else None,

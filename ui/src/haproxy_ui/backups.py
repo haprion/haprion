@@ -19,11 +19,12 @@ this page can be believed.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
+
+from haproxy_mgmt import backup_schedule
 
 from haproxy_ui import metrics
 from haproxy_ui.cluster_identity import accent_index
@@ -103,7 +104,17 @@ class ScheduleView:
     last_run: str
     next_run: str
     outcome: str
+    #
+    # What the calendar means, in words, and the form fields that would say it
+    # again. `readable` falls back to the expression itself for a calendar the
+    # form cannot express - one edited by hand on the manager.
+    #
+    readable: str
     time: str
+    frequency: str
+    weekdays: tuple[str, ...]
+    day_of_month: int
+    retention: int | None
     enabled: bool
 
 
@@ -343,7 +354,9 @@ def _schedule_view(value: Any, *, now: datetime) -> ScheduleView | None:
 
     next_run = _stamp(schedule.get("next_run"))
     calendar = _text(schedule.get("calendar"), "no calendar")
-    matched = re.search(r"(?<!\d)([0-2][0-9]:[0-5][0-9])(?::[0-5][0-9])?", calendar)
+    raw_retention = schedule.get("retention")
+    retention = raw_retention if type(raw_retention) is int else None
+    shape = backup_schedule.describe(schedule.get("calendar"))
     return ScheduleView(
         unit=unit,
         label=label,
@@ -351,14 +364,53 @@ def _schedule_view(value: Any, *, now: datetime) -> ScheduleView | None:
         calendar=calendar,
         last_run=_elapsed(schedule.get("last_run"), now),
         #
-        # A disabled timer still reports the elapse it would have had. Showing
-        # it would promise a run that is not going to happen.
+        # A disabled or unscheduled timer still reports the elapse it would
+        # have had. Showing it would promise a run that is not going to happen.
         #
-        next_run=next_run if tone != "critical" else "—",
+        next_run=next_run if schedule.get("enabled") is True and tone != "critical" else "—",
         outcome=outcome or "—",
-        time=matched.group(1) if matched else "05:00",
+        #
+        # A cluster nobody has scheduled carries the template's default calendar.
+        # Saying "Every day at 05:00" under *Not scheduled* would describe a run
+        # that is not going to happen; the form below offers it instead.
+        #
+        readable="No schedule set"
+        if label == "Not scheduled"
+        else (_readable(shape) if shape else calendar),
+        time=shape.time if shape else "05:00",
+        frequency=shape.frequency if shape else "daily",
+        weekdays=shape.weekdays if shape else (),
+        day_of_month=shape.day_of_month or 1 if shape else 1,
+        retention=retention,
         enabled=schedule.get("enabled") is True,
     )
+
+
+WEEKDAY_NAMES = {
+    "Mon": "Monday",
+    "Tue": "Tuesday",
+    "Wed": "Wednesday",
+    "Thu": "Thursday",
+    "Fri": "Friday",
+    "Sat": "Saturday",
+    "Sun": "Sunday",
+}
+
+
+def _readable(shape: backup_schedule.Schedule) -> str:
+    """`*-*-* 05:00:00` as a person would say it."""
+
+    if shape.frequency == "weekly":
+        if shape.weekdays == backup_schedule.WEEKDAYS:
+            return f"Every day at {shape.time}"
+        if shape.weekdays == backup_schedule.WEEKDAYS[:5]:
+            return f"Every weekday at {shape.time}"
+        names = [WEEKDAY_NAMES[day] for day in shape.weekdays]
+        listed = " and ".join(filter(None, (", ".join(names[:-1]), names[-1])))
+        return f"Every {listed} at {shape.time}"
+    if shape.frequency == "monthly":
+        return f"On day {shape.day_of_month} of every month at {shape.time}"
+    return f"Every day at {shape.time}"
 
 
 def _empty(cluster: str, *, configured: bool) -> BackupClusterView:

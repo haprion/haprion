@@ -313,6 +313,33 @@ class ScheduleTests(unittest.TestCase):
         #
         self.assertEqual(disabled.next_run, "—")
 
+    def test_the_calendar_is_said_in_words_and_split_back_into_the_form(self) -> None:
+        for calendar, readable, frequency in (
+            ("*-*-* 05:00:00", "Every day at 05:00", "daily"),
+            ("Mon,Wed,Fri *-*-* 22:30:00", "Every Monday, Wednesday and Friday at 22:30", "weekly"),
+            ("Sun *-*-* 03:00:00", "Every Sunday at 03:00", "weekly"),
+            ("Mon,Tue,Wed,Thu,Fri *-*-* 05:00:00", "Every weekday at 05:00", "weekly"),
+            ("*-*-01 04:15:00", "On day 1 of every month at 04:15", "monthly"),
+        ):
+            with self.subTest(calendar=calendar):
+                view = timer_of(overview(reading(timer=schedule(calendar=calendar, retention=30))))
+                self.assertEqual(view.readable, readable)
+                self.assertEqual(view.frequency, frequency)
+                self.assertEqual(view.time, calendar[-8:-3])
+                self.assertEqual(view.retention, 30)
+        weekly = timer_of(overview(reading(timer=schedule(calendar="Mon,Fri *-*-* 22:30:00"))))
+        self.assertEqual(weekly.weekdays, ("Mon", "Fri"))
+        monthly = timer_of(overview(reading(timer=schedule(calendar="*-*-07 04:15:00"))))
+        self.assertEqual(monthly.day_of_month, 7)
+
+    def test_a_hand_written_calendar_is_shown_as_it_is(self) -> None:
+        """One edited on the manager is not translated into a shape it does not have."""
+
+        view = timer_of(overview(reading(timer=schedule(calendar="Mon..Fri *-*-* 05:00:00"))))
+        self.assertEqual(view.readable, "Mon..Fri *-*-* 05:00:00")
+        self.assertEqual(view.frequency, "daily")
+        self.assertIsNone(view.retention)
+
     def test_a_cluster_whose_poll_failed_does_not_borrow_another_schedule(self) -> None:
         view = build_backup_overview(
             ("alpha", "beta"),

@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import re
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from haproxy_mgmt.backup_retention import DEFAULT_RETENTION, RetentionError, bounded
 from haproxy_mgmt.config import CLUSTER_ID, TIMER_UNIT
 
 SYSTEMCTL = "/usr/bin/systemctl"
@@ -55,6 +57,117 @@ CALENDAR = re.compile(r"OnCalendar=(?P<calendar>[^;}]+?)\s*[;}]")
 
 class ScheduleError(ValueError):
     """The configured timer name is not a name this may put in an argv."""
+
+
+#
+# The schedule an administrator may ask for. Three shapes, each of which maps
+# to exactly one calendar expression and back: every day, chosen weekdays, or
+# one day of the month - and that day stops at 28 so that no month skips its
+# backup. Anything else in a calendar expression is not something the form can
+# say, so the reader below reports it verbatim rather than as one of these.
+#
+FREQUENCIES = ("daily", "weekly", "monthly")
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+DAY_OF_MONTH_MAX = 28
+TIME = re.compile(r"^(?P<hour>[01][0-9]|2[0-3]):(?P<minute>[0-5][0-9])$")
+EXPRESSION = re.compile(
+    r"^(?:(?P<weekdays>[A-Za-z]{3}(?:,[A-Za-z]{3})*) )?"
+    r"\*-\*-(?P<day>\*|[0-2][0-9]) (?P<time>[0-2][0-9]:[0-5][0-9]):00$"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Schedule:
+    """A bounded request: when to run and how much to keep."""
+
+    time: str
+    frequency: str = "daily"
+    weekdays: tuple[str, ...] = ()
+    day_of_month: int | None = None
+    retention: int = DEFAULT_RETENTION
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "time": self.time,
+            "frequency": self.frequency,
+            "weekdays": list(self.weekdays),
+            "day_of_month": self.day_of_month,
+            "retention": self.retention,
+        }
+
+    def calendar(self) -> str:
+        """The systemd expression, with no zone suffix on purpose.
+
+        systemd then reads it in the manager's own zone, which is the clock
+        every other timer on the machine and the journal keep. A schedule in
+        UTC would be the one time on the host an operator had to convert before
+        comparing it with anything else.
+        """
+
+        if self.frequency == "weekly":
+            return f"{','.join(self.weekdays)} *-*-* {self.time}:00"
+        if self.frequency == "monthly":
+            return f"*-*-{self.day_of_month:02d} {self.time}:00"
+        return f"*-*-* {self.time}:00"
+
+
+def parse_schedule(parameters: Mapping[str, Any]) -> Schedule:
+    """The request as the contract bounds it, or a `ScheduleError` naming the field."""
+
+    time = parameters.get("time")
+    if not isinstance(time, str) or TIME.fullmatch(time) is None:
+        raise ScheduleError("time must be HH:MM on the manager's clock")
+    frequency = parameters.get("frequency", "daily")
+    if frequency not in FREQUENCIES:
+        raise ScheduleError("frequency must be daily, weekly or monthly")
+    raw_weekdays = parameters.get("weekdays", [])
+    if not isinstance(raw_weekdays, list) or any(day not in WEEKDAYS for day in raw_weekdays):
+        raise ScheduleError("weekdays must name days Mon to Sun")
+    #
+    # In the week's order and once each, whatever order the form sent them in:
+    # the expression is read back and compared byte for byte.
+    #
+    weekdays = tuple(day for day in WEEKDAYS if day in raw_weekdays)
+    day_of_month = parameters.get("day_of_month")
+    if frequency == "weekly":
+        if not weekdays:
+            raise ScheduleError("a weekly schedule needs at least one weekday")
+    else:
+        weekdays = ()
+    if frequency == "monthly":
+        if type(day_of_month) is not int or not 1 <= day_of_month <= DAY_OF_MONTH_MAX:
+            raise ScheduleError(f"day_of_month must be 1 to {DAY_OF_MONTH_MAX}")
+    else:
+        day_of_month = None
+    try:
+        retention = bounded(parameters.get("retention", DEFAULT_RETENTION))
+    except RetentionError as exc:
+        raise ScheduleError(str(exc)) from exc
+    return Schedule(time, frequency, weekdays, day_of_month, retention)
+
+
+def describe(calendar: str | None, *, retention: int = DEFAULT_RETENTION) -> Schedule | None:
+    """The schedule a calendar expression stands for, or None if the form cannot say it."""
+
+    matched = EXPRESSION.fullmatch(calendar or "")
+    if matched is None:
+        return None
+    time = matched.group("time")
+    if TIME.fullmatch(time) is None:
+        return None
+    if matched.group("weekdays"):
+        days = tuple(matched.group("weekdays").split(","))
+        if any(day not in WEEKDAYS for day in days) or matched.group("day") != "*":
+            return None
+        return Schedule(
+            time, "weekly", tuple(day for day in WEEKDAYS if day in days), None, retention
+        )
+    if matched.group("day") != "*":
+        day = int(matched.group("day"))
+        if not 1 <= day <= DAY_OF_MONTH_MAX:
+            return None
+        return Schedule(time, "monthly", (), day, retention)
+    return Schedule(time, "daily", (), None, retention)
 
 
 def _run(unit: str, properties: tuple[str, ...]) -> dict[str, str]:

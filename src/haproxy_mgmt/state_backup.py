@@ -24,6 +24,7 @@ from typing import BinaryIO, Literal
 from uuid import uuid4
 
 from haproxy_mgmt.backup_archive import MAX_ARCHIVE_BYTES, ArchiveError, ArchiveFacts, validate
+from haproxy_mgmt.backup_retention import DEFAULT_RETENTION
 from haproxy_mgmt.config import Cluster, DeployIdentity, Node
 
 SSH = "/usr/bin/ssh"
@@ -46,9 +47,10 @@ SSH_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
 
 MAX_STDERR_BYTES = 64 * 1024
 FETCH_TIMEOUT_SECONDS = 300.0
-# Fourteen daily archives per node cover two weeks.  Retention is deliberately
-# per node: a two-node cluster therefore holds 28 archives in total.
-RETENTION = 14
+# Fourteen daily archives per node cover two weeks unless the Backups page set
+# another count (`backup_retention`).  Retention is deliberately per node: a
+# two-node cluster on the default therefore holds 28 archives in total.
+RETENTION = DEFAULT_RETENTION
 LOCK_PATH = Path("/run/lock/haproxy-state-backup.lock")
 
 
@@ -281,11 +283,11 @@ def run(
     cluster: Cluster,
     identity: DeployIdentity | None,
     root: Path | None,
+    retention: int = RETENTION,
     *,
     fetch: Fetch = fetch_over_ssh,
     validator: Callable[[Path], ArchiveFacts] = validate,
     now: datetime | None = None,
-    retention: int = RETENTION,
     lock_path: Path = LOCK_PATH,
 ) -> BackupResult:
     """Take a state archive from both configured nodes under one global lock."""

@@ -4,7 +4,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VERIFY="${SCRIPT_DIR}/node-bundle.py"
-STATE_BACKUP=/usr/local/sbin/haproxy-state-backup
+STATE_BACKUP=/opt/haproxy-mgmt/current/bin/haproxy-state-backup
 
 bundle=""
 expected_sha=""
@@ -13,11 +13,13 @@ node=""
 cluster=""
 dry_run="no"
 #
-# The state backup archives the whole fleet, so a bundle rolled across four
-# nodes one invocation at a time would take eight of them for one change.
-# The rule is one before the first write and one after the last: the first
-# node keeps its "before", the last node its "after", the ones between skip
-# both. The default stays both, so a single-node run needs no flag.
+# The state backup archives both nodes of the bundle's cluster, so a bundle
+# rolled across a pair one invocation at a time would take four of them for
+# one change. The rule is one before the first write and one after the last:
+# the first node keeps its "before", the last node its "after", the ones
+# between skip both. The default stays both, so a single-node run needs no
+# flag. Per cluster since the engine's own command took over from the
+# fleet-wide script: the other cluster is not touched and is not archived.
 #
 backup_before="yes"
 backup_after="yes"
@@ -108,9 +110,9 @@ sudo -v
 sudo test -x "$STATE_BACKUP" \
     || fail "state backup command is not executable by root: ${STATE_BACKUP}"
 if [[ "$backup_before" == "yes" ]]; then
-    sudo "$STATE_BACKUP"
+    sudo "$STATE_BACKUP" -c "$cluster"
 else
-    echo "state backup before: skipped on request (take one before the fleet's first node)"
+    echo "state backup before: skipped on request (take one before the cluster's first node)"
 fi
 
 remote_dir="$(ssh "${ssh_opts[@]}" "$node" 'mktemp -d /tmp/haproxy-node-bundle.XXXXXXXX')"
@@ -138,9 +140,9 @@ remote_install="
 ssh -tt "${ssh_opts[@]}" "$node" "$remote_install"
 
 if [[ "$backup_after" == "yes" ]]; then
-    sudo "$STATE_BACKUP"
+    sudo "$STATE_BACKUP" -c "$cluster"
 else
-    echo "state backup after: skipped on request (take one after the fleet's last node)"
+    echo "state backup after: skipped on request (take one after the cluster's last node)"
 fi
 if [[ -x /opt/haproxy-mgmt/current/bin/haproxy-status ]]; then
     /opt/haproxy-mgmt/current/bin/haproxy-status -c "$cluster"

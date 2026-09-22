@@ -1928,13 +1928,14 @@ tools/install-node-bundle --dry-run \
   --cluster alpha
 ```
 
-Remove `--dry-run` to install. Rolling one bundle across a fleet, give the nodes between the
-first and the last `--skip-backup-before --skip-backup-after`, and the last one
-`--skip-backup-before`: the state backup archives the whole fleet, and one before the first write
-and one after the last is the rule, not one pair per node. The tool:
+Remove `--dry-run` to install. Rolling one bundle across a cluster's pair, give the first node
+`--skip-backup-after` and the second `--skip-backup-before`: the state backup
+(`haproxy-state-backup -c <cluster>` from the installed release) archives both nodes of that
+cluster, and one before the first write and one after the last is the rule, not one pair per
+node. Another cluster's roll-out is its own pair of backups. The tool:
 
 1. verifies the external digest and complete internal manifest before contacting the node;
-2. takes a state backup before the first remote write;
+2. takes a state backup of the cluster before the first remote write;
 3. uses one multiplexed, strictly host-key-checked SSH session for staging and installation;
 4. copies only the bundle and the separate answers file to a random mode-700 directory under
    `/tmp`, then verifies the bundle digest again on the node;

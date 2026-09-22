@@ -182,7 +182,7 @@ class NodeBundleTransportContractTests(unittest.TestCase):
         before, after = [
             index
             for index, line in enumerate(self.script.splitlines())
-            if line.strip() == 'sudo "$STATE_BACKUP"'
+            if line.strip() == 'sudo "$STATE_BACKUP" -c "$cluster"'
         ]
         install = self.script.splitlines().index(
             'ssh -tt "${ssh_opts[@]}" "$node" "$remote_install"'
@@ -190,6 +190,12 @@ class NodeBundleTransportContractTests(unittest.TestCase):
         self.assertLess(before, install)
         self.assertGreater(after, install)
         self.assertIn('sudo test -x "$STATE_BACKUP"', self.script)
+        # The engine's own command, scoped to the cluster the bundle goes to:
+        # the other cluster is neither written nor archived.
+        self.assertIn(
+            "STATE_BACKUP=/opt/haproxy-mgmt/current/bin/haproxy-state-backup", self.script
+        )
+        self.assertNotIn("/usr/local/sbin", self.script)
 
     def test_staging_has_a_narrow_shape_and_is_deleted(self) -> None:
         self.assertIn("^/tmp/haproxy-node-bundle\\.[A-Za-z0-9]+$", self.script)
@@ -197,7 +203,7 @@ class NodeBundleTransportContractTests(unittest.TestCase):
 
     def test_dry_run_stops_before_backups_and_staging(self) -> None:
         dry_run = self.script.index('if [[ "$dry_run" == "yes" ]]')
-        backup = self.script.index('sudo "$STATE_BACKUP"')
+        backup = self.script.index('sudo "$STATE_BACKUP" -c "$cluster"')
         staging = self.script.index("mktemp -d /tmp/haproxy-node-bundle")
         self.assertLess(dry_run, backup)
         self.assertLess(dry_run, staging)

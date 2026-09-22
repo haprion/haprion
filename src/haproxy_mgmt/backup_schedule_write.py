@@ -88,6 +88,10 @@ def _write(path: Path, content: bytes) -> None:
     temporary = path.parent / f".{path.name}.{uuid4().hex}"
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
     try:
+        # The mode `os.open` was given passes through the helper's umask (0077);
+        # readers other than root - systemd's loader, an operator's `cat` - want
+        # the file world-readable, and nothing in it is secret.
+        os.fchmod(descriptor, 0o644)
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(content)
             stream.flush()

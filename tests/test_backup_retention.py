@@ -11,6 +11,8 @@ from haproxy_mgmt import backup_retention
 
 class BackupRetentionTests(unittest.TestCase):
     def test_no_file_means_the_default_and_a_written_count_is_read_back(self) -> None:
+        previous_umask = os.umask(0o077)  # as the socket helper runs
+        self.addCleanup(os.umask, previous_umask)
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw) / "retention"
             self.assertEqual(backup_retention.read("alpha", root=root), 14)

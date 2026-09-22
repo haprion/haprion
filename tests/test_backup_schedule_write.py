@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,8 @@ from haproxy_mgmt.backup_schedule import Schedule
 
 class BackupScheduleWriteTests(unittest.TestCase):
     def test_a_daily_schedule_is_written_enabled_and_read_back(self) -> None:
+        previous_umask = os.umask(0o077)  # as the socket helper runs
+        self.addCleanup(os.umask, previous_umask)
         commands: list[tuple[str, ...]] = []
         readings = iter(
             (
@@ -38,8 +41,13 @@ class BackupScheduleWriteTests(unittest.TestCase):
                     run=lambda command: commands.append(command) or 0,
                     read=lambda unit: next(readings),
                 )
-            content = (root / "haproxy-state-backup@alpha.timer.d/schedule.conf").read_text()
+            dropin = root / "haproxy-state-backup@alpha.timer.d"
+            content = (dropin / "schedule.conf").read_text()
             kept = backup_retention.read("alpha", root=root / "retention")
+            # World-readable whatever umask the helper runs under: systemd's
+            # loader complains about anything else on every query.
+            self.assertEqual(oct(os.stat(dropin).st_mode & 0o777), "0o755")
+            self.assertEqual(oct(os.stat(dropin / "schedule.conf").st_mode & 0o777), "0o644")
 
         self.assertEqual(result.time, "04:30")
         self.assertEqual(result.as_dict()["retention"], 30)

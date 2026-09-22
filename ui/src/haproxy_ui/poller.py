@@ -101,6 +101,18 @@ class Source:
     sample: Callable[..., int] | None = None
 
 
+def _list_every_backup(cluster: str, request_id: str) -> Any:
+    """Every archive the manager keeps for this cluster, not the command line's default.
+
+    The archive list is where a restore is chosen from, and the retention is
+    set per cluster from 1 to 365. A fixed page-sized limit here would make the
+    older archives exist on disk and nowhere on the page; the page pages them
+    instead.
+    """
+
+    return run_list_backups_helper(cluster, request_id, None)
+
+
 SOURCES: tuple[Source, ...] = (
     Source(
         "status",
@@ -111,7 +123,7 @@ SOURCES: tuple[Source, ...] = (
     ),
     Source("inventory", run_inventory_helper, db.record_cluster_inventory),
     Source("list", run_list_helper, db.record_cluster_history),
-    Source("list_backups", run_list_backups_helper, db.record_cluster_backups, partial_ok=True),
+    Source("list_backups", _list_every_backup, db.record_cluster_backups, partial_ok=True),
     Source("cert_list", run_cert_list_helper, db.record_cluster_certificates),
     Source("network", run_network_helper, db.record_cluster_network),
     #

@@ -225,6 +225,18 @@ class Passes(unittest.TestCase):
             [True, False, False, True, False, False, False],
         )
 
+    def test_the_backup_source_asks_for_every_retained_archive(self) -> None:
+        #
+        # The page pages the list and a restore is chosen from it. The command
+        # line's default of fourteen per node would leave the rest of a longer
+        # retention on disk and off the page.
+        #
+        source = next(item for item in poller.SOURCES if item.operation == "list_backups")
+        with unittest.mock.patch.object(poller, "run_list_backups_helper") as helper:
+            source.run("alpha", "request-1")
+
+        helper.assert_called_once_with("alpha", "request-1", None)
+
     def test_the_objects_source_reads_the_source_and_not_the_published_config(self) -> None:
         #
         # The two are easy to confuse and answer different questions:

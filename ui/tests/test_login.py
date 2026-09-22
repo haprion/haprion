@@ -284,6 +284,20 @@ class SigningIn(LoginTestCase):
         self.assertIn("service-b", page.text)
         self.assertIn("Backup overdue", page.text)
 
+    def test_the_backup_page_opens_on_the_newest_ten_per_node(self) -> None:
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        page = client.get("/backups")
+        self.assertEqual(page.status_code, 200)
+        # The demo edge cluster keeps 21 per node: three pages. The service
+        # cluster has 14 on one node and 2 on the one that fell behind: two.
+        self.assertIn("42 retained archives on these nodes", page.text)
+        self.assertEqual(page.text.count('data-archive-page="0"'), 10 + 10 + 10 + 2)
+        self.assertEqual(page.text.count('data-archive-page="2" hidden'), 2)
+        self.assertIn("Archives 1–10 per node · page 1 of 3", page.text)
+        self.assertIn("Archives 1–10 per node · page 1 of 2", page.text)
+        self.assertIn("data-archive-page-next>Older</button>", page.text)
+
     def test_the_backup_schedule_editor_speaks_the_timer_s_calendar(self) -> None:
         """An admin with writes sees the schedule in words, and the form pre-filled from it."""
 

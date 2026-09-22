@@ -73,11 +73,11 @@
       {% endfor %}
     </tbody></table></div>
     {% if cluster.archives %}
-    <details class="archive-details">
+    <details class="archive-details" data-archive-list data-archive-per-page="{{ archives_per_page }}" data-archive-deepest="{{ cluster.deepest }}">
       <summary>{% if cluster.truncated %}{{ cluster.shown_count }} of {% endif %}{{ cluster.retained_count }} retained archive{{ '' if cluster.retained_count == 1 else 's' }} on these nodes</summary>
     <div class="table-scroll"><table class="node-table archive-table"><thead><tr><th>Archive</th><th>Node</th><th>Taken</th><th>Age</th><th>Size</th></tr></thead><tbody>
       {% for archive in cluster.archives %}
-      <tr{% if archive.latest %} class="archive-latest"{% endif %}>
+      <tr data-archive-page="{{ archive.page }}"{% if archive.latest %} class="archive-latest"{% endif %}{% if archive.page %} hidden{% endif %}>
         <td data-label="Archive"><code>{{ archive.version }}</code></td>
         <td data-label="Node">{{ archive.node }}</td>
         <td data-label="Taken">{% if archive.taken_iso %}<time datetime="{{ archive.taken_iso }}">{{ archive.taken }}</time>{% else %}{{ archive.taken }}{% endif %}</td>
@@ -86,6 +86,10 @@
       </tr>
       {% endfor %}
     </tbody></table></div>
+    {% if cluster.page_count > 1 %}<nav class="log-pagination" aria-label="Archive pages for {{ cluster.cluster }}">
+      <span data-archive-page-range aria-live="polite">Archives 1–{{ archives_per_page }} per node · page 1 of {{ cluster.page_count }}</span>
+      <div><button class="secondary-button" type="button" data-archive-page-previous disabled>Newer</button><button class="secondary-button" type="button" data-archive-page-next>Older</button></div>
+    </nav>{% endif %}
     </details>
     {% endif %}
     <p class="table-note">Retention is {{ cluster.schedule.retention if cluster.schedule and cluster.schedule.retention else 14 }} archives per node{% if cluster.truncated %}; this view shows only the most recent archives returned per node{% endif %}. Restoring from an archive is currently a command-line recovery procedure.</p>

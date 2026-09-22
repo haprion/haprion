@@ -468,29 +468,29 @@ def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
             observed_at=observed,
             outcome="done",
             result={
-                "limit": 14,
+                "limit": None,
                 "schedule": schedule,
                 "nodes": [
                     {
                         "name": "edge-a",
                         "available": True,
                         "latest_version": _archives(last_run, 1)[0]["version"],
-                        "retained_count": 14,
+                        "retained_count": 21,
                         "retained_size_bytes": sum(
-                            item["size_bytes"] for item in _archives(last_run, 14)
+                            item["size_bytes"] for item in _archives(last_run, 21)
                         ),
-                        "backups": _archives(last_run, 14),
+                        "backups": _archives(last_run, 21),
                         "error": None,
                     },
                     {
                         "name": "edge-b",
                         "available": True,
                         "latest_version": _archives(last_run, 1)[0]["version"],
-                        "retained_count": 14,
+                        "retained_count": 21,
                         "retained_size_bytes": sum(
-                            item["size_bytes"] for item in _archives(last_run, 14)
+                            item["size_bytes"] for item in _archives(last_run, 21)
                         ),
-                        "backups": _archives(last_run, 14),
+                        "backups": _archives(last_run, 21),
                         "error": None,
                     },
                 ],

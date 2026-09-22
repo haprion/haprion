@@ -48,6 +48,14 @@ BACKUP_WARNING = timedelta(hours=36)
 #
 BACKUP_CRITICAL = timedelta(days=7)
 
+#
+# The archive list opens on this many archives per node, newest first, and
+# pages back through the rest. Per node rather than per page of rows, so a
+# two-node cluster shows each node's last ten runs side by side instead of one
+# node's history pushing the other's off the page.
+#
+ARCHIVES_PER_PAGE = 10
+
 
 @dataclass(frozen=True, slots=True)
 class ArchiveView:
@@ -58,6 +66,9 @@ class ArchiveView:
     age_label: str
     size: str
     latest: bool
+    # Which page of the list this archive is on: its rank on its own node,
+    # newest first, divided by ARCHIVES_PER_PAGE.
+    page: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +101,9 @@ class BackupClusterView:
     retained_count: int
     shown_count: int
     truncated: bool
+    page_count: int
+    # The most archives any one node lists, which is where the last page ends.
+    deepest: int
     schedule: ScheduleView | None
 
 
@@ -184,11 +198,18 @@ def _archive_views(node: str, value: Any, *, now: datetime) -> tuple[ArchiveView
     if not isinstance(value, list):
         return ()
     archives: list[ArchiveView] = []
-    for entry in value:
-        item = _mapping(entry)
-        version = _text(item.get("version"), "")
-        if not version:
-            continue
+    #
+    # Ranked by name rather than by the order the listing arrived in: the page
+    # an archive lands on is its place in this node's history, and the name is
+    # the stamp the run gave it.
+    #
+    named = [(_text(_mapping(entry).get("version"), ""), _mapping(entry)) for entry in value]
+    ranked = sorted(
+        ((version, item) for version, item in named if version),
+        key=lambda pair: pair[0],
+        reverse=True,
+    )
+    for rank, (version, item) in enumerate(ranked):
         taken_at = _moment(item.get("created_at"))
         size = _integer(item.get("size_bytes"))
         archives.append(
@@ -200,6 +221,7 @@ def _archive_views(node: str, value: Any, *, now: datetime) -> tuple[ArchiveView
                 age_label="—" if taken_at is None else relative_age(taken_at, now),
                 size="—" if size is None else _size(size),
                 latest=item.get("latest") is True,
+                page=rank // ARCHIVES_PER_PAGE,
             )
         )
     return tuple(archives)
@@ -440,6 +462,8 @@ def _empty(cluster: str, *, configured: bool) -> BackupClusterView:
         retained_count=0,
         shown_count=0,
         truncated=False,
+        page_count=1,
+        deepest=0,
         schedule=None,
     )
 
@@ -499,7 +523,9 @@ def _cluster_view(
     stale = now - reading.observed_at > stale_after
     label, tone, detail = _state(reading, stale=stale, nodes=tuple(nodes))
 
-    ordered = tuple(sorted(archives, key=lambda entry: (entry.version, entry.node), reverse=True))
+    newest_first = sorted(archives, key=lambda entry: (entry.version, entry.node), reverse=True)
+    ordered = tuple(sorted(newest_first, key=lambda entry: entry.page))
+    deepest = max((node.shown_count for node in nodes), default=0)
     return BackupClusterView(
         cluster=reading.cluster,
         accent=accent_index(reading.cluster),
@@ -515,7 +541,8 @@ def _cluster_view(
         #
         # Newest first, and across nodes rather than per node: the question is
         # what can be restored and how recent it is, and the two nodes' runs
-        # interleave in time.
+        # interleave in time. Grouped by page first, so each page is a
+        # contiguous run of rows the browser can show or hide as a block.
         #
         archives=ordered,
         #
@@ -525,6 +552,8 @@ def _cluster_view(
         retained_count=sum(node.count for node in nodes),
         shown_count=len(archives),
         truncated=any(node.shown_count < node.count for node in nodes),
+        page_count=max(-(-deepest // ARCHIVES_PER_PAGE), 1),
+        deepest=deepest,
         schedule=_schedule_view(
             result.get("schedule"), now=now, newest=ordered[0] if ordered else None
         ),

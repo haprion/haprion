@@ -600,6 +600,10 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .archive-details > summary:hover { color: var(--text-strong); }
 .archive-details > summary:hover::before { border-color: var(--text-strong); }
 .archive-details[open] > summary { color: var(--text-strong); }
+/* The archive pager borrows the traffic log's bar; inside a card it needs the card's gutter. */
+.archive-details > .log-pagination { margin-top: 0; padding: 10px 20px 0; }
+/* The narrow layout turns rows into grids, which would otherwise override `hidden` and show every page at once. */
+.archive-table tr[hidden] { display: none; }
 /* The stored document's fold sits inside a card that has already drawn a
    divider above it, so this one does not draw a second. */
 .config-details > summary { border-top: 0; padding-top: 4px; }
@@ -868,6 +872,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   .node-table td, .node-table td:first-child, .node-table td:last-child { position: relative; min-width: 0; padding: 9px 8px 9px 88px; border: 0; white-space: normal; }
   .node-table td::before { position: absolute; top: 10px; left: 8px; color: var(--muted); content: attr(data-label); font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
   .node-table td:nth-child(1), .node-table td:nth-child(2) { grid-column: 1 / -1; }
+  /* The wide layout's column widths outrank `.node-table td` and would squeeze every card to a quarter of its width. */
+  .backup-node-table td:nth-child(n), .archive-table td:nth-child(n), .registry-table td:nth-child(n) { width: 100%; }
   /*
    * The follow-up cells carry no data-label, so they need neither the room a
    * label takes nor the centring that placed the button under a column that

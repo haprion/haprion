@@ -249,6 +249,50 @@ class ArchiveListingTests(unittest.TestCase):
         self.assertEqual(partial.retained_count, 14)
         self.assertEqual(partial.shown_count, 10)
 
+    def test_the_list_pages_ten_archives_per_node(self) -> None:
+        cluster = overview(
+            reading(
+                nodes=[
+                    node("node-a", backups=archives(21)),
+                    node("node-b", backups=archives(12, newest_hours_ago=6)),
+                ],
+                limit=None,
+            )
+        ).clusters[0]
+        pages = [archive.page for archive in cluster.archives]
+
+        self.assertFalse(cluster.truncated)
+        self.assertEqual(cluster.page_count, 3)
+        self.assertEqual(cluster.deepest, 21)
+        # Each page is one contiguous block, in order.
+        self.assertEqual(pages, sorted(pages))
+        first = [archive for archive in cluster.archives if archive.page == 0]
+        self.assertEqual(
+            [sum(archive.node == name for archive in first) for name in ("node-a", "node-b")],
+            [10, 10],
+        )
+        self.assertTrue(all(archive.node == "node-a" for archive in cluster.archives[-1:]))
+        # Newest first within a page, across both nodes.
+        versions = [archive.version for archive in first]
+        self.assertEqual(versions, sorted(versions, reverse=True))
+
+    def test_a_node_s_rank_follows_the_archive_name_not_the_listing_order(self) -> None:
+        listing = list(reversed(archives(11)))
+        cluster = overview(reading(nodes=[node(backups=listing)], limit=None)).clusters[0]
+        oldest = min(archive.version for archive in cluster.archives)
+
+        self.assertEqual(
+            [archive.page for archive in cluster.archives if archive.version == oldest], [1]
+        )
+
+    def test_ten_or_fewer_per_node_is_one_page(self) -> None:
+        cluster = overview(
+            reading(nodes=[node(backups=archives(10)), node("node-b", backups=archives(10))])
+        ).clusters[0]
+
+        self.assertEqual(cluster.page_count, 1)
+        self.assertEqual({archive.page for archive in cluster.archives}, {0})
+
     def test_an_archive_without_a_timestamp_still_lists(self) -> None:
         listing = [{"version": "2026-08-29_05-00-00", "size_bytes": 4096, "latest": True}]
         cluster = overview(reading(nodes=[node(backups=listing)])).clusters[0]

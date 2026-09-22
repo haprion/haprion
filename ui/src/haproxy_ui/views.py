@@ -3844,6 +3844,7 @@ def build_router(config: Config) -> APIRouter:
                     (day, backups.WEEKDAY_NAMES[day]) for day in backup_schedule.WEEKDAYS
                 ),
                 "day_of_month_max": backup_schedule.DAY_OF_MONTH_MAX,
+                "archives_per_page": backups.ARCHIVES_PER_PAGE,
                 "retention_bounds": (
                     backup_retention.RETENTION_MIN,
                     backup_retention.RETENTION_MAX,

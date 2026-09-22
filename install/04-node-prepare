@@ -248,6 +248,19 @@ step "Node configuration"
 # that differed only in the publication path - which is exactly the kind of drift
 # that survives for years because each copy looks correct on its own.
 #
+#
+# node.conf is sourced as root, so every extra path is held to the pattern the
+# state export applies to it: nothing that could quote, expand or glob.
+#
+EXTRA_PATH_PATTERN='^/[A-Za-z0-9._@+/-]+$'
+read -r -a extra_paths <<<"${EXTRA_BACKUP_PATHS:-}"
+for extra in "${extra_paths[@]}"; do
+    [[ "$extra" =~ $EXTRA_PATH_PATTERN && "${extra}/" != *"/../"* && "${extra}/" != *"/./"* \
+       && "$extra" != *"//"* && "$extra" != "/" ]] \
+        || die "EXTRA_BACKUP_PATHS holds an unusable path: ${extra}"
+done
+EXTRA_BACKUP_PATHS="${extra_paths[*]}"
+
 node_path="$(cluster_value NODE_PATH "$CLUSTER")"
 [[ -n "$node_path" ]] || die "NODE_PATH_${CLUSTER} is not set in the answers file"
 
@@ -269,7 +282,11 @@ CONFIG_REMOTE_PATH=\"${CLUSTER}/current/${node_path}/\"
 # to log in is not a restored node, so operator accounts belong here too.
 BACKUP_SERVICE_ACCOUNTS=\"${TRIGGER_USER} ${STATUS_USER} ${BACKUP_USER} ${LOGREAD_USER}\"
 BACKUP_ACCOUNTS=\"${TRIGGER_USER} ${STATUS_USER} ${BACKUP_USER} ${LOGREAD_USER}${OPERATOR_ACCOUNTS:+ ${OPERATOR_ACCOUNTS}}\"
-BACKUP_GROUPS=\"${LOGREAD_GROUP}${EXTRA_BACKUP_GROUPS:+ ${EXTRA_BACKUP_GROUPS}}\""
+BACKUP_GROUPS=\"${LOGREAD_GROUP}${EXTRA_BACKUP_GROUPS:+ ${EXTRA_BACKUP_GROUPS}}\"
+
+# The operator's own files a state backup carries besides the product's -
+# absolute paths, space-separated. A listed path that is missing fails the backup.
+EXTRA_BACKUP_PATHS=\"${EXTRA_BACKUP_PATHS:-}\""
 
 if [[ -n "${CERT_PULL_USER:-}" ]]; then
     require_vars NODE_CERT_PULL_KEY

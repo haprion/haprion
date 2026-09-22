@@ -1814,6 +1814,19 @@ node compatibility API and a SHA-256 digest for each of these eleven scripts.
 cannot hide a script changed after installation. The report contains code
 digests only, never node configuration or key material.
 
+**Your own files in the state backup.** The export carries the product's state
+by name. Files that are yours rather than the product's — a local kernel option,
+a site drop-in — are listed in `EXTRA_BACKUP_PATHS` in the answers file, which
+step 4 renders into `node.conf`. Absolute paths, space-separated, letters, digits
+and `. _ @ + - /` only; step 4 refuses anything else, because `node.conf` is
+sourced as root. The export copies each one into the archive at its own path and
+lists them in `meta/extra-paths.txt`, so a restore can tell them apart. A listed
+path that does not exist on the node, or a directory holding a socket, pipe or
+device, **fails that node's backup** instead of being skipped — the management
+host only shows an export's messages when it fails, and an archive that quietly
+lacks a file you asked for is the drift a backup is there to rule out. Every
+node that gets the answers file must therefore have every listed path.
+
 Two of these deserve attention:
 
 **`haproxy-cert-trigger` exists because sudoers cannot express a list.** The certificate IDs arrive

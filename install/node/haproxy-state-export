@@ -167,6 +167,60 @@ copy_path /etc/systemd/system/ipvsadm.service
 copy_path /etc/cloud/cloud-init.disabled
 
 # ------------------------------------------------------------
+# The operator's own paths
+# ------------------------------------------------------------
+#
+# EXTRA_BACKUP_PATHS in node.conf names files that are the operator's rather
+# than the product's - a local kernel option, a site's own drop-in. They go into
+# rootfs/ at their own path like everything above and are listed in
+# meta/extra-paths.txt, so a restore can tell them from the product's state.
+#
+# A listed path that is missing, or that holds something a state archive cannot
+# carry, fails the export instead of being skipped. The operator asked for it by
+# name, and the management side only shows an export's messages when it fails:
+# a skipped path would be an archive that quietly lacks it.
+#
+# The same pattern is checked when 04-node-prepare renders node.conf, which is
+# sourced as root - so nothing in a path may quote, expand or glob.
+EXTRA_PATH_PATTERN='^/[A-Za-z0-9._@+/-]+$'
+
+copy_extra_paths() {
+    local extras=() extra
+    read -r -a extras <<<"${EXTRA_BACKUP_PATHS:-}"
+    for extra in "${extras[@]}"; do
+        if [[ ! "$extra" =~ $EXTRA_PATH_PATTERN || "${extra}/" == *"/../"* \
+              || "${extra}/" == *"/./"* || "$extra" == *"//"* || "$extra" == "/" \
+              || "$extra" =~ ^/(proc|sys|dev|run)(/|$) ]]; then
+            echo "ERROR: EXTRA_BACKUP_PATHS holds an unusable path: ${extra}" >&2
+            exit 78
+        fi
+        if [[ ! -e "$extra" && ! -L "$extra" ]]; then
+            echo "ERROR: EXTRA_BACKUP_PATHS names ${extra}, which does not exist on this node" >&2
+            exit 78
+        fi
+        if [[ ! -L "$extra" ]] \
+            && find "$extra" ! -type f ! -type d ! -type l -print -quit | grep -q .; then
+            echo "ERROR: ${extra} holds a socket, pipe or device, which a state archive cannot carry" >&2
+            exit 78
+        fi
+        #
+        # A path may overlap what is already carried - the product's own
+        # directory, or a parent of it. `cp -a dir existing-dir` would nest the
+        # copy inside itself, so an existing directory is merged into and an
+        # existing file is left as the product took it.
+        #
+        local target="$ROOTFS$extra"
+        if [[ -d "$extra" && ! -L "$extra" && -d "$target" && ! -L "$target" ]]; then
+            cp -a -- "$extra/." "$target/"
+        elif [[ ! -e "$target" && ! -L "$target" ]]; then
+            copy_path "$extra"
+        fi
+    done
+    printf '%s\n' "${extras[@]}" | sed '/^$/d' > "$META/extra-paths.txt"
+}
+copy_extra_paths
+
+# ------------------------------------------------------------
 # Metadata
 # ------------------------------------------------------------
 

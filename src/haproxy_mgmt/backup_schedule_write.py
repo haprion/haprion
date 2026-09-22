@@ -159,6 +159,13 @@ def _apply_timer(
     dropin.mkdir(mode=0o755, exist_ok=True)
     if not _private_directory(dropin):
         raise ScheduleWriteError("the timer drop-in directory is not root-owned and private")
+    #
+    # Explicitly, and after the ownership check: the helper runs under
+    # `UMask=0077` and `mkdir`'s mode is filtered through it. systemd reads a
+    # 0700 drop-in directory fine and says so in the journal on every load,
+    # which is noise an operator will go looking for the cause of.
+    #
+    os.chmod(dropin, 0o755)  # noqa: S103 - root-owned unit drop-in, like its siblings
     path = dropin / "schedule.conf"
     if path.is_symlink():
         raise ScheduleWriteError("the timer schedule is a symlink")

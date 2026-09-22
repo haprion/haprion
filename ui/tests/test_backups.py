@@ -283,6 +283,20 @@ class ScheduleTests(unittest.TestCase):
         self.assertNotIn("(", schedule_view.next_run)
         self.assertEqual(second.label, "Scheduled")
 
+    def test_the_line_reports_the_newest_archive_not_the_timer_s_last_trigger(self) -> None:
+        """*Back up now* never fires the timer, so the trigger would lag the nodes."""
+
+        view = timer_of(
+            overview(
+                reading(
+                    nodes=[node("node-a", backups=archives(newest_hours_ago=1))],
+                    timer=schedule(),
+                )
+            )
+        )
+        self.assertIn("1h ago", view.last_run)
+        self.assertNotIn("5h ago", view.last_run)
+
     def test_an_installation_without_a_timer_shows_no_schedule(self) -> None:
         self.assertIsNone(overview(reading()).clusters[0].schedule)
 

@@ -188,9 +188,10 @@ Description=Schedule HAProxy Manager node state backup for cluster %i
 # which writes a drop-in that replaces this line.
 OnCalendar=*-*-* 05:00:00
 Unit=haproxy-state-backup@%i.service
+# No RandomizedDelaySec: the instances of one manager serialise on a lock
+# already, and the time an administrator set is the time the page promises.
 Persistent=yes
-AccuracySec=1min
-RandomizedDelaySec=5min"
+AccuracySec=1min"
     backup_timer+="
 
 [Install]

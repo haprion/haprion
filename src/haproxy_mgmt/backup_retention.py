@@ -96,6 +96,7 @@ def write(cluster_id: str, retention: int, *, root: Path = RETENTION_ROOT) -> by
     root.mkdir(mode=0o755, exist_ok=True)
     if not _private_directory(root):
         raise RetentionError("the backup retention directory is not root-owned and private")
+    os.chmod(root, 0o755)  # noqa: S103 - root-owned; the helper's umask would leave it 0700
     if file.is_symlink():
         raise RetentionError("the backup retention file is a symlink")
     previous = file.read_bytes() if file.exists() else None

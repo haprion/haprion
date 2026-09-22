@@ -314,7 +314,9 @@ def _elapsed(value: Any, now: datetime) -> str:
     return f"{_stamp(value)} ({relative_age(moment, now)})"
 
 
-def _schedule_view(value: Any, *, now: datetime) -> ScheduleView | None:
+def _schedule_view(
+    value: Any, *, now: datetime, newest: ArchiveView | None = None
+) -> ScheduleView | None:
     """The timer, read from the same envelope the archives came from.
 
     A missing timer and a disabled one are both critical and are worded
@@ -362,7 +364,15 @@ def _schedule_view(value: Any, *, now: datetime) -> ScheduleView | None:
         label=label,
         tone=tone,
         calendar=calendar,
-        last_run=_elapsed(schedule.get("last_run"), now),
+        #
+        # The newest archive on any node, however it was taken. The timer's own
+        # last trigger is not this: a *Back up now* runs through the socket
+        # helper and never fires the timer, so a strip that reported the
+        # trigger said "36 minutes ago" beside nodes backed up a minute ago.
+        #
+        last_run=f"{newest.taken} ({newest.age_label})"
+        if newest is not None and newest.taken_iso is not None
+        else _elapsed(schedule.get("last_run"), now),
         #
         # A disabled or unscheduled timer still reports the elapse it would
         # have had. Showing it would promise a run that is not going to happen.
@@ -489,6 +499,7 @@ def _cluster_view(
     stale = now - reading.observed_at > stale_after
     label, tone, detail = _state(reading, stale=stale, nodes=tuple(nodes))
 
+    ordered = tuple(sorted(archives, key=lambda entry: (entry.version, entry.node), reverse=True))
     return BackupClusterView(
         cluster=reading.cluster,
         accent=accent_index(reading.cluster),
@@ -506,9 +517,7 @@ def _cluster_view(
         # what can be restored and how recent it is, and the two nodes' runs
         # interleave in time.
         #
-        archives=tuple(
-            sorted(archives, key=lambda entry: (entry.version, entry.node), reverse=True)
-        ),
+        archives=ordered,
         #
         # The listing reports both the returned and retained count, so a full
         # fourteen-at-the-limit list is not mistaken for a truncated one.
@@ -516,7 +525,9 @@ def _cluster_view(
         retained_count=sum(node.count for node in nodes),
         shown_count=len(archives),
         truncated=any(node.shown_count < node.count for node in nodes),
-        schedule=_schedule_view(result.get("schedule"), now=now),
+        schedule=_schedule_view(
+            result.get("schedule"), now=now, newest=ordered[0] if ordered else None
+        ),
     )
 
 

@@ -9,7 +9,8 @@
 # A dump nobody has restored is a belief, not a backup. `dump` therefore reads
 # every dump back with `pg_restore --list` before keeping it, and
 # `verify-restore` goes further: it restores the newest dump into a scratch
-# database, compares what came out against what is live, and drops it again.
+# database, compares what came out against what the archive holds, and drops
+# it again.
 #
 # The dumps contain every password hash and every session hash in the
 # installation. They are root-owned 0600 in a 0700 directory, and no application
@@ -83,6 +84,27 @@ row_counts() {
     local how="$1" database="$2" table
     for table in "${TABLES[@]}"; do
         printf '%s=%s\n' "$table" "$("$how" -d "$database" -c "select count(*) from ${table}")"
+    done
+}
+
+#
+# How many rows the archive itself holds per table, read from its data section
+# without a database. COPY's text format writes one line per row - a newline in
+# a value is escaped as `\n` - so the lines between `COPY` and `\.` are the rows.
+#
+# This, and not the live database, is what a restore is measured against. The
+# live tables move on after the dump: a sign-in adds a session and an audit
+# row, and retention removes old jobs between the dump and the check. Compared
+# with live, the check failed every week retention had something to do
+# (2026-09-20: job live 59, restored 63) while the restore was perfect.
+#
+archive_counts() {
+    local archive="$1" table
+    for table in "${TABLES[@]}"; do
+        printf '%s=%s\n' "$table" "$(
+            pg_restore --data-only --table="$table" --file=- "$archive" \
+                | awk '/^COPY /{rows=1; next} /^\\\.$/{rows=0} rows{count++} END{print count+0}'
+        )"
     done
 }
 
@@ -190,22 +212,28 @@ do_verify_restore() {
     fi
     log "  ok       restored without error"
 
-    step_log "Comparing what came out with what is live"
-    local live restored mismatch=0
-    live="$(row_counts psql_as "$DB_NAME")"
+    step_log "Comparing what came out with what the archive holds"
+    local expected restored live mismatch=0
+    expected="$(archive_counts "$archive")"
     restored="$(row_counts psql_scratch "$scratch")"
-    local line table live_count restored_count
+    #
+    # Live is shown beside it, not compared: it says how far the installation
+    # has moved since the dump, which is worth seeing and is not a fault.
+    #
+    live="$(row_counts psql_as "$DB_NAME")"
+    local line table expected_count restored_count live_count
     while IFS= read -r line; do
         table="${line%%=*}"
-        live_count="${line#*=}"
+        expected_count="${line#*=}"
         restored_count="$(grep "^${table}=" <<<"$restored" | cut -d= -f2)"
-        if [[ "$live_count" == "$restored_count" ]]; then
-            log "  ok       ${table}: ${restored_count}"
+        live_count="$(grep "^${table}=" <<<"$live" | cut -d= -f2)"
+        if [[ "$expected_count" == "$restored_count" ]]; then
+            log "  ok       ${table}: ${restored_count}  (live now ${live_count})"
         else
-            warn "  DIFFERS  ${table}: live ${live_count}, restored ${restored_count}"
+            warn "  DIFFERS  ${table}: archive ${expected_count}, restored ${restored_count}"
             mismatch=1
         fi
-    done <<<"$live"
+    done <<<"$expected"
 
     #
     # A row count of zero everywhere would compare equal against an empty
@@ -227,7 +255,7 @@ do_verify_restore() {
     [[ "$hash" == '$argon2id$'* ]] || die "a restored password hash is not Argon2id"
     log "  ok       a restored password hash is intact"
 
-    [[ "$mismatch" -eq 0 ]] || die "the restore does not match the live database"
+    [[ "$mismatch" -eq 0 ]] || die "the restore does not match the archive"
 
     #
     # Dropped here rather than left to the trap, so the ordinary path cleans up

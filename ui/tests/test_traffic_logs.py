@@ -8,6 +8,7 @@ import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from haproxy_mgmt.proxy_model import load_proxy
@@ -473,7 +474,15 @@ class TheTrafficLogPage(LoginTestCase):
         clusters: tuple[str, ...] = ("alpha",),
         objects: tuple[ClusterObjects, ...] = (),
         query: str = "",
+        now: datetime | None = None,
     ) -> str:
+        """The page, optionally rendered as if the machine's clock read `now`.
+
+        The view judges a chosen time against the retention window from its
+        own clock. A test that names a date therefore has to name the clock
+        too, or it passes for fourteen days and then fails on a calendar it
+        never mentioned - which is exactly what happened on 2026-09-22.
+        """
         config = replace(
             configuration(),
             clusters=clusters,
@@ -489,9 +498,17 @@ class TheTrafficLogPage(LoginTestCase):
         ) -> Reading:
             return read(directory, named, **kwargs)  # type: ignore[arg-type]
 
+        frozen = now
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz: Any = None) -> Any:
+                return frozen if frozen is not None else datetime.now(tz)
+
         with (
             patch("haproxy_ui.db.cluster_objects", return_value=list(objects)),
             patch("haproxy_ui.traffic_logs.read_database", side_effect=file_read),
+            patch("haproxy_ui.views.datetime", Clock),
         ):
             response = client.get(f"/logs{query}")
 
@@ -649,7 +666,9 @@ class TheTrafficLogPage(LoginTestCase):
         self.host_zone("Europe/Stockholm")
         (self.root / "alpha--node-a.jsonl").write_bytes(record())
 
-        page = self.page(query="?from=26-09-08%2013:59&to=26-09-08%2014:00")
+        page = self.page(
+            query="?from=26-09-08%2013:59&to=26-09-08%2014:00", now=NOW + timedelta(hours=1)
+        )
 
         self.assertIn("app.example.com", page)
         self.assertIn('value="26-09-08 13:59"', page)
@@ -659,14 +678,16 @@ class TheTrafficLogPage(LoginTestCase):
         stamp = NOW + timedelta(seconds=45)
         (self.root / "alpha--node-a.jsonl").write_bytes(record(at=int(stamp.timestamp())))
 
-        page = self.page(query="?to=26-09-08%2014:00")
+        page = self.page(query="?to=26-09-08%2014:00", now=NOW + timedelta(hours=1))
 
         self.assertIn("app.example.com", page)
 
     def test_a_reversed_time_range_is_explained_instead_of_showing_all_records(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(record())
 
-        page = self.page(query="?from=26-09-09%2012:00&to=26-09-08%2012:00")
+        page = self.page(
+            query="?from=26-09-09%2012:00&to=26-09-08%2012:00", now=NOW + timedelta(days=1)
+        )
 
         self.assertIn("From must be earlier than To.", page)
         self.assertNotIn("app.example.com</strong>", page)

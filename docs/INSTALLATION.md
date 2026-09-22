@@ -371,7 +371,7 @@ for the node's backup account; the private half remains root-only on the manager
 Step 2 installs `haproxy-state-backup@.service`. Each instance takes both nodes in exactly one
 configured cluster and keeps a bounded number of root-only archives per node — 14 unless the
 Backups page set another count, which the root socket helper records in
-`/etc/haproxy-manager/backup-retention/<cluster>.json` (root-owned, `0644`, 1–365). Every run
+`/etc/haproxy-manager/backup-retention/<cluster>.json` (root-only, 1–365). Every run
 reads that file, including the terminal `haproxy-state-backup`, so a manual run prunes to the
 same count the schedule promised; a file that is present but unreadable stops the run rather
 than falling back to 14. The ordinary list and the backup UI show every retained archive per node

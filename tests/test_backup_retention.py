@@ -24,9 +24,9 @@ class BackupRetentionTests(unittest.TestCase):
                     backup_retention.write("alpha", 7, root=root), b'{"retention":30}\n'
                 )
             self.assertEqual(backup_retention.read("alpha", root=root), 7)
-            self.assertEqual(oct(os.stat(root / "alpha.json").st_mode & 0o777), "0o644")
-            # Whatever umask the helper runs under, the directory is readable.
-            self.assertEqual(oct(os.stat(root).st_mode & 0o777), "0o755")
+            # Root-only: every reader of this file runs as root.
+            self.assertEqual(oct(os.stat(root / "alpha.json").st_mode & 0o777), "0o600")
+            self.assertEqual(oct(os.stat(root).st_mode & 0o777), "0o700")
 
     def test_a_present_but_untrustworthy_file_is_an_error_not_the_default(self) -> None:
         """Pruning is destructive; "could not read it, kept fourteen" is the wrong guess."""

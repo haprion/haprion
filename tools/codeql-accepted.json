@@ -104,6 +104,13 @@
       "message": "Overly permissive mask in open sets file to world readable.",
       "decided": "2026-09-21",
       "reason": "The file is a systemd drop-in under /etc/systemd/system/<timer>.d/ holding one OnCalendar line for a cluster's backup timer. Unit files are root-owned 0644 by convention and every unit this project installs is written 644 by install_file; the drop-in keeps that mode so `systemctl cat` shows an operator the effective schedule without root. A daily time is not secret. The directory is verified root-owned and not group/world-writable before the write, the file is created O_EXCL|O_NOFOLLOW and renamed into place, so nothing but root can put content there."
+    },
+    {
+      "rule": "py/overly-permissive-file",
+      "path": "src/haproxy_mgmt/backup_schedule_write.py",
+      "message": "Overly permissive mask in chmod sets file to world readable.",
+      "decided": "2026-09-22",
+      "reason": "The chmod completes the open accepted above: the drop-in directory <timer>.d/ and the file in it are made 0755/0644 explicitly because the socket helper runs under UMask=0077, which filtered the modes given to mkdir and os.open down to 0700/0600 - measured in production 2026-09-22, where systemd logged the drop-in as world-inaccessible on every query. The chmod runs after the directory has been verified root-owned and not group/world-writable, so it never widens something that is not root's. Unit files are root-owned 0644 by convention; a schedule is not secret; and nothing here becomes writable."
     }
   ]
 }

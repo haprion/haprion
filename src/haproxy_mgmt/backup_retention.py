@@ -93,10 +93,14 @@ def write(cluster_id: str, retention: int, *, root: Path = RETENTION_ROOT) -> by
     """Record the count atomically; returns the previous content for a rollback."""
 
     file = path(cluster_id, root=root)
-    root.mkdir(mode=0o755, exist_ok=True)
+    #
+    # Root-only, and left at whatever the helper's umask makes it: every reader
+    # of this file is root - the timer's service, the socket helper and the
+    # break-glass command - and nothing else has a reason to see it.
+    #
+    root.mkdir(mode=0o700, exist_ok=True)
     if not _private_directory(root):
         raise RetentionError("the backup retention directory is not root-owned and private")
-    os.chmod(root, 0o755)  # noqa: S103 - root-owned; the helper's umask would leave it 0700
     if file.is_symlink():
         raise RetentionError("the backup retention file is a symlink")
     previous = file.read_bytes() if file.exists() else None
@@ -112,12 +116,8 @@ def restore(file: Path, content: bytes | None) -> None:
         file.unlink(missing_ok=True)
         return
     temporary = file.parent / f".{file.name}.{uuid4().hex}"
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
-        # The mode `os.open` was given passes through the helper's umask (0077);
-        # readers other than root - systemd's loader, an operator's `cat` - want
-        # the file world-readable, and nothing in it is secret.
-        os.fchmod(descriptor, 0o644)
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(content)
             stream.flush()

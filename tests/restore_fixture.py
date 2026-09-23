@@ -98,7 +98,10 @@ FILES: dict[str, tuple[str, int]] = {
     "/etc/hostname": ("node-a\n", 0o644),
     "/etc/hosts": ("127.0.0.1 localhost\n127.0.1.1 node-a.example.com node-a\n", 0o644),
     "/etc/keepalived/keepalived.conf": (KEEPALIVED, 0o644),
-    "/etc/keepalived/addresses.conf": ("192.0.2.30/32\n", 0o644),
+    "/etc/keepalived/addresses.conf": (
+        "# Generated. Do not edit.\n192.0.2.30/24 dev eth0 # vip a\n192.0.2.31/24 dev eth0\n",
+        0o644,
+    ),
     "/etc/default/haproxy": ("CONFIG=/etc/haproxy/haproxy.cfg\n", 0o644),
     "/etc/netplan/50-cloud-init.yaml": (NETPLAN, 0o600),
     "/etc/sysctl.d/60-haproxy.conf": ("net.ipv4.ip_nonlocal_bind = 1\n", 0o644),

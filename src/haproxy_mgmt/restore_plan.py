@@ -335,7 +335,11 @@ def build(
                     }[name]
                     rewrites.append(Rewrite(entry.path, name, old, new))
             elif entry.path == KEEPALIVED_ADDRESSES:
-                old = " ".join(_text(source, entry).split())
+                old = ", ".join(
+                    line.split("#", 1)[0].strip()
+                    for line in _text(source, entry).splitlines()
+                    if line.split("#", 1)[0].strip()
+                )
                 data = f"{profile.vip}\n".encode()
                 rewrites.append(Rewrite(entry.path, "addresses", old, str(profile.vip)))
         files.append(_planned(entry, data))

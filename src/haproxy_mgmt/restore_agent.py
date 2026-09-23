@@ -9,8 +9,9 @@ operations that write, a tar stream of the files to place.  Stdout carries one
 JSON result document; stderr carries progress lines for the operator's log.
 
 ``inspect``  reads: OS, interface, host key, accounts.  Writes nothing.
-``apply``    APT sources and the product's packages, groups and accounts,
-             password hashes where an account has none (B173), the files, the
+``apply``    groups and accounts with the archive's IDs, password hashes where
+             an account has none (B173), APT sources and the product's
+             packages, the files, the
              HAProxy release layout, the service states, the hostname.
 ``network``  Netplan, under a timer that puts the previous Netplan back unless
              the next session cancels it from the node's new address.
@@ -579,8 +580,12 @@ def apply(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, A
         raise Refused("; ".join(problems))
     report = Report()
 
-    _packages(host, header, items, report)
+    # Accounts before packages. A package that creates a system account or
+    # group takes the next free ID, and on a fresh target that can be the one
+    # the archive's own account holds - the node got its IDs in another order.
+    # Created first, the archive's IDs are taken, and the packages go around them.
     _accounts(host, header, report)
+    _packages(host, header, items, report)
 
     keep = [item.path for item in items]
     for directory in header["equal_directories"]:

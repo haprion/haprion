@@ -262,6 +262,12 @@ class Apply(AgentTest):
         self.apply()
         self.assertEqual(order, ["haproxy\n"])
 
+    def test_the_archives_ids_are_taken_before_packages_can_take_them(self) -> None:
+        self.apply()
+        programs = [argv[0] for argv in self.host.commands]
+        self.assertLess(programs.index("groupadd"), programs.index("apt-get"))
+        self.assertLess(programs.index("useradd"), programs.index("apt-get"))
+
     def test_accounts_groups_and_passwords(self) -> None:
         self.apply()
         useradd = self.commands("useradd")

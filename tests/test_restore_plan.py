@@ -151,6 +151,10 @@ class TestMode(Planning):
             },
         )
 
+    def test_the_old_address_list_is_shown_without_its_comments(self) -> None:
+        rewrite = next(r for r in self.plan().rewrites if r.path.endswith("addresses.conf"))
+        self.assertEqual(rewrite.old, "192.0.2.30/24 dev eth0, 192.0.2.31/24 dev eth0")
+
     def test_a_test_address_outside_the_nodes_network_is_refused(self) -> None:
         profile = TestProfile(
             hostname="node-test",

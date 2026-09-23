@@ -1,0 +1,452 @@
+from __future__ import annotations
+
+import io
+import json
+import shutil
+import subprocess
+import tarfile
+import tempfile
+import unittest
+from pathlib import Path
+from typing import Any
+
+from haproxy_mgmt import restore_agent
+from haproxy_mgmt.restore_agent import Failed, Host
+
+RUN = "run-0123456789"
+
+
+class FakeHost(Host):
+    """A directory standing in for the target, and a record of every command."""
+
+    def __init__(self, root: Path) -> None:
+        super().__init__(str(root))
+        self.commands: list[list[str]] = []
+        self.owners: dict[str, tuple[int, int]] = {}
+        self.active: dict[str, str] = {}
+        self.fail: set[str] = set()
+        for name, text in {
+            "/etc/passwd": "root:x:0:0:root:/root:/bin/bash\n"
+            "syslog:x:104:110::/nonexistent:/usr/sbin/nologin\n"
+            "operator:x:1000:1000:Operator:/home/operator:/bin/bash\n",
+            "/etc/group": "root:x:0:\nsudo:x:27:\nsyslog:x:110:\noperator:x:1000:\n",
+            "/etc/shadow": "root:*:1::::::\noperator:$y$existing:1::::::\n",
+            "/etc/os-release": 'ID=ubuntu\nVERSION_ID="26.04"\n',
+            "/etc/hostname": "temp\n",
+        }.items():
+            path = self.path(name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        for directory in (
+            "/etc/netplan",
+            "/etc/sudoers.d",
+            "/etc/apt/sources.list.d",
+            "/root/.ssh",
+        ):
+            self.path(directory).mkdir(parents=True, exist_ok=True)
+        self.path("/etc/netplan/50-cloud-init.yaml").write_text("dhcp\n")
+        self.path("/etc/sudoers.d/90-cloud-init-users").write_text(
+            "ubuntu ALL=(ALL) NOPASSWD:ALL\n"
+        )
+        self.path("/etc/apt/sources.list.d/ubuntu.sources").write_text("image\n")
+        self.path("/root/.ssh/authorized_keys").write_text("one-time key\n")
+        self.path("/usr/sbin").mkdir(parents=True)
+        self.path("/etc/ssh").mkdir(parents=True)
+        self.path("/etc/ssh/ssh_host_ed25519_key.pub").write_text("ssh-ed25519 AAAA temp\n")
+        self.path("/etc/haproxy").mkdir(parents=True)
+        self.path("/etc/haproxy/haproxy.cfg").write_text("package default\n")
+
+    def chown(self, path: Path, uid: int, gid: int) -> None:
+        self.owners["/" + str(path.relative_to(self.root))] = (uid, gid)
+
+    def _append(self, name: str, line: str) -> None:
+        with self.path(name).open("a") as stream:
+            stream.write(line + "\n")
+
+    def run(
+        self, argv: list[str], *, stdin: str | None = None, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        self.commands.append(argv)
+        out, code = "", 0
+        if argv[0] in self.fail:
+            code = 1
+        elif argv[:2] == ["ip", "-j"]:
+            if argv[2:4] == ["route", "show"]:
+                out = json.dumps([{"dst": "default", "dev": "eth0"}])
+            elif argv[2] == "link":
+                out = json.dumps([{"ifname": "eth0", "address": "02:00:00:00:00:99"}])
+            else:
+                out = json.dumps([{"addr_info": [{"local": "192.0.2.120", "prefixlen": 24}]}])
+        elif argv[0] == "ssh-keygen":
+            out = "256 SHA256:fixturefingerprint root@temp (ED25519)\n"
+        elif argv[0] == "groupadd":
+            self._append("/etc/group", f"{argv[-1]}:x:{argv[2]}:")
+        elif argv[0] == "useradd":
+            options = dict(zip(argv[1:-1:2], argv[2:-1:2], strict=False))
+            self._append(
+                "/etc/passwd",
+                f"{argv[-1]}:x:{options['-u']}:{options['-g']}:{options['-c']}:"
+                f"{options['-d']}:{options['-s']}",
+            )
+            self._append("/etc/shadow", f"{argv[-1]}:!:1::::::")
+        elif argv[0] == "chpasswd":
+            name, hashed = (stdin or "").strip().split(":", 1)
+            lines = self.path("/etc/shadow").read_text().splitlines()
+            lines = [
+                f"{name}:{hashed}:1::::::" if ln.startswith(f"{name}:") else ln for ln in lines
+            ]
+            self.path("/etc/shadow").write_text("\n".join(lines) + "\n")
+        elif argv[:2] == ["systemctl", "is-active"]:
+            out = self.active.get(argv[2], "inactive") + "\n"
+        if check and code != 0:
+            raise Failed(f"{argv[0]} failed")
+        return subprocess.CompletedProcess(argv, code, out, "")
+
+
+def payload(items: list[tuple[str, str, int, int, int, bytes | str]]) -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:") as archive:
+        for path, kind, mode, uid, gid, data in items:
+            info = tarfile.TarInfo(path.lstrip("/"))
+            info.mode, info.uid, info.gid = mode, uid, gid
+            if kind == "directory":
+                info.type = tarfile.DIRTYPE
+                archive.addfile(info)
+            elif kind == "symlink":
+                info.type = tarfile.SYMTYPE
+                info.linkname = str(data)
+                archive.addfile(info)
+            else:
+                raw = data if isinstance(data, bytes) else data.encode()
+                info.size = len(raw)
+                archive.addfile(info, io.BytesIO(raw))
+    return buffer.getvalue()
+
+
+def request(header: dict[str, Any], body: bytes = b"") -> io.BytesIO:
+    return io.BytesIO(json.dumps(header).encode() + b"\n" + body)
+
+
+APPLY_FILES = [
+    ("/etc/apt/sources.list.d", "directory", 0o755, 0, 0, b""),
+    ("/etc/apt/sources.list.d/ubuntu.sources", "file", 0o644, 0, 0, "archive\n"),
+    ("/etc/apt/sources.list.d/haproxy.sources", "file", 0o644, 0, 0, "haproxy\n"),
+    ("/etc/sudoers.d", "directory", 0o750, 0, 0, b""),
+    ("/etc/sudoers.d/haproxy-node", "file", 0o440, 0, 0, "# rules\n"),
+    ("/etc/haproxy-manager/node.conf", "file", 0o600, 0, 0, "CLUSTER=alpha\n"),
+    ("/root/.ssh", "directory", 0o700, 0, 0, b""),
+    ("/root/.ssh/known_hosts", "file", 0o644, 0, 0, "mgr key\n"),
+    ("/var/lib/svc-backup/.ssh/authorized_keys", "file", 0o644, 0, 0, "restrict\n"),
+    ("/etc/systemd/system/ipvsadm.service", "symlink", 0o777, 0, 0, "/dev/null"),
+    ("/etc/default/grub.d/99-local.cfg", "file", 0o644, 0, 0, "local\n"),
+]
+
+APPLY_HEADER: dict[str, Any] = {
+    "op": "apply",
+    "run": RUN,
+    "hostname": "node-test",
+    "keepalived": "mask",
+    "packages": ["haproxy", "keepalived"],
+    "equal_directories": ["/etc/apt/sources.list.d", "/etc/sudoers.d", "/root/.ssh"],
+    "logread_group": "svc-logread-group",
+    "groups": [{"name": "svc-backup", "gid": 990}, {"name": "svc-logread-group", "gid": 985}],
+    "accounts": [
+        {
+            "name": "svc-backup",
+            "uid": 990,
+            "gid": 990,
+            "gecos": "",
+            "home": "/var/lib/svc-backup",
+            "shell": "/bin/bash",
+            "groups": ["svc-backup", "svc-logread-group"],
+            "service": True,
+            "password_hash": "!",
+        },
+        {
+            "name": "operator",
+            "uid": 1000,
+            "gid": 1000,
+            "gecos": "Operator",
+            "home": "/home/operator",
+            "shell": "/bin/bash",
+            "groups": ["operator", "sudo", "adm"],
+            "service": False,
+            "password_hash": "$y$archived",
+        },
+    ],
+}
+
+
+class AgentTest(unittest.TestCase):
+    def setUp(self) -> None:
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        self.host = FakeHost(work)
+
+    def serve(self, header: dict[str, Any], body: bytes = b"") -> dict[str, Any]:
+        return restore_agent.serve(self.host, request(header, body))
+
+    def commands(self, program: str) -> list[list[str]]:
+        return [argv for argv in self.host.commands if argv[0] == program]
+
+
+class Inspect(AgentTest):
+    def test_reads_without_writing(self) -> None:
+        before = sorted(p for p in self.host.root.rglob("*"))
+        result = self.serve({"op": "inspect", "names": ["operator"], "ids": [990]})
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["interface"]["mac"], "02:00:00:00:00:99")
+        self.assertEqual(result["host_keys"], {"ed25519": "SHA256:fixturefingerprint"})
+        self.assertEqual(result["accounts"], {"operator": [1000, 1000]})
+        self.assertEqual(result["os_release"]["VERSION_ID"], "26.04")
+        self.assertEqual(sorted(p for p in self.host.root.rglob("*")), before)
+
+
+class Apply(AgentTest):
+    def apply(self, header: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self.serve(header or APPLY_HEADER, payload(APPLY_FILES))
+
+    def test_files_land_with_their_metadata_and_parents_are_created_plain(self) -> None:
+        result = self.apply()
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(self.host.path("/etc/sudoers.d/haproxy-node").read_text(), "# rules\n")
+        self.assertEqual(
+            self.host.path("/etc/sudoers.d/haproxy-node").stat().st_mode & 0o7777, 0o440
+        )
+        self.assertEqual(self.host.path("/etc/sudoers.d").stat().st_mode & 0o7777, 0o750)
+        # A parent the export only created with mkdir -p is plain 0755 root here.
+        self.assertEqual(self.host.path("/etc/default/grub.d").stat().st_mode & 0o7777, 0o755)
+        self.assertEqual(self.host.owners["/etc/default/grub.d"], (0, 0))
+        self.assertTrue(self.host.path("/etc/systemd/system/ipvsadm.service").is_symlink())
+
+    def test_what_the_image_had_in_a_carried_directory_goes_to_quarantine(self) -> None:
+        self.apply()
+        self.assertFalse(self.host.path("/etc/sudoers.d/90-cloud-init-users").exists())
+        moved = self.host.path(
+            f"/var/lib/haproxy-restore/{RUN}/quarantine/etc/sudoers.d/90-cloud-init-users"
+        )
+        self.assertTrue(moved.exists())
+        self.assertEqual(
+            self.host.path("/etc/apt/sources.list.d/ubuntu.sources").read_text(), "archive\n"
+        )
+
+    def test_the_one_time_key_survives_apply(self) -> None:
+        self.apply()
+        self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "one-time key\n")
+        self.assertTrue(self.host.path("/root/.ssh/known_hosts").exists())
+
+    def test_nothing_starts_during_package_installation(self) -> None:
+        seen: list[bool] = []
+        original = self.host.run
+
+        def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if argv[:2] == ["apt-get", "install"]:
+                seen.append(self.host.path("/usr/sbin/policy-rc.d").exists())
+            return original(argv, **kwargs)
+
+        self.host.run = run  # type: ignore[method-assign]
+        self.apply()
+        self.assertEqual(seen, [True])
+        self.assertFalse(self.host.path("/usr/sbin/policy-rc.d").exists())
+
+    def test_apt_sources_are_in_place_before_apt_runs(self) -> None:
+        order: list[str] = []
+        original = self.host.run
+
+        def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if argv[:2] == ["apt-get", "update"]:
+                order.append(self.host.path("/etc/apt/sources.list.d/haproxy.sources").read_text())
+            return original(argv, **kwargs)
+
+        self.host.run = run  # type: ignore[method-assign]
+        self.apply()
+        self.assertEqual(order, ["haproxy\n"])
+
+    def test_accounts_groups_and_passwords(self) -> None:
+        self.apply()
+        useradd = self.commands("useradd")
+        self.assertEqual(len(useradd), 1)
+        self.assertIn("-M", useradd[0])
+        self.assertEqual(useradd[0][-1], "svc-backup")
+        self.assertEqual(self.host.owners["/var/lib/svc-backup"], (0, 0))
+        self.assertIn(["usermod", "-a", "-G", "sudo", "operator"], self.host.commands)
+        self.assertIn(
+            ["usermod", "-a", "-G", "svc-logread-group", "svc-backup"], self.host.commands
+        )
+        # The operator already has a password on the target (B173).
+        self.assertEqual(self.commands("chpasswd"), [])
+
+    def test_an_archived_hash_is_set_where_the_account_has_none(self) -> None:
+        self.host.path("/etc/shadow").write_text("root:*:1::::::\noperator:!:1::::::\n")
+        self.apply()
+        self.assertEqual(self.commands("chpasswd"), [["chpasswd", "-e"]])
+        self.assertIn("operator:$y$archived:", self.host.path("/etc/shadow").read_text())
+
+    def test_a_uid_conflict_stops_before_anything_is_written(self) -> None:
+        header = json.loads(json.dumps(APPLY_HEADER))
+        header["accounts"][1]["uid"] = 1001
+        self.host._append("/etc/passwd", "other:x:1001:1000::/home/other:/bin/sh")
+        result = self.apply(header)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["refused"])
+        self.assertIn("operator", result["error"])
+        self.assertEqual(self.host.commands, [])
+        self.assertTrue(self.host.path("/etc/sudoers.d/90-cloud-init-users").exists())
+
+    def test_the_haproxy_layout_boots_on_a_listener_nothing_can_reach(self) -> None:
+        self.apply()
+        current = self.host.path("/etc/haproxy/current")
+        self.assertTrue(current.is_symlink())
+        config = self.host.path("/etc/haproxy/releases/00000000-000000/haproxy.cfg").read_text()
+        self.assertIn("bind unix@/run/haproxy-restore-bootstrap.sock mode 600", config)
+        self.assertEqual(
+            str(self.host.path("/etc/haproxy/haproxy.cfg").readlink()), "current/haproxy.cfg"
+        )
+        moved = self.host.path(f"/var/lib/haproxy-restore/{RUN}/quarantine/etc/haproxy/haproxy.cfg")
+        self.assertEqual(moved.read_text(), "package default\n")
+
+    def test_keepalived_is_masked_in_test_mode(self) -> None:
+        self.apply()
+        self.assertIn(["systemctl", "mask", "keepalived"], self.host.commands)
+        self.assertNotIn(["systemctl", "enable", "keepalived"], self.host.commands)
+
+    def test_sysctl_hostname_and_sshd(self) -> None:
+        self.apply()
+        self.assertIn(["sysctl", "--system"], self.host.commands)
+        self.assertIn(["hostnamectl", "set-hostname", "node-test"], self.host.commands)
+        sshd = self.host.commands.index(["sshd", "-t"])
+        self.assertEqual(
+            self.host.commands[sshd + 1], ["systemctl", "reload-or-restart", "ssh.service"]
+        )
+
+    def test_the_traffic_log_root_is_created_as_node_prepare_does(self) -> None:
+        self.apply()
+        self.assertEqual(self.host.owners["/var/log/haproxy-manager"], (104, 985))
+        self.assertEqual(self.host.path("/var/log/haproxy-manager").stat().st_mode & 0o7777, 0o2750)
+
+    def test_netplan_and_roots_keys_are_refused_in_apply(self) -> None:
+        for path in ("/etc/netplan/50-x.yaml", "/root/.ssh/authorized_keys"):
+            result = self.serve(APPLY_HEADER, payload([(path, "file", 0o600, 0, 0, "x")]))
+            self.assertFalse(result["ok"])
+            self.assertIn("later session", result["error"])
+
+    def test_an_unsafe_payload_path_is_refused(self) -> None:
+        result = self.serve(APPLY_HEADER, payload([("etc/../../x", "file", 0o600, 0, 0, "x")]))
+        self.assertFalse(result["ok"])
+        self.assertIn("unsafe", result["error"])
+
+
+class Network(AgentTest):
+    NETPLAN = [("/etc/netplan/50-cloud-init.yaml", "file", 0o600, 0, 0, "network: {}\n")]
+
+    def header(self, seconds: int = 180) -> dict[str, Any]:
+        return {"op": "network", "run": RUN, "rollback_seconds": seconds}
+
+    def test_netplan_is_replaced_and_a_rollback_is_scheduled_before_it_applies(self) -> None:
+        result = self.serve(self.header(), payload(self.NETPLAN))
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            self.host.path("/etc/netplan/50-cloud-init.yaml").read_text(), "network: {}\n"
+        )
+        before = self.host.path(f"/var/lib/haproxy-restore/{RUN}/netplan-before/50-cloud-init.yaml")
+        self.assertEqual(before.read_text(), "dhcp\n")
+        runs = self.commands("systemd-run")
+        self.assertEqual(
+            runs[0][1:3], [f"--unit=haproxy-restore-rollback-{RUN}", "--on-active=180"]
+        )
+        self.assertEqual(runs[1][1:3], [f"--unit=haproxy-restore-apply-{RUN}", "--on-active=3"])
+        self.assertEqual(result["rollback_unit"], f"haproxy-restore-rollback-{RUN}")
+
+    def test_a_rejected_netplan_is_put_back_at_once(self) -> None:
+        self.host.fail.add("netplan")
+        result = self.serve(self.header(), payload(self.NETPLAN))
+        self.assertFalse(result["ok"])
+        self.assertEqual(self.host.path("/etc/netplan/50-cloud-init.yaml").read_text(), "dhcp\n")
+        self.assertEqual(self.commands("systemd-run"), [])
+
+    def test_only_netplan_travels_and_the_delay_is_bounded(self) -> None:
+        wrong = payload([("/etc/hosts", "file", 0o644, 0, 0, "x")])
+        self.assertFalse(self.serve(self.header(), wrong)["ok"])
+        self.assertFalse(self.serve(self.header(seconds=10), payload(self.NETPLAN))["ok"])
+
+    def test_a_second_network_change_in_one_run_is_refused(self) -> None:
+        self.assertTrue(self.serve(self.header(), payload(self.NETPLAN))["ok"])
+        again = self.serve(self.header(), payload(self.NETPLAN))
+        self.assertFalse(again["ok"])
+        self.assertIn("already", again["error"])
+
+
+class Finish(AgentTest):
+    KEYS = [("/root/.ssh/authorized_keys", "file", 0o600, 0, 0, "operator key\n")]
+
+    def header(self, keepalived: str = "mask") -> dict[str, Any]:
+        return {
+            "op": "finish",
+            "run": RUN,
+            "certificates": ["cert-a", "cert-b"],
+            "keepalived": keepalived,
+        }
+
+    def test_the_order_is_timer_haproxy_certificates_config_services_keys(self) -> None:
+        self.host.active.update(
+            {f"haproxy-restore-rollback-{RUN}.timer": "active", "haproxy": "active"}
+        )
+        result = self.serve(self.header(), payload(self.KEYS))
+        self.assertTrue(result["ok"], result)
+        sequence = [argv for argv in self.host.commands if argv[:2] != ["systemctl", "is-active"]]
+        self.assertEqual(
+            sequence,
+            [
+                ["systemctl", "stop", f"haproxy-restore-rollback-{RUN}.timer"],
+                ["systemctl", "start", "haproxy"],
+                ["/usr/local/sbin/haproxy-cert-pull", "cert-a", "cert-b"],
+                ["/usr/local/sbin/haproxy-pull-deploy"],
+            ],
+        )
+        self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "operator key\n")
+
+    def test_a_fired_rollback_timer_stops_finish(self) -> None:
+        result = self.serve(self.header(), payload(self.KEYS))
+        self.assertFalse(result["ok"])
+        self.assertIn("rollback timer", result["error"])
+        self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "one-time key\n")
+
+    def test_failing_services_keep_the_one_time_key(self) -> None:
+        self.host.active.update({f"haproxy-restore-rollback-{RUN}.timer": "active"})
+        result = self.serve(self.header(), payload(self.KEYS))
+        self.assertFalse(result["ok"])
+        self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "one-time key\n")
+
+    def test_keepalived_is_started_for_a_real_restore(self) -> None:
+        self.host.active.update(
+            {
+                f"haproxy-restore-rollback-{RUN}.timer": "active",
+                "haproxy": "active",
+                "keepalived": "active",
+            }
+        )
+        result = self.serve(self.header("start"), payload(self.KEYS))
+        self.assertTrue(result["ok"], result)
+        self.assertIn(["systemctl", "start", "keepalived"], self.host.commands)
+
+    def test_finish_carries_roots_keys_and_nothing_else(self) -> None:
+        extra = payload([*self.KEYS, ("/etc/hosts", "file", 0o644, 0, 0, "x")])
+        self.assertFalse(self.serve(self.header(), extra)["ok"])
+
+
+class Protocol(AgentTest):
+    def test_unknown_operations_and_run_ids_are_refused(self) -> None:
+        self.assertFalse(self.serve({"op": "shell"})["ok"])
+        self.assertFalse(self.serve({"op": "apply", "run": "../x"})["ok"])
+
+    def test_a_missing_header_is_refused(self) -> None:
+        self.assertFalse(restore_agent.serve(self.host, io.BytesIO(b"{}"))["ok"])
+
+    def test_the_agent_imports_only_the_standard_library(self) -> None:
+        source = Path(restore_agent.__file__).read_text()
+        self.assertNotIn("haproxy_mgmt", source.split('"""', 2)[2])
+        self.assertNotIn("import yaml", source)
+
+
+if __name__ == "__main__":
+    unittest.main()

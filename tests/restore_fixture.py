@@ -1,0 +1,185 @@
+"""A state archive shaped like the one install/node/haproxy-state-export writes.
+
+Built the way the exporter builds it: under umask 077, with each copied path's
+parents created by `mkdir -p` and so recorded as 0700 - the property the restore
+has to be careful about - and a manifest computed over the staged tree.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import stat
+import tarfile
+from pathlib import Path
+
+from haproxy_mgmt.backup_archive import REQUIRED_PATHS
+
+SERVICE_ACCOUNTS = ("svc-trigger", "svc-status", "svc-backup", "svc-logread")
+
+NODE_CONF = """CLUSTER="alpha"
+MANAGER="mgr.example.com"
+CONFIG_PULL_USER="svc-pull"
+CONFIG_PULL_KEY="/etc/haproxy-manager/keys/config-pull"
+CONFIG_REMOTE_PATH="alpha/current/node-a/"
+BACKUP_SERVICE_ACCOUNTS="svc-trigger svc-status svc-backup svc-logread"
+BACKUP_ACCOUNTS="svc-trigger svc-status svc-backup svc-logread operator"
+BACKUP_GROUPS="haproxy-logread"
+EXTRA_BACKUP_PATHS="/etc/default/grub.d/99-local.cfg"
+"""
+
+NETPLAN = """network:
+  version: 2
+  ethernets:
+    eth0:
+      match:
+        macaddress: "02:00:00:00:00:0a"
+      set-name: eth0
+      addresses:
+        - 192.0.2.21/24
+      routes:
+        - to: default
+          via: 192.0.2.1
+"""
+
+KEEPALIVED = """vrrp_instance VI_1 {
+    state BACKUP
+    nopreempt
+    interface eth0
+    virtual_router_id 51
+    priority 110
+    unicast_src_ip 192.0.2.21
+    unicast_peer {
+        192.0.2.22
+    }
+    virtual_ipaddress {
+        192.0.2.20/24
+    }
+    include /etc/keepalived/addresses.conf
+}
+"""
+
+OS_RELEASE = 'NAME="Ubuntu"\nVERSION_ID="26.04"\nID=ubuntu\nVERSION_CODENAME=resolute\n'
+
+
+def _users() -> str:
+    lines = [
+        f"{name}:x:{990 - index}:{990 - index}::/var/lib/{name}:/bin/bash"
+        for index, name in enumerate(SERVICE_ACCOUNTS)
+    ]
+    lines.append("operator:x:1000:1000:Operator:/home/operator:/bin/bash")
+    return "\n".join(lines) + "\n"
+
+
+def _groups() -> str:
+    lines = [
+        f"uid={990 - index}({name}) gid={990 - index}({name}) groups={990 - index}({name})"
+        for index, name in enumerate(SERVICE_ACCOUNTS)
+    ]
+    lines[-1] += ",985(haproxy-logread)"
+    lines.append("uid=1000(operator) gid=1000(operator) groups=1000(operator),27(sudo)")
+    return "\n".join(lines) + "\n"
+
+
+def _group_definitions() -> str:
+    lines = [f"{name}:x:{990 - index}:" for index, name in enumerate(SERVICE_ACCOUNTS)]
+    lines += ["haproxy-logread:x:985:svc-logread", "operator:x:1000:"]
+    return "\n".join(sorted(lines)) + "\n"
+
+
+def _shadow() -> str:
+    lines = [f"{name}:!:20000:0:99999:7:::" for name in SERVICE_ACCOUNTS]
+    lines.append("operator:$y$j9T$fixture$hash:20000:0:99999:7:::")
+    return "\n".join(lines) + "\n"
+
+
+FILES: dict[str, tuple[str, int]] = {
+    "/etc/hostname": ("node-a\n", 0o644),
+    "/etc/hosts": ("127.0.0.1 localhost\n127.0.1.1 node-a.example.com node-a\n", 0o644),
+    "/etc/keepalived/keepalived.conf": (KEEPALIVED, 0o644),
+    "/etc/keepalived/addresses.conf": ("192.0.2.30/32\n", 0o644),
+    "/etc/default/haproxy": ("CONFIG=/etc/haproxy/haproxy.cfg\n", 0o644),
+    "/etc/netplan/50-cloud-init.yaml": (NETPLAN, 0o600),
+    "/etc/sysctl.d/60-haproxy.conf": ("net.ipv4.ip_nonlocal_bind = 1\n", 0o644),
+    "/etc/apt/sources.list.d/haproxy.sources": ("Types: deb\n", 0o644),
+    "/etc/sudoers.d/haproxy-node": ("# rules\n", 0o440),
+    "/etc/haproxy-manager/node.conf": (NODE_CONF, 0o600),
+    "/etc/haproxy-manager/node-installation.json": ('{"node_api": 1}\n', 0o644),
+    "/etc/haproxy-manager/keys/config-pull": ("private\n", 0o600),
+    "/etc/ssh/sshd_config": ("PermitRootLogin prohibit-password\n", 0o644),
+    "/etc/ssh/ssh_host_ed25519_key": ("host private\n", 0o600),
+    "/etc/ssh/ssh_host_ed25519_key.pub": ("ssh-ed25519 AAAA node-a\n", 0o644),
+    "/root/.ssh/authorized_keys": ("ssh-ed25519 AAAA operator\n", 0o600),
+    "/var/lib/svc-backup/.ssh/authorized_keys": ("restrict ssh-ed25519 AAAA\n", 0o644),
+    "/home/operator/.ssh/authorized_keys": ("ssh-ed25519 AAAA operator\n", 0o600),
+    "/etc/default/grub.d/99-local.cfg": ("GRUB_CMDLINE_LINUX_DEFAULT=x\n", 0o644),
+    "/etc/cloud/cloud-init.disabled": ("", 0o644),
+}
+
+META: dict[str, str] = {
+    "meta/backup-created.txt": "2026-01-01T04:00:00+00:00\n",
+    "meta/hostname.txt": "node-a\n",
+    "meta/fqdn.txt": "node-a.example.com\n",
+    "meta/os-release": OS_RELEASE,
+    "meta/users.txt": _users(),
+    "meta/groups.txt": _groups(),
+    "meta/group-definitions.txt": _group_definitions(),
+    "meta/shadow.txt": _shadow(),
+    "meta/packages.txt": "haproxy\nkeepalived\n",
+    "meta/package-versions.txt": "haproxy\t3.4.4-1\n",
+    "meta/services.txt": "[haproxy]\nenabled=enabled\n",
+    "meta/extra-paths.txt": "/etc/default/grub.d/99-local.cfg\n",
+}
+
+
+def _write(path: Path, text: str, mode: int) -> None:
+    # `mkdir -p` under umask 077: every parent the exporter did not copy is 0700.
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.write_text(text, encoding="utf-8")
+    path.chmod(mode)
+
+
+def build(root: Path, *, files: dict[str, tuple[str, int]] | None = None) -> Path:
+    stage = root / "stage"
+    previous = os.umask(0o077)
+    try:
+        chosen = dict(FILES if files is None else files)
+        for name in REQUIRED_PATHS:
+            if name.startswith("rootfs/usr/local/sbin/"):
+                chosen.setdefault(name.removeprefix("rootfs"), ("#!/bin/sh\n", 0o755))
+        for path, (text, mode) in chosen.items():
+            _write(stage / f"rootfs{path}", text, mode)
+        # Copied directories carry their own mode, as `cp -a` preserves it.
+        for directory in ("/etc/netplan", "/etc/sysctl.d", "/etc/haproxy-manager", "/root/.ssh"):
+            target = stage / f"rootfs{directory}"
+            if target.is_dir():
+                target.chmod(0o700 if directory == "/root/.ssh" else 0o755)
+        for name, text in META.items():
+            _write(stage / name, text, 0o644)
+    finally:
+        os.umask(previous)
+
+    entries: list[dict[str, object]] = []
+    for tree in (stage / "rootfs", stage / "meta"):
+        for path in sorted(tree.rglob("*")):
+            info = path.lstat()
+            entry: dict[str, object] = {
+                "path": path.relative_to(stage).as_posix(),
+                "mode": stat.S_IMODE(info.st_mode),
+                "uid": info.st_uid,
+                "gid": info.st_gid,
+                "type": "directory" if path.is_dir() else "file",
+            }
+            if path.is_file():
+                content = path.read_bytes()
+                entry.update(size=len(content), sha256=hashlib.sha256(content).hexdigest())
+            entries.append(entry)
+    (stage / "meta/manifest.json").write_text(
+        json.dumps({"schema_version": 1, "entries": entries}, sort_keys=True), encoding="utf-8"
+    )
+    archive = root / "state.tar.gz"
+    with tarfile.open(archive, "w:gz") as output:
+        output.add(stage / "rootfs", arcname="rootfs")
+        output.add(stage / "meta", arcname="meta")
+    return archive

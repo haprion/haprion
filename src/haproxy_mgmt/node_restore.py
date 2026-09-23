@@ -384,7 +384,8 @@ def prepare(
     _write_json(directory / "request.json", request.as_dict())
     paste = (
         f"echo '{line}' | sudo sh -c 'install -d -m 700 /root/.ssh && "
-        "cat >> /root/.ssh/authorized_keys' && ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub"
+        "cat >> /root/.ssh/authorized_keys' && sudo tail -n 1 /root/.ssh/authorized_keys && "
+        "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub"
     )
     return {"run": request.run, "paste": paste, "from": manager}
 

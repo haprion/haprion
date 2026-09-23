@@ -139,6 +139,8 @@ class Prepare(RestoreTest):
         self.assertEqual((directory / "key").stat().st_mode & 0o777, 0o600)
         self.assertIn('from="192.0.2.7",restrict ssh-ed25519 ', prepared["paste"])
         self.assertIn("ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub", prepared["paste"])
+        # The line shows what landed: a paste that broke on the way in is seen at once.
+        self.assertIn("sudo tail -n 1 /root/.ssh/authorized_keys", prepared["paste"])
         self.assertEqual(FakeSession.calls, [])
 
     def test_the_archive_must_be_in_the_nodes_own_listing(self) -> None:

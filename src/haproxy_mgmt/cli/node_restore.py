@@ -110,12 +110,13 @@ def _text_preview(summary: dict[str, Any], out: TextIO) -> None:
     out.write("  accounts:\n")
     for account in plan["accounts"]:
         kind = "service" if account["service"] else "operator"
-        password = (
+        # A fixed phrase chosen by a boolean; the hash itself never reaches the preview.
+        restored = (
             ", password from the archive if none on the target" if account["has_password"] else ""
         )
         out.write(
             f"    {account['name']} {account['uid']}:{account['gid']} {account['home']} "
-            f"({kind}; {', '.join(account['groups'])}{password})\n"
+            f"({kind}; {', '.join(account['groups'])}{restored})\n"
         )
     if plan["rewrites"]:
         out.write("  rewritten:\n")

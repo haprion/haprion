@@ -49,6 +49,10 @@ Three properties drive the whole design, and every step below follows from one o
 1. **The management host never pushes.** It asks a node to pull, and nothing else. Every management
    SSH identity is a forced command; none of them can copy a file or run a shell on a node. A node
    fetches its own configuration from the management host over a separate, restricted account.
+   The one exception is deliberate and does not stand: restoring a node onto an empty VM
+   ([2.6](#26-restoring-a-node-onto-an-empty-vm)) writes as root through a key the operator pastes
+   into that VM's console for one run, limited to the management host's address, and removed by
+   the run itself as its last step.
 2. **Configuration is versioned before it is deployed.** Editing produces a draft; publishing
    produces an immutable release; deploying brings nodes to a published release. Each stage is a
    separate command with its own privilege.
@@ -360,7 +364,8 @@ in turn - it reads `clusters.yaml` as the calling user, the same way `haproxy-cl
 only to learn which clusters exist. Each listing is still resolved inside the privilege boundary by
 one helper call per cluster. Only metadata is ever reported from it - archive name, size and
 modification time. The archives themselves hold password hashes and private SSH keys, so the root
-stays root-owned and no command opens one; the helper exists precisely so that an unprivileged
+stays root-owned and only one command opens one - `haproxy-node-restore`, as root, to restore it
+([2.6](#26-restoring-a-node-onto-an-empty-vm)); the helper exists precisely so that an unprivileged
 caller can learn a backup exists without being able to read it.
 
 `backup_identity` is the separate forced-command SSH identity that fetches the state-export stream
@@ -1989,6 +1994,92 @@ Optional features have their own symmetric rollback. For traffic logging, disabl
 with `sudo haproxy-traffic-log-enable --disable`, remove only that collector key's forced-command
 line from `svc-logread` and disable the manager collector. Traffic files are deliberately retained;
 rollback never deletes evidence.
+
+### 2.6 Restoring a node onto an empty VM
+
+A node that is lost is rebuilt from its state archive: install an empty VM, run
+`haproxy-node-restore`, and the VM becomes that node - its hostname, address, SSH host keys,
+accounts, node scripts and keepalived role - and then fetches its configuration and certificates
+the way a deploy does. Nothing is installed on the VM beforehand.
+
+**What counts as an empty VM.** The same distribution and version the node ran (the archive's
+`meta/os-release`; another version is not restored yet, another distribution never), one network
+interface with the same name as the node's, a temporary address the management host can reach,
+and an administrator account with `sudo`. The node's own address must not answer: a restore onto
+it while the old node is still up would put two machines on one address, and the preview stops.
+
+**Three steps, each its own command**, run as root on the management host:
+
+```bash
+# 1. Choose the node, the archive (by its version, from haproxy-list-backups) and the VM.
+sudo haproxy-node-restore prepare -c alpha --node node-a \
+    --archive 2026-01-01_04-00-00 --target 192.0.2.120
+
+# It prints one line. Paste it on the VM, as its administrator. It adds this run's
+# one-time key to root's authorized_keys - restricted, and accepted only from the
+# management host's address - shows the line that landed, and prints the VM's
+# host key fingerprint.
+
+# 2. Compare: the fingerprint it printed is the one the preview is given.
+sudo haproxy-node-restore preview --run <run> --fingerprint SHA256:...
+
+# 3. Carry out exactly what the preview showed, confirmed with the node's name.
+sudo haproxy-node-restore run --run <run> --confirm node-a
+
+# Afterwards, or to abandon a run: remove its directory and one-time key.
+sudo haproxy-node-restore forget --run <run>
+```
+
+**What the preview shows and what stops it.** The target's OS, interface and MAC address; the
+host key fingerprint; the name and address the VM will have; every file written and every
+directory made equal to the archive; every account with its IDs and groups; and, in test mode,
+every rewritten field with its old and new value. It stops on: a fingerprint that is not the one
+given (nothing is sent at all); an archive that is not of the chosen node; another OS version or
+distribution; the final address, or the node's own, already answering; and an account or group
+whose name or ID is taken differently on the VM. `run` asks the VM again and refuses unless the
+archive, the VM and the plan are exactly what the preview saw - so what was approved is what is
+written.
+
+**What `run` does, in order.** Three SSH sessions with the one-time key:
+
+1. On the temporary address: the archive's groups and accounts with their own IDs (before any
+   package can take one), password hashes only for accounts that have no password on the VM, the
+   archive's APT sources, then `haproxy keepalived rsyslog openssh-server rsync python3` with
+   service starts held off until their configuration is in place, then the files. Only paths the
+   export copied get the archive's ownership and mode; a directory it created only to hold one is
+   made if missing and otherwise left alone. A directory the export carries whole is made equal to
+   the archive, and what the VM had there is moved to `/var/lib/haproxy-restore/<run>/quarantine`,
+   never deleted. Then the HAProxy release layout, the traffic-log directory, the hostname, and
+   sshd is reloaded.
+2. Still there: the archive's Netplan, bound to the VM's MAC address, applied three seconds after
+   the session ends - under a timer that puts the VM's own Netplan back after 180 seconds.
+3. On the node's own address, with the archive's host key: the timer is cancelled, HAProxy starts
+   on a placeholder release whose only listener is a root-only unix socket, the node's
+   `haproxy-cert-pull` fetches the cluster's certificates and its `haproxy-pull-deploy` the
+   published configuration - the same scripts a deploy triggers - keepalived starts as `BACKUP`,
+   and **last** root's `authorized_keys` is replaced by the archive's, which removes the one-time
+   key.
+
+If the node never answers on its own address, the timer returns the VM to its temporary address
+and the run reports `failed` with the network rolled back. The run's result is kept in
+`/var/lib/haproxy-mgmt/restore/<run>/result.json` beside the key, both root-only `0600` in a
+`0700` directory. A restore takes about a minute; the longest part is the package installation.
+
+**Test mode proves a restore before it is needed.** Add `--test --test-hostname <name>
+--test-address <address/prefix> --test-vip <address/prefix>` to `prepare`. The node is restored as
+above, except that the hostname, the node address in Netplan, keepalived's own address and its
+virtual addresses are rewritten to the test values - the preview lists every one - the `include`
+of the published address list is removed, keepalived is masked so it can never join the
+production pair's VRRP, and the VM keeps its own SSH host keys. The test address must be in the
+node's network, because the node's routes come with the archive. `--confirm` takes the test
+hostname.
+
+**What it does not do.** Overwrite a node that is running (not built yet); restore onto another OS
+version; configure what is the environment's rather than the product's - a configuration-management
+baseline, monitoring agents - which runs afterwards as it would on any new machine. The node scripts
+come back at the archive's version: upgrade them afterwards as in [2.5](#25-installing-and-changing-node-scripts)
+if the bundle has moved on. Whether the traffic-log prune timer was enabled is not in the archive;
+the unit files are restored, and a node that logged traffic needs its timer enabled again.
 
 ## Releasing a change
 

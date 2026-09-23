@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "node_restore_preview",
+  "cluster": "alpha",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "run": "r260101-0000aaaa",
+    "digest": "0000000000000000000000000000000000000000000000000000000000000000",
+    "problems": [],
+    "plan": {
+      "mode": "test",
+      "source_hostname": "node-a",
+      "hostname": "node-test",
+      "address": "192.0.2.29/24",
+      "files": [
+        "/etc/hostname",
+        "/etc/hosts"
+      ],
+      "network": [
+        "/etc/netplan/50-cloud-init.yaml"
+      ],
+      "equal_directories": [
+        "/etc/sudoers.d"
+      ],
+      "groups": [
+        {
+          "name": "operator",
+          "gid": 1000
+        }
+      ],
+      "accounts": [
+        {
+          "name": "operator",
+          "uid": 1000,
+          "gid": 1000,
+          "home": "/home/operator",
+          "groups": [
+            "operator",
+            "sudo"
+          ],
+          "service": false,
+          "has_password": true
+        }
+      ],
+      "packages": [
+        "haproxy",
+        "keepalived"
+      ],
+      "keepalived": "mask",
+      "rewrites": [
+        {
+          "path": "/etc/hostname",
+          "field": "hostname",
+          "old": "node-a",
+          "new": "node-test"
+        }
+      ]
+    },
+    "target": {
+      "hostname": "temp",
+      "os_release": {
+        "ID": "ubuntu",
+        "VERSION_ID": "26.04"
+      },
+      "interface": {
+        "name": "eth0",
+        "mac": "02:00:00:00:00:99",
+        "addresses": [
+          "192.0.2.120/24"
+        ]
+      },
+      "fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    "archive": {
+      "node": "node-a",
+      "version": "2026-01-01_04-00-00",
+      "os_release": {
+        "ID": "ubuntu",
+        "VERSION_ID": "26.04"
+      },
+      "extra_paths": []
+    }
+  },
+  "warnings": [],
+  "error": null
+}

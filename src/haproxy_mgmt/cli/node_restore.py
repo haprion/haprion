@@ -12,7 +12,6 @@ Three steps, in order, each a separate command (B175):
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import os
 import sys
@@ -21,9 +20,9 @@ from typing import Any, TextIO
 
 from haproxy_mgmt import node_restore
 from haproxy_mgmt.backup_archive import ArchiveError
+from haproxy_mgmt.cli import node_restore_helper
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haproxy_mgmt.node_restore import Request, RestoreError
-from haproxy_mgmt.restore_plan import TestProfile
 
 EXIT_USAGE = 64
 EXIT_NOT_ROOT = 77
@@ -65,7 +64,7 @@ def _options(argv: list[str], flags: set[str], values: set[str]) -> dict[str, An
     return parsed
 
 
-def _profile(options: dict[str, Any]) -> TestProfile | None:
+def _test(options: dict[str, Any]) -> dict[str, str] | None:
     fields = ("--test-hostname", "--test-address", "--test-vip")
     if "--test" not in options:
         if any(field in options for field in fields):
@@ -73,11 +72,35 @@ def _profile(options: dict[str, Any]) -> TestProfile | None:
         return None
     if not all(field in options for field in fields):
         raise ValueError("--test needs --test-hostname, --test-address and --test-vip")
-    return TestProfile(
-        hostname=options["--test-hostname"],
-        address=ipaddress.IPv4Interface(options["--test-address"]),
-        vip=ipaddress.IPv4Interface(options["--test-vip"]),
-    )
+    return {
+        "hostname": options["--test-hostname"],
+        "address": options["--test-address"],
+        "vip": options["--test-vip"],
+    }
+
+
+def _parameters(step: str, options: dict[str, Any], run: str) -> dict[str, Any]:
+    """What the socket helper would be sent - held to the same checks it applies."""
+
+    if step == "prepare":
+        parameters = {
+            "run": run,
+            "node": options["--node"],
+            "archive": options["--archive"],
+            "target": options["--target"],
+            "test": _test(options),
+        }
+        operation = node_restore_helper.PREPARE
+    elif step == "preview":
+        parameters = {"run": run, "fingerprint": options["--fingerprint"]}
+        operation = node_restore_helper.PREVIEW
+    elif step == "run":
+        parameters = {"run": run, "confirm": options["--confirm"]}
+        operation = node_restore_helper.RUN
+    else:
+        return {"run": run}
+    node_restore_helper.validate(operation, parameters)
+    return parameters
 
 
 def _text_preview(summary: dict[str, Any], out: TextIO) -> None:
@@ -179,7 +202,6 @@ def main(
             )
             if not all(name in options for name in ("-c", "--node", "--archive", "--target")):
                 raise ValueError("missing")
-            ipaddress.IPv4Address(options["--target"])
         else:
             options = _options(rest, {"--json"}, {"--run", "--fingerprint", "--confirm"})
             needed = {
@@ -189,7 +211,11 @@ def main(
             }
             if not all(name in options for name in needed[step]):
                 raise ValueError("missing")
-        profile = _profile(options) if step == "prepare" else None
+        run_id = node_restore.new_run_id() if step == "prepare" else options["--run"]
+        parameters = _parameters(step, options, run_id)
+    except node_restore_helper.ParameterProblem as problem:
+        errors.write(f"ERROR: {problem}\n\n{USAGE}")
+        return EXIT_USAGE
     except ValueError:
         errors.write(USAGE)
         return EXIT_USAGE
@@ -210,8 +236,9 @@ def main(
             raise RestoreError("the runtime policy declares no backup_root")
         if step == "prepare":
             cluster = runtime.cluster(options["-c"])
+            profile = node_restore_helper.test_profile(parameters["test"])
             request = Request(
-                run=node_restore.new_run_id(),
+                run=run_id,
                 cluster=options["-c"],
                 node=options["--node"],
                 archive=options["--archive"],

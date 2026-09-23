@@ -312,6 +312,20 @@ class Cli(unittest.TestCase):
             64,
         )  # fmt: skip
 
+    def test_the_command_line_refuses_what_the_helper_refuses(self) -> None:
+        # One check for both callers: a test address without its prefix is the
+        # same mistake typed in a terminal or in the form.
+        errors = io.StringIO()
+        code = cli.main(
+            ["prepare", "-c", "alpha", "--node", "node-a", "--archive", VERSION,
+             "--target", "192.0.2.120", "--test", "--test-hostname", "node-test",
+             "--test-address", "192.0.2.29", "--test-vip", "198.51.100.254/32"],
+            error_stream=errors,
+            require_root=False,
+        )  # fmt: skip
+        self.assertEqual(code, 64)
+        self.assertIn("address/prefix", errors.getvalue())
+
     def test_it_must_run_as_root(self) -> None:
         if os.geteuid() == 0:
             self.skipTest("running as root")

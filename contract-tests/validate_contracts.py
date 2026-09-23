@@ -745,6 +745,63 @@ def check_backup_schedule_semantics(document: dict[str, object], path: Path) -> 
         raise AssertionError(f"{path}: backup_schedule timer state does not match the request")
 
 
+def check_node_restore_prepare_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done node_restore_prepare carries its run")
+        return
+    assert isinstance(result, dict)
+    if result["cluster"] != document["cluster"]:
+        raise AssertionError(f"{path}: node_restore_prepare result names another cluster")
+    # Test mode is exactly the mode with a profile: the rewrite has values or does not happen.
+    if (result["mode"] == "test") != (result["profile"] is not None):
+        raise AssertionError(f"{path}: node_restore_prepare mode and profile disagree")
+    # The pasted line authorizes this run's key, restricted, and nothing else.
+    paste = str(result["paste"])
+    if f"haproxy-restore-{result['run']}" not in paste or ",restrict " not in paste:
+        raise AssertionError(f"{path}: the pasted line is not this run's restricted key")
+
+
+def check_node_restore_preview_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done node_restore_preview carries its plan")
+        return
+    assert isinstance(result, dict)
+    problems = result["problems"]
+    assert isinstance(problems, list)
+    # done means run may proceed; a plan that stops carries why.
+    if document["outcome"] == "done" and problems:
+        raise AssertionError(f"{path}: a done preview lists problems")
+    if document["outcome"] == "blocked" and not problems:
+        raise AssertionError(f"{path}: a blocked preview with a plan names no problem")
+    plan = result["plan"]
+    assert isinstance(plan, dict)
+    if (plan["mode"] == "test") != (plan["keepalived"] == "mask"):
+        raise AssertionError(f"{path}: keepalived is masked in test mode and only there")
+
+
+def check_node_restore_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done node_restore carries its result")
+        return
+    assert isinstance(result, dict)
+    sessions = result["sessions"]
+    assert isinstance(sessions, dict)
+    if document["outcome"] == "done":
+        # B176: rolled back is a kind of failure, never a success.
+        if result["rolled_back"] or "stage" in result or "finish" not in sessions:
+            raise AssertionError(f"{path}: a done restore reached finish without rolling back")
+        if not result.get("address") or not result.get("hostname"):
+            raise AssertionError(f"{path}: a done restore names the node it made")
+    elif "stage" not in result or result["stage"] not in sessions:
+        raise AssertionError(f"{path}: a failed restore names the session it stopped in")
+
+
 SEMANTIC_CHECKS = {
     "status": check_status_semantics,
     "list": check_list_semantics,
@@ -771,6 +828,9 @@ SEMANTIC_CHECKS = {
     "cert_delete": check_cert_delete_semantics,
     "cert_scep": check_cert_scep_semantics,
     "cert_receiver": check_cert_receiver_semantics,
+    "node_restore_prepare": check_node_restore_prepare_semantics,
+    "node_restore_preview": check_node_restore_preview_semantics,
+    "node_restore": check_node_restore_semantics,
 }
 
 
@@ -828,6 +888,15 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["schedule"]["calendar"] = "*-*-* 00:00:00"
     elif operation == "cert_receiver":
         result["layers"] = [{"layer": "account", "state": "failed", "detail": "userdel: busy"}]
+    elif operation == "node_restore_prepare":
+        result["mode"] = "new_vm"
+    elif operation == "node_restore_preview":
+        result["problems"] = [] if result["problems"] else ["a problem the outcome ignores"]
+    elif operation == "node_restore":
+        if invalid["outcome"] == "done":
+            result["rolled_back"] = True
+        else:
+            result.pop("stage", None)
     else:
         raise AssertionError(f"no semantic mutation defined for {operation}")
 

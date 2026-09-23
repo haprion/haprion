@@ -1,0 +1,17 @@
+[Unit]
+Description=Socket the HAProxy Manager worker uses for node restore jobs
+Documentation=file:///opt/haproxy-mgmt/current
+
+[Socket]
+ListenStream=/run/haproxy-mgmt/node-restore.sock
+SocketUser=root
+SocketGroup=WORKER_USER
+SocketMode=0660
+Accept=yes
+# One restore at a time on the whole manager: two runs writing root's SSH
+# state and a node's network at once is not a thing to allow by accident.
+MaxConnections=1
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

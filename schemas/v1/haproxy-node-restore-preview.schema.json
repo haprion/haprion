@@ -1,0 +1,280 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haproxy-node-restore-preview.schema.json",
+  "title": "HAProxy node restore: preview",
+  "allOf": [
+    {
+      "$ref": "common.schema.json#/$defs/envelope"
+    },
+    {
+      "properties": {
+        "operation": {
+          "const": "node_restore_preview"
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "failed",
+            "blocked"
+          ]
+        },
+        "result": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/result"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "done"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "run_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{7,39}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$"
+    },
+    "profile": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "hostname",
+            "address",
+            "vip"
+          ],
+          "properties": {
+            "hostname": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 63
+            },
+            "address": {
+              "type": "string",
+              "maxLength": 18
+            },
+            "vip": {
+              "type": "string",
+              "maxLength": 18
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "result": {
+      "description": "What the run would write. `blocked` may carry the plan with the problems that stop it, or no plan when it stopped before one (a fingerprint that does not match); `done` has a plan and no problems.",
+      "type": "object",
+      "required": [
+        "run",
+        "digest",
+        "problems",
+        "plan",
+        "target",
+        "archive"
+      ],
+      "properties": {
+        "run": {
+          "$ref": "#/$defs/run_id"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "problems": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 512
+          }
+        },
+        "plan": {
+          "type": "object",
+          "required": [
+            "mode",
+            "source_hostname",
+            "hostname",
+            "address",
+            "files",
+            "network",
+            "equal_directories",
+            "groups",
+            "accounts",
+            "packages",
+            "keepalived",
+            "rewrites"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "new_vm",
+                "test"
+              ]
+            },
+            "keepalived": {
+              "enum": [
+                "start",
+                "mask"
+              ]
+            },
+            "accounts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "uid",
+                  "gid",
+                  "home",
+                  "groups",
+                  "service",
+                  "has_password"
+                ],
+                "properties": {
+                  "has_password": {
+                    "type": "boolean"
+                  }
+                },
+                "not": {
+                  "required": [
+                    "password_hash"
+                  ]
+                }
+              }
+            },
+            "rewrites": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "path",
+                  "field",
+                  "old",
+                  "new"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "field": {
+                    "type": "string"
+                  },
+                  "old": {
+                    "type": "string"
+                  },
+                  "new": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "source_hostname": {
+              "type": "string"
+            },
+            "hostname": {
+              "type": "string"
+            },
+            "address": {
+              "type": "string"
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "network": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "equal_directories": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "packages": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "gid"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "gid": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "target": {
+          "type": "object",
+          "required": [
+            "hostname",
+            "os_release",
+            "interface",
+            "fingerprint"
+          ]
+        },
+        "archive": {
+          "type": "object",
+          "required": [
+            "node",
+            "version",
+            "os_release",
+            "extra_paths"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

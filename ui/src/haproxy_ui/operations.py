@@ -46,6 +46,8 @@ from haproxy_mgmt.cli import (
     deploy,
     managed_network_publish,
     managed_objects_publish,
+    node_restore_ask,
+    node_restore_helper,
     revert,
 )
 from haproxy_mgmt.config import CERTIFICATE_ID, RECEIVER_FORMATS, RECEIVER_ID, RECEIVER_TRANSPORTS
@@ -76,6 +78,7 @@ SUDO_FLAGS = ("-n", "--")
 #
 RECEIVER_CLIENT = (sys.executable, "-m", cert_receiver_ask.__name__)
 BACKUP_CLIENT = (sys.executable, "-m", backup_job_ask.__name__)
+RESTORE_CLIENT = (sys.executable, "-m", node_restore_ask.__name__)
 
 
 class UnknownOperation(Exception):
@@ -118,6 +121,25 @@ def _only(payload: Mapping[str, Any], *allowed: str) -> None:
     unexpected = sorted(set(payload) - set(allowed))
     if unexpected:
         raise BadPayload(f"unexpected parameters: {', '.join(unexpected)}")
+
+
+def _restore(
+    operation: str, cluster: str, request_id: UUID, payload: Mapping[str, Any]
+) -> Prepared:
+    """One of the three restore jobs, checked by the helper's own parameter check.
+
+    The same `validate` the root helper and the command line run, so a payload
+    the web built cannot pass here and be refused there, or the other way round.
+    """
+
+    _only(payload, *node_restore_helper.KEYS[operation])
+    try:
+        request = node_restore_helper.build_request(
+            operation, cluster, str(request_id), dict(payload)
+        )
+    except node_restore_helper.ParameterProblem as exc:
+        raise BadPayload(str(exc)) from exc
+    return Prepared(argv=RESTORE_CLIENT, request=request)
 
 
 def _targets(payload: Mapping[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -733,6 +755,18 @@ def prepare(
                 cluster, str(request_id), schedule=requested, enabled=enabled
             ),
         )
+
+    #
+    # Three branches rather than one test for membership: the test that holds
+    # this module, the queue's constraint and the worker's outcomes together
+    # reads the operations off these lines.
+    #
+    if operation == "node_restore_prepare":
+        return _restore(operation, cluster, request_id, payload)
+    if operation == "node_restore_preview":
+        return _restore(operation, cluster, request_id, payload)
+    if operation == "node_restore":
+        return _restore(operation, cluster, request_id, payload)
 
     if operation == "deploy":
         _only(payload, "allow_vip_unknown")

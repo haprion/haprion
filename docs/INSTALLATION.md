@@ -2030,6 +2030,16 @@ sudo haproxy-node-restore run --run <run> --confirm node-a
 sudo haproxy-node-restore forget --run <run>
 ```
 
+**The same three steps from the interface.** An administrator with management writes gets
+*Restore…* on each archive row of the backup page. The form takes the temporary address and the
+mode (the node itself, or a test with its hostname, address and VIP); the run's own page,
+`/backups/restore/<run>`, then shows the line to paste, takes the fingerprint, shows the plan and
+takes the node's name as confirmation. Each step is one job - `node_restore_prepare`,
+`node_restore_preview`, `node_restore` - run by the worker through the root helper on
+`node-restore.sock`, the same engine as the command. The page is drawn from those jobs alone;
+nothing else is stored. While a job runs it holds the cluster's job slot, so a deploy to that
+cluster waits. `forget` is command-line only.
+
 **What the preview shows and what stops it.** The target's OS, interface and MAC address; the
 host key fingerprint; the name and address the VM will have; every file written and every
 directory made equal to the archive; every account with its IDs and groups; and, in test mode,

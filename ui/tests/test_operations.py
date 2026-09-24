@@ -679,6 +679,9 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
             ("cert_receiver", "haproxy-cert-receiver.schema.json"),
             ("cert_import", "haproxy-cert-import.schema.json"),
             ("cert_request", "haproxy-cert-request.schema.json"),
+            ("node_restore_prepare", "haproxy-node-restore-prepare.schema.json"),
+            ("node_restore_preview", "haproxy-node-restore-preview.schema.json"),
+            ("node_restore", "haproxy-node-restore.schema.json"),
         ):
             with self.subTest(operation=name):
                 document = json.loads((schemas / path).read_text(encoding="utf-8"))

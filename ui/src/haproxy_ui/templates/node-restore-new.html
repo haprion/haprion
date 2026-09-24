@@ -1,0 +1,56 @@
+{% extends "layout.html" %}
+{% block title %}Restore a node — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  The start of a restore (§15.2, B170/B171): which archive, onto which
+  machine, and whether as the node itself or as a test. One job creates the
+  run and its one-time key; the run's own page takes it from there.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Restore {{ node }}</h1><p class="page-lede">Onto an empty VM, from the archive taken {{ archive.taken }}. Nothing is written until the target has been previewed and you have confirmed.</p></div>
+  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+{% if running %}
+<p class="preview-notice"><strong>{{ running }} on {{ cluster }}.</strong> The queue runs one job per cluster at a time; this form can be sent once it has finished.</p>
+{% endif %}
+
+<form method="post" action="/backups/restore/new" class="preview-form restore-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <input type="hidden" name="cluster" value="{{ cluster }}"><input type="hidden" name="node" value="{{ node }}"><input type="hidden" name="archive" value="{{ archive.version }}">
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Target</h3><p>Archive <code>{{ archive.version }}</code> of {{ node }} in {{ cluster }} · {{ archive.size }}</p></div></div></header>
+    <div class="form-grid restore-form-grid">
+      <div class="field">
+        <label class="field-title" for="restore-target">Temporary address</label>
+        <input id="restore-target" name="target" type="text" value="{{ form.target }}" required maxlength="15" autocomplete="off" spellcheck="false" placeholder="192.0.2.120" autofocus>
+        <small>The address the empty VM has now, reachable from this manager on SSH. The node's own address comes from the archive and is set last.</small>
+      </div>
+      <div class="field">
+        <span class="field-title">Restore as</span>
+        <div class="form-checks form-checks-stacked method-choices">
+          <label class="check"><input type="radio" name="mode" value="new_vm"{% if form.mode == 'new_vm' %} checked{% endif %}> <span><strong>The node itself</strong> — its address, name and VIP. Its production address must not answer.</span></label>
+          <label class="check"><input type="radio" name="mode" value="test"{% if form.mode == 'test' %} checked{% endif %}> <span><strong>A test</strong> — address, name and VIP rewritten to the test profile; keepalived stays masked.</span></label>
+        </div>
+      </div>
+      <div class="field">
+        <span class="field-title">Test profile <small>(test restore only)</small></span>
+        <div class="restore-test-fields">
+          <label><span>Host name</span><input name="test_hostname" type="text" value="{{ form.test_hostname }}" maxlength="63" autocomplete="off" spellcheck="false" placeholder="node-test"></label>
+          <label><span>Address</span><input name="test_address" type="text" value="{{ form.test_address }}" maxlength="18" autocomplete="off" spellcheck="false" placeholder="192.0.2.29/24"></label>
+          <label><span>VIP</span><input name="test_vip" type="text" value="{{ form.test_vip }}" maxlength="18" autocomplete="off" spellcheck="false" placeholder="198.51.100.254/32"></label>
+        </div>
+      </div>
+    </div>
+    <div class="editor-actions editor-submit">
+      <p class="table-note">The next page shows one line to paste on the VM's console. It adds a one-time key for this manager, which the restore removes at the end.</p>
+      <div class="form-buttons"><a class="secondary-button" href="/backups">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if running %} disabled{% endif %}>Prepare the restore</button></div>
+    </div>
+  </section>
+</form>
+{% endblock %}

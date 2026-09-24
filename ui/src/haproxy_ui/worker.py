@@ -92,6 +92,14 @@ _REQUIRED_ENVELOPE_FIELDS = frozenset(
 _OPERATION_OUTCOMES = {
     "backup_run": frozenset({"done", "partial", "failed"}),
     "backup_schedule": frozenset({"done", "failed"}),
+    #
+    # A restore that undid itself is `failed` with `rolled_back` in its result
+    # (B176), not a status of its own; `blocked` is a refusal before anything
+    # was written on the target.
+    #
+    "node_restore_prepare": frozenset({"done", "failed", "blocked"}),
+    "node_restore_preview": frozenset({"done", "failed", "blocked"}),
+    "node_restore": frozenset({"done", "failed", "blocked"}),
     "deploy": frozenset({"done", "partial", "failed", "blocked"}),
     "cert_deploy": frozenset({"done", "partial", "failed", "blocked"}),
     "revert": frozenset({"done", "failed", "blocked"}),

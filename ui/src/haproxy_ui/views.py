@@ -68,6 +68,7 @@ from haproxy_ui import (
     metrics,
     ndes_profile_form,
     network,
+    node_restores,
     objects,
     operations,
     proxies,
@@ -3855,6 +3856,336 @@ def build_router(config: Config) -> APIRouter:
                 "production_snapshot": config.production_snapshot,
                 "snapshot_age": snapshot_age(captured_at),
             },
+        )
+
+    # - Node restore (§15.2, B175) -----------------------------------------
+
+    def _backup_cluster(request: Request, cluster: str) -> backups.BackupClusterView | None:
+        clusters, backup_rows, captured_at = read_source(request, config, BACKUP_SOURCE)
+        overview = backups.build_backup_overview(
+            clusters,
+            backup_rows,
+            now=captured_at,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            captured=captured_at is not None,
+        )
+        return next((view for view in overview.clusters if view.cluster == cluster), None)
+
+    def _restore_form_page(
+        request: Request,
+        session: AuthenticatedSession,
+        *,
+        cluster: str,
+        node: str,
+        archive: str,
+        problem: str = "",
+        form: Mapping[str, str] | None = None,
+    ) -> Response:
+        view = _backup_cluster(request, cluster)
+        chosen = next(
+            (
+                item
+                for item in (view.archives if view else ())
+                if item.node == node and item.version == archive
+            ),
+            None,
+        )
+        if chosen is None:
+            return PlainTextResponse("Not found", status_code=404)
+        entered = {
+            "target": "",
+            "mode": "new_vm",
+            "test_hostname": "",
+            "test_address": "",
+            "test_vip": "",
+        }
+        if form:
+            entered.update(form)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        with request.app.state.pool.connection() as connection:
+            running = jobs.in_flight(db.recent_jobs(connection, cluster=cluster))
+        return TEMPLATES.TemplateResponse(
+            request,
+            "node-restore-new.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "cluster": cluster,
+                "node": node,
+                "archive": chosen,
+                "form": entered,
+                "problem": problem,
+                "running": running.get(cluster),
+                "section": "backups",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+            },
+        )
+
+    def _restore_page(
+        request: Request, session: AuthenticatedSession, run: str, *, problem: str = ""
+    ) -> Response:
+        if not node_restores.usable_run(run):
+            return PlainTextResponse("Not found", status_code=404)
+        with request.app.state.pool.connection() as connection:
+            restore = node_restores.run_view(run, db.restore_jobs(connection, run))
+        if restore is None:
+            return PlainTextResponse("Not found", status_code=404)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        return TEMPLATES.TemplateResponse(
+            request,
+            "node-restore.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "restore": restore,
+                "steps": node_restores.step_states(restore),
+                "problem": problem,
+                "editable": config.management_writes and session.role == "admin",
+                "section": "backups",
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+            },
+        )
+
+    def _queue_restore_job(
+        request: Request,
+        session: AuthenticatedSession,
+        *,
+        operation: str,
+        cluster: str,
+        payload: Mapping[str, Any],
+        key: UUID,
+        again: Callable[[str], Response],
+    ) -> Response:
+        """Queue one restore job and go to the run's page, or say why not."""
+
+        try:
+            operations.prepare(
+                operation=operation, cluster=cluster, request_id=uuid4(), payload=payload
+            )
+        except operations.BadPayload as refused:
+            return again(str(refused))
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation=operation,
+                    cluster=cluster,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.ClusterBusy:
+                connection.rollback()
+                return again(
+                    f"A job is already running for {cluster}. Wait for it to finish, then ask again."
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            #
+            # The run, node and archive, never the fingerprint or the pasted
+            # line: the audit log says who restored what, not how it was reached.
+            #
+            db.record_audit_event(
+                connection,
+                actor=session.username,
+                action="queue_job",
+                cluster=cluster,
+                request_id=job.request_id,
+                detail={"operation": operation, "job": job.id, "run": payload["run"]},
+            )
+            connection.commit()
+        #
+        # To the run as the queue stored it, and only when it is still a run
+        # ID: the row the insert returned, not the value this request carried.
+        #
+        stored = job.payload.get("run")
+        if isinstance(stored, str) and node_restores.usable_run(stored):
+            return RedirectResponse(f"/backups/restore/{stored}", status_code=303)
+        return RedirectResponse("/jobs", status_code=303)
+
+    @router.get("/backups/restore/new", response_class=HTMLResponse)
+    def node_restore_form(
+        request: Request, cluster: str = "", node: str = "", archive: str = ""
+    ) -> Response:
+        """Start a restore from one archive row: the target and the mode."""
+
+        gate = _certificate_delete_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        return _restore_form_page(request, gate, cluster=cluster, node=node, archive=archive)
+
+    @router.post("/backups/restore/new", response_class=HTMLResponse)
+    def node_restore_prepare(
+        request: Request,
+        cluster: str = Form(default="", max_length=64),
+        node: str = Form(default="", max_length=253),
+        archive: str = Form(default="", max_length=32),
+        target: str = Form(default="", max_length=64),
+        mode: str = Form(default="", max_length=16),
+        test_hostname: str = Form(default="", max_length=64),
+        test_address: str = Form(default="", max_length=64),
+        test_vip: str = Form(default="", max_length=64),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue `node_restore_prepare` under a new run ID, then show the run."""
+
+        gate = _certificate_delete_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        entered = {
+            "target": target,
+            "mode": mode,
+            "test_hostname": test_hostname,
+            "test_address": test_address,
+            "test_vip": test_vip,
+        }
+
+        def again(problem: str) -> Response:
+            return _restore_form_page(
+                request,
+                gate,
+                cluster=cluster,
+                node=node,
+                archive=archive,
+                problem=problem,
+                form=entered,
+            )
+
+        view = _backup_cluster(request, cluster)
+        try:
+            payload = node_restores.prepare_payload(
+                run=node_restores.new_run_id(),
+                node=node,
+                archive=archive,
+                target=target,
+                mode=mode,
+                test_hostname=test_hostname,
+                test_address=test_address,
+                test_vip=test_vip,
+                archives=((item.node, item.version) for item in (view.archives if view else ())),
+            )
+        except node_restores.RestoreProblem as refused:
+            return again(str(refused))
+        return _queue_restore_job(
+            request,
+            gate,
+            operation="node_restore_prepare",
+            cluster=cluster,
+            payload=payload,
+            key=key,
+            again=again,
+        )
+
+    @router.get("/backups/restore/{run}", response_class=HTMLResponse)
+    def node_restore_page(request: Request, run: str) -> Response:
+        """One restore run, drawn from its jobs."""
+
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        return _restore_page(request, session, run)
+
+    def _restore_step(
+        request: Request, run: str, csrf_token: str, idempotency_key: str
+    ) -> tuple[AuthenticatedSession, node_restores.RestoreRun, UUID] | Response:
+        gate = _certificate_delete_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        if not node_restores.usable_run(run):
+            return PlainTextResponse("Not found", status_code=404)
+        with request.app.state.pool.connection() as connection:
+            restore = node_restores.run_view(run, db.restore_jobs(connection, run))
+        if restore is None:
+            return PlainTextResponse("Not found", status_code=404)
+        return gate, restore, key
+
+    @router.post("/backups/restore/{run}/preview", response_class=HTMLResponse)
+    def node_restore_preview(
+        request: Request,
+        run: str,
+        fingerprint: str = Form(default="", max_length=128),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue `node_restore_preview` with the fingerprint read on the console."""
+
+        step = _restore_step(request, run, csrf_token, idempotency_key)
+        if isinstance(step, Response):
+            return step
+        session, restore, key = step
+
+        def again(problem: str) -> Response:
+            return _restore_page(request, session, run, problem=problem)
+
+        if restore.stage != "fingerprint":
+            return again("This run is not waiting for a fingerprint.")
+        try:
+            payload = node_restores.preview_payload(run, fingerprint)
+        except node_restores.RestoreProblem as refused:
+            return again(str(refused))
+        return _queue_restore_job(
+            request,
+            session,
+            operation="node_restore_preview",
+            cluster=restore.cluster,
+            payload=payload,
+            key=key,
+            again=again,
+        )
+
+    @router.post("/backups/restore/{run}/run", response_class=HTMLResponse)
+    def node_restore_run(
+        request: Request,
+        run: str,
+        confirm: str = Form(default="", max_length=128),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue `node_restore` once the node's name has been typed."""
+
+        step = _restore_step(request, run, csrf_token, idempotency_key)
+        if isinstance(step, Response):
+            return step
+        session, restore, key = step
+
+        def again(problem: str) -> Response:
+            return _restore_page(request, session, run, problem=problem)
+
+        if restore.stage != "confirm":
+            return again("This run has no preview waiting for confirmation.")
+        try:
+            payload = node_restores.run_payload(run, confirm, restore.confirm_name)
+        except node_restores.RestoreProblem as refused:
+            return again(str(refused))
+        return _queue_restore_job(
+            request,
+            session,
+            operation="node_restore",
+            cluster=restore.cluster,
+            payload=payload,
+            key=key,
+            again=again,
         )
 
     @router.get("/history", response_class=HTMLResponse)

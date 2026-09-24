@@ -60,7 +60,18 @@ KEYS = {
 NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
 TEST_KEYS = frozenset({"hostname", "address", "vip"})
 
-__all__ = ["HELPER", "OPERATIONS", "PREPARE", "PREVIEW", "RUN", "build_request", "main", "validate"]
+__all__ = [
+    "HELPER",
+    "KEYS",
+    "OPERATIONS",
+    "PREPARE",
+    "PREVIEW",
+    "RUN",
+    "ParameterProblem",
+    "build_request",
+    "main",
+    "validate",
+]
 
 
 class ParameterProblem(ValueError):

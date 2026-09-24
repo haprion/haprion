@@ -444,6 +444,28 @@ def operation_jobs(connection: Connection[Any], operation: str, *, limit: int = 
         return cursor.fetchall()
 
 
+def restore_jobs(connection: Connection[Any], run: str) -> list[Job]:
+    """The jobs of one node restore run, oldest first.
+
+    A run is nothing but these rows: the three restore operations whose payload
+    names it. Nothing else is stored, so the page cannot disagree with them.
+    """
+
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key, attempts "
+            "  from job "
+            " where operation in ('node_restore_prepare', 'node_restore_preview', "
+            "                     'node_restore') "
+            "   and payload->>'run' = %(run)s "
+            " order by id",
+            {"run": run},
+        )
+        return cursor.fetchall()
+
+
 def job_state(connection: Connection[Any], job_id: int) -> str | None:
     """One job's state, or None when there is no such job."""
 

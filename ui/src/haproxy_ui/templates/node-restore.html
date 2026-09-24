@@ -1,0 +1,106 @@
+{% extends "layout.html" %}
+{% block title %}Restore {{ restore.node }} — HAProxy Manager{% endblock %}
+{#
+  A meta refresh while a job is queued or running, as /jobs does: no script,
+  no state, and a page left open in a tab ends up showing the answer.
+#}
+{% block head_extra %}{% if restore.active %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block content %}
+{% set plan = restore.plan %}{% set facts = restore.target_facts %}
+<section class="page-heading">
+  <div class="heading-title"><h1>Restore {{ restore.node }}</h1><p class="page-lede">{{ restore.cluster }} · archive <code>{{ restore.archive }}</code> · onto {{ restore.target }} · run <code>{{ restore.run }}</code></p></div>
+  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-{{ 'info' if restore.mode == 'test' else 'warning' }}"></span>{{ 'Test restore' if restore.mode == 'test' else 'Restore as the node' }}</span></div>
+</section>
+
+<ol class="restore-steps" aria-label="Restore steps">
+  {% for key, name in (('prepare', 'Prepare'), ('preview', 'Preview'), ('run', 'Restore')) %}
+  <li class="restore-step restore-step-{{ steps[key] }}"><span class="status-dot status-{{ {'done': 'healthy', 'current': 'info', 'failed': 'critical', 'waiting': 'unknown'}[steps[key]] }}" aria-hidden="true"></span>{{ name }}</li>
+  {% endfor %}
+</ol>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+{% if restore.stage == 'working' %}
+<p class="preview-notice"><span class="badge-spinner" aria-hidden="true"></span><strong>{{ restore.working }}.</strong> This page refreshes by itself.</p>
+{% elif restore.stage == 'prepare_failed' %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>The restore could not be prepared: {{ restore.error }}</strong></p>
+<p class="table-note"><a href="/backups">Back to the backups</a> to start again.</p>
+{% elif restore.stage == 'done' %}
+<p class="preview-notice"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>Restored.</strong> {{ restore.result.hostname or restore.node }} answers on {{ restore.result.address or '—' }}; the one-time key has been removed.</p>
+{% elif restore.stage == 'failed' %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>The restore stopped{% if restore.failed_stage %} in {{ restore.failed_stage }}{% endif %}: {{ restore.error }}</strong></p>
+<p class="table-note">{% if restore.rolled_back %}The network was rolled back: the VM is on its temporary address again.{% else %}The network was not rolled back. Check the VM's console before anything else.{% endif %}</p>
+{% elif restore.error and not restore.problems %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ restore.error }}</strong></p>
+{% endif %}
+
+{% if restore.warnings %}
+<section class="cluster-card"><header class="cluster-header"><div class="section-title"><h3>Warnings</h3></div></header>
+  <ul class="restore-list">{% for warning in restore.warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+{% if restore.stage == 'fingerprint' and editable %}
+<section class="cluster-card">
+  <header class="cluster-header"><div class="section-title"><h3>1 · Paste on the VM's console</h3><p>Adds this manager's one-time key for root, shows the line that landed and prints the VM's host key fingerprint.</p></div></header>
+  <pre class="receiver-command restore-paste"><code>{{ restore.paste }}</code></pre>
+  <form method="post" action="/backups/restore/{{ restore.run }}/preview" class="preview-form restore-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+    <div class="form-grid restore-form-grid">
+      <div class="field">
+        <label class="field-title" for="restore-fingerprint">2 · Fingerprint the VM printed</label>
+        <input id="restore-fingerprint" name="fingerprint" type="text" required maxlength="80" autocomplete="off" spellcheck="false" placeholder="SHA256:…" autofocus>
+        <small>Read on the console, not over the network: it is what tells this manager the VM it reaches is the one you are looking at.</small>
+      </div>
+    </div>
+    <div class="editor-actions editor-submit"><p class="table-note">The preview connects and reads the VM; it writes nothing.</p><div class="form-buttons"><button type="submit" class="secondary-button deploy-button">Preview the restore</button></div></div>
+  </form>
+</section>
+{% endif %}
+
+{% if restore.problems %}
+<section class="cluster-card"><header class="cluster-header"><div class="section-title"><h3>What stops this restore</h3></div></header>
+  <ul class="restore-list">{% for item in restore.problems %}<li>{{ item }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+{% if plan and restore.stage in ('fingerprint', 'confirm') %}
+<section class="cluster-card">
+  <header class="cluster-header"><div class="section-title"><h3>The plan</h3><p>What the restore writes on {{ restore.target }}{% if facts %} ({{ facts.hostname }}, {{ facts.os_release.ID }} {{ facts.os_release.VERSION_ID }}){% endif %}.</p></div></header>
+  <dl class="restore-plan">
+    <div><dt>Becomes</dt><dd>{{ plan.hostname }} on {{ plan.address }}{% if plan.hostname != plan.source_hostname %} · from the archive of {{ plan.source_hostname }}{% endif %}</dd></div>
+    {% if facts %}<div><dt>Interface</dt><dd>{{ facts.interface.name }} · {{ facts.interface.mac }} · host key {{ facts.fingerprint }}</dd></div>{% endif %}
+    <div><dt>keepalived</dt><dd>{{ 'Started as BACKUP' if plan.keepalived == 'start' else 'Masked — never started' }}</dd></div>
+    <div><dt>Packages</dt><dd>{{ plan.packages | join(', ') }}</dd></div>
+    <div><dt>Accounts</dt><dd>{% for account in plan.accounts %}{{ account.name }} ({{ account.uid }}){% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
+    <div><dt>Files</dt><dd>{{ plan.files | length }} files{% if plan.equal_directories %} · made equal to the archive: {{ plan.equal_directories | join(', ') }}{% endif %}</dd></div>
+    <div><dt>Network, last</dt><dd>{{ plan.network | join(', ') }} · rolled back by itself if this manager cannot reach the node afterwards</dd></div>
+  </dl>
+  {% if plan.rewrites %}
+  <div class="table-scroll"><table class="node-table restore-rewrite-table"><thead><tr><th>Rewritten</th><th>Field</th><th>From</th><th>To</th></tr></thead><tbody>
+    {% for rewrite in plan.rewrites %}<tr><td data-label="Rewritten"><code>{{ rewrite.path }}</code></td><td data-label="Field">{{ rewrite.field }}</td><td data-label="From">{{ rewrite.old }}</td><td data-label="To">{{ rewrite.new }}</td></tr>{% endfor %}
+  </tbody></table></div>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if restore.stage == 'confirm' and editable %}
+<form method="post" action="/backups/restore/{{ restore.run }}/run" class="preview-form restore-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="section-title"><h3>Restore</h3><p>{% if restore.mode == 'test' %}A test: the node's production address and VIP are never used.{% else %}The VM becomes {{ restore.confirm_name }}, on its production address. Its neighbour keeps the VIP.{% endif %}</p></div></header>
+    <div class="form-grid restore-form-grid">
+      <div class="field">
+        <label class="field-title" for="restore-confirm">Type <code>{{ restore.confirm_name }}</code> to confirm</label>
+        <input id="restore-confirm" name="confirm" type="text" required maxlength="63" autocomplete="off" spellcheck="false" autofocus>
+      </div>
+    </div>
+    <div class="editor-actions editor-submit"><p class="table-note">About a minute. The cluster's other jobs wait until it is done.</p><div class="form-buttons"><a class="secondary-button" href="/backups">Cancel</a><button type="submit" class="secondary-button deploy-button">Restore {{ restore.confirm_name }}</button></div></div>
+  </section>
+</form>
+{% endif %}
+
+<p class="table-note">Jobs in this run: {% for job in restore.jobs %}<a href="/jobs#job-{{ job.id }}">#{{ job.id }}</a> {{ job.state }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+{% endblock %}

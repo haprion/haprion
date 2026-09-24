@@ -135,6 +135,9 @@ def _operation(value: str) -> str:
         "network_publish": "Publish network description",
         "backup_run": "Back up cluster nodes",
         "backup_schedule": "Change backup schedule",
+        "node_restore_prepare": "Prepare node restore",
+        "node_restore_preview": "Preview node restore",
+        "node_restore": "Restore node",
     }.get(value, value.replace("_", " ").capitalize())
 
 
@@ -711,6 +714,9 @@ NO_CLUSTER = "—"
 RUNNING_LABELS = {
     "backup_run": "Backing up nodes",
     "backup_schedule": "Changing backup schedule",
+    "node_restore_prepare": "Preparing restore",
+    "node_restore_preview": "Previewing restore",
+    "node_restore": "Restoring node",
     "deploy": "Deploying",
     "cert_deploy": "Deploying certificates",
     "revert": "Reverting",
@@ -748,6 +754,9 @@ FOLLOW_UP_LABELS = {
 FAILURE_LABELS = {
     "backup_run": "Backup failed",
     "backup_schedule": "Schedule change failed",
+    "node_restore_prepare": "Restore preparation failed",
+    "node_restore_preview": "Restore preview failed",
+    "node_restore": "Restore failed",
     "deploy": "Deploy failed",
     "cert_deploy": "Certificate deploy failed",
     "revert": "Revert failed",

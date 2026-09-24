@@ -1,0 +1,461 @@
+"""Restoring a node from the backup page (§15.2, B175).
+
+The engine and its helper are tested with the engine. This side owns the form's
+refusals, the run page read from the run's jobs - against the contract's own
+fixtures, so a page and a helper cannot drift apart - and the routes' gates.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import unittest
+from pathlib import Path
+from typing import Any
+from unittest import mock
+from uuid import uuid4
+
+from haproxy_ui import auth, db, node_restores
+from tests.test_backups import reading
+from tests.test_certificate_delete import DeleteRouteTestCase
+from tests.test_queue_route import queued
+
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
+RUN = "r260101-0000aaaa"
+VERSION = str(reading().result["nodes"][0]["backups"][0]["version"])
+FINGERPRINT = "SHA256:" + "A" * 43
+TEST = {"hostname": "node-test", "address": "192.0.2.29/24", "vip": "198.51.100.254/32"}
+
+
+def fixture(helper: str, name: str) -> dict[str, Any]:
+    document: dict[str, Any] = json.loads((FIXTURES / helper / "valid" / name).read_text())
+    return document
+
+
+def job(
+    operation: str,
+    state: str,
+    *,
+    result: dict[str, Any] | None = None,
+    number: int = 1,
+    **payload: Any,
+) -> db.Job:
+    asked = {
+        "node_restore_prepare": {
+            "run": RUN,
+            "node": "node-a",
+            "archive": VERSION,
+            "target": "192.0.2.120",
+            "test": TEST,
+        },
+        "node_restore_preview": {"run": RUN, "fingerprint": FINGERPRINT},
+        "node_restore": {"run": RUN, "confirm": "node-test"},
+    }[operation]
+    return queued(
+        id=number,
+        operation=operation,
+        cluster="alpha",
+        payload={**asked, **payload},
+        state=state,
+        outcome=None if state in {"pending", "running"} else state,
+        result=result,
+    )
+
+
+PREPARED = job(
+    "node_restore_prepare",
+    "done",
+    result=fixture("haproxy-node-restore-prepare", "done.json"),
+    number=1,
+)
+PREVIEWED = job(
+    "node_restore_preview",
+    "done",
+    result=fixture("haproxy-node-restore-preview", "done.json"),
+    number=2,
+)
+BLOCKED_PREVIEW = job(
+    "node_restore_preview",
+    "blocked",
+    result=fixture("haproxy-node-restore-preview", "blocked.json"),
+    number=2,
+)
+
+
+class TheForm(unittest.TestCase):
+    def payload(self, **changes: str) -> dict[str, Any]:
+        fields = {
+            "run": RUN,
+            "node": "node-a",
+            "archive": VERSION,
+            "target": " 192.0.2.120 ",
+            "mode": "new_vm",
+            "test_hostname": "",
+            "test_address": "",
+            "test_vip": "",
+            **changes,
+        }
+        return node_restores.prepare_payload(
+            **fields, archives=[("node-a", VERSION), ("node-b", VERSION)]
+        )
+
+    def test_a_new_vm_carries_no_test_profile(self) -> None:
+        self.assertEqual(
+            self.payload(),
+            {
+                "run": RUN,
+                "node": "node-a",
+                "archive": VERSION,
+                "target": "192.0.2.120",
+                "test": None,
+            },
+        )
+
+    def test_a_test_restore_carries_the_three_fields(self) -> None:
+        payload = self.payload(
+            mode="test",
+            test_hostname="node-test",
+            test_address="192.0.2.29/24",
+            test_vip="198.51.100.254/32",
+        )
+        self.assertEqual(payload["test"], TEST)
+
+    def test_what_is_refused_before_a_job_is_queued(self) -> None:
+        for changes, words in (
+            ({"archive": "2026-01-01_00-00-00"}, "not in this cluster's backup listing"),
+            ({"node": "node-c"}, "not in this cluster's backup listing"),
+            ({"mode": "overwrite"}, "Choose a new VM or a test restore"),
+            ({"target": "192.0.2.300"}, "The target is an IPv4 address"),
+            (
+                {"mode": "test", "test_hostname": "node-test", "test_address": "192.0.2.29"},
+                "written address/prefix",
+            ),
+        ):
+            with (
+                self.subTest(changes=changes),
+                self.assertRaisesRegex(node_restores.RestoreProblem, words),
+            ):
+                self.payload(**changes)
+
+    def test_the_confirmation_is_the_name_in_the_plan(self) -> None:
+        with self.assertRaisesRegex(node_restores.RestoreProblem, "Type node-test"):
+            node_restores.run_payload(RUN, "node-a", "node-test")
+        self.assertEqual(
+            node_restores.run_payload(RUN, " node-test ", "node-test"),
+            {"run": RUN, "confirm": "node-test"},
+        )
+
+    def test_a_fingerprint_is_held_to_the_helper_s_pattern(self) -> None:
+        with self.assertRaisesRegex(node_restores.RestoreProblem, "SHA256: and 43"):
+            node_restores.preview_payload(RUN, "SHA256:short")
+        self.assertEqual(
+            node_restores.preview_payload(RUN, FINGERPRINT)["fingerprint"], FINGERPRINT
+        )
+
+    def test_a_run_id_in_a_url_is_held_to_the_run_directory_s_pattern(self) -> None:
+        self.assertTrue(node_restores.usable_run(RUN))
+        self.assertTrue(node_restores.usable_run(node_restores.new_run_id()))
+        for bad in ("new", "../../etc", "R260101-0000AAAA"):
+            self.assertFalse(node_restores.usable_run(bad))
+
+
+class TheRunPage(unittest.TestCase):
+    def view(self, *jobs: db.Job) -> node_restores.RestoreRun:
+        restore = node_restores.run_view(RUN, jobs)
+        if restore is None:
+            self.fail("the run has no view")
+        return restore
+
+    def test_a_run_with_no_prepare_job_does_not_exist(self) -> None:
+        self.assertIsNone(node_restores.run_view(RUN, []))
+        self.assertIsNone(node_restores.run_view(RUN, [PREVIEWED]))
+        self.assertIsNone(node_restores.run_view("r260101-0000bbbb", [PREPARED]))
+
+    def test_a_queued_job_is_working_and_names_its_step(self) -> None:
+        restore = self.view(job("node_restore_prepare", "pending"))
+        self.assertEqual(restore.stage, "working")
+        self.assertTrue(restore.active)
+        self.assertEqual(restore.working, "Preparing restore")
+        self.assertEqual(
+            node_restores.step_states(restore),
+            {"prepare": "current", "preview": "waiting", "run": "waiting"},
+        )
+
+    def test_prepared_asks_for_the_fingerprint_with_the_line_to_paste(self) -> None:
+        restore = self.view(PREPARED)
+        self.assertEqual(restore.stage, "fingerprint")
+        self.assertIn("haproxy-restore-r260101-0000aaaa", restore.paste)
+        self.assertEqual(restore.mode, "test")
+        self.assertEqual(restore.node, "node-a")
+
+    def test_a_failed_prepare_says_the_helper_s_words(self) -> None:
+        restore = self.view(
+            job(
+                "node_restore_prepare",
+                "blocked",
+                result={
+                    **fixture("haproxy-node-restore", "refused.json"),
+                    "operation": "node_restore_prepare",
+                },
+            )
+        )
+        self.assertEqual(restore.stage, "prepare_failed")
+        self.assertIn("changed after the preview", restore.error)
+
+    def test_a_clean_preview_asks_for_the_name_in_its_plan(self) -> None:
+        restore = self.view(PREPARED, PREVIEWED)
+        self.assertEqual(restore.stage, "confirm")
+        self.assertEqual(restore.confirm_name, "node-test")
+        self.assertEqual((restore.plan or {}).get("keepalived"), "mask")
+        self.assertEqual(
+            node_restores.step_states(restore),
+            {"prepare": "done", "preview": "done", "run": "current"},
+        )
+
+    def test_a_blocked_preview_shows_its_plan_and_problems_and_asks_again(self) -> None:
+        restore = self.view(PREPARED, BLOCKED_PREVIEW)
+        self.assertEqual(restore.stage, "fingerprint")
+        self.assertTrue(restore.problems)
+        self.assertIsNotNone(restore.plan)
+        self.assertTrue(restore.error)
+
+    def test_a_rolled_back_run_is_failed_and_says_so(self) -> None:
+        restore = self.view(
+            PREPARED,
+            PREVIEWED,
+            job(
+                "node_restore",
+                "failed",
+                result=fixture("haproxy-node-restore", "rolled-back.json"),
+                number=3,
+            ),
+        )
+        self.assertEqual(restore.stage, "failed")
+        self.assertTrue(restore.rolled_back)
+        self.assertEqual(restore.failed_stage, "network")
+        self.assertIn("never answered", restore.error)
+
+    def test_a_refused_run_goes_back_to_the_preview(self) -> None:
+        restore = self.view(
+            PREPARED,
+            PREVIEWED,
+            job(
+                "node_restore",
+                "blocked",
+                result=fixture("haproxy-node-restore", "refused.json"),
+                number=3,
+            ),
+        )
+        self.assertEqual(restore.stage, "fingerprint")
+        self.assertIn("preview again", restore.error)
+
+    def test_a_done_run_carries_its_address_and_warnings(self) -> None:
+        done = fixture("haproxy-node-restore", "done.json")
+        done["result"]["sessions"]["finish"]["warnings"] = ["prune timer state unknown"]
+        restore = self.view(PREPARED, PREVIEWED, job("node_restore", "done", result=done, number=3))
+        self.assertEqual(restore.stage, "done")
+        self.assertEqual((restore.result or {}).get("address"), "192.0.2.29")
+        self.assertEqual(restore.warnings, ("prune timer state unknown",))
+
+
+class RestoreRouteTestCase(DeleteRouteTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.runs: list[db.Job] = []
+
+        def queue(_c: object, **fields: Any) -> db.Job:
+            # As the database does: the row comes back with what was stored.
+            self.queued.append(fields)
+            return queued(
+                operation=fields["operation"], cluster=fields["cluster"], payload=fields["payload"]
+            )
+
+        for patch in (
+            mock.patch("haproxy_ui.db.queue_job", side_effect=queue),
+            mock.patch("haproxy_ui.db.cluster_backups", return_value=[reading()]),
+            mock.patch("haproxy_ui.db.restore_jobs", side_effect=lambda _c, _run: list(self.runs)),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def post(self, client: Any, path: str, **fields: str) -> Any:
+        data = {
+            "idempotency_key": str(uuid4()),
+            auth.CSRF_FIELD: auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
+            **fields,
+        }
+        return client.post(path, data=data, follow_redirects=False)
+
+    def start(self, client: Any, **fields: str) -> Any:
+        return self.post(
+            client,
+            "/backups/restore/new",
+            **{
+                "cluster": "alpha",
+                "node": "node-a",
+                "archive": VERSION,
+                "target": "192.0.2.120",
+                "mode": "new_vm",
+                **fields,
+            },
+        )
+
+
+class TheBackupPageOffersIt(RestoreRouteTestCase):
+    def test_an_admin_gets_a_restore_link_per_archive_row(self) -> None:
+        page = self.writing_client().get("/backups").text
+        self.assertIn(
+            f'href="/backups/restore/new?cluster=alpha&amp;node=node-a&amp;archive={VERSION}"',
+            page,
+        )
+        self.assertIn("archive-table-restore", page)
+
+    def test_a_reader_gets_none(self) -> None:
+        page = self.writing_client(role="reader").get("/backups").text
+        self.assertNotIn("/backups/restore/new", page)
+
+
+class StartingARun(RestoreRouteTestCase):
+    def test_the_form_names_the_archive_and_its_node(self) -> None:
+        page = self.writing_client().get(
+            f"/backups/restore/new?cluster=alpha&node=node-a&archive={VERSION}"
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("<h1>Restore node-a</h1>", page.text)
+        self.assertIn('name="mode" value="new_vm" checked', page.text)
+
+    def test_the_gates(self) -> None:
+        path = f"/backups/restore/new?cluster=alpha&node=node-a&archive={VERSION}"
+        self.assertEqual(self.writing_client(role="reader").get(path).status_code, 403)
+        self.assertEqual(self.writing_client(writes=False).get(path).status_code, 404)
+        client = self.writing_client()
+        self.assertEqual(client.get(path.replace(VERSION, "2026-01-01_00-00-00")).status_code, 404)
+        self.assertEqual(self.start(client, **{auth.CSRF_FIELD: "bad"}).status_code, 403)
+        self.assertEqual(self.queued, [])
+
+    def test_it_queues_prepare_under_a_new_run_and_goes_to_the_run(self) -> None:
+        response = self.start(self.writing_client())
+
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(len(self.queued), 1)
+        queued_job = self.queued[0]
+        self.assertEqual(queued_job["operation"], "node_restore_prepare")
+        self.assertEqual(queued_job["cluster"], "alpha")
+        run = queued_job["payload"]["run"]
+        self.assertTrue(node_restores.usable_run(run))
+        self.assertEqual(response.headers["location"], f"/backups/restore/{run}")
+        self.assertEqual(
+            queued_job["payload"],
+            {
+                "run": run,
+                "node": "node-a",
+                "archive": VERSION,
+                "target": "192.0.2.120",
+                "test": None,
+            },
+        )
+        self.assertEqual(self.audit[-1], "queue_job")
+
+    def test_a_refused_form_is_drawn_again_with_what_was_typed(self) -> None:
+        response = self.start(self.writing_client(), target="lb-01.example.net")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("The target is an IPv4 address", response.text)
+        self.assertIn('value="lb-01.example.net"', response.text)
+        self.assertEqual(self.queued, [])
+
+    def test_a_busy_cluster_is_said_on_the_form(self) -> None:
+        with mock.patch("haproxy_ui.db.queue_job", side_effect=db.ClusterBusy()):
+            response = self.start(self.writing_client())
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("A job is already running for alpha", response.text)
+
+
+class FollowingARun(RestoreRouteTestCase):
+    def test_an_unknown_or_malformed_run_is_not_found(self) -> None:
+        client = self.writing_client()
+        self.assertEqual(client.get(f"/backups/restore/{RUN}").status_code, 404)
+        self.assertEqual(client.get("/backups/restore/NOT-A-RUN").status_code, 404)
+
+    def test_a_working_run_refreshes_itself(self) -> None:
+        self.runs = [job("node_restore_prepare", "running")]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn('<meta http-equiv="refresh" content="5">', page)
+        self.assertIn("Preparing restore.", page)
+
+    def test_a_prepared_run_shows_the_line_and_asks_for_the_fingerprint(self) -> None:
+        self.runs = [PREPARED]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn("haproxy-restore-r260101-0000aaaa", page)
+        self.assertIn(f'action="/backups/restore/{RUN}/preview"', page)
+        self.assertNotIn("http-equiv", page)
+
+    def test_a_reader_sees_the_run_but_no_forms(self) -> None:
+        self.runs = [PREPARED]
+        page = self.writing_client(role="reader").get(f"/backups/restore/{RUN}").text
+        self.assertIn("<h1>Restore node-a</h1>", page)
+        self.assertNotIn(
+            "<form", re.sub(r'<form method="post" action="/logout".*?</form>', "", page, flags=re.S)
+        )
+
+    def test_the_fingerprint_queues_the_preview(self) -> None:
+        self.runs = [PREPARED]
+        response = self.post(
+            self.writing_client(), f"/backups/restore/{RUN}/preview", fingerprint=FINGERPRINT
+        )
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(self.queued[0]["operation"], "node_restore_preview")
+        self.assertEqual(self.queued[0]["payload"], {"run": RUN, "fingerprint": FINGERPRINT})
+
+    def test_a_clean_preview_shows_the_plan_and_the_confirmation(self) -> None:
+        self.runs = [PREPARED, PREVIEWED]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn("Masked — never started", page)
+        self.assertIn("Type <code>node-test</code> to confirm", page)
+        self.assertIn(f'action="/backups/restore/{RUN}/run"', page)
+
+    def test_a_blocked_preview_says_each_problem_once_and_asks_again(self) -> None:
+        self.runs = [PREPARED, BLOCKED_PREVIEW]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        (problem,) = BLOCKED_PREVIEW.result["result"]["problems"][:1]
+        self.assertEqual(page.count(problem), 1)
+        self.assertIn("What stops this restore", page)
+        self.assertIn(f'action="/backups/restore/{RUN}/preview"', page)
+        self.assertNotIn(f'action="/backups/restore/{RUN}/run"', page)
+
+    def test_the_wrong_name_is_refused_and_the_right_one_queues_the_run(self) -> None:
+        self.runs = [PREPARED, PREVIEWED]
+        client = self.writing_client()
+        refused = self.post(client, f"/backups/restore/{RUN}/run", confirm="node-a")
+        self.assertEqual(refused.status_code, 200)
+        self.assertIn("Type node-test to restore this node.", refused.text)
+        self.assertEqual(self.queued, [])
+
+        response = self.post(client, f"/backups/restore/{RUN}/run", confirm="node-test")
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(self.queued[0]["operation"], "node_restore")
+        self.assertEqual(self.queued[0]["payload"], {"run": RUN, "confirm": "node-test"})
+
+    def test_a_step_out_of_order_is_refused(self) -> None:
+        self.runs = [PREPARED]
+        response = self.post(
+            self.writing_client(), f"/backups/restore/{RUN}/run", confirm="node-test"
+        )
+        self.assertIn("no preview waiting for confirmation", response.text)
+        self.assertEqual(self.queued, [])
+
+    def test_the_step_routes_have_the_form_s_gates(self) -> None:
+        self.runs = [PREPARED]
+        path = f"/backups/restore/{RUN}/preview"
+        self.assertEqual(
+            self.post(
+                self.writing_client(role="reader"), path, fingerprint=FINGERPRINT
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.post(
+                self.writing_client(), path, fingerprint=FINGERPRINT, **{auth.CSRF_FIELD: "bad"}
+            ).status_code,
+            403,
+        )
+        self.assertEqual(self.queued, [])

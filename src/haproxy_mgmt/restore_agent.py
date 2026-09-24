@@ -53,6 +53,15 @@ NETPLAN = "/etc/netplan"
 ROOT_KEYS = "/root/.ssh/authorized_keys"
 POLICY_RC = "/usr/sbin/policy-rc.d"
 TRAFFIC_LOG_ROOT = "/var/log/haproxy-manager"
+#
+# The traffic log's prune timer. Its unit files exist exactly while the timer
+# is enabled: `haproxy-traffic-log-enable` installs them and runs `enable
+# --now`, and `--disable` runs `disable --now` and removes them. So a restored
+# timer file is the archive saying the timer was on, and it is turned on again;
+# before 2026-09-24 the files came back and the timer stayed off, and the
+# node's log directory would have grown without end.
+#
+PRUNE_TIMER = "haproxy-traffic-log-prune.timer"
 HAPROXY = "/etc/haproxy"
 EMPTY_RELEASE = "00000000-000000"
 BOOTSTRAP_SOCKET = "/run/haproxy-restore-bootstrap.sock"
@@ -580,7 +589,15 @@ def _services(host: Host, header: dict[str, Any], report: Report) -> None:
     else:
         host.run(["systemctl", "enable", "keepalived"])
     host.run(["systemctl", "enable", "haproxy"])
-    report.step("services", keepalived=header["keepalived"], haproxy="enabled")
+    prune = host.path(f"/etc/systemd/system/{PRUNE_TIMER}").exists()
+    if prune:
+        host.run(["systemctl", "enable", "--now", PRUNE_TIMER])
+    report.step(
+        "services",
+        keepalived=header["keepalived"],
+        haproxy="enabled",
+        prune_timer="enabled" if prune else "not in the archive",
+    )
 
     host.run(["hostnamectl", "set-hostname", header["hostname"]])
     report.step("hostname", hostname=header["hostname"])

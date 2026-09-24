@@ -328,6 +328,26 @@ class Apply(AgentTest):
         self.assertIn(["systemctl", "mask", "keepalived"], self.host.commands)
         self.assertNotIn(["systemctl", "enable", "keepalived"], self.host.commands)
 
+    def test_the_prune_timer_comes_back_on_when_the_archive_has_it(self) -> None:
+        self.apply()
+        self.assertNotIn(
+            ["systemctl", "enable", "--now", "haproxy-traffic-log-prune.timer"], self.host.commands
+        )
+        self.setUp()
+        timer = (
+            "/etc/systemd/system/haproxy-traffic-log-prune.timer",
+            "file",
+            0o644,
+            0,
+            0,
+            "[Timer]\n",
+        )
+        result = self.serve(APPLY_HEADER, payload([*APPLY_FILES, timer]))
+        self.assertTrue(result["ok"], result)
+        self.assertIn(
+            ["systemctl", "enable", "--now", "haproxy-traffic-log-prune.timer"], self.host.commands
+        )
+
     def test_sysctl_hostname_and_sshd(self) -> None:
         self.apply()
         self.assertIn(["sysctl", "--system"], self.host.commands)

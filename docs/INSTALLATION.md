@@ -2062,8 +2062,9 @@ written.
    export copied get the archive's ownership and mode; a directory it created only to hold one is
    made if missing and otherwise left alone. A directory the export carries whole is made equal to
    the archive, and what the VM had there is moved to `/var/lib/haproxy-restore/<run>/quarantine`,
-   never deleted. Then the HAProxy release layout, the traffic-log directory, the hostname, and
-   sshd is reloaded.
+   never deleted. Then the HAProxy release layout, the traffic-log directory, the traffic log's
+   prune timer turned on if the archive carries it (its unit files exist only while it is enabled),
+   the hostname, and sshd is reloaded.
 2. Still there: the archive's Netplan, bound to the VM's MAC address, applied three seconds after
    the session ends - under a timer that puts the VM's own Netplan back after 180 seconds.
 3. On the node's own address, with the archive's host key: the timer is cancelled, HAProxy starts

@@ -41,6 +41,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -98,6 +99,15 @@ frontend restore-bootstrap
 """
 HOSTNAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 APT_DIRECTORIES = ("/etc/apt/sources.list.d", "/etc/apt/preferences.d", "/etc/apt/keyrings")
+#
+# `apt-get update` against the distribution's own mirrors: three tries, and
+# APT's own retries inside each. A mirror caught mid-sync answers with a hash
+# mismatch for a while and then does not (seen on security.ubuntu.com
+# 2026-09-24, for an AppStream index no package install reads).
+#
+APT_UPDATE_TRIES = 3
+APT_UPDATE_PAUSE = 20.0
+FETCH_FAILED = re.compile(r"^(?:Err:\d+|E: Failed to fetch)\s+(\S+)", re.MULTILINE)
 RUN_ID = re.compile(r"^[a-z0-9][a-z0-9-]{7,39}$")
 NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}\$?$")
 CERTIFICATE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
@@ -537,7 +547,7 @@ def _packages(host: Host, header: dict[str, Any], items: list[Item], report: Rep
     policy.write_text("#!/bin/sh\nexit 101\n", encoding="utf-8")
     policy.chmod(0o755)
     try:
-        host.run(["apt-get", "update"])
+        _update(host, _required_uris(apt), report)
         host.run(
             [
                 "apt-get",
@@ -558,6 +568,54 @@ def _packages(host: Host, header: dict[str, Any], items: list[Item], report: Rep
     report.step(
         "packages",
         installed=dict(line.split("\t", 1) for line in versions.splitlines() if "\t" in line),
+    )
+
+
+def _required_uris(apt: list[Item]) -> tuple[str, ...]:
+    """The URIs of the deb822 sources this restore placed: the HAProxy repository."""
+
+    uris: list[str] = []
+    for item in apt:
+        if item.kind != "file" or not item.path.endswith(".sources"):
+            continue
+        for line in item.data.decode("utf-8", "replace").splitlines():
+            if line.startswith("URIs:"):
+                uris.extend(uri.rstrip("/") for uri in line.split()[1:])
+    return tuple(uris)
+
+
+def _update(
+    host: Host,
+    required: tuple[str, ...],
+    report: Report,
+    *,
+    tries: int = APT_UPDATE_TRIES,
+    pause: float = APT_UPDATE_PAUSE,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """`apt-get update`, tried again, and let through when only other indexes failed.
+
+    The HAProxy repository's index must arrive: without it APT installs the
+    distribution's own, older HAProxy and says nothing. An index of the
+    distribution's that still fails after the tries is a warning - the install
+    that follows fails by itself if a package it needs really cannot be had.
+    """
+
+    argv = ["apt-get", "-o", "Acquire::Retries=3", "update"]
+    for attempt in range(1, tries + 1):
+        completed = host.run(argv, check=False)
+        if completed.returncode == 0:
+            return
+        if attempt < tries:
+            sleep(pause)
+    output = f"{completed.stdout}\n{completed.stderr}"
+    failed = sorted(set(FETCH_FAILED.findall(output)))
+    detail = (completed.stderr or completed.stdout).strip().splitlines()[-5:]
+    if not failed or any(url.startswith(required) for url in failed) or not required:
+        raise Failed(f"apt-get update exited {completed.returncode}: {' / '.join(detail)}")
+    report.warnings.append(
+        f"apt-get update could not fetch {len(failed)} index file(s) outside the HAProxy "
+        f"repository after {tries} tries; installing from what it has: {', '.join(failed[:3])}"
     )
 
 

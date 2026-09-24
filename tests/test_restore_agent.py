@@ -319,7 +319,7 @@ class Apply(AgentTest):
         original = self.host.run
 
         def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            if argv[:2] == ["apt-get", "update"]:
+            if argv[0] == "apt-get" and argv[-1] == "update":
                 order.append(self.host.path("/etc/apt/sources.list.d/haproxy.sources").read_text())
             return original(argv, **kwargs)
 
@@ -637,3 +637,73 @@ class Protocol(AgentTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AptUpdate(unittest.TestCase):
+    """A distribution mirror mid-sync does not stop a restore; the HAProxy repository does."""
+
+    SOURCE = "https://ppa.launchpadcontent.net/example/haproxy-3.4/ubuntu"
+
+    def attempt(self, *answers: tuple[int, str]) -> tuple[list[str], list[float]]:
+        replies = iter(answers)
+        calls: list[list[str]] = []
+
+        class Host:
+            def run(self, argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+                calls.append(argv)
+                code, err = next(replies)
+                return subprocess.CompletedProcess(argv, code, "", err)
+
+        report = restore_agent.Report()
+        slept: list[float] = []
+        restore_agent._update(
+            Host(),  # type: ignore[arg-type]
+            (self.SOURCE,),
+            report,
+            sleep=slept.append,
+        )
+        self.assertTrue(all(argv[-1] == "update" for argv in calls))
+        return report.warnings, slept
+
+    MIRROR = (
+        "E: Failed to fetch http://security.ubuntu.example/ubuntu/dists/x-security/universe/"
+        "dep11/Components-amd64.yml.xz  Hash Sum mismatch\n"
+        "E: Some index files failed to download."
+    )
+
+    def test_a_passing_try_after_a_failing_one_is_enough(self) -> None:
+        warnings, slept = self.attempt((100, self.MIRROR), (0, ""))
+        self.assertEqual((warnings, slept), ([], [restore_agent.APT_UPDATE_PAUSE]))
+
+    def test_another_mirror_failing_every_try_is_a_warning(self) -> None:
+        warnings, slept = self.attempt(*[(100, self.MIRROR)] * 3)
+        self.assertEqual(len(slept), 2)
+        self.assertIn("outside the HAProxy repository", warnings[0])
+        self.assertIn("Components-amd64.yml.xz", warnings[0])
+
+    def test_the_haproxy_repository_failing_stops_the_restore(self) -> None:
+        failing = (
+            f"Err:7 {self.SOURCE} x InRelease\nE: Failed to fetch {self.SOURCE}/dists/x/InRelease"
+        )
+        with self.assertRaisesRegex(restore_agent.Failed, "apt-get update exited 100"):
+            self.attempt(*[(100, failing)] * 3)
+
+    def test_a_failure_it_cannot_read_stops_the_restore(self) -> None:
+        with self.assertRaises(restore_agent.Failed):
+            self.attempt(*[(100, "E: something else entirely")] * 3)
+
+    def test_the_required_uris_are_read_from_the_placed_sources(self) -> None:
+        items = [
+            restore_agent.Item(
+                path="/etc/apt/sources.list.d/haproxy-3.4.sources",
+                kind="file",
+                mode=0o644,
+                uid=0,
+                gid=0,
+                data=f"Types: deb\nURIs: {self.SOURCE}/\nSuites: x\n".encode(),
+            ),
+            restore_agent.Item(
+                path="/etc/apt/keyrings/haproxy.asc", kind="file", mode=0o644, uid=0, gid=0
+            ),
+        ]
+        self.assertEqual(restore_agent._required_uris(items), (self.SOURCE,))

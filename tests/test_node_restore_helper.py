@@ -215,6 +215,23 @@ class ThreeJobs(HelperTest):
         self.assertTrue(document["result"]["rolled_back"])
         self.assertEqual(document["error"]["code"], "restore_failed")
 
+    def test_the_overwrite_ticks_reach_the_engine_through_the_helper(self) -> None:
+        """What the web sends passes the protocol layer too, not only `validate` (job 1092)."""
+
+        self.prepared()
+        self.ask(PREVIEW, {"run": RUN_ID, "fingerprint": FINGERPRINT})
+        FakeSession.answers["network"] = {"ok": True, "rollback_unit": "u"}
+        document, code = self.ask(
+            RUN,
+            {
+                "run": RUN_ID,
+                "confirm": "node-test",
+                "backup_failed_ok": True,
+                "break_traffic": False,
+            },
+        )
+        self.assertEqual((document["outcome"], code), ("done", 0), document)
+
     def test_a_run_of_another_cluster_is_refused(self) -> None:
         self.prepared()
         request = node_restore_helper.build_request(

@@ -288,7 +288,7 @@ def _answer(
         request = read_helper_request(
             io.BytesIO(raw),
             expected_operation=operation,
-            allowed_parameter_keys=KEYS[operation],
+            allowed_parameter_keys=KEYS[operation] | OPTIONAL[operation],
             validate_parameters=_checked(operation),
         )
     except HelperProtocolError as exc:

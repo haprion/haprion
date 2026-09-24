@@ -10,7 +10,8 @@
       "0032",
       "0033",
       "0034",
-      "0035"
+      "0035",
+      "0036"
     ],
     "engine_api": 2,
     "node_api": 1,
@@ -41,7 +42,8 @@
     ],
     "socket_helpers": {
       "haproxy-cert-receiver-helper": "/run/haproxy-mgmt/cert-receiver.sock",
-      "haproxy-backup-job-helper": "/run/haproxy-mgmt/backup-job.sock"
+      "haproxy-backup-job-helper": "/run/haproxy-mgmt/backup-job.sock",
+      "haproxy-node-restore-helper": "/run/haproxy-mgmt/node-restore.sock"
     }
   }
 }

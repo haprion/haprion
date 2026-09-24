@@ -463,9 +463,23 @@ class Apply(AgentTest):
         self.assertLess(self.host.commands.index(self.prepared()), enable)
 
     def test_the_node_preparation_s_warnings_are_reported(self) -> None:
-        self.host.prepare_stderr = "WARNING: keepalived.state does not exist yet\nnoise\n"
+        self.host.prepare_stderr = (
+            "WARNING: /run/haproxy/keepalived.state does not exist yet. A config reload\n"
+            "WARNING:   does not always produce a state transition - force one by\n"
+            "noise\n"
+            "WARNING:   restarting keepalived on this node once.\n"
+            "WARNING: nopreempt is not set.\n"
+        )
         result = self.apply()
-        self.assertIn("node preparation: keepalived.state does not exist yet", result["warnings"])
+        self.assertEqual(
+            [w for w in result["warnings"] if w.startswith("node preparation")],
+            [
+                "node preparation: /run/haproxy/keepalived.state does not exist yet. A config "
+                "reload does not always produce a state transition - force one by restarting "
+                "keepalived on this node once.",
+                "node preparation: nopreempt is not set.",
+            ],
+        )
 
     def test_a_node_conf_rendered_differently_is_reported(self) -> None:
         self.host.rendered_node_conf = "CLUSTER=alpha\n"

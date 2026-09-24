@@ -482,11 +482,20 @@ def _node_bundle(
     answers.write_text(header["answers"], encoding="utf-8")
     answers.chmod(0o600)
     prepared = host.run(["bash", str(install / "04-node-prepare"), str(answers), header["cluster"]])
-    warnings = [
-        line.removeprefix("WARNING:").strip()
-        for line in prepared.stderr.splitlines()
-        if line.startswith("WARNING:")
-    ]
+    #
+    # 04-node-prepare writes one warning over several `warn` calls, each line
+    # after the first indented: "WARNING:   does not always ...". Those are
+    # joined onto the line before, so a warning reads as the sentence it is.
+    #
+    warnings: list[str] = []
+    for line in prepared.stderr.splitlines():
+        if not line.startswith("WARNING:"):
+            continue
+        text = line.removeprefix("WARNING:")
+        if warnings and text.startswith("  "):
+            warnings[-1] += " " + text.strip()
+        else:
+            warnings.append(text.strip())
     report.warnings += [f"node preparation: {line}" for line in warnings]
     report.step("node-bundle", root=header["node_bundle"]["root"], warnings=len(warnings))
 

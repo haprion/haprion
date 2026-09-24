@@ -42,8 +42,8 @@ fi
 # directory. Ubuntu drops to `syslog` ($PrivDropToUser in rsyslog.conf);
 # Debian 13 has no such line and no such account and writes as root
 # (measured 2026-09-24). Read from rsyslog's own configuration, the main file
-# first and its drop-ins after, the last setting winning - the same rule as
-# `rsyslog_writer` in restore_agent.py, held together by a test.
+# first and its drop-ins after, the last setting winning - the same function
+# in 04-node-prepare and haproxy-traffic-log-enable, held together by a test.
 #
 rsyslog_writer() {
     local config="${RSYSLOG_CONFIG:-/etc/rsyslog.conf}" dropins="${RSYSLOG_DROPINS:-/etc/rsyslog.d}"
@@ -292,40 +292,8 @@ EXTRA_BACKUP_PATHS="${extra_paths[*]}"
 node_path="$(cluster_value NODE_PATH "$CLUSTER")"
 [[ -n "$node_path" ]] || die "NODE_PATH_${CLUSTER} is not set in the answers file"
 
-node_conf="# Node configuration for haproxy-manager. Rendered by install/04-node-prepare.
-#
-# Read by the node-side scripts in /usr/local/sbin. Root-owned and not writable
-# by anyone else: it names the account and key used to fetch configuration, so
-# whoever can edit it can redirect this node to another source.
-
-CLUSTER=\"${CLUSTER}\"
-MANAGER=\"${MANAGER_HOST}\"
-
-# Where this node fetches its published configuration from.
-CONFIG_PULL_USER=\"${PULL_USER}\"
-CONFIG_PULL_KEY=\"${NODE_CONFIG_PULL_KEY}\"
-CONFIG_REMOTE_PATH=\"${CLUSTER}/current/${node_path}/\"
-
-# Local accounts and groups a state backup captures. A rebuilt node with no way
-# to log in is not a restored node, so operator accounts belong here too.
-BACKUP_SERVICE_ACCOUNTS=\"${TRIGGER_USER} ${STATUS_USER} ${BACKUP_USER} ${LOGREAD_USER}\"
-BACKUP_ACCOUNTS=\"${TRIGGER_USER} ${STATUS_USER} ${BACKUP_USER} ${LOGREAD_USER}${OPERATOR_ACCOUNTS:+ ${OPERATOR_ACCOUNTS}}\"
-BACKUP_GROUPS=\"${LOGREAD_GROUP}${EXTRA_BACKUP_GROUPS:+ ${EXTRA_BACKUP_GROUPS}}\"
-
-# The operator's own files a state backup carries besides the product's -
-# absolute paths, space-separated. A listed path that is missing fails the backup.
-EXTRA_BACKUP_PATHS=\"${EXTRA_BACKUP_PATHS:-}\""
-
-if [[ -n "${CERT_PULL_USER:-}" ]]; then
-    require_vars NODE_CERT_PULL_KEY
-    node_conf+="
-
-# Where this node fetches certificates from. A separate account and key: a node
-# that may read configuration has no business reading certificates it was not
-# asked for.
-CERT_PULL_USER=\"${CERT_PULL_USER}\"
-CERT_PULL_KEY=\"${NODE_CERT_PULL_KEY}\""
-fi
+[[ -z "${CERT_PULL_USER:-}" ]] || require_vars NODE_CERT_PULL_KEY
+node_conf="$(render_node_conf "$CLUSTER" "$node_path" "$LOGREAD_GROUP")"
 
 ensure_dir "$(dirname "$NODE_CONF")" root:root 755
 install_file "$NODE_CONF" root:root 600 "$node_conf"

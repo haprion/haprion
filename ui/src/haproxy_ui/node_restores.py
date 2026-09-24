@@ -149,6 +149,8 @@ class RestoreRun:
     result: Mapping[str, Any] | None
     warnings: tuple[str, ...]
     jobs: tuple[RestoreJob, ...]
+    # The manager's node bundle the preview found (B180): root and commit.
+    node_bundle: Mapping[str, Any] | None = None
 
     @property
     def active(self) -> bool:
@@ -262,6 +264,9 @@ def run_view(run: str, rows: Sequence[Job]) -> RestoreRun | None:
         result=result,
         warnings=_warnings(result) if result else (),
         jobs=tuple(RestoreJob(job.id, job.operation, job.state) for job in jobs),
+        node_bundle=preview.get("node_bundle")
+        if isinstance(preview.get("node_bundle"), dict)
+        else None,
     )
 
 

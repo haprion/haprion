@@ -58,7 +58,12 @@
           "old": "node-a",
           "new": "node-test"
         }
-      ]
+      ],
+      "from_bundle": [
+        "/usr/local/sbin/haproxy-pull-deploy",
+        "/etc/haproxy-manager/node-installation.json"
+      ],
+      "traffic_log": true
     },
     "target": {
       "hostname": "temp",
@@ -83,6 +88,10 @@
         "VERSION_ID": "26.04"
       },
       "extra_paths": []
+    },
+    "node_bundle": {
+      "root": "haproxy-manager-node-000000000000",
+      "commit": "0000000000000000000000000000000000000000"
     }
   },
   "warnings": [],

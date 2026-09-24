@@ -89,7 +89,6 @@ preflight="
     set -Eeuo pipefail
     sudo -v
     test -d /run/lock
-    getent passwd syslog >/dev/null
     command -v rsyslogd >/dev/null
     if sudo test -f /etc/haproxy-manager/node.conf; then
         sudo grep -Fqx 'CLUSTER=\"${cluster}\"' /etc/haproxy-manager/node.conf \

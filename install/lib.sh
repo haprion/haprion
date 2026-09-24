@@ -131,3 +131,46 @@ each_cluster() {
 #
 node_name() { echo "${1%%:*}"; }
 node_host() { echo "${1##*:}"; }
+
+#
+# node.conf as 04-node-prepare installs it, from the answers already loaded.
+# Its own function so a node restore can be held to it: the restore derives an
+# answers file from an archived node.conf, and a test renders that file back
+# through exactly this template and expects the same bytes.
+#
+render_node_conf() {
+    local cluster="$1" node_path="$2" logread_group="$3" node_conf
+    node_conf="# Node configuration for haproxy-manager. Rendered by install/04-node-prepare.
+#
+# Read by the node-side scripts in /usr/local/sbin. Root-owned and not writable
+# by anyone else: it names the account and key used to fetch configuration, so
+# whoever can edit it can redirect this node to another source.
+
+CLUSTER=\"${cluster}\"
+MANAGER=\"${MANAGER_HOST}\"
+
+# Where this node fetches its published configuration from.
+CONFIG_PULL_USER=\"${PULL_USER}\"
+CONFIG_PULL_KEY=\"${NODE_CONFIG_PULL_KEY}\"
+CONFIG_REMOTE_PATH=\"${cluster}/current/${node_path}/\"
+
+# Local accounts and groups a state backup captures. A rebuilt node with no way
+# to log in is not a restored node, so operator accounts belong here too.
+BACKUP_SERVICE_ACCOUNTS=\"${TRIGGER_USER} ${STATUS_USER} ${BACKUP_USER} ${LOGREAD_USER}\"
+BACKUP_ACCOUNTS=\"${TRIGGER_USER} ${STATUS_USER} ${BACKUP_USER} ${LOGREAD_USER}${OPERATOR_ACCOUNTS:+ ${OPERATOR_ACCOUNTS}}\"
+BACKUP_GROUPS=\"${logread_group}${EXTRA_BACKUP_GROUPS:+ ${EXTRA_BACKUP_GROUPS}}\"
+
+# The operator's own files a state backup carries besides the product's -
+# absolute paths, space-separated. A listed path that is missing fails the backup.
+EXTRA_BACKUP_PATHS=\"${EXTRA_BACKUP_PATHS:-}\""
+    if [[ -n "${CERT_PULL_USER:-}" ]]; then
+        node_conf+="
+
+# Where this node fetches certificates from. A separate account and key: a node
+# that may read configuration has no business reading certificates it was not
+# asked for.
+CERT_PULL_USER=\"${CERT_PULL_USER}\"
+CERT_PULL_KEY=\"${NODE_CERT_PULL_KEY}\""
+    fi
+    printf '%s\n' "$node_conf"
+}

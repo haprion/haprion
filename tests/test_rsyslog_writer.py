@@ -1,9 +1,10 @@
-"""The account rsyslog writes as: one rule, in the two node scripts and the restore agent.
+"""The account rsyslog writes as: one rule, in the two node scripts.
 
 Ubuntu drops to `syslog`; Debian 13 writes as root with no `syslog` account
 (measured 2026-09-24). The traffic log's directory is owned by whichever it is,
-and three places decide that - so they are run against the same configurations
-here and must answer alike.
+and two scripts decide that - 04-node-prepare, which a node restore also runs
+(B180), and haproxy-traffic-log-enable - so they are run against the same
+configurations here and must answer alike.
 """
 
 from __future__ import annotations
@@ -15,8 +16,6 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-
-from haproxy_mgmt.restore_agent import Host, rsyslog_writer
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = (ROOT / "install/04-node-prepare", ROOT / "install/node/haproxy-traffic-log-enable")
@@ -49,12 +48,12 @@ def function_text(script: Path) -> str:
     return found.group(0)
 
 
-class OneRuleThreePlaces(unittest.TestCase):
+class OneRuleTwoScripts(unittest.TestCase):
     def test_both_scripts_carry_the_same_function(self) -> None:
         first, second = (function_text(script) for script in SCRIPTS)
         self.assertEqual(first, second)
 
-    def test_the_scripts_and_the_agent_answer_alike(self) -> None:
+    def test_the_scripts_answer_as_rsyslog_would(self) -> None:
         function = function_text(SCRIPTS[0])
         for name, (written, expected) in CASES.items():
             with self.subTest(case=name), tempfile.TemporaryDirectory() as raw:
@@ -74,4 +73,3 @@ class OneRuleThreePlaces(unittest.TestCase):
                     },
                 ).stdout.strip()
                 self.assertEqual(shell, expected)
-                self.assertEqual(rsyslog_writer(Host(raw)), expected)

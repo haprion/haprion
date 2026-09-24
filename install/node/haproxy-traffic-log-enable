@@ -40,8 +40,8 @@ die()  { echo "ERROR: $*" >&2; exit 1; }
 # directory. Ubuntu drops to `syslog` ($PrivDropToUser in rsyslog.conf);
 # Debian 13 has no such line and no such account and writes as root
 # (measured 2026-09-24). Read from rsyslog's own configuration, the main file
-# first and its drop-ins after, the last setting winning - the same rule as
-# `rsyslog_writer` in restore_agent.py, held together by a test.
+# first and its drop-ins after, the last setting winning - the same function
+# in 04-node-prepare and haproxy-traffic-log-enable, held together by a test.
 #
 rsyslog_writer() {
     local config="${RSYSLOG_CONFIG:-/etc/rsyslog.conf}" dropins="${RSYSLOG_DROPINS:-/etc/rsyslog.d}"

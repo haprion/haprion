@@ -18,15 +18,36 @@ from haproxy_mgmt.backup_archive import REQUIRED_PATHS
 
 SERVICE_ACCOUNTS = ("svc-trigger", "svc-status", "svc-backup", "svc-logread")
 
-NODE_CONF = """CLUSTER="alpha"
+# Rendered by install/lib.sh's render_node_conf; a test holds the two together.
+NODE_CONF = """# Node configuration for haproxy-manager. Rendered by install/04-node-prepare.
+#
+# Read by the node-side scripts in /usr/local/sbin. Root-owned and not writable
+# by anyone else: it names the account and key used to fetch configuration, so
+# whoever can edit it can redirect this node to another source.
+
+CLUSTER="alpha"
 MANAGER="mgr.example.com"
+
+# Where this node fetches its published configuration from.
 CONFIG_PULL_USER="svc-pull"
 CONFIG_PULL_KEY="/etc/haproxy-manager/keys/config-pull"
 CONFIG_REMOTE_PATH="alpha/current/node-a/"
+
+# Local accounts and groups a state backup captures. A rebuilt node with no way
+# to log in is not a restored node, so operator accounts belong here too.
 BACKUP_SERVICE_ACCOUNTS="svc-trigger svc-status svc-backup svc-logread"
 BACKUP_ACCOUNTS="svc-trigger svc-status svc-backup svc-logread operator"
 BACKUP_GROUPS="haproxy-logread"
+
+# The operator's own files a state backup carries besides the product's -
+# absolute paths, space-separated. A listed path that is missing fails the backup.
 EXTRA_BACKUP_PATHS="/etc/default/grub.d/99-local.cfg"
+
+# Where this node fetches certificates from. A separate account and key: a node
+# that may read configuration has no business reading certificates it was not
+# asked for.
+CERT_PULL_USER="svc-cert-pull"
+CERT_PULL_KEY="/etc/haproxy-manager/keys/cert-pull"
 """
 
 NETPLAN = """network:

@@ -29,6 +29,8 @@ DEFAULT_PYTHON = Path("/usr/bin/python3")
 # whatever the number - the rollback path must never be the one pruned.
 #
 DEFAULT_KEEP = 10
+# Beside INSTALLATION.json in the release; `haproxy_mgmt.node_bundle` finds it there.
+NODE_BUNDLE_NAME = "node-bundle.tar.gz"
 EXPECTED_PROJECT = "haproxy-manager"
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 VERSION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
@@ -242,6 +244,39 @@ def _verify_imports(python: Path, lib_dir: Path, modules: set[str]) -> None:
         raise InstallError(f"installed package import verification failed: {exc}") from exc
 
 
+def _verify_node_bundle(python: Path, lib_dir: Path, bundle: Path, expected: str) -> dict[str, str]:
+    """Verify the node bundle with the release's own verifier; answer its root and commit.
+
+    The wheel just extracted is the code that will later send this bundle to a
+    restored node, so it is also the code that judges it now - one verifier,
+    not a second copy in this installer.
+    """
+
+    code = (
+        "import json,sys;"
+        f"sys.path.insert(0,{str(lib_dir)!r});"
+        "from pathlib import Path;"
+        "from haproxy_mgmt.node_bundle import verify_bundle;"
+        "root,manifest=verify_bundle(Path(sys.argv[1]),sys.argv[2]);"
+        "print(json.dumps({'root':root,'commit':manifest['commit']}))"
+    )
+    try:
+        completed = subprocess.run(  # noqa: S603 - validated interpreter, fixed code
+            [str(python), "-I", "-c", code, str(bundle), expected],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        facts = json.loads(completed.stdout)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip().splitlines()[-1:] or ["no detail"]
+        raise InstallError(f"node bundle verification failed: {detail[0]}") from exc
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        raise InstallError(f"node bundle verification failed: {exc}") from exc
+    return {"root": str(facts["root"]), "commit": str(facts["commit"]), "sha256": expected}
+
+
 def install_release(
     *,
     wheel: Path,
@@ -250,6 +285,8 @@ def install_release(
     python: Path,
     require_root: bool = True,
     keep: int = DEFAULT_KEEP,
+    node_bundle: Path | None = None,
+    node_bundle_sha256: str | None = None,
 ) -> str:
     if require_root and os.geteuid() != 0:
         raise InstallError("installer must run as root")
@@ -264,6 +301,22 @@ def install_release(
     actual_sha256 = sha256_file(wheel)
     if actual_sha256 != expected_sha256:
         raise InstallError("wheel SHA-256 does not match the expected value")
+    #
+    # The node bundle built from the same commit (B180). A node restore
+    # installs exactly this one, so a CLI rollback takes the bundle back with
+    # it. Optional, so a wheel from before B180 stays installable for rollback;
+    # a release without one refuses to restore a node and says why.
+    #
+    if (node_bundle is None) != (node_bundle_sha256 is None):
+        raise InstallError("a node bundle needs both its path and its SHA-256")
+    if node_bundle is not None:
+        node_bundle = require_safe_absolute_path(node_bundle, label="node bundle path")
+        if not node_bundle.is_file() or node_bundle.is_symlink():
+            raise InstallError("node bundle must be a regular non-symlink file")
+        if not SHA256_PATTERN.fullmatch(node_bundle_sha256 or ""):
+            raise InstallError("node bundle SHA-256 must be 64 lowercase hexadecimal characters")
+        if sha256_file(node_bundle) != node_bundle_sha256:
+            raise InstallError("node bundle SHA-256 does not match the expected value")
 
     runtime = inspect_runtime(python)
     project, version, scripts, _ = inspect_wheel(wheel)
@@ -288,6 +341,13 @@ def install_release(
             raise InstallError(f"existing release cannot be verified: {exc}") from exc
         if installed.get("wheel_sha256") != actual_sha256:
             raise InstallError("existing release ID has different installation metadata")
+        carried = (installed.get("node_bundle") or {}).get("sha256")
+        if carried != node_bundle_sha256:
+            raise InstallError(
+                "this release is already installed with "
+                + (f"node bundle {carried[:12]}" if carried else "no node bundle")
+                + "; a release is not changed in place"
+            )
     else:
         staging = Path(tempfile.mkdtemp(prefix=f".{release_id}.", dir=releases))
         try:
@@ -295,6 +355,10 @@ def install_release(
             with zipfile.ZipFile(wheel) as archive:
                 archive.extractall(lib_dir)
             _write_launchers(staging / "bin", final_release / "lib", python, scripts)
+            bundle_facts = None
+            if node_bundle is not None and node_bundle_sha256 is not None:
+                bundle_facts = _verify_node_bundle(python, lib_dir, node_bundle, node_bundle_sha256)
+                shutil.copyfile(node_bundle, staging / NODE_BUNDLE_NAME)
             installation = {
                 "project": project,
                 "version": version,
@@ -307,6 +371,8 @@ def install_release(
                 "entry_points": sorted(scripts),
                 "engine_api": engine_api,
             }
+            if bundle_facts is not None:
+                installation["node_bundle"] = {"file": NODE_BUNDLE_NAME, **bundle_facts}
             (staging / "INSTALLATION.json").write_text(
                 json.dumps(installation, indent=2, sort_keys=True) + "\n", encoding="utf-8"
             )
@@ -372,6 +438,12 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--wheel", required=True, type=Path)
     parser.add_argument("--sha256", required=True)
+    parser.add_argument(
+        "--node-bundle",
+        type=Path,
+        help="the node bundle built from the same commit (tools/node-bundle.py build)",
+    )
+    parser.add_argument("--node-bundle-sha256")
     parser.add_argument("--target", type=Path, default=DEFAULT_TARGET)
     parser.add_argument("--python", type=Path, default=DEFAULT_PYTHON)
     parser.add_argument(
@@ -393,6 +465,8 @@ def main(argv: list[str] | None = None) -> int:
             target=args.target,
             python=args.python,
             keep=args.keep,
+            node_bundle=args.node_bundle,
+            node_bundle_sha256=args.node_bundle_sha256,
         )
     except InstallError as exc:
         print(f"install-release: ERROR: {exc}", file=sys.stderr)

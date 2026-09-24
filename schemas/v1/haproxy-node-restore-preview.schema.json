@@ -257,6 +257,15 @@
                 },
                 "additionalProperties": false
               }
+            },
+            "from_bundle": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "traffic_log": {
+              "type": "boolean"
             }
           },
           "additionalProperties": false
@@ -278,6 +287,24 @@
             "os_release",
             "extra_paths"
           ]
+        },
+        "node_bundle": {
+          "type": "object",
+          "required": [
+            "root",
+            "commit"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "root": {
+              "type": "string",
+              "pattern": "^haproxy-manager-node-[0-9a-f]{12}$"
+            },
+            "commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          }
         }
       },
       "additionalProperties": false

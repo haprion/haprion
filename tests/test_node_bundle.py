@@ -3,33 +3,21 @@
 from __future__ import annotations
 
 import gzip
-import importlib.util
 import io
 import os
 import subprocess
 import tarfile
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
 from pathlib import Path
-from types import ModuleType
 from unittest.mock import patch
+
+from haproxy_mgmt import node_bundle
 
 BASE = Path(__file__).resolve().parents[1]
 
 
-def load_tool() -> ModuleType:
-    path = BASE / "tools" / "node-bundle.py"
-    spec = importlib.util.spec_from_loader(
-        "node_bundle_tool", SourceFileLoader("node_bundle_tool", str(path))
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-TOOL = load_tool()
+TOOL = node_bundle
 
 
 class NodeBundleTests(unittest.TestCase):

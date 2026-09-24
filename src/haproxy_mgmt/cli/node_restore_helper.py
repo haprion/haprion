@@ -294,6 +294,7 @@ def main(
                 str(parameters["fingerprint"]),
                 cluster,
                 policy.backup_root,
+                publish_root=policy.publish_root,
                 progress=errors,
             )
             problems = summary["problems"]
@@ -316,7 +317,13 @@ def main(
             return BLOCKED_EXIT if problems else 0
 
         carried = engine.run(
-            run_root, run, str(parameters["confirm"]), cluster, policy.backup_root, progress=errors
+            run_root,
+            run,
+            str(parameters["confirm"]),
+            cluster,
+            policy.backup_root,
+            publish_root=policy.publish_root,
+            progress=errors,
         )
     except (RestoreError, ArchiveError) as exc:
         return refuse("restore_refused", str(exc), BLOCKED_EXIT)

@@ -82,6 +82,26 @@ SHARED_DIRECTORIES = {
 }
 # The product sets nothing in the SSH server's own file; the target's stays.
 TARGET_FILES = frozenset({"/etc/ssh/sshd_config"})
+#
+# What the release's node bundle writes on a restored node (B178, B180): the
+# node scripts and the record of which bundle they came from, by
+# 04-node-prepare, and the traffic log's rsyslog, AppArmor and retention files,
+# by haproxy-traffic-log-enable when the archive shows the log was on. The
+# archive's copies are of the release the node ran when it was archived.
+#
+SCRIPT_DIR = "/usr/local/sbin"
+TRAFFIC_LOG_RULE = "/etc/rsyslog.d/48-haproxy-manager-traffic.conf"
+FROM_BUNDLE = frozenset(
+    {
+        "/etc/haproxy-manager/node-installation.json",
+        TRAFFIC_LOG_RULE,
+        "/etc/apparmor.d/rsyslog.d/haproxy-manager-traffic",
+        "/etc/systemd/system/haproxy-traffic-log-prune.service",
+        "/etc/systemd/system/haproxy-traffic-log-prune.timer",
+    }
+)
+# 04-node-prepare's rollback copies: history of the old node, not its state.
+REPLACED = re.compile(r"\.replaced-\d{8}-\d{6}$")
 
 MAC = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
 
@@ -140,6 +160,10 @@ class RestorePlan:
     # before the restore rather than missed after it.
     #
     left_out: tuple[str, ...]
+    # Archived files the node bundle writes in its own version instead.
+    from_bundle: tuple[str, ...]
+    # The archive shows the traffic log was on; haproxy-traffic-log-enable runs.
+    traffic_log: bool
     parents: tuple[str, ...]
     network: tuple[PlannedFile, ...]
     root_keys: PlannedFile | None
@@ -161,6 +185,8 @@ class RestorePlan:
             "network": [file.path for file in self.network],
             "equal_directories": list(self.equal_directories),
             "left_out": list(self.left_out),
+            "from_bundle": list(self.from_bundle),
+            "traffic_log": self.traffic_log,
             "groups": [{"name": group.name, "gid": group.gid} for group in self.groups],
             "accounts": [
                 {
@@ -193,7 +219,7 @@ def _targets_own(path: str, extra: tuple[str, ...]) -> bool:
 
     if _under(path, extra):
         return False
-    if path in TARGET_FILES or _under(path, APT_DIRECTORIES):
+    if path in TARGET_FILES or _under(path, APT_DIRECTORIES) or REPLACED.search(path):
         return True
     for directory, own in SHARED_DIRECTORIES.items():
         if _under(path, (directory,)):
@@ -363,6 +389,7 @@ def build(
 
     files: list[PlannedFile] = []
     left_out: list[str] = []
+    from_bundle: list[str] = []
     root_keys: PlannedFile | None = None
     for entry in source.owned():
         if entry.path == NETPLAN_DIR or entry.path.startswith(f"{NETPLAN_DIR}/"):
@@ -370,6 +397,11 @@ def build(
         if _targets_own(entry.path, source.extra_paths):
             if entry.kind != "directory":
                 left_out.append(entry.path)
+            continue
+        if not _under(entry.path, source.extra_paths) and (
+            entry.path in FROM_BUNDLE or _under(entry.path, (SCRIPT_DIR,))
+        ):
+            from_bundle.append(entry.path)
             continue
         if entry.path == ROOT_KEYS:
             root_keys = _planned(entry)
@@ -440,6 +472,8 @@ def build(
         #
         equal_directories=(),
         left_out=tuple(left_out),
+        from_bundle=tuple(from_bundle),
+        traffic_log=source.entry(TRAFFIC_LOG_RULE) is not None,
         parents=source.parents(),
         network=network,
         root_keys=root_keys,

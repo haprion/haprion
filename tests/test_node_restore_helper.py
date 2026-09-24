@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import shutil
@@ -12,7 +13,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_mgmt import node_restore
+from haproxy_mgmt import node_bundle, node_restore
 from haproxy_mgmt.cli import node_restore_ask, node_restore_helper
 from haproxy_mgmt.cli.node_restore_helper import PREPARE, PREVIEW, RUN, ParameterProblem
 from haproxy_mgmt.node_restore import Clock
@@ -22,6 +23,7 @@ from tests.test_node_restore import (
     CLUSTER,
     FINGERPRINT,
     INSPECTED,
+    PUBLISH_ROOT,
     TARGET_KEY,
     VERSION,
     FakeSession,
@@ -47,6 +49,14 @@ class HelperTest(unittest.TestCase):
         FakeSession.calls = []
         FakeSession.answers = {"inspect": dict(INSPECTED)}
         self.silent = {"192.0.2.29", "192.0.2.21"}
+        carried = work / "node-bundle.tar.gz"
+        carried.write_bytes(b"the release's node bundle")
+        self.bundle = node_bundle.ReleaseBundle(
+            path=carried,
+            root="haproxy-manager-node-0123456789ab",
+            commit="0123456789ab" + "0" * 28,
+            sha256=hashlib.sha256(carried.read_bytes()).hexdigest(),
+        )
 
     def answering(self, address: str) -> bool:
         if address in self.silent and any(c[1]["op"] == "network" for c in FakeSession.calls):
@@ -69,18 +79,20 @@ class HelperTest(unittest.TestCase):
                 fingerprint_of=lambda key: FINGERPRINT if key == TARGET_KEY else "SHA256:x",
                 answering=self.answering,
                 session_for=FakeSession,
+                bundle_of=lambda: self.bundle,
             ),
             run=partial(
                 node_restore.run,
                 answering=self.answering,
                 clock=Clock(now=lambda: float(next(ticks)), sleep=lambda _: None),
                 session_for=FakeSession,
+                bundle_of=lambda: self.bundle,
             ),
         )
 
     def ask(self, operation: str, parameters: dict[str, Any]) -> tuple[dict[str, Any], int]:
         request = node_restore_helper.build_request(operation, "alpha", str(uuid4()), parameters)
-        policy = SimpleNamespace(backup_root=self.backups)
+        policy = SimpleNamespace(backup_root=self.backups, publish_root=PUBLISH_ROOT)
         runtime = SimpleNamespace(cluster=lambda _cluster: CLUSTER)
         output = io.StringIO()
         with (
@@ -195,7 +207,7 @@ class ThreeJobs(HelperTest):
             mock.patch.object(
                 node_restore_helper,
                 "load_policy",
-                return_value=SimpleNamespace(backup_root=self.backups),
+                return_value=SimpleNamespace(backup_root=self.backups, publish_root=PUBLISH_ROOT),
             ),
             mock.patch.object(
                 node_restore_helper,

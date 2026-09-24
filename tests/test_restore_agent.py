@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
 import io
 import json
 import shutil
@@ -14,6 +16,28 @@ from haproxy_mgmt import restore_agent
 from haproxy_mgmt.restore_agent import Failed, Host
 
 RUN = "run-0123456789"
+BUNDLE_ROOT = "haproxy-manager-node-0123456789ab"
+
+
+def bundle_bytes() -> bytes:
+    """A node bundle's shape: one root, install/04-node-prepare inside it."""
+
+    raw = io.BytesIO()
+    with (
+        gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as packed,
+        tarfile.open(fileobj=packed, mode="w") as archive,
+    ):
+        for name, text in (
+            (f"{BUNDLE_ROOT}/install/04-node-prepare", "#!/bin/bash\n"),
+            (f"{BUNDLE_ROOT}/install/lib.sh", "# library\n"),
+        ):
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(text), 0o755
+            archive.addfile(info, io.BytesIO(text.encode()))
+    return raw.getvalue()
+
+
+BUNDLE = bundle_bytes()
 
 
 class FakeHost(Host):
@@ -26,6 +50,9 @@ class FakeHost(Host):
         self.active: dict[str, str] = {}
         self.fail: set[str] = set()
         self.preinstalled: set[str] = set()
+        # What the bundle's 04-node-prepare prints, and node.conf as it renders it.
+        self.prepare_stderr = ""
+        self.rendered_node_conf: str | None = None
         for name, text in {
             "/etc/passwd": "root:x:0:0:root:/root:/bin/bash\n"
             "syslog:x:104:110::/nonexistent:/usr/sbin/nologin\n"
@@ -106,9 +133,14 @@ class FakeHost(Host):
             self.path("/etc/shadow").write_text("\n".join(lines) + "\n")
         elif argv[:2] == ["systemctl", "is-active"]:
             out = self.active.get(argv[2], "inactive") + "\n"
+        errors = ""
+        if argv[0] == "bash" and argv[1].endswith("/install/04-node-prepare"):
+            errors = self.prepare_stderr
+            if self.rendered_node_conf is not None:
+                self.path("/etc/haproxy-manager/node.conf").write_text(self.rendered_node_conf)
         if check and code != 0:
             raise Failed(f"{argv[0]} failed")
-        return subprocess.CompletedProcess(argv, code, out, "")
+        return subprocess.CompletedProcess(argv, code, out, errors)
 
 
 def payload(items: list[tuple[str, str, int, int, int, bytes | str]]) -> bytes:
@@ -147,6 +179,7 @@ APPLY_FILES = [
     ("/var/lib/svc-backup/.ssh/authorized_keys", "file", 0o644, 0, 0, "restrict\n"),
     ("/etc/systemd/system/ipvsadm.service", "symlink", 0o777, 0, 0, "/dev/null"),
     ("/etc/default/grub.d/99-local.cfg", "file", 0o644, 0, 0, "local\n"),
+    (f"/var/lib/haproxy-restore/{RUN}/node-bundle.tar.gz", "file", 0o600, 0, 0, BUNDLE),
 ]
 
 APPLY_HEADER: dict[str, Any] = {
@@ -156,7 +189,10 @@ APPLY_HEADER: dict[str, Any] = {
     "keepalived": "mask",
     "packages": ["haproxy", "keepalived"],
     "equal_directories": ["/etc/apt/sources.list.d", "/etc/sudoers.d", "/root/.ssh"],
-    "logread_group": "svc-logread-group",
+    "cluster": "alpha",
+    "node_bundle": {"root": BUNDLE_ROOT, "sha256": hashlib.sha256(BUNDLE).hexdigest()},
+    "answers": 'TRIGGER_USER="svc-trigger"\n',
+    "traffic_log": False,
     "groups": [{"name": "svc-backup", "gid": 990}, {"name": "svc-logread-group", "gid": 985}],
     "accounts": [
         {
@@ -330,26 +366,6 @@ class Apply(AgentTest):
         self.assertIn(["systemctl", "mask", "keepalived"], self.host.commands)
         self.assertNotIn(["systemctl", "enable", "keepalived"], self.host.commands)
 
-    def test_the_prune_timer_comes_back_on_when_the_archive_has_it(self) -> None:
-        self.apply()
-        self.assertNotIn(
-            ["systemctl", "enable", "--now", "haproxy-traffic-log-prune.timer"], self.host.commands
-        )
-        self.setUp()
-        timer = (
-            "/etc/systemd/system/haproxy-traffic-log-prune.timer",
-            "file",
-            0o644,
-            0,
-            0,
-            "[Timer]\n",
-        )
-        result = self.serve(APPLY_HEADER, payload([*APPLY_FILES, timer]))
-        self.assertTrue(result["ok"], result)
-        self.assertIn(
-            ["systemctl", "enable", "--now", "haproxy-traffic-log-prune.timer"], self.host.commands
-        )
-
     def test_sysctl_hostname_and_sshd(self) -> None:
         self.apply()
         self.assertIn(["sysctl", "--system"], self.host.commands)
@@ -359,17 +375,76 @@ class Apply(AgentTest):
             self.host.commands[sshd + 1], ["systemctl", "reload-or-restart", "ssh.service"]
         )
 
-    def test_the_traffic_log_root_is_created_as_node_prepare_does(self) -> None:
-        self.apply()
-        self.assertEqual(self.host.owners["/var/log/haproxy-manager"], (104, 985))
-        self.assertEqual(self.host.path("/var/log/haproxy-manager").stat().st_mode & 0o7777, 0o2750)
+    def prepared(self) -> list[str]:
+        return next(argv for argv in self.host.commands if argv[0] == "bash")
 
-    def test_on_debian_the_traffic_log_root_belongs_to_root(self) -> None:
-        """Debian 13's rsyslog writes as root and has no `syslog` account."""
+    def test_the_release_s_node_bundle_prepares_the_node_last(self) -> None:
+        """B180: 04-node-prepare with answers from the archive, after files and services."""
 
-        self.host.path("/etc/rsyslog.conf").write_text('module(load="imuxsock")\n')
-        self.apply()
-        self.assertEqual(self.host.owners["/var/log/haproxy-manager"], (0, 985))
+        result = self.apply()
+        self.assertTrue(result["ok"], result)
+        argv = self.prepared()
+        work = self.host.path(f"/var/lib/haproxy-restore/{RUN}/node-bundle")
+        self.assertEqual(
+            argv,
+            [
+                "bash",
+                str(work / BUNDLE_ROOT / "install/04-node-prepare"),
+                str(work / "answers.env"),
+                "alpha",
+            ],
+        )
+        self.assertEqual((work / "answers.env").read_text(), APPLY_HEADER["answers"])
+        self.assertEqual((work / "answers.env").stat().st_mode & 0o777, 0o600)
+        self.assertLess(
+            self.host.commands.index(["systemctl", "enable", "haproxy"]),
+            self.host.commands.index(argv),
+        )
+        # The bundle is extracted beside the run, never placed as a node file.
+        self.assertFalse(self.host.path("/etc/node-bundle.tar.gz").exists())
+        self.assertNotIn(["/usr/local/sbin/haproxy-traffic-log-enable"], self.host.commands)
+
+    def test_the_traffic_log_is_turned_on_by_the_bundle_when_it_was_on(self) -> None:
+        header = dict(APPLY_HEADER, traffic_log=True)
+        result = self.apply(header)
+        self.assertTrue(result["ok"], result)
+        enable = self.host.commands.index(["/usr/local/sbin/haproxy-traffic-log-enable"])
+        self.assertLess(self.host.commands.index(self.prepared()), enable)
+
+    def test_the_node_preparation_s_warnings_are_reported(self) -> None:
+        self.host.prepare_stderr = "WARNING: keepalived.state does not exist yet\nnoise\n"
+        result = self.apply()
+        self.assertIn("node preparation: keepalived.state does not exist yet", result["warnings"])
+
+    def test_a_node_conf_rendered_differently_is_reported(self) -> None:
+        self.host.rendered_node_conf = "CLUSTER=alpha\n"
+        self.assertFalse(any("node.conf" in w for w in self.apply()["warnings"]))
+        self.setUp()
+        self.host.rendered_node_conf = "CLUSTER=beta\n"
+        self.assertTrue(any("rendered differently" in w for w in self.apply()["warnings"]))
+
+    def test_a_bundle_that_does_not_match_its_digest_stops_before_anything_is_written(
+        self,
+    ) -> None:
+        header = dict(APPLY_HEADER, node_bundle={"root": BUNDLE_ROOT, "sha256": "0" * 64})
+        result = self.apply(header)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["refused"])
+        self.assertIn("does not match", result["error"])
+        self.assertEqual(self.host.commands, [])
+
+    def test_apply_without_a_bundle_is_refused(self) -> None:
+        files = [item for item in APPLY_FILES if not item[0].endswith("node-bundle.tar.gz")]
+        result = self.serve(APPLY_HEADER, payload(files))
+        self.assertFalse(result["ok"])
+        self.assertIn("no node bundle", result["error"])
+        self.assertEqual(self.host.commands, [])
+
+    def test_nothing_else_may_be_placed_in_the_restore_s_own_directory(self) -> None:
+        stray = (f"/var/lib/haproxy-restore/{RUN}/answers.env", "file", 0o600, 0, 0, "x")
+        result = self.serve(APPLY_HEADER, payload([*APPLY_FILES, stray]))
+        self.assertFalse(result["ok"])
+        self.assertIn("own directory", result["error"])
 
     def test_netplan_and_roots_keys_are_refused_in_apply(self) -> None:
         for path in ("/etc/netplan/50-x.yaml", "/root/.ssh/authorized_keys"):

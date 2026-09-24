@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import ipaddress
 import os
@@ -11,7 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from haproxy_mgmt import node_restore
+from haproxy_mgmt import node_bundle, node_restore
 from haproxy_mgmt.cli import node_restore as cli
 from haproxy_mgmt.config import Node
 from haproxy_mgmt.node_restore import Clock, Request, RestoreError
@@ -19,6 +20,7 @@ from haproxy_mgmt.restore_plan import TestProfile
 from tests.restore_fixture import build
 
 VERSION = "2026-01-01_04-00-00"
+PUBLISH_ROOT = Path("/srv/haproxy-manager/published")
 FINGERPRINT = "SHA256:" + "A" * 43
 TARGET_KEY = "ssh-ed25519 AAAAtargetkey"
 CLUSTER = SimpleNamespace(
@@ -75,6 +77,14 @@ class RestoreTest(unittest.TestCase):
         FakeSession.calls = []
         FakeSession.answers = {"inspect": dict(INSPECTED)}
         self.silent = {"192.0.2.29", "192.0.2.21"}
+        carried = work / "node-bundle.tar.gz"
+        carried.write_bytes(b"the release's node bundle")
+        self.bundle: node_bundle.ReleaseBundle | None = node_bundle.ReleaseBundle(
+            path=carried,
+            root="haproxy-manager-node-0123456789ab",
+            commit="0123456789ab" + "0" * 28,
+            sha256=hashlib.sha256(carried.read_bytes()).hexdigest(),
+        )
 
     def answering(self, address: str) -> bool:
         return address not in self.silent
@@ -101,9 +111,11 @@ class RestoreTest(unittest.TestCase):
             self.backups,
             scan=lambda _: TARGET_KEY,
             fingerprint_of=lambda key: FINGERPRINT if key == TARGET_KEY else "SHA256:other",
+            publish_root=PUBLISH_ROOT,
             answering=self.answering,
             progress=io.StringIO(),
             session_for=FakeSession,  # type: ignore[arg-type]
+            bundle_of=lambda: self.bundle,
         )
 
     def carry_out(self, run: str, confirm: str = "node-test", **kwargs: Any) -> dict[str, Any]:
@@ -119,6 +131,8 @@ class RestoreTest(unittest.TestCase):
             progress=io.StringIO(),
             clock=clock,
             session_for=FakeSession,  # type: ignore[arg-type]
+            publish_root=PUBLISH_ROOT,
+            bundle_of=lambda: self.bundle,
             **kwargs,
         )
 
@@ -169,6 +183,46 @@ class Preview(RestoreTest):
         known = (self.root / run / "known_hosts").read_text()
         self.assertEqual(known, f"192.0.2.120 {TARGET_KEY}\n")
         self.assertEqual([c[1]["op"] for c in FakeSession.calls], ["inspect"])
+
+    def test_the_preview_names_the_bundle_that_will_prepare_the_node(self) -> None:
+        run = self.prepare()
+        summary = self.preview(run)
+        assert self.bundle is not None
+        self.assertEqual(
+            summary["node_bundle"], {"root": self.bundle.root, "commit": self.bundle.commit}
+        )
+        self.assertIn("/usr/local/sbin/haproxy-pull-deploy", summary["plan"]["from_bundle"])
+
+    def test_a_release_without_a_node_bundle_stops_the_restore(self) -> None:
+        """B180: a CLI release installed without --node-bundle cannot prepare a node."""
+
+        run = self.prepare()
+        self.bundle = None
+        summary = self.preview(run)
+        self.assertIn("carries no node bundle", " ".join(summary["problems"]))
+        self.assertNotIn("node_bundle", summary)
+
+    def test_a_bundle_that_fails_verification_stops_the_restore(self) -> None:
+        run = self.prepare()
+
+        def broken() -> node_bundle.ReleaseBundle:
+            raise node_bundle.BundleError("bundle SHA-256 does not match the expected value")
+
+        summary = node_restore.preview(
+            self.root,
+            run,
+            FINGERPRINT,
+            CLUSTER,  # type: ignore[arg-type]
+            self.backups,
+            scan=lambda _: TARGET_KEY,
+            fingerprint_of=lambda _: FINGERPRINT,
+            publish_root=PUBLISH_ROOT,
+            answering=self.answering,
+            progress=io.StringIO(),
+            session_for=FakeSession,  # type: ignore[arg-type]
+            bundle_of=broken,
+        )
+        self.assertIn("node bundle cannot be used", " ".join(summary["problems"]))
 
     def test_an_unsupported_target_is_stopped_and_debian_13_is_not(self) -> None:
         """B178: the target's own release decides, not the archive's."""
@@ -284,8 +338,27 @@ class Run(RestoreTest):
         header = FakeSession.calls[1][1]
         operator = next(a for a in header["accounts"] if a["name"] == "operator")
         self.assertTrue(operator["password_hash"].startswith("$y$"))
-        self.assertEqual(header["logread_group"], "haproxy-logread")
+        self.assertNotIn("$y$", header["answers"])
         self.assertNotIn("$y$", (self.root / run / "result.json").read_text())
+
+    def test_apply_carries_the_release_s_bundle_and_answers_derived_from_the_archive(
+        self,
+    ) -> None:
+        run = self.previewed()
+        self.carry_out(run)
+        header, carried = FakeSession.calls[1][1], FakeSession.calls[1][2]
+        assert self.bundle is not None
+        self.assertEqual(
+            header["node_bundle"], {"root": self.bundle.root, "sha256": self.bundle.sha256}
+        )
+        self.assertEqual(header["cluster"], "alpha")
+        self.assertIn('NODE_PATH_alpha="node-a"', header["answers"])
+        self.assertIn(f'PUBLISH_ROOT="{PUBLISH_ROOT}"', header["answers"])
+        self.assertFalse(header["traffic_log"])
+        self.assertIn(f"/var/lib/haproxy-restore/{run}/node-bundle.tar.gz", members(carried))
+        # The bundle writes these in the running release's version, not the archive's.
+        self.assertFalse(any(path.startswith("/usr/local/sbin/") for path in members(carried)))
+        self.assertNotIn("/etc/haproxy-manager/node-installation.json", members(carried))
 
     def test_a_change_after_the_preview_refuses_before_writing(self) -> None:
         run = self.previewed()

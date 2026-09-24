@@ -38,7 +38,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from haproxy_mgmt import haproxy_repository, restore_agent, restore_plan
+from haproxy_mgmt import (
+    haproxy_repository,
+    node_bundle,
+    restore_agent,
+    restore_answers,
+    restore_plan,
+)
 from haproxy_mgmt.backups import node_backups
 from haproxy_mgmt.config import Cluster, Node
 from haproxy_mgmt.restore_plan import PlannedFile, RestorePlan, Target, TestProfile
@@ -54,7 +60,6 @@ FINGERPRINT = re.compile(r"^SHA256:[A-Za-z0-9+/]{43}$")
 VERSION = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 ROLLBACK_SECONDS = 180
 SESSION_TIMEOUT = 900.0
-LOGREAD_GROUP_LINE = re.compile(r'^BACKUP_GROUPS="(?P<first>[a-z_][a-z0-9_-]*)')
 
 
 class RestoreError(RuntimeError):
@@ -402,17 +407,12 @@ class Checked:
     inspected: dict[str, Any]
     digest: str
     problems: tuple[str, ...]
-
-
-def _logread_group(source: RestoreSource) -> str | None:
-    entry = source.entry("/etc/haproxy-manager/node.conf")
-    if entry is None:
-        return None
-    for line in content(source, entry).decode("utf-8").splitlines():
-        matched = LOGREAD_GROUP_LINE.match(line.strip())
-        if matched:
-            return matched.group("first")
-    return None
+    #
+    # The running release's node bundle and the answers derived for it (B180).
+    # None and "" when either cannot be had; `problems` then says why.
+    #
+    bundle: node_bundle.ReleaseBundle | None = None
+    answers: str = ""
 
 
 def _inspect_header(source: RestoreSource) -> dict[str, Any]:
@@ -490,8 +490,10 @@ def check(
     backup_root: Path,
     *,
     session: Session,
+    publish_root: Path,
     answering: Callable[[str], bool] = answers,
     progress: TextIO | None = None,
+    bundle_of: Callable[[], node_bundle.ReleaseBundle | None] = node_bundle.release_bundle,
 ) -> Checked:
     node = node_of(cluster, request.node)
     archive = archive_path(backup_root, node, request.archive)
@@ -508,6 +510,26 @@ def check(
     except restore_plan.PlanError as exc:
         raise RestoreError(str(exc)) from exc
     problems = _problems(request, node, source, plan, inspected, answering)
+    #
+    # B178/B180: the node scripts and what else the product writes come from
+    # this manager's own release, prepared with answers read out of the
+    # archive's node.conf. Either missing stops the restore at the preview.
+    #
+    bundle: node_bundle.ReleaseBundle | None = None
+    try:
+        bundle = bundle_of()
+    except node_bundle.BundleError as exc:
+        problems.append(f"this manager's node bundle cannot be used: {exc}")
+    else:
+        if bundle is None:
+            problems.append(
+                "this manager's CLI release carries no node bundle; install it with --node-bundle"
+            )
+    derived = ""
+    try:
+        derived = restore_answers.derive(source, request.cluster, publish_root)
+    except restore_answers.AnswersError as exc:
+        problems.append(str(exc))
     bound = {
         "request": request.as_dict(),
         "archive_sha256": _digest_file(archive),
@@ -517,9 +539,11 @@ def check(
             "host_keys": inspected["host_keys"],
         },
         "plan": plan.summary(),
+        "node_bundle": None if bundle is None else bundle.sha256,
+        "answers": derived,
     }
     digest = hashlib.sha256(json.dumps(bound, sort_keys=True).encode()).hexdigest()
-    return Checked(source, plan, inspected, digest, tuple(problems))
+    return Checked(source, plan, inspected, digest, tuple(problems), bundle, derived)
 
 
 def preview(
@@ -531,9 +555,11 @@ def preview(
     *,
     scan: Callable[[str], str] = scan_host_key,
     fingerprint_of: Callable[[str], str] = fingerprint,
+    publish_root: Path,
     answering: Callable[[str], bool] = answers,
     progress: TextIO | None = None,
     session_for: Callable[[Path, Path], Session] = Session,
+    bundle_of: Callable[[], node_bundle.ReleaseBundle | None] = node_bundle.release_bundle,
 ) -> dict[str, Any]:
     directory = run_directory(root, run)
     request = Request.from_dict(read_json(directory / "request.json"))
@@ -551,7 +577,14 @@ def preview(
     _write_json(directory / "target-key.json", {"key": key, "fingerprint": fingerprint_seen})
     session = session_for(directory / "key", known_hosts)
     checked = check(
-        request, cluster, backup_root, session=session, answering=answering, progress=progress
+        request,
+        cluster,
+        backup_root,
+        session=session,
+        publish_root=publish_root,
+        answering=answering,
+        progress=progress,
+        bundle_of=bundle_of,
     )
     summary = {
         "run": run,
@@ -573,6 +606,8 @@ def preview(
             "extra_paths": list(checked.source.extra_paths),
         },
     }
+    if checked.bundle is not None:
+        summary["node_bundle"] = {"root": checked.bundle.root, "commit": checked.bundle.commit}
     _write_json(directory / "preview.json", summary)
     return summary
 
@@ -611,6 +646,8 @@ def run(
     rollback_seconds: int = ROLLBACK_SECONDS,
     clock: Clock = Clock(),  # noqa: B008 - immutable
     session_for: Callable[[Path, Path], Session] = Session,
+    publish_root: Path,
+    bundle_of: Callable[[], node_bundle.ReleaseBundle | None] = node_bundle.release_bundle,
 ) -> dict[str, Any]:
     stream = progress or sys.stderr
     directory = run_directory(root, run_id)
@@ -620,7 +657,14 @@ def run(
         raise RestoreError("this run has already been carried out; prepare a new one")
     session = session_for(directory / "key", directory / "known_hosts")
     checked = check(
-        request, cluster, backup_root, session=session, answering=answering, progress=stream
+        request,
+        cluster,
+        backup_root,
+        session=session,
+        publish_root=publish_root,
+        answering=answering,
+        progress=stream,
+        bundle_of=bundle_of,
     )
     if checked.digest != previewed.get("digest"):
         raise RestoreError(
@@ -629,6 +673,9 @@ def run(
     if checked.problems:
         raise RestoreError("; ".join(checked.problems))
     plan = checked.plan
+    bundle = checked.bundle
+    if bundle is None:
+        raise RestoreError("this manager's CLI release carries no node bundle")
     if confirm != plan.hostname:
         raise RestoreError(f"confirm with the restored node's name, {plan.hostname}")
 
@@ -651,7 +698,10 @@ def run(
         "keepalived": plan.keepalived,
         "packages": list(plan.packages),
         "equal_directories": list(plan.equal_directories),
-        "logread_group": _logread_group(checked.source),
+        "cluster": request.cluster,
+        "node_bundle": {"root": bundle.root, "sha256": bundle.sha256},
+        "answers": checked.answers,
+        "traffic_log": plan.traffic_log,
         "groups": [{"name": g.name, "gid": g.gid} for g in plan.groups],
         "accounts": [
             {
@@ -669,8 +719,19 @@ def run(
         ],
     }
     stream.write(f"apply on {request.target}\n")
+    carried = PlannedFile(
+        path=f"{restore_agent.STATE}/{run_id}/{restore_agent.BUNDLE_FILE}",
+        kind="file",
+        mode=0o600,
+        uid=0,
+        gid=0,
+        data=bundle.path.read_bytes(),
+    )
     applied = session.call(
-        request.target, apply_header, payload(checked.source, plan.files), progress=stream
+        request.target,
+        apply_header,
+        payload(checked.source, (*plan.files, carried)),
+        progress=stream,
     )
     result["sessions"]["apply"] = {k: v for k, v in applied.items() if k != "ok"}
     if not applied.get("ok"):

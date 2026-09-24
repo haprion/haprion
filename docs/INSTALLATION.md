@@ -2043,9 +2043,13 @@ nothing else is stored. While a job runs it holds the cluster's job slot, so a d
 cluster waits. `forget` is command-line only.
 
 **What the preview shows and what stops it.** The target's OS, interface and MAC address; the
-host key fingerprint; the name and address the VM will have; every file written and every
-directory made equal to the archive; every account with its IDs and groups; and, in test mode,
-every rewritten field with its old and new value. It stops on: a fingerprint that is not the one
+host key fingerprint; the name and address the VM will have; every file written, and every archived
+file that is not - the VM's own in a directory it shares with the image, the archive's APT sources,
+and old `.replaced-` copies; the node bundle that will prepare the node; every account with its IDs
+and groups; and, in test mode, every rewritten field with its old and new value. It stops on: this
+manager's CLI release carrying no node bundle, or one that does not verify (see
+[Part 3](#part-3--the-versioned-cli-release)); a `node.conf` in the archive that cannot be read back
+into answers; a fingerprint that is not the one
 given (nothing is sent at all); an archive that is not of the chosen node; a target that is not
 Ubuntu 26.04 or Debian 13; `haproxy` or `keepalived` already installed (unless an earlier restore run left
 them there - a run that rolled back can be tried again); the final address, or the node's own,
@@ -2064,11 +2068,17 @@ written.
    is the one pinned in the code - it is never fetched at restore time), then `haproxy keepalived rsyslog openssh-server rsync python3 netplan.io` with
    service starts held off until their configuration is in place, then the files. Only paths the
    export copied get the archive's ownership and mode; a directory it created only to hold one is
-   made if missing and otherwise left alone. A directory the export carries whole is made equal to
-   the archive, and what the VM had there is moved to `/var/lib/haproxy-restore/<run>/quarantine`,
-   never deleted. Then the HAProxy release layout, the traffic-log directory, the traffic log's
-   prune timer turned on if the archive carries it (its unit files exist only while it is enabled),
-   the hostname, and sshd is reloaded.
+   made if missing and otherwise left alone. What the product shares with the OS image is restored
+   file by file, not directory by directory: in `sudoers.d` and `sysctl.d` only the file
+   `04-node-prepare` writes comes back, and `sshd_config` and its drop-ins stay the VM's own. An
+   operator's own file there comes back when the node names it in `EXTRA_BACKUP_PATHS`. Then the
+   HAProxy release layout, the services, the hostname, and sshd is reloaded. Last, the node
+   bundle of the manager's own CLI release runs its `04-node-prepare` on the VM, with an answers
+   file read back out of the archive's `node.conf` (and the manager's publish root): it writes the
+   node scripts and `node-installation.json` of the running release, not the archive's, the sudo
+   rules, the traffic-log directory, and re-renders `node.conf` - to the same bytes, which the
+   preview's answers are tested against. If the archive shows the traffic log was on, the bundle's
+   `haproxy-traffic-log-enable` turns it on again, prune timer included.
 2. Still there: the archive's Netplan, bound to the VM's MAC address, applied three seconds after
    the session ends - under a timer that puts the VM's own Netplan back after 180 seconds.
 3. On the node's own address, with the archive's host key: the timer is cancelled, HAProxy starts
@@ -2092,12 +2102,10 @@ production pair's VRRP, and the VM keeps its own SSH host keys. The test address
 node's network, because the node's routes come with the archive. `--confirm` takes the test
 hostname.
 
-**What it does not do.** Overwrite a node that is running (not built yet); restore onto another OS
-version; configure what is the environment's rather than the product's - a configuration-management
-baseline, monitoring agents - which runs afterwards as it would on any new machine. The node scripts
-come back at the archive's version: upgrade them afterwards as in [2.5](#25-installing-and-changing-node-scripts)
-if the bundle has moved on. Whether the traffic-log prune timer was enabled is not in the archive;
-the unit files are restored, and a node that logged traffic needs its timer enabled again.
+**What it does not do.** Overwrite a node that is running (not built yet); restore onto an OS other
+than Ubuntu 26.04 or Debian 13; configure what is the environment's rather than the product's - a
+configuration-management baseline, monitoring agents, an operator's own sudo rules - which runs
+afterwards as it would on any new machine.
 
 ## Releasing a change
 
@@ -2178,13 +2186,26 @@ python -m build --wheel --outdir /path/to/protected/staging
 sha256sum /path/to/protected/staging/haproxy_manager-*.whl
 ```
 
-Install the absolute wheel path with the digest printed by the previous command:
+Build the node bundle from the same commit, as in [2.5](#25-installing-and-changing-node-scripts),
+and record its digest too. The release carries it: a node restore installs exactly the bundle of
+the release that runs it, and a rollback of the CLI takes the bundle back with it.
+
+Install the absolute wheel and bundle paths with the digests printed by the previous commands:
 
 ```bash
 sudo /usr/bin/python3 tools/install-release.py \
   --wheel /path/to/protected/staging/haproxy_manager-0.1.0-py3-none-any.whl \
-  --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --node-bundle /path/to/protected/staging/haproxy-manager-node-0123456789ab.tar.gz \
+  --node-bundle-sha256 fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
 ```
+
+The bundle is verified by the new release's own verifier before anything is activated, copied
+into the release as `node-bundle.tar.gz` and recorded in `INSTALLATION.json` with its commit and
+digest. The two bundle arguments are optional so a wheel from before them stays installable for
+rollback; a release without a bundle refuses to restore a node and says why. A release is not
+changed in place: installing an already installed wheel with another bundle, or without the one it
+has, is refused.
 
 The installer fails closed unless it runs as root and the supplied digest matches. It also rejects
 unsafe wheel members and entry points, verifies the runtime baseline (including the distribution's
@@ -2196,6 +2217,7 @@ PyYAML, PyNaCl and psycopg packages) and imports, then installs:
 └── releases/
     └── <version>-<wheel-hash-prefix>/
         ├── INSTALLATION.json
+        ├── node-bundle.tar.gz
         ├── bin/
         └── lib/
 ```
@@ -2229,8 +2251,9 @@ silently treat an unknown old engine as compatible with a newer UI.
 
 ### Rollback
 
-Re-run the same installer with the retained previous wheel and its recorded digest. An already
-installed matching release is verified and `current` is atomically switched back.
+Re-run the same installer with the retained previous wheel and its recorded digest - and its node
+bundle, if it was installed with one. An already installed matching release is verified and
+`current` is atomically switched back.
 
 **Ten releases stay on disk; older ones go when a new one activates.** The installer prunes after
 a successful activation and never before it - a failed activation is exactly when nothing may be

@@ -12,7 +12,9 @@ JSON result document; stderr carries progress lines for the operator's log.
 ``apply``    groups and accounts with the archive's IDs, password hashes where
              an account has none (B173), APT sources and the product's
              packages, the files, the
-             HAProxy release layout, the service states, the hostname.
+             HAProxy release layout, the service states, the hostname - then
+             the release's node bundle: its 04-node-prepare with answers
+             derived from the archive, and the traffic log if it was on.
 ``network``  Netplan, under a timer that puts the previous Netplan back unless
              the next session cancels it from the node's new address.
 ``finish``   cancels that timer, pulls configuration and certificates the way
@@ -29,6 +31,7 @@ target's own.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -54,16 +57,21 @@ NOT_EMPTY_IF_INSTALLED = ("haproxy", "keepalived")
 NETPLAN = "/etc/netplan"
 ROOT_KEYS = "/root/.ssh/authorized_keys"
 POLICY_RC = "/usr/sbin/policy-rc.d"
-TRAFFIC_LOG_ROOT = "/var/log/haproxy-manager"
+NODE_CONF = "/etc/haproxy-manager/node.conf"
 #
-# The traffic log's prune timer. Its unit files exist exactly while the timer
-# is enabled: `haproxy-traffic-log-enable` installs them and runs `enable
-# --now`, and `--disable` runs `disable --now` and removes them. So a restored
-# timer file is the archive saying the timer was on, and it is turned on again;
-# before 2026-09-24 the files came back and the timer stayed off, and the
-# node's log directory would have grown without end.
+# The release's node bundle (B180), sent in the apply payload at this name in
+# the run's own directory, and extracted beside it. Its 04-node-prepare writes
+# what the product owns on a node, in the running release's version.
 #
-PRUNE_TIMER = "haproxy-traffic-log-prune.timer"
+BUNDLE_FILE = "node-bundle.tar.gz"
+BUNDLE_ROOT = re.compile(r"^haproxy-manager-node-[0-9a-f]{12}$")
+CLUSTER_ID = re.compile(r"^[a-z0-9][a-z0-9_]{0,31}$")
+#
+# Turns the traffic log on in the release's version: the rsyslog rule, the
+# AppArmor snippet and the retention timer, enabled. Run when the archive
+# shows the log was on; the archive's own copies are not written.
+#
+TRAFFIC_LOG_ENABLE = "/usr/local/sbin/haproxy-traffic-log-enable"
 HAPROXY = "/etc/haproxy"
 EMPTY_RELEASE = "00000000-000000"
 BOOTSTRAP_SOCKET = "/run/haproxy-restore-bootstrap.sock"
@@ -431,17 +439,88 @@ def _conflicts(host: Host, header: dict[str, Any]) -> list[str]:
     return problems
 
 
-def _validate_apply(header: dict[str, Any], items: list[Item]) -> None:
+def _bundle_path(run: str) -> str:
+    return f"{STATE}/{run}/{BUNDLE_FILE}"
+
+
+def _validate_apply(header: dict[str, Any], items: list[Item]) -> Item:
+    """Everything apply checks before its first write; answers the node bundle."""
+
     for record in (*header["groups"], *header["accounts"]):
         if not NAME.fullmatch(str(record.get("name", ""))):
             raise Refused("the header names an unusable account or group")
+    wanted = _bundle_path(header["run"])
+    bundle: Item | None = None
     for item in items:
         if item.path == ROOT_KEYS or item.path == NETPLAN or item.path.startswith(f"{NETPLAN}/"):
             raise Refused(f"{item.path} is written by a later session, not by apply")
+        if item.path == wanted and item.kind == "file":
+            bundle = item
+        elif item.path == STATE or item.path.startswith(f"{STATE}/"):
+            raise Refused(f"{item.path} is this restore's own directory, not a file to place")
+    described = header.get("node_bundle")
+    if bundle is None or not isinstance(described, dict):
+        raise Refused("the payload carries no node bundle")
+    if not BUNDLE_ROOT.fullmatch(str(described.get("root", ""))):
+        raise Refused("the node bundle's root is not usable")
+    if hashlib.sha256(bundle.data).hexdigest() != described.get("sha256"):
+        raise Refused("the node bundle does not match the digest the manager sent")
+    if not CLUSTER_ID.fullmatch(str(header.get("cluster", ""))):
+        raise Refused("the cluster ID is not usable")
+    if not isinstance(header.get("answers"), str) or "\0" in header["answers"]:
+        raise Refused("the answers for the node bundle are not usable")
     if header["keepalived"] not in {"start", "mask"}:
         raise Refused("keepalived must be started or masked")
     if not HOSTNAME.fullmatch(header["hostname"]):
         raise Refused("the hostname is not usable")
+    return bundle
+
+
+def _node_bundle(
+    host: Host, header: dict[str, Any], bundle: Item, items: list[Item], report: Report
+) -> None:
+    """Run the release's 04-node-prepare on the node, with answers from its archive."""
+
+    work = host.path(f"{STATE}/{header['run']}/node-bundle")
+    work.mkdir(parents=True, exist_ok=True, mode=0o700)
+    work.chmod(0o700)
+    with tarfile.open(fileobj=io.BytesIO(bundle.data), mode="r:gz") as archive:
+        archive.extractall(work, filter="data")
+    install = work / header["node_bundle"]["root"] / "install"
+    if not (install / "04-node-prepare").is_file():
+        raise Failed("the node bundle has no install/04-node-prepare")
+    answers = work / "answers.env"
+    answers.write_text(header["answers"], encoding="utf-8")
+    answers.chmod(0o600)
+    prepared = host.run(["bash", str(install / "04-node-prepare"), str(answers), header["cluster"]])
+    warnings = [
+        line.removeprefix("WARNING:").strip()
+        for line in prepared.stderr.splitlines()
+        if line.startswith("WARNING:")
+    ]
+    report.warnings += [f"node preparation: {line}" for line in warnings]
+    report.step("node-bundle", root=header["node_bundle"]["root"], warnings=len(warnings))
+
+    #
+    # 04-node-prepare renders node.conf from the answers derived from the
+    # archived one, and a test holds the two to the same bytes. An archive
+    # from an older template can still differ; its copy is kept beside it.
+    #
+    archived = next((item for item in items if item.path == NODE_CONF), None)
+    written = host.path(NODE_CONF)
+    if (
+        archived is not None
+        and written.is_file()
+        and written.read_bytes().rstrip(b"\n") != archived.data.rstrip(b"\n")
+    ):
+        report.warnings.append(
+            f"{NODE_CONF} was rendered differently from the archive's; "
+            "the archive's is kept as node.conf.replaced-<time>"
+        )
+
+    if header.get("traffic_log"):
+        host.run([TRAFFIC_LOG_ENABLE])
+        report.step("traffic-log", enabled=True)
 
 
 def _packages(host: Host, header: dict[str, Any], items: list[Item], report: Report) -> None:
@@ -566,56 +645,6 @@ def _layout(host: Host, run: str, report: Report) -> None:
     report.step("haproxy-layout")
 
 
-PRIVDROP = (
-    re.compile(r"^\s*\$PrivDropToUser\s+([^\s#]+)", re.IGNORECASE),
-    re.compile(r'privdrop\.user\.name\s*=\s*"([^"]+)"', re.IGNORECASE),
-)
-
-
-def rsyslog_writer(host: Host) -> str:
-    """The account rsyslog writes as - the same rule as `rsyslog_writer` in the node scripts.
-
-    Ubuntu drops to `syslog` with `$PrivDropToUser`; Debian 13 writes as root
-    and has no `syslog` account (measured 2026-09-24). The main file first,
-    then its drop-ins, the last setting winning.
-    """
-
-    config = host.path("/etc/rsyslog.conf")
-    sources = [config] if config.is_file() else []
-    dropins = host.path("/etc/rsyslog.d")
-    if dropins.is_dir():
-        sources += sorted(path for path in dropins.glob("*.conf") if path.is_file())
-    found = ""
-    for source in sources:
-        for line in source.read_text(encoding="utf-8", errors="replace").splitlines():
-            if line.lstrip().startswith("#"):
-                continue
-            for pattern in PRIVDROP:
-                match = pattern.search(line)
-                if match:
-                    found = match.group(1)
-    return found or "root"
-
-
-def _traffic_log(host: Host, header: dict[str, Any], report: Report) -> None:
-    group = header.get("logread_group")
-    if not group:
-        return
-    target = host.path(TRAFFIC_LOG_ROOT)
-    target.mkdir(parents=True, exist_ok=True)
-    users = passwd(host)
-    present = groups(host)
-    writer = rsyslog_writer(host)
-    if writer not in users or group not in present:
-        report.warnings.append(
-            f"{TRAFFIC_LOG_ROOT} left root-owned: {writer} (rsyslog's account) or {group} is missing"
-        )
-        return
-    host.chown(target, users[writer][0], present[group])
-    target.chmod(0o2750)
-    report.step("traffic-log-root", owner=f"{writer}:{group}", mode="2750")
-
-
 def _services(host: Host, header: dict[str, Any], report: Report) -> None:
     host.run(["sysctl", "--system"])
     host.run(["systemctl", "daemon-reload"])
@@ -625,15 +654,7 @@ def _services(host: Host, header: dict[str, Any], report: Report) -> None:
     else:
         host.run(["systemctl", "enable", "keepalived"])
     host.run(["systemctl", "enable", "haproxy"])
-    prune = host.path(f"/etc/systemd/system/{PRUNE_TIMER}").exists()
-    if prune:
-        host.run(["systemctl", "enable", "--now", PRUNE_TIMER])
-    report.step(
-        "services",
-        keepalived=header["keepalived"],
-        haproxy="enabled",
-        prune_timer="enabled" if prune else "not in the archive",
-    )
+    report.step("services", keepalived=header["keepalived"], haproxy="enabled")
 
     host.run(["hostnamectl", "set-hostname", header["hostname"]])
     report.step("hostname", hostname=header["hostname"])
@@ -645,7 +666,8 @@ def _services(host: Host, header: dict[str, Any], report: Report) -> None:
 
 def apply(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, Any]:
     items = read_payload(payload)
-    _validate_apply(header, items)
+    bundle = _validate_apply(header, items)
+    items = [item for item in items if item is not bundle]
     problems = _conflicts(host, header)
     if problems:
         raise Refused("; ".join(problems))
@@ -673,8 +695,8 @@ def apply(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, A
     report.step("files", written=written)
 
     _layout(host, header["run"], report)
-    _traffic_log(host, header, report)
     _services(host, header, report)
+    _node_bundle(host, header, bundle, items, report)
     return {"steps": report.steps, "warnings": report.warnings}
 
 

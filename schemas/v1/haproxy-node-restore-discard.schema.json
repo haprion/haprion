@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/haproxy-manager/schemas/v1/haproxy-node-restore-discard.schema.json",
+  "title": "HAProxy node restore: discard",
+  "allOf": [
+    {
+      "$ref": "common.schema.json#/$defs/envelope"
+    },
+    {
+      "properties": {
+        "operation": {
+          "const": "node_restore_discard"
+        },
+        "outcome": {
+          "enum": [
+            "done",
+            "failed",
+            "blocked"
+          ]
+        },
+        "result": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/result"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "done"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/result"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "result": {
+      "description": "The run, and whether its directory and one-time key were still there to remove. A run already swept after its hour is removed = false, and still done.",
+      "type": "object",
+      "required": [
+        "run",
+        "removed"
+      ],
+      "properties": {
+        "run": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{7,39}$"
+        },
+        "removed": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

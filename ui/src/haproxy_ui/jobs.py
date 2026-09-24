@@ -107,7 +107,9 @@ class JobView:
     link: str | None = None
 
 
-RESTORE_OPERATIONS = frozenset({"node_restore_prepare", "node_restore_preview", "node_restore"})
+RESTORE_OPERATIONS = frozenset(
+    {"node_restore_prepare", "node_restore_preview", "node_restore", "node_restore_discard"}
+)
 
 
 def _link(job: Job) -> str | None:
@@ -157,6 +159,7 @@ def _operation(value: str) -> str:
         "node_restore_prepare": "Prepare node restore",
         "node_restore_preview": "Preview node restore",
         "node_restore": "Restore node",
+        "node_restore_discard": "Discard node restore",
     }.get(value, value.replace("_", " ").capitalize())
 
 
@@ -737,6 +740,7 @@ RUNNING_LABELS = {
     "node_restore_prepare": "Preparing restore",
     "node_restore_preview": "Previewing restore",
     "node_restore": "Restoring node",
+    "node_restore_discard": "Discarding restore",
     "deploy": "Deploying",
     "cert_deploy": "Deploying certificates",
     "revert": "Reverting",
@@ -777,6 +781,7 @@ FAILURE_LABELS = {
     "node_restore_prepare": "Restore preparation failed",
     "node_restore_preview": "Restore preview failed",
     "node_restore": "Restore failed",
+    "node_restore_discard": "Discarding the restore failed",
     "deploy": "Deploy failed",
     "cert_deploy": "Certificate deploy failed",
     "revert": "Revert failed",

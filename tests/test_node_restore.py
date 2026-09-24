@@ -7,6 +7,7 @@ import os
 import shutil
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -102,7 +103,7 @@ class RestoreTest(unittest.TestCase):
         node_restore.prepare(self.root, request, source_of=lambda _: "192.0.2.7")
         return request.run
 
-    def preview(self, run: str, fingerprint: str = FINGERPRINT) -> dict[str, Any]:
+    def preview(self, run: str, fingerprint: str = FINGERPRINT, **kwargs: Any) -> dict[str, Any]:
         return node_restore.preview(
             self.root,
             run,
@@ -116,6 +117,7 @@ class RestoreTest(unittest.TestCase):
             progress=io.StringIO(),
             session_for=FakeSession,  # type: ignore[arg-type]
             bundle_of=lambda: self.bundle,
+            **kwargs,
         )
 
     def carry_out(self, run: str, confirm: str = "node-test", **kwargs: Any) -> dict[str, Any]:
@@ -148,11 +150,18 @@ class Prepare(RestoreTest):
             mode="new_vm",
             profile=None,
         )
-        prepared = node_restore.prepare(self.root, request, source_of=lambda _: "192.0.2.7")
+        # 2026-01-01 04:00:00 UTC; the target accepts the key for two hours.
+        prepared = node_restore.prepare(
+            self.root, request, source_of=lambda _: "192.0.2.7", now=lambda: 1767240000.0
+        )
         directory = self.root / "r260101-0000aaaa"
         self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
         self.assertEqual((directory / "key").stat().st_mode & 0o777, 0o600)
-        self.assertIn('from="192.0.2.7",restrict ssh-ed25519 ', prepared["paste"])
+        self.assertIn(
+            'from="192.0.2.7",restrict,expiry-time="202601010600Z" ssh-ed25519 ',
+            prepared["paste"],
+        )
+        self.assertEqual(node_restore.prepared_at(directory), 1767240000.0)
         self.assertIn("ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub", prepared["paste"])
         # The line shows what landed: a paste that broke on the way in is seen at once.
         self.assertIn("sudo tail -n 1 /root/.ssh/authorized_keys", prepared["paste"])
@@ -414,6 +423,72 @@ class Run(RestoreTest):
         self.assertNotIn("finish", [c[1]["op"] for c in FakeSession.calls])
 
 
+class TheHour(RestoreTest):
+    """B182: an hour from prepare to run, then the run and its key are gone."""
+
+    def answering(self, address: str) -> bool:
+        # The test address answers once the network session has run, as in Run.
+        if address in self.silent and any(c[1]["op"] == "network" for c in FakeSession.calls):
+            return True
+        return super().answering(address)
+
+    def later(self, run: str, seconds: float) -> float:
+        return node_restore.prepared_at(self.root / run) + seconds
+
+    def test_a_preview_past_the_hour_is_refused_and_removes_the_run(self) -> None:
+        run = self.prepare()
+        after = self.later(run, node_restore.START_WINDOW + 1)
+        with self.assertRaisesRegex(RestoreError, "more than an hour ago"):
+            self.preview(run, now=lambda: after)
+        self.assertFalse((self.root / run).exists())
+        self.assertEqual(FakeSession.calls, [])
+
+    def test_a_run_past_the_hour_is_refused_and_one_within_it_is_carried_out(self) -> None:
+        run = self.prepare()
+        self.preview(run)
+        FakeSession.answers["network"] = {"ok": True, "rollback_unit": "u"}
+        within = self.later(run, node_restore.START_WINDOW - 1)
+        self.assertEqual(self.carry_out(run, now=lambda: within)["outcome"], "done")
+        other = self.prepare()
+        self.preview(other)
+        after = self.later(other, node_restore.START_WINDOW + 1)
+        with self.assertRaisesRegex(RestoreError, "has expired"):
+            self.carry_out(other, now=lambda: after)
+
+    def test_discard_removes_the_key_and_says_whether_there_was_one(self) -> None:
+        run = self.prepare()
+        self.assertTrue(node_restore.discard(self.root, run))
+        self.assertFalse((self.root / run).exists())
+        self.assertFalse(node_restore.discard(self.root, run))
+        with self.assertRaisesRegex(RestoreError, "not usable"):
+            node_restore.discard(self.root, "../elsewhere")
+
+    def test_a_run_being_worked_on_is_neither_discarded_nor_swept(self) -> None:
+        run = self.prepare()
+        after = self.later(run, node_restore.START_WINDOW + 1)
+        with node_restore._Held(self.root / run, wait=True):
+            with self.assertRaisesRegex(RestoreError, "being worked on"):
+                node_restore.discard(self.root, run)
+            self.assertEqual(node_restore.sweep(self.root, after), [])
+        self.assertEqual(node_restore.sweep(self.root, after), [run])
+
+    def test_the_sweep_takes_only_runs_past_their_hour(self) -> None:
+        old, fresh = self.prepare(), self.prepare()
+        (self.root / old / "prepared.json").write_text('{"at": 1000}\n')
+        self.assertEqual(node_restore.sweep(self.root, time.time()), [old])
+        self.assertTrue((self.root / fresh).is_dir())
+
+    def test_a_run_from_before_the_hour_existed_is_timed_by_its_request(self) -> None:
+        run = self.prepare()
+        (self.root / run / "prepared.json").unlink()
+        os.utime(self.root / run / "request.json", (1000, 1000))
+        self.assertEqual(node_restore.prepared_at(self.root / run), 1000.0)
+        self.assertEqual(node_restore.sweep(self.root, time.time()), [run])
+
+    def test_a_missing_root_is_nothing_to_sweep(self) -> None:
+        self.assertEqual(node_restore.sweep(self.root / "absent", time.time()), [])
+
+
 class Cli(unittest.TestCase):
     def test_usage_errors_are_64(self) -> None:
         errors = io.StringIO()
@@ -456,7 +531,7 @@ class Cli(unittest.TestCase):
         if os.geteuid() == 0:
             self.skipTest("running as root")
         errors = io.StringIO()
-        code = cli.main(["forget", "--run", "r260101-0000aaaa"], error_stream=errors)
+        code = cli.main(["discard", "--run", "r260101-0000aaaa"], error_stream=errors)
         self.assertEqual(code, 77)
 
     def test_the_preview_text_names_every_rewrite(self) -> None:

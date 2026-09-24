@@ -11,7 +11,7 @@ import json
 import re
 import unittest
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -52,6 +52,7 @@ def job(
         },
         "node_restore_preview": {"run": RUN, "fingerprint": FINGERPRINT},
         "node_restore": {"run": RUN, "confirm": "node-test"},
+        "node_restore_discard": {"run": RUN},
     }[operation]
     return queued(
         id=number,
@@ -76,6 +77,8 @@ PREVIEWED = job(
     result=fixture("haproxy-node-restore-preview", "done.json"),
     number=2,
 )
+SOON = PREPARED.created_at + timedelta(minutes=10)
+LATE = PREPARED.created_at + node_restores.EXPIRES_AFTER + timedelta(minutes=1)
 BLOCKED_PREVIEW = job(
     "node_restore_preview",
     "blocked",
@@ -274,7 +277,7 @@ class RecentRuns(unittest.TestCase):
                 created_at=PREPARED.created_at + timedelta(minutes=5),
             ),
         ]
-        recent = node_restores.recent_runs(rows, shown=lambda moment: moment)
+        recent = node_restores.recent_runs(rows, shown=lambda moment: moment, now=SOON)
         self.assertEqual([run.run for run in recent["alpha"]], [other, RUN])
         self.assertEqual(recent["alpha"][0].label, "Running")
         self.assertEqual(recent["alpha"][1].label, "Waiting for confirmation")
@@ -285,7 +288,7 @@ class RecentRuns(unittest.TestCase):
             "node_restore", "done", result=fixture("haproxy-node-restore", "done.json"), number=3
         )
         self.assertEqual(
-            node_restores.recent_runs([PREPARED, PREVIEWED, done], shown=lambda m: m), {}
+            node_restores.recent_runs([PREPARED, PREVIEWED, done], shown=lambda m: m, now=SOON), {}
         )
 
     def test_a_rolled_back_run_says_so_and_a_cluster_lists_five(self) -> None:
@@ -296,7 +299,7 @@ class RecentRuns(unittest.TestCase):
             number=3,
         )
         recent = node_restores.recent_runs(
-            [PREPARED, PREVIEWED, failed], shown=lambda moment: moment
+            [PREPARED, PREVIEWED, failed], shown=lambda moment: moment, now=SOON
         )
         self.assertEqual(recent["alpha"][0].label, "Failed · rolled back")
         many = [
@@ -304,9 +307,89 @@ class RecentRuns(unittest.TestCase):
             for index in range(10, 17)
         ]
         self.assertEqual(
-            len(node_restores.recent_runs(many, shown=lambda m: m)["alpha"]),
+            len(node_restores.recent_runs(many, shown=lambda m: m, now=SOON)["alpha"]),
             node_restores.RECENT_PER_CLUSTER,
         )
+
+
+def viewed(rows: list[db.Job], now: datetime) -> node_restores.RestoreRun:
+    restore = node_restores.run_view(RUN, rows, now=now)
+    if restore is None:
+        raise AssertionError("the run has no view")
+    return restore
+
+
+class TheHour(unittest.TestCase):
+    """B182: a run waiting on its operator expires an hour after it was prepared."""
+
+    def test_a_waiting_run_expires_and_a_finished_one_keeps_its_stage(self) -> None:
+        waiting = viewed([PREPARED], LATE)
+        self.assertEqual(waiting.stage, "expired")
+        self.assertTrue(waiting.discardable)
+        confirm = viewed([PREPARED, PREVIEWED], LATE)
+        self.assertEqual(confirm.stage, "expired")
+        self.assertEqual(viewed([PREPARED, PREVIEWED], SOON).stage, "confirm")
+        failed = job(
+            "node_restore",
+            "failed",
+            result=fixture("haproxy-node-restore", "rolled-back.json"),
+            number=3,
+        )
+        self.assertEqual(viewed([PREPARED, PREVIEWED, failed], LATE).stage, "failed")
+
+    def test_the_hour_is_the_engine_s(self) -> None:
+        self.assertEqual(node_restores.EXPIRES_AFTER.total_seconds(), 3600)
+
+    def test_past_its_hour_a_run_leaves_the_list_unless_it_is_working(self) -> None:
+        self.assertEqual(node_restores.recent_runs([PREPARED], shown=lambda m: m, now=LATE), {})
+        failed = job(
+            "node_restore",
+            "failed",
+            result=fixture("haproxy-node-restore", "rolled-back.json"),
+            number=3,
+        )
+        self.assertEqual(
+            node_restores.recent_runs([PREPARED, PREVIEWED, failed], shown=lambda m: m, now=LATE),
+            {},
+        )
+        running = job("node_restore", "running", number=3)
+        recent = node_restores.recent_runs(
+            [PREPARED, PREVIEWED, running], shown=lambda m: m, now=LATE
+        )
+        self.assertEqual(recent["alpha"][0].label, "Running")
+        self.assertFalse(recent["alpha"][0].discardable)
+
+
+class Discarding(unittest.TestCase):
+    def test_a_done_discard_gives_the_run_up_and_it_leaves_the_list(self) -> None:
+        discarded = job("node_restore_discard", "done", number=3)
+        restore = viewed([PREPARED, PREVIEWED, discarded], SOON)
+        self.assertEqual(restore.stage, "discarded")
+        self.assertFalse(restore.discardable)
+        self.assertEqual(
+            node_restores.recent_runs(
+                [PREPARED, PREVIEWED, discarded], shown=lambda m: m, now=SOON
+            ),
+            {},
+        )
+
+    def test_a_queued_discard_is_working_and_a_refused_one_leaves_the_stage(self) -> None:
+        pending = job("node_restore_discard", "pending", number=3)
+        restore = viewed([PREPARED, pending], SOON)
+        self.assertEqual((restore.stage, restore.working), ("working", "Discarding restore"))
+        self.assertEqual(node_restores.step_states(restore)["prepare"], "done")
+        refused = job(
+            "node_restore_discard",
+            "blocked",
+            result=fixture("haproxy-node-restore-discard", "refused.json"),
+            number=3,
+        )
+        restore = viewed([PREPARED, refused], SOON)
+        self.assertEqual(restore.stage, "fingerprint")
+        self.assertIn("being worked on", restore.error)
+
+    def test_the_payload_is_the_run_alone(self) -> None:
+        self.assertEqual(node_restores.discard_payload(RUN), {"run": RUN})
 
 
 class RestoreRouteTestCase(DeleteRouteTestCase):
@@ -568,3 +651,86 @@ class FollowingARun(RestoreRouteTestCase):
             403,
         )
         self.assertEqual(self.queued, [])
+
+
+class DiscardingARun(RestoreRouteTestCase):
+    """B182: Discard on the run's page and on its line; the hour on the page."""
+
+    def old(self, *rows: db.Job) -> list[db.Job]:
+        before = datetime.now(UTC) - node_restores.EXPIRES_AFTER - timedelta(minutes=5)
+        return [replace(row, created_at=before) for row in rows]
+
+    def test_a_waiting_run_offers_discard_to_an_admin_only(self) -> None:
+        self.runs = [PREPARED]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn(f'action="/backups/restore/{RUN}/discard"', page)
+        self.assertIn("Start the restore by ", page)
+        reader = self.writing_client(role="reader").get(f"/backups/restore/{RUN}").text
+        self.assertNotIn("/discard", reader)
+
+    def test_discard_queues_the_fourth_job_and_goes_back_where_it_was_asked(self) -> None:
+        self.runs = [PREPARED]
+        client = self.writing_client()
+        response = self.post(client, f"/backups/restore/{RUN}/discard", return_to="backups")
+        self.assertEqual((response.status_code, response.headers["location"]), (303, "/backups"))
+        response = self.post(client, f"/backups/restore/{RUN}/discard")
+        self.assertEqual(response.headers["location"], f"/backups/restore/{RUN}")
+        self.assertEqual(
+            [(q["operation"], q["cluster"], q["payload"]) for q in self.queued],
+            [("node_restore_discard", "alpha", {"run": RUN})] * 2,
+        )
+        self.assertEqual(self.audit[-1], "queue_job")
+
+    def test_a_restored_or_working_run_is_not_discarded(self) -> None:
+        done = job(
+            "node_restore", "done", result=fixture("haproxy-node-restore", "done.json"), number=3
+        )
+        client = self.writing_client()
+        for rows in ([PREPARED, PREVIEWED, done], [job("node_restore_prepare", "running")]):
+            self.runs = rows
+            response = self.post(client, f"/backups/restore/{RUN}/discard")
+            self.assertIn("This run cannot be discarded now.", response.text)
+        self.assertEqual(self.queued, [])
+        self.assertEqual(
+            self.post(
+                self.writing_client(role="reader"), f"/backups/restore/{RUN}/discard"
+            ).status_code,
+            403,
+        )
+
+    def test_an_expired_run_says_so_and_takes_no_fingerprint(self) -> None:
+        self.runs = self.old(PREPARED)
+        client = self.writing_client()
+        page = client.get(f"/backups/restore/{RUN}").text
+        self.assertIn("<strong>Expired.</strong>", page)
+        self.assertNotIn(f'action="/backups/restore/{RUN}/preview"', page)
+        self.assertIn(f'action="/backups/restore/{RUN}/discard"', page)
+        response = self.post(client, f"/backups/restore/{RUN}/preview", fingerprint=FINGERPRINT)
+        self.assertIn("This run has expired", response.text)
+        self.runs = self.old(PREPARED, PREVIEWED)
+        response = self.post(client, f"/backups/restore/{RUN}/run", confirm="node-test")
+        self.assertIn("This run has expired", response.text)
+        self.assertEqual(self.queued, [])
+
+    def test_a_discarded_run_says_its_key_is_gone(self) -> None:
+        self.runs = [PREPARED, job("node_restore_discard", "done", number=2)]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn("<strong>Discarded.</strong>", page)
+        self.assertNotIn("/discard", page)
+
+    def test_the_backup_page_offers_discard_on_the_line_and_drops_an_expired_run(self) -> None:
+        rows: list[db.Job] = [PREPARED]
+
+        def listed(_c: object, operation: str, **_k: Any) -> list[db.Job]:
+            return [row for row in rows if row.operation == operation]
+
+        with mock.patch("haproxy_ui.db.operation_jobs", side_effect=listed):
+            page = self.writing_client().get("/backups").text
+            self.assertIn(
+                f'<form method="post" action="/backups/restore/{RUN}/discard" class="restore-run-discard">',
+                page,
+            )
+            reader = self.writing_client(role="reader").get("/backups").text
+            self.assertNotIn("restore-run-discard", reader)
+            rows[:] = self.old(PREPARED)
+            self.assertNotIn("Unfinished restores", self.writing_client().get("/backups").text)

@@ -757,10 +757,12 @@ def check_node_restore_prepare_semantics(document: dict[str, object], path: Path
     # Test mode is exactly the mode with a profile: the rewrite has values or does not happen.
     if (result["mode"] == "test") != (result["profile"] is not None):
         raise AssertionError(f"{path}: node_restore_prepare mode and profile disagree")
-    # The pasted line authorizes this run's key, restricted, and nothing else.
+    # The pasted line authorizes this run's key, restricted and for a while only (B182).
     paste = str(result["paste"])
-    if f"haproxy-restore-{result['run']}" not in paste or ",restrict " not in paste:
+    if f"haproxy-restore-{result['run']}" not in paste or ",restrict," not in paste:
         raise AssertionError(f"{path}: the pasted line is not this run's restricted key")
+    if 'expiry-time="' not in paste:
+        raise AssertionError(f"{path}: the pasted line lets the target accept the key forever")
 
 
 def check_node_restore_preview_semantics(document: dict[str, object], path: Path) -> None:
@@ -781,6 +783,17 @@ def check_node_restore_preview_semantics(document: dict[str, object], path: Path
     assert isinstance(plan, dict)
     if (plan["mode"] == "test") != (plan["keepalived"] == "mask"):
         raise AssertionError(f"{path}: keepalived is masked in test mode and only there")
+
+
+def check_node_restore_discard_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done node_restore_discard names its run")
+        return
+    assert isinstance(result, dict)
+    if document["outcome"] != "done":
+        raise AssertionError(f"{path}: only a done node_restore_discard carries a result")
 
 
 def check_node_restore_semantics(document: dict[str, object], path: Path) -> None:
@@ -831,6 +844,7 @@ SEMANTIC_CHECKS = {
     "node_restore_prepare": check_node_restore_prepare_semantics,
     "node_restore_preview": check_node_restore_preview_semantics,
     "node_restore": check_node_restore_semantics,
+    "node_restore_discard": check_node_restore_discard_semantics,
 }
 
 
@@ -892,6 +906,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["mode"] = "new_vm"
     elif operation == "node_restore_preview":
         result["problems"] = [] if result["problems"] else ["a problem the outcome ignores"]
+    elif operation == "node_restore_discard":
+        invalid["outcome"] = "blocked"
     elif operation == "node_restore":
         if invalid["outcome"] == "done":
             result["rolled_back"] = True

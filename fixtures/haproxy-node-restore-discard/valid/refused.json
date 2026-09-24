@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "blocked",
+  "operation": "node_restore_discard",
+  "cluster": "alpha",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": null,
+  "warnings": [],
+  "error": {
+    "code": "restore_refused",
+    "message": "run r260101-0000aaaa is being worked on; wait for it to finish"
+  }
+}

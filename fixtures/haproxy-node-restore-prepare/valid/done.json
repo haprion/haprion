@@ -17,7 +17,7 @@
       "address": "192.0.2.29/24",
       "vip": "198.51.100.254/32"
     },
-    "paste": "echo 'from=\"192.0.2.7\",restrict ssh-ed25519 AAAAexample haproxy-restore-r260101-0000aaaa' | sudo sh -c 'install -d -m 700 /root/.ssh && cat >> /root/.ssh/authorized_keys' && sudo tail -n 1 /root/.ssh/authorized_keys && ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub"
+    "paste": "echo 'from=\"192.0.2.7\",restrict,expiry-time=\"202601010600Z\" ssh-ed25519 AAAAexample haproxy-restore-r260101-0000aaaa' | sudo sh -c 'install -d -m 700 /root/.ssh && cat >> /root/.ssh/authorized_keys' && sudo tail -n 1 /root/.ssh/authorized_keys && ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub"
   },
   "warnings": [],
   "error": null

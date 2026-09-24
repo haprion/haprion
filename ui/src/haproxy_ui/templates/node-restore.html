@@ -35,7 +35,14 @@
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>The restore stopped{% if restore.failed_stage %} in {{ restore.failed_stage }}{% endif %}: {{ restore.error }}</strong></p>
 <p class="table-note">{% if restore.rolled_back %}The network was rolled back: the VM is on its temporary address again.{% else %}The network was not rolled back. Check the VM's console before anything else.{% endif %}</p>
 <div class="form-buttons restore-leave"><a class="secondary-button" href="/backups">Back to node backups</a></div>
-{% elif restore.error and not restore.problems %}
+{% elif restore.stage == 'expired' %}
+<p class="preview-notice"><span class="status-orb status-unknown" aria-hidden="true"></span><strong>Expired.</strong> A run has an hour from being prepared to being started, and this one's ended at {{ expires }}. Start the restore again from the backup page. This manager removes the run's one-time key, and the VM stops accepting it by itself.</p>
+<div class="form-buttons restore-leave"><a class="secondary-button" href="/backups">Back to node backups</a></div>
+{% elif restore.stage == 'discarded' %}
+<p class="preview-notice"><span class="status-orb status-unknown" aria-hidden="true"></span><strong>Discarded.</strong> The run and its one-time key are gone from this manager. A line already pasted on the VM stops working by itself.</p>
+<div class="form-buttons restore-leave"><a class="secondary-button" href="/backups">Back to node backups</a></div>
+{% endif %}
+{% if restore.error and not restore.problems and restore.stage not in ('prepare_failed', 'failed') %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ restore.error }}</strong></p>
 {% endif %}
 
@@ -47,7 +54,7 @@
 
 {% if restore.stage == 'fingerprint' and editable %}
 <section class="cluster-card">
-  <header class="cluster-header"><div class="section-title"><h3>1 · Paste on the VM's console</h3><p>Adds this manager's one-time key for root, shows the line that landed and prints the VM's host key fingerprint.</p></div></header>
+  <header class="cluster-header"><div class="section-title"><h3>1 · Paste on the VM's console</h3><p>Adds this manager's one-time key for root, shows the line that landed and prints the VM's host key fingerprint. Start the restore by {{ expires }}; after that the run expires and starts again.</p></div></header>
   <div class="copy-row restore-paste"><pre class="receiver-command" data-copy-beside><code>{{ restore.paste }}</code></pre></div>
   <form method="post" action="/backups/restore/{{ restore.run }}/preview" class="preview-form restore-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
@@ -109,6 +116,12 @@
 </form>
 {% endif %}
 
+{% if restore.discardable and editable %}
+<form method="post" action="/backups/restore/{{ restore.run }}/discard" class="restore-discard">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups">
+  <div class="editor-actions editor-submit"><p class="table-note">Discard gives this run up: its one-time key is removed from this manager, and nothing is sent to the VM.</p><div class="form-buttons"><button type="submit" class="secondary-button">Discard this run</button></div></div>
+</form>
+{% endif %}
 </div>
 <p class="table-note">Jobs in this run: {% for job in restore.jobs %}<a href="/jobs#job-{{ job.id }}">#{{ job.id }}</a> {{ job.state }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
 {% endblock %}

@@ -126,7 +126,7 @@ def _only(payload: Mapping[str, Any], *allowed: str) -> None:
 def _restore(
     operation: str, cluster: str, request_id: UUID, payload: Mapping[str, Any]
 ) -> Prepared:
-    """One of the three restore jobs, checked by the helper's own parameter check.
+    """One of the four restore jobs, checked by the helper's own parameter check.
 
     The same `validate` the root helper and the command line run, so a payload
     the web built cannot pass here and be refused there, or the other way round.
@@ -757,7 +757,7 @@ def prepare(
         )
 
     #
-    # Three branches rather than one test for membership: the test that holds
+    # Four branches rather than one test for membership: the test that holds
     # this module, the queue's constraint and the worker's outcomes together
     # reads the operations off these lines.
     #
@@ -766,6 +766,8 @@ def prepare(
     if operation == "node_restore_preview":
         return _restore(operation, cluster, request_id, payload)
     if operation == "node_restore":
+        return _restore(operation, cluster, request_id, payload)
+    if operation == "node_restore_discard":
         return _restore(operation, cluster, request_id, payload)
 
     if operation == "deploy":

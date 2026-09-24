@@ -11,6 +11,12 @@ Three steps, each its own command and later its own job (B175):
 ``run``      asks again, refuses unless the digest is unchanged, then runs the
              agent's ``apply``, ``network`` and ``finish`` sessions.
 
+A run has an hour from ``prepare`` to ``run`` (B182). After that it has expired:
+``preview`` and ``run`` refuse it and remove its directory, and every call
+through the helper sweeps away the directories of runs past the hour that
+nothing holds. The line pasted on the target carries an ``expiry-time`` of its
+own, so the target stops accepting the one-time key whatever happens here.
+
 The archive is chosen by name from this host's own listing, never by path.  The
 target is reached only with the one-time key, with ``StrictHostKeyChecking``
 against a ``known_hosts`` that holds exactly the keys this run has verified.
@@ -19,6 +25,7 @@ against a ``known_hosts`` that holds exactly the keys this run has verified.
 from __future__ import annotations
 
 import base64
+import fcntl
 import hashlib
 import io
 import ipaddress
@@ -60,6 +67,18 @@ FINGERPRINT = re.compile(r"^SHA256:[A-Za-z0-9+/]{43}$")
 VERSION = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 ROLLBACK_SECONDS = 180
 SESSION_TIMEOUT = 900.0
+#
+# From `prepare` to the start of `run`. Past it the run is gone and the operator
+# starts again (B182): a key nobody is about to use is a key
+# nobody should be holding. The web page reads the same constant.
+#
+START_WINDOW = 3600
+#
+# How long the target itself accepts the one-time key: the hour to start, and
+# room after it for a run started at the last minute. `finish` removes the line
+# from a node it restored; this is what removes it from one it did not.
+#
+KEY_LIFETIME = 2 * START_WINDOW
 
 
 class RestoreError(RuntimeError):
@@ -132,6 +151,64 @@ def run_directory(root: Path, run: str) -> Path:
     if not directory.is_dir():
         raise RestoreError(f"there is no restore run {run}")
     _private_directory(directory)
+    return directory
+
+
+def prepared_at(directory: Path) -> float:
+    """When the run was prepared, as epoch seconds.
+
+    Runs prepared before B182 have no `prepared.json`; the request file was
+    written in the same breath and never again, so its time stands in.
+    """
+
+    try:
+        document = json.loads((directory / "prepared.json").read_text(encoding="utf-8"))
+        at = document["at"] if isinstance(document, dict) else None
+        if isinstance(at, int | float) and not isinstance(at, bool):
+            return float(at)
+    except (OSError, ValueError, KeyError):
+        pass
+    try:
+        return (directory / "request.json").stat().st_mtime
+    except OSError:
+        return directory.stat().st_mtime
+
+
+def expired(directory: Path, now: float) -> bool:
+    return now - prepared_at(directory) > START_WINDOW
+
+
+class _Held:
+    """An exclusive lock on a run directory for as long as a step works in it.
+
+    `sweep` and `discard` take the same lock without waiting, so a run that is
+    being carried out is never removed from under itself.
+    """
+
+    def __init__(self, directory: Path, *, wait: bool) -> None:
+        self._fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(self._fd)
+            raise
+
+    def __enter__(self) -> _Held:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        os.close(self._fd)
+
+
+def _unexpired(root: Path, run: str, now: float) -> Path:
+    """The run's directory, or a refusal that removes it when its hour is past."""
+
+    directory = run_directory(root, run)
+    if expired(directory, now):
+        shutil.rmtree(directory, ignore_errors=True)
+        raise RestoreError(
+            f"run {run} was prepared more than an hour ago and has expired; prepare a new one"
+        )
     return directory
 
 
@@ -362,8 +439,10 @@ def prepare(
     *,
     source_of: Callable[[str], str] = source_address,
     keygen: str = SSH_KEYGEN,
+    now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
     _private_directory(root)
+    at = int(now())
     directory = root / request.run
     directory.mkdir(mode=0o700)
     key = directory / "key"
@@ -385,8 +464,10 @@ def prepare(
     )
     public = (directory / "key.pub").read_text(encoding="utf-8").strip()
     manager = source_of(request.target)
-    line = f'from="{manager}",restrict {public}'
+    until = time.strftime("%Y%m%d%H%M", time.gmtime(at + KEY_LIFETIME))
+    line = f'from="{manager}",restrict,expiry-time="{until}Z" {public}'
     _write_json(directory / "request.json", request.as_dict())
+    _write_json(directory / "prepared.json", {"at": at})
     paste = (
         f"echo '{line}' | sudo sh -c 'install -d -m 700 /root/.ssh && "
         "cat >> /root/.ssh/authorized_keys' && sudo tail -n 1 /root/.ssh/authorized_keys && "
@@ -573,8 +654,38 @@ def preview(
     progress: TextIO | None = None,
     session_for: Callable[[Path, Path], Session] = Session,
     bundle_of: Callable[[], node_bundle.ReleaseBundle | None] = node_bundle.release_bundle,
+    now: Callable[[], float] = time.time,
 ) -> dict[str, Any]:
-    directory = run_directory(root, run)
+    with _Held(run_directory(root, run), wait=True):
+        return _preview(
+            _unexpired(root, run, now()),
+            fingerprint_seen,
+            cluster,
+            backup_root,
+            scan=scan,
+            fingerprint_of=fingerprint_of,
+            publish_root=publish_root,
+            answering=answering,
+            progress=progress,
+            session_for=session_for,
+            bundle_of=bundle_of,
+        )
+
+
+def _preview(
+    directory: Path,
+    fingerprint_seen: str,
+    cluster: Cluster,
+    backup_root: Path,
+    *,
+    scan: Callable[[str], str],
+    fingerprint_of: Callable[[str], str],
+    publish_root: Path,
+    answering: Callable[[str], bool],
+    progress: TextIO | None,
+    session_for: Callable[[Path, Path], Session],
+    bundle_of: Callable[[], node_bundle.ReleaseBundle | None],
+) -> dict[str, Any]:
     request = Request.from_dict(read_json(directory / "request.json"))
     if not FINGERPRINT.fullmatch(fingerprint_seen):
         raise RestoreError("the fingerprint is written as SHA256:<43 characters>")
@@ -600,7 +711,7 @@ def preview(
         bundle_of=bundle_of,
     )
     summary = {
-        "run": run,
+        "run": request.run,
         "digest": checked.digest,
         "problems": list(checked.problems),
         "plan": checked.plan.summary(),
@@ -662,9 +773,49 @@ def run(
     session_for: Callable[[Path, Path], Session] = Session,
     publish_root: Path,
     bundle_of: Callable[[], node_bundle.ReleaseBundle | None] = node_bundle.release_bundle,
+    now: Callable[[], float] = time.time,
+) -> dict[str, Any]:
+    """Carry out the previewed plan, holding the run's directory throughout.
+
+    The hour is checked once, here at the start: a run that has begun is
+    carried to its end however long its sessions take.
+    """
+
+    with _Held(run_directory(root, run_id), wait=True):
+        return _run(
+            _unexpired(root, run_id, now()),
+            run_id,
+            confirm,
+            cluster,
+            backup_root,
+            answering=answering,
+            progress=progress,
+            pause=pause,
+            rollback_seconds=rollback_seconds,
+            clock=clock,
+            session_for=session_for,
+            publish_root=publish_root,
+            bundle_of=bundle_of,
+        )
+
+
+def _run(
+    directory: Path,
+    run_id: str,
+    confirm: str,
+    cluster: Cluster,
+    backup_root: Path,
+    *,
+    answering: Callable[[str], bool],
+    progress: TextIO | None,
+    pause: float,
+    rollback_seconds: int,
+    clock: Clock,
+    session_for: Callable[[Path, Path], Session],
+    publish_root: Path,
+    bundle_of: Callable[[], node_bundle.ReleaseBundle | None],
 ) -> dict[str, Any]:
     stream = progress or sys.stderr
-    directory = run_directory(root, run_id)
     request = Request.from_dict(read_json(directory / "request.json"))
     previewed = read_json(directory / "preview.json")
     if (directory / "result.json").exists():
@@ -810,7 +961,46 @@ def run(
     return finish_with("done", address=final, hostname=plan.hostname)
 
 
-def forget(root: Path, run_id: str) -> None:
-    """Remove a run's directory - its one-time private key with it."""
+def discard(root: Path, run_id: str) -> bool:
+    """Remove a run's directory unless a step is working in it; False when there was none.
 
-    shutil.rmtree(run_directory(root, run_id))
+    Nothing is sent to the target. The line pasted there stays until its
+    `expiry-time`, and without the private half removed here nothing can use it.
+    """
+
+    if not restore_agent.RUN_ID.fullmatch(run_id):
+        raise RestoreError("the run ID is not usable")
+    directory = root / run_id
+    if not directory.is_dir():
+        return False
+    _private_directory(directory)
+    try:
+        with _Held(directory, wait=False):
+            shutil.rmtree(directory)
+    except BlockingIOError as exc:
+        raise RestoreError(f"run {run_id} is being worked on; wait for it to finish") from exc
+    return True
+
+
+def sweep(root: Path, now: float) -> list[str]:
+    """Remove every run directory past its hour that no step holds; the runs removed.
+
+    Done or failed runs go too: `finish` has replaced the target's keys on a node
+    it restored, and a run that stopped is read from its job, not from here.
+    """
+
+    if not root.is_dir():
+        return []
+    removed = []
+    for directory in sorted(root.iterdir()):
+        if not directory.is_dir() or not restore_agent.RUN_ID.fullmatch(directory.name):
+            continue
+        try:
+            if not expired(directory, now):
+                continue
+            with _Held(directory, wait=False):
+                shutil.rmtree(directory)
+        except (BlockingIOError, FileNotFoundError):
+            continue
+        removed.append(directory.name)
+    return removed

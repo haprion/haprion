@@ -2028,8 +2028,8 @@ sudo haproxy-node-restore preview --run <run> --fingerprint SHA256:...
 # 3. Carry out exactly what the preview showed, confirmed with the node's name.
 sudo haproxy-node-restore run --run <run> --confirm node-a
 
-# Afterwards, or to abandon a run: remove its directory and one-time key.
-sudo haproxy-node-restore forget --run <run>
+# To abandon a run: remove its directory and one-time key.
+sudo haproxy-node-restore discard --run <run>
 ```
 
 **The same three steps from the interface.** An administrator with management writes gets
@@ -2040,7 +2040,14 @@ takes the node's name as confirmation. Each step is one job - `node_restore_prep
 `node_restore_preview`, `node_restore` - run by the worker through the root helper on
 `node-restore.sock`, the same engine as the command. The page is drawn from those jobs alone;
 nothing else is stored. While a job runs it holds the cluster's job slot, so a deploy to that
-cluster waits. `forget` is command-line only.
+cluster waits. *Discard* on the run's page is the fourth job, `node_restore_discard`.
+
+**A run has an hour.** From *prepare* to the start of *run*: past it the run has expired, the
+backup page stops listing it, its page takes nothing more, and the command and the helper refuse
+it and remove its directory - prepare a new one. Every call to either removes the directories of
+runs past their hour that no step is working in, done and failed runs included. The pasted line
+carries `expiry-time` two hours after *prepare*, so the VM itself stops accepting the one-time key
+even when nothing on the management host ever runs again.
 
 **What the preview shows and what stops it.** The target's OS, interface and MAC address; the
 host key fingerprint; the name and address the VM will have; every file written, and every archived

@@ -1,7 +1,7 @@
 """Restoring a node from its archive: the form that starts a run, and the run's page.
 
-Nothing new is stored for a restore. A run is the three jobs that carry its ID
-in their payload (B175) - prepare, preview, run - and the page is drawn from
+Nothing new is stored for a restore. A run is the jobs that carry its ID in
+their payload (B175) - prepare, preview, run, and discard (B182) - and the page is drawn from
 those rows alone, so what it says is what the helper answered and nothing a
 second table could disagree with. The steps a person takes between the jobs
 (pasting a line on the target, reading its fingerprint, typing the node's name)
@@ -9,25 +9,36 @@ happen on the page, and each one queues the next job.
 
 The parameters are checked by the root helper's own `validate`, the one the
 command line uses too, so this form cannot accept what the helper refuses.
+
+A run has an hour from prepare to run (B182), read from the engine's own
+constant: past it the page says so and takes nothing more, the backup page
+stops listing it, and the helper refuses it and removes its key. Nobody has to
+click anything for that - the hour is a rule both ends read, not a job.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from haproxy_mgmt import node_restore, restore_agent
 from haproxy_mgmt.cli import node_restore_helper
-from haproxy_mgmt.cli.node_restore_helper import PREPARE, PREVIEW, RUN
+from haproxy_mgmt.cli.node_restore_helper import DISCARD, PREPARE, PREVIEW, RUN
 
 from .db import Job
 from .jobs import RUNNING_LABELS
 
-OPERATIONS = (PREPARE, PREVIEW, RUN)
+OPERATIONS = (PREPARE, PREVIEW, RUN, DISCARD)
 MODES = ("new_vm", "test")
 ACTIVE_STATES = frozenset({"pending", "running"})
+EXPIRES_AFTER = timedelta(seconds=node_restore.START_WINDOW)
+#
+# What Discard is offered for: every stage but one that is working, one that
+# restored the node, and one already discarded.
+#
+DISCARDABLE = frozenset({"prepare_failed", "fingerprint", "confirm", "failed", "expired"})
 
 
 class RestoreProblem(ValueError):
@@ -89,6 +100,12 @@ def preview_payload(run: str, fingerprint: str) -> dict[str, Any]:
     return payload
 
 
+def discard_payload(run: str) -> dict[str, Any]:
+    payload = {"run": run}
+    _checked(DISCARD, payload)
+    return payload
+
+
 def run_payload(run: str, confirm: str, expected: str) -> dict[str, Any]:
     """Typing the node's name is the confirmation, and it must be the name in the plan."""
 
@@ -127,6 +144,8 @@ class RestoreRun:
     ``done``               restored
     ``failed``             the run stopped after writing; `rolled_back` says whether
                            the network was put back
+    ``expired``            waited for a fingerprint or a confirmation past its hour
+    ``discarded``          given up with Discard; its key is gone
     """
 
     run: str
@@ -153,10 +172,20 @@ class RestoreRun:
     node_bundle: Mapping[str, Any] | None = None
     # Accounts and groups whose number on the VM differs from the archive's (B181).
     renumbered: tuple[str, ...] = ()
+    # When the prepare job was queued, and when the hour to start the run ends (B182).
+    prepared_at: datetime | None = None
 
     @property
     def active(self) -> bool:
         return self.stage == "working"
+
+    @property
+    def discardable(self) -> bool:
+        return self.stage in DISCARDABLE
+
+    @property
+    def expires_at(self) -> datetime | None:
+        return None if self.prepared_at is None else self.prepared_at + EXPIRES_AFTER
 
 
 def _body(job: Job) -> Mapping[str, Any]:
@@ -193,8 +222,12 @@ def _warnings(body: Mapping[str, Any]) -> tuple[str, ...]:
     )
 
 
-def run_view(run: str, rows: Sequence[Job]) -> RestoreRun | None:
-    """The run's state from its jobs, oldest first, or None when it has none."""
+def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> RestoreRun | None:
+    """The run's state from its jobs, oldest first, or None when it has none.
+
+    `now` decides whether a run waiting on its operator has expired; without it
+    the hour is not judged, which is what a test of the steps alone wants.
+    """
 
     jobs = sorted(
         (job for job in rows if job.operation in OPERATIONS and job.payload.get("run") == run),
@@ -212,7 +245,7 @@ def run_view(run: str, rows: Sequence[Job]) -> RestoreRun | None:
     stage, working, error = "fingerprint", "", ""
     problems: tuple[str, ...] = ()
     rolled_back, failed_stage, result = False, "", None
-    latest = jobs[-1]
+    latest = [job for job in jobs if job.operation != DISCARD][-1]
     if latest.state in ACTIVE_STATES:
         stage = "working"
         working = RUNNING_LABELS.get(latest.operation, latest.operation)
@@ -244,6 +277,27 @@ def run_view(run: str, rows: Sequence[Job]) -> RestoreRun | None:
             rolled_back = body.get("rolled_back") is True
             failed_stage = str(body.get("stage") or "")
 
+    if (
+        now is not None
+        and stage in {"fingerprint", "confirm"}
+        and now - prepared.created_at > EXPIRES_AFTER
+    ):
+        stage, error, problems = "expired", "", ()
+    discards = [job for job in jobs if job.operation == DISCARD]
+    if discards and stage != "working":
+        #
+        # A discard is read last and over whatever the steps left: done, the run
+        # is given up; still queued, it is working; refused, the stage stands
+        # with the reason beside it.
+        #
+        discard = discards[-1]
+        if discard.state in ACTIVE_STATES:
+            stage, working = "working", RUNNING_LABELS.get(DISCARD, DISCARD)
+        elif discard.state == "done":
+            stage, error, problems = "discarded", "", ()
+        else:
+            error = _error(discard)
+
     target_facts = preview.get("target") if isinstance(preview.get("target"), dict) else None
     return RestoreRun(
         run=run,
@@ -270,6 +324,7 @@ def run_view(run: str, rows: Sequence[Job]) -> RestoreRun | None:
         if isinstance(preview.get("node_bundle"), dict)
         else None,
         renumbered=_strings(preview.get("renumbered")),
+        prepared_at=prepared.created_at,
     )
 
 
@@ -277,7 +332,7 @@ def step_states(restore: RestoreRun) -> dict[str, str]:
     """Where each of the three steps stands: done, current, failed or waiting."""
 
     order = ("prepare", "preview", "run")
-    if restore.stage == "working":
+    if restore.stage == "working" and restore.jobs[-1].operation != DISCARD:
         latest = restore.jobs[-1].operation
         at = {PREPARE: 0, PREVIEW: 1, RUN: 2}[latest]
         return {
@@ -290,6 +345,10 @@ def step_states(restore: RestoreRun) -> dict[str, str]:
         "confirm": {"prepare": "done", "preview": "done", "run": "current"},
         "done": {"prepare": "done", "preview": "done", "run": "done"},
         "failed": {"prepare": "done", "preview": "done", "run": "failed"},
+        # Given up, past its hour, or being discarded: the steps not taken stay grey.
+        "expired": {"prepare": "done", "preview": "waiting", "run": "waiting"},
+        "discarded": {"prepare": "done", "preview": "waiting", "run": "waiting"},
+        "working": {"prepare": "done", "preview": "waiting", "run": "waiting"},
     }[restore.stage]
 
 
@@ -310,6 +369,8 @@ STAGE_LABELS: dict[str, tuple[str, str]] = {
     "confirm": ("Waiting for confirmation", "warning"),
     "done": ("Restored", "healthy"),
     "failed": ("Failed", "critical"),
+    "expired": ("Expired", "unknown"),
+    "discarded": ("Discarded", "unknown"),
 }
 RECENT_PER_CLUSTER = 5
 
@@ -323,17 +384,21 @@ class RecentRun:
     started_iso: str
     label: str
     tone: str
+    discardable: bool = False
 
 
 def recent_runs(
-    rows: Iterable[Job], *, shown: Callable[[datetime], datetime]
+    rows: Iterable[Job], *, shown: Callable[[datetime], datetime], now: datetime
 ) -> dict[str, tuple[RecentRun, ...]]:
     """The runs that still ask something of somebody, per cluster, newest first.
 
     A restored run is history: the audit trail and the jobs page keep it. What
     the backup page lists is a run left waiting for its fingerprint or its
     confirmation, one still running, and one that stopped - each the way its
-    own page reads it, and each a way back to that page.
+    own page reads it, and each a way back to that page. Only within the run's
+    hour (B182): past it a run is started again, not finished, so it leaves the
+    list by itself - unless a job of it is still working. A discarded run goes
+    at once.
 
     `rows` may hold the same job more than once (three queries, one per
     operation); a job is counted once. The job table keeps a week of rows, so
@@ -348,8 +413,10 @@ def recent_runs(
             by_run.setdefault(run, []).append(job)
     views = []
     for run, jobs in by_run.items():
-        restore = run_view(run, jobs)
-        if restore is None or restore.stage == "done":
+        restore = run_view(run, jobs, now=now)
+        if restore is None or restore.stage in {"done", "discarded", "expired"}:
+            continue
+        if not restore.active and restore.expires_at is not None and now > restore.expires_at:
             continue
         first = min(jobs, key=lambda job: job.id)
         views.append((first.created_at, first.id, restore))
@@ -371,6 +438,7 @@ def recent_runs(
                 started_iso=created.astimezone(UTC).isoformat(),
                 label=label,
                 tone=tone,
+                discardable=restore.discardable,
             )
         )
     return {cluster: tuple(runs) for cluster, runs in recent.items()}

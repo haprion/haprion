@@ -100,6 +100,7 @@ _OPERATION_OUTCOMES = {
     "node_restore_prepare": frozenset({"done", "failed", "blocked"}),
     "node_restore_preview": frozenset({"done", "failed", "blocked"}),
     "node_restore": frozenset({"done", "failed", "blocked"}),
+    "node_restore_discard": frozenset({"done", "failed", "blocked"}),
     "deploy": frozenset({"done", "partial", "failed", "blocked"}),
     "cert_deploy": frozenset({"done", "partial", "failed", "blocked"}),
     "revert": frozenset({"done", "failed", "blocked"}),

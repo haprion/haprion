@@ -262,6 +262,10 @@ TOUCH_AFTER = timedelta(minutes=1)
 DNS_PROFILE_APPLY_WAIT = 6.0
 
 SIGN_IN_FAILED = "Sign-in failed. Check the username and password and try again."
+EXPIRED = (
+    "This run has expired: it was prepared more than an hour ago. Start a new restore from the "
+    "backup page."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -3841,7 +3845,9 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "backups": overview,
                 "in_flight": running,
-                "restores": node_restores.recent_runs(restore_rows, shown=metrics.shown),
+                "restores": node_restores.recent_runs(
+                    restore_rows, shown=metrics.shown, now=datetime.now(UTC)
+                ),
                 #
                 # The zone the schedule form's time is read in: the manager's,
                 # named so an operator on another clock is not left guessing.
@@ -3936,7 +3942,9 @@ def build_router(config: Config) -> APIRouter:
         if not node_restores.usable_run(run):
             return PlainTextResponse("Not found", status_code=404)
         with request.app.state.pool.connection() as connection:
-            restore = node_restores.run_view(run, db.restore_jobs(connection, run))
+            restore = node_restores.run_view(
+                run, db.restore_jobs(connection, run), now=datetime.now(UTC)
+            )
         if restore is None:
             return PlainTextResponse("Not found", status_code=404)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -3949,6 +3957,9 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "restore": restore,
                 "steps": node_restores.step_states(restore),
+                "expires": metrics.shown(restore.expires_at).strftime("%H:%M")
+                if restore.expires_at
+                else "",
                 "problem": problem,
                 "editable": config.management_writes and session.role == "admin",
                 "section": "backups",
@@ -3967,8 +3978,13 @@ def build_router(config: Config) -> APIRouter:
         payload: Mapping[str, Any],
         key: UUID,
         again: Callable[[str], Response],
+        to_backups: bool = False,
     ) -> Response:
-        """Queue one restore job and go to the run's page, or say why not."""
+        """Queue one restore job and go to the run's page, or say why not.
+
+        `to_backups` goes back to the backup page instead: a run discarded from
+        its line there is gone from the list, and that is the answer.
+        """
 
         try:
             operations.prepare(
@@ -4011,6 +4027,8 @@ def build_router(config: Config) -> APIRouter:
         # ID: the row the insert returned, not the value this request carried.
         #
         stored = job.payload.get("run")
+        if to_backups:
+            return RedirectResponse("/backups", status_code=303)
         if isinstance(stored, str) and node_restores.usable_run(stored):
             return RedirectResponse(f"/backups/restore/{stored}", status_code=303)
         return RedirectResponse("/jobs", status_code=303)
@@ -4121,7 +4139,9 @@ def build_router(config: Config) -> APIRouter:
         if not node_restores.usable_run(run):
             return PlainTextResponse("Not found", status_code=404)
         with request.app.state.pool.connection() as connection:
-            restore = node_restores.run_view(run, db.restore_jobs(connection, run))
+            restore = node_restores.run_view(
+                run, db.restore_jobs(connection, run), now=datetime.now(UTC)
+            )
         if restore is None:
             return PlainTextResponse("Not found", status_code=404)
         return gate, restore, key
@@ -4144,6 +4164,8 @@ def build_router(config: Config) -> APIRouter:
         def again(problem: str) -> Response:
             return _restore_page(request, session, run, problem=problem)
 
+        if restore.stage == "expired":
+            return again(EXPIRED)
         if restore.stage != "fingerprint":
             return again("This run is not waiting for a fingerprint.")
         try:
@@ -4178,6 +4200,8 @@ def build_router(config: Config) -> APIRouter:
         def again(problem: str) -> Response:
             return _restore_page(request, session, run, problem=problem)
 
+        if restore.stage == "expired":
+            return again(EXPIRED)
         if restore.stage != "confirm":
             return again("This run has no preview waiting for confirmation.")
         try:
@@ -4192,6 +4216,41 @@ def build_router(config: Config) -> APIRouter:
             payload=payload,
             key=key,
             again=again,
+        )
+
+    @router.post("/backups/restore/{run}/discard", response_class=HTMLResponse)
+    def node_restore_discard(
+        request: Request,
+        run: str,
+        return_to: str = Form(default="", max_length=16),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue `node_restore_discard`: the run is given up and its key removed (B182)."""
+
+        step = _restore_step(request, run, csrf_token, idempotency_key)
+        if isinstance(step, Response):
+            return step
+        session, restore, key = step
+
+        def again(problem: str) -> Response:
+            return _restore_page(request, session, run, problem=problem)
+
+        if not restore.discardable:
+            return again("This run cannot be discarded now.")
+        try:
+            payload = node_restores.discard_payload(run)
+        except node_restores.RestoreProblem as refused:
+            return again(str(refused))
+        return _queue_restore_job(
+            request,
+            session,
+            operation="node_restore_discard",
+            cluster=restore.cluster,
+            payload=payload,
+            key=key,
+            again=again,
+            to_backups=return_to == "backups",
         )
 
     @router.get("/history", response_class=HTMLResponse)

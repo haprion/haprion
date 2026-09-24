@@ -8,6 +8,9 @@ Three steps, in order, each a separate command (B175):
   preview   compare the host key with the one read on the console, and show
             exactly what the restore would write and rewrite
   run       carry out what the preview showed - refused if anything changed
+
+A run has an hour from prepare to run (B182); past it, prepare a new one. Every
+step also removes the directories of runs past their hour.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -34,7 +38,7 @@ Usage:
                                 --test-vip <addr/prefix>]
   haproxy-node-restore preview --run <id> --fingerprint <SHA256:...>
   haproxy-node-restore run     --run <id> --confirm <hostname>
-  haproxy-node-restore forget  --run <id>
+  haproxy-node-restore discard --run <id>
 
   prepare   prints a line to paste on the target's console as its administrator.
             It authorizes this run's one-time key for root, from this host only,
@@ -42,7 +46,10 @@ Usage:
   preview   --fingerprint is the one the pasted line printed on the console.
   run       --confirm is the name the node will have: the archived node's, or
             the test hostname.
-  forget    removes the run and its one-time key.
+  discard   removes the run and its one-time key.
+
+  A run has an hour from prepare to run; after that it has expired and is
+  removed, and prepare starts again.
 
   Add --json to any step for one JSON document instead of text.
 """
@@ -194,7 +201,7 @@ def main(
     argv = sys.argv[1:] if argv is None else argv
     out = output_stream or sys.stdout
     errors = error_stream or sys.stderr
-    if not argv or argv[0] not in {"prepare", "preview", "run", "forget"}:
+    if not argv or argv[0] not in {"prepare", "preview", "run", "discard"}:
         errors.write(USAGE)
         return EXIT_USAGE
     step, rest = argv[0], argv[1:]
@@ -220,7 +227,7 @@ def main(
             needed = {
                 "preview": ("--run", "--fingerprint"),
                 "run": ("--run", "--confirm"),
-                "forget": ("--run",),
+                "discard": ("--run",),
             }
             if not all(name in options for name in needed[step]):
                 raise ValueError("missing")
@@ -243,9 +250,34 @@ def main(
 
     as_json = "--json" in options
     try:
-        if step == "forget":
-            node_restore.forget(run_root, options["--run"])
-            out.write(f"run {options['--run']} removed\n")
+        return _step(step, options, parameters, run_id, policy_path, run_root, out, errors, as_json)
+    finally:
+        #
+        # After the step, not before: a run that has just expired is refused by
+        # its own step with a sentence saying so, rather than found missing.
+        #
+        node_restore.sweep(run_root, time.time())
+
+
+def _step(
+    step: str,
+    options: dict[str, Any],
+    parameters: dict[str, Any],
+    run_id: str,
+    policy_path: Path,
+    run_root: Path,
+    out: TextIO,
+    errors: TextIO,
+    as_json: bool,
+) -> int:
+    try:
+        if step == "discard":
+            removed = node_restore.discard(run_root, options["--run"])
+            out.write(
+                f"run {options['--run']} removed\n"
+                if removed
+                else f"there is no run {options['--run']}; nothing to remove\n"
+            )
             return 0
         policy = load_policy(policy_path)
         runtime = load_runtime_config(policy)

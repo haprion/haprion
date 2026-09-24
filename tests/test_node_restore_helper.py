@@ -5,6 +5,7 @@ import io
 import json
 import shutil
 import tempfile
+import time
 import unittest
 from functools import partial
 from pathlib import Path
@@ -15,7 +16,13 @@ from uuid import uuid4
 
 from haproxy_mgmt import node_bundle, node_restore
 from haproxy_mgmt.cli import node_restore_ask, node_restore_helper
-from haproxy_mgmt.cli.node_restore_helper import PREPARE, PREVIEW, RUN, ParameterProblem
+from haproxy_mgmt.cli.node_restore_helper import (
+    DISCARD,
+    PREPARE,
+    PREVIEW,
+    RUN,
+    ParameterProblem,
+)
 from haproxy_mgmt.node_restore import Clock
 from tests.contract_schema import assert_contract
 from tests.restore_fixture import build
@@ -35,6 +42,7 @@ COMMANDS = {
     PREPARE: "haproxy-node-restore-prepare",
     PREVIEW: "haproxy-node-restore-preview",
     RUN: "haproxy-node-restore",
+    DISCARD: "haproxy-node-restore-discard",
 }
 
 
@@ -72,6 +80,8 @@ class HelperTest(unittest.TestCase):
             archive_path=node_restore.archive_path,
             read_json=node_restore.read_json,
             run_directory=node_restore.run_directory,
+            discard=node_restore.discard,
+            sweep=node_restore.sweep,
             prepare=partial(node_restore.prepare, source_of=lambda _: "192.0.2.7"),
             preview=partial(
                 node_restore.preview,
@@ -90,8 +100,15 @@ class HelperTest(unittest.TestCase):
             ),
         )
 
-    def ask(self, operation: str, parameters: dict[str, Any]) -> tuple[dict[str, Any], int]:
-        request = node_restore_helper.build_request(operation, "alpha", str(uuid4()), parameters)
+    def ask(
+        self,
+        operation: str,
+        parameters: dict[str, Any],
+        *,
+        cluster: str = "alpha",
+        now: float | None = None,
+    ) -> tuple[dict[str, Any], int]:
+        request = node_restore_helper.build_request(operation, cluster, str(uuid4()), parameters)
         policy = SimpleNamespace(backup_root=self.backups, publish_root=PUBLISH_ROOT)
         runtime = SimpleNamespace(cluster=lambda _cluster: CLUSTER)
         output = io.StringIO()
@@ -107,6 +124,7 @@ class HelperTest(unittest.TestCase):
                 error_stream=io.StringIO(),
                 require_root=False,
                 engine=self.engine(),
+                now=time.time if now is None else (lambda: now),
             )
         return assert_contract(COMMANDS[operation], output.getvalue()), code
 
@@ -226,6 +244,51 @@ class ThreeJobs(HelperTest):
             )
         self.assertEqual(code, 75)
         self.assertIn("belongs to cluster alpha", output.getvalue())
+
+
+class Discard(HelperTest):
+    def test_discard_removes_the_run_and_says_so(self) -> None:
+        self.prepared()
+        document, code = self.ask(DISCARD, {"run": RUN_ID})
+        self.assertEqual((document["outcome"], code), ("done", 0))
+        self.assertEqual(document["result"], {"run": RUN_ID, "removed": True})
+        self.assertFalse((self.root / RUN_ID).exists())
+        # Already gone - swept, or discarded twice: nothing to remove, still done.
+        document, code = self.ask(DISCARD, {"run": RUN_ID})
+        self.assertEqual(document["result"]["removed"], False)
+
+    def test_a_run_of_another_cluster_is_not_discarded(self) -> None:
+        self.prepared()
+        document, code = self.ask(DISCARD, {"run": RUN_ID}, cluster="beta")
+        self.assertEqual((document["outcome"], code), ("blocked", 75))
+        self.assertTrue((self.root / RUN_ID).is_dir())
+
+    def test_a_step_past_the_hour_is_refused_in_words_then_swept(self) -> None:
+        self.prepared()
+        after = time.time() + node_restore.START_WINDOW + 60
+        document, code = self.ask(PREVIEW, {"run": RUN_ID, "fingerprint": FINGERPRINT}, now=after)
+        self.assertEqual((document["outcome"], code), ("blocked", 75))
+        self.assertIn("has expired", document["error"]["message"])
+        self.assertFalse((self.root / RUN_ID).exists())
+
+    def test_every_call_sweeps_the_runs_past_their_hour(self) -> None:
+        self.prepared()
+        other = "r260101-0000beef"
+        document, _code = self.ask(
+            PREPARE,
+            {
+                "run": other,
+                "node": "node-a",
+                "archive": VERSION,
+                "target": "192.0.2.120",
+                "test": TEST,
+            },
+            now=time.time() + node_restore.START_WINDOW + 60,
+        )
+        self.assertEqual(document["outcome"], "done")
+        # The first run's hour is past by the second call's clock; the second is new.
+        self.assertFalse((self.root / RUN_ID).exists())
+        self.assertTrue((self.root / other).is_dir())
 
 
 class Parameters(unittest.TestCase):

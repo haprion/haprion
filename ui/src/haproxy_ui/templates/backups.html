@@ -97,7 +97,7 @@
     {% if runs %}
     <section class="restore-runs" aria-label="Unfinished restores in {{ cluster.cluster }}">
       <h4>Unfinished restores</h4>
-      <ul>{% for run in runs %}<li><span class="status-dot status-{{ run.tone }}" aria-hidden="true"></span><a href="/backups/restore/{{ run.run }}"><code>{{ run.run }}</code></a> · {{ run.node }} · {{ run.mode }} · <time datetime="{{ run.started_iso }}">{{ run.started }}</time> · {{ run.label }}</li>{% endfor %}</ul>
+      <ul>{% for run in runs %}<li><span class="status-dot status-{{ run.tone }}" aria-hidden="true"></span><a href="/backups/restore/{{ run.run }}"><code>{{ run.run }}</code></a> · {{ run.node }} · {{ run.mode }} · <time datetime="{{ run.started_iso }}">{{ run.started }}</time> · {{ run.label }}{% if editable and run.discardable %}<form method="post" action="/backups/restore/{{ run.run }}/discard" class="restore-run-discard"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups"><button type="submit" class="link-button">Discard</button></form>{% endif %}</li>{% endfor %}</ul>
     </section>
     {% endif %}
     <p class="table-note">Retention is {{ cluster.schedule.retention if cluster.schedule and cluster.schedule.retention else 14 }} archives per node{% if cluster.truncated %}; this view shows only the most recent archives returned per node{% endif %}. Restore starts a restore onto an empty VM; <code>haproxy-node-restore</code> does the same from the command line.</p>

@@ -11,6 +11,9 @@ terminal's ``haproxy-node-restore`` runs - one implementation, two callers.
 ``node_restore_preview``  checks the fingerprint the operator read on the
                           target's console and answers with the plan
 ``node_restore``          carries out the previewed plan
+``node_restore_discard``  removes a run and its one-time key (B182)
+
+Every call also sweeps away the runs past their hour (B182), after answering.
 
 The run ID is chosen by the caller, so the page that follows a restore can be
 drawn before its first job has run. It is held to the same pattern the run
@@ -25,6 +28,7 @@ import json
 import os
 import re
 import sys
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
@@ -48,7 +52,8 @@ from haproxy_mgmt.restore_plan import TestProfile
 PREPARE = "node_restore_prepare"
 PREVIEW = "node_restore_preview"
 RUN = "node_restore"
-OPERATIONS = frozenset({PREPARE, PREVIEW, RUN})
+DISCARD = "node_restore_discard"
+OPERATIONS = frozenset({PREPARE, PREVIEW, RUN, DISCARD})
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-node-restore-helper"
 EXIT_NOT_ROOT = 77
 
@@ -56,6 +61,7 @@ KEYS = {
     PREPARE: frozenset({"run", "node", "archive", "target", "test"}),
     PREVIEW: frozenset({"run", "fingerprint"}),
     RUN: frozenset({"run", "confirm"}),
+    DISCARD: frozenset({"run"}),
 }
 NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
 TEST_KEYS = frozenset({"hostname", "address", "vip"})
@@ -67,6 +73,7 @@ TEST_KEYS = frozenset({"hostname", "address", "vip"})
 FINGERPRINT_IN_LINE = re.compile(r"SHA256:[A-Za-z0-9+/]{43}(?![A-Za-z0-9+/=])")
 
 __all__ = [
+    "DISCARD",
     "HELPER",
     "KEYS",
     "OPERATIONS",
@@ -146,7 +153,7 @@ def validate(operation: str, parameters: Mapping[str, Any]) -> None:
     elif operation == PREVIEW:
         if not node_restore.FINGERPRINT.fullmatch(_string(parameters, "fingerprint")):
             raise ParameterProblem("the fingerprint is written SHA256: and 43 characters")
-    elif not restore_agent.HOSTNAME.fullmatch(_string(parameters, "confirm")):
+    elif operation == RUN and not restore_agent.HOSTNAME.fullmatch(_string(parameters, "confirm")):
         raise ParameterProblem("confirm with the name the node will have")
 
 
@@ -203,6 +210,45 @@ def main(
     require_secure: bool = True,
     require_root: bool = True,
     engine: Any = node_restore,
+    now: Any = time.time,
+) -> int:
+    try:
+        return _answer(
+            argv,
+            policy_path=policy_path,
+            run_root=run_root,
+            input_stream=input_stream,
+            output_stream=output_stream,
+            error_stream=error_stream,
+            require_secure=require_secure,
+            require_root=require_root,
+            engine=engine,
+            now=now,
+        )
+    finally:
+        #
+        # After the answer, so a run that has just expired is refused by its
+        # own step in words; and not as anyone but root, who owns the runs.
+        #
+        if not require_root or os.geteuid() == 0:
+            try:
+                engine.sweep(run_root, now())
+            except OSError as exc:
+                (error_stream or sys.stderr).write(f"WARNING: sweeping expired runs: {exc}\n")
+
+
+def _answer(
+    argv: list[str] | None,
+    *,
+    policy_path: Path,
+    run_root: Path,
+    input_stream: BinaryIO | None,
+    output_stream: TextIO | None,
+    error_stream: TextIO | None,
+    require_secure: bool,
+    require_root: bool,
+    engine: Any,
+    now: Any,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer = output_stream or sys.stdout
@@ -254,6 +300,30 @@ def main(
 
     run = str(parameters["run"])
     try:
+        if operation == DISCARD:
+            #
+            # Not the stored request's cluster check the other steps make: a run
+            # already swept has nothing left to compare, and removing nothing is
+            # the answer to discarding it. The job's cluster is still the web's.
+            #
+            directory = run_root / run
+            if (directory / "request.json").is_file():
+                owner = Request.from_dict(engine.read_json(directory / "request.json")).cluster
+                if owner != request.cluster:
+                    raise RestoreError(f"run {run} belongs to cluster {owner}")
+            removed = engine.discard(run_root, run)
+            write_document(
+                writer,
+                envelope(
+                    operation=operation,
+                    outcome="done",
+                    cluster=request.cluster,
+                    request_id=request.request_id,
+                    result={"run": run, "removed": removed},
+                ),
+            )
+            return 0
+
         if operation == PREPARE:
             profile = test_profile(parameters["test"])
             restore = Request(
@@ -269,7 +339,7 @@ def main(
             engine.archive_path(policy.backup_root, node, restore.archive)
             if (run_root / run).exists():
                 raise RestoreError(f"a restore run {run} already exists")
-            prepared = engine.prepare(run_root, restore)
+            prepared = engine.prepare(run_root, restore, now=now)
             result: dict[str, Any] = {**restore.as_dict(), "paste": prepared["paste"]}
             document = envelope(
                 operation=operation,
@@ -296,6 +366,7 @@ def main(
                 policy.backup_root,
                 publish_root=policy.publish_root,
                 progress=errors,
+                now=now,
             )
             problems = summary["problems"]
             write_document(
@@ -324,6 +395,7 @@ def main(
             policy.backup_root,
             publish_root=policy.publish_root,
             progress=errors,
+            now=now,
         )
     except (RestoreError, ArchiveError) as exc:
         return refuse("restore_refused", str(exc), BLOCKED_EXIT)

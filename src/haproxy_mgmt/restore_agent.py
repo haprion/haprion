@@ -21,8 +21,10 @@ JSON result document; stderr carries progress lines for the operator's log.
              restore is connected with.
 
 Every check an operation makes happens before its first write.  A directory the
-export carries whole is made equal to the archive; what was there and is not in
-the archive is moved to a quarantine directory, never deleted.
+plan names in ``equal_directories`` is made equal to the archive; what was there
+and is not in the archive is moved to a quarantine directory, never deleted.  A
+new VM's plan names none (B178): the product's files are written beside the
+target's own.
 """
 
 from __future__ import annotations

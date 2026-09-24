@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -65,6 +66,22 @@ PRODUCT_PACKAGES = (
 # its own and gets the HAProxy repository for its own release instead (B178).
 #
 APT_DIRECTORIES = ("/etc/apt/sources.list.d", "/etc/apt/preferences.d", "/etc/apt/keyrings")
+#
+# Directories the product shares with the OS image (B178). The export takes
+# them whole, but only the product's own file in each comes back: the rest
+# belong to the image the archive was taken on - the cloud image's sysctl and
+# sshd drop-ins, cloud-init's sudoers file, rules left from before the product
+# - and the target has its own. An operator's file here comes back when the
+# operator names it in EXTRA_BACKUP_PATHS. The names are the ones
+# install/04-node-prepare writes; a test holds the two together.
+#
+SHARED_DIRECTORIES = {
+    "/etc/sysctl.d": frozenset({"/etc/sysctl.d/60-haproxy.conf"}),
+    "/etc/sudoers.d": frozenset({"/etc/sudoers.d/haproxy-node"}),
+    "/etc/ssh/sshd_config.d": frozenset(),
+}
+# The product sets nothing in the SSH server's own file; the target's stays.
+TARGET_FILES = frozenset({"/etc/ssh/sshd_config"})
 
 MAC = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
 
@@ -117,6 +134,12 @@ class RestorePlan:
     address: ipaddress.IPv4Interface
     files: tuple[PlannedFile, ...]
     equal_directories: tuple[str, ...]
+    #
+    # Files in the archive this restore does not write, because the target
+    # has its own (B178). Shown, so an operator's own file among them is seen
+    # before the restore rather than missed after it.
+    #
+    left_out: tuple[str, ...]
     parents: tuple[str, ...]
     network: tuple[PlannedFile, ...]
     root_keys: PlannedFile | None
@@ -137,6 +160,7 @@ class RestorePlan:
             "files": [file.path for file in self.files],
             "network": [file.path for file in self.network],
             "equal_directories": list(self.equal_directories),
+            "left_out": list(self.left_out),
             "groups": [{"name": group.name, "gid": group.gid} for group in self.groups],
             "accounts": [
                 {
@@ -158,6 +182,23 @@ class RestorePlan:
                 for item in self.rewrites
             ],
         }
+
+
+def _under(path: str, roots: Iterable[str]) -> bool:
+    return any(path == root or path.startswith(f"{root}/") for root in roots)
+
+
+def _targets_own(path: str, extra: tuple[str, ...]) -> bool:
+    """True for an archived path the target keeps its own version of (B178)."""
+
+    if _under(path, extra):
+        return False
+    if path in TARGET_FILES or _under(path, APT_DIRECTORIES):
+        return True
+    for directory, own in SHARED_DIRECTORIES.items():
+        if _under(path, (directory,)):
+            return path not in own
+    return False
 
 
 def _planned(entry: Entry, data: bytes | None = None) -> PlannedFile:
@@ -321,13 +362,14 @@ def build(
     hostname = source.hostname if profile is None else profile.hostname
 
     files: list[PlannedFile] = []
+    left_out: list[str] = []
     root_keys: PlannedFile | None = None
     for entry in source.owned():
         if entry.path == NETPLAN_DIR or entry.path.startswith(f"{NETPLAN_DIR}/"):
             continue
-        if entry.path in APT_DIRECTORIES or entry.path.startswith(
-            tuple(f"{directory}/" for directory in APT_DIRECTORIES)
-        ):
+        if _targets_own(entry.path, source.extra_paths):
+            if entry.kind != "directory":
+                left_out.append(entry.path)
             continue
         if entry.path == ROOT_KEYS:
             root_keys = _planned(entry)
@@ -385,21 +427,19 @@ def build(
             for item in written
         )
 
-    equal = tuple(
-        entry.path
-        for entry in source.owned()
-        if entry.kind == "directory"
-        and entry.path in source.roots
-        and entry.path != NETPLAN_DIR
-        and entry.path not in APT_DIRECTORIES
-    )
     return RestorePlan(
         mode=mode,
         source_hostname=source.hostname,
         hostname=hostname,
         address=address,
         files=tuple(files),
-        equal_directories=equal,
+        #
+        # A new VM has nothing of its own in the product's directories to set
+        # aside, and the directories it shares with the image keep the image's
+        # files (B178). Overwrite node (B172) is what will fill this.
+        #
+        equal_directories=(),
+        left_out=tuple(left_out),
         parents=source.parents(),
         network=network,
         root_keys=root_keys,

@@ -79,6 +79,7 @@
     <div><dt>Packages</dt><dd>{{ plan.packages | join(', ') }}</dd></div>
     <div><dt>Accounts</dt><dd>{% for account in plan.accounts %}{{ account.name }} ({{ account.uid }}){% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
     <div><dt>Files</dt><dd>{{ plan.files | length }} files{% if plan.equal_directories %} · made equal to the archive: {{ plan.equal_directories | join(', ') }}{% endif %}</dd></div>
+    {% if plan.left_out %}<div><dt>Left as the VM has them</dt><dd>{% for path in plan.left_out %}<code>{{ path }}</code>{% if not loop.last %}, {% endif %}{% endfor %} · an operator's own file among these comes back only when named in <code>EXTRA_BACKUP_PATHS</code></dd></div>{% endif %}
     <div><dt>Network, last</dt><dd>{{ plan.network | join(', ') }} · rolled back by itself if this manager cannot reach the node afterwards</dd></div>
   </dl>
   {% if plan.rewrites %}

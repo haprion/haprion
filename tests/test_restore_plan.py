@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import shutil
 import tempfile
 import unittest
@@ -11,6 +12,9 @@ import yaml
 from haproxy_mgmt import restore_plan, restore_source
 from haproxy_mgmt.restore_plan import PlanError, Target, TestProfile
 from tests.restore_fixture import FILES, NETPLAN, build
+
+BASE = Path(__file__).resolve().parents[1]
+NODE_PREPARE = BASE / "install/04-node-prepare"
 
 TARGET = Target(
     os_release={"ID": "ubuntu", "VERSION_ID": "26.04", "VERSION_CODENAME": "resolute"},
@@ -72,8 +76,42 @@ class ANewVm(Planning):
         self.assertIn("/root/.ssh", paths)
         assert plan.root_keys is not None
         self.assertEqual(plan.root_keys.path, "/root/.ssh/authorized_keys")
-        self.assertNotIn("/etc/netplan", plan.equal_directories)
-        self.assertIn("/etc/sudoers.d", plan.equal_directories)
+        self.assertEqual(plan.equal_directories, ())
+
+    def test_only_the_products_own_file_comes_back_to_a_directory_it_shares(self) -> None:
+        """B178: the image's files there are the target's, not the archive's."""
+
+        plan = restore_plan.build(self.source(), "new_vm", TARGET)
+        paths = {file.path for file in plan.files}
+        self.assertIn("/etc/sudoers.d/haproxy-node", paths)
+        self.assertIn("/etc/sysctl.d/60-haproxy.conf", paths)
+        for path in (
+            "/etc/sudoers.d/90-cloud-init-users",
+            "/etc/sysctl.d/99-cloudimg-ipv6.conf",
+            "/etc/ssh/sshd_config.d/60-cloudimg-settings.conf",
+            "/etc/ssh/sshd_config",
+        ):
+            self.assertNotIn(path, paths)
+            self.assertIn(path, plan.left_out)
+        # The target's directories keep their own mode; only the file is written.
+        for directory in ("/etc/sudoers.d", "/etc/sysctl.d", "/etc/ssh/sshd_config.d"):
+            self.assertNotIn(directory, paths)
+            self.assertNotIn(directory, plan.left_out)
+
+    def test_the_archives_apt_files_are_left_out_and_shown(self) -> None:
+        plan = restore_plan.build(self.source(), "new_vm", TARGET)
+        self.assertIn("/etc/apt/sources.list.d/haproxy.sources", plan.left_out)
+        self.assertIn("/etc/apt/sources.list.d/haproxy.sources", plan.summary()["left_out"])
+
+    def test_an_operators_file_named_as_an_extra_path_comes_back(self) -> None:
+        files = dict(FILES)
+        files["/etc/sudoers.d/svc-app"] = ("svc-app ALL=(root) NOPASSWD: /bin/true\n", 0o440)
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        archive = build(work, files=files, extra_paths=("/etc/sudoers.d/svc-app",))
+        plan = restore_plan.build(restore_source.read(archive), "new_vm", TARGET)
+        self.assertIn("/etc/sudoers.d/svc-app", {file.path for file in plan.files})
+        self.assertNotIn("/etc/sudoers.d/svc-app", plan.left_out)
 
     def test_parents_are_never_planned_as_files(self) -> None:
         plan = restore_plan.build(self.source(), "new_vm", TARGET)
@@ -133,9 +171,11 @@ class TestMode(Planning):
         self.assertEqual(self.data(plan, "/etc/keepalived/addresses.conf"), "198.51.100.254/32\n")
 
     def test_the_test_node_keeps_its_own_host_keys(self) -> None:
-        paths = {file.path for file in self.plan().files}
+        plan = self.plan()
+        paths = {file.path for file in plan.files}
         self.assertFalse(any(path.startswith("/etc/ssh/ssh_host_") for path in paths))
-        self.assertIn("/etc/ssh/sshd_config", paths)
+        # Held back as the key the preview compared, not as the target's own file.
+        self.assertFalse(any(path.startswith("/etc/ssh/ssh_host_") for path in plan.left_out))
 
     def test_every_rewrite_is_listed(self) -> None:
         fields = {(r.path, r.field) for r in self.plan().rewrites}
@@ -180,3 +220,14 @@ class NetplanShapes(Planning):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheProductsFilesAreTheInstallersOwn(unittest.TestCase):
+    def test_each_shared_directory_keeps_exactly_what_04_node_prepare_writes(self) -> None:
+        text = NODE_PREPARE.read_text(encoding="utf-8")
+        self.assertIn('install -o root -g root -m 440 "$tmp" /etc/sudoers.d/haproxy-node', text)
+        self.assertIn('sysctl_file="/etc/sysctl.d/60-haproxy.conf"', text)
+        self.assertNotIn("sshd_config", text)
+        written = set(re.findall(r"/etc/(?:sudoers|sysctl)\.d/[\w.-]+", text))
+        own = set().union(*restore_plan.SHARED_DIRECTORIES.values())
+        self.assertEqual(written, own)

@@ -107,6 +107,9 @@ FILES: dict[str, tuple[str, int]] = {
     "/etc/sysctl.d/60-haproxy.conf": ("net.ipv4.ip_nonlocal_bind = 1\n", 0o644),
     "/etc/apt/sources.list.d/haproxy.sources": ("Types: deb\n", 0o644),
     "/etc/sudoers.d/haproxy-node": ("# rules\n", 0o440),
+    "/etc/sudoers.d/90-cloud-init-users": ("# image\n", 0o440),
+    "/etc/sysctl.d/99-cloudimg-ipv6.conf": ("net.ipv6.conf.all.use_tempaddr = 0\n", 0o644),
+    "/etc/ssh/sshd_config.d/60-cloudimg-settings.conf": ("PasswordAuthentication no\n", 0o644),
     "/etc/haproxy-manager/node.conf": (NODE_CONF, 0o600),
     "/etc/haproxy-manager/node-installation.json": ('{"node_api": 1}\n', 0o644),
     "/etc/haproxy-manager/keys/config-pull": ("private\n", 0o600),
@@ -143,7 +146,12 @@ def _write(path: Path, text: str, mode: int) -> None:
     path.chmod(mode)
 
 
-def build(root: Path, *, files: dict[str, tuple[str, int]] | None = None) -> Path:
+def build(
+    root: Path,
+    *,
+    files: dict[str, tuple[str, int]] | None = None,
+    extra_paths: tuple[str, ...] = ("/etc/default/grub.d/99-local.cfg",),
+) -> Path:
     stage = root / "stage"
     previous = os.umask(0o077)
     try:
@@ -158,7 +166,8 @@ def build(root: Path, *, files: dict[str, tuple[str, int]] | None = None) -> Pat
             target = stage / f"rootfs{directory}"
             if target.is_dir():
                 target.chmod(0o700 if directory == "/root/.ssh" else 0o755)
-        for name, text in META.items():
+        meta = {**META, "meta/extra-paths.txt": "".join(f"{path}\n" for path in extra_paths)}
+        for name, text in meta.items():
             _write(stage / name, text, 0o644)
     finally:
         os.umask(previous)

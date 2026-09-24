@@ -21,8 +21,10 @@
       "network": [
         "/etc/netplan/50-cloud-init.yaml"
       ],
-      "equal_directories": [
-        "/etc/sudoers.d"
+      "equal_directories": [],
+      "left_out": [
+        "/etc/ssh/sshd_config",
+        "/etc/sudoers.d/90-cloud-init-users"
       ],
       "groups": [
         {

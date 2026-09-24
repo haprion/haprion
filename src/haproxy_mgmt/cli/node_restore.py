@@ -125,9 +125,13 @@ def _text_preview(summary: dict[str, Any], out: TextIO) -> None:
     out.write(
         f"  files     {len(plan['files'])} written, network last: {', '.join(plan['network'])}\n"
     )
-    out.write(
-        f"  made equal to the archive (the rest to quarantine): {', '.join(plan['equal_directories'])}\n"
-    )
+    if plan["equal_directories"]:
+        out.write(
+            "  made equal to the archive (the rest to quarantine): "
+            f"{', '.join(plan['equal_directories'])}\n"
+        )
+    if plan.get("left_out"):
+        out.write(f"  left to the target's own: {', '.join(plan['left_out'])}\n")
     if archive["extra_paths"]:
         out.write(f"  operator's own paths: {', '.join(archive['extra_paths'])}\n")
     out.write("  accounts:\n")

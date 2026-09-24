@@ -226,6 +226,12 @@
                 "type": "string"
               }
             },
+            "left_out": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
             "packages": {
               "type": "array",
               "items": {

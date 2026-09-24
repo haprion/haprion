@@ -37,8 +37,36 @@ if id -u "$LOGREAD_USER" >/dev/null 2>&1; then
         && "$logread_shell" == "/bin/bash" ]] \
         || die "existing LOGREAD_USER is not the account created by this installer"
 fi
-getent passwd syslog >/dev/null \
-    || die "the rsyslog account 'syslog' does not exist; install rsyslog first"
+#
+# The account rsyslog writes files as, which must own the traffic log's
+# directory. Ubuntu drops to `syslog` ($PrivDropToUser in rsyslog.conf);
+# Debian 13 has no such line and no such account and writes as root
+# (measured 2026-09-24). Read from rsyslog's own configuration, the main file
+# first and its drop-ins after, the last setting winning - the same rule as
+# `rsyslog_writer` in restore_agent.py, held together by a test.
+#
+rsyslog_writer() {
+    local config="${RSYSLOG_CONFIG:-/etc/rsyslog.conf}" dropins="${RSYSLOG_DROPINS:-/etc/rsyslog.d}"
+    local sources=() found
+    [[ -f "$config" ]] && sources+=("$config")
+    for found in "$dropins"/*.conf; do
+        [[ -f "$found" ]] && sources+=("$found")
+    done
+    found=""
+    if ((${#sources[@]})); then
+        # shellcheck disable=SC2016  # the literal dollar sign is the directive being matched
+        found="$(sed -nE \
+            -e '/^[[:space:]]*#/d' \
+            -e 's/^[[:space:]]*\$PrivDropToUser[[:space:]]+([^[:space:]#]+).*/\1/Ip' \
+            -e 's/.*privdrop\.user\.name[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/Ip' \
+            "${sources[@]}" | tail -n 1)"
+    fi
+    echo "${found:-root}"
+}
+command -v rsyslogd >/dev/null || die "rsyslog is not installed; install rsyslog first"
+RSYSLOG_WRITER="$(rsyslog_writer)"
+getent passwd "$RSYSLOG_WRITER" >/dev/null \
+    || die "rsyslog writes as '${RSYSLOG_WRITER}', which does not exist; reinstall rsyslog"
 
 SBIN="/usr/local/sbin"
 NODE_CONF="/etc/haproxy-manager/node.conf"
@@ -137,7 +165,7 @@ usermod -a -G "$LOGREAD_GROUP" "$LOGREAD_USER"
 # makes every traffic file inherit haproxy-logread on creation, which is what
 # lets the reader account read it - without widening the syslog account.
 #
-ensure_dir "$TRAFFIC_LOG_ROOT" "syslog:${LOGREAD_GROUP}" 2750
+ensure_dir "$TRAFFIC_LOG_ROOT" "${RSYSLOG_WRITER}:${LOGREAD_GROUP}" 2750
 log "  member    ${LOGREAD_USER} -> ${LOGREAD_GROUP}"
 
 step "HAProxy release layout"

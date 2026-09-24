@@ -564,6 +564,37 @@ def _layout(host: Host, run: str, report: Report) -> None:
     report.step("haproxy-layout")
 
 
+PRIVDROP = (
+    re.compile(r"^\s*\$PrivDropToUser\s+([^\s#]+)", re.IGNORECASE),
+    re.compile(r'privdrop\.user\.name\s*=\s*"([^"]+)"', re.IGNORECASE),
+)
+
+
+def rsyslog_writer(host: Host) -> str:
+    """The account rsyslog writes as - the same rule as `rsyslog_writer` in the node scripts.
+
+    Ubuntu drops to `syslog` with `$PrivDropToUser`; Debian 13 writes as root
+    and has no `syslog` account (measured 2026-09-24). The main file first,
+    then its drop-ins, the last setting winning.
+    """
+
+    config = host.path("/etc/rsyslog.conf")
+    sources = [config] if config.is_file() else []
+    dropins = host.path("/etc/rsyslog.d")
+    if dropins.is_dir():
+        sources += sorted(path for path in dropins.glob("*.conf") if path.is_file())
+    found = ""
+    for source in sources:
+        for line in source.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            for pattern in PRIVDROP:
+                match = pattern.search(line)
+                if match:
+                    found = match.group(1)
+    return found or "root"
+
+
 def _traffic_log(host: Host, header: dict[str, Any], report: Report) -> None:
     group = header.get("logread_group")
     if not group:
@@ -572,12 +603,15 @@ def _traffic_log(host: Host, header: dict[str, Any], report: Report) -> None:
     target.mkdir(parents=True, exist_ok=True)
     users = passwd(host)
     present = groups(host)
-    if "syslog" not in users or group not in present:
-        report.warnings.append(f"{TRAFFIC_LOG_ROOT} left root-owned: syslog or {group} is missing")
+    writer = rsyslog_writer(host)
+    if writer not in users or group not in present:
+        report.warnings.append(
+            f"{TRAFFIC_LOG_ROOT} left root-owned: {writer} (rsyslog's account) or {group} is missing"
+        )
         return
-    host.chown(target, users["syslog"][0], present[group])
+    host.chown(target, users[writer][0], present[group])
     target.chmod(0o2750)
-    report.step("traffic-log-root", owner=f"syslog:{group}", mode="2750")
+    report.step("traffic-log-root", owner=f"{writer}:{group}", mode="2750")
 
 
 def _services(host: Host, header: dict[str, Any], report: Report) -> None:

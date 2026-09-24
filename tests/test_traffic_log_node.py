@@ -195,7 +195,9 @@ class TrafficLogRsyslogRuleTests(unittest.TestCase):
     def test_the_directory_is_set_group_id_so_files_inherit_the_read_group(self) -> None:
         prepare = (BASE / "install" / "04-node-prepare").read_text()
 
-        self.assertIn('ensure_dir "$TRAFFIC_LOG_ROOT" "syslog:${LOGREAD_GROUP}" 2750', prepare)
+        self.assertIn(
+            'ensure_dir "$TRAFFIC_LOG_ROOT" "${RSYSLOG_WRITER}:${LOGREAD_GROUP}" 2750', prepare
+        )
 
     @unittest.skipUnless(shutil.which("rsyslogd"), "rsyslog is not installed here")
     def test_the_real_rsyslog_parser_accepts_the_rule(self) -> None:

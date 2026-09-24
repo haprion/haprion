@@ -35,6 +35,33 @@ WITHDRAWN=(
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 die()  { echo "ERROR: $*" >&2; exit 1; }
 
+#
+# The account rsyslog writes files as, which must own the traffic log's
+# directory. Ubuntu drops to `syslog` ($PrivDropToUser in rsyslog.conf);
+# Debian 13 has no such line and no such account and writes as root
+# (measured 2026-09-24). Read from rsyslog's own configuration, the main file
+# first and its drop-ins after, the last setting winning - the same rule as
+# `rsyslog_writer` in restore_agent.py, held together by a test.
+#
+rsyslog_writer() {
+    local config="${RSYSLOG_CONFIG:-/etc/rsyslog.conf}" dropins="${RSYSLOG_DROPINS:-/etc/rsyslog.d}"
+    local sources=() found
+    [[ -f "$config" ]] && sources+=("$config")
+    for found in "$dropins"/*.conf; do
+        [[ -f "$found" ]] && sources+=("$found")
+    done
+    found=""
+    if ((${#sources[@]})); then
+        # shellcheck disable=SC2016  # the literal dollar sign is the directive being matched
+        found="$(sed -nE \
+            -e '/^[[:space:]]*#/d' \
+            -e 's/^[[:space:]]*\$PrivDropToUser[[:space:]]+([^[:space:]#]+).*/\1/Ip' \
+            -e 's/.*privdrop\.user\.name[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/Ip' \
+            "${sources[@]}" | tail -n 1)"
+    fi
+    echo "${found:-root}"
+}
+
 render_rule() {
     cat <<'CONF'
 # Installed by haproxy-traffic-log-enable. Do not edit by hand.
@@ -239,8 +266,9 @@ getent group "$LOG_GROUP" >/dev/null \
 # the only way that does not require widening the syslog account.
 #
 owner="$(stat -c '%U:%G %a' "$LOG_ROOT")"
-[[ "$owner" == "syslog:${LOG_GROUP} 2750" ]] \
-    || die "${LOG_ROOT} is ${owner}, expected syslog:${LOG_GROUP} 2750; rerun 04-node-prepare"
+writer="$(rsyslog_writer)"
+[[ "$owner" == "${writer}:${LOG_GROUP} 2750" ]] \
+    || die "${LOG_ROOT} is ${owner}, expected ${writer}:${LOG_GROUP} 2750; rerun 04-node-prepare"
 
 [[ -x "$PRUNE_COMMAND" ]] \
     || die "${PRUNE_COMMAND} is missing; run 04-node-prepare on this node first"

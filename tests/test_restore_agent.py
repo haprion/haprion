@@ -34,6 +34,8 @@ class FakeHost(Host):
             "/etc/shadow": "root:*:1::::::\noperator:$y$existing:1::::::\n",
             "/etc/os-release": 'ID=ubuntu\nVERSION_ID="26.04"\n',
             "/etc/hostname": "temp\n",
+            # Ubuntu's rsyslog drops to `syslog`, as the node's does.
+            "/etc/rsyslog.conf": "$PrivDropToUser syslog\n$PrivDropToGroup syslog\n",
         }.items():
             path = self.path(name)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -361,6 +363,13 @@ class Apply(AgentTest):
         self.apply()
         self.assertEqual(self.host.owners["/var/log/haproxy-manager"], (104, 985))
         self.assertEqual(self.host.path("/var/log/haproxy-manager").stat().st_mode & 0o7777, 0o2750)
+
+    def test_on_debian_the_traffic_log_root_belongs_to_root(self) -> None:
+        """Debian 13's rsyslog writes as root and has no `syslog` account."""
+
+        self.host.path("/etc/rsyslog.conf").write_text('module(load="imuxsock")\n')
+        self.apply()
+        self.assertEqual(self.host.owners["/var/log/haproxy-manager"], (0, 985))
 
     def test_netplan_and_roots_keys_are_refused_in_apply(self) -> None:
         for path in ("/etc/netplan/50-x.yaml", "/root/.ssh/authorized_keys"):

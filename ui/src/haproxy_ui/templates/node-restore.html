@@ -27,20 +27,15 @@
 <p class="preview-notice"><span class="badge-spinner" aria-hidden="true"></span><strong>{{ restore.working }}.</strong> This page refreshes by itself.</p>
 {% elif restore.stage == 'prepare_failed' %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>The restore could not be prepared: {{ restore.error }}</strong></p>
-<div class="form-buttons restore-leave"><a class="secondary-button" href="/backups">Back to node backups</a></div>
 {% elif restore.stage == 'done' %}
 <p class="preview-notice"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>Restored.</strong> {{ restore.result.hostname or restore.node }} answers on {{ restore.result.address or '—' }}; the one-time key has been removed.</p>
-<div class="form-buttons restore-leave"><a class="secondary-button deploy-button" href="/backups">Back to node backups</a></div>
 {% elif restore.stage == 'failed' %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>The restore stopped{% if restore.failed_stage %} in {{ restore.failed_stage }}{% endif %}: {{ restore.error }}</strong></p>
 <p class="table-note">{% if restore.rolled_back %}The network was rolled back: the VM is on its temporary address again.{% else %}The network was not rolled back. Check the VM's console before anything else.{% endif %}</p>
-<div class="form-buttons restore-leave"><a class="secondary-button" href="/backups">Back to node backups</a></div>
 {% elif restore.stage == 'expired' %}
 <p class="preview-notice"><span class="status-orb status-unknown" aria-hidden="true"></span><strong>Expired.</strong> A run has an hour from being prepared to being started, and this one's ended at {{ expires }}. Start the restore again from the backup page. This manager removes the run's one-time key, and the VM stops accepting it by itself.</p>
-<div class="form-buttons restore-leave"><a class="secondary-button" href="/backups">Back to node backups</a></div>
 {% elif restore.stage == 'discarded' %}
 <p class="preview-notice"><span class="status-orb status-unknown" aria-hidden="true"></span><strong>Discarded.</strong> The run and its one-time key are gone from this manager. A line already pasted on the VM stops working by itself.</p>
-<div class="form-buttons restore-leave"><a class="secondary-button" href="/backups">Back to node backups</a></div>
 {% endif %}
 {% if restore.error and not restore.problems and restore.stage not in ('prepare_failed', 'failed') %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ restore.error }}</strong></p>
@@ -111,16 +106,20 @@
         <input id="restore-confirm" name="confirm" type="text" required maxlength="63" autocomplete="off" spellcheck="false" autofocus>
       </div>
     </div>
-    <div class="editor-actions editor-submit"><p class="table-note">About a minute. The cluster's other jobs wait until it is done.</p><div class="form-buttons"><button type="submit" class="secondary-button deploy-button">Restore {{ restore.confirm_name }}</button></div></div>
+    <div class="editor-actions editor-submit"><p class="table-note">The restore takes about a minute. The cluster's other jobs wait until it is done.</p><div class="form-buttons"><button type="submit" class="secondary-button deploy-button">Restore {{ restore.confirm_name }}</button></div></div>
   </section>
 </form>
 {% endif %}
 
-{% if restore.discardable and editable %}
-<form method="post" action="/backups/restore/{{ restore.run }}/discard" class="restore-discard">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups">
-  <div class="editor-actions editor-submit"><div class="form-buttons"><button type="submit" class="secondary-button">Discard this run</button></div></div>
-</form>
+{% set leaving = restore.stage in ('prepare_failed', 'done', 'failed', 'expired', 'discarded') %}
+{% if leaving or (restore.discardable and editable) %}
+<div class="form-buttons restore-leave">
+  {% if leaving %}<a class="secondary-button{% if restore.stage == 'done' %} deploy-button{% endif %}" href="/backups">Back to node backups</a>{% endif %}
+  {% if restore.discardable and editable %}<form method="post" action="/backups/restore/{{ restore.run }}/discard" class="restore-discard">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups">
+    <button type="submit" class="secondary-button">Discard this run</button>
+  </form>{% endif %}
+</div>
 {% endif %}
 </div>
 {% if restore.stage in ('prepare_failed', 'failed') or restore.error %}<p class="table-note">Jobs in this run: {% for job in restore.jobs %}<a href="/jobs#job-{{ job.id }}">#{{ job.id }}</a> {{ job.state }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}

@@ -748,6 +748,26 @@ class Overwrite(AgentTest):
         self.assertFalse(self.host.path("/etc/default/grub.d/99-local.cfg").exists())
         self.assertIn(["systemctl", "start", "keepalived"], self.host.commands)
 
+    def test_a_link_the_node_had_comes_back_as_a_link(self) -> None:
+        link = self.host.path("/etc/systemd/system/ipvsadm.service")
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to("/dev/null")
+        self.host.fail = {"bash"}
+        result = self.apply()
+        self.assertTrue(result["rolled_back"], result)
+        self.assertEqual(os.readlink(link), "/dev/null")
+
+    def test_a_copy_naming_a_path_outside_the_node_is_not_put_back(self) -> None:
+        self.apply()
+        copy = self.host.path(f"/var/lib/haproxy-restore/{RUN}/before/files.tar")
+        with tarfile.open(copy, "a") as archive:
+            info = tarfile.TarInfo("../escaped")
+            archive.addfile(info, io.BytesIO(b""))
+        result = self.serve({"op": "rollback", "run": RUN})
+        self.assertFalse(result["ok"])
+        self.assertIn("unsafe path", result["error"])
+        self.assertFalse((self.host.root.parent / "escaped").exists())
+
     def test_a_failed_rollback_says_go_to_the_console(self) -> None:
         self.host.fail = {"bash"}
         self.host.path("/var/lib/haproxy-restore").mkdir(parents=True)

@@ -604,9 +604,10 @@ def rollback_files(host: Host, run: str, report: Report) -> None:
     for path in added:
         _set_aside(host, run, path)
     with tarfile.open(base / "files.tar", "r") as archive:
+        members = [_inside(host, member) for member in archive.getmembers()]
         # A file or link is replaced whole, not written through: its mode may
         # forbid writing, and a path may have changed kind since the copy.
-        for member in archive.getmembers():
+        for member in members:
             if member.isdir():
                 continue
             current = host.root / member.name
@@ -615,12 +616,30 @@ def rollback_files(host: Host, run: str, report: Report) -> None:
             elif current.is_dir():
                 _set_aside(host, run, "/" + member.name)
         # The copy this agent wrote itself, in a root-only directory, of the
-        # node's own files. "fully_trusted" because owners and every mode bit
-        # must come back as they were - the "data" and "tar" filters drop setgid.
+        # node's own files, each name held under the root above. "fully_trusted"
+        # because owners and every mode bit must come back as they were - the
+        # "data" and "tar" filters drop setgid.
         archive.extractall(  # noqa: S202 - see above
-            host.root, numeric_owner=True, filter="fully_trusted"
+            host.root, members=members, numeric_owner=True, filter="fully_trusted"
         )
     report.step("rolled-back", restored=len(manifest["present"]), set_aside=len(added))
+
+
+def _inside(host: Host, member: tarfile.TarInfo) -> tarfile.TarInfo:
+    """A member of the copy, refused unless its name lands under the node's root.
+
+    Links keep their targets: they are put back as links, never followed.
+    """
+
+    name = member.name
+    if not name or os.path.isabs(name) or ".." in PurePosixPath(name).parts:
+        raise Failed(f"the node's copy names an unsafe path: {name!r}")
+    # The parent, resolved: the member itself may be a link pointing anywhere.
+    root = os.path.realpath(host.root)
+    parent = os.path.realpath((host.root / name).parent)
+    if os.path.commonpath([root, parent]) != root:
+        raise Failed(f"the node's copy names a path outside the node: {name!r}")
+    return member
 
 
 def _restart_after_rollback(host: Host, report: Report) -> None:

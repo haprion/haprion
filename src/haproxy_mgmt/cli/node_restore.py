@@ -130,6 +130,8 @@ def _text_preview(summary: dict[str, Any], out: TextIO) -> None:
             "  made equal to the archive (the rest to quarantine): "
             f"{', '.join(plan['equal_directories'])}\n"
         )
+    for note in summary.get("renumbered", []):
+        out.write(f"  numbering {note}\n")
     if summary.get("node_bundle"):
         bundle = summary["node_bundle"]
         out.write(

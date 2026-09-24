@@ -305,6 +305,13 @@
               "pattern": "^[0-9a-f]{40}$"
             }
           }
+        },
+        "renumbered": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 512
+          }
         }
       },
       "additionalProperties": false

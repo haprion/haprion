@@ -460,28 +460,41 @@ def _problems(
             f"{' and '.join(preinstalled)} already installed on the target; "
             "restore onto an empty VM"
         )
+    return problems
+
+
+def renumbered(source: RestoreSource, inspected: dict[str, Any]) -> list[str]:
+    """Accounts and groups whose number on the VM will differ from the archive's (B181).
+
+    Not a problem: an account or group is its name. One the VM already has
+    keeps the VM's number; a new one whose number the VM already uses for
+    something else gets a free one. Listed so the preview says so.
+    """
+
     existing_accounts = inspected.get("accounts", {})
     existing_groups = inspected.get("groups", {})
+    notes: list[str] = []
     for group in source.groups:
-        gid = existing_groups.get(group.name)
-        if gid is not None and gid != group.gid:
-            problems.append(f"group {group.name} has GID {gid} on the target, {group.gid} here")
-        for name, other in existing_groups.items():
-            if other == group.gid and name != group.name:
-                problems.append(f"GID {group.gid} of {group.name} belongs to {name} on the target")
+        here = existing_groups.get(group.name)
+        if here is not None and here != group.gid:
+            notes.append(f"group {group.name} keeps the VM's GID {here} (archive {group.gid})")
+        elif here is None:
+            holder = next((n for n, g in existing_groups.items() if g == group.gid), None)
+            if holder is not None:
+                notes.append(f"group {group.name} gets a free GID ({group.gid} is {holder} here)")
     for account in source.accounts:
         ids = existing_accounts.get(account.name)
-        if ids is not None and tuple(ids) != (account.uid, account.gid):
-            problems.append(
-                f"account {account.name} is {ids[0]}:{ids[1]} on the target, "
-                f"{account.uid}:{account.gid} here"
+        if ids is not None and ids[0] != account.uid:
+            notes.append(
+                f"account {account.name} keeps the VM's UID {ids[0]} (archive {account.uid})"
             )
-        for name, other in existing_accounts.items():
-            if other[0] == account.uid and name != account.name:
-                problems.append(
-                    f"UID {account.uid} of {account.name} belongs to {name} on the target"
+        elif ids is None:
+            holder = next((n for n, v in existing_accounts.items() if v[0] == account.uid), None)
+            if holder is not None:
+                notes.append(
+                    f"account {account.name} gets a free UID ({account.uid} is {holder} here)"
                 )
-    return problems
+    return notes
 
 
 def check(
@@ -606,6 +619,7 @@ def preview(
             "extra_paths": list(checked.source.extra_paths),
         },
     }
+    summary["renumbered"] = renumbered(checked.source, checked.inspected)
     if checked.bundle is not None:
         summary["node_bundle"] = {"root": checked.bundle.root, "commit": checked.bundle.commit}
     _write_json(directory / "preview.json", summary)

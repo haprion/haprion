@@ -281,11 +281,19 @@ class Preview(RestoreTest):
         FakeSession.answers["inspect"]["previous_restore"] = True
         self.assertNotIn("already installed", " ".join(self.preview(run)["problems"]))
 
-    def test_a_uid_taken_on_the_target_is_a_problem(self) -> None:
+    def test_a_number_taken_on_the_target_is_named_not_a_problem(self) -> None:
+        """B181: an account is its name; its number follows the target."""
+
         run = self.prepare()
         FakeSession.answers["inspect"]["accounts"] = {"other": [1000, 1000]}
+        FakeSession.answers["inspect"]["groups"] = {"operator": 1001}
+        summary = self.preview(run)
+        self.assertEqual(summary["problems"], [])
         self.assertIn(
-            "UID 1000 of operator belongs to other", " ".join(self.preview(run)["problems"])
+            "account operator gets a free UID (1000 is other here)", summary["renumbered"]
+        )
+        self.assertIn(
+            "group operator keeps the VM's GID 1001 (archive 1000)", summary["renumbered"]
         )
 
 

@@ -2053,15 +2053,18 @@ into answers; a fingerprint that is not the one
 given (nothing is sent at all); an archive that is not of the chosen node; a target that is not
 Ubuntu 26.04 or Debian 13; `haproxy` or `keepalived` already installed (unless an earlier restore run left
 them there - a run that rolled back can be tried again); the final address, or the node's own,
-already answering; and an account or group
-whose name or ID is taken differently on the VM. `run` asks the VM again and refuses unless the
+already answering; and an account whose primary group the archive does not
+carry. A number the VM already uses stops nothing: an account or group is its name. One the VM
+already has keeps the VM's number, a new one gets the archive's number where it is free and a free
+one of the same kind (system or ordinary) where it is not, and the preview lists every such
+change; the restored files are owned by name, so they follow. `run` asks the VM again and refuses unless the
 archive, the VM and the plan are exactly what the preview saw - so what was approved is what is
 written.
 
 **What `run` does, in order.** Three SSH sessions with the one-time key:
 
-1. On the temporary address: the archive's groups and accounts with their own IDs (before any
-   package can take one), password hashes only for accounts that have no password on the VM, the
+1. On the temporary address: the archive's groups and accounts, numbered as above (before any
+   package can take a number), password hashes only for accounts that have no password on the VM, the
    HAProxy repository for the VM's own distribution and release on the branch the node ran (the
    archive's APT sources name the release it was taken on and are not written; the VM keeps its
    own; the repository's signing key ships with the product and is used only when its fingerprint

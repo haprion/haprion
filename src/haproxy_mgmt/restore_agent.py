@@ -408,33 +408,20 @@ def quarantine(
 # --------------------------------------------------------------------------
 
 
-def _conflicts(host: Host, header: dict[str, Any]) -> list[str]:
+def _conflicts(header: dict[str, Any]) -> list[str]:
+    """What stops apply before it writes: an account whose group the archive does not name.
+
+    Numbers taken on the target stop nothing (B181): an account or group is
+    its name, and the number follows the target - see ``_accounts``.
+    """
+
     problems: list[str] = []
-    existing_users = passwd(host)
-    existing_groups = groups(host)
-    for group in header["groups"]:
-        name, gid = group["name"], group["gid"]
-        if name in existing_groups and existing_groups[name] != gid:
-            problems.append(
-                f"group {name} has GID {existing_groups[name]} here, {gid} in the archive"
-            )
-        holder = next((n for n, g in existing_groups.items() if g == gid and n != name), None)
-        if holder is not None:
-            problems.append(f"GID {gid} of group {name} belongs to {holder} here")
+    named = {group["gid"] for group in header["groups"]} | {0}
     for account in header["accounts"]:
-        name, uid, gid = account["name"], account["uid"], account["gid"]
-        if name in existing_users and existing_users[name][:2] != (uid, gid):
-            here = existing_users[name][:2]
+        if account["gid"] not in named:
             problems.append(
-                f"account {name} is {here[0]}:{here[1]} here, {uid}:{gid} in the archive"
-            )
-        holder = next((n for n, v in existing_users.items() if v[0] == uid and n != name), None)
-        if holder is not None:
-            problems.append(f"UID {uid} of account {name} belongs to {holder} here")
-        known = {group["gid"] for group in header["groups"]} | set(existing_groups.values())
-        if gid not in known:
-            problems.append(
-                f"account {name} has primary GID {gid}, which no group here or in the archive has"
+                f"account {account['name']} has primary GID {account['gid']}, "
+                "which no group in the archive has"
             )
     return problems
 
@@ -563,22 +550,75 @@ def _packages(host: Host, header: dict[str, Any], items: list[Item], report: Rep
     )
 
 
-def _accounts(host: Host, header: dict[str, Any], report: Report) -> None:
+@dataclass(slots=True)
+class Owners:
+    """The archive's UIDs and GIDs to the target's, by name (B181)."""
+
+    uids: dict[int, int] = field(default_factory=dict)
+    gids: dict[int, int] = field(default_factory=dict)
+
+    def translate(self, items: list[Item], report: Report) -> None:
+        unknown: set[str] = set()
+        for item in items:
+            if item.uid in self.uids:
+                item.uid = self.uids[item.uid]
+            elif item.uid != 0:
+                unknown.add(f"UID {item.uid}")
+            if item.gid in self.gids:
+                item.gid = self.gids[item.gid]
+            elif item.gid != 0:
+                unknown.add(f"GID {item.gid}")
+        if unknown:
+            report.warnings.append(
+                "files owned by numbers no archived account or group has, kept as numbers: "
+                + ", ".join(sorted(unknown))
+            )
+
+
+def _free_id_argument(flag: str, wanted: int, taken: set[int]) -> list[str]:
+    """The archive's number where it is free; otherwise a free one of the same kind.
+
+    A system account or group (below 1000) gets another system number, an
+    operator's another ordinary one - the target's own ranges decide which.
+    """
+
+    if wanted not in taken:
+        return [flag, str(wanted)]
+    return ["-r"] if wanted < 1000 else []
+
+
+def _accounts(host: Host, header: dict[str, Any], report: Report) -> Owners:
+    """Groups and accounts by name, numbered as the target allows; answers the translation.
+
+    B181: an account or group is its name. One the target already has keeps
+    the target's number; a new one gets the archive's number where it is free
+    and another where the target's image already uses it - Debian's
+    systemd-timesync holds 997, which an Ubuntu node's service account had.
+    Files are then owned by name, through the translation this answers.
+    """
+
+    owners = Owners()
+    renumbered: list[str] = []
     created_groups = []
-    existing = groups(host)
     for group in header["groups"]:
-        if group["name"] not in existing:
-            host.run(["groupadd", "-g", str(group["gid"]), group["name"]])
-            created_groups.append(group["name"])
-    users = passwd(host)
+        name, gid = group["name"], group["gid"]
+        existing = groups(host)
+        if name not in existing:
+            host.run(["groupadd", *_free_id_argument("-g", gid, set(existing.values())), name])
+            created_groups.append(name)
+            existing = groups(host)
+        owners.gids[gid] = existing[name]
+        if existing[name] != gid:
+            renumbered.append(f"group {name} {gid} -> {existing[name]}")
     created: list[str] = []
     for account in header["accounts"]:
-        name = account["name"]
+        name, uid = account["name"], account["uid"]
+        users = passwd(host)
         if name not in users:
             argv = [
                 "useradd",
-                "-u", str(account["uid"]),
-                "-g", str(account["gid"]),
+                *_free_id_argument("-u", uid, {value[0] for value in users.values()}),
+                "-g", str(owners.gids.get(account["gid"], account["gid"])),
                 "-d", account["home"],
                 "-s", account["shell"],
                 "-c", account["gecos"],
@@ -586,6 +626,10 @@ def _accounts(host: Host, header: dict[str, Any], report: Report) -> None:
             argv += ["-M"] if account["service"] else ["-m"]
             host.run([*argv, name])
             created.append(name)
+            users = passwd(host)
+        owners.uids[uid] = users[name][0]
+        if users[name][0] != uid:
+            renumbered.append(f"account {name} {uid} -> {users[name][0]}")
         if account["service"]:
             # As 04-node-prepare: the account owns nothing in its home (B131).
             home = host.path(account["home"])
@@ -606,7 +650,7 @@ def _accounts(host: Host, header: dict[str, Any], report: Report) -> None:
         report.warnings.append(
             "groups not on the target, membership skipped: " + ", ".join(missing)
         )
-    report.step("accounts", created=created, groups_created=created_groups)
+    report.step("accounts", created=created, groups_created=created_groups, renumbered=renumbered)
 
     usable = usable_password(host)
     restored = []
@@ -616,6 +660,7 @@ def _accounts(host: Host, header: dict[str, Any], report: Report) -> None:
             host.run(["chpasswd", "-e"], stdin=f"{account['name']}:{hashed}\n")
             restored.append(account["name"])
     report.step("passwords", restored=restored)
+    return owners
 
 
 def _layout(host: Host, run: str, report: Report) -> None:
@@ -668,7 +713,7 @@ def apply(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, A
     items = read_payload(payload)
     bundle = _validate_apply(header, items)
     items = [item for item in items if item is not bundle]
-    problems = _conflicts(host, header)
+    problems = _conflicts(header)
     if problems:
         raise Refused("; ".join(problems))
     report = Report()
@@ -677,7 +722,8 @@ def apply(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, A
     # group takes the next free ID, and on a fresh target that can be the one
     # the archive's own account holds - the node got its IDs in another order.
     # Created first, the archive's IDs are taken, and the packages go around them.
-    _accounts(host, header, report)
+    owners = _accounts(host, header, report)
+    owners.translate(items, report)
     _packages(host, header, items, report)
 
     keep = [item.path for item in items]

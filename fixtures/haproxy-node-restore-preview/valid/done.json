@@ -92,7 +92,10 @@
     "node_bundle": {
       "root": "haproxy-manager-node-000000000000",
       "commit": "0000000000000000000000000000000000000000"
-    }
+    },
+    "renumbered": [
+      "account svc-logread gets a free UID (997 is systemd-timesync here)"
+    ]
   },
   "warnings": [],
   "error": null

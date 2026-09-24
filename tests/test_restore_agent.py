@@ -89,6 +89,13 @@ class FakeHost(Host):
     def chown(self, path: Path, uid: int, gid: int) -> None:
         self.owners["/" + str(path.relative_to(self.root))] = (uid, gid)
 
+    def _free(self, name: str, *, system: bool) -> str:
+        """As useradd/groupadd choose: system IDs from 999 down, others from 1000 up."""
+
+        taken = {int(line.split(":")[2]) for line in self.path(name).read_text().splitlines()}
+        candidates = range(999, 99, -1) if system else range(1000, 60000)
+        return str(next(number for number in candidates if number not in taken))
+
     def _append(self, name: str, line: str) -> None:
         with self.path(name).open("a") as stream:
             stream.write(line + "\n")
@@ -115,12 +122,16 @@ class FakeHost(Host):
         elif argv[0] == "ssh-keygen":
             out = "256 SHA256:fixturefingerprint root@temp (ED25519)\n"
         elif argv[0] == "groupadd":
-            self._append("/etc/group", f"{argv[-1]}:x:{argv[2]}:")
+            gid = argv[2] if argv[1] == "-g" else self._free("/etc/group", system="-r" in argv)
+            self._append("/etc/group", f"{argv[-1]}:x:{gid}:")
         elif argv[0] == "useradd":
-            options = dict(zip(argv[1:-1:2], argv[2:-1:2], strict=False))
+            flags = [a for a in argv[1:-1] if a in {"-r", "-M", "-m"}]
+            rest = [a for a in argv[1:-1] if a not in flags]
+            options = dict(zip(rest[::2], rest[1::2], strict=False))
+            uid = options.get("-u") or self._free("/etc/passwd", system="-r" in flags)
             self._append(
                 "/etc/passwd",
-                f"{argv[-1]}:x:{options['-u']}:{options['-g']}:{options['-c']}:"
+                f"{argv[-1]}:x:{uid}:{options['-g']}:{options['-c']}:"
                 f"{options['-d']}:{options['-s']}",
             )
             self._append("/etc/shadow", f"{argv[-1]}:!:1::::::")
@@ -193,7 +204,11 @@ APPLY_HEADER: dict[str, Any] = {
     "node_bundle": {"root": BUNDLE_ROOT, "sha256": hashlib.sha256(BUNDLE).hexdigest()},
     "answers": 'TRIGGER_USER="svc-trigger"\n',
     "traffic_log": False,
-    "groups": [{"name": "svc-backup", "gid": 990}, {"name": "svc-logread-group", "gid": 985}],
+    "groups": [
+        {"name": "operator", "gid": 1000},
+        {"name": "svc-backup", "gid": 990},
+        {"name": "svc-logread-group", "gid": 985},
+    ],
     "accounts": [
         {
             "name": "svc-backup",
@@ -338,10 +353,46 @@ class Apply(AgentTest):
         self.assertEqual(self.commands("chpasswd"), [["chpasswd", "-e"]])
         self.assertIn("operator:$y$archived:", self.host.path("/etc/shadow").read_text())
 
-    def test_a_uid_conflict_stops_before_anything_is_written(self) -> None:
+    def test_a_number_the_target_uses_gives_the_account_another_and_files_follow(
+        self,
+    ) -> None:
+        """B181: Debian's systemd-timesync holds 997, which the archived node's account had."""
+
+        self.host._append("/etc/passwd", "systemd-timesync:x:990:990::/:/usr/sbin/nologin")
+        self.host._append("/etc/group", "tcpdump:x:985:")
+        result = self.apply()
+        self.assertTrue(result["ok"], result)
+        useradd = self.commands("useradd")[0]
+        self.assertNotIn("-u", useradd)
+        self.assertIn("-r", useradd)
+        groupadd = next(
+            argv for argv in self.commands("groupadd") if argv[-1] == "svc-logread-group"
+        )
+        self.assertEqual(groupadd, ["groupadd", "-r", "svc-logread-group"])
+        renumbered = next(step for step in result["steps"] if step["step"] == "accounts")[
+            "renumbered"
+        ]
+        self.assertIn("group svc-logread-group 985 -> 999", renumbered)
+        self.assertIn("account svc-backup 990 -> 999", renumbered)
+
+    def test_an_archived_owner_is_translated_by_name(self) -> None:
+        self.host._append("/etc/passwd", "systemd-timesync:x:990:990::/:/usr/sbin/nologin")
+        owned = ("/var/lib/svc-backup/.ssh/known_hosts", "file", 0o600, 990, 990, "k\n")
+        result = self.serve(APPLY_HEADER, payload([*APPLY_FILES, owned]))
+        self.assertTrue(result["ok"], result)
+        # Staged beside its name and renamed onto it; the owner is set on the staged file.
+        staged = [
+            owner
+            for path, owner in self.host.owners.items()
+            if path.startswith("/var/lib/svc-backup/.ssh/.restore-")
+        ]
+        self.assertIn((999, 990), staged)
+
+    def test_an_account_whose_group_the_archive_lacks_stops_before_anything_is_written(
+        self,
+    ) -> None:
         header = json.loads(json.dumps(APPLY_HEADER))
-        header["accounts"][1]["uid"] = 1001
-        self.host._append("/etc/passwd", "other:x:1001:1000::/home/other:/bin/sh")
+        header["accounts"][1]["gid"] = 1234
         result = self.apply(header)
         self.assertFalse(result["ok"])
         self.assertTrue(result["refused"])

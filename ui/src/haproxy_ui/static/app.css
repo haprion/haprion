@@ -1750,7 +1750,18 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .restore-runs li { color: var(--text-secondary); }
 .restore-runs li .status-dot { display: inline-block; margin-right: 8px; vertical-align: middle; }
 .restore-runs code { font-size: 12px; }
-.restore-paste { margin: 16px 20px 0; }
+.restore-paste { margin: 12px 20px 0; }
+.copy-row { display: flex; align-items: stretch; gap: 10px; }
+.copy-row .receiver-command { flex: 1; min-width: 0; margin: 0; padding-right: 12px; }
+.copy-button-beside { flex: none; display: inline-flex; align-items: center; gap: 8px; min-height: 0; padding: 0 18px; font-size: 13px; }
+.copy-button-beside svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.copy-button-beside.copied { color: var(--healthy); }
+.copy-button-beside.refused { color: var(--critical); }
+/* The restore run's cards: the pasted line and its fingerprint are one step, not two sections apart. */
+.restore-cards .cluster-header { padding-top: 12px; padding-bottom: 12px; }
+.restore-cards .restore-form .form-grid { padding-top: 12px; }
+.restore-cards .restore-form .editor-submit { padding-top: 0; padding-bottom: 14px; }
+.restore-cards .preview-form .cluster-card { padding-bottom: 0; }
 .restore-cards { margin-bottom: 16px; }
 .restore-cards > .preview-notice, .restore-cards > .table-note { margin: 0; }
 .restore-leave { justify-content: flex-start; }
@@ -1779,4 +1790,9 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 @media (max-width: 680px) {
   /* The button says what it does; a label beside it would say it twice. */
   .archive-table td.archive-restore { padding-left: 8px; text-align: left; }
+}
+@media (max-width: 680px) {
+  /* Beside the box there is no room for both; under it, the button keeps its size and the line its width. */
+  .copy-row { flex-direction: column; }
+  .copy-button-beside { justify-content: center; min-height: 40px; }
 }

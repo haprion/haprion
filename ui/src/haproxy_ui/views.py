@@ -4130,7 +4130,7 @@ def build_router(config: Config) -> APIRouter:
     def node_restore_preview(
         request: Request,
         run: str,
-        fingerprint: str = Form(default="", max_length=128),
+        fingerprint: str = Form(default="", max_length=512),
         idempotency_key: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:

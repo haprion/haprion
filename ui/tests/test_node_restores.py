@@ -450,7 +450,8 @@ class FollowingARun(RestoreRouteTestCase):
         self.runs = [PREPARED]
         page = self.writing_client().get(f"/backups/restore/{RUN}").text
         self.assertIn("haproxy-restore-r260101-0000aaaa", page)
-        self.assertIn('class="receiver-command restore-paste"', page)
+        self.assertIn('<pre class="receiver-command" data-copy-beside>', page)
+        self.assertIn('maxlength="512"', page)
         self.assertIn("/copy-command.js", page)
         self.assertIn(f'action="/backups/restore/{RUN}/preview"', page)
         self.assertNotIn("http-equiv", page)

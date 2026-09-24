@@ -48,13 +48,13 @@
 {% if restore.stage == 'fingerprint' and editable %}
 <section class="cluster-card">
   <header class="cluster-header"><div class="section-title"><h3>1 · Paste on the VM's console</h3><p>Adds this manager's one-time key for root, shows the line that landed and prints the VM's host key fingerprint.</p></div></header>
-  <pre class="receiver-command restore-paste"><code>{{ restore.paste }}</code></pre>
+  <div class="copy-row restore-paste"><pre class="receiver-command" data-copy-beside><code>{{ restore.paste }}</code></pre></div>
   <form method="post" action="/backups/restore/{{ restore.run }}/preview" class="preview-form restore-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
     <div class="form-grid restore-form-grid">
       <div class="field">
         <label class="field-title" for="restore-fingerprint">2 · The fingerprint line the VM printed</label>
-        <input id="restore-fingerprint" name="fingerprint" type="text" required maxlength="80" autocomplete="off" spellcheck="false" placeholder="256 SHA256:… root@… (ED25519)" autofocus>
+        <input id="restore-fingerprint" name="fingerprint" type="text" required maxlength="512" autocomplete="off" spellcheck="false" placeholder="256 SHA256:… root@… (ED25519)" autofocus>
         <small>The whole line, or just its SHA256:… part. Read on the console, not over the network: it is what tells this manager the VM it reaches is the one you are looking at.</small>
       </div>
     </div>

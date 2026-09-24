@@ -36,7 +36,7 @@ Usage:
   haproxy-node-restore prepare -c <cluster> --node <node> --archive <version> --target <address>
                                [--test --test-hostname <name> --test-address <addr/prefix>
                                 --test-vip <addr/prefix>]
-  haproxy-node-restore preview --run <id> --fingerprint <SHA256:...>
+  haproxy-node-restore preview --run <id> [--fingerprint <SHA256:...>]
   haproxy-node-restore run     --run <id> --confirm <hostname>
                                [--backup-failed-ok] [--break-traffic]
   haproxy-node-restore discard --run <id>
@@ -44,7 +44,8 @@ Usage:
   prepare   prints a line to paste on the target's console as its administrator.
             It authorizes this run's one-time key for root, from this host only,
             and prints the target's host key fingerprint.
-  preview   --fingerprint is the one the pasted line printed on the console.
+  preview   --fingerprint is the one the pasted line printed on the console. Left
+            out, only the node itself is accepted: its archived host key.
   run       --confirm is the name the node will have: the archived node's, or
             the test hostname.
 
@@ -107,7 +108,7 @@ def _parameters(step: str, options: dict[str, Any], run: str) -> dict[str, Any]:
         }
         operation = node_restore_helper.PREPARE
     elif step == "preview":
-        parameters = {"run": run, "fingerprint": options["--fingerprint"]}
+        parameters = {"run": run, "fingerprint": options.get("--fingerprint", "")}
         operation = node_restore_helper.PREVIEW
     elif step == "run":
         parameters = {"run": run, "confirm": options["--confirm"]}
@@ -272,7 +273,7 @@ def main(
                 flags |= {"--backup-failed-ok", "--break-traffic"}
             options = _options(rest, flags, {"--run", "--fingerprint", "--confirm"})
             needed = {
-                "preview": ("--run", "--fingerprint"),
+                "preview": ("--run",),
                 "run": ("--run", "--confirm"),
                 "discard": ("--run",),
             }
@@ -368,7 +369,7 @@ def _step(
             summary = node_restore.preview(
                 run_root,
                 options["--run"],
-                options["--fingerprint"],
+                options.get("--fingerprint", ""),
                 cluster,
                 policy.backup_root,
                 publish_root=policy.publish_root,

@@ -655,6 +655,7 @@ class Overwrite(AgentTest):
             "/etc/haproxy-manager/node.conf": "CLUSTER=drifted\n",
             "/etc/haproxy-manager/node-installation.json": '{"node_api": 1}\n',
             "/etc/haproxy-manager/stray": "left by hand\n",
+            "/etc/haproxy-manager/node.conf.replaced-20260101-000000": "old\n",
             "/usr/local/sbin/haproxy-pull-deploy": "#!/bin/sh\nold\n",
         }.items():
             path = self.host.path(name)
@@ -726,6 +727,9 @@ class Overwrite(AgentTest):
             ).exists()
         )
         self.assertTrue(self.host.path("/etc/haproxy-manager/node-installation.json").exists())
+        self.assertTrue(
+            self.host.path("/etc/haproxy-manager/node.conf.replaced-20260101-000000").exists()
+        )
         self.assertEqual(
             self.host.path("/etc/haproxy-manager/node.conf").read_text(), "CLUSTER=alpha\n"
         )

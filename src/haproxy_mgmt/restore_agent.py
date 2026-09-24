@@ -126,6 +126,11 @@ SNAPSHOT_FILES = (
     "/etc/systemd/system/haproxy-traffic-log-prune.timer",
 )
 SNAPSHOT_TREES = ("/usr/local/sbin", "/etc/haproxy-manager")
+#
+# 04-node-prepare's rollback copies, `<file>.replaced-<date>-<time>`: the node's
+# own history. Quarantine leaves them where they are (B178); the plan's pattern.
+#
+REPLACED = re.compile(r"\.replaced-\d{8}-\d{6}$")
 HOSTNAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 APT_DIRECTORIES = ("/etc/apt/sources.list.d", "/etc/apt/preferences.d", "/etc/apt/keyrings")
 #
@@ -498,7 +503,7 @@ def quarantine(
         relative = "/" + str(Path(current).relative_to(host.root))
         for name in sorted([*files, *subdirectories]):
             path = f"{relative.rstrip('/')}/{name}"
-            if path in kept or path in ancestors:
+            if path in kept or path in ancestors or REPLACED.search(name):
                 continue
             destination = host.path(f"{STATE}/{run}/quarantine{path}")
             destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

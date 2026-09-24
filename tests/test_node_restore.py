@@ -490,11 +490,13 @@ class Overwrite(RestoreTest):
         node_restore.prepare(self.root, request, source_of=lambda _: "192.0.2.7")
         return request.run
 
-    def preview_overwrite(self, run: str, key: str = ARCHIVED_KEY) -> dict[str, Any]:
+    def preview_overwrite(
+        self, run: str, key: str = ARCHIVED_KEY, fingerprint: str = FINGERPRINT
+    ) -> dict[str, Any]:
         return node_restore.preview(
             self.root,
             run,
-            FINGERPRINT,
+            fingerprint,
             CLUSTER,  # type: ignore[arg-type]
             self.backups,
             scan=lambda _: key,
@@ -530,6 +532,17 @@ class Overwrite(RestoreTest):
         self.assertEqual(summary["plan"]["mode"], "overwrite")
         stored = node_restore.read_json(self.root / run / "request.json")
         self.assertEqual(stored["mode"], "overwrite")
+
+    def test_the_node_itself_needs_no_fingerprint(self) -> None:
+        summary = self.preview_overwrite(self.prepare_overwrite(), fingerprint="")
+        self.assertEqual(summary["plan"]["mode"], "overwrite")
+        self.assertEqual(summary["target"]["fingerprint"], FINGERPRINT)
+
+    def test_without_a_fingerprint_a_new_vm_is_refused_before_anything_is_sent(self) -> None:
+        run = self.prepare_overwrite(target="192.0.2.120")
+        with self.assertRaisesRegex(RestoreError, "give the fingerprint read on its console"):
+            self.preview_overwrite(run, key=TARGET_KEY, fingerprint="")
+        self.assertEqual(FakeSession.calls, [])
 
     def test_another_host_key_is_a_new_vm_in_its_place(self) -> None:
         run = self.prepare_overwrite(target="192.0.2.120")

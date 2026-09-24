@@ -375,6 +375,11 @@ class Parameters(unittest.TestCase):
                 PREVIEW, {"run": RUN_ID, "fingerprint": "x", "overwrite": True}
             )
 
+    def test_an_empty_fingerprint_is_the_node_itself(self) -> None:
+        node_restore_helper.validate(PREVIEW, {"run": RUN_ID, "fingerprint": ""})
+        with self.assertRaises(ParameterProblem):
+            node_restore_helper.validate(PREVIEW, {"run": RUN_ID, "fingerprint": "SHA256:short"})
+
     def test_the_helper_takes_no_arguments_and_runs_as_root(self) -> None:
         self.assertEqual(node_restore_helper.main(["x"], error_stream=io.StringIO()), 64)
 

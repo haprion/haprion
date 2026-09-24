@@ -31,7 +31,8 @@
 <p class="preview-notice"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>Restored.</strong> {{ restore.result.hostname or restore.node }} answers on {{ restore.result.address or '—' }}; the one-time key has been removed.</p>
 {% elif restore.stage == 'failed' %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>The restore stopped{% if restore.failed_stage %} in {{ restore.failed_stage }}{% endif %}: {{ restore.error }}</strong></p>
-{% if restore.mode == 'overwrite' %}<p class="table-note">{% if restore.rolled_back %}The node was put back from its copy and keepalived started again.{% else %}The node was not put back. Check its console before anything else.{% endif %}</p>
+{% if not restore.failed_stage and not restore.rolled_back %}<p class="table-note">The helper's answer could not be read, so whether anything was written is not known. Check the node before anything else.</p>
+{% elif restore.mode == 'overwrite' %}<p class="table-note">{% if restore.rolled_back %}The node was put back from its copy and keepalived started again.{% else %}The node was not put back. Check its console before anything else.{% endif %}</p>
 {% else %}<p class="table-note">{% if restore.rolled_back %}The network was rolled back: the VM is on its temporary address again.{% else %}The network was not rolled back. Check the VM's console before anything else.{% endif %}</p>{% endif %}
 {% elif restore.stage == 'expired' %}
 <p class="preview-notice"><span class="status-orb status-unknown" aria-hidden="true"></span><strong>Expired.</strong> A run has an hour from being prepared to being started, and this one's ended at {{ expires }}. Start the restore again from the backup page. This manager removes the run's one-time key, and the VM stops accepting it by itself.</p>
@@ -50,14 +51,14 @@
 
 {% if restore.stage == 'fingerprint' and editable %}
 <section class="cluster-card">
-  <header class="cluster-header"><div class="section-title"><h3>1 · Paste on the VM's console</h3><p>Adds this manager's one-time key for root, shows the line that landed and prints the VM's host key fingerprint. Start the restore by {{ expires }}; after that the run expires and starts again.</p></div></header>
+  <header class="cluster-header"><div class="section-title"><h3>1 · Paste on the target, as its administrator</h3><p>Adds this manager's one-time key for root, shows the line that landed and prints the host key fingerprint. On a new VM, paste it on the console. Start the restore by {{ expires }}; after that the run expires and starts again.</p></div></header>
   <div class="copy-row restore-paste"><pre class="receiver-command" data-copy-beside><code>{{ restore.paste }}</code></pre></div>
   <form method="post" action="/backups/restore/{{ restore.run }}/preview" class="preview-form restore-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
     <div class="form-grid restore-form-grid">
       <div class="field">
-        <label class="field-title" for="restore-fingerprint">2 · The fingerprint line the VM printed</label>
-        <input id="restore-fingerprint" name="fingerprint" type="text" required maxlength="512" autocomplete="off" spellcheck="false" placeholder="256 SHA256:… root@… (ED25519)" autofocus>
+        <label class="field-title" for="restore-fingerprint">2 · The fingerprint line it printed</label>
+        <input id="restore-fingerprint" name="fingerprint" type="text"{% if restore.mode == 'test' %} required{% endif %} maxlength="512" autocomplete="off" spellcheck="false" placeholder="256 SHA256:… root@… (ED25519)" autofocus>
         <small>The whole line, or just its SHA256:… part. Read on the console, not over the network: it is what tells this manager the VM it reaches is the one you are looking at.</small>
       </div>
     </div>
@@ -82,14 +83,14 @@
     <div><dt>keepalived</dt><dd>{{ 'Started as BACKUP' if plan.keepalived == 'start' else 'Masked — never started' }}</dd></div>
     <div><dt>Packages</dt><dd>{{ plan.packages | join(', ') if plan.packages else 'None missing' }}</dd></div>
     {% if plan.mode == 'overwrite' %}
-    <div><dt>Changes</dt><dd>{% if plan.changed %}{% for path in plan.changed %}<code>{{ path }}{% if not loop.last %},{% endif %}</code> {% endfor %}{% else %}None{% endif %} · {{ plan.unchanged }} already equal</dd></div>
+    <div><dt>Changes</dt><dd>{{ plan.changed | length }} of {{ plan.changed | length + plan.unchanged }} files{% if plan.changed %}: {% for path in plan.changed %}<code>{{ path }}{% if not loop.last %},{% endif %}</code> {% endfor %}{% endif %}{% if '/root/.ssh/authorized_keys' in plan.changed %} · root's keys lose the one-time key{% endif %}</dd></div>
     {% if plan.quarantined %}<div><dt>To quarantine</dt><dd>{% for path in plan.quarantined %}<code>{{ path }}{% if not loop.last %},{% endif %}</code> {% endfor %}</dd></div>{% endif %}
     {% endif %}
     <div><dt>Accounts</dt><dd>{% for account in plan.accounts %}{{ account.name }}{% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
     {% if restore.renumbered %}<div><dt>Other numbers</dt><dd>{{ restore.renumbered | join('; ') }} · files are owned by name</dd></div>{% endif %}
-    <div><dt>Files</dt><dd>{{ plan.files | length }} files{% if plan.equal_directories %} · made equal to the archive: {{ plan.equal_directories | join(', ') }}{% endif %}</dd></div>
+    {% if plan.mode != 'overwrite' %}<div><dt>Files</dt><dd>{{ plan.files | length }} files{% if plan.equal_directories %} · made equal to the archive: {{ plan.equal_directories | join(', ') }}{% endif %}</dd></div>{% endif %}
     {% if restore.node_bundle %}<div><dt>Node bundle</dt><dd><code>{{ restore.node_bundle.root }}</code> from this manager's release writes the node scripts{% if plan.from_bundle %} in place of the archive's {{ plan.from_bundle | length }}{% endif %}{% if plan.traffic_log %} · turns the traffic log on, as it was{% endif %}</dd></div>{% endif %}
-    {% if plan.left_out %}<div><dt>Not from the archive</dt><dd>{% for path in plan.left_out %}<code>{{ path }}{% if not loop.last %},{% endif %}</code> {% endfor %} · the VM keeps its own, and old <code>.replaced-</code> copies stay behind; an operator's own file among these comes back only when named in <code>EXTRA_BACKUP_PATHS</code></dd></div>{% endif %}
+    {% if plan.left_out and plan.mode != 'overwrite' %}<div><dt>Not from the archive</dt><dd>{% for path in plan.left_out %}<code>{{ path }}{% if not loop.last %},{% endif %}</code> {% endfor %} · the VM keeps its own, and old <code>.replaced-</code> copies stay behind; an operator's own file among these comes back only when named in <code>EXTRA_BACKUP_PATHS</code></dd></div>{% endif %}
     {% if plan.mode == 'overwrite' and plan.network_unchanged %}<div><dt>Network</dt><dd>Unchanged · not applied</dd></div>
     {% else %}<div><dt>Network, last</dt><dd>{{ plan.network | join(', ') }} · rolled back by itself if this manager cannot reach the node afterwards</dd></div>{% endif %}
   </dl>
@@ -106,23 +107,24 @@
 <form method="post" action="/backups/restore/{{ restore.run }}/run" class="preview-form restore-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
   <section class="cluster-card">
-    <header class="cluster-header"><div class="section-title"><h3>Overwrite</h3></div></header>
+    <header class="cluster-header"><div class="section-title"><h3>Overwrite {{ restore.confirm_name }}</h3></div></header>
     <div class="preview-notice form-problem restore-overwrite-warning">
       <span class="status-orb status-critical" aria-hidden="true"></span>
-      <ul class="restore-list">
-        <li><strong>{{ restore.confirm_name }} is running.</strong> Every file in the plan is written over; a copy is kept on the node and put back if the node does not come up.</li>
-        <li>{% if standing.vip_owner %}It holds the VIP; keepalived stops first and the VIP moves to {{ standing.neighbour }}.{% elif standing.vip_owner is none %}Whether it holds the VIP could not be read.{% else %}{{ standing.neighbour }} holds the VIP.{% endif %} {{ standing.neighbour }} is {% if standing.neighbour_healthy %}healthy{% else %}<strong>not healthy</strong>{% if standing.detail %} ({{ standing.detail }}){% endif %}{% endif %}.</li>
-        <li>{% if restore.backup_failed %}<strong>No backup could be taken:</strong> {{ standing.backup_error }}{% else %}A backup of {{ restore.cluster }} was taken at the preview.{% endif %}</li>
-      </ul>
+      <div>
+        <p><strong>{{ restore.confirm_name }} is in service.</strong> {{ plan.changed | length }} of {{ plan.changed | length + plan.unchanged }} files differ from the archive. A copy of everything written is kept on the node and put back if it does not come up.</p>
+        <p><strong>VIP:</strong> {% if standing.vip_owner %}{{ restore.confirm_name }} holds it; keepalived stops first and it moves to {{ standing.neighbour }}{% if standing.neighbour_healthy %}, which is healthy{% else %}, which is <strong>not healthy</strong>{% if standing.detail %} ({{ standing.detail }}){% endif %}{% endif %}.{% elif standing.vip_owner is none %}whether {{ restore.confirm_name }} holds it could not be read; {{ standing.neighbour }} is {% if standing.neighbour_healthy %}healthy{% else %}<strong>not healthy</strong>{% endif %}.{% else %}{{ standing.neighbour }} holds it{% if standing.neighbour_healthy %} and is healthy{% else %} and is <strong>not healthy</strong>{% if standing.detail %} ({{ standing.detail }}){% endif %}{% endif %}. keepalived on {{ restore.confirm_name }} stops during the restore and starts again as BACKUP.{% endif %}</p>
+        <p><strong>Backup:</strong> {% if restore.backup_failed %}none could be taken — {{ standing.backup_error }}{% else %}{{ restore.cluster }} was backed up at the preview.{% endif %}</p>
+      </div>
     </div>
     <div class="form-grid restore-form-grid">
+      {% if restore.backup_failed or restore.traffic_at_risk %}
       <div class="field">
         <div class="form-checks form-checks-stacked method-choices">
-          <label class="check"><input type="checkbox" name="acknowledged" value="yes" required> <span>Overwrite {{ restore.confirm_name }} while it runs</span></label>
           {% if restore.backup_failed %}<label class="check"><input type="checkbox" name="backup_failed_ok" value="yes" required> <span>Go on without a backup</span></label>{% endif %}
           {% if restore.traffic_at_risk %}<label class="check"><input type="checkbox" name="break_traffic" value="yes" required> <span><strong>This WILL break live traffic</strong></span></label>{% endif %}
         </div>
       </div>
+      {% endif %}
       <div class="field">
         <label class="field-title" for="restore-confirm">Type <code>{{ restore.confirm_name }}</code> to confirm</label>
         <input id="restore-confirm" name="confirm" type="text" required maxlength="63" autocomplete="off" spellcheck="false">

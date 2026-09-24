@@ -3911,11 +3911,16 @@ def build_router(config: Config) -> APIRouter:
             "test_address": "",
             "test_vip": "",
         }
-        if form:
-            entered.update(form)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         with request.app.state.pool.connection() as connection:
             running = jobs.in_flight(db.recent_jobs(connection, cluster=cluster))
+            if not form:
+                # The node's own address: right for a repair, overwritten for a new VM.
+                entered["target"] = node_restores.node_address(
+                    db.cluster_statuses(connection), cluster, node
+                )
+        if form:
+            entered.update(form)
         return TEMPLATES.TemplateResponse(
             request,
             "node-restore-new.html",
@@ -4187,7 +4192,6 @@ def build_router(config: Config) -> APIRouter:
         request: Request,
         run: str,
         confirm: str = Form(default="", max_length=128),
-        acknowledged: str = Form(default="", max_length=8),
         backup_failed_ok: str = Form(default="", max_length=8),
         break_traffic: str = Form(default="", max_length=8),
         idempotency_key: str = Form(default="", max_length=64),
@@ -4195,9 +4199,8 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue `node_restore` once the node's name has been typed.
 
-        An overwrite also takes the tick under its red box, and the ones for
-        going on without a backup or breaking live traffic when its preview
-        showed either (B172).
+        An overwrite also takes the ticks for going on without a backup or
+        breaking live traffic, when its preview showed either (B172).
         """
 
         step = _restore_step(request, run, csrf_token, idempotency_key)
@@ -4218,7 +4221,6 @@ def build_router(config: Config) -> APIRouter:
                 confirm,
                 restore.confirm_name,
                 overwrite=restore.mode == "overwrite",
-                acknowledged=acknowledged == "yes",
                 backup_failed_ok=backup_failed_ok == "yes",
                 break_traffic=break_traffic == "yes",
             )

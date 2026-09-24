@@ -755,10 +755,10 @@ def _preview(
     checks: OverwriteChecks | None,
 ) -> dict[str, Any]:
     request = Request.from_dict(read_json(directory / "request.json"))
-    if not FINGERPRINT.fullmatch(fingerprint_seen):
+    if fingerprint_seen and not FINGERPRINT.fullmatch(fingerprint_seen):
         raise RestoreError("the fingerprint is written as SHA256:<43 characters>")
     key = scan(request.target)
-    if fingerprint_of(key) != fingerprint_seen:
+    if fingerprint_seen and fingerprint_of(key) != fingerprint_seen:
         raise RestoreError(
             f"{request.target} offers a host key whose fingerprint is not the one read on its "
             "console; nothing was sent to it"
@@ -774,15 +774,29 @@ def _preview(
         source = read(archive_path(backup_root, node_of(cluster, request.node), request.archive))
         archived = source.entry(ARCHIVED_HOST_KEY)
         itself = archived is not None and _key(content(source, archived)) == _key(key.encode())
+        if not fingerprint_seen and not itself:
+            #
+            # Without a fingerprint only the node itself is trusted: its archived
+            # host key is the proof. A VM in its place is known only by the key
+            # read on its console.
+            #
+            raise RestoreError(
+                f"{request.target} does not offer {request.node}'s archived host key; for a new "
+                "VM, give the fingerprint read on its console - nothing was sent to it"
+            )
         mode: restore_plan.Mode = "overwrite" if itself else "new_vm"
         if mode != request.mode:
             request = dataclasses.replace(request, mode=mode)
             _write_json(directory / "request.json", request.as_dict())
+    elif not fingerprint_seen:
+        raise RestoreError("a test restore is a new VM; give the fingerprint read on its console")
     if request.mode == "overwrite" and checks is None:
         raise RestoreError("an overwrite needs the cluster's backup and status; none were given")
     known_hosts = directory / "known_hosts"
     known_hosts.write_text(f"{request.target} {key}\n", encoding="utf-8")
     known_hosts.chmod(0o600)
+    # What the preview shows: the key's own fingerprint when none was given (the node itself).
+    fingerprint_seen = fingerprint_seen or fingerprint_of(key)
     _write_json(directory / "target-key.json", {"key": key, "fingerprint": fingerprint_seen})
     session = session_for(directory / "key", known_hosts)
     checked = check(

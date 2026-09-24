@@ -13,6 +13,7 @@ import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 from uuid import uuid4
@@ -690,6 +691,31 @@ class OverwritingANode(RestoreRouteTestCase):
             self.fail("the run has a prepare job")
         self.assertEqual(restore.mode, "new_vm")
 
+    def test_the_form_suggests_the_nodes_own_address(self) -> None:
+        status = SimpleNamespace(
+            cluster="alpha",
+            result={"nodes": [{"name": "node-a", "mgmt_host": "node-a.example.com"}]},
+        )
+        found = node_restores.node_address(
+            [status], "alpha", "node-a", resolve=lambda host: "192.0.2.21"
+        )
+        self.assertEqual(found, "192.0.2.21")
+        literal = SimpleNamespace(
+            cluster="alpha", result={"nodes": [{"name": "node-a", "mgmt_host": "192.0.2.21"}]}
+        )
+        self.assertEqual(node_restores.node_address([literal], "alpha", "node-a"), "192.0.2.21")
+        self.assertEqual(
+            node_restores.node_address([status], "alpha", "node-a", resolve=lambda _h: ""), ""
+        )
+        self.assertEqual(node_restores.node_address([status], "beta", "node-a"), "")
+
+    def test_an_unreadable_answer_says_it_is_not_known_what_was_written(self) -> None:
+        unknown = job("node_restore", "unknown", number=3, confirm="node-a")
+        self.runs = [OVERWRITE_PREPARED, OVERWRITE_PREVIEWED, unknown]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn("whether anything was written is not known", page)
+        self.assertNotIn("The node was not put back", page)
+
     def test_the_run_is_read_as_an_overwrite(self) -> None:
         restore = node_restores.run_view(RUN, [OVERWRITE_PREPARED, OVERWRITE_PREVIEWED])
         if restore is None:
@@ -703,12 +729,13 @@ class OverwritingANode(RestoreRouteTestCase):
         page = self.writing_client().get(f"/backups/restore/{RUN}").text
         self.assertIn("Overwrite the node", page)
         self.assertIn("/etc/keepalived/keepalived.conf", page)
-        self.assertIn("41 already equal", page)
+        self.assertIn("1 of 42 files", page)
+        self.assertNotIn("Not from the archive", page)
         self.assertIn("/etc/haproxy-manager/stray", page)
         self.assertIn("Unchanged · not applied", page)
-        self.assertIn("It holds the VIP; keepalived stops first and the VIP moves to node-b", page)
-        self.assertIn("No backup could be taken:", page)
-        self.assertIn('name="acknowledged"', page)
+        self.assertIn("node-a holds it; keepalived stops first and it moves to node-b", page)
+        self.assertIn("none could be taken", page)
+        self.assertNotIn('name="acknowledged"', page)
         self.assertIn('name="backup_failed_ok"', page)
         self.assertNotIn('name="break_traffic"', page)
         self.assertIn("Overwrite node-a</button>", page)
@@ -727,14 +754,11 @@ class OverwritingANode(RestoreRouteTestCase):
     def test_the_run_needs_the_tick_and_passes_the_others_on(self) -> None:
         self.runs = [OVERWRITE_PREPARED, OVERWRITE_PREVIEWED]
         client = self.writing_client()
-        refused = self.post(client, f"/backups/restore/{RUN}/run", confirm="node-a")
-        self.assertIn("Tick that you overwrite a running node.", refused.text)
-        self.assertEqual(self.queued, [])
+        # The name is the confirmation; the backup tick is passed on to the helper.
         response = self.post(
             client,
             f"/backups/restore/{RUN}/run",
             confirm="node-a",
-            acknowledged="yes",
             backup_failed_ok="yes",
         )
         self.assertEqual(response.status_code, 303)

@@ -611,11 +611,14 @@ def _overwrite(source: RestoreSource, target: Target, plan: RestorePlan) -> Rest
 
     # What moves is the topmost path not kept; what is under it moves with it.
     keep = {file.path for file in plan.files} | set(plan.from_bundle)
+    # 04-node-prepare's `.replaced-` copies are the node's history and stay (B178).
     moving = sorted(
         path
         for directory in plan.equal_directories
         for path in target.listing.get(directory, ())
-        if path not in keep and not any(k.startswith(f"{path}/") for k in keep)
+        if path not in keep
+        and not REPLACED.search(path)
+        and not any(k.startswith(f"{path}/") for k in keep)
     )
     quarantined = [
         path for path in moving if not any(path.startswith(f"{other}/") for other in moving)

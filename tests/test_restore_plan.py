@@ -366,10 +366,13 @@ class Overwrite(Planning):
         self.assertEqual(
             plan.quarantined,
             (
-                "/etc/haproxy-manager/node.conf.replaced-20260101-000000",
                 "/etc/haproxy-manager/stray",
                 "/etc/systemd/system/haproxy.service.d/override.conf",
             ),
+        )
+        # 04-node-prepare's rollback copies are the node's history and stay (B178).
+        self.assertNotIn(
+            "/etc/haproxy-manager/node.conf.replaced-20260101-000000", plan.quarantined
         )
         # The bundle's own file is kept, not moved and written again.
         self.assertNotIn("/etc/haproxy-manager/node-installation.json", plan.quarantined)
@@ -424,3 +427,10 @@ class TheBundlesFilesAreTheEnableScriptsOwn(unittest.TestCase):
             if not path.startswith("/etc/haproxy-manager/")
         }
         self.assertEqual(written, in_plan)
+
+
+class TheAgentSparesWhatThePlanSpares(unittest.TestCase):
+    def test_the_replaced_copy_pattern_is_the_same_on_both_sides(self) -> None:
+        from haproxy_mgmt import restore_agent
+
+        self.assertEqual(restore_agent.REPLACED.pattern, restore_plan.REPLACED.pattern)

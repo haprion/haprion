@@ -18,6 +18,8 @@ click anything for that - the hour is a rule both ends read, not a job.
 
 from __future__ import annotations
 
+import ipaddress
+import socket
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -43,6 +45,42 @@ DISCARDABLE = frozenset({"prepare_failed", "fingerprint", "confirm", "failed", "
 
 class RestoreProblem(ValueError):
     """What was entered cannot start or continue a restore; safe to show."""
+
+
+def _resolve(host: str) -> str:
+    try:
+        found = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)
+    except (OSError, UnicodeError):
+        return ""
+    return str(found[0][4][0]) if found else ""
+
+
+def node_address(
+    statuses: Iterable[Any],
+    cluster: str,
+    node: str,
+    *,
+    resolve: Callable[[str], str] = _resolve,
+) -> str:
+    """The node's own IPv4 address, to fill in the form's target; empty when not known.
+
+    Read from the poller's reading of the cluster - the name status and deploy
+    reach the node by - and looked up when it is a name. Only a suggestion: a
+    restore as the node itself is held to the archive's address and host key
+    by the preview, whatever is typed here.
+    """
+
+    for status in statuses:
+        if getattr(status, "cluster", None) != cluster or not isinstance(status.result, dict):
+            continue
+        for entry in status.result.get("nodes", []):
+            if isinstance(entry, dict) and entry.get("name") == node:
+                host = str(entry.get("mgmt_host") or "")
+                try:
+                    return str(ipaddress.IPv4Address(host))
+                except ValueError:
+                    return resolve(host) if host else ""
+    return ""
 
 
 def new_run_id() -> str:
@@ -95,6 +133,8 @@ def prepare_payload(
 
 
 def preview_payload(run: str, fingerprint: str) -> dict[str, Any]:
+    """Empty is allowed: the node itself is known by its archived host key (B184)."""
+
     payload = {"run": run, "fingerprint": node_restore_helper.fingerprint_in(fingerprint)}
     _checked(PREVIEW, payload)
     return payload
@@ -112,19 +152,16 @@ def run_payload(
     expected: str,
     *,
     overwrite: bool = False,
-    acknowledged: bool = False,
     backup_failed_ok: bool = False,
     break_traffic: bool = False,
 ) -> dict[str, Any]:
     """Typing the node's name is the confirmation, and it must be the name in the plan.
 
-    An overwrite (B172) also takes the tick under its red box, and passes on
-    the two the helper itself holds it to: going on without a backup, and
-    breaking live traffic.
+    An overwrite (B172) passes on the two ticks the helper itself holds it to,
+    shown only when its preview found the need: going on without a backup, and
+    breaking live traffic. The name is the confirmation; there is no third tick.
     """
 
-    if overwrite and not acknowledged:
-        raise RestoreProblem("Tick that you overwrite a running node.")
     if confirm.strip() != expected:
         raise RestoreProblem(f"Type {expected} to restore this node.")
     payload: dict[str, Any] = {"run": run, "confirm": confirm.strip()}

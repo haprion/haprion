@@ -175,7 +175,11 @@ def validate(operation: str, parameters: Mapping[str, Any]) -> None:
             raise ParameterProblem("the target is an IPv4 address") from exc
         test_profile(parameters["test"])
     elif operation == PREVIEW:
-        if not node_restore.FINGERPRINT.fullmatch(_string(parameters, "fingerprint")):
+        # Empty is the node itself: its archived host key is what is checked (B184).
+        fingerprint = parameters.get("fingerprint")
+        if not isinstance(fingerprint, str) or (
+            fingerprint and not node_restore.FINGERPRINT.fullmatch(fingerprint)
+        ):
             raise ParameterProblem("the fingerprint is written SHA256: and 43 characters")
     elif operation == RUN and not restore_agent.HOSTNAME.fullmatch(_string(parameters, "confirm")):
         raise ParameterProblem("confirm with the name the node will have")

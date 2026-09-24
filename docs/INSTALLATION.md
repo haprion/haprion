@@ -2005,7 +2005,8 @@ the way a deploy does. Nothing is installed on the VM beforehand.
 **What counts as an empty VM.** The same distribution and version the node ran (the archive's
 `meta/os-release`; another version is not restored yet, another distribution never), one network
 interface with the same name as the node's, a temporary address the management host can reach,
-and an administrator account with `sudo`. The node's own address must not answer: a restore onto
+an administrator account with `sudo`, and neither `haproxy` nor `keepalived` installed - the
+restore installs them itself, with their services held off until their configuration is in place. The node's own address must not answer: a restore onto
 it while the old node is still up would put two machines on one address, and the preview stops.
 
 **Three steps, each its own command**, run as root on the management host:
@@ -2045,7 +2046,9 @@ host key fingerprint; the name and address the VM will have; every file written 
 directory made equal to the archive; every account with its IDs and groups; and, in test mode,
 every rewritten field with its old and new value. It stops on: a fingerprint that is not the one
 given (nothing is sent at all); an archive that is not of the chosen node; another OS version or
-distribution; the final address, or the node's own, already answering; and an account or group
+distribution; `haproxy` or `keepalived` already installed (unless an earlier restore run left
+them there - a run that rolled back can be tried again); the final address, or the node's own,
+already answering; and an account or group
 whose name or ID is taken differently on the VM. `run` asks the VM again and refuses unless the
 archive, the VM and the plan are exactly what the preview saw - so what was approved is what is
 written.

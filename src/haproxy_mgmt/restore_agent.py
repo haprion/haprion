@@ -42,6 +42,13 @@ from pathlib import Path, PurePosixPath
 from typing import IO, Any
 
 STATE = "/var/lib/haproxy-restore"
+#
+# The packages whose presence means the VM is not empty. A restore installs
+# them itself with their services held off; one already there has run with the
+# package's defaults and owns accounts made with whatever IDs were free.
+# rsyslog and openssh-server are not here: every image has them.
+#
+NOT_EMPTY_IF_INSTALLED = ("haproxy", "keepalived")
 NETPLAN = "/etc/netplan"
 ROOT_KEYS = "/root/.ssh/authorized_keys"
 POLICY_RC = "/usr/sbin/policy-rc.d"
@@ -202,6 +209,16 @@ def _fingerprints(host: Host) -> dict[str, str]:
     return prints
 
 
+def installed(host: Host, packages: tuple[str, ...]) -> list[str]:
+    """Which of these packages dpkg says are installed; unknown ones are not."""
+
+    listed = host.run(
+        ["dpkg-query", "-W", "-f", "${Package}\t${db:Status-Status}\n", *packages], check=False
+    ).stdout
+    rows = (line.split("\t", 1) for line in listed.splitlines() if "\t" in line)
+    return sorted(name for name, status in rows if status == "installed")
+
+
 def inspect(host: Host, header: dict[str, Any], _payload: IO[bytes]) -> dict[str, Any]:
     names = set(header.get("names", []))
     ids = set(header.get("ids", []))
@@ -220,6 +237,7 @@ def inspect(host: Host, header: dict[str, Any], _payload: IO[bytes]) -> dict[str
         },
         "groups": {name: gid for name, gid in groups(host).items() if name in names or gid in ids},
         "previous_restore": host.path(STATE).exists(),
+        "installed": installed(host, NOT_EMPTY_IF_INSTALLED),
     }
 
 

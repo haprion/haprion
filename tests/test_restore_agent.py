@@ -25,6 +25,7 @@ class FakeHost(Host):
         self.owners: dict[str, tuple[int, int]] = {}
         self.active: dict[str, str] = {}
         self.fail: set[str] = set()
+        self.preinstalled: set[str] = set()
         for name, text in {
             "/etc/passwd": "root:x:0:0:root:/root:/bin/bash\n"
             "syslog:x:104:110::/nonexistent:/usr/sbin/nologin\n"
@@ -77,6 +78,11 @@ class FakeHost(Host):
                 out = json.dumps([{"ifname": "eth0", "address": "02:00:00:00:00:99"}])
             else:
                 out = json.dumps([{"addr_info": [{"local": "192.0.2.120", "prefixlen": 24}]}])
+        elif argv[0] == "dpkg-query" and "${db:Status-Status}" in argv[3]:
+            out = "".join(f"{name}\tinstalled\n" for name in argv[4:] if name in self.preinstalled)
+            out += "".join(
+                f"{name}\tnot-installed\n" for name in argv[4:] if name not in self.preinstalled
+            )
         elif argv[0] == "ssh-keygen":
             out = "256 SHA256:fixturefingerprint root@temp (ED25519)\n"
         elif argv[0] == "groupadd":
@@ -200,6 +206,12 @@ class Inspect(AgentTest):
         self.assertEqual(result["accounts"], {"operator": [1000, 1000]})
         self.assertEqual(result["os_release"]["VERSION_ID"], "26.04")
         self.assertEqual(sorted(p for p in self.host.root.rglob("*")), before)
+        self.assertEqual(result["installed"], [])
+
+    def test_names_the_product_packages_already_installed(self) -> None:
+        self.host.preinstalled = {"haproxy", "rsyslog"}
+        result = self.serve({"op": "inspect", "names": [], "ids": []})
+        self.assertEqual(result["installed"], ["haproxy"])
 
 
 class Apply(AgentTest):

@@ -454,6 +454,18 @@ def _problems(
         problems.append(f"{final} already answers; two machines would hold one address")
     if request.mode == "new_vm" and node.mgmt_host != final and answering(node.mgmt_host):
         problems.append(f"{node.name} still answers at {node.mgmt_host}")
+    #
+    # "Nothing is installed on the VM beforehand" is a requirement, not a
+    # description. A VM this product has already restored onto is the one
+    # exception: a run that rolled its network back left its packages behind,
+    # and the next attempt must not be refused for them.
+    #
+    preinstalled = inspected.get("installed", [])
+    if preinstalled and not inspected.get("previous_restore"):
+        problems.append(
+            f"{' and '.join(preinstalled)} already installed on the target; "
+            "restore onto an empty VM"
+        )
     existing_accounts = inspected.get("accounts", {})
     existing_groups = inspected.get("groups", {})
     for group in source.groups:

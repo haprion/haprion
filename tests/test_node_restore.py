@@ -41,6 +41,7 @@ INSPECTED = {
     "accounts": {"operator": [1000, 1000]},
     "groups": {"operator": 1000},
     "previous_restore": False,
+    "installed": [],
 }
 
 
@@ -191,6 +192,17 @@ class Preview(RestoreTest):
         run = self.prepare(test=False)
         self.silent.discard("192.0.2.21")
         self.assertIn("already answers", " ".join(self.preview(run)["problems"]))
+
+    def test_a_vm_with_haproxy_already_installed_is_not_empty(self) -> None:
+        run = self.prepare()
+        FakeSession.answers["inspect"]["installed"] = ["haproxy", "keepalived"]
+        self.assertIn(
+            "haproxy and keepalived already installed on the target",
+            " ".join(self.preview(run)["problems"]),
+        )
+        # Unless this product restored onto it before: a rolled-back run left them.
+        FakeSession.answers["inspect"]["previous_restore"] = True
+        self.assertNotIn("already installed", " ".join(self.preview(run)["problems"]))
 
     def test_a_uid_taken_on_the_target_is_a_problem(self) -> None:
         run = self.prepare()

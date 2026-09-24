@@ -1760,7 +1760,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 /* The restore run's cards: the pasted line and its fingerprint are one step, not two sections apart. */
 .restore-cards .cluster-header { padding-top: 12px; padding-bottom: 12px; }
 .restore-cards .restore-form .form-grid { padding-top: 12px; }
-.restore-cards .restore-form .editor-submit { padding-top: 0; padding-bottom: 14px; }
+.restore-cards .restore-form .editor-submit { padding-top: 12px; padding-bottom: 14px; }
 .restore-cards .preview-form .cluster-card { padding-bottom: 0; }
 .restore-cards { margin-bottom: 16px; }
 .restore-cards > .preview-notice, .restore-cards > .table-note { margin: 0; }

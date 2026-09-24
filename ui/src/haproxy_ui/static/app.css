@@ -1753,6 +1753,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .restore-run-discard { display: inline; margin-left: 12px; }
 .restore-runs .link-button { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
 .restore-discard { margin-top: 4px; }
+.form-buttons-end { margin-left: auto; }
 .restore-paste { margin: 12px 20px 0; }
 .copy-row { display: flex; align-items: stretch; gap: 10px; }
 .copy-row .receiver-command { flex: 1; min-width: 0; margin: 0; padding-right: 12px; }

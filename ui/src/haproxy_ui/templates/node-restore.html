@@ -65,7 +65,7 @@
         <small>The whole line, or just its SHA256:… part. Read on the console, not over the network: it is what tells this manager the VM it reaches is the one you are looking at.</small>
       </div>
     </div>
-    <div class="editor-actions editor-submit"><p class="table-note">The preview connects and reads the VM; it writes nothing.</p><div class="form-buttons"><button type="submit" class="secondary-button deploy-button">Preview the restore</button></div></div>
+    <div class="editor-actions editor-submit"><div class="form-buttons form-buttons-end"><button type="submit" class="secondary-button deploy-button">Preview the restore</button></div></div>
   </form>
 </section>
 {% endif %}
@@ -104,14 +104,14 @@
 <form method="post" action="/backups/restore/{{ restore.run }}/run" class="preview-form restore-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
   <section class="cluster-card">
-    <header class="cluster-header"><div class="section-title"><h3>Restore</h3><p>{% if restore.mode == 'test' %}A test: the node's production address and VIP are never used.{% else %}The VM becomes {{ restore.confirm_name }}, on its production address. Its neighbour keeps the VIP.{% endif %}</p></div></header>
+    <header class="cluster-header"><div class="section-title"><h3>Restore</h3><p>{% if restore.mode == 'test' %}A test: the node's production address and VIP are never used.{% else %}The VM becomes {{ restore.confirm_name }}, on its production address. Its neighbour keeps the VIP.{% endif %} Everything on {{ restore.target }} the plan names is overwritten: its network configuration, hostname, accounts, root's SSH keys{% if restore.mode != 'test' %}, its SSH host keys{% endif %} and the product's files. Only the network is put back by itself if the node cannot be reached afterwards.</p></div></header>
     <div class="form-grid restore-form-grid">
       <div class="field">
         <label class="field-title" for="restore-confirm">Type <code>{{ restore.confirm_name }}</code> to confirm</label>
         <input id="restore-confirm" name="confirm" type="text" required maxlength="63" autocomplete="off" spellcheck="false" autofocus>
       </div>
     </div>
-    <div class="editor-actions editor-submit"><p class="table-note">About a minute. The cluster's other jobs wait until it is done.</p><div class="form-buttons"><a class="secondary-button" href="/backups">Cancel</a><button type="submit" class="secondary-button deploy-button">Restore {{ restore.confirm_name }}</button></div></div>
+    <div class="editor-actions editor-submit"><p class="table-note">About a minute. The cluster's other jobs wait until it is done.</p><div class="form-buttons"><button type="submit" class="secondary-button deploy-button">Restore {{ restore.confirm_name }}</button></div></div>
   </section>
 </form>
 {% endif %}
@@ -119,9 +119,9 @@
 {% if restore.discardable and editable %}
 <form method="post" action="/backups/restore/{{ restore.run }}/discard" class="restore-discard">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups">
-  <div class="editor-actions editor-submit"><p class="table-note">Discard gives this run up: its one-time key is removed from this manager, and nothing is sent to the VM.</p><div class="form-buttons"><button type="submit" class="secondary-button">Discard this run</button></div></div>
+  <div class="editor-actions editor-submit"><div class="form-buttons"><button type="submit" class="secondary-button">Discard this run</button></div></div>
 </form>
 {% endif %}
 </div>
-<p class="table-note">Jobs in this run: {% for job in restore.jobs %}<a href="/jobs#job-{{ job.id }}">#{{ job.id }}</a> {{ job.state }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+{% if restore.stage in ('prepare_failed', 'failed') or restore.error %}<p class="table-note">Jobs in this run: {% for job in restore.jobs %}<a href="/jobs#job-{{ job.id }}">#{{ job.id }}</a> {{ job.state }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
 {% endblock %}

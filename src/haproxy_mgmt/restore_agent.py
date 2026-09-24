@@ -166,7 +166,9 @@ def _colon_file(host: Host, path: str) -> list[list[str]]:
     return [line.split(":") for line in target.read_text(encoding="utf-8").splitlines() if line]
 
 
-def passwd(host: Host) -> dict[str, tuple[int, int, str]]:
+def local_accounts(host: Host) -> dict[str, tuple[int, int, str]]:
+    """Each account in /etc/passwd: UID, GID and home. No password is in that file."""
+
     return {
         fields[0]: (int(fields[2]), int(fields[3]), fields[5])
         for fields in _colon_file(host, "/etc/passwd")
@@ -241,7 +243,7 @@ def installed(host: Host, packages: tuple[str, ...]) -> list[str]:
 def inspect(host: Host, header: dict[str, Any], _payload: IO[bytes]) -> dict[str, Any]:
     names = set(header.get("names", []))
     ids = set(header.get("ids", []))
-    users = passwd(host)
+    users = local_accounts(host)
     return {
         "os_release": os_release(host),
         "hostname": host.path("/etc/hostname").read_text(encoding="utf-8").strip()
@@ -613,7 +615,7 @@ def _accounts(host: Host, header: dict[str, Any], report: Report) -> Owners:
     created: list[str] = []
     for account in header["accounts"]:
         name, uid = account["name"], account["uid"]
-        users = passwd(host)
+        users = local_accounts(host)
         if name not in users:
             argv = [
                 "useradd",
@@ -626,7 +628,7 @@ def _accounts(host: Host, header: dict[str, Any], report: Report) -> Owners:
             argv += ["-M"] if account["service"] else ["-m"]
             host.run([*argv, name])
             created.append(name)
-            users = passwd(host)
+            users = local_accounts(host)
         owners.uids[uid] = users[name][0]
         if users[name][0] != uid:
             renumbered.append(f"account {name} {uid} -> {users[name][0]}")

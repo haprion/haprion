@@ -320,7 +320,12 @@ class RecentRun:
 def recent_runs(
     rows: Iterable[Job], *, shown: Callable[[datetime], datetime]
 ) -> dict[str, tuple[RecentRun, ...]]:
-    """The newest runs per cluster, newest first, each read the way its own page reads it.
+    """The runs that still ask something of somebody, per cluster, newest first.
+
+    A restored run is history: the audit trail and the jobs page keep it. What
+    the backup page lists is a run left waiting for its fingerprint or its
+    confirmation, one still running, and one that stopped - each the way its
+    own page reads it, and each a way back to that page.
 
     `rows` may hold the same job more than once (three queries, one per
     operation); a job is counted once. The job table keeps a week of rows, so
@@ -336,7 +341,7 @@ def recent_runs(
     views = []
     for run, jobs in by_run.items():
         restore = run_view(run, jobs)
-        if restore is None:
+        if restore is None or restore.stage == "done":
             continue
         first = min(jobs, key=lambda job: job.id)
         views.append((first.created_at, first.id, restore))

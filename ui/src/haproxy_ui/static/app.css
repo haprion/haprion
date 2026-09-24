@@ -1743,6 +1743,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .restore-form .method-choices .check { flex-direction: row; align-items: flex-start; gap: 8px; }
 .restore-form .method-choices .check input { flex: none; width: auto; margin-top: 4px; }
 .restore-form .method-choices .check span { font-weight: var(--font-weight-regular); }
+.archive-table .secondary-button { display: inline-flex; align-items: center; min-height: 26px; padding: 2px 14px; text-decoration: none; }
 .restore-runs { padding: 12px 20px 0; border-top: 1px solid var(--line); }
 .restore-runs h4 { margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
 .restore-runs ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
@@ -1774,4 +1775,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 @media (max-width: 680px) {
   /* The card layout gives every cell the row; the wide layout's fixed widths would squeeze it. */
   .job-table td:nth-child(n) { width: 100%; }
+}
+@media (max-width: 680px) {
+  /* The button says what it does; a label beside it would say it twice. */
+  .archive-table td.archive-restore { padding-left: 8px; text-align: left; }
 }

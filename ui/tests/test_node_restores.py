@@ -280,6 +280,14 @@ class RecentRuns(unittest.TestCase):
         self.assertEqual(recent["alpha"][1].label, "Waiting for confirmation")
         self.assertEqual(recent["alpha"][1].mode, "test")
 
+    def test_a_restored_run_is_not_listed(self) -> None:
+        done = job(
+            "node_restore", "done", result=fixture("haproxy-node-restore", "done.json"), number=3
+        )
+        self.assertEqual(
+            node_restores.recent_runs([PREPARED, PREVIEWED, done], shown=lambda m: m), {}
+        )
+
     def test_a_rolled_back_run_says_so_and_a_cluster_lists_five(self) -> None:
         failed = job(
             "node_restore",
@@ -348,7 +356,7 @@ class TheBackupPageOffersIt(RestoreRouteTestCase):
     def test_an_admin_gets_a_restore_link_per_archive_row(self) -> None:
         page = self.writing_client().get("/backups").text
         self.assertIn(
-            f'href="/backups/restore/new?cluster=alpha&amp;node=node-a&amp;archive={VERSION}"',
+            f'<a class="secondary-button" href="/backups/restore/new?cluster=alpha&amp;node=node-a&amp;archive={VERSION}">Restore</a>',
             page,
         )
         self.assertIn("archive-table-restore", page)
@@ -362,7 +370,7 @@ class TheBackupPageOffersIt(RestoreRouteTestCase):
         ):
             for role in ("admin", "reader"):
                 page = self.writing_client(role=role).get("/backups").text
-                self.assertIn("Recent restores", page)
+                self.assertIn("Unfinished restores", page)
                 self.assertIn(f'<a href="/backups/restore/{RUN}"><code>{RUN}</code></a>', page)
                 self.assertIn("node-a · test", page)
 

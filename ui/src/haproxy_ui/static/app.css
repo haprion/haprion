@@ -524,13 +524,12 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    cluster card per row: their order is the operational fact.  The operation
    description may be long, so it gets the flexible column. */
 .job-table { table-layout: fixed; }
-.job-table th:nth-child(1), .job-table td:nth-child(1) { width: 70px; }
-.job-table th:nth-child(2), .job-table td:nth-child(2) { width: 210px; }
-.job-table th:nth-child(3), .job-table td:nth-child(3) { width: 140px; }
-.job-table th:nth-child(4), .job-table td:nth-child(4) { width: 170px; }
-.job-table th:nth-child(n+5), .job-table td:nth-child(n+5) { width: 125px; }
+.job-table th:nth-child(1), .job-table td:nth-child(1) { width: 210px; }
+.job-table th:nth-child(2), .job-table td:nth-child(2) { width: 140px; }
+.job-table th:nth-child(3), .job-table td:nth-child(3) { width: 170px; }
+.job-table th:nth-child(n+4), .job-table td:nth-child(n+4) { width: 125px; }
 .job-table td { padding-top: 7px; padding-bottom: 7px; }
-.job-table td:nth-child(2) { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
+.job-table td:nth-child(1) { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .job-table time { font-variant-numeric: tabular-nums; }
 /* The exit code is shown for the reader who wants the precise number and
    explained for the one who does not. A dotted underline rather than the
@@ -1771,4 +1770,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 @media (max-width: 680px) {
   .restore-plan > div { grid-template-columns: 1fr; padding: 10px 16px; }
   .restore-rewrite-table td:nth-child(n) { width: 100%; }
+}
+@media (max-width: 680px) {
+  /* The card layout gives every cell the row; the wide layout's fixed widths would squeeze it. */
+  .job-table td:nth-child(n) { width: 100%; }
 }

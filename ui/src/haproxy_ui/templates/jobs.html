@@ -23,12 +23,11 @@
 
 <div class="table-scroll job-table-wrap">
   <table class="node-table job-table">
-    <thead><tr><th>Job</th><th>Operation</th><th>Cluster</th><th>State</th><th>Requested</th><th>Started</th><th>Finished</th><th>Outcome</th><th>Exit</th></tr></thead>
+    <thead><tr><th>Operation</th><th>Cluster</th><th>State</th><th>Requested</th><th>Started</th><th>Finished</th><th>Outcome</th><th>Exit</th></tr></thead>
     <tbody>
     {% for job in jobs.jobs %}
       <tr id="job-{{ job.id }}">
-        <td data-label="Job"><strong>#{{ job.id }}</strong></td>
-        <td data-label="Operation">{% if job.link %}<a href="{{ job.link }}">{{ job.operation }}</a>{% else %}{{ job.operation }}{% endif %}</td>
+        <td data-label="Operation" title="Job {{ job.id }}">{% if job.link %}<a href="{{ job.link }}">{{ job.operation }}</a>{% else %}{{ job.operation }}{% endif %}</td>
         <td data-label="Cluster"><strong>{{ job.cluster }}</strong></td>
         <td data-label="State"><span class="status-badge status-badge-{{ job.tone }}">{{ job.state_label }}</span></td>
         <td data-label="Requested"><time datetime="{{ job.requested_iso }}" title="{{ job.requested_iso }}">{{ job.requested }}</time></td>
@@ -48,7 +47,7 @@
           certificate deploy's label is wider than an exit column, and a
           button that overhangs the table's edge is clipped by it.
         #}
-        <td colspan="7">
+        <td colspan="6">
           <div class="follow-up-line">
             <span><span class="status-dot status-warning" aria-hidden="true"></span>{{ job.follow_up }}</span>
             {#
@@ -81,19 +80,25 @@
       {% endif %}
       {% if job.note %}
       <tr class="job-follow-up job-note">
-        <td colspan="9"><div class="follow-up-line"><span><span class="status-dot status-info" aria-hidden="true"></span>{{ job.note }}</span></div></td>
+        <td colspan="8"><div class="follow-up-line"><span><span class="status-dot status-info" aria-hidden="true"></span>{{ job.note }}</span></div></td>
       </tr>
       {% endif %}
-      {% if job.error_code or job.diagnostics %}
+      {#
+        The job's number is shown here and nowhere else in the row: it is what
+        finds the job's lines in the worker's journal ("job 998 ended as
+        failed"), which is only worth doing when it did not go.
+      #}
+      {% if job.error_code or job.diagnostics or job.state in ('failed', 'blocked', 'unknown', 'partial') %}
       <tr class="job-follow-up job-failure">
-        <td colspan="9">
-          {% if job.error_code %}<span class="status-dot status-critical" aria-hidden="true"></span><span>Reason:</span> <code>{{ job.error_code }}</code>{% if job.error_message %} <span class="job-error-message">— {{ job.error_message }}</span>{% endif %}{% endif %}
+        <td colspan="8">
+          {% if not job.error_code %}<span class="status-dot status-{{ job.tone }}" aria-hidden="true"></span><span>Job {{ job.id }}</span>{% endif %}
+          {% if job.error_code %}<span class="status-dot status-critical" aria-hidden="true"></span><span>Job {{ job.id }} · Reason:</span> <code>{{ job.error_code }}</code>{% if job.error_message %} <span class="job-error-message">— {{ job.error_message }}</span>{% endif %}{% endif %}
           {% if job.diagnostics %}<details class="job-diagnostics"><summary>Diagnostics</summary><pre>{{ job.diagnostics }}</pre></details>{% endif %}
         </td>
       </tr>
       {% endif %}
     {% else %}
-      <tr><td colspan="9"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5"></path></svg><div><strong>No jobs yet</strong><span>New management requests will appear here.</span></div></td></tr>
+      <tr><td colspan="8"><div class="empty-state"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 9h8M8 13h5"></path></svg><div><strong>No jobs yet</strong><span>New management requests will appear here.</span></div></td></tr>
     {% endfor %}
     </tbody>
   </table>

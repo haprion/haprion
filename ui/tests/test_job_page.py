@@ -232,6 +232,24 @@ class JobPageTests(LoginTestCase):
         for label in ("Completed with gaps", "Blocked", "Outcome unknown"):
             self.assertIn(label, page.text)
 
+    def test_the_number_is_shown_only_for_a_job_that_did_not_go(self) -> None:
+        """What finds the job in the worker's journal, where that is worth doing."""
+
+        rows = [
+            replace(job(state="done", outcome="done"), id=41),
+            replace(job(state="unknown", outcome="unknown"), id=42),
+        ]
+        client = self.client()
+        self.sign_in(client)
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=rows):
+            page = client.get("/jobs").text
+
+        self.assertNotIn("<th>Job</th>", page)
+        self.assertIn("<span>Job 42</span>", page)
+        self.assertNotIn("<span>Job 41", page)
+        # Still findable by the links other pages hold.
+        self.assertIn('id="job-41"', page)
+
     def test_a_revert_that_still_needs_a_deploy_says_so_on_the_page(self) -> None:
         """The projection being right is not the same as the page showing it."""
 

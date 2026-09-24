@@ -1766,6 +1766,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .restore-cards .restore-form .form-grid { padding-top: 12px; }
 .restore-cards .restore-form .editor-submit { padding-top: 12px; padding-bottom: 14px; }
 .restore-cards .preview-form .cluster-card { padding-bottom: 0; }
+.restore-cards > .preview-form { margin-bottom: 0; }
 .restore-cards { margin-bottom: 16px; }
 .restore-cards > .preview-notice, .restore-cards > .table-note { margin: 0; }
 .restore-leave { justify-content: flex-start; }

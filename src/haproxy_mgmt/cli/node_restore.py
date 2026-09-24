@@ -211,6 +211,10 @@ def main(
             }
             if not all(name in options for name in needed[step]):
                 raise ValueError("missing")
+            if "--fingerprint" in options:
+                options["--fingerprint"] = node_restore_helper.fingerprint_in(
+                    options["--fingerprint"]
+                )
         run_id = node_restore.new_run_id() if step == "prepare" else options["--run"]
         parameters = _parameters(step, options, run_id)
     except node_restore_helper.ParameterProblem as problem:

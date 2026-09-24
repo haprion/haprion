@@ -83,7 +83,7 @@ def prepare_payload(
 
 
 def preview_payload(run: str, fingerprint: str) -> dict[str, Any]:
-    payload = {"run": run, "fingerprint": fingerprint.strip()}
+    payload = {"run": run, "fingerprint": node_restore_helper.fingerprint_in(fingerprint)}
     _checked(PREVIEW, payload)
     return payload
 

@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}Register a receiver — HAProxy Manager{% endblock %}
-{% block head_extra %}<script defer src="{{ url_for('static', path='/receiver-page.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block head_extra %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script><script defer src="{{ url_for('static', path='/receiver-page.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
 {#
   The half that comes before the job (B142): name the host, choose how it

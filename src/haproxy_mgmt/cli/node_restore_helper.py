@@ -59,6 +59,12 @@ KEYS = {
 }
 NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
 TEST_KEYS = frozenset({"hostname", "address", "vip"})
+#
+# The fingerprint as it stands inside the line `ssh-keygen -lf` prints
+# ("256 SHA256:... root@host (ED25519)"), unanchored so the whole line can be
+# pasted; `validate` still holds the result to the anchored pattern.
+#
+FINGERPRINT_IN_LINE = re.compile(r"SHA256:[A-Za-z0-9+/]{43}(?![A-Za-z0-9+/=])")
 
 __all__ = [
     "HELPER",
@@ -69,6 +75,7 @@ __all__ = [
     "RUN",
     "ParameterProblem",
     "build_request",
+    "fingerprint_in",
     "main",
     "validate",
 ]
@@ -101,6 +108,18 @@ def test_profile(raw: Any) -> TestProfile | None:
     if "/" not in raw["address"] or "/" not in raw["vip"]:
         raise ParameterProblem("the test address and VIP are written address/prefix")
     return TestProfile(hostname=hostname, address=address, vip=vip)
+
+
+def fingerprint_in(text: str) -> str:
+    """The SHA256 fingerprint in what the operator pasted, or the text as given.
+
+    The console shows a whole line, and which part of it to copy is a question
+    nobody should have to ask. The command line and the web form both read the
+    fingerprint through this, so the two accept exactly the same input.
+    """
+
+    found = FINGERPRINT_IN_LINE.search(text)
+    return found.group(0) if found else text.strip()
 
 
 def validate(operation: str, parameters: Mapping[str, Any]) -> None:

@@ -247,6 +247,16 @@ class Parameters(unittest.TestCase):
         with self.assertRaises(ParameterProblem):
             node_restore_helper.validate(PREVIEW, {"run": RUN_ID, "fingerprint": "SHA256:short"})
 
+    def test_the_fingerprint_is_read_out_of_the_line_the_console_printed(self) -> None:
+        bare = "SHA256:" + "Ab+/" * 10 + "Ab+"
+        line = f"256 {bare} root@node-test (ED25519)"
+        self.assertEqual(node_restore_helper.fingerprint_in(line), bare)
+        self.assertEqual(node_restore_helper.fingerprint_in(f"  {bare}\n"), bare)
+        # Nothing that looks like one: given back as typed, for validate to refuse.
+        self.assertEqual(node_restore_helper.fingerprint_in(" SHA256:short "), "SHA256:short")
+        # One character too many is not a fingerprint with a tail.
+        self.assertEqual(node_restore_helper.fingerprint_in(bare + "A"), bare + "A")
+
     def test_the_helper_takes_no_arguments_and_runs_as_root(self) -> None:
         self.assertEqual(node_restore_helper.main(["x"], error_stream=io.StringIO()), 64)
 

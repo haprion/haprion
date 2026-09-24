@@ -326,6 +326,16 @@ class Cli(unittest.TestCase):
         self.assertEqual(code, 64)
         self.assertIn("address/prefix", errors.getvalue())
 
+    def test_the_whole_fingerprint_line_is_accepted_as_the_form_accepts_it(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("running as root")
+        errors = io.StringIO()
+        line = "256 SHA256:" + "A" * 43 + " root@node-test (ED25519)"
+        # Past the parameter check (64) to the root check (77): the line was read.
+        run = ["preview", "--run", "r260101-0000aaaa", "--fingerprint"]
+        self.assertEqual(cli.main([*run, line], error_stream=errors), 77)
+        self.assertEqual(cli.main([*run, "256 SHA256:short x"], error_stream=errors), 64)
+
     def test_it_must_run_as_root(self) -> None:
         if os.geteuid() == 0:
             self.skipTest("running as root")

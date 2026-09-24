@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from haproxy_mgmt.deploy_run import CERTIFICATES_NOT_DEPLOYED
+from haproxy_mgmt.restore_agent import RUN_ID
 
 from haproxy_ui.dashboard import relative_age
 from haproxy_ui.db import ClusterStatus, Job
@@ -98,6 +99,24 @@ class JobView:
     # to know which - and not for a `done`, where the job's own row says it.
     #
     note: str | None = None
+    #
+    # Where the job belongs, when that is a page of its own: a node restore's
+    # three jobs are steps of one run, and the run's page is the only place
+    # its next step can be taken. Without this nothing led back to it.
+    #
+    link: str | None = None
+
+
+RESTORE_OPERATIONS = frozenset({"node_restore_prepare", "node_restore_preview", "node_restore"})
+
+
+def _link(job: Job) -> str | None:
+    """The run's page for a node restore job, when its payload names a usable run."""
+
+    run = job.payload.get("run") if job.operation in RESTORE_OPERATIONS else None
+    if isinstance(run, str) and RUN_ID.fullmatch(run):
+        return f"/backups/restore/{run}"
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -536,6 +555,7 @@ def _view(
         exit_meaning=_exit_meaning(job.exit_code),
         follow_up=follow_up,
         next_command=next_command,
+        link=_link(job),
         follow_up_operation=follow_up_operation,
         follow_up_label=(
             None

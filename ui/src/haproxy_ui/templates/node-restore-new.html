@@ -29,12 +29,12 @@
       <div class="field">
         <label class="field-title" for="restore-target">Temporary address</label>
         <input id="restore-target" name="target" type="text" value="{{ form.target }}" required maxlength="15" autocomplete="off" spellcheck="false" placeholder="192.0.2.120" autofocus>
-        <small>The address the empty VM has now, reachable from this manager on SSH. The node's own address comes from the archive and is set last.</small>
+        <small>The address the empty VM has now, reachable from this manager on SSH.<br>The node's own address comes from the archive and is set last.</small>
       </div>
       <div class="field">
         <span class="field-title">Restore as</span>
         <div class="form-checks form-checks-stacked method-choices">
-          <label class="check"><input type="radio" name="mode" value="new_vm"{% if form.mode == 'new_vm' %} checked{% endif %}> <span><strong>The node itself</strong> — its address, name and VIP. Its production address must not answer.</span></label>
+          <label class="check"><input type="radio" name="mode" value="new_vm"{% if form.mode == 'new_vm' %} checked{% endif %}> <span><strong>The node itself</strong> — its address, name and VIP.<br>Its production address must not answer.</span></label>
           <label class="check"><input type="radio" name="mode" value="test"{% if form.mode == 'test' %} checked{% endif %}> <span><strong>A test</strong> — address, name and VIP rewritten to the test profile; keepalived stays masked.</span></label>
         </div>
       </div>
@@ -47,8 +47,7 @@
         </div>
       </div>
     </div>
-    <div class="editor-actions editor-submit">
-      <p class="table-note">The next page shows one line to paste on the VM's console. It adds a one-time key for this manager, which the restore removes at the end.</p>
+    <div class="editor-actions editor-submit restore-start-actions">
       <div class="form-buttons"><a class="secondary-button" href="/backups">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if running %} disabled{% endif %}>Prepare the restore</button></div>
     </div>
   </section>

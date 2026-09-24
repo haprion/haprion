@@ -151,6 +151,8 @@ class TheForm(unittest.TestCase):
         self.assertEqual(
             node_restores.preview_payload(RUN, FINGERPRINT)["fingerprint"], FINGERPRINT
         )
+        line = f"256 {FINGERPRINT} root@node-test (ED25519)"
+        self.assertEqual(node_restores.preview_payload(RUN, line)["fingerprint"], FINGERPRINT)
 
     def test_a_run_id_in_a_url_is_held_to_the_run_directory_s_pattern(self) -> None:
         self.assertTrue(node_restores.usable_run(RUN))
@@ -386,6 +388,8 @@ class FollowingARun(RestoreRouteTestCase):
         self.runs = [PREPARED]
         page = self.writing_client().get(f"/backups/restore/{RUN}").text
         self.assertIn("haproxy-restore-r260101-0000aaaa", page)
+        self.assertIn('class="receiver-command restore-paste"', page)
+        self.assertIn("/copy-command.js", page)
         self.assertIn(f'action="/backups/restore/{RUN}/preview"', page)
         self.assertNotIn("http-equiv", page)
 
@@ -434,6 +438,28 @@ class FollowingARun(RestoreRouteTestCase):
         self.assertEqual(response.status_code, 303)
         self.assertEqual(self.queued[0]["operation"], "node_restore")
         self.assertEqual(self.queued[0]["payload"], {"run": RUN, "confirm": "node-test"})
+
+    def test_a_finished_run_offers_the_way_back(self) -> None:
+        self.runs = [
+            PREPARED,
+            PREVIEWED,
+            job(
+                "node_restore",
+                "done",
+                result=fixture("haproxy-node-restore", "done.json"),
+                number=3,
+            ),
+        ]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn("<strong>Restored.</strong>", page)
+        self.assertIn('href="/backups">Back to node backups</a>', page)
+
+    def test_the_jobs_page_leads_back_to_the_run(self) -> None:
+        stray = job("node_restore_preview", "done", run="../../etc", number=9)
+        with mock.patch("haproxy_ui.db.recent_jobs", return_value=[PREVIEWED, PREPARED, stray]):
+            page = self.writing_client().get("/jobs").text
+        self.assertEqual(page.count(f'<a href="/backups/restore/{RUN}">'), 2)
+        self.assertNotIn("/backups/restore/../", page)
 
     def test_a_step_out_of_order_is_refused(self) -> None:
         self.runs = [PREPARED]

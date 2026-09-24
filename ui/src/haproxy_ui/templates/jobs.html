@@ -28,7 +28,7 @@
     {% for job in jobs.jobs %}
       <tr id="job-{{ job.id }}">
         <td data-label="Job"><strong>#{{ job.id }}</strong></td>
-        <td data-label="Operation">{{ job.operation }}</td>
+        <td data-label="Operation">{% if job.link %}<a href="{{ job.link }}">{{ job.operation }}</a>{% else %}{{ job.operation }}{% endif %}</td>
         <td data-label="Cluster"><strong>{{ job.cluster }}</strong></td>
         <td data-label="State"><span class="status-badge status-badge-{{ job.tone }}">{{ job.state_label }}</span></td>
         <td data-label="Requested"><time datetime="{{ job.requested_iso }}" title="{{ job.requested_iso }}">{{ job.requested }}</time></td>

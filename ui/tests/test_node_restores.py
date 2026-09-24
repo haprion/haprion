@@ -464,10 +464,17 @@ class FollowingARun(RestoreRouteTestCase):
         self.assertIn("<code>haproxy-manager-node-000000000000</code> from this manager", page)
         self.assertIn("in place of the archive's 2", page)
         self.assertIn("turns the traffic log on, as it was", page)
+        self.assertIn("account svc-logread gets a free UID (997 is systemd-timesync here)", page)
         self.assertIn(
             "<code>/etc/ssh/sshd_config,</code> <code>/etc/sudoers.d/90-cloud-init-users</code>",
             page,
         )
+
+    def test_a_blocked_preview_offers_the_way_back(self) -> None:
+        self.runs = [PREPARED, BLOCKED_PREVIEW]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        stops = page.split("What stops this restore", 1)[1].split("</section>", 1)[0]
+        self.assertIn('<a class="secondary-button" href="/backups">Back to backups</a>', stops)
 
     def test_a_reader_sees_the_run_but_no_forms(self) -> None:
         self.runs = [PREPARED]

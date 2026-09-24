@@ -66,6 +66,7 @@
 {% if restore.problems %}
 <section class="cluster-card"><header class="cluster-header"><div class="section-title"><h3>What stops this restore</h3></div></header>
   <ul class="restore-list">{% for item in restore.problems %}<li>{{ item }}</li>{% endfor %}</ul>
+  <div class="editor-actions editor-submit"><p class="table-note">Nothing was written to the VM. Put it right and preview again above, or leave this run.</p><div class="form-buttons"><a class="secondary-button" href="/backups">Back to backups</a></div></div>
 </section>
 {% endif %}
 
@@ -78,6 +79,7 @@
     <div><dt>keepalived</dt><dd>{{ 'Started as BACKUP' if plan.keepalived == 'start' else 'Masked — never started' }}</dd></div>
     <div><dt>Packages</dt><dd>{{ plan.packages | join(', ') }}</dd></div>
     <div><dt>Accounts</dt><dd>{% for account in plan.accounts %}{{ account.name }} ({{ account.uid }}){% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
+    {% if restore.renumbered %}<div><dt>Other numbers</dt><dd>{{ restore.renumbered | join('; ') }} · files are owned by name</dd></div>{% endif %}
     <div><dt>Files</dt><dd>{{ plan.files | length }} files{% if plan.equal_directories %} · made equal to the archive: {{ plan.equal_directories | join(', ') }}{% endif %}</dd></div>
     {% if restore.node_bundle %}<div><dt>Node bundle</dt><dd><code>{{ restore.node_bundle.root }}</code> from this manager's release writes the node scripts{% if plan.from_bundle %} in place of the archive's {{ plan.from_bundle | length }}{% endif %}{% if plan.traffic_log %} · turns the traffic log on, as it was{% endif %}</dd></div>{% endif %}
     {% if plan.left_out %}<div><dt>Not from the archive</dt><dd>{% for path in plan.left_out %}<code>{{ path }}{% if not loop.last %},{% endif %}</code> {% endfor %} · the VM keeps its own, and old <code>.replaced-</code> copies stay behind; an operator's own file among these comes back only when named in <code>EXTRA_BACKUP_PATHS</code></dd></div>{% endif %}

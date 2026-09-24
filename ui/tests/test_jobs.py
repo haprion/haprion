@@ -416,6 +416,23 @@ class WhatTheLastJobLeftBehind(unittest.TestCase):
 
         self.assertEqual(verdicts["alpha"].code, "deploy_refused")
 
+    def test_a_node_restore_neither_sets_nor_ends_the_verdict(self) -> None:
+        """Its jobs hold the cluster's lock; they are about a VM, not the configuration."""
+
+        self.assertEqual(
+            jobs.last_failure(
+                [self.job("alpha", "node_restore_preview", "blocked", "restore_blocked")]
+            ),
+            {},
+        )
+        verdicts = jobs.last_failure(
+            [
+                self.job("alpha", "node_restore", "done"),
+                self.job("alpha", "deploy", "failed", "deploy_refused"),
+            ]
+        )
+        self.assertEqual(verdicts["alpha"].code, "deploy_refused")
+
     def test_another_cluster_s_failure_stays_with_that_cluster(self) -> None:
         verdicts = jobs.last_failure(
             [

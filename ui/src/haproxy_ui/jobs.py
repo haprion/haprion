@@ -815,11 +815,18 @@ def last_failure(jobs: Iterable[Job]) -> dict[str, Failure]:
     Newest first, one verdict per cluster: an older failure that the next
     attempt fixed is history, and showing it would send somebody after a
     problem that is already gone.
+
+    A node restore neither sets nor ends the verdict. Its jobs carry the
+    cluster only to hold the cluster's lock; they act on a VM, not on the
+    cluster's configuration, and a preview blocked by a VM that is not empty
+    is the check working. Their state is on the run's own page.
     """
 
     verdicts: dict[str, Failure] = {}
     for job in jobs:
         if job.cluster is None or job.cluster in verdicts or job.state in {"pending", "running"}:
+            continue
+        if job.operation in RESTORE_OPERATIONS:
             continue
         verdicts[job.cluster] = (
             Failure(

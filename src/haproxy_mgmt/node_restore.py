@@ -46,16 +46,21 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from haproxy_mgmt import (
+    backup_retention,
     haproxy_repository,
     node_bundle,
     restore_agent,
     restore_answers,
     restore_plan,
+    state_backup,
 )
 from haproxy_mgmt.backups import node_backups
-from haproxy_mgmt.config import Cluster, Node
+from haproxy_mgmt.cluster_status import StatusError, parse_status
+from haproxy_mgmt.config import Cluster, Node, PathPolicy
+from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.restore_plan import PlannedFile, RestorePlan, Target, TestProfile
 from haproxy_mgmt.restore_source import RestoreSource, content, read
+from haproxy_mgmt.status_collect import ask_node, collect
 
 RUN_ROOT = Path("/var/lib/haproxy-mgmt/restore")
 SSH = "/usr/bin/ssh"
@@ -83,6 +88,29 @@ KEY_LIFETIME = 2 * START_WINDOW
 
 class RestoreError(RuntimeError):
     """The restore cannot start or continue; nothing further was sent."""
+
+
+@dataclass(frozen=True, slots=True)
+class Standing:
+    """The node's place in its pair, read before an overwrite (B172)."""
+
+    vip_owner: bool | None
+    neighbour: str
+    neighbour_healthy: bool
+    detail: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class OverwriteChecks:
+    """What an overwrite asks about the cluster, beyond the node itself.
+
+    ``backup`` takes the cluster's state backup and answers None, or why it
+    could not. ``standing`` reads the pair for the named node. Built from the
+    runtime policy by the helper; tests pass their own.
+    """
+
+    backup: Callable[[], str | None]
+    standing: Callable[[str], Standing]
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,12 +524,18 @@ class Checked:
     answers: str = ""
 
 
-def _inspect_header(source: RestoreSource) -> dict[str, Any]:
-    return {
+def _inspect_header(source: RestoreSource, mode: str) -> dict[str, Any]:
+    header: dict[str, Any] = {
         "op": "inspect",
         "names": sorted({a.name for a in source.accounts} | {g.name for g in source.groups}),
         "ids": sorted({a.uid for a in source.accounts} | {g.gid for g in source.groups}),
     }
+    if mode == "overwrite":
+        # B183: what the node holds, so the preview can say what changes.
+        header["hash"] = sorted(entry.path for entry in source.owned() if entry.kind == "file")
+        header["list"] = [restore_plan.NETPLAN_DIR, *restore_plan.PRODUCT_DIRECTORIES]
+        header["packages"] = list(restore_plan.PRODUCT_PACKAGES)
+    return header
 
 
 def _problems(
@@ -542,6 +576,14 @@ def _problems(
             "restore onto a cloud image of Ubuntu 26.04 or Debian 13"
         )
     final = str(plan.address.ip)
+    if request.mode == "overwrite":
+        # B172: the node itself, at its own address - the reverse of a new VM.
+        if request.target != final:
+            problems.append(
+                f"an overwrite connects to {node.name} at its own address {final}, "
+                f"not {request.target}"
+            )
+        return problems
     if final != request.target and answering(final):
         problems.append(f"{final} already answers; two machines would hold one address")
     if request.mode == "new_vm" and node.mgmt_host != final and answering(node.mgmt_host):
@@ -603,12 +645,19 @@ def check(
     node = node_of(cluster, request.node)
     archive = archive_path(backup_root, node, request.archive)
     source = read(archive)
-    inspected = session.call(request.target, _inspect_header(source), progress=progress)
+    inspected = session.call(
+        request.target, _inspect_header(source, request.mode), progress=progress
+    )
     if not inspected.get("ok"):
         raise RestoreError(f"the target could not be inspected: {inspected.get('error')}")
     interface = inspected["interface"]
     target = Target(
-        os_release=inspected["os_release"], interface=interface["name"], mac=interface["mac"]
+        os_release=inspected["os_release"],
+        interface=interface["name"],
+        mac=interface["mac"],
+        hashes=inspected.get("hashes", {}),
+        listing={k: tuple(v) for k, v in inspected.get("listing", {}).items()},
+        installed=tuple(inspected.get("product_installed", ())),
     )
     try:
         plan = restore_plan.build(source, request.mode, target, request.profile)
@@ -666,6 +715,7 @@ def preview(
     session_for: Callable[[Path, Path], Session] = Session,
     bundle_of: Callable[[], node_bundle.ReleaseBundle | None] = node_bundle.release_bundle,
     now: Callable[[], float] = time.time,
+    checks: OverwriteChecks | None = None,
 ) -> dict[str, Any]:
     with _Held(run_directory(root, run), wait=True):
         return _preview(
@@ -680,6 +730,7 @@ def preview(
             progress=progress,
             session_for=session_for,
             bundle_of=bundle_of,
+            checks=checks,
         )
 
 
@@ -696,8 +747,11 @@ def _preview(
     progress: TextIO | None,
     session_for: Callable[[Path, Path], Session],
     bundle_of: Callable[[], node_bundle.ReleaseBundle | None],
+    checks: OverwriteChecks | None,
 ) -> dict[str, Any]:
     request = Request.from_dict(read_json(directory / "request.json"))
+    if request.mode == "overwrite" and checks is None:
+        raise RestoreError("an overwrite needs the cluster's backup and status; none were given")
     if not FINGERPRINT.fullmatch(fingerprint_seen):
         raise RestoreError("the fingerprint is written as SHA256:<43 characters>")
     key = scan(request.target)
@@ -706,6 +760,15 @@ def _preview(
             f"{request.target} offers a host key whose fingerprint is not the one read on its "
             "console; nothing was sent to it"
         )
+    if request.mode == "overwrite":
+        # B172: the machine answering must be the archived node, not one in its place.
+        source = read(archive_path(backup_root, node_of(cluster, request.node), request.archive))
+        archived = source.entry(ARCHIVED_HOST_KEY)
+        if archived is None or _key(content(source, archived)) != _key(key.encode()):
+            raise RestoreError(
+                f"{request.target} does not offer {request.node}'s archived host key; "
+                "an overwrite is for the archived node itself - nothing was sent to it"
+            )
     known_hosts = directory / "known_hosts"
     known_hosts.write_text(f"{request.target} {key}\n", encoding="utf-8")
     known_hosts.chmod(0o600)
@@ -742,10 +805,117 @@ def _preview(
         },
     }
     summary["renumbered"] = renumbered(checked.source, checked.inspected)
+    if request.mode == "overwrite" and checks is not None:
+        summary["overwrite"] = _overwrite_standing(request, checks, progress)
     if checked.bundle is not None:
         summary["node_bundle"] = {"root": checked.bundle.root, "commit": checked.bundle.commit}
     _write_json(directory / "preview.json", summary)
     return summary
+
+
+ARCHIVED_HOST_KEY = "/etc/ssh/ssh_host_ed25519_key.pub"
+
+
+def overwrite_checks(cluster_id: str, cluster: Cluster, policy: PathPolicy) -> OverwriteChecks:
+    """The backup and the pair's reading an overwrite makes, as the backup job and deploy make them."""
+
+    def backup() -> str | None:
+        try:
+            report = state_backup.run(
+                cluster_id,
+                cluster,
+                policy.backup_identity,
+                policy.backup_root,
+                retention=backup_retention.read(cluster_id),
+            )
+        except (state_backup.BackupRunError, backup_retention.RetentionError) as exc:
+            return str(exc)
+        failed = [
+            f"{node.name}: {node.error or node.outcome}"
+            for node in report.nodes
+            if node.outcome != "done"
+        ]
+        return None if not failed else "; ".join(failed)
+
+    def standing(name: str) -> Standing:
+        others = [node.name for node in cluster.nodes if node.name != name]
+        neighbour = others[0] if len(others) == 1 else ", ".join(others)
+        identity = policy.status_identity
+        if identity is None:
+            return Standing(None, neighbour, False, "no status_identity in the runtime policy")
+        report = collect(cluster.nodes, lambda node: ask_node(node, identity), target=None)
+        try:
+            parsed = parse_status(report.as_envelope(cluster_id, request_id=new_request_id()))
+            own = parsed.node(name).owns_vip
+        except StatusError as exc:
+            return Standing(None, neighbour, False, str(exc))
+        raw = {entry["name"]: entry for entry in report.result.get("nodes", [])}
+        entry = raw.get(neighbour) or {}
+        status = entry.get("status") or {}
+        haproxy = bool((status.get("haproxy") or {}).get("active"))
+        keepalived = bool((status.get("keepalived") or {}).get("active"))
+        healthy = bool(entry.get("status_ok")) and haproxy and keepalived
+        detail = (
+            ""
+            if healthy
+            else f"reachable {bool(entry.get('reachable'))}, HAProxy active {haproxy}, "
+            f"keepalived active {keepalived}"
+        )
+        return Standing(own, neighbour, healthy, detail)
+
+    return OverwriteChecks(backup=backup, standing=standing)
+
+
+def _key(line: bytes) -> str:
+    """A public key's type and body, without the comment."""
+
+    return " ".join(line.decode("utf-8", "replace").split()[:2])
+
+
+def _overwrite_standing(
+    request: Request, checks: OverwriteChecks, progress: TextIO | None
+) -> dict[str, Any]:
+    """The backup and the pair, as the preview shows them. Not bound by the digest:
+    both change on their own, and the run reads the pair again."""
+
+    stream = progress or sys.stderr
+    stream.write(f"state backup of {request.cluster}\n")
+    backup_error = checks.backup()
+    standing = checks.standing(request.node)
+    return {
+        "backup": "done" if backup_error is None else "failed",
+        "backup_error": backup_error,
+        "vip_owner": standing.vip_owner,
+        "neighbour": standing.neighbour,
+        "neighbour_healthy": standing.neighbour_healthy,
+        "detail": standing.detail,
+    }
+
+
+def _overwrite_refusals(
+    request: Request,
+    previewed: dict[str, Any],
+    checks: OverwriteChecks,
+    *,
+    backup_failed_ok: bool,
+    break_traffic: bool,
+) -> list[str]:
+    """What stops an overwrite at the run unless the operator ticked it (B172)."""
+
+    refusals: list[str] = []
+    backup = previewed.get("overwrite", {})
+    if backup.get("backup") != "done" and not backup_failed_ok:
+        refusals.append(
+            "no state backup could be taken before the overwrite; "
+            "tick that you continue without one"
+        )
+    standing = checks.standing(request.node)
+    if standing.vip_owner is not False and not standing.neighbour_healthy and not break_traffic:
+        refusals.append(
+            f"{request.node} may hold the VIP and {standing.neighbour} is not healthy "
+            f"({standing.detail or 'no detail'}); this WILL break live traffic unless ticked"
+        )
+    return refusals
 
 
 # --------------------------------------------------------------------------
@@ -785,6 +955,9 @@ def run(
     publish_root: Path,
     bundle_of: Callable[[], node_bundle.ReleaseBundle | None] = node_bundle.release_bundle,
     now: Callable[[], float] = time.time,
+    checks: OverwriteChecks | None = None,
+    backup_failed_ok: bool = False,
+    break_traffic: bool = False,
 ) -> dict[str, Any]:
     """Carry out the previewed plan, holding the run's directory throughout.
 
@@ -807,6 +980,9 @@ def run(
             session_for=session_for,
             publish_root=publish_root,
             bundle_of=bundle_of,
+            checks=checks,
+            backup_failed_ok=backup_failed_ok,
+            break_traffic=break_traffic,
         )
 
 
@@ -825,6 +1001,9 @@ def _run(
     session_for: Callable[[Path, Path], Session],
     publish_root: Path,
     bundle_of: Callable[[], node_bundle.ReleaseBundle | None],
+    checks: OverwriteChecks | None,
+    backup_failed_ok: bool,
+    break_traffic: bool,
 ) -> dict[str, Any]:
     stream = progress or sys.stderr
     request = Request.from_dict(read_json(directory / "request.json"))
@@ -854,6 +1033,21 @@ def _run(
         raise RestoreError("this manager's CLI release carries no node bundle")
     if confirm != plan.hostname:
         raise RestoreError(f"confirm with the restored node's name, {plan.hostname}")
+    overwrite = plan.mode == "overwrite"
+    if overwrite:
+        if checks is None:
+            raise RestoreError(
+                "an overwrite needs the cluster's backup and status; none were given"
+            )
+        refusals = _overwrite_refusals(
+            request,
+            previewed,
+            checks,
+            backup_failed_ok=backup_failed_ok,
+            break_traffic=break_traffic,
+        )
+        if refusals:
+            raise RestoreError("; ".join(refusals))
 
     result: dict[str, Any] = {
         "run": run_id,
@@ -874,6 +1068,8 @@ def _run(
         "keepalived": plan.keepalived,
         "packages": list(plan.packages),
         "equal_directories": list(plan.equal_directories),
+        "overwrite": overwrite,
+        "keep": list(plan.from_bundle),
         "cluster": request.cluster,
         "node_bundle": {"root": bundle.root, "sha256": bundle.sha256},
         "answers": checked.answers,
@@ -911,7 +1107,20 @@ def _run(
     )
     result["sessions"]["apply"] = {k: v for k, v in applied.items() if k != "ok"}
     if not applied.get("ok"):
-        return finish_with("failed", error=applied.get("error"), stage="apply")
+        return finish_with(
+            "failed",
+            error=applied.get("error"),
+            stage="apply",
+            rolled_back=bool(applied.get("rolled_back")),
+        )
+
+    final = str(plan.address.ip)
+    if overwrite and not plan.network:
+        # B183: the node's network is already the archive's; it is not applied again.
+        stream.write("network unchanged; not applied\n")
+        return _finish(
+            session, directory, checked, cluster, final, result, finish_with, stream, network=False
+        )
 
     stream.write(
         f"network on {request.target}: {plan.address} after 3 s, rollback in {rollback_seconds} s\n"
@@ -926,7 +1135,6 @@ def _run(
     if not changed.get("ok"):
         return finish_with("failed", error=changed.get("error"), stage="network")
 
-    final = str(plan.address.ip)
     if plan.mode == "test":
         key = read_json(directory / "target-key.json")["key"]
     else:
@@ -946,29 +1154,63 @@ def _run(
         stream.write(f"{final} did not answer; waiting for the rollback timer\n")
         clock.sleep(max(0.0, started + rollback_seconds + 20 - clock.now()))
         back = _wait_for(request.target, clock.now() + 60, answering, pause, clock)
+        if back and overwrite:
+            # The network is the node's again; its files are put back from its copy.
+            undone = session.call(
+                request.target, {"op": "rollback", "run": run_id}, progress=stream
+            )
+            result["sessions"]["rollback"] = {k: v for k, v in undone.items() if k != "ok"}
+            back = bool(undone.get("ok"))
         return finish_with(
             "failed",
             rolled_back=back,
             stage="network",
-            error=f"{final} never answered; the network was "
+            error=f"{final} never answered; the "
+            + ("node" if overwrite else "network")
+            + " was "
             + ("rolled back" if back else "NOT confirmed rolled back - go to the console"),
         )
 
+    return _finish(
+        session, directory, checked, cluster, final, result, finish_with, stream, network=True
+    )
+
+
+def _finish(
+    session: Session,
+    directory: Path,
+    checked: Checked,
+    cluster: Cluster,
+    final: str,
+    result: dict[str, Any],
+    finish_with: Callable[..., dict[str, Any]],
+    stream: TextIO,
+    *,
+    network: bool,
+) -> dict[str, Any]:
+    plan = checked.plan
     stream.write(f"finish on {final}\n")
     finished = session.call(
         final,
         {
             "op": "finish",
-            "run": run_id,
+            "run": directory.name,
             "certificates": list(cluster.certificate_ids),
             "keepalived": plan.keepalived,
+            "overwrite": plan.mode == "overwrite",
+            "network": network,
         },
         payload(checked.source, (plan.root_keys,)) if plan.root_keys else b"",
         progress=stream,
     )
     result["sessions"]["finish"] = {k: v for k, v in finished.items() if k != "ok"}
     if not finished.get("ok"):
-        return finish_with("failed", error=finished.get("error"), stage="finish")
+        return finish_with(
+            "failed",
+            error=finished.get("error"),
+            stage="finish",
+            rolled_back=bool(finished.get("rolled_back")),
+        )
     return finish_with("done", address=final, hostname=plan.hostname)
 
 

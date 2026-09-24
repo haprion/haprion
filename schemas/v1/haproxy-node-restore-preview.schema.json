@@ -138,7 +138,8 @@
             "mode": {
               "enum": [
                 "new_vm",
-                "test"
+                "test",
+                "overwrite"
               ]
             },
             "keepalived": {
@@ -266,6 +267,25 @@
             },
             "traffic_log": {
               "type": "boolean"
+            },
+            "changed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "unchanged": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "quarantined": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "network_unchanged": {
+              "type": "boolean"
             }
           },
           "additionalProperties": false
@@ -311,6 +331,50 @@
           "items": {
             "type": "string",
             "maxLength": 512
+          }
+        },
+        "overwrite": {
+          "description": "Overwrite only (B172, B183): the state backup taken at the preview and the pair as it read then. Not bound by the digest; the run reads the pair again.",
+          "type": "object",
+          "required": [
+            "backup",
+            "backup_error",
+            "vip_owner",
+            "neighbour",
+            "neighbour_healthy",
+            "detail"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "backup": {
+              "enum": [
+                "done",
+                "failed"
+              ]
+            },
+            "backup_error": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 2048
+            },
+            "vip_owner": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "neighbour": {
+              "type": "string"
+            },
+            "neighbour_healthy": {
+              "type": "boolean"
+            },
+            "detail": {
+              "type": "string",
+              "maxLength": 512
+            }
           }
         }
       },

@@ -4187,10 +4187,18 @@ def build_router(config: Config) -> APIRouter:
         request: Request,
         run: str,
         confirm: str = Form(default="", max_length=128),
+        acknowledged: str = Form(default="", max_length=8),
+        backup_failed_ok: str = Form(default="", max_length=8),
+        break_traffic: str = Form(default="", max_length=8),
         idempotency_key: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
-        """Queue `node_restore` once the node's name has been typed."""
+        """Queue `node_restore` once the node's name has been typed.
+
+        An overwrite also takes the tick under its red box, and the ones for
+        going on without a backup or breaking live traffic when its preview
+        showed either (B172).
+        """
 
         step = _restore_step(request, run, csrf_token, idempotency_key)
         if isinstance(step, Response):
@@ -4205,7 +4213,15 @@ def build_router(config: Config) -> APIRouter:
         if restore.stage != "confirm":
             return again("This run has no preview waiting for confirmation.")
         try:
-            payload = node_restores.run_payload(run, confirm, restore.confirm_name)
+            payload = node_restores.run_payload(
+                run,
+                confirm,
+                restore.confirm_name,
+                overwrite=restore.mode == "overwrite",
+                acknowledged=acknowledged == "yes",
+                backup_failed_ok=backup_failed_ok == "yes",
+                break_traffic=break_traffic == "yes",
+            )
         except node_restores.RestoreProblem as refused:
             return again(str(refused))
         return _queue_restore_job(

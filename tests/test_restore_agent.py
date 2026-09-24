@@ -4,6 +4,7 @@ import gzip
 import hashlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import tarfile
@@ -630,6 +631,184 @@ class Finish(AgentTest):
     def test_finish_carries_roots_keys_and_nothing_else(self) -> None:
         extra = payload([*self.KEYS, ("/etc/hosts", "file", 0o644, 0, 0, "x")])
         self.assertFalse(self.serve(self.header(), extra)["ok"])
+
+
+OVERWRITE_FILES = [item for item in APPLY_FILES if not item[0].startswith("/etc/apt/")]
+OVERWRITE_HEADER: dict[str, Any] = {
+    **APPLY_HEADER,
+    "keepalived": "start",
+    "overwrite": True,
+    "packages": ["rsync"],
+    "equal_directories": ["/etc/haproxy-manager"],
+    "keep": ["/etc/haproxy-manager/node-installation.json"],
+}
+
+
+class Overwrite(AgentTest):
+    """B172/B183: the archive over a running node, with a copy to go back to."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # A running node: its product files, its release, a stray file of its own.
+        for name, text in {
+            "/etc/sudoers.d/haproxy-node": "# node's rules\n",
+            "/etc/haproxy-manager/node.conf": "CLUSTER=drifted\n",
+            "/etc/haproxy-manager/node-installation.json": '{"node_api": 1}\n',
+            "/etc/haproxy-manager/stray": "left by hand\n",
+            "/usr/local/sbin/haproxy-pull-deploy": "#!/bin/sh\nold\n",
+        }.items():
+            path = self.host.path(name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        self.host.path("/etc/haproxy/haproxy.cfg").unlink()
+        self.host.path("/etc/haproxy/releases/r1").mkdir(parents=True)
+        self.host.path("/etc/haproxy/current").symlink_to("/etc/haproxy/releases/r1")
+        self.host.path("/etc/haproxy/haproxy.cfg").symlink_to("current/haproxy.cfg")
+
+    def apply(self, header: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self.serve(header or OVERWRITE_HEADER, payload(OVERWRITE_FILES))
+
+    def test_inspect_says_what_the_node_holds(self) -> None:
+        self.host.preinstalled = {"haproxy", "rsync"}
+        result = self.serve(
+            {
+                "op": "inspect",
+                "names": [],
+                "ids": [],
+                "hash": ["/etc/sudoers.d/haproxy-node", "/etc/missing"],
+                "list": ["/etc/haproxy-manager", "/etc/systemd/system/haproxy.service.d"],
+                "packages": ["haproxy", "keepalived", "rsync"],
+            }
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertIsNone(result["hashes"]["/etc/missing"])
+        self.assertEqual(
+            result["hashes"]["/etc/sudoers.d/haproxy-node"],
+            hashlib.sha256(b"# node's rules\n").hexdigest(),
+        )
+        self.assertIn("/etc/haproxy-manager/stray", result["hashes"])
+        self.assertEqual(result["listing"]["/etc/systemd/system/haproxy.service.d"], [])
+        self.assertIn("/etc/haproxy-manager/stray", result["listing"]["/etc/haproxy-manager"])
+        self.assertEqual(result["product_installed"], ["haproxy", "rsync"])
+
+    def test_the_copy_comes_first_and_keepalived_stops_before_any_write(self) -> None:
+        result = self.apply()
+        self.assertTrue(result["ok"], result)
+        steps = [step["step"] for step in result["steps"]]
+        self.assertEqual(steps[:2], ["copy", "keepalived"])
+        self.assertEqual(self.host.commands[0], ["systemctl", "stop", "keepalived"])
+        self.assertTrue(
+            self.host.path(f"/var/lib/haproxy-restore/{RUN}/before/files.tar").is_file()
+        )
+
+    def test_the_nodes_software_and_release_are_left_alone(self) -> None:
+        self.apply()
+        installs = [argv for argv in self.commands("apt-get") if "install" in argv]
+        self.assertEqual(len(installs), 1)
+        self.assertIn("--no-upgrade", installs[0])
+        self.assertEqual(installs[0][-1], "rsync")
+        self.assertFalse(self.host.path("/etc/apt/sources.list.d/haproxy.sources").exists())
+        self.assertEqual(
+            os.readlink(self.host.path("/etc/haproxy/current")), "/etc/haproxy/releases/r1"
+        )
+        self.assertFalse(self.host.path("/etc/haproxy/releases/00000000-000000").exists())
+
+    def test_nothing_missing_means_no_apt_at_all(self) -> None:
+        self.apply({**OVERWRITE_HEADER, "packages": []})
+        self.assertEqual(self.commands("apt-get"), [])
+
+    def test_the_products_directory_is_made_the_archives(self) -> None:
+        self.apply()
+        self.assertFalse(self.host.path("/etc/haproxy-manager/stray").exists())
+        self.assertTrue(
+            self.host.path(
+                f"/var/lib/haproxy-restore/{RUN}/quarantine/etc/haproxy-manager/stray"
+            ).exists()
+        )
+        self.assertTrue(self.host.path("/etc/haproxy-manager/node-installation.json").exists())
+        self.assertEqual(
+            self.host.path("/etc/haproxy-manager/node.conf").read_text(), "CLUSTER=alpha\n"
+        )
+        # The directories the product shares with the image keep the image's files.
+        self.assertTrue(self.host.path("/etc/sudoers.d/90-cloud-init-users").exists())
+
+    def test_a_failure_puts_the_node_back_as_it_was(self) -> None:
+        self.host.fail = {"bash"}  # the node bundle's 04-node-prepare
+        result = self.apply()
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["rolled_back"], result)
+        self.assertEqual(
+            self.host.path("/etc/haproxy-manager/node.conf").read_text(), "CLUSTER=drifted\n"
+        )
+        self.assertEqual(self.host.path("/etc/haproxy-manager/stray").read_text(), "left by hand\n")
+        self.assertEqual(
+            self.host.path("/etc/sudoers.d/haproxy-node").read_text(), "# node's rules\n"
+        )
+        # What the overwrite added is set aside, not left behind.
+        self.assertFalse(self.host.path("/etc/default/grub.d/99-local.cfg").exists())
+        self.assertIn(["systemctl", "start", "keepalived"], self.host.commands)
+
+    def test_a_failed_rollback_says_go_to_the_console(self) -> None:
+        self.host.fail = {"bash"}
+        self.host.path("/var/lib/haproxy-restore").mkdir(parents=True)
+        original = restore_agent.rollback_files
+
+        def broken(*_args: object) -> None:
+            raise Failed("disk full")
+
+        restore_agent.rollback_files = broken  # type: ignore[assignment]
+        self.addCleanup(setattr, restore_agent, "rollback_files", original)
+        result = self.apply()
+        self.assertFalse(result["ok"])
+        self.assertNotIn("rolled_back", result)
+        self.assertIn("go to the console", result["error"])
+
+    def test_a_second_copy_in_one_run_is_refused(self) -> None:
+        self.apply()
+        result = self.apply()
+        self.assertFalse(result["ok"])
+        self.assertIn("already taken", result["error"])
+
+    def test_an_overwrite_writes_no_repository_file(self) -> None:
+        result = self.serve(OVERWRITE_HEADER, payload(APPLY_FILES))
+        self.assertTrue(result["refused"], result)
+
+    def test_rollback_after_a_network_failure_puts_the_files_back(self) -> None:
+        self.apply()
+        result = self.serve({"op": "rollback", "run": RUN})
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            self.host.path("/etc/haproxy-manager/node.conf").read_text(), "CLUSTER=drifted\n"
+        )
+
+    def finish(self) -> dict[str, Any]:
+        header = {
+            "op": "finish",
+            "run": RUN,
+            "certificates": [],
+            "keepalived": "start",
+            "overwrite": True,
+            "network": False,
+        }
+        return self.serve(header, payload(Finish.KEYS))
+
+    def test_finish_without_a_network_change_has_no_timer_to_stop(self) -> None:
+        self.apply()
+        self.host.active.update({"haproxy": "active", "keepalived": "active"})
+        result = self.finish()
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn("rollback-cancelled", [step["step"] for step in result["steps"]])
+
+    def test_a_node_that_does_not_come_up_is_put_back_and_keeps_the_one_time_key(self) -> None:
+        self.apply()
+        self.host.active.update({"haproxy": "active"})  # keepalived does not come up
+        result = self.finish()
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["rolled_back"], result)
+        self.assertEqual(
+            self.host.path("/etc/haproxy-manager/node.conf").read_text(), "CLUSTER=drifted\n"
+        )
+        self.assertEqual(self.host.path("/root/.ssh/authorized_keys").read_text(), "one-time key\n")
 
 
 class Protocol(AgentTest):

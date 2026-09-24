@@ -1,4 +1,4 @@
-"""``haproxy-node-restore`` - restore a node's state archive onto an empty VM.
+"""``haproxy-node-restore`` - restore a node's state archive onto an empty VM or over the node.
 
 Runs as root: it reads the root-only archives and holds the run's one-time key.
 Three steps, in order, each a separate command (B175):
@@ -36,8 +36,11 @@ Usage:
   haproxy-node-restore prepare -c <cluster> --node <node> --archive <version> --target <address>
                                [--test --test-hostname <name> --test-address <addr/prefix>
                                 --test-vip <addr/prefix>]
+  haproxy-node-restore prepare -c <cluster> --node <node> --archive <version> --target <address>
+                               --overwrite
   haproxy-node-restore preview --run <id> --fingerprint <SHA256:...>
   haproxy-node-restore run     --run <id> --confirm <hostname>
+                               [--backup-failed-ok] [--break-traffic]
   haproxy-node-restore discard --run <id>
 
   prepare   prints a line to paste on the target's console as its administrator.
@@ -46,6 +49,12 @@ Usage:
   preview   --fingerprint is the one the pasted line printed on the console.
   run       --confirm is the name the node will have: the archived node's, or
             the test hostname.
+
+  --overwrite puts the archive back over the running node itself, at its own
+  address; the host key must be the archived one. The preview takes a state
+  backup and reads the pair. The run refuses when that backup failed, unless
+  --backup-failed-ok, and when the node may hold the VIP while its neighbour
+  is not healthy, unless --break-traffic.
   discard   removes the run and its one-time key.
 
   A run has an hour from prepare to run; after that it has expired and is
@@ -97,12 +106,20 @@ def _parameters(step: str, options: dict[str, Any], run: str) -> dict[str, Any]:
             "target": options["--target"],
             "test": _test(options),
         }
+        if "--overwrite" in options:
+            parameters["overwrite"] = True
         operation = node_restore_helper.PREPARE
     elif step == "preview":
         parameters = {"run": run, "fingerprint": options["--fingerprint"]}
         operation = node_restore_helper.PREVIEW
     elif step == "run":
         parameters = {"run": run, "confirm": options["--confirm"]}
+        for flag, name in (
+            ("--backup-failed-ok", "backup_failed_ok"),
+            ("--break-traffic", "break_traffic"),
+        ):
+            if flag in options:
+                parameters[name] = True
         operation = node_restore_helper.RUN
     else:
         return {"run": run}
@@ -136,6 +153,36 @@ def _text_preview(summary: dict[str, Any], out: TextIO) -> None:
         out.write(
             "  made equal to the archive (the rest to quarantine): "
             f"{', '.join(plan['equal_directories'])}\n"
+        )
+    if plan["mode"] == "overwrite":
+        out.write(
+            f"  changes   {len(plan['changed'])} file(s), {plan['unchanged']} already equal\n"
+        )
+        for path in plan["changed"]:
+            out.write(f"    {path}\n")
+        for path in plan["quarantined"]:
+            out.write(f"  to quarantine on the node: {path}\n")
+        out.write(
+            "  network   "
+            + ("unchanged, not applied\n" if plan["network_unchanged"] else "differs, applied\n")
+        )
+        standing = summary.get("overwrite", {})
+        out.write(
+            f"  backup    {standing.get('backup')}"
+            + (f" ({standing['backup_error']})" if standing.get("backup_error") else "")
+            + "\n"
+        )
+        owner = standing.get("vip_owner")
+        out.write(
+            "  VIP       "
+            + ("held by this node; it moves to " if owner else "not held by this node; neighbour ")
+            + f"{standing.get('neighbour')}, "
+            + (
+                "healthy"
+                if standing.get("neighbour_healthy")
+                else f"NOT healthy ({standing.get('detail')})"
+            )
+            + "\n"
         )
     for note in summary.get("renumbered", []):
         out.write(f"  numbering {note}\n")
@@ -209,7 +256,7 @@ def main(
         if step == "prepare":
             options = _options(
                 rest,
-                {"--test", "--json"},
+                {"--test", "--overwrite", "--json"},
                 {
                     "-c",
                     "--node",
@@ -223,7 +270,10 @@ def main(
             if not all(name in options for name in ("-c", "--node", "--archive", "--target")):
                 raise ValueError("missing")
         else:
-            options = _options(rest, {"--json"}, {"--run", "--fingerprint", "--confirm"})
+            flags = {"--json"}
+            if step == "run":
+                flags |= {"--backup-failed-ok", "--break-traffic"}
+            options = _options(rest, flags, {"--run", "--fingerprint", "--confirm"})
             needed = {
                 "preview": ("--run", "--fingerprint"),
                 "run": ("--run", "--confirm"),
@@ -292,7 +342,7 @@ def _step(
                 node=options["--node"],
                 archive=options["--archive"],
                 target=options["--target"],
-                mode="test" if profile is not None else "new_vm",
+                mode=node_restore_helper.mode_of(parameters),
                 profile=profile,
             )
             node_restore.archive_path(
@@ -312,6 +362,11 @@ def _step(
         directory = node_restore.run_directory(run_root, options["--run"])
         request = Request.from_dict(node_restore.read_json(directory / "request.json"))
         cluster = runtime.cluster(request.cluster)
+        checks = (
+            node_restore.overwrite_checks(request.cluster, cluster, policy)
+            if request.mode == "overwrite"
+            else None
+        )
         if step == "preview":
             summary = node_restore.preview(
                 run_root,
@@ -321,6 +376,7 @@ def _step(
                 policy.backup_root,
                 publish_root=policy.publish_root,
                 progress=errors,
+                checks=checks,
             )
             if as_json:
                 out.write(json.dumps(summary) + "\n")
@@ -335,6 +391,9 @@ def _step(
             policy.backup_root,
             publish_root=policy.publish_root,
             progress=errors,
+            checks=checks,
+            backup_failed_ok=bool(parameters.get("backup_failed_ok")),
+            break_traffic=bool(parameters.get("break_traffic")),
         )
         if as_json:
             out.write(json.dumps(result) + "\n")

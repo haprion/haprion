@@ -263,6 +263,131 @@ class TestMode(Planning):
             restore_plan.build(self.source(), "test", TARGET, profile)
 
 
+class Overwrite(Planning):
+    """B183: the archive over the running node itself."""
+
+    def live(self, **changes: object) -> Target:
+        """The node as it reports itself: every archived file equal to the archive's."""
+
+        source = self.source()
+        same = Target(os_release=TARGET.os_release, interface="eth0", mac="02:00:00:00:00:0a")
+        plan = restore_plan.build(source, "new_vm", same)
+        hashes: dict[str, str | None] = {}
+        for file in (*plan.files, *plan.network, *((plan.root_keys,) if plan.root_keys else ())):
+            digest = restore_plan._digest(source, file)
+            if digest is not None:
+                hashes[file.path] = digest
+        values: dict[str, object] = {
+            "os_release": TARGET.os_release,
+            "interface": TARGET.interface,
+            "mac": "02:00:00:00:00:0a",
+            "hashes": hashes,
+            "listing": {
+                "/etc/netplan": ("/etc/netplan/50-cloud-init.yaml",),
+                "/etc/haproxy-manager": (
+                    "/etc/haproxy-manager/keys",
+                    "/etc/haproxy-manager/keys/config-pull",
+                    "/etc/haproxy-manager/node.conf",
+                    "/etc/haproxy-manager/node-installation.json",
+                ),
+            },
+            "installed": restore_plan.PRODUCT_PACKAGES,
+        }
+        values.update(changes)
+        return Target(**values)  # type: ignore[arg-type]
+
+    def test_a_node_equal_to_its_archive_changes_nothing(self) -> None:
+        plan = restore_plan.build(self.source(), "overwrite", self.live())
+        self.assertEqual(plan.changed, ())
+        self.assertGreater(plan.unchanged, 0)
+        self.assertEqual(plan.quarantined, ())
+        self.assertTrue(plan.network_unchanged)
+        self.assertEqual(plan.network, ())
+        self.assertEqual(plan.packages, ())
+        self.assertEqual(plan.keepalived, "start")
+        self.assertEqual(plan.hostname, "node-a")
+
+    def test_no_repository_file_is_written(self) -> None:
+        plan = restore_plan.build(self.source(), "overwrite", self.live())
+        self.assertFalse(any(f.path.startswith("/etc/apt/") for f in plan.files))
+
+    def test_only_missing_product_packages_are_installed(self) -> None:
+        live = self.live(installed=("haproxy", "keepalived", "openssh-server", "python3"))
+        plan = restore_plan.build(self.source(), "overwrite", live)
+        self.assertEqual(plan.packages, ("rsyslog", "rsync", "netplan.io"))
+
+    def test_a_changed_file_is_named(self) -> None:
+        live = self.live()
+        live.hashes["/etc/keepalived/keepalived.conf"] = "0" * 64
+        del live.hashes["/etc/default/haproxy"]
+        plan = restore_plan.build(self.source(), "overwrite", live)
+        self.assertEqual(plan.changed, ("/etc/default/haproxy", "/etc/keepalived/keepalived.conf"))
+
+    def test_the_network_is_written_only_when_it_differs(self) -> None:
+        live = self.live()
+        live.hashes["/etc/netplan/50-cloud-init.yaml"] = "0" * 64
+        plan = restore_plan.build(self.source(), "overwrite", live)
+        self.assertFalse(plan.network_unchanged)
+        self.assertEqual([f.path for f in plan.network], ["/etc/netplan/50-cloud-init.yaml"])
+        self.assertIn("/etc/netplan/50-cloud-init.yaml", plan.changed)
+
+    def test_an_extra_netplan_file_on_the_node_is_a_difference(self) -> None:
+        live = self.live(
+            listing={
+                "/etc/netplan": (
+                    "/etc/netplan/50-cloud-init.yaml",
+                    "/etc/netplan/90-local.yaml",
+                )
+            }
+        )
+        live.hashes["/etc/netplan/90-local.yaml"] = "1" * 64
+        plan = restore_plan.build(self.source(), "overwrite", live)
+        self.assertFalse(plan.network_unchanged)
+        self.assertIn("/etc/netplan/90-local.yaml", plan.changed)
+
+    def test_the_netplan_is_compared_after_binding_to_the_nodes_mac(self) -> None:
+        """The same node answers with the archive's MAC: no rewrite, nothing to write."""
+
+        plan = restore_plan.build(self.source(), "overwrite", self.live())
+        self.assertEqual(plan.rewrites, ())
+
+    def test_what_the_archive_lacks_in_the_products_directories_goes_to_quarantine(self) -> None:
+        listing = dict(self.live().listing)
+        listing["/etc/haproxy-manager"] = (
+            *listing["/etc/haproxy-manager"],
+            "/etc/haproxy-manager/node.conf.replaced-20260101-000000",
+            "/etc/haproxy-manager/stray",
+            "/etc/haproxy-manager/stray/file",
+        )
+        listing["/etc/systemd/system/haproxy.service.d"] = (
+            "/etc/systemd/system/haproxy.service.d/override.conf",
+        )
+        plan = restore_plan.build(self.source(), "overwrite", self.live(listing=listing))
+        self.assertEqual(
+            plan.quarantined,
+            (
+                "/etc/haproxy-manager/node.conf.replaced-20260101-000000",
+                "/etc/haproxy-manager/stray",
+                "/etc/systemd/system/haproxy.service.d/override.conf",
+            ),
+        )
+        # The bundle's own file is kept, not moved and written again.
+        self.assertNotIn("/etc/haproxy-manager/node-installation.json", plan.quarantined)
+        self.assertEqual(plan.equal_directories, restore_plan.PRODUCT_DIRECTORIES)
+
+    def test_only_an_overwrite_summary_carries_the_comparison(self) -> None:
+        overwrite = restore_plan.build(self.source(), "overwrite", self.live()).summary()
+        self.assertEqual(overwrite["changed"], [])
+        self.assertTrue(overwrite["network_unchanged"])
+        new_vm = restore_plan.build(self.source(), "new_vm", TARGET).summary()
+        self.assertNotIn("changed", new_vm)
+        self.assertNotIn("quarantined", new_vm)
+
+    def test_an_unknown_mode_is_refused(self) -> None:
+        with self.assertRaises(PlanError):
+            restore_plan.build(self.source(), "image", TARGET)  # type: ignore[arg-type]
+
+
 class NetplanShapes(Planning):
     def test_two_addresses_are_refused(self) -> None:
         files = dict(FILES)

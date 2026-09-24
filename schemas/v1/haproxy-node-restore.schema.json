@@ -93,7 +93,7 @@
       ]
     },
     "result": {
-      "description": "One carried-out restore. `rolled_back` says whether the target is back where it was (B176): for a new VM, back on its temporary address.",
+      "description": "One carried-out restore. `rolled_back` says whether the target is back where it was (B176): for a new VM, back on its temporary address; for an overwrite (B183), the node's own files put back from the copy taken before the first write.",
       "type": "object",
       "required": [
         "run",
@@ -127,7 +127,8 @@
             "enum": [
               "apply",
               "network",
-              "finish"
+              "finish",
+              "rollback"
             ]
           },
           "additionalProperties": {

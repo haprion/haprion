@@ -2112,7 +2112,35 @@ production pair's VRRP, and the VM keeps its own SSH host keys. The test address
 node's network, because the node's routes come with the archive. `--confirm` takes the test
 hostname.
 
-**What it does not do.** Overwrite a node that is running (not built yet); restore onto an OS other
+**Overwriting a running node.** Add `--overwrite` to `prepare`, with the node's own address as
+`--target`, and the archive is put back over the node itself - for a node left in a bad state by
+hand. The paste and the three steps are the same; what differs:
+
+- the machine answering must offer the **archived** host key - the node itself, not one in its
+  place - and be reached at the address its archive gives it;
+- the preview takes a state backup of the cluster and reads the pair: whether this node holds the
+  VIP and whether its neighbour is healthy (answering, HAProxy and keepalived active). It lists
+  every file whose contents differ from the node's, how many are already equal, what goes to
+  quarantine, and whether the network differs;
+- `run` refuses when that backup failed, unless `--backup-failed-ok`, and when the node may hold
+  the VIP while its neighbour is not healthy, unless `--break-traffic` - which is what it says;
+- before its first write the run copies every path it or the node bundle may change to
+  `/var/lib/haproxy-restore/<run>/before/` on the node, then stops keepalived, so the VIP moves to
+  the neighbour before anything changes;
+- the node's software is its own: no repository file is written, and only a product package the
+  node lacks is installed (`apt-get install --no-upgrade`, from the node's own sources). The HAProxy
+  releases and `current` are not touched;
+- what `/etc/haproxy-manager` and `/etc/systemd/system/haproxy.service.d` hold beyond the archive
+  and the node bundle goes to quarantine on the node, never deleted; the directories the product
+  shares with the OS image keep the image's files, as for a new VM;
+- Netplan is written only when the node's differs from the archive's; otherwise the network
+  session is skipped and nothing is applied;
+- if a session fails, the node is put back from its copy in the same session - or, after a
+  network change that never came up, by the timer and then from the management host once the node
+  answers again - keepalived is started again, and the run is `failed` with `rolled_back`. The
+  one-time key stays in root's `authorized_keys` until its `expiry-time` when the run was put back.
+
+**What it does not do.** Restore onto an OS other
 than Ubuntu 26.04 or Debian 13; configure what is the environment's rather than the product's - a
 configuration-management baseline, monitoring agents, an operator's own sudo rules - which runs
 afterwards as it would on any new machine.

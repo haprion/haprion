@@ -31,7 +31,7 @@ from .db import Job
 from .jobs import RUNNING_LABELS
 
 OPERATIONS = (PREPARE, PREVIEW, RUN, DISCARD)
-MODES = ("new_vm", "test")
+MODES = ("new_vm", "test", "overwrite")
 ACTIVE_STATES = frozenset({"pending", "running"})
 EXPIRES_AFTER = timedelta(seconds=node_restore.START_WINDOW)
 #
@@ -73,7 +73,7 @@ def prepare_payload(
     if (node, archive) not in set(archives):
         raise RestoreProblem("That archive is not in this cluster's backup listing.")
     if mode not in MODES:
-        raise RestoreProblem("Choose a new VM or a test restore.")
+        raise RestoreProblem("Choose a new VM, a test restore or an overwrite.")
     test = (
         {
             "hostname": test_hostname.strip(),
@@ -90,6 +90,8 @@ def prepare_payload(
         "target": target.strip(),
         "test": test,
     }
+    if mode == "overwrite":
+        payload["overwrite"] = True
     _checked(PREPARE, payload)
     return payload
 
@@ -106,12 +108,30 @@ def discard_payload(run: str) -> dict[str, Any]:
     return payload
 
 
-def run_payload(run: str, confirm: str, expected: str) -> dict[str, Any]:
-    """Typing the node's name is the confirmation, and it must be the name in the plan."""
+def run_payload(
+    run: str,
+    confirm: str,
+    expected: str,
+    *,
+    overwrite: bool = False,
+    acknowledged: bool = False,
+    backup_failed_ok: bool = False,
+    break_traffic: bool = False,
+) -> dict[str, Any]:
+    """Typing the node's name is the confirmation, and it must be the name in the plan.
 
+    An overwrite (B172) also takes the tick under its red box, and passes on
+    the two the helper itself holds it to: going on without a backup, and
+    breaking live traffic.
+    """
+
+    if overwrite and not acknowledged:
+        raise RestoreProblem("Tick that you overwrite a running node.")
     if confirm.strip() != expected:
         raise RestoreProblem(f"Type {expected} to restore this node.")
-    payload = {"run": run, "confirm": confirm.strip()}
+    payload: dict[str, Any] = {"run": run, "confirm": confirm.strip()}
+    if overwrite:
+        payload.update(backup_failed_ok=backup_failed_ok, break_traffic=break_traffic)
     _checked(RUN, payload)
     return payload
 
@@ -174,6 +194,22 @@ class RestoreRun:
     renumbered: tuple[str, ...] = ()
     # When the prepare job was queued, and when the hour to start the run ends (B182).
     prepared_at: datetime | None = None
+    # An overwrite's backup and pair, as its preview read them (B172, B183).
+    overwrite: Mapping[str, Any] | None = None
+
+    @property
+    def backup_failed(self) -> bool:
+        return self.overwrite is not None and self.overwrite.get("backup") != "done"
+
+    @property
+    def traffic_at_risk(self) -> bool:
+        """The node may hold the VIP and its neighbour could not take it."""
+
+        return (
+            self.overwrite is not None
+            and self.overwrite.get("vip_owner") is not False
+            and not self.overwrite.get("neighbour_healthy")
+        )
 
     @property
     def active(self) -> bool:
@@ -216,7 +252,7 @@ def _warnings(body: Mapping[str, Any]) -> tuple[str, ...]:
         return ()
     return tuple(
         warning
-        for name in ("apply", "network", "finish")
+        for name in ("apply", "network", "finish", "rollback")
         if isinstance(sessions.get(name), dict)
         for warning in _strings(sessions[name].get("warnings"))
     )
@@ -305,7 +341,11 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
         node=str(asked.get("node", "")),
         archive=str(asked.get("archive", "")),
         target=str(asked.get("target", "")),
-        mode="test" if isinstance(test, dict) else "new_vm",
+        mode="test"
+        if isinstance(test, dict)
+        else "overwrite"
+        if asked.get("overwrite") is True
+        else "new_vm",
         profile=test if isinstance(test, dict) else None,
         stage=stage,
         working=working,
@@ -325,6 +365,7 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
         else None,
         renumbered=_strings(preview.get("renumbered")),
         prepared_at=prepared.created_at,
+        overwrite=preview.get("overwrite") if isinstance(preview.get("overwrite"), dict) else None,
     )
 
 
@@ -433,7 +474,9 @@ def recent_runs(
             RecentRun(
                 run=restore.run,
                 node=restore.node,
-                mode="test" if restore.mode == "test" else "as the node",
+                mode={"test": "test", "overwrite": "over the node"}.get(
+                    restore.mode, "as the node"
+                ),
                 started=shown(created).strftime("%Y-%m-%d %H:%M"),
                 started_iso=created.astimezone(UTC).isoformat(),
                 label=label,

@@ -783,6 +783,12 @@ def check_node_restore_preview_semantics(document: dict[str, object], path: Path
     assert isinstance(plan, dict)
     if (plan["mode"] == "test") != (plan["keepalived"] == "mask"):
         raise AssertionError(f"{path}: keepalived is masked in test mode and only there")
+    # B183: what an overwrite changes, and the backup and pair it read, belong
+    # to an overwrite and to nothing else.
+    overwrite = plan["mode"] == "overwrite"
+    compared = {"changed", "unchanged", "quarantined", "network_unchanged"}
+    if overwrite != ("overwrite" in result) or any(overwrite != (key in plan) for key in compared):
+        raise AssertionError(f"{path}: only an overwrite's preview says what it changes")
 
 
 def check_node_restore_discard_semantics(document: dict[str, object], path: Path) -> None:

@@ -47,7 +47,7 @@ from haproxy_mgmt.helper_protocol import (
     write_document,
 )
 from haproxy_mgmt.node_restore import Request, RestoreError
-from haproxy_mgmt.restore_plan import TestProfile
+from haproxy_mgmt.restore_plan import Mode, TestProfile
 
 PREPARE = "node_restore_prepare"
 PREVIEW = "node_restore_preview"
@@ -62,6 +62,16 @@ KEYS = {
     PREVIEW: frozenset({"run", "fingerprint"}),
     RUN: frozenset({"run", "confirm"}),
     DISCARD: frozenset({"run"}),
+}
+#
+# Booleans an operation may carry, left out meaning false - so a request from
+# before Overwrite node (B172, B183) is still exactly what it was.
+#
+OPTIONAL = {
+    PREPARE: frozenset({"overwrite"}),
+    PREVIEW: frozenset(),
+    RUN: frozenset({"backup_failed_ok", "break_traffic"}),
+    DISCARD: frozenset(),
 }
 NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
 TEST_KEYS = frozenset({"hostname", "address", "vip"})
@@ -84,6 +94,7 @@ __all__ = [
     "build_request",
     "fingerprint_in",
     "main",
+    "mode_of",
     "validate",
 ]
 
@@ -117,6 +128,14 @@ def test_profile(raw: Any) -> TestProfile | None:
     return TestProfile(hostname=hostname, address=address, vip=vip)
 
 
+def mode_of(parameters: Mapping[str, Any]) -> Mode:
+    """The restore mode a prepare request asks for - one reading for helper, CLI and web."""
+
+    if parameters.get("test") is not None:
+        return "test"
+    return "overwrite" if parameters.get("overwrite") else "new_vm"
+
+
 def fingerprint_in(text: str) -> str:
     """The SHA256 fingerprint in what the operator pasted, or the text as given.
 
@@ -134,10 +153,13 @@ def validate(operation: str, parameters: Mapping[str, Any]) -> None:
 
     if operation not in OPERATIONS:
         raise ParameterProblem("not a restore operation")
-    unexpected = sorted(set(parameters) - KEYS[operation])
+    unexpected = sorted(set(parameters) - KEYS[operation] - OPTIONAL[operation])
     missing = sorted(KEYS[operation] - set(parameters))
     if unexpected or missing:
         raise ParameterProblem(f"{operation} takes exactly: {', '.join(sorted(KEYS[operation]))}")
+    for name in OPTIONAL[operation] & set(parameters):
+        if not isinstance(parameters[name], bool):
+            raise ParameterProblem(f"{name} is true or false")
     if not restore_agent.RUN_ID.fullmatch(_string(parameters, "run")):
         raise ParameterProblem("the run ID is not usable")
     if operation == PREPARE:
@@ -149,7 +171,8 @@ def validate(operation: str, parameters: Mapping[str, Any]) -> None:
             ipaddress.IPv4Address(_string(parameters, "target"))
         except ValueError as exc:
             raise ParameterProblem("the target is an IPv4 address") from exc
-        test_profile(parameters["test"])
+        if test_profile(parameters["test"]) is not None and parameters.get("overwrite"):
+            raise ParameterProblem("an overwrite is of the node itself; it has no test profile")
     elif operation == PREVIEW:
         if not node_restore.FINGERPRINT.fullmatch(_string(parameters, "fingerprint")):
             raise ParameterProblem("the fingerprint is written SHA256: and 43 characters")
@@ -332,7 +355,7 @@ def _answer(
                 node=str(parameters["node"]),
                 archive=str(parameters["archive"]),
                 target=str(parameters["target"]),
-                mode="test" if profile is not None else "new_vm",
+                mode=mode_of(parameters),
                 profile=profile,
             )
             node = engine.node_of(cluster, restore.node)
@@ -356,6 +379,11 @@ def _answer(
         )
         if stored.cluster != request.cluster:
             raise RestoreError(f"run {run} belongs to cluster {stored.cluster}")
+        checks = (
+            engine.overwrite_checks(request.cluster, cluster, policy)
+            if stored.mode == "overwrite"
+            else None
+        )
 
         if operation == PREVIEW:
             summary = engine.preview(
@@ -367,6 +395,7 @@ def _answer(
                 publish_root=policy.publish_root,
                 progress=errors,
                 now=now,
+                checks=checks,
             )
             problems = summary["problems"]
             write_document(
@@ -396,6 +425,9 @@ def _answer(
             publish_root=policy.publish_root,
             progress=errors,
             now=now,
+            checks=checks,
+            backup_failed_ok=bool(parameters.get("backup_failed_ok", False)),
+            break_traffic=bool(parameters.get("break_traffic", False)),
         )
     except (RestoreError, ArchiveError) as exc:
         return refuse("restore_refused", str(exc), BLOCKED_EXIT)

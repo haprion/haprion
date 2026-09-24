@@ -132,7 +132,11 @@ def _restore(
     the web built cannot pass here and be refused there, or the other way round.
     """
 
-    _only(payload, *node_restore_helper.KEYS[operation])
+    _only(
+        payload,
+        *node_restore_helper.KEYS[operation],
+        *node_restore_helper.OPTIONAL[operation],
+    )
     try:
         request = node_restore_helper.build_request(
             operation, cluster, str(request_id), dict(payload)

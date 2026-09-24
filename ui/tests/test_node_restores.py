@@ -129,7 +129,7 @@ class TheForm(unittest.TestCase):
         for changes, words in (
             ({"archive": "2026-01-01_00-00-00"}, "not in this cluster's backup listing"),
             ({"node": "node-c"}, "not in this cluster's backup listing"),
-            ({"mode": "overwrite"}, "Choose a new VM or a test restore"),
+            ({"mode": "image"}, "Choose a new VM, a test restore or an overwrite"),
             ({"target": "192.0.2.300"}, "The target is an IPv4 address"),
             (
                 {"mode": "test", "test_hostname": "node-test", "test_address": "192.0.2.29"},
@@ -651,6 +651,103 @@ class FollowingARun(RestoreRouteTestCase):
             403,
         )
         self.assertEqual(self.queued, [])
+
+
+OVERWRITE_PREPARED = job(
+    "node_restore_prepare",
+    "done",
+    result=fixture("haproxy-node-restore-prepare", "done.json"),
+    number=1,
+    target="192.0.2.21",
+    test=None,
+    overwrite=True,
+)
+OVERWRITE_PREVIEWED = job(
+    "node_restore_preview",
+    "done",
+    result=fixture("haproxy-node-restore-preview", "overwrite.json"),
+    number=2,
+)
+
+
+class OverwritingANode(RestoreRouteTestCase):
+    """B172/B183: the archive over the running node, confirmed in three steps."""
+
+    def test_the_form_offers_it_and_the_payload_says_so(self) -> None:
+        page = (
+            self.writing_client()
+            .get(f"/backups/restore/new?cluster=alpha&node=node-a&archive={VERSION}")
+            .text
+        )
+        self.assertIn('value="overwrite"', page)
+        self.start(self.writing_client(), mode="overwrite", target="192.0.2.21")
+        self.assertEqual(self.queued[0]["payload"]["overwrite"], True)
+        self.assertIsNone(self.queued[0]["payload"]["test"])
+
+    def test_the_run_is_read_as_an_overwrite(self) -> None:
+        restore = node_restores.run_view(RUN, [OVERWRITE_PREPARED, OVERWRITE_PREVIEWED])
+        if restore is None:
+            self.fail("the run has a prepare job")
+        self.assertEqual((restore.mode, restore.stage), ("overwrite", "confirm"))
+        self.assertTrue(restore.backup_failed)
+        self.assertFalse(restore.traffic_at_risk)
+
+    def test_the_page_says_what_changes_and_asks_for_every_tick(self) -> None:
+        self.runs = [OVERWRITE_PREPARED, OVERWRITE_PREVIEWED]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn("Overwrite the node", page)
+        self.assertIn("/etc/keepalived/keepalived.conf", page)
+        self.assertIn("41 already equal", page)
+        self.assertIn("/etc/haproxy-manager/stray", page)
+        self.assertIn("Unchanged · not applied", page)
+        self.assertIn("It holds the VIP; keepalived stops first and the VIP moves to node-b", page)
+        self.assertIn("No backup could be taken:", page)
+        self.assertIn('name="acknowledged"', page)
+        self.assertIn('name="backup_failed_ok"', page)
+        self.assertNotIn('name="break_traffic"', page)
+        self.assertIn("Overwrite node-a</button>", page)
+
+    def test_a_sick_neighbour_under_the_vip_asks_for_the_traffic_tick(self) -> None:
+        document = fixture("haproxy-node-restore-preview", "overwrite.json")
+        document["result"]["overwrite"].update(neighbour_healthy=False, detail="HAProxy down")
+        self.runs = [
+            OVERWRITE_PREPARED,
+            job("node_restore_preview", "done", result=document, number=2),
+        ]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn('name="break_traffic"', page)
+        self.assertIn("This WILL break live traffic", page)
+
+    def test_the_run_needs_the_tick_and_passes_the_others_on(self) -> None:
+        self.runs = [OVERWRITE_PREPARED, OVERWRITE_PREVIEWED]
+        client = self.writing_client()
+        refused = self.post(client, f"/backups/restore/{RUN}/run", confirm="node-a")
+        self.assertIn("Tick that you overwrite a running node.", refused.text)
+        self.assertEqual(self.queued, [])
+        response = self.post(
+            client,
+            f"/backups/restore/{RUN}/run",
+            confirm="node-a",
+            acknowledged="yes",
+            backup_failed_ok="yes",
+        )
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(
+            self.queued[0]["payload"],
+            {"run": RUN, "confirm": "node-a", "backup_failed_ok": True, "break_traffic": False},
+        )
+
+    def test_a_node_put_back_says_so(self) -> None:
+        failed = job(
+            "node_restore",
+            "failed",
+            result=fixture("haproxy-node-restore", "overwrite-rolled-back.json"),
+            number=3,
+            confirm="node-a",
+        )
+        self.runs = [OVERWRITE_PREPARED, OVERWRITE_PREVIEWED, failed]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn("The node was put back from its copy", page)
 
 
 class DiscardingARun(RestoreRouteTestCase):

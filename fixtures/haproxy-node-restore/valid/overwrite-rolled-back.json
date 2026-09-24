@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "failed",
+  "operation": "node_restore",
+  "cluster": "alpha",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "run": "r260101-0000bbbb",
+    "rolled_back": true,
+    "stage": "network",
+    "sessions": {
+      "apply": {
+        "steps": [],
+        "warnings": []
+      },
+      "network": {
+        "steps": [],
+        "warnings": []
+      },
+      "rollback": {
+        "steps": [
+          {
+            "step": "rolled-back",
+            "restored": 42,
+            "set_aside": 1
+          }
+        ],
+        "warnings": []
+      }
+    }
+  },
+  "warnings": [],
+  "error": {
+    "code": "restore_failed",
+    "message": "192.0.2.29 never answered; the network was rolled back"
+  }
+}

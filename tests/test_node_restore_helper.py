@@ -332,6 +332,35 @@ class Parameters(unittest.TestCase):
         # One character too many is not a fingerprint with a tail.
         self.assertEqual(node_restore_helper.fingerprint_in(bare + "A"), bare + "A")
 
+    def test_an_overwrite_and_its_ticks_are_optional_booleans(self) -> None:
+        """B183: a request from before Overwrite node is exactly what it was."""
+
+        prepare = {
+            "run": RUN_ID,
+            "node": "node-a",
+            "archive": "2026-01-01_04-00-00",
+            "target": "192.0.2.21",
+            "test": None,
+        }
+        node_restore_helper.validate(PREPARE, prepare)
+        node_restore_helper.validate(PREPARE, {**prepare, "overwrite": True})
+        self.assertEqual(node_restore_helper.mode_of(prepare), "new_vm")
+        self.assertEqual(node_restore_helper.mode_of({**prepare, "overwrite": True}), "overwrite")
+        self.assertEqual(node_restore_helper.mode_of({**prepare, "test": TEST}), "test")
+        with self.assertRaises(ParameterProblem):
+            node_restore_helper.validate(PREPARE, {**prepare, "overwrite": "yes"})
+        with self.assertRaises(ParameterProblem):
+            node_restore_helper.validate(PREPARE, {**prepare, "test": TEST, "overwrite": True})
+        run = {"run": RUN_ID, "confirm": "node-a"}
+        node_restore_helper.validate(RUN, run)
+        node_restore_helper.validate(RUN, {**run, "backup_failed_ok": True, "break_traffic": False})
+        with self.assertRaises(ParameterProblem):
+            node_restore_helper.validate(RUN, {**run, "break_traffic": 1})
+        with self.assertRaises(ParameterProblem):
+            node_restore_helper.validate(
+                PREVIEW, {"run": RUN_ID, "fingerprint": "x", "overwrite": True}
+            )
+
     def test_the_helper_takes_no_arguments_and_runs_as_root(self) -> None:
         self.assertEqual(node_restore_helper.main(["x"], error_stream=io.StringIO()), 64)
 

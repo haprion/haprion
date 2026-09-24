@@ -7,7 +7,7 @@
   run and its one-time key; the run's own page takes it from there.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>Restore {{ node }}</h1><p class="page-lede">Onto an empty VM, from the archive taken {{ archive.taken }}. Nothing is written until the target has been previewed and you have confirmed.</p></div>
+  <div class="heading-title"><h1>Restore {{ node }}</h1><p class="page-lede">From the archive taken {{ archive.taken }}. Nothing is written until the target has been previewed and you have confirmed.</p></div>
   <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
 </section>
 
@@ -27,15 +27,16 @@
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Target</h3><p>Archive <code>{{ archive.version }}</code> of {{ node }} in {{ cluster }} · {{ archive.size }}</p></div></div></header>
     <div class="form-grid restore-form-grid">
       <div class="field">
-        <label class="field-title" for="restore-target">Temporary address</label>
+        <label class="field-title" for="restore-target">Address</label>
         <input id="restore-target" name="target" type="text" value="{{ form.target }}" required maxlength="15" autocomplete="off" spellcheck="false" placeholder="192.0.2.120" autofocus>
-        <small>The IP the empty node has now, reachable from this manager on SSH.<br>The node's own address comes from the archive and is set last.</small>
+        <small>Where this manager reaches the machine on SSH: the empty VM's temporary IP,<br>or the node's own address for an overwrite.</small>
       </div>
       <div class="field">
         <span class="field-title">Restore as</span>
         <div class="form-checks form-checks-stacked method-choices">
           <label class="check"><input type="radio" name="mode" value="new_vm"{% if form.mode == 'new_vm' %} checked{% endif %}> <span><strong>The node itself</strong> — its address, name and VIP.<br>Its production address must not answer.</span></label>
           <label class="check"><input type="radio" name="mode" value="test"{% if form.mode == 'test' %} checked{% endif %}> <span><strong>A test</strong> — address, name and VIP rewritten to the test profile; keepalived stays masked.</span></label>
+          <label class="check"><input type="radio" name="mode" value="overwrite"{% if form.mode == 'overwrite' %} checked{% endif %}> <span><strong>Over the running node</strong> — the archive back over the node itself.<br>Its host key must be the archived one.</span></label>
         </div>
       </div>
       <div class="field">

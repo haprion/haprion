@@ -21,6 +21,16 @@ JSON result document; stderr carries progress lines for the operator's log.
              a deploy does, starts the services, and writes root's
              ``authorized_keys`` last - which removes the one-time key this
              restore is connected with.
+``rollback`` an overwrite only: puts back the copy ``apply`` took.
+
+Overwriting a running node (B172, B183) adds a copy: before its first write,
+``apply`` stores every path it or the node bundle may change, and a failure in
+``apply`` or ``finish`` puts that copy back in the same session - the node is
+then as it was, its keepalived started again. A failure in ``network`` is put
+back by the timer first and then by ``rollback``, from the manager, once the
+node answers again. The node's own software is left as it is: no repository
+file is written, only a missing product package is installed, and the HAProxy
+release layout is not touched.
 
 Every check an operation makes happens before its first write.  A directory the
 plan names in ``equal_directories`` is made equal to the archive; what was there
@@ -97,6 +107,25 @@ defaults
 frontend restore-bootstrap
     bind unix@{BOOTSTRAP_SOCKET} mode 600
 """
+#
+# What an overwrite copies before its first write, besides the paths it writes
+# itself: the account files, and what the node bundle's 04-node-prepare and
+# haproxy-traffic-log-enable write - their files and the directories they fill.
+#
+SNAPSHOT_FILES = (
+    "/etc/passwd",
+    "/etc/group",
+    "/etc/shadow",
+    "/etc/gshadow",
+    "/etc/hostname",
+    "/etc/sudoers.d/haproxy-node",
+    "/etc/sysctl.d/60-haproxy.conf",
+    "/etc/rsyslog.d/48-haproxy-manager-traffic.conf",
+    "/etc/apparmor.d/rsyslog.d/haproxy-manager-traffic",
+    "/etc/systemd/system/haproxy-traffic-log-prune.service",
+    "/etc/systemd/system/haproxy-traffic-log-prune.timer",
+)
+SNAPSHOT_TREES = ("/usr/local/sbin", "/etc/haproxy-manager")
 HOSTNAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 APT_DIRECTORIES = ("/etc/apt/sources.list.d", "/etc/apt/preferences.d", "/etc/apt/keyrings")
 #
@@ -126,6 +155,10 @@ class Refused(RuntimeError):
 
 class Failed(RuntimeError):
     """A step that had begun writing did not complete."""
+
+
+class RolledBack(Failed):
+    """An overwrite failed and the node was put back from its copy."""
 
 
 def log(message: str) -> None:
@@ -295,6 +328,44 @@ def inspect(host: Host, header: dict[str, Any], _payload: IO[bytes]) -> dict[str
         "previous_restore": host.path(STATE).exists(),
         "installed": installed(host, NOT_EMPTY_IF_INSTALLED),
         "network": network_managers(host),
+        **_holdings(host, header),
+    }
+
+
+def _sha256(path: Path) -> str | None:
+    if path.is_symlink() or not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _tree(host: Host, directory: str) -> list[str]:
+    """Every path under `directory`, as absolute paths on the node; empty if it is not one."""
+
+    base = host.path(directory)
+    if base.is_symlink() or not base.is_dir():
+        return []
+    found: list[str] = []
+    for current, subdirectories, files in os.walk(base):
+        relative = "/" + str(Path(current).relative_to(host.root))
+        found.extend(f"{relative.rstrip('/')}/{name}" for name in [*subdirectories, *files])
+    return sorted(found)
+
+
+def _holdings(host: Host, header: dict[str, Any]) -> dict[str, Any]:
+    """For an overwrite's preview (B183): what the node holds at the paths it names."""
+
+    if not any(key in header for key in ("hash", "list", "packages")):
+        return {}
+    for key in ("hash", "list", "packages"):
+        values = header.get(key, [])
+        if not isinstance(values, list) or not all(isinstance(v, str) for v in values):
+            raise Refused(f"the inspect header's {key} is not a list of names")
+    listing = {directory: _tree(host, directory) for directory in header.get("list", [])}
+    wanted = set(header.get("hash", [])) | {p for paths in listing.values() for p in paths}
+    return {
+        "hashes": {path: _sha256(host.path(path)) for path in sorted(wanted)},
+        "listing": listing,
+        "product_installed": installed(host, tuple(header.get("packages", []))),
     }
 
 
@@ -442,6 +513,152 @@ def quarantine(
 
 
 # --------------------------------------------------------------------------
+# The overwrite's copy (B172, B183)
+# --------------------------------------------------------------------------
+
+
+#
+# Everything `serve` would answer as a failure. Caught here first, in an
+# overwrite, so that no failure `serve` reports leaves the node half written.
+#
+OVERWRITE_FAILURES = (
+    Failed,
+    OSError,
+    tarfile.TarError,
+    subprocess.SubprocessError,
+    ValueError,
+    KeyError,
+    TypeError,
+)
+
+
+def _before(run: str) -> str:
+    return f"{STATE}/{run}/before"
+
+
+def snapshot(
+    host: Host, run: str, paths: Iterable[str], trees: Iterable[str], report: Report
+) -> None:
+    """Copy what an overwrite may change, before it changes anything.
+
+    Each path is kept as it is - file, link or directory, with owner and mode -
+    or recorded as absent. Each tree is kept whole, with a listing of what it
+    held, so rollback can also set aside what was added to it.
+    """
+
+    base = host.path(_before(run))
+    if base.exists():
+        raise Refused("this run has already taken its copy of the node")
+    base.mkdir(parents=True, mode=0o700)
+    base.chmod(0o700)
+    present: list[str] = []
+    absent: list[str] = []
+    listing: dict[str, list[str]] = {}
+    with tarfile.open(base / "files.tar", "w") as archive:
+        for path in sorted(set(paths)):
+            target = host.path(path)
+            if target.is_symlink() or target.exists():
+                archive.add(target, arcname=path.lstrip("/"), recursive=False)
+                present.append(path)
+            else:
+                absent.append(path)
+        for tree in sorted(set(trees)):
+            target = host.path(tree)
+            if target.is_symlink() or not target.is_dir():
+                if not target.exists():
+                    absent.append(tree)
+                continue
+            archive.add(target, arcname=tree.lstrip("/"), recursive=True)
+            listing[tree] = _tree(host, tree)
+    (base / "manifest.json").write_text(
+        json.dumps({"present": present, "absent": sorted(set(absent)), "trees": listing}),
+        encoding="utf-8",
+    )
+    report.step("copy", paths=len(present), absent=len(absent), trees=sorted(listing))
+
+
+def _set_aside(host: Host, run: str, path: str) -> None:
+    source = host.path(path)
+    if not (source.is_symlink() or source.exists()):
+        return
+    destination = host.path(f"{STATE}/{run}/rolled-back{path}")
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    shutil.move(str(source), destination)
+
+
+def rollback_files(host: Host, run: str, report: Report) -> None:
+    """Put the node's copy back: what was added is set aside, what was there returns."""
+
+    base = host.path(_before(run))
+    manifest_path = base / "manifest.json"
+    if not manifest_path.is_file():
+        raise Failed("this run has no copy of the node to put back")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    added: list[str] = []
+    for tree, before in manifest["trees"].items():
+        kept = set(before)
+        for path in _tree(host, tree):
+            if path not in kept and not any(path.startswith(f"{a}/") for a in added):
+                added.append(path)
+    added.extend(path for path in manifest["absent"] if path not in added)
+    for path in added:
+        _set_aside(host, run, path)
+    with tarfile.open(base / "files.tar", "r") as archive:
+        # A file or link is replaced whole, not written through: its mode may
+        # forbid writing, and a path may have changed kind since the copy.
+        for member in archive.getmembers():
+            if member.isdir():
+                continue
+            current = host.root / member.name
+            if current.is_symlink() or current.is_file():
+                current.unlink()
+            elif current.is_dir():
+                _set_aside(host, run, "/" + member.name)
+        # The copy this agent wrote itself, in a root-only directory, of the
+        # node's own files. "fully_trusted" because owners and every mode bit
+        # must come back as they were - the "data" and "tar" filters drop setgid.
+        archive.extractall(  # noqa: S202 - see above
+            host.root, numeric_owner=True, filter="fully_trusted"
+        )
+    report.step("rolled-back", restored=len(manifest["present"]), set_aside=len(added))
+
+
+def _restart_after_rollback(host: Host, report: Report) -> None:
+    """Bring the services back on the files put back; each is tried, none stops the others."""
+
+    results = {}
+    for argv in (
+        ["systemctl", "daemon-reload"],
+        ["sysctl", "--system"],
+        ["systemctl", "reload-or-restart", "ssh.service"],
+        ["systemctl", "reload-or-restart", "haproxy"],
+        ["systemctl", "start", "keepalived"],
+    ):
+        results[" ".join(argv[1:])] = host.run(argv, check=False).returncode
+    report.step("services-after-rollback", **results)
+
+
+def _rolled_back(host: Host, run: str, report: Report, error: BaseException) -> RolledBack:
+    """Put the node back after `error`; answer what to raise. A failed rollback is said so."""
+
+    try:
+        rollback_files(host, run, report)
+        _restart_after_rollback(host, report)
+    except (Failed, OSError, tarfile.TarError, subprocess.SubprocessError, ValueError) as exc:
+        raise Failed(
+            f"{error}; putting the node back ALSO failed: {exc} - go to the console"
+        ) from exc
+    return RolledBack(f"{error}; the node was put back as it was")
+
+
+def rollback(host: Host, header: dict[str, Any], _payload: IO[bytes]) -> dict[str, Any]:
+    report = Report()
+    rollback_files(host, header["run"], report)
+    _restart_after_rollback(host, report)
+    return {"steps": report.steps, "warnings": report.warnings}
+
+
+# --------------------------------------------------------------------------
 # apply
 # --------------------------------------------------------------------------
 
@@ -498,6 +715,12 @@ def _validate_apply(header: dict[str, Any], items: list[Item]) -> Item:
         raise Refused("keepalived must be started or masked")
     if not HOSTNAME.fullmatch(header["hostname"]):
         raise Refused("the hostname is not usable")
+    if header.get("overwrite"):
+        # B183: the node's software is its own.
+        if header["keepalived"] != "start":
+            raise Refused("an overwrite leaves keepalived running")
+        if any(item.path.startswith(APT_DIRECTORIES) for item in items):
+            raise Refused("an overwrite writes no repository file")
     return bundle
 
 
@@ -558,6 +781,9 @@ def _node_bundle(
 
 
 def _packages(host: Host, header: dict[str, Any], items: list[Item], report: Report) -> None:
+    if header.get("overwrite"):
+        _missing_packages(host, header["packages"], report)
+        return
     apt = [item for item in items if item.path.startswith(APT_DIRECTORIES)]
     for directory in APT_DIRECTORIES:
         if directory in header["equal_directories"]:
@@ -595,6 +821,36 @@ def _packages(host: Host, header: dict[str, Any], items: list[Item], report: Rep
         "packages",
         installed=dict(line.split("\t", 1) for line in versions.splitlines() if "\t" in line),
     )
+
+
+def _missing_packages(host: Host, packages: list[str], report: Report) -> None:
+    """B183: the product packages a running node lacks, from its own sources, nothing upgraded."""
+
+    if not packages:
+        report.step("packages", missing=[])
+        return
+    if host.run(["apt-get", "-o", "Acquire::Retries=3", "update"], check=False).returncode:
+        report.warnings.append("apt-get update failed; installing from the lists the node has")
+    policy = host.path(POLICY_RC)
+    policy.write_text("#!/bin/sh\nexit 101\n", encoding="utf-8")
+    policy.chmod(0o755)
+    try:
+        host.run(
+            [
+                "apt-get",
+                "install",
+                "-y",
+                "--no-upgrade",
+                "-o",
+                "Dpkg::Options::=--force-confdef",
+                "-o",
+                "Dpkg::Options::=--force-confold",
+                *packages,
+            ]
+        )
+    finally:
+        policy.unlink(missing_ok=True)
+    report.step("packages", missing=list(packages))
 
 
 def _required_uris(apt: list[Item]) -> tuple[str, ...]:
@@ -812,7 +1068,28 @@ def apply(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, A
     if problems:
         raise Refused("; ".join(problems))
     report = Report()
+    if not header.get("overwrite"):
+        return _apply(host, header, items, bundle, report)
 
+    snapshot(
+        host,
+        header["run"],
+        [*(item.path for item in items), *SNAPSHOT_FILES],
+        [*SNAPSHOT_TREES, *header["equal_directories"]],
+        report,
+    )
+    # The VIP moves to the neighbour before anything here changes (B172).
+    host.run(["systemctl", "stop", "keepalived"])
+    report.step("keepalived", stopped=True)
+    try:
+        return _apply(host, header, items, bundle, report)
+    except OVERWRITE_FAILURES as exc:
+        raise _rolled_back(host, header["run"], report, exc) from exc
+
+
+def _apply(
+    host: Host, header: dict[str, Any], items: list[Item], bundle: Item, report: Report
+) -> dict[str, Any]:
     # Accounts before packages. A package that creates a system account or
     # group takes the next free ID, and on a fresh target that can be the one
     # the archive's own account holds - the node got its IDs in another order.
@@ -821,7 +1098,7 @@ def apply(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, A
     owners.translate(items, report)
     _packages(host, header, items, report)
 
-    keep = [item.path for item in items]
+    keep = [*(item.path for item in items), *header.get("keep", [])]
     for directory in header["equal_directories"]:
         if directory in APT_DIRECTORIES:
             continue
@@ -835,7 +1112,9 @@ def apply(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, A
         written += 1
     report.step("files", written=written)
 
-    _layout(host, header["run"], report)
+    if not header.get("overwrite"):
+        # A running node's releases and `current` are its own (B183).
+        _layout(host, header["run"], report)
     _services(host, header, report)
     _node_bundle(host, header, bundle, items, report)
     return {"steps": report.steps, "warnings": report.warnings}
@@ -925,13 +1204,32 @@ def finish(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, 
     run = header["run"]
     report = Report()
 
-    timer = f"{_unit(run, 'rollback')}.timer"
-    active = host.run(["systemctl", "is-active", timer], check=False).stdout.strip()
-    if active != "active":
-        raise Refused(f"the network rollback timer is {active or 'gone'}; it may already have run")
-    host.run(["systemctl", "stop", timer])
-    report.step("rollback-cancelled", timer=timer)
+    # An overwrite whose network was already the archive's had no network session.
+    if header.get("network", True):
+        timer = f"{_unit(run, 'rollback')}.timer"
+        active = host.run(["systemctl", "is-active", timer], check=False).stdout.strip()
+        if active != "active":
+            raise Refused(
+                f"the network rollback timer is {active or 'gone'}; it may already have run"
+            )
+        host.run(["systemctl", "stop", timer])
+        report.step("rollback-cancelled", timer=timer)
 
+    if not header.get("overwrite"):
+        _start(host, header, certificates, report)
+    else:
+        try:
+            _start(host, header, certificates, report)
+        except OVERWRITE_FAILURES as exc:
+            raise _rolled_back(host, run, report, exc) from exc
+
+    # Last. The one-time key this session is using is in the file being replaced.
+    place(host, items[0])
+    report.step("root-keys", replaced=True)
+    return {"steps": report.steps, "warnings": report.warnings}
+
+
+def _start(host: Host, header: dict[str, Any], certificates: list[str], report: Report) -> None:
     # Certificates before configuration: the published configuration names
     # them by path and does not validate without them. Both scripts reload,
     # so HAProxy runs on the bootstrap release first (see BOOTSTRAP_CONFIG).
@@ -953,11 +1251,6 @@ def finish(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, 
     if states["haproxy"] != "active" or states["keepalived"] != expected_keepalived:
         raise Failed(f"services are not as expected: {states}")
 
-    # Last. The one-time key this session is using is in the file being replaced.
-    place(host, items[0])
-    report.step("root-keys", replaced=True)
-    return {"steps": report.steps, "warnings": report.warnings}
-
 
 # --------------------------------------------------------------------------
 # Entry point
@@ -968,6 +1261,7 @@ OPERATIONS: dict[str, Callable[[Host, dict[str, Any], IO[bytes]], dict[str, Any]
     "apply": apply,
     "network": network,
     "finish": finish,
+    "rollback": rollback,
 }
 
 
@@ -988,7 +1282,15 @@ def serve(host: Host, stdin: IO[bytes]) -> dict[str, Any]:
         result = OPERATIONS[operation](host, header, stdin)
     except Refused as exc:
         return {"ok": False, "op": operation, "refused": True, "error": str(exc)}
-    except (Failed, OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
+    except RolledBack as exc:
+        return {
+            "ok": False,
+            "op": operation,
+            "refused": False,
+            "rolled_back": True,
+            "error": str(exc),
+        }
+    except (Failed, OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as exc:
         return {"ok": False, "op": operation, "refused": False, "error": str(exc)}
     return {"ok": True, "op": operation, **result}
 

@@ -13,11 +13,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from haproxy_mgmt import node_bundle, node_restore
+from haproxy_mgmt import node_bundle, node_restore, restore_plan, restore_source
 from haproxy_mgmt.cli import node_restore as cli
 from haproxy_mgmt.config import Node
 from haproxy_mgmt.node_restore import Clock, Request, RestoreError
-from haproxy_mgmt.restore_plan import TestProfile
+from haproxy_mgmt.restore_plan import Target, TestProfile
 from tests.restore_fixture import build
 
 VERSION = "2026-01-01_04-00-00"
@@ -431,6 +431,191 @@ class Run(RestoreTest):
         self.assertEqual((result["outcome"], result["stage"]), ("failed", "network"))
         self.assertTrue(result["rolled_back"])
         self.assertNotIn("finish", [c[1]["op"] for c in FakeSession.calls])
+
+
+ARCHIVED_KEY = "ssh-ed25519 AAAA"
+
+
+class Overwrite(RestoreTest):
+    """B172/B183: the archive over the running node itself."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        source = restore_source.read(self.backups / "node-a" / f"{VERSION}.tar.gz")
+        same = Target(
+            os_release=INSPECTED["os_release"],  # type: ignore[arg-type]
+            interface="eth0",
+            mac="02:00:00:00:00:0a",
+        )
+        plan = restore_plan.build(source, "new_vm", same)
+        hashes = {
+            f.path: restore_plan._digest(source, f)
+            for f in (*plan.files, *plan.network, *((plan.root_keys,) if plan.root_keys else ()))
+            if f.kind == "file"
+        }
+        FakeSession.answers["inspect"] = {
+            **INSPECTED,
+            "hostname": "node-a",
+            "interface": {
+                "name": "eth0",
+                "mac": "02:00:00:00:00:0a",
+                "addresses": ["192.0.2.21/24"],
+            },
+            "installed": ["haproxy", "keepalived"],
+            "hashes": hashes,
+            "listing": {
+                "/etc/netplan": ["/etc/netplan/50-cloud-init.yaml"],
+                "/etc/haproxy-manager": [],
+                "/etc/systemd/system/haproxy.service.d": [],
+            },
+            "product_installed": list(restore_plan.PRODUCT_PACKAGES),
+        }
+        self.silent = set()
+        self.backup_error: str | None = None
+        self.standing = node_restore.Standing(True, "node-b", True)
+        self.checks = node_restore.OverwriteChecks(
+            backup=lambda: self.backup_error, standing=lambda _name: self.standing
+        )
+
+    def prepare_overwrite(self, target: str = "192.0.2.21") -> str:
+        request = Request(
+            run=node_restore.new_run_id(),
+            cluster="alpha",
+            node="node-a",
+            archive=VERSION,
+            target=target,
+            mode="overwrite",
+            profile=None,
+        )
+        node_restore.prepare(self.root, request, source_of=lambda _: "192.0.2.7")
+        return request.run
+
+    def preview_overwrite(self, run: str, key: str = ARCHIVED_KEY) -> dict[str, Any]:
+        return node_restore.preview(
+            self.root,
+            run,
+            FINGERPRINT,
+            CLUSTER,  # type: ignore[arg-type]
+            self.backups,
+            scan=lambda _: key,
+            fingerprint_of=lambda _key: FINGERPRINT,
+            publish_root=PUBLISH_ROOT,
+            answering=self.answering,
+            progress=io.StringIO(),
+            session_for=FakeSession,  # type: ignore[arg-type]
+            bundle_of=lambda: self.bundle,
+            checks=self.checks,
+        )
+
+    def previewed(self) -> str:
+        run = self.prepare_overwrite()
+        self.preview_overwrite(run)
+        FakeSession.calls = []
+        return run
+
+    def test_a_node_equal_to_its_archive_is_shown_so_and_takes_a_backup(self) -> None:
+        summary = self.preview_overwrite(self.prepare_overwrite())
+        self.assertEqual(summary["problems"], [])
+        self.assertEqual(summary["plan"]["changed"], [])
+        self.assertTrue(summary["plan"]["network_unchanged"])
+        self.assertEqual(summary["overwrite"]["backup"], "done")
+        self.assertTrue(summary["overwrite"]["vip_owner"])
+        self.assertEqual(FakeSession.calls[0][1]["list"][0], "/etc/netplan")
+
+    def test_a_machine_without_the_archived_host_key_is_not_the_node(self) -> None:
+        run = self.prepare_overwrite()
+        with self.assertRaisesRegex(RestoreError, "archived host key"):
+            self.preview_overwrite(run, key=TARGET_KEY)
+        self.assertEqual(FakeSession.calls, [])
+
+    def test_the_node_is_reached_at_its_own_address(self) -> None:
+        summary = self.preview_overwrite(self.prepare_overwrite(target="192.0.2.120"))
+        self.assertTrue(any("its own address" in p for p in summary["problems"]))
+
+    def test_an_overwrite_needs_the_clusters_checks(self) -> None:
+        run = self.prepare_overwrite()
+        self.checks = None  # type: ignore[assignment]
+        with self.assertRaisesRegex(RestoreError, "backup and status"):
+            self.preview_overwrite(run)
+
+    def test_an_unchanged_network_is_not_applied(self) -> None:
+        run = self.previewed()
+        result = self.carry_out(run, confirm="node-a", checks=self.checks)
+        self.assertEqual(result["outcome"], "done", result)
+        self.assertEqual(
+            [(address, header["op"]) for address, header, _ in FakeSession.calls],
+            [("192.0.2.21", "inspect"), ("192.0.2.21", "apply"), ("192.0.2.21", "finish")],
+        )
+        apply, finish = FakeSession.calls[1][1], FakeSession.calls[2][1]
+        self.assertTrue(apply["overwrite"])
+        self.assertEqual(apply["packages"], [])
+        self.assertIn("/etc/haproxy-manager/node-installation.json", apply["keep"])
+        self.assertEqual((finish["overwrite"], finish["network"]), (True, False))
+
+    def test_a_failed_backup_needs_the_operators_tick(self) -> None:
+        self.backup_error = "node-b: unreachable"
+        run = self.previewed()
+        with self.assertRaisesRegex(RestoreError, "no state backup"):
+            self.carry_out(run, confirm="node-a", checks=self.checks)
+        result = self.carry_out(run, confirm="node-a", checks=self.checks, backup_failed_ok=True)
+        self.assertEqual(result["outcome"], "done", result)
+
+    def test_the_vip_holder_with_a_sick_neighbour_needs_the_operators_tick(self) -> None:
+        run = self.previewed()
+        self.standing = node_restore.Standing(True, "node-b", False, "HAProxy active False")
+        with self.assertRaisesRegex(RestoreError, "WILL break live traffic"):
+            self.carry_out(run, confirm="node-a", checks=self.checks)
+        self.assertEqual([c[1]["op"] for c in FakeSession.calls], ["inspect"])
+        result = self.carry_out(run, confirm="node-a", checks=self.checks, break_traffic=True)
+        self.assertEqual(result["outcome"], "done", result)
+
+    def test_a_backup_node_with_a_sick_neighbour_goes_ahead(self) -> None:
+        run = self.previewed()
+        self.standing = node_restore.Standing(False, "node-b", False)
+        result = self.carry_out(run, confirm="node-a", checks=self.checks)
+        self.assertEqual(result["outcome"], "done", result)
+
+    def test_an_apply_the_node_put_back_is_failed_and_rolled_back(self) -> None:
+        run = self.previewed()
+        FakeSession.answers["apply"] = {"ok": False, "rolled_back": True, "error": "x; put back"}
+        result = self.carry_out(run, confirm="node-a", checks=self.checks)
+        self.assertEqual((result["outcome"], result["stage"]), ("failed", "apply"))
+        self.assertTrue(result["rolled_back"])
+
+    def test_a_network_that_never_comes_up_is_put_back_with_the_files(self) -> None:
+        FakeSession.answers["inspect"]["hashes"]["/etc/netplan/50-cloud-init.yaml"] = "0" * 64
+        run = self.previewed()
+        FakeSession.answers["network"] = {"ok": True, "rollback_unit": "u"}
+        fired: list[bool] = []
+        ticks = iter(range(0, 100_000))
+
+        def sleep(seconds: float) -> None:
+            # The long wait is the one for the rollback timer; after it the node answers.
+            if seconds > 10:
+                fired.append(True)
+
+        def answering(_address: str) -> bool:
+            ops = [c[1]["op"] for c in FakeSession.calls]
+            return "network" not in ops or bool(fired)
+
+        result = node_restore.run(
+            self.root,
+            run,
+            "node-a",
+            CLUSTER,  # type: ignore[arg-type]
+            self.backups,
+            answering=answering,
+            progress=io.StringIO(),
+            clock=Clock(now=lambda: float(next(ticks)), sleep=sleep),
+            session_for=FakeSession,  # type: ignore[arg-type]
+            publish_root=PUBLISH_ROOT,
+            bundle_of=lambda: self.bundle,
+            checks=self.checks,
+        )
+        self.assertEqual((result["outcome"], result["stage"]), ("failed", "network"), result)
+        self.assertEqual(FakeSession.calls[-1][1], {"op": "rollback", "run": run})
+        self.assertTrue(result["rolled_back"])
+        self.assertIn("node was rolled back", result["error"])
 
 
 class TheHour(RestoreTest):

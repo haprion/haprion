@@ -5,7 +5,7 @@ and what the target reported about itself.  It is shown in full by the preview
 and executed unchanged by the run, so what the operator approved and what is
 written are the same object.
 
-Two modes exist in this first delivery:
+Three modes exist:
 
 * ``new_vm`` - an empty VM becomes the archived node: its hostname, its
   address, its host keys, its keepalived role.
@@ -13,6 +13,11 @@ Two modes exist in this first delivery:
   rewritten to a test profile, field by field, and keepalived is masked so the
   node can never take part in the production cluster's VRRP.  Every rewritten
   field is listed; nothing else differs from ``new_vm``.
+* ``overwrite`` - the archive over the node itself, running (B172, B183): the
+  same files as ``new_vm``, but the node's software is its own - no repository
+  file is written and only a missing product package is installed - the
+  network is written only where it differs, and what the product's own
+  directories hold beyond the archive goes to quarantine on the node.
 
 Two things are split off the main file set because of *when* they may be
 written, not what they are: Netplan (last, under a timer that rolls it back),
@@ -22,6 +27,7 @@ one-time key the restore itself is connected with).
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import re
 from collections.abc import Iterable
@@ -33,7 +39,8 @@ import yaml
 from haproxy_mgmt import haproxy_repository
 from haproxy_mgmt.restore_source import Account, Entry, Group, RestoreSource, content
 
-Mode = Literal["new_vm", "test"]
+Mode = Literal["new_vm", "test", "overwrite"]
+MODES: tuple[Mode, ...] = ("new_vm", "test", "overwrite")
 
 NETPLAN_DIR = "/etc/netplan"
 ROOT_KEYS = "/root/.ssh/authorized_keys"
@@ -100,6 +107,13 @@ FROM_BUNDLE = frozenset(
         "/etc/systemd/system/haproxy-traffic-log-prune.timer",
     }
 )
+#
+# The directories only the product writes in (B183). Overwriting a node makes
+# them hold what the archive and the node bundle put there; anything else in
+# them goes to quarantine on the node, never deleted. The directories the
+# product shares with the image are not among them (B178).
+#
+PRODUCT_DIRECTORIES = ("/etc/haproxy-manager", "/etc/systemd/system/haproxy.service.d")
 # 04-node-prepare's rollback copies: history of the old node, not its state.
 REPLACED = re.compile(r"\.replaced-\d{8}-\d{6}$")
 
@@ -124,6 +138,15 @@ class Target:
     os_release: dict[str, str]
     interface: str
     mac: str
+    #
+    # For an overwrite (B183), what the node holds now: the SHA-256 of each
+    # archived path that is a file there (None where it is not), what the
+    # product's directories and /etc/netplan contain, and which product
+    # packages are installed.
+    #
+    hashes: dict[str, str | None] = field(default_factory=dict)
+    listing: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    installed: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +195,15 @@ class RestorePlan:
     packages: tuple[str, ...]
     keepalived: Literal["start", "mask"]
     rewrites: tuple[Rewrite, ...] = field(default=())
+    #
+    # Overwrite only (B183): the planned files whose contents differ from the
+    # node's or that it does not have, the number already equal, what moves to
+    # quarantine, and whether the network is written at all.
+    #
+    changed: tuple[str, ...] = ()
+    unchanged: int = 0
+    quarantined: tuple[str, ...] = ()
+    network_unchanged: bool = False
 
     def summary(self) -> dict[str, Any]:
         """The plan as the preview shows it: paths and fields, never contents or hashes."""
@@ -207,7 +239,16 @@ class RestorePlan:
                 {"path": item.path, "field": item.field, "old": item.old, "new": item.new}
                 for item in self.rewrites
             ],
-        }
+        } | (
+            {
+                "changed": list(self.changed),
+                "unchanged": self.unchanged,
+                "quarantined": list(self.quarantined),
+                "network_unchanged": self.network_unchanged,
+            }
+            if self.mode == "overwrite"
+            else {}
+        )
 
 
 def _under(path: str, roots: Iterable[str]) -> bool:
@@ -305,6 +346,7 @@ def _network(
                 f"the archive's interface is {live_name} and the target's is "
                 f"{target.interface}; renaming a live interface is not part of a restore"
             )
+        rewritten = len(rewrites)
         match = interface.get("match")
         if isinstance(match, dict) and "macaddress" in match:
             old_mac = str(match["macaddress"]).lower()
@@ -321,6 +363,11 @@ def _network(
             rewrites.append(
                 Rewrite(entry.path, "addresses", str(node_address), str(profile.address))
             )
+        if len(rewrites) == rewritten:
+            # Nothing to change: the archive's own bytes, so a node that already
+            # has them is seen to have them (B183).
+            files.append(_planned(entry))
+            continue
         data = yaml.safe_dump(document, default_flow_style=False, sort_keys=False).encode()
         files.append(_planned(entry, data))
     if node_address is None:
@@ -389,6 +436,8 @@ def _keepalived_test(text: str, address: str, vip: str) -> tuple[str, list[tuple
 def build(
     source: RestoreSource, mode: Mode, target: Target, profile: TestProfile | None = None
 ) -> RestorePlan:
+    if mode not in MODES:
+        raise PlanError(f"{mode!r} is not a restore mode")
     if (mode == "test") != (profile is not None):
         raise PlanError("a test profile is required in test mode and refused otherwise")
     if not MAC.fullmatch(target.mac):
@@ -458,6 +507,31 @@ def build(
     # Only for a target this can serve: an unsupported one is a problem the
     # preview names, with the rest of the plan shown, rather than no plan.
     #
+    if mode == "overwrite":
+        return _overwrite(
+            source,
+            target,
+            RestorePlan(
+                mode=mode,
+                source_hostname=source.hostname,
+                hostname=hostname,
+                address=address,
+                files=tuple(files),
+                equal_directories=PRODUCT_DIRECTORIES,
+                left_out=tuple(left_out),
+                from_bundle=tuple(from_bundle),
+                traffic_log=source.entry(TRAFFIC_LOG_RULE) is not None,
+                parents=source.parents(),
+                network=network,
+                root_keys=root_keys,
+                groups=source.groups,
+                accounts=source.accounts,
+                packages=tuple(p for p in PRODUCT_PACKAGES if p not in target.installed),
+                keepalived="start",
+                rewrites=tuple(rewrites),
+            ),
+        )
+
     if haproxy_repository.supported(target.os_release):
         try:
             branch = haproxy_repository.branch_of(source.haproxy_version)
@@ -492,4 +566,69 @@ def build(
         packages=PRODUCT_PACKAGES,
         keepalived="mask" if profile is not None else "start",
         rewrites=tuple(rewrites),
+    )
+
+
+def _digest(source: RestoreSource, file: PlannedFile) -> str | None:
+    if file.kind != "file":
+        return None
+    data = (
+        file.data if file.data is not None else content(source, file.entry) if file.entry else b""
+    )
+    return hashlib.sha256(data).hexdigest()
+
+
+def _overwrite(source: RestoreSource, target: Target, plan: RestorePlan) -> RestorePlan:
+    """What an overwrite changes on the node, from what the node said it holds (B183).
+
+    The node's software stays its own: no repository file is planned, and only
+    the product packages it lacks are. A file counts as changed when its
+    contents differ or the node does not have it; a directory or link is
+    written as planned and not counted. Netplan is written only when the
+    node's differs from the archive's, bound to the node's MAC.
+    """
+
+    changed: list[str] = []
+    unchanged = 0
+    for file in (*plan.files, *((plan.root_keys,) if plan.root_keys else ())):
+        digest = _digest(source, file)
+        if digest is None:
+            continue
+        if target.hashes.get(file.path) == digest:
+            unchanged += 1
+        else:
+            changed.append(file.path)
+
+    planned_netplan = {file.path: _digest(source, file) for file in plan.network}
+    live_netplan = {
+        path: target.hashes.get(path)
+        for path in target.listing.get(NETPLAN_DIR, ())
+        if path.endswith((".yaml", ".yml"))
+    }
+    network_unchanged = planned_netplan == live_netplan
+    if not network_unchanged:
+        changed.extend(sorted(set(planned_netplan) | set(live_netplan)))
+
+    # What moves is the topmost path not kept; what is under it moves with it.
+    keep = {file.path for file in plan.files} | set(plan.from_bundle)
+    moving = sorted(
+        path
+        for directory in plan.equal_directories
+        for path in target.listing.get(directory, ())
+        if path not in keep and not any(k.startswith(f"{path}/") for k in keep)
+    )
+    quarantined = [
+        path for path in moving if not any(path.startswith(f"{other}/") for other in moving)
+    ]
+    return RestorePlan(
+        **{
+            name: getattr(plan, name)
+            for name in plan.__dataclass_fields__
+            if name not in {"network", "changed", "unchanged", "quarantined", "network_unchanged"}
+        },
+        network=() if network_unchanged else plan.network,
+        changed=tuple(changed),
+        unchanged=unchanged,
+        quarantined=tuple(quarantined),
+        network_unchanged=network_unchanged,
     )

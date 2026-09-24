@@ -9,7 +9,7 @@
 {% set plan = restore.plan %}{% set facts = restore.target_facts %}
 <section class="page-heading">
   <div class="heading-title"><h1>Restore {{ restore.node }}</h1><p class="page-lede">{{ restore.cluster }} · archive <code>{{ restore.archive }}</code> · onto {{ restore.target }} · run <code>{{ restore.run }}</code></p></div>
-  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-{{ 'info' if restore.mode == 'test' else 'warning' }}"></span>{{ 'Test restore' if restore.mode == 'test' else 'Restore as the node' }}</span></div>
+  <div class="heading-badges"><span class="mode-badge"><span class="status-dot status-{{ {'test': 'info', 'overwrite': 'critical'}.get(restore.mode, 'warning') }}"></span>{{ {'test': 'Test restore', 'overwrite': 'Overwrite the node'}.get(restore.mode, 'Restore as the node') }}</span></div>
 </section>
 
 <ol class="restore-steps" aria-label="Restore steps">
@@ -31,7 +31,8 @@
 <p class="preview-notice"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>Restored.</strong> {{ restore.result.hostname or restore.node }} answers on {{ restore.result.address or '—' }}; the one-time key has been removed.</p>
 {% elif restore.stage == 'failed' %}
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>The restore stopped{% if restore.failed_stage %} in {{ restore.failed_stage }}{% endif %}: {{ restore.error }}</strong></p>
-<p class="table-note">{% if restore.rolled_back %}The network was rolled back: the VM is on its temporary address again.{% else %}The network was not rolled back. Check the VM's console before anything else.{% endif %}</p>
+{% if restore.mode == 'overwrite' %}<p class="table-note">{% if restore.rolled_back %}The node was put back from its copy and keepalived started again.{% else %}The node was not put back. Check its console before anything else.{% endif %}</p>
+{% else %}<p class="table-note">{% if restore.rolled_back %}The network was rolled back: the VM is on its temporary address again.{% else %}The network was not rolled back. Check the VM's console before anything else.{% endif %}</p>{% endif %}
 {% elif restore.stage == 'expired' %}
 <p class="preview-notice"><span class="status-orb status-unknown" aria-hidden="true"></span><strong>Expired.</strong> A run has an hour from being prepared to being started, and this one's ended at {{ expires }}. Start the restore again from the backup page. This manager removes the run's one-time key, and the VM stops accepting it by itself.</p>
 {% elif restore.stage == 'discarded' %}
@@ -79,13 +80,18 @@
     <div><dt>Becomes</dt><dd>{{ plan.hostname }} on {{ plan.address }}{% if plan.hostname != plan.source_hostname %} · from the archive of {{ plan.source_hostname }}{% endif %}</dd></div>
     {% if facts %}<div><dt>Interface</dt><dd>{{ facts.interface.name }} · {{ facts.interface.mac }} · host key {{ facts.fingerprint }}</dd></div>{% endif %}
     <div><dt>keepalived</dt><dd>{{ 'Started as BACKUP' if plan.keepalived == 'start' else 'Masked — never started' }}</dd></div>
-    <div><dt>Packages</dt><dd>{{ plan.packages | join(', ') }}</dd></div>
+    <div><dt>Packages</dt><dd>{{ plan.packages | join(', ') if plan.packages else 'None missing' }}</dd></div>
+    {% if plan.mode == 'overwrite' %}
+    <div><dt>Changes</dt><dd>{% if plan.changed %}{% for path in plan.changed %}<code>{{ path }}{% if not loop.last %},{% endif %}</code> {% endfor %}{% else %}None{% endif %} · {{ plan.unchanged }} already equal</dd></div>
+    {% if plan.quarantined %}<div><dt>To quarantine</dt><dd>{% for path in plan.quarantined %}<code>{{ path }}{% if not loop.last %},{% endif %}</code> {% endfor %}</dd></div>{% endif %}
+    {% endif %}
     <div><dt>Accounts</dt><dd>{% for account in plan.accounts %}{{ account.name }}{% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
     {% if restore.renumbered %}<div><dt>Other numbers</dt><dd>{{ restore.renumbered | join('; ') }} · files are owned by name</dd></div>{% endif %}
     <div><dt>Files</dt><dd>{{ plan.files | length }} files{% if plan.equal_directories %} · made equal to the archive: {{ plan.equal_directories | join(', ') }}{% endif %}</dd></div>
     {% if restore.node_bundle %}<div><dt>Node bundle</dt><dd><code>{{ restore.node_bundle.root }}</code> from this manager's release writes the node scripts{% if plan.from_bundle %} in place of the archive's {{ plan.from_bundle | length }}{% endif %}{% if plan.traffic_log %} · turns the traffic log on, as it was{% endif %}</dd></div>{% endif %}
     {% if plan.left_out %}<div><dt>Not from the archive</dt><dd>{% for path in plan.left_out %}<code>{{ path }}{% if not loop.last %},{% endif %}</code> {% endfor %} · the VM keeps its own, and old <code>.replaced-</code> copies stay behind; an operator's own file among these comes back only when named in <code>EXTRA_BACKUP_PATHS</code></dd></div>{% endif %}
-    <div><dt>Network, last</dt><dd>{{ plan.network | join(', ') }} · rolled back by itself if this manager cannot reach the node afterwards</dd></div>
+    {% if plan.mode == 'overwrite' and plan.network_unchanged %}<div><dt>Network</dt><dd>Unchanged · not applied</dd></div>
+    {% else %}<div><dt>Network, last</dt><dd>{{ plan.network | join(', ') }} · rolled back by itself if this manager cannot reach the node afterwards</dd></div>{% endif %}
   </dl>
   {% if plan.rewrites %}
   <div class="table-scroll"><table class="node-table restore-rewrite-table"><thead><tr><th>Rewritten</th><th>Field</th><th>From</th><th>To</th></tr></thead><tbody>
@@ -95,7 +101,37 @@
 </section>
 {% endif %}
 
-{% if restore.stage == 'confirm' and editable %}
+{% if restore.stage == 'confirm' and editable and restore.mode == 'overwrite' %}
+{% set standing = restore.overwrite or {} %}
+<form method="post" action="/backups/restore/{{ restore.run }}/run" class="preview-form restore-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="section-title"><h3>Overwrite</h3></div></header>
+    <div class="preview-notice form-problem restore-overwrite-warning">
+      <span class="status-orb status-critical" aria-hidden="true"></span>
+      <ul class="restore-list">
+        <li><strong>{{ restore.confirm_name }} is running.</strong> Every file in the plan is written over; a copy is kept on the node and put back if the node does not come up.</li>
+        <li>{% if standing.vip_owner %}It holds the VIP; keepalived stops first and the VIP moves to {{ standing.neighbour }}.{% elif standing.vip_owner is none %}Whether it holds the VIP could not be read.{% else %}{{ standing.neighbour }} holds the VIP.{% endif %} {{ standing.neighbour }} is {% if standing.neighbour_healthy %}healthy{% else %}<strong>not healthy</strong>{% if standing.detail %} ({{ standing.detail }}){% endif %}{% endif %}.</li>
+        <li>{% if restore.backup_failed %}<strong>No backup could be taken:</strong> {{ standing.backup_error }}{% else %}A backup of {{ restore.cluster }} was taken at the preview.{% endif %}</li>
+      </ul>
+    </div>
+    <div class="form-grid restore-form-grid">
+      <div class="field">
+        <div class="form-checks form-checks-stacked method-choices">
+          <label class="check"><input type="checkbox" name="acknowledged" value="yes" required> <span>Overwrite {{ restore.confirm_name }} while it runs</span></label>
+          {% if restore.backup_failed %}<label class="check"><input type="checkbox" name="backup_failed_ok" value="yes" required> <span>Go on without a backup</span></label>{% endif %}
+          {% if restore.traffic_at_risk %}<label class="check"><input type="checkbox" name="break_traffic" value="yes" required> <span><strong>This WILL break live traffic</strong></span></label>{% endif %}
+        </div>
+      </div>
+      <div class="field">
+        <label class="field-title" for="restore-confirm">Type <code>{{ restore.confirm_name }}</code> to confirm</label>
+        <input id="restore-confirm" name="confirm" type="text" required maxlength="63" autocomplete="off" spellcheck="false">
+      </div>
+    </div>
+    <div class="editor-actions editor-submit"><div class="form-buttons form-buttons-end"><button type="submit" class="secondary-button deploy-button">Overwrite {{ restore.confirm_name }}</button></div></div>
+  </section>
+</form>
+{% elif restore.stage == 'confirm' and editable %}
 <form method="post" action="/backups/restore/{{ restore.run }}/run" class="preview-form restore-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
   <section class="cluster-card">

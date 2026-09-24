@@ -1775,6 +1775,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .restore-plan > div { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 4px 16px; padding: 10px 20px; border-bottom: 1px solid var(--line); }
 .restore-plan dt { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
 .restore-plan dd { margin: 0; overflow-wrap: anywhere; }
+/* A path breaks between paths, and inside one only when it is wider than the line. */
+.restore-plan dd code { display: inline-block; max-width: 100%; }
 .restore-rewrite-table th:nth-child(1), .restore-rewrite-table td:nth-child(1) { width: 40%; }
 .restore-rewrite-table th:nth-child(2), .restore-rewrite-table td:nth-child(2) { width: 16%; }
 .restore-rewrite-table th:nth-child(3), .restore-rewrite-table td:nth-child(3) { width: 22%; }

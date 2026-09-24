@@ -80,7 +80,7 @@
     <div><dt>Accounts</dt><dd>{% for account in plan.accounts %}{{ account.name }} ({{ account.uid }}){% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
     <div><dt>Files</dt><dd>{{ plan.files | length }} files{% if plan.equal_directories %} · made equal to the archive: {{ plan.equal_directories | join(', ') }}{% endif %}</dd></div>
     {% if restore.node_bundle %}<div><dt>Node bundle</dt><dd><code>{{ restore.node_bundle.root }}</code> from this manager's release writes the node scripts{% if plan.from_bundle %} in place of the archive's {{ plan.from_bundle | length }}{% endif %}{% if plan.traffic_log %} · turns the traffic log on, as it was{% endif %}</dd></div>{% endif %}
-    {% if plan.left_out %}<div><dt>Not from the archive</dt><dd>{% for path in plan.left_out %}<code>{{ path }}</code>{% if not loop.last %}, {% endif %}{% endfor %} · the VM keeps its own, and old <code>.replaced-</code> copies stay behind; an operator's own file among these comes back only when named in <code>EXTRA_BACKUP_PATHS</code></dd></div>{% endif %}
+    {% if plan.left_out %}<div><dt>Not from the archive</dt><dd>{% for path in plan.left_out %}<code>{{ path }}{% if not loop.last %},{% endif %}</code> {% endfor %} · the VM keeps its own, and old <code>.replaced-</code> copies stay behind; an operator's own file among these comes back only when named in <code>EXTRA_BACKUP_PATHS</code></dd></div>{% endif %}
     <div><dt>Network, last</dt><dd>{{ plan.network | join(', ') }} · rolled back by itself if this manager cannot reach the node afterwards</dd></div>
   </dl>
   {% if plan.rewrites %}

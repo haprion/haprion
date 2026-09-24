@@ -456,6 +456,19 @@ class FollowingARun(RestoreRouteTestCase):
         self.assertIn(f'action="/backups/restore/{RUN}/preview"', page)
         self.assertNotIn("http-equiv", page)
 
+    def test_the_plan_names_the_node_bundle_and_what_the_archive_does_not_give(self) -> None:
+        """B178/B180: the release's bundle writes the scripts; the VM keeps its own files."""
+
+        self.runs = [PREPARED, PREVIEWED]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn("<code>haproxy-manager-node-000000000000</code> from this manager", page)
+        self.assertIn("in place of the archive's 2", page)
+        self.assertIn("turns the traffic log on, as it was", page)
+        self.assertIn(
+            "<code>/etc/ssh/sshd_config,</code> <code>/etc/sudoers.d/90-cloud-init-users</code>",
+            page,
+        )
+
     def test_a_reader_sees_the_run_but_no_forms(self) -> None:
         self.runs = [PREPARED]
         page = self.writing_client(role="reader").get(f"/backups/restore/{RUN}").text

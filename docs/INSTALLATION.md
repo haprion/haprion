@@ -2002,8 +2002,9 @@ A node that is lost is rebuilt from its state archive: install an empty VM, run
 accounts, node scripts and keepalived role - and then fetches its configuration and certificates
 the way a deploy does. Nothing is installed on the VM beforehand.
 
-**What counts as an empty VM.** The same distribution and version the node ran (the archive's
-`meta/os-release`; another version is not restored yet, another distribution never), one network
+**What counts as an empty VM.** Ubuntu 26.04 or Debian 13, installed from its cloud image - whichever
+the node ran before does not matter; both write their network as Netplan, which is what the restore
+writes. One network
 interface with the same name as the node's, a temporary address the management host can reach,
 an administrator account with `sudo`, and neither `haproxy` nor `keepalived` installed - the
 restore installs them itself, with their services held off until their configuration is in place. The node's own address must not answer: a restore onto
@@ -2045,8 +2046,8 @@ cluster waits. `forget` is command-line only.
 host key fingerprint; the name and address the VM will have; every file written and every
 directory made equal to the archive; every account with its IDs and groups; and, in test mode,
 every rewritten field with its old and new value. It stops on: a fingerprint that is not the one
-given (nothing is sent at all); an archive that is not of the chosen node; another OS version or
-distribution; `haproxy` or `keepalived` already installed (unless an earlier restore run left
+given (nothing is sent at all); an archive that is not of the chosen node; a target that is not
+Ubuntu 26.04 or Debian 13; `haproxy` or `keepalived` already installed (unless an earlier restore run left
 them there - a run that rolled back can be tried again); the final address, or the node's own,
 already answering; and an account or group
 whose name or ID is taken differently on the VM. `run` asks the VM again and refuses unless the
@@ -2057,7 +2058,10 @@ written.
 
 1. On the temporary address: the archive's groups and accounts with their own IDs (before any
    package can take one), password hashes only for accounts that have no password on the VM, the
-   archive's APT sources, then `haproxy keepalived rsyslog openssh-server rsync python3` with
+   HAProxy repository for the VM's own distribution and release on the branch the node ran (the
+   archive's APT sources name the release it was taken on and are not written; the VM keeps its
+   own; the repository's signing key ships with the product and is used only when its fingerprint
+   is the one pinned in the code - it is never fetched at restore time), then `haproxy keepalived rsyslog openssh-server rsync python3 netplan.io` with
    service starts held off until their configuration is in place, then the files. Only paths the
    export copied get the archive's ownership and mode; a directory it created only to hold one is
    made if missing and otherwise left alone. A directory the export carries whole is made equal to

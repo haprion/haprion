@@ -116,6 +116,12 @@ class RestoreSource:
     accounts: tuple[Account, ...]
     extra_paths: tuple[str, ...]
     roots: tuple[str, ...]
+    #
+    # The node's installed HAProxy, from `meta/package-versions.txt`: the
+    # restored node gets the same branch (B178), from its own distribution's
+    # build of it. Empty when the archive does not say.
+    #
+    haproxy_version: str
     entries: tuple[Entry, ...] = field(repr=False)
 
     @property
@@ -315,6 +321,14 @@ def _roots(
     return tuple(dict.fromkeys(path for path in candidates if path in present))
 
 
+def _version(text: str, package: str) -> str:
+    for line in _lines(text):
+        name, _tab, version = line.partition("\t")
+        if name.split(":", 1)[0] == package:
+            return version.strip()
+    return ""
+
+
 def read(path: Path) -> RestoreSource:
     """Validate the archive and read it as a restore's input."""
 
@@ -345,6 +359,7 @@ def read(path: Path) -> RestoreSource:
             accounts=accounts,
             extra_paths=extra,
             roots=_roots(entries, accounts, extra),
+            haproxy_version=_version(_text(archive, "meta/package-versions.txt"), "haproxy"),
             entries=entries,
         )
 

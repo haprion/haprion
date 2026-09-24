@@ -34,7 +34,7 @@ PROFILE = TestProfile(
 INSPECTED = {
     "ok": True,
     "op": "inspect",
-    "os_release": {"ID": "ubuntu", "VERSION_ID": "26.04"},
+    "os_release": {"ID": "ubuntu", "VERSION_ID": "26.04", "VERSION_CODENAME": "resolute"},
     "hostname": "temp",
     "interface": {"name": "eth0", "mac": "02:00:00:00:00:99", "addresses": ["192.0.2.120/24"]},
     "host_keys": {"ed25519": FINGERPRINT},
@@ -170,12 +170,35 @@ class Preview(RestoreTest):
         self.assertEqual(known, f"192.0.2.120 {TARGET_KEY}\n")
         self.assertEqual([c[1]["op"] for c in FakeSession.calls], ["inspect"])
 
-    def test_another_version_and_another_distribution_are_stopped(self) -> None:
+    def test_an_unsupported_target_is_stopped_and_debian_13_is_not(self) -> None:
+        """B178: the target's own release decides, not the archive's."""
+
         run = self.prepare()
-        FakeSession.answers["inspect"]["os_release"] = {"ID": "ubuntu", "VERSION_ID": "26.10"}
-        self.assertIn("another version", " ".join(self.preview(run)["problems"]))
-        FakeSession.answers["inspect"]["os_release"] = {"ID": "debian", "VERSION_ID": "13"}
-        self.assertIn("does not cross distributions", " ".join(self.preview(run)["problems"]))
+        FakeSession.answers["inspect"]["os_release"] = {
+            "ID": "ubuntu",
+            "VERSION_ID": "26.10",
+            "VERSION_CODENAME": "stonking",
+        }
+        self.assertIn(
+            "restore onto Ubuntu 26.04 or Debian 13", " ".join(self.preview(run)["problems"])
+        )
+        FakeSession.answers["inspect"]["os_release"] = {
+            "ID": "debian",
+            "VERSION_ID": "13",
+            "VERSION_CODENAME": "trixie",
+        }
+        summary = self.preview(run)
+        self.assertEqual(summary["problems"], [])
+        self.assertIn("/etc/apt/preferences.d/haproxy-3.4.pref", summary["plan"]["files"])
+        self.assertIn("/etc/apt/keyrings/haproxy-debian-net.asc", summary["plan"]["files"])
+
+    def test_the_archive_s_apt_state_is_replaced_by_the_target_s_repository(self) -> None:
+        run = self.prepare()
+        files = self.preview(run)["plan"]["files"]
+        self.assertIn("/etc/apt/sources.list.d/haproxy-3.4.sources", files)
+        self.assertIn("/etc/apt/keyrings/haproxy-ubuntu-ppa.asc", files)
+        self.assertNotIn("/etc/apt/sources.list.d/haproxy.sources", files)
+        self.assertNotIn("/etc/apt/preferences.d/haproxy-3.4.pref", files)
 
     def test_an_archive_is_offered_for_its_own_node_only(self) -> None:
         (self.backups / "node-b").mkdir()

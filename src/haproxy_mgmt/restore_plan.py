@@ -29,6 +29,7 @@ from typing import Any, Literal
 
 import yaml
 
+from haproxy_mgmt import haproxy_repository
 from haproxy_mgmt.restore_source import Account, Entry, Group, RestoreSource, content
 
 Mode = Literal["new_vm", "test"]
@@ -45,7 +46,25 @@ HOST_KEY_PREFIX = "/etc/ssh/ssh_host_"
 # of the old image and is shown, not installed.  rsync is how pull-deploy
 # fetches a release; python3 runs the node's status and probe scripts.
 #
-PRODUCT_PACKAGES = ("haproxy", "keepalived", "rsyslog", "openssh-server", "rsync", "python3")
+PRODUCT_PACKAGES = (
+    "haproxy",
+    "keepalived",
+    "rsyslog",
+    "openssh-server",
+    "rsync",
+    "python3",
+    #
+    # The network is written as Netplan and applied with `netplan apply` on
+    # both supported targets; Debian's cloud image renders Netplan at boot
+    # but does not carry the command (measured 2026-09-24).
+    #
+    "netplan.io",
+)
+#
+# The archive's APT state names the release it was taken on; the target keeps
+# its own and gets the HAProxy repository for its own release instead (B178).
+#
+APT_DIRECTORIES = ("/etc/apt/sources.list.d", "/etc/apt/preferences.d", "/etc/apt/keyrings")
 
 MAC = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
 
@@ -306,6 +325,10 @@ def build(
     for entry in source.owned():
         if entry.path == NETPLAN_DIR or entry.path.startswith(f"{NETPLAN_DIR}/"):
             continue
+        if entry.path in APT_DIRECTORIES or entry.path.startswith(
+            tuple(f"{directory}/" for directory in APT_DIRECTORIES)
+        ):
+            continue
         if entry.path == ROOT_KEYS:
             root_keys = _planned(entry)
             continue
@@ -347,10 +370,28 @@ def build(
     if root_keys is None:
         raise PlanError(f"the archive has no {ROOT_KEYS}; the one-time key would stay behind")
 
+    #
+    # Only for a target this can serve: an unsupported one is a problem the
+    # preview names, with the rest of the plan shown, rather than no plan.
+    #
+    if haproxy_repository.supported(target.os_release):
+        try:
+            branch = haproxy_repository.branch_of(source.haproxy_version)
+            written = haproxy_repository.repository_files(target.os_release, branch)
+        except haproxy_repository.RepositoryError as exc:
+            raise PlanError(str(exc)) from exc
+        files.extend(
+            PlannedFile(path=item.path, kind="file", mode=0o644, uid=0, gid=0, data=item.data)
+            for item in written
+        )
+
     equal = tuple(
         entry.path
         for entry in source.owned()
-        if entry.kind == "directory" and entry.path in source.roots and entry.path != NETPLAN_DIR
+        if entry.kind == "directory"
+        and entry.path in source.roots
+        and entry.path != NETPLAN_DIR
+        and entry.path not in APT_DIRECTORIES
     )
     return RestorePlan(
         mode=mode,

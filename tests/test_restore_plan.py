@@ -13,7 +13,9 @@ from haproxy_mgmt.restore_plan import PlanError, Target, TestProfile
 from tests.restore_fixture import FILES, NETPLAN, build
 
 TARGET = Target(
-    os_release={"ID": "ubuntu", "VERSION_ID": "26.04"}, interface="eth0", mac="02:00:00:00:00:99"
+    os_release={"ID": "ubuntu", "VERSION_ID": "26.04", "VERSION_CODENAME": "resolute"},
+    interface="eth0",
+    mac="02:00:00:00:00:99",
 )
 PROFILE = TestProfile(
     hostname="node-test",

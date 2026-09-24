@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from haproxy_mgmt import restore_agent, restore_plan
+from haproxy_mgmt import haproxy_repository, restore_agent, restore_plan
 from haproxy_mgmt.backups import node_backups
 from haproxy_mgmt.config import Cluster, Node
 from haproxy_mgmt.restore_plan import PlannedFile, RestorePlan, Target, TestProfile
@@ -435,19 +435,13 @@ def _problems(
     # B168: an archive carries one node's identity and is offered for that node only.
     if source.hostname != node.name:
         problems.append(f"the archive is of {source.hostname}, not of {node.name}")
-    # B174: the same distribution and version; another version needs a
-    # confirmation this first delivery does not offer, another distribution never.
+    # B178: the target may run another release or distribution than the archive
+    # was taken on, as long as it is one a restore supports.
     theirs = inspected["os_release"]
-    ours = source.os_release
-    if theirs.get("ID") != ours.get("ID"):
+    if not haproxy_repository.supported(theirs):
         problems.append(
-            f"the target runs {theirs.get('ID')} and the archive is of {ours.get('ID')}; "
-            "a restore does not cross distributions"
-        )
-    elif theirs.get("VERSION_ID") != ours.get("VERSION_ID"):
-        problems.append(
-            f"the target runs {ours.get('ID')} {theirs.get('VERSION_ID')} and the archive is of "
-            f"{ours.get('VERSION_ID')}; another version is not restored in this delivery"
+            f"the target runs {theirs.get('ID')} {theirs.get('VERSION_ID')}; "
+            "restore onto Ubuntu 26.04 or Debian 13"
         )
     final = str(plan.address.ip)
     if final != request.target and answering(final):

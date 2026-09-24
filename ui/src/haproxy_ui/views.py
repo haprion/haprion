@@ -3827,6 +3827,11 @@ def build_router(config: Config) -> APIRouter:
         )
         with request.app.state.pool.connection() as connection:
             running = jobs.in_flight(db.recent_jobs(connection))
+            restore_rows = [
+                job
+                for operation in node_restores.OPERATIONS
+                for job in db.operation_jobs(connection, operation, limit=100)
+            ]
         return TEMPLATES.TemplateResponse(
             request,
             "backups.html",
@@ -3836,6 +3841,7 @@ def build_router(config: Config) -> APIRouter:
                 "csrf_token": auth.csrf_token(token),
                 "backups": overview,
                 "in_flight": running,
+                "restores": node_restores.recent_runs(restore_rows, shown=metrics.shown),
                 #
                 # The zone the schedule form's time is read in: the manager's,
                 # named so an operator on another clock is not left guessing.

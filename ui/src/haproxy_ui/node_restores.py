@@ -13,8 +13,9 @@ command line uses too, so this form cannot accept what the helper refuses.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from haproxy_mgmt import node_restore, restore_agent
@@ -288,3 +289,75 @@ def usable_run(run: str) -> bool:
     """A run ID in a URL is held to the pattern the run directory is."""
 
     return restore_agent.RUN_ID.fullmatch(run) is not None
+
+
+#
+# What the backup page says about a run, by the stage its page is at. The run's
+# page is where anything is done; this is a line that leads there.
+#
+STAGE_LABELS: dict[str, tuple[str, str]] = {
+    "working": ("Running", "info"),
+    "prepare_failed": ("Not prepared", "critical"),
+    "fingerprint": ("Waiting for the fingerprint", "warning"),
+    "confirm": ("Waiting for confirmation", "warning"),
+    "done": ("Restored", "healthy"),
+    "failed": ("Failed", "critical"),
+}
+RECENT_PER_CLUSTER = 5
+
+
+@dataclass(frozen=True, slots=True)
+class RecentRun:
+    run: str
+    node: str
+    mode: str
+    started: str
+    started_iso: str
+    label: str
+    tone: str
+
+
+def recent_runs(
+    rows: Iterable[Job], *, shown: Callable[[datetime], datetime]
+) -> dict[str, tuple[RecentRun, ...]]:
+    """The newest runs per cluster, newest first, each read the way its own page reads it.
+
+    `rows` may hold the same job more than once (three queries, one per
+    operation); a job is counted once. The job table keeps a week of rows, so
+    this is a week of runs at most.
+    """
+
+    unique = {job.id: job for job in rows if job.operation in OPERATIONS}
+    by_run: dict[str, list[Job]] = {}
+    for job in unique.values():
+        run = job.payload.get("run")
+        if isinstance(run, str) and usable_run(run):
+            by_run.setdefault(run, []).append(job)
+    views = []
+    for run, jobs in by_run.items():
+        restore = run_view(run, jobs)
+        if restore is None:
+            continue
+        first = min(jobs, key=lambda job: job.id)
+        views.append((first.created_at, first.id, restore))
+    views.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    recent: dict[str, list[RecentRun]] = {}
+    for created, _id, restore in views:
+        listed = recent.setdefault(restore.cluster, [])
+        if len(listed) >= RECENT_PER_CLUSTER:
+            continue
+        label, tone = STAGE_LABELS[restore.stage]
+        if restore.stage == "failed" and restore.rolled_back:
+            label = "Failed · rolled back"
+        listed.append(
+            RecentRun(
+                run=restore.run,
+                node=restore.node,
+                mode="test" if restore.mode == "test" else "as the node",
+                started=shown(created).strftime("%Y-%m-%d %H:%M"),
+                started_iso=created.astimezone(UTC).isoformat(),
+                label=label,
+                tone=tone,
+            )
+        )
+    return {cluster: tuple(runs) for cluster, runs in recent.items()}

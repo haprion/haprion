@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import re
 import unittest
+from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -260,6 +262,45 @@ class TheRunPage(unittest.TestCase):
         self.assertEqual(restore.warnings, ("prune timer state unknown",))
 
 
+class RecentRuns(unittest.TestCase):
+    def test_each_run_once_newest_first_read_as_its_page_reads_it(self) -> None:
+        other = "r260101-0000bbbb"
+        rows = [
+            PREPARED,
+            PREVIEWED,
+            PREVIEWED,  # the same job from a second query
+            replace(
+                job("node_restore_prepare", "running", run=other, number=5),
+                created_at=PREPARED.created_at + timedelta(minutes=5),
+            ),
+        ]
+        recent = node_restores.recent_runs(rows, shown=lambda moment: moment)
+        self.assertEqual([run.run for run in recent["alpha"]], [other, RUN])
+        self.assertEqual(recent["alpha"][0].label, "Running")
+        self.assertEqual(recent["alpha"][1].label, "Waiting for confirmation")
+        self.assertEqual(recent["alpha"][1].mode, "test")
+
+    def test_a_rolled_back_run_says_so_and_a_cluster_lists_five(self) -> None:
+        failed = job(
+            "node_restore",
+            "failed",
+            result=fixture("haproxy-node-restore", "rolled-back.json"),
+            number=3,
+        )
+        recent = node_restores.recent_runs(
+            [PREPARED, PREVIEWED, failed], shown=lambda moment: moment
+        )
+        self.assertEqual(recent["alpha"][0].label, "Failed · rolled back")
+        many = [
+            job("node_restore_prepare", "done", run=f"r260101-0000{index:04d}", number=index)
+            for index in range(10, 17)
+        ]
+        self.assertEqual(
+            len(node_restores.recent_runs(many, shown=lambda m: m)["alpha"]),
+            node_restores.RECENT_PER_CLUSTER,
+        )
+
+
 class RestoreRouteTestCase(DeleteRouteTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -311,6 +352,19 @@ class TheBackupPageOffersIt(RestoreRouteTestCase):
             page,
         )
         self.assertIn("archive-table-restore", page)
+
+    def test_recent_runs_are_listed_under_their_cluster_for_everyone(self) -> None:
+        with mock.patch(
+            "haproxy_ui.db.operation_jobs",
+            side_effect=lambda _c, operation, **_k: [
+                row for row in (PREPARED, PREVIEWED) if row.operation == operation
+            ],
+        ):
+            for role in ("admin", "reader"):
+                page = self.writing_client(role=role).get("/backups").text
+                self.assertIn("Recent restores", page)
+                self.assertIn(f'<a href="/backups/restore/{RUN}"><code>{RUN}</code></a>', page)
+                self.assertIn("node-a · test", page)
 
     def test_a_reader_gets_none(self) -> None:
         page = self.writing_client(role="reader").get("/backups").text

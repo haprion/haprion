@@ -697,6 +697,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .schedule-details > summary:hover .schedule-edit::before { border-color: var(--text-strong); }
 .backup-now { position: absolute; top: 9px; right: 20px; }
 .backup-now .status-badge { margin-top: 4px; }
+/* Without a schedule strip the button is the block's only content: in the flow, not over the table. */
+.schedule-block-bare .backup-now { position: static; display: flex; justify-content: flex-end; padding: 9px 20px; }
 .backup-schedule-form { display: flex; flex-direction: column; gap: 10px; padding: 4px 20px 16px; }
 .schedule-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .backup-schedule-form label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }

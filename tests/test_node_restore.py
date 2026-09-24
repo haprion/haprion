@@ -45,6 +45,7 @@ INSPECTED = {
     "groups": {"operator": 1000},
     "previous_restore": False,
     "installed": [],
+    "network": {"netplan": ["50-cloud-init.yaml"], "ifupdown": []},
 }
 
 
@@ -255,6 +256,17 @@ class Preview(RestoreTest):
         self.assertIn("/etc/apt/preferences.d/haproxy-3.4.pref", summary["plan"]["files"])
         self.assertIn("/etc/apt/keyrings/haproxy-debian-net.asc", summary["plan"]["files"])
 
+    def test_a_target_whose_network_is_not_netplan_is_stopped(self) -> None:
+        """A restore writes Netplan; ifupdown beside it would configure the interface twice."""
+
+        run = self.prepare()
+        FakeSession.answers["inspect"]["network"] = {"netplan": [], "ifupdown": ["eth0"]}
+        self.assertIn("ifupdown configures eth0", " ".join(self.preview(run)["problems"]))
+        FakeSession.answers["inspect"]["network"] = {"netplan": [], "ifupdown": []}
+        self.assertIn("no Netplan configuration", " ".join(self.preview(run)["problems"]))
+        del FakeSession.answers["inspect"]["network"]
+        self.assertIn("did not say how its network", " ".join(self.preview(run)["problems"]))
+
     def test_the_archive_s_apt_state_is_replaced_by_the_target_s_repository(self) -> None:
         run = self.prepare()
         files = self.preview(run)["plan"]["files"]
@@ -298,9 +310,7 @@ class Preview(RestoreTest):
         FakeSession.answers["inspect"]["groups"] = {"operator": 1001}
         summary = self.preview(run)
         self.assertEqual(summary["problems"], [])
-        self.assertIn(
-            "account operator gets a free UID (1000 is other here)", summary["renumbered"]
-        )
+        self.assertIn("account operator gets a free UID", summary["renumbered"])
         self.assertIn(
             "group operator keeps the VM's GID 1001 (archive 1000)", summary["renumbered"]
         )

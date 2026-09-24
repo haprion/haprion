@@ -210,6 +210,22 @@ class TestMode(Planning):
         self.assertNotIn("include /etc/keepalived/addresses.conf", conf)
         self.assertEqual(self.data(plan, "/etc/keepalived/addresses.conf"), "198.51.100.254/32\n")
 
+    def test_an_include_inside_the_address_block_is_said_as_removed(self) -> None:
+        conf = (
+            "vrrp_instance VI_1 {\n"
+            "    virtual_ipaddress {\n"
+            "        include /etc/keepalived/addresses.conf\n"
+            "    }\n"
+            "}\n"
+        )
+        text, changes = restore_plan._keepalived_test(conf, "192.0.2.29", "198.51.100.254/32")
+        self.assertEqual(
+            changes,
+            [("include", "/etc/keepalived/addresses.conf"), ("virtual_ipaddress", "(none)")],
+        )
+        self.assertNotIn("include", text)
+        self.assertIn("198.51.100.254/32", text)
+
     def test_the_test_node_keeps_its_own_host_keys(self) -> None:
         plan = self.plan()
         paths = {file.path for file in plan.files}

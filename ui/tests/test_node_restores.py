@@ -547,7 +547,7 @@ class FollowingARun(RestoreRouteTestCase):
         self.assertIn("<code>haproxy-manager-node-000000000000</code> from this manager", page)
         self.assertIn("in place of the archive's 2", page)
         self.assertIn("turns the traffic log on, as it was", page)
-        self.assertIn("account svc-logread gets a free UID (997 is systemd-timesync here)", page)
+        self.assertIn("account svc-logread gets a free UID", page)
         self.assertIn(
             "<code>/etc/ssh/sshd_config,</code> <code>/etc/sudoers.d/90-cloud-init-users</code>",
             page,

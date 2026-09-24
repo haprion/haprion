@@ -524,6 +524,23 @@ def _problems(
             f"the target runs {theirs.get('ID')} {theirs.get('VERSION_ID')}; "
             "restore onto Ubuntu 26.04 or Debian 13"
         )
+    #
+    # The network is written as Netplan. A target whose network something else
+    # configures would end up with two configurations of one interface.
+    #
+    network = inspected.get("network")
+    if not isinstance(network, dict):
+        problems.append("the target did not say how its network is configured")
+    elif network.get("ifupdown"):
+        problems.append(
+            f"ifupdown configures {', '.join(network['ifupdown'])} on the target; a restore writes "
+            "the network as Netplan - restore onto a cloud image of Ubuntu 26.04 or Debian 13"
+        )
+    elif not network.get("netplan"):
+        problems.append(
+            "the target has no Netplan configuration; a restore writes the network as Netplan - "
+            "restore onto a cloud image of Ubuntu 26.04 or Debian 13"
+        )
     final = str(plan.address.ip)
     if final != request.target and answering(final):
         problems.append(f"{final} already answers; two machines would hold one address")
@@ -559,22 +576,16 @@ def renumbered(source: RestoreSource, inspected: dict[str, Any]) -> list[str]:
         here = existing_groups.get(group.name)
         if here is not None and here != group.gid:
             notes.append(f"group {group.name} keeps the VM's GID {here} (archive {group.gid})")
-        elif here is None:
-            holder = next((n for n, g in existing_groups.items() if g == group.gid), None)
-            if holder is not None:
-                notes.append(f"group {group.name} gets a free GID ({group.gid} is {holder} here)")
+        elif here is None and group.gid in existing_groups.values():
+            notes.append(f"group {group.name} gets a free GID")
     for account in source.accounts:
         ids = existing_accounts.get(account.name)
         if ids is not None and ids[0] != account.uid:
             notes.append(
                 f"account {account.name} keeps the VM's UID {ids[0]} (archive {account.uid})"
             )
-        elif ids is None:
-            holder = next((n for n, v in existing_accounts.items() if v[0] == account.uid), None)
-            if holder is not None:
-                notes.append(
-                    f"account {account.name} gets a free UID ({account.uid} is {holder} here)"
-                )
+        elif ids is None and any(taken[0] == account.uid for taken in existing_accounts.values()):
+            notes.append(f"account {account.name} gets a free UID")
     return notes
 
 

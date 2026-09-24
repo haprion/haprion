@@ -80,7 +80,7 @@
     {% if facts %}<div><dt>Interface</dt><dd>{{ facts.interface.name }} · {{ facts.interface.mac }} · host key {{ facts.fingerprint }}</dd></div>{% endif %}
     <div><dt>keepalived</dt><dd>{{ 'Started as BACKUP' if plan.keepalived == 'start' else 'Masked — never started' }}</dd></div>
     <div><dt>Packages</dt><dd>{{ plan.packages | join(', ') }}</dd></div>
-    <div><dt>Accounts</dt><dd>{% for account in plan.accounts %}{{ account.name }} ({{ account.uid }}){% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
+    <div><dt>Accounts</dt><dd>{% for account in plan.accounts %}{{ account.name }}{% if not loop.last %}, {% endif %}{% endfor %}</dd></div>
     {% if restore.renumbered %}<div><dt>Other numbers</dt><dd>{{ restore.renumbered | join('; ') }} · files are owned by name</dd></div>{% endif %}
     <div><dt>Files</dt><dd>{{ plan.files | length }} files{% if plan.equal_directories %} · made equal to the archive: {{ plan.equal_directories | join(', ') }}{% endif %}</dd></div>
     {% if restore.node_bundle %}<div><dt>Node bundle</dt><dd><code>{{ restore.node_bundle.root }}</code> from this manager's release writes the node scripts{% if plan.from_bundle %} in place of the archive's {{ plan.from_bundle | length }}{% endif %}{% if plan.traffic_log %} · turns the traffic log on, as it was{% endif %}</dd></div>{% endif %}

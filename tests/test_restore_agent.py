@@ -261,6 +261,17 @@ class Inspect(AgentTest):
         self.assertEqual(sorted(p for p in self.host.root.rglob("*")), before)
         self.assertEqual(result["installed"], [])
 
+    def test_says_what_configures_the_network(self) -> None:
+        result = self.serve({"op": "inspect", "names": [], "ids": []})
+        self.assertEqual(result["network"], {"netplan": ["50-cloud-init.yaml"], "ifupdown": []})
+        self.host.path("/etc/network/interfaces.d").mkdir(parents=True)
+        self.host.path("/etc/network/interfaces").write_text(
+            "auto lo\niface lo inet loopback\n# iface eth9 inet dhcp\nsource interfaces.d/*\n"
+        )
+        self.host.path("/etc/network/interfaces.d/eth0").write_text("iface eth0 inet dhcp\n")
+        result = self.serve({"op": "inspect", "names": [], "ids": []})
+        self.assertEqual(result["network"]["ifupdown"], ["eth0"])
+
     def test_names_the_product_packages_already_installed(self) -> None:
         self.host.preinstalled = {"haproxy", "rsyslog"}
         result = self.serve({"op": "inspect", "names": [], "ids": []})

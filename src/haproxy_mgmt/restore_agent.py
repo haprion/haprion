@@ -250,6 +250,31 @@ def installed(host: Host, packages: tuple[str, ...]) -> list[str]:
     return sorted(name for name, status in rows if status == "installed")
 
 
+def network_managers(host: Host) -> dict[str, list[str]]:
+    """What configures the network here: Netplan's files, and interfaces ifupdown brings up.
+
+    A restore writes the network as Netplan. A VM whose interfaces ifupdown
+    configures - a Debian installed from its installer rather than a cloud
+    image - would have both after the restore, each configuring the interface.
+    """
+
+    netplan = host.path(NETPLAN)
+    files = sorted(p.name for p in netplan.glob("*.yaml")) if netplan.is_dir() else []
+    sources = [host.path("/etc/network/interfaces")]
+    directory = host.path("/etc/network/interfaces.d")
+    if directory.is_dir():
+        sources.extend(sorted(p for p in directory.iterdir() if p.is_file()))
+    interfaces: set[str] = set()
+    for source in sources:
+        if not source.is_file():
+            continue
+        for line in source.read_text(encoding="utf-8", errors="replace").splitlines():
+            words = line.split("#", 1)[0].split()
+            if len(words) >= 2 and words[0] == "iface" and words[1] != "lo":
+                interfaces.add(words[1])
+    return {"netplan": files, "ifupdown": sorted(interfaces)}
+
+
 def inspect(host: Host, header: dict[str, Any], _payload: IO[bytes]) -> dict[str, Any]:
     names = set(header.get("names", []))
     ids = set(header.get("ids", []))
@@ -269,6 +294,7 @@ def inspect(host: Host, header: dict[str, Any], _payload: IO[bytes]) -> dict[str
         "groups": {name: gid for name, gid in groups(host).items() if name in names or gid in ids},
         "previous_restore": host.path(STATE).exists(),
         "installed": installed(host, NOT_EMPTY_IF_INSTALLED),
+        "network": network_managers(host),
     }
 
 

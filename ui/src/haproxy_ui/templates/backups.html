@@ -24,7 +24,7 @@
     {% set running = in_flight.get(cluster.cluster) if in_flight else none %}
     {% set editable = management_writes and role == 'admin' and not demo_fixture and not production_snapshot %}
     {% if cluster.schedule or editable %}
-    <div class="schedule-block">
+    <div class="schedule-block{% if not cluster.schedule %} schedule-block-bare{% endif %}">
       {% if cluster.schedule %}{% set schedule = cluster.schedule %}
       {% if editable and not running %}
       <details class="schedule-details">

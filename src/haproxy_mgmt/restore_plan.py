@@ -355,17 +355,27 @@ def _keepalived_test(text: str, address: str, vip: str) -> tuple[str, list[tuple
 
     text = re.sub(r"^([ \t]*unicast_src_ip[ \t]+)(\S+)", source_ip, text, flags=re.MULTILINE)
 
+    included = re.compile(
+        rf"^[ \t]*include[ \t]+{re.escape(KEEPALIVED_ADDRESSES)}[ \t]*$", re.MULTILINE
+    )
+
     def addresses(matched: re.Match[str]) -> str:
-        changes.append(("virtual_ipaddress", " ".join(matched.group(2).split())))
+        #
+        # The include may sit inside the block itself. Said as its own change,
+        # as it is when it stands outside, rather than as the block's old text.
+        #
+        body = matched.group(2)
+        if included.search(body):
+            changes.append(("include", KEEPALIVED_ADDRESSES))
+            body = included.sub("", body)
+        changes.append(("virtual_ipaddress", " ".join(body.split()) or "(none)"))
         indent = matched.group(1)
         return f"{indent}virtual_ipaddress {{\n{indent}    {vip}\n{indent}}}"
 
     text = re.sub(
         r"^([ \t]*)virtual_ipaddress[ \t]*\{([^}]*)\}", addresses, text, flags=re.MULTILINE
     )
-    if re.search(
-        rf"^[ \t]*include[ \t]+{re.escape(KEEPALIVED_ADDRESSES)}[ \t]*$", text, re.MULTILINE
-    ):
+    if included.search(text):
         changes.append(("include", KEEPALIVED_ADDRESSES))
         text = re.sub(
             rf"^[ \t]*include[ \t]+{re.escape(KEEPALIVED_ADDRESSES)}[ \t]*\n",

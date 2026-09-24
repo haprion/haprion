@@ -126,8 +126,7 @@
         "mode": {
           "enum": [
             "new_vm",
-            "test",
-            "overwrite"
+            "test"
           ]
         },
         "profile": {

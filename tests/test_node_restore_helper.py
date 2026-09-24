@@ -332,7 +332,7 @@ class Parameters(unittest.TestCase):
         # One character too many is not a fingerprint with a tail.
         self.assertEqual(node_restore_helper.fingerprint_in(bare + "A"), bare + "A")
 
-    def test_an_overwrite_and_its_ticks_are_optional_booleans(self) -> None:
+    def test_the_overwrite_ticks_are_optional_booleans(self) -> None:
         """B183: a request from before Overwrite node is exactly what it was."""
 
         prepare = {
@@ -343,14 +343,11 @@ class Parameters(unittest.TestCase):
             "test": None,
         }
         node_restore_helper.validate(PREPARE, prepare)
-        node_restore_helper.validate(PREPARE, {**prepare, "overwrite": True})
         self.assertEqual(node_restore_helper.mode_of(prepare), "new_vm")
-        self.assertEqual(node_restore_helper.mode_of({**prepare, "overwrite": True}), "overwrite")
         self.assertEqual(node_restore_helper.mode_of({**prepare, "test": TEST}), "test")
+        # B184: as the node is one request; the preview says which case it is.
         with self.assertRaises(ParameterProblem):
-            node_restore_helper.validate(PREPARE, {**prepare, "overwrite": "yes"})
-        with self.assertRaises(ParameterProblem):
-            node_restore_helper.validate(PREPARE, {**prepare, "test": TEST, "overwrite": True})
+            node_restore_helper.validate(PREPARE, {**prepare, "overwrite": True})
         run = {"run": RUN_ID, "confirm": "node-a"}
         node_restore_helper.validate(RUN, run)
         node_restore_helper.validate(RUN, {**run, "backup_failed_ok": True, "break_traffic": False})

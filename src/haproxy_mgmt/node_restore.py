@@ -1,4 +1,7 @@
-"""Restore one node's state archive onto an empty VM - the management half.
+"""Restore one node's state archive as the node - onto an empty VM or over the node itself.
+
+The management half. Which of the two a run is, is decided at the preview from
+the host key the target offers (B184): the archived one means the node itself.
 
 Three steps, each its own command and later its own job (B175):
 
@@ -25,6 +28,7 @@ against a ``known_hosts`` that holds exactly the keys this run has verified.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import fcntl
 import hashlib
 import io
@@ -597,8 +601,9 @@ def _problems(
     preinstalled = inspected.get("installed", [])
     if preinstalled and not inspected.get("previous_restore"):
         problems.append(
-            f"{' and '.join(preinstalled)} already installed on the target; "
-            "restore onto an empty VM"
+            f"{' and '.join(preinstalled)} already installed on the target, and its host key "
+            f"is not {node.name}'s archived one; restore onto an empty VM, or onto the node "
+            "itself to repair it"
         )
     return problems
 
@@ -750,8 +755,6 @@ def _preview(
     checks: OverwriteChecks | None,
 ) -> dict[str, Any]:
     request = Request.from_dict(read_json(directory / "request.json"))
-    if request.mode == "overwrite" and checks is None:
-        raise RestoreError("an overwrite needs the cluster's backup and status; none were given")
     if not FINGERPRINT.fullmatch(fingerprint_seen):
         raise RestoreError("the fingerprint is written as SHA256:<43 characters>")
     key = scan(request.target)
@@ -760,15 +763,23 @@ def _preview(
             f"{request.target} offers a host key whose fingerprint is not the one read on its "
             "console; nothing was sent to it"
         )
-    if request.mode == "overwrite":
-        # B172: the machine answering must be the archived node, not one in its place.
+    if request.mode != "test":
+        #
+        # B184: a restore as the node is one operation whatever it lands on. A
+        # target offering the archived host key is the node itself, and the
+        # archive goes back over it (B172, B183); any other is a VM in its
+        # place. Decided here, from the key just verified, and kept in the
+        # run's request so the run is held to the same case.
+        #
         source = read(archive_path(backup_root, node_of(cluster, request.node), request.archive))
         archived = source.entry(ARCHIVED_HOST_KEY)
-        if archived is None or _key(content(source, archived)) != _key(key.encode()):
-            raise RestoreError(
-                f"{request.target} does not offer {request.node}'s archived host key; "
-                "an overwrite is for the archived node itself - nothing was sent to it"
-            )
+        itself = archived is not None and _key(content(source, archived)) == _key(key.encode())
+        mode: restore_plan.Mode = "overwrite" if itself else "new_vm"
+        if mode != request.mode:
+            request = dataclasses.replace(request, mode=mode)
+            _write_json(directory / "request.json", request.as_dict())
+    if request.mode == "overwrite" and checks is None:
+        raise RestoreError("an overwrite needs the cluster's backup and status; none were given")
     known_hosts = directory / "known_hosts"
     known_hosts.write_text(f"{request.target} {key}\n", encoding="utf-8")
     known_hosts.chmod(0o600)

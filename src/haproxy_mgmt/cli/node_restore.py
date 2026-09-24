@@ -1,4 +1,4 @@
-"""``haproxy-node-restore`` - restore a node's state archive onto an empty VM or over the node.
+"""``haproxy-node-restore`` - restore a node's state archive as the node, or as a test.
 
 Runs as root: it reads the root-only archives and holds the run's one-time key.
 Three steps, in order, each a separate command (B175):
@@ -36,8 +36,6 @@ Usage:
   haproxy-node-restore prepare -c <cluster> --node <node> --archive <version> --target <address>
                                [--test --test-hostname <name> --test-address <addr/prefix>
                                 --test-vip <addr/prefix>]
-  haproxy-node-restore prepare -c <cluster> --node <node> --archive <version> --target <address>
-                               --overwrite
   haproxy-node-restore preview --run <id> --fingerprint <SHA256:...>
   haproxy-node-restore run     --run <id> --confirm <hostname>
                                [--backup-failed-ok] [--break-traffic]
@@ -50,11 +48,12 @@ Usage:
   run       --confirm is the name the node will have: the archived node's, or
             the test hostname.
 
-  --overwrite puts the archive back over the running node itself, at its own
-  address; the host key must be the archived one. The preview takes a state
-  backup and reads the pair. The run refuses when that backup failed, unless
-  --backup-failed-ok, and when the node may hold the VIP while its neighbour
-  is not healthy, unless --break-traffic.
+  --target is an empty VM, or the node itself at its own address to repair it.
+  The preview tells them apart by the host key: the archived one is the node
+  itself, and the archive goes back over it. Then the preview also takes a
+  state backup and reads the pair, and the run refuses when that backup
+  failed, unless --backup-failed-ok, and when the node may hold the VIP while
+  its neighbour is not healthy, unless --break-traffic.
   discard   removes the run and its one-time key.
 
   A run has an hour from prepare to run; after that it has expired and is
@@ -106,8 +105,6 @@ def _parameters(step: str, options: dict[str, Any], run: str) -> dict[str, Any]:
             "target": options["--target"],
             "test": _test(options),
         }
-        if "--overwrite" in options:
-            parameters["overwrite"] = True
         operation = node_restore_helper.PREPARE
     elif step == "preview":
         parameters = {"run": run, "fingerprint": options["--fingerprint"]}
@@ -256,7 +253,7 @@ def main(
         if step == "prepare":
             options = _options(
                 rest,
-                {"--test", "--overwrite", "--json"},
+                {"--test", "--json"},
                 {
                     "-c",
                     "--node",
@@ -364,7 +361,7 @@ def _step(
         cluster = runtime.cluster(request.cluster)
         checks = (
             node_restore.overwrite_checks(request.cluster, cluster, policy)
-            if request.mode == "overwrite"
+            if request.mode != "test"
             else None
         )
         if step == "preview":

@@ -68,7 +68,7 @@ KEYS = {
 # before Overwrite node (B172, B183) is still exactly what it was.
 #
 OPTIONAL = {
-    PREPARE: frozenset({"overwrite"}),
+    PREPARE: frozenset(),
     PREVIEW: frozenset(),
     RUN: frozenset({"backup_failed_ok", "break_traffic"}),
     DISCARD: frozenset(),
@@ -129,11 +129,13 @@ def test_profile(raw: Any) -> TestProfile | None:
 
 
 def mode_of(parameters: Mapping[str, Any]) -> Mode:
-    """The restore mode a prepare request asks for - one reading for helper, CLI and web."""
+    """The restore mode a prepare request asks for - one reading for helper, CLI and web.
 
-    if parameters.get("test") is not None:
-        return "test"
-    return "overwrite" if parameters.get("overwrite") else "new_vm"
+    As the node or as a test. Whether "as the node" lands on an empty VM or over
+    the node itself is not asked: the preview reads it from the host key (B184).
+    """
+
+    return "test" if parameters.get("test") is not None else "new_vm"
 
 
 def fingerprint_in(text: str) -> str:
@@ -171,8 +173,7 @@ def validate(operation: str, parameters: Mapping[str, Any]) -> None:
             ipaddress.IPv4Address(_string(parameters, "target"))
         except ValueError as exc:
             raise ParameterProblem("the target is an IPv4 address") from exc
-        if test_profile(parameters["test"]) is not None and parameters.get("overwrite"):
-            raise ParameterProblem("an overwrite is of the node itself; it has no test profile")
+        test_profile(parameters["test"])
     elif operation == PREVIEW:
         if not node_restore.FINGERPRINT.fullmatch(_string(parameters, "fingerprint")):
             raise ParameterProblem("the fingerprint is written SHA256: and 43 characters")
@@ -379,9 +380,10 @@ def _answer(
         )
         if stored.cluster != request.cluster:
             raise RestoreError(f"run {run} belongs to cluster {stored.cluster}")
+        # Any restore as the node may turn out to be the node itself at its preview.
         checks = (
             engine.overwrite_checks(request.cluster, cluster, policy)
-            if stored.mode == "overwrite"
+            if stored.mode != "test"
             else None
         )
 

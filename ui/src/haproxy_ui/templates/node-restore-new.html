@@ -29,14 +29,13 @@
       <div class="field">
         <label class="field-title" for="restore-target">Address</label>
         <input id="restore-target" name="target" type="text" value="{{ form.target }}" required maxlength="15" autocomplete="off" spellcheck="false" placeholder="192.0.2.120" autofocus>
-        <small>Where this manager reaches the machine on SSH: the empty VM's temporary IP,<br>or the node's own address for an overwrite.</small>
+        <small>Where this manager reaches the machine on SSH: an empty VM's IP,<br>or the node's own address to repair it.</small>
       </div>
       <div class="field">
         <span class="field-title">Restore as</span>
         <div class="form-checks form-checks-stacked method-choices">
-          <label class="check"><input type="radio" name="mode" value="new_vm"{% if form.mode == 'new_vm' %} checked{% endif %}> <span><strong>The node itself</strong> — its address, name and VIP.<br>Its production address must not answer.</span></label>
+          <label class="check"><input type="radio" name="mode" value="new_vm"{% if form.mode == 'new_vm' %} checked{% endif %}> <span><strong>The node itself</strong> — its address, name and VIP.<br>Restores it to a new empty VM, or repairs the running node.</span></label>
           <label class="check"><input type="radio" name="mode" value="test"{% if form.mode == 'test' %} checked{% endif %}> <span><strong>A test</strong> — address, name and VIP rewritten to the test profile; keepalived stays masked.</span></label>
-          <label class="check"><input type="radio" name="mode" value="overwrite"{% if form.mode == 'overwrite' %} checked{% endif %}> <span><strong>Over the running node</strong> — the archive back over the node itself.<br>Its host key must be the archived one.</span></label>
         </div>
       </div>
       <div class="field">

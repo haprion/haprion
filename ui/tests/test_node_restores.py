@@ -129,7 +129,7 @@ class TheForm(unittest.TestCase):
         for changes, words in (
             ({"archive": "2026-01-01_00-00-00"}, "not in this cluster's backup listing"),
             ({"node": "node-c"}, "not in this cluster's backup listing"),
-            ({"mode": "image"}, "Choose a new VM, a test restore or an overwrite"),
+            ({"mode": "image"}, "Choose the node or a test restore"),
             ({"target": "192.0.2.300"}, "The target is an IPv4 address"),
             (
                 {"mode": "test", "test_hostname": "node-test", "test_address": "192.0.2.29"},
@@ -660,7 +660,6 @@ OVERWRITE_PREPARED = job(
     number=1,
     target="192.0.2.21",
     test=None,
-    overwrite=True,
 )
 OVERWRITE_PREVIEWED = job(
     "node_restore_preview",
@@ -673,16 +672,23 @@ OVERWRITE_PREVIEWED = job(
 class OverwritingANode(RestoreRouteTestCase):
     """B172/B183: the archive over the running node, confirmed in three steps."""
 
-    def test_the_form_offers_it_and_the_payload_says_so(self) -> None:
+    def test_the_form_asks_only_node_or_test(self) -> None:
+        """B184: over the node or onto a VM is the preview's to tell, not the form's."""
+
         page = (
             self.writing_client()
             .get(f"/backups/restore/new?cluster=alpha&node=node-a&archive={VERSION}")
             .text
         )
-        self.assertIn('value="overwrite"', page)
-        self.start(self.writing_client(), mode="overwrite", target="192.0.2.21")
-        self.assertEqual(self.queued[0]["payload"]["overwrite"], True)
-        self.assertIsNone(self.queued[0]["payload"]["test"])
+        self.assertNotIn('value="overwrite"', page)
+        self.start(self.writing_client(), mode="new_vm", target="192.0.2.21")
+        self.assertNotIn("overwrite", self.queued[0]["payload"])
+
+    def test_before_its_preview_a_run_as_the_node_is_not_yet_an_overwrite(self) -> None:
+        restore = node_restores.run_view(RUN, [OVERWRITE_PREPARED])
+        if restore is None:
+            self.fail("the run has a prepare job")
+        self.assertEqual(restore.mode, "new_vm")
 
     def test_the_run_is_read_as_an_overwrite(self) -> None:
         restore = node_restores.run_view(RUN, [OVERWRITE_PREPARED, OVERWRITE_PREVIEWED])

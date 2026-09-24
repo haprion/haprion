@@ -2010,6 +2010,9 @@ an administrator account with `sudo`, and neither `haproxy` nor `keepalived` ins
 restore installs them itself, with their services held off until their configuration is in place. The node's own address must not answer: a restore onto
 it while the old node is still up would put two machines on one address, and the preview stops.
 
+The same command also repairs a node that still runs, over itself - see *Repairing the node
+itself* below.
+
 **Three steps, each its own command**, run as root on the management host:
 
 ```bash
@@ -2112,12 +2115,13 @@ production pair's VRRP, and the VM keeps its own SSH host keys. The test address
 node's network, because the node's routes come with the archive. `--confirm` takes the test
 hostname.
 
-**Overwriting a running node.** Add `--overwrite` to `prepare`, with the node's own address as
-`--target`, and the archive is put back over the node itself - for a node left in a bad state by
-hand. The paste and the three steps are the same; what differs:
+**Repairing the node itself.** The same restore, with the node's own address as `--target`, puts
+the archive back over the node - for a node left in a bad state by hand. Nothing is chosen for
+this: the preview tells the two cases apart by the host key the target offers. The archived one
+means the node itself; any other means an empty VM in its place, with the rules above. The paste
+and the three steps are the same; over the node itself, what differs:
 
-- the machine answering must offer the **archived** host key - the node itself, not one in its
-  place - and be reached at the address its archive gives it;
+- the node must be reached at the address its archive gives it;
 - the preview takes a state backup of the cluster and reads the pair: whether this node holds the
   VIP and whether its neighbour is healthy (answering, HAProxy and keepalived active). It lists
   every file whose contents differ from the node's, how many are already equal, what goes to

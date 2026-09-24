@@ -484,7 +484,7 @@ class Overwrite(RestoreTest):
             node="node-a",
             archive=VERSION,
             target=target,
-            mode="overwrite",
+            mode="new_vm",
             profile=None,
         )
         node_restore.prepare(self.root, request, source_of=lambda _: "192.0.2.7")
@@ -522,15 +522,39 @@ class Overwrite(RestoreTest):
         self.assertTrue(summary["overwrite"]["vip_owner"])
         self.assertEqual(FakeSession.calls[0][1]["list"][0], "/etc/netplan")
 
-    def test_a_machine_without_the_archived_host_key_is_not_the_node(self) -> None:
-        run = self.prepare_overwrite()
-        with self.assertRaisesRegex(RestoreError, "archived host key"):
-            self.preview_overwrite(run, key=TARGET_KEY)
-        self.assertEqual(FakeSession.calls, [])
+    def test_the_archived_host_key_makes_it_the_node_itself(self) -> None:
+        """B184: one restore as the node; the key it answers with says which case."""
 
-    def test_the_node_is_reached_at_its_own_address(self) -> None:
+        run = self.prepare_overwrite()
+        summary = self.preview_overwrite(run)
+        self.assertEqual(summary["plan"]["mode"], "overwrite")
+        stored = node_restore.read_json(self.root / run / "request.json")
+        self.assertEqual(stored["mode"], "overwrite")
+
+    def test_another_host_key_is_a_new_vm_in_its_place(self) -> None:
+        run = self.prepare_overwrite(target="192.0.2.120")
+        FakeSession.answers["inspect"] = dict(INSPECTED)
+        self.silent = {"192.0.2.21"}
+        summary = self.preview_overwrite(run, key=TARGET_KEY)
+        self.assertEqual(summary["plan"]["mode"], "new_vm")
+        self.assertNotIn("overwrite", summary)
+
+    def test_the_node_itself_is_reached_at_its_own_address(self) -> None:
         summary = self.preview_overwrite(self.prepare_overwrite(target="192.0.2.120"))
         self.assertTrue(any("its own address" in p for p in summary["problems"]))
+
+    def test_an_empty_vm_already_on_the_nodes_address_is_a_new_vm(self) -> None:
+        run = self.prepare_overwrite()
+        FakeSession.answers["inspect"] = dict(INSPECTED)
+        summary = self.preview_overwrite(run, key=TARGET_KEY)
+        self.assertEqual((summary["plan"]["mode"], summary["problems"]), ("new_vm", []))
+
+    def test_a_machine_that_is_neither_the_node_nor_empty_is_stopped(self) -> None:
+        run = self.prepare_overwrite()
+        FakeSession.answers["inspect"] = {**INSPECTED, "installed": ["haproxy"]}
+        summary = self.preview_overwrite(run, key=TARGET_KEY)
+        self.assertEqual(summary["plan"]["mode"], "new_vm")
+        self.assertTrue(any("empty VM" in p for p in summary["problems"]))
 
     def test_an_overwrite_needs_the_clusters_checks(self) -> None:
         run = self.prepare_overwrite()

@@ -31,7 +31,7 @@ from .db import Job
 from .jobs import RUNNING_LABELS
 
 OPERATIONS = (PREPARE, PREVIEW, RUN, DISCARD)
-MODES = ("new_vm", "test", "overwrite")
+MODES = ("new_vm", "test")
 ACTIVE_STATES = frozenset({"pending", "running"})
 EXPIRES_AFTER = timedelta(seconds=node_restore.START_WINDOW)
 #
@@ -73,7 +73,7 @@ def prepare_payload(
     if (node, archive) not in set(archives):
         raise RestoreProblem("That archive is not in this cluster's backup listing.")
     if mode not in MODES:
-        raise RestoreProblem("Choose a new VM, a test restore or an overwrite.")
+        raise RestoreProblem("Choose the node or a test restore.")
     test = (
         {
             "hostname": test_hostname.strip(),
@@ -90,8 +90,6 @@ def prepare_payload(
         "target": target.strip(),
         "test": test,
     }
-    if mode == "overwrite":
-        payload["overwrite"] = True
     _checked(PREPARE, payload)
     return payload
 
@@ -341,10 +339,11 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
         node=str(asked.get("node", "")),
         archive=str(asked.get("archive", "")),
         target=str(asked.get("target", "")),
+        # As the node, the preview decides: over the node itself or a VM in its place (B184).
         mode="test"
         if isinstance(test, dict)
         else "overwrite"
-        if asked.get("overwrite") is True
+        if plan is not None and plan.get("mode") == "overwrite"
         else "new_vm",
         profile=test if isinstance(test, dict) else None,
         stage=stage,

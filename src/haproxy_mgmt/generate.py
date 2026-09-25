@@ -1575,7 +1575,7 @@ def _backend(
             f"    server {name} {server.host}:{server.port}"
             f" guid {server_guid(proxy.name, backend.name, server)}"
             f"{_server_tls(backend, server)}{_server_address(server, resolvers)}"
-            f"{_server_check(backend, server)}{cookie}{backup}{limit}{ramp}"
+            f"{_server_check(backend, server, held=source is not None)}{cookie}{backup}{limit}{ramp}"
         )
     return lines
 
@@ -1713,7 +1713,14 @@ def _check_encryption(backend: Backend, health: Health) -> str:
     return ""
 
 
-def _server_check(backend: Backend, server: Server) -> str:
+#
+# The check interval while a pool reached from a held address is down or coming
+# back up. See `_server_check`.
+#
+HELD_SOURCE_INTERVAL = "2s"
+
+
+def _server_check(backend: Backend, server: Server, *, held: bool = False) -> str:
     """The check on the server line, with whether it is encrypted beside it.
 
     HAProxy's own documentation for 3.4.4 on this machine, under `ssl`: "health
@@ -1740,7 +1747,25 @@ def _server_check(backend: Backend, server: Server) -> str:
     # until somebody can say why it fails, rather than carried because the
     # reasoning was appealing.
     #
-    return f" check{port}{encrypted} inter {health.interval} rise {health.rise} fall {health.fall}"
+    #
+    # A pool reached from a `source` is reached from an address keepalived holds,
+    # so on the node without the VIP every check fails and every server stands
+    # DOWN. When the VIP moves, the server is used only after `rise` passing
+    # checks - and HAProxy spaces them by `inter` unless told otherwise: a DOWN
+    # server by `downinter`, one on its way up by `fastinter` (the 3.4.4 manual,
+    # under `fastinter`). Measured 2026-09-25 at failover: 14, 16 and 32 s of 503
+    # for `inter` 5, 10 and 25 s. Both are set, since `downinter` alone brings
+    # the first pass forward and leaves the rest a full `inter` apart.
+    #
+    # `fastinter` also shortens the way down on the node that holds the VIP -
+    # after one failed check the rest follow two seconds apart - which is the
+    # same question asked sooner, not a different one.
+    #
+    faster = f" fastinter {HELD_SOURCE_INTERVAL} downinter {HELD_SOURCE_INTERVAL}" if held else ""
+    return (
+        f" check{port}{encrypted} inter {health.interval}{faster}"
+        f" rise {health.rise} fall {health.fall}"
+    )
 
 
 def _server_tls(backend: Backend, server: Server) -> str:

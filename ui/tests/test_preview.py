@@ -530,7 +530,11 @@ class TheCheckTimingTheObjectAsksFor(unittest.TestCase):
         )
 
         self.assertIsNone(result.problem)
-        self.assertIn("check inter 5s rise 3 fall 2", result.files["1001-app.cfg"])
+        # The preview cluster's VIP has a source, so the pool also gets the short
+        # intervals a held address needs (see generate._server_check).
+        self.assertIn(
+            "check inter 5s fastinter 2s downinter 2s rise 3 fall 2", result.files["1001-app.cfg"]
+        )
 
     def test_a_count_that_is_not_a_count_is_named_before_the_engine_sees_it(self) -> None:
         result = preview(form(health_type="http", health_rise="twice"), PREVIEW_CLUSTER)

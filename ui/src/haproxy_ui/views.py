@@ -40,7 +40,9 @@ from haproxy_mgmt import backup_retention, backup_schedule, proxy_model
 from haproxy_mgmt.config import CERTIFICATE_ID
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haproxy_mgmt.proxy_model import (
+    DEFAULT_DOWN_INTERVAL,
     DEFAULT_FALL,
+    DEFAULT_FAST_INTERVAL,
     DEFAULT_INTERVAL,
     DEFAULT_RISE,
     ModelError,
@@ -4941,6 +4943,8 @@ def _editor_page(
             # the value the engine will actually use.
             #
             "check_interval": DEFAULT_INTERVAL,
+            "check_fast_interval": DEFAULT_FAST_INTERVAL,
+            "check_down_interval": DEFAULT_DOWN_INTERVAL,
             "check_rise": DEFAULT_RISE,
             "check_fall": DEFAULT_FALL,
             "result": result,

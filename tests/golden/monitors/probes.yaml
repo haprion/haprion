@@ -46,6 +46,8 @@ backends:
       send: PING
       expect: PONG
       interval: 5s
+      fast_interval: 1s
+      down_interval: 10s
       rise: 3
       fall: 2
     servers:

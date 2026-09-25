@@ -135,6 +135,8 @@ DEFAULTS = {
     "health_send": "",
     "health_expect": "",
     "health_interval": "",
+    "health_fast_interval": "",
+    "health_down_interval": "",
     "health_rise": "",
     "health_fall": "",
     "backend_tls": "",
@@ -403,13 +405,15 @@ def build_document(form: dict[str, object]) -> str:
         #
         for field, key in (
             ("health_interval", "interval"),
+            ("health_fast_interval", "fast_interval"),
+            ("health_down_interval", "down_interval"),
             ("health_rise", "rise"),
             ("health_fall", "fall"),
         ):
             asked = text(field)
             if not asked:
                 continue
-            if key == "interval":
+            if key.endswith("interval"):
                 health[key] = asked
                 continue
             if not asked.isdigit():
@@ -933,6 +937,8 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         # write them into every object it saved.
         #
         "health_interval": str(health.get("interval", "") or ""),
+        "health_fast_interval": str(health.get("fast_interval", "") or ""),
+        "health_down_interval": str(health.get("down_interval", "") or ""),
         "health_rise": str(health.get("rise", "") or ""),
         "health_fall": str(health.get("fall", "") or ""),
         "backend_tls": str(_sub(backend, "tls").get("verify", "") or ""),

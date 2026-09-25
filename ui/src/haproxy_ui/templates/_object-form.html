@@ -314,6 +314,14 @@
       <label><span class="field-title">Checks to fall <span class="optional">(optional)</span></span><input name="health_fall" value="{{ form.health_fall }}" size="10" placeholder="{{ check_fall }}"><small>Failures in a row before a server is taken out. Too low, and one slow answer does it.</small></label>
     </div>
     {#
+      HAProxy's `fastinter` and `downinter`, with what the generator writes when
+      they are empty as the placeholder - ours, not HAProxy's.
+    #}
+    <div class="form-grid form-grid-fixed">
+      <label><span class="field-title">Fast interval <span class="optional">(optional)</span></span><input name="health_fast_interval" value="{{ form.health_fast_interval }}" size="10" placeholder="{{ check_fast_interval }}"><small>Between checks while a server goes up or down.</small></label>
+      <label><span class="field-title">Down interval <span class="optional">(optional)</span></span><input name="health_down_interval" value="{{ form.health_down_interval }}" size="10" placeholder="{{ check_down_interval }}"><small>Between checks while a server is down.</small></label>
+    </div>
+    {#
       HAProxy's own verdict, from the nodes, on the backend this object names. It
       is an observation and not a test run from here: the checks have been
       running on the nodes, against the servers those nodes were told about,

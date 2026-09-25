@@ -521,6 +521,8 @@ class TheCheckTimingTheObjectAsksFor(unittest.TestCase):
 
         self.assertNotIn("interval:", document)
         self.assertNotIn("rise:", document)
+        self.assertNotIn("fast_interval:", document)
+        self.assertNotIn("down_interval:", document)
         self.assertNotIn("fall:", document)
 
     def test_what_is_written_reaches_the_server_line(self) -> None:
@@ -530,10 +532,20 @@ class TheCheckTimingTheObjectAsksFor(unittest.TestCase):
         )
 
         self.assertIsNone(result.problem)
-        # The preview cluster's VIP has a source, so the pool also gets the short
-        # intervals a held address needs (see generate._server_check).
+        # Fast and down are ours when not written (proxy_model.DEFAULT_FAST_INTERVAL).
         self.assertIn(
-            "check inter 5s fastinter 2s downinter 2s rise 3 fall 2", result.files["1001-app.cfg"]
+            "check inter 5s fastinter 1s downinter 1s rise 3 fall 2", result.files["1001-app.cfg"]
+        )
+
+    def test_a_written_fast_and_down_interval_win_over_the_default(self) -> None:
+        result = preview(
+            form(health_type="http", health_fast_interval="1s", health_down_interval="3s"),
+            PREVIEW_CLUSTER,
+        )
+
+        self.assertIsNone(result.problem)
+        self.assertIn(
+            "check inter 2s fastinter 1s downinter 3s rise 2 fall 3", result.files["1001-app.cfg"]
         )
 
     def test_a_count_that_is_not_a_count_is_named_before_the_engine_sees_it(self) -> None:
@@ -544,10 +556,19 @@ class TheCheckTimingTheObjectAsksFor(unittest.TestCase):
     def test_the_timing_survives_a_round_trip_through_the_document(self) -> None:
         """Opened, saved and opened again must not change what it says."""
 
-        written = form(health_type="http", health_interval="5s", health_rise="3", health_fall="2")
+        written = form(
+            health_type="http",
+            health_interval="5s",
+            health_fast_interval="1s",
+            health_down_interval="3s",
+            health_rise="3",
+            health_fall="2",
+        )
         reopened = form_from_document(build_document(written), networks=())
 
         self.assertEqual(reopened["health_interval"], "5s")
+        self.assertEqual(reopened["health_fast_interval"], "1s")
+        self.assertEqual(reopened["health_down_interval"], "3s")
         self.assertEqual(reopened["health_rise"], "3")
         self.assertEqual(reopened["health_fall"], "2")
 

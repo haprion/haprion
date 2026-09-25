@@ -276,6 +276,18 @@ HEALTH_TYPES = ("disabled", "tcp", "http")
 DEFAULT_INTERVAL = "2s"
 DEFAULT_RISE = 2
 DEFAULT_FALL = 3
+#
+# `fastinter` and `downinter`. Not HAProxy's default, which is `inter`: ours,
+# for every pool. A server changing state, or down, is checked this often, so a
+# dead one is out in about `inter` plus `fall` seconds and a returning one is in
+# within `rise` seconds. That matters most behind a `source` keepalived holds:
+# the node without it sees every server down, and after a failover waits for
+# `rise` passing checks spaced by these (measured 2026-09-25: 14-32 s of 503 at
+# `inter` 5-25 s). The check's timeout stays `inter` - the 3.4.4 manual, under
+# `inter` - so a short value asks sooner without asking less patiently.
+#
+DEFAULT_FAST_INTERVAL = "1s"
+DEFAULT_DOWN_INTERVAL = "1s"
 
 #
 # The status range a check accepts when nobody said. Also HAProxy's own
@@ -408,6 +420,13 @@ class Health:
     send: str | None = None
     expect: str | None = None
     interval: str = DEFAULT_INTERVAL
+    #
+    # HAProxy's `fastinter` and `downinter`: the interval while a server is on
+    # its way up or down, and while it is down. Absent is the generator's
+    # choice - see `generate._server_check` - not HAProxy's `inter`.
+    #
+    fast_interval: str | None = None
+    down_interval: str | None = None
     rise: int = DEFAULT_RISE
     fall: int = DEFAULT_FALL
 
@@ -787,7 +806,7 @@ def _server(value: Any, location: str) -> Server:
 
 _HTTP_ONLY = ("path", "host", "expect_status", "expect_body")
 _TCP_ONLY = ("send", "expect")
-_TIMING = ("tls", "port", "interval", "rise", "fall")
+_TIMING = ("tls", "port", "interval", "fast_interval", "down_interval", "rise", "fall")
 
 
 def _health(value: Any, location: str) -> Health:
@@ -810,6 +829,8 @@ def _health(value: Any, location: str) -> Health:
     interval = data.get("interval", DEFAULT_INTERVAL)
     if not isinstance(interval, str) or not DURATION.match(interval):
         raise ModelError(f"{location}.interval must be a duration such as 5s or 500ms")
+    fast_interval = _duration(data, "fast_interval", location)
+    down_interval = _duration(data, "down_interval", location)
 
     #
     # Absent is not false. Written out, `false` is somebody asking for a
@@ -852,6 +873,8 @@ def _health(value: Any, location: str) -> Health:
             tls=tls,
             port=port,
             interval=interval,
+            fast_interval=fast_interval,
+            down_interval=down_interval,
             rise=rise,
             fall=fall,
         )
@@ -872,9 +895,18 @@ def _health(value: Any, location: str) -> Health:
         tls=tls,
         port=port,
         interval=interval,
+        fast_interval=fast_interval,
+        down_interval=down_interval,
         rise=rise,
         fall=fall,
     )
+
+
+def _duration(data: Mapping[str, Any], key: str, location: str) -> str | None:
+    value = data.get(key)
+    if value is not None and (not isinstance(value, str) or not DURATION.match(value)):
+        raise ModelError(f"{location}.{key} must be a duration such as 2s or 500ms")
+    return value
 
 
 def _count(data: Mapping[str, Any], key: str, location: str, default: int) -> int:

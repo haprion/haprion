@@ -269,6 +269,8 @@ class ObjectForm(BaseModel):
     health_host: Annotated[str, StringConstraints(max_length=255)] = ""
     health_port: Annotated[str, StringConstraints(max_length=8)] = ""
     health_interval: Annotated[str, StringConstraints(max_length=8)] = ""
+    health_fast_interval: Annotated[str, StringConstraints(max_length=8)] = ""
+    health_down_interval: Annotated[str, StringConstraints(max_length=8)] = ""
     health_rise: Annotated[str, StringConstraints(max_length=2)] = ""
     health_fall: Annotated[str, StringConstraints(max_length=2)] = ""
     #

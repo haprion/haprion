@@ -345,6 +345,19 @@ class TheMonitorVariants(unittest.TestCase):
         self.assertEqual(health.host, "app.example.com")
         self.assertEqual(health.expect_status, "200-399")
 
+    def test_the_fast_and_down_intervals_are_absent_unless_written(self) -> None:
+        self.assertIsNone(self.health("      type: tcp").fast_interval)
+
+        health = self.health("      type: tcp\n      fast_interval: 1s\n      down_interval: 3s")
+
+        self.assertEqual((health.fast_interval, health.down_interval), ("1s", "3s"))
+
+    def test_a_fast_interval_that_is_not_a_duration_is_refused(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            self.health("      type: tcp\n      fast_interval: soon")
+
+        self.assertIn("fast_interval must be a duration", str(raised.exception))
+
     def test_a_disabled_check_cannot_also_be_configured(self) -> None:
         with self.assertRaises(ModelError) as raised:
             self.health("      type: disabled\n      interval: 5s")

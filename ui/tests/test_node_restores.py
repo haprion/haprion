@@ -264,6 +264,23 @@ class TheRunPage(unittest.TestCase):
         self.assertEqual(restore.stage, "done")
         self.assertEqual((restore.result or {}).get("address"), "192.0.2.29")
         self.assertEqual(restore.warnings, ("prune timer state unknown",))
+        self.assertEqual(restore.warning_commands, ("",))
+
+    def test_a_warning_one_command_answers_carries_that_command(self) -> None:
+        done = fixture("haproxy-node-restore", "done.json")
+        done["result"]["sessions"]["apply"]["warnings"] = [
+            "node preparation: /run/haproxy/keepalived.state does not exist yet. A config reload"
+            " does not always produce a state transition - force one by restarting keepalived"
+            " on this node once."
+        ]
+        restore = self.view(PREPARED, PREVIEWED, job("node_restore", "done", result=done, number=3))
+        self.assertEqual(restore.warning_commands, ("sudo systemctl restart keepalived",))
+
+    def test_the_phrases_are_still_what_the_node_script_prints(self) -> None:
+        script = (Path(__file__).resolve().parents[2] / "install" / "04-node-prepare").read_text()
+        printed = " ".join(re.findall(r'warn "\s*([^"]*)"', script))
+        for phrase, _command in node_restores.WARNING_COMMANDS:
+            self.assertIn(phrase, printed)
 
 
 class RecentRuns(unittest.TestCase):
@@ -532,6 +549,18 @@ class FollowingARun(RestoreRouteTestCase):
             page,
         )
         self.assertIn("Preparing restore.", page)
+
+    def test_a_warning_s_command_is_offered_with_a_copy_button(self) -> None:
+        done = fixture("haproxy-node-restore", "done.json")
+        done["result"]["sessions"]["apply"]["warnings"] = [
+            "node preparation: /run/haproxy/keepalived.state does not exist yet."
+        ]
+        self.runs = [PREPARED, PREVIEWED, job("node_restore", "done", result=done, number=3)]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn(
+            '<pre class="receiver-command" data-copy-beside><code>sudo systemctl restart keepalived</code></pre>',
+            page,
+        )
 
     def test_a_prepared_run_shows_the_line_and_asks_for_the_fingerprint(self) -> None:
         self.runs = [PREPARED]

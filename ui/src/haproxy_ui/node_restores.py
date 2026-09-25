@@ -223,6 +223,8 @@ class RestoreRun:
     result: Mapping[str, Any] | None
     warnings: tuple[str, ...]
     jobs: tuple[RestoreJob, ...]
+    # One per warning: the command that answers it, or "" when there is none.
+    warning_commands: tuple[str, ...] = ()
     # The manager's node bundle the preview found (B180): root and commit.
     node_bundle: Mapping[str, Any] | None = None
     # Accounts and groups whose number on the VM differs from the archive's (B181).
@@ -291,6 +293,20 @@ def _warnings(body: Mapping[str, Any]) -> tuple[str, ...]:
         if isinstance(sessions.get(name), dict)
         for warning in _strings(sessions[name].get("warnings"))
     )
+
+
+#
+# Warnings the node's own scripts print that one command answers, by a phrase
+# they carry (a session puts its own name in front). The text is ours (`install/04-node-prepare`), and a test reads the
+# script so the two cannot drift apart.
+#
+WARNING_COMMANDS = (
+    ("/run/haproxy/keepalived.state does not exist yet.", "sudo systemctl restart keepalived"),
+)
+
+
+def warning_command(warning: str) -> str:
+    return next((command for phrase, command in WARNING_COMMANDS if phrase in warning), "")
 
 
 def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> RestoreRun | None:
@@ -395,6 +411,7 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
         failed_stage=failed_stage,
         result=result,
         warnings=_warnings(result) if result else (),
+        warning_commands=tuple(warning_command(w) for w in _warnings(result)) if result else (),
         jobs=tuple(RestoreJob(job.id, job.operation, job.state) for job in jobs),
         node_bundle=preview.get("node_bundle")
         if isinstance(preview.get("node_bundle"), dict)

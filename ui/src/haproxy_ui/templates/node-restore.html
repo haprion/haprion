@@ -46,7 +46,7 @@
 
 {% if restore.warnings %}
 <section class="cluster-card"><header class="cluster-header"><div class="section-title"><h3>Warnings</h3></div></header>
-  <ul class="restore-list">{% for warning in restore.warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
+  <ul class="restore-list">{% for warning in restore.warnings %}{% set command = restore.warning_commands[loop.index0] if restore.warning_commands | length > loop.index0 else '' %}<li>{{ warning }}{% if command %}<div class="copy-row restore-paste"><pre class="receiver-command" data-copy-beside><code>{{ command }}</code></pre></div>{% endif %}</li>{% endfor %}</ul>
 </section>
 {% endif %}
 

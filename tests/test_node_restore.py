@@ -52,6 +52,9 @@ INSPECTED = {
 class FakeSession:
     calls: list[tuple[str, dict[str, Any], bytes]]
     answers: dict[str, dict[str, Any]]
+    # What the run's known_hosts held when each operation was called: the host
+    # key SSH would have checked, which a fake that ignored it once let through.
+    trusted: dict[str, list[str]] = {}
 
     def __init__(self, key: Path, known_hosts: Path) -> None:
         self.key, self.known_hosts = key, known_hosts
@@ -60,6 +63,9 @@ class FakeSession:
         self, address: str, header: dict[str, Any], payload: bytes = b"", **_: Any
     ) -> dict[str, Any]:
         FakeSession.calls.append((address, header, payload))
+        FakeSession.trusted[header["op"]] = (
+            self.known_hosts.read_text().splitlines() if self.known_hosts.exists() else []
+        )
         return FakeSession.answers.get(header["op"], {"ok": True, "op": header["op"]})
 
 
@@ -77,6 +83,7 @@ class RestoreTest(unittest.TestCase):
         shutil.move(build(work), self.backups / "node-a" / f"{VERSION}.tar.gz")
         self.root = work / "runs"
         FakeSession.calls = []
+        FakeSession.trusted = {}
         FakeSession.answers = {"inspect": dict(INSPECTED)}
         self.silent = {"192.0.2.29", "192.0.2.21"}
         carried = work / "node-bundle.tar.gz"
@@ -321,6 +328,7 @@ class Run(RestoreTest):
         run = self.prepare(test=test)
         self.preview(run)
         FakeSession.calls = []
+        FakeSession.trusted = {}
         FakeSession.answers["network"] = {"ok": True, "rollback_unit": "u"}
         return run
 
@@ -358,6 +366,27 @@ class Run(RestoreTest):
         known = (self.root / run / "known_hosts").read_text().splitlines()
         self.assertEqual(known[-1], "192.0.2.21 ssh-ed25519 AAAA")
         self.assertEqual(FakeSession.calls[-1][0], "192.0.2.21")
+
+    def test_a_new_vm_is_trusted_with_the_archived_key_once_apply_has_written_it(self) -> None:
+        """`apply` puts the archive's host keys on the VM and reloads sshd.
+
+        The network session that follows reaches the same temporary address,
+        which now answers with the node's key. With only the key verified at the
+        preview in known_hosts, SSH refused it and the first restore to a new VM
+        in production mode stopped there (2026-09-25, exit 255).
+        """
+
+        run = self.previewed(test=False)
+        result = self.carry_out(run, confirm="node-a")
+        self.assertEqual(result["outcome"], "done", result)
+        self.assertNotIn("192.0.2.120 ssh-ed25519 AAAA", FakeSession.trusted["apply"])
+        self.assertIn(f"192.0.2.120 {TARGET_KEY}", FakeSession.trusted["network"])
+        self.assertIn("192.0.2.120 ssh-ed25519 AAAA", FakeSession.trusted["network"])
+
+    def test_a_test_node_keeps_its_own_key_and_is_trusted_with_that_alone(self) -> None:
+        run = self.previewed()
+        self.carry_out(run)
+        self.assertEqual(FakeSession.trusted["network"], [f"192.0.2.120 {TARGET_KEY}"])
 
     def test_the_apply_header_carries_hashes_but_the_result_file_does_not(self) -> None:
         run = self.previewed()
@@ -513,6 +542,7 @@ class Overwrite(RestoreTest):
         run = self.prepare_overwrite()
         self.preview_overwrite(run)
         FakeSession.calls = []
+        FakeSession.trusted = {}
         return run
 
     def test_a_node_equal_to_its_archive_is_shown_so_and_takes_a_backup(self) -> None:

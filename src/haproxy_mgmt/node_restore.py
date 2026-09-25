@@ -964,6 +964,15 @@ def _wait_for(
     return False
 
 
+def _archived_host_key(source: RestoreSource) -> str | None:
+    """The archived node's ed25519 host key as a known_hosts value, or None."""
+
+    public = source.entry("/etc/ssh/ssh_host_ed25519_key.pub")
+    if public is None:
+        return None
+    return " ".join(content(source, public).decode().split()[:2])
+
+
 def run(
     root: Path,
     run_id: str,
@@ -1140,6 +1149,15 @@ def _run(
         )
 
     final = str(plan.address.ip)
+    archived = None if plan.mode == "test" else _archived_host_key(checked.source)
+    if plan.mode != "test" and archived is None:
+        return finish_with("failed", error="the archive has no ed25519 host key", stage="apply")
+    if plan.mode == "new_vm":
+        # `apply` wrote the archive's host keys and reloaded sshd, so the VM on
+        # its temporary address now answers with the node's key, not the one
+        # verified at the preview. The network session is the first to meet it.
+        with (directory / "known_hosts").open("a", encoding="utf-8") as stream_hosts:
+            stream_hosts.write(f"{request.target} {archived}\n")
     if overwrite and not plan.network:
         # B183: the node's network is already the archive's; it is not applied again.
         stream.write("network unchanged; not applied\n")
@@ -1160,15 +1178,7 @@ def _run(
     if not changed.get("ok"):
         return finish_with("failed", error=changed.get("error"), stage="network")
 
-    if plan.mode == "test":
-        key = read_json(directory / "target-key.json")["key"]
-    else:
-        public = checked.source.entry("/etc/ssh/ssh_host_ed25519_key.pub")
-        if public is None:
-            return finish_with(
-                "failed", error="the archive has no ed25519 host key", stage="network"
-            )
-        key = " ".join(content(checked.source, public).decode().split()[:2])
+    key = read_json(directory / "target-key.json")["key"] if archived is None else archived
     with (directory / "known_hosts").open("a", encoding="utf-8") as stream_hosts:
         stream_hosts.write(f"{final} {key}\n")
 

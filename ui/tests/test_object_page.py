@@ -159,12 +159,12 @@ class InSnapshotMode(DraftReading):
 
 
 class TheOverviewOrdering(LoginTestCase):
-    def test_an_undeployed_object_is_the_first_row_of_the_cluster(self) -> None:
-        """Not a section below the table, and not sorted in among the rest.
+    def test_an_undeployed_object_keeps_its_alphabetical_place(self) -> None:
+        """Not a section below the table, and not moved to the top either.
 
-        It is the row that changed, and a published list is long enough that
-        alphabetical order hides it. The rest stay alphabetical, and a row
-        joins that order as soon as it is deployed.
+        Waiting rows went first once, so the one that changed was not missed;
+        editing an object then moved it, which read as the list reshuffling
+        itself. The badge says it is waiting; the position is alphabetical.
         """
 
         client = self.client(replace(configuration(), demo_fixture=True))
@@ -173,8 +173,20 @@ class TheOverviewOrdering(LoginTestCase):
         text = client.get("/proxies").text
         rows = re.findall(r'href="/proxies/edge-demo/([a-z-]+)"', text)
 
-        self.assertEqual(rows[0], "shop")
+        self.assertIn("shop", rows)
+        self.assertEqual(rows, sorted(rows))
         self.assertNotIn("Stored, not yet serving", text)
+
+    def test_the_whole_row_opens_the_object(self) -> None:
+        """The name is a link, and the rest of the row follows it (proxy-rows.js)."""
+
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+
+        text = client.get("/proxies").text
+
+        self.assertIn("/proxy-rows.js", text)
+        self.assertIn('data-href="/proxies/edge-demo/shop"', text)
 
     def test_published_rows_are_alphabetical_and_not_in_file_order(self) -> None:
         """Section order is an artefact of how the file was assembled."""
@@ -220,8 +232,9 @@ class TheOverviewOrdering(LoginTestCase):
         self.sign_in(client)
 
         text = client.get("/proxies").text
-        protocol = text.split('data-label="Protocol"', 1)[1].split("</td>", 1)[0]
-        hosts = text.split('data-label="Hosts / ports"', 1)[1].split("</td>", 1)[0]
+        row = text.split('href="/proxies/edge-demo/shop"', 1)[1].split("</tr>", 1)[0]
+        protocol = row.split('data-label="Protocol"', 1)[1].split("</td>", 1)[0]
+        hosts = row.split('data-label="Hosts / ports"', 1)[1].split("</td>", 1)[0]
 
         self.assertIn("Inactive · deploy to add", protocol)
         self.assertIn("shop.demo.example", hosts)

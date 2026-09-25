@@ -90,10 +90,10 @@ def inventory(*served: str) -> ClusterInventory:
 class TheRowsCatchUpWithoutTheWholePageBeingDrawn(LoginTestCase):
     """A row moves for reasons that happen elsewhere, and it has to move here.
 
-    An object waiting for a deploy sits at the top so nobody misses it, and it
-    joins the alphabetical order the moment the nodes are serving it. That
-    moment arrives while somebody is looking at the page, and until the rows
-    could be replaced on their own the only way to see it was to reload.
+    A row's badge changes when the nodes start serving it, and that moment
+    arrives while somebody is looking at the page. Its position does not: the
+    list is alphabetical whatever state a row is in, so an edit or a deploy
+    never reshuffles it (2026-09-25; it used to put waiting rows first).
     """
 
     def rows(self, *, served: tuple[str, ...]) -> Any:
@@ -116,7 +116,7 @@ class TheRowsCatchUpWithoutTheWholePageBeingDrawn(LoginTestCase):
             for part in [part.split("<strong>")[1]]
         ]
 
-    def test_nothing_deployed_puts_them_all_first_in_alphabetical_order(self) -> None:
+    def test_nothing_deployed_is_alphabetical(self) -> None:
         answer = self.rows(served=())
 
         self.assertEqual(answer.status_code, 200)
@@ -124,17 +124,24 @@ class TheRowsCatchUpWithoutTheWholePageBeingDrawn(LoginTestCase):
             self.order(answer.json()["clusters"]["alpha"]), ["alpha-site", "middle", "zeta"]
         )
 
-    def test_a_deployed_object_leaves_the_top_and_joins_the_list(self) -> None:
+    def test_a_row_waiting_for_a_deploy_keeps_its_alphabetical_place(self) -> None:
         #
-        # `alpha-site` is first alphabetically, so an ordering that ignored the
-        # deploy state would look identical. It is served here, which must put
-        # it below the two that are still waiting.
+        # `middle` and `zeta` are waiting and `alpha-site` is served. The old
+        # order put the waiting two first; this one must not move anything.
         #
         answer = self.rows(served=("alpha-site",))
 
         self.assertEqual(
-            self.order(answer.json()["clusters"]["alpha"]), ["middle", "zeta", "alpha-site"]
+            self.order(answer.json()["clusters"]["alpha"]), ["alpha-site", "middle", "zeta"]
         )
+
+    def test_every_row_carries_the_address_its_name_links_to(self) -> None:
+        """The whole row opens the object (proxy-rows.js), so it needs the address."""
+
+        markup = self.rows(served=("alpha-site",)).json()["clusters"]["alpha"]
+
+        for name in ("alpha-site", "middle", "zeta"):
+            self.assertIn(f'data-href="/proxies/alpha/{name}"', markup)
 
     def test_the_counts_come_back_with_the_rows(self) -> None:
         counts = self.rows(served=()).json()["counts"]

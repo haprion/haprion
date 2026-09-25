@@ -7,14 +7,21 @@
 {% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=()) %}
 {% set drafted = unpublished | map(attribute='object_id') | list %}
 {#
-  Drafts first, then objects written but not deployed, then the rest. The
-  published list is long enough that an alphabetical position would hide the one
-  row that changed, and a row joins that order the moment the nodes are serving
-  it - which is why these rows are replaced in place rather than left until
-  somebody reloads.
+  One alphabetical list, whatever state a row is in. Drafts and rows waiting
+  for a deploy used to go first so the one that changed could not be missed,
+  and editing an object then moved it - which read as the list reshuffling
+  itself (2026-09-25). The badge in the protocol cell says what is
+  waiting; the position says nothing. The rows are still replaced in place,
+  since a badge changes while somebody is looking.
 #}
-{% for draft in unpublished %}
-      <tr class="proxy-draft"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol">{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% elif draft.object_id in failed %}{#
+{% set rows = [] %}
+{% for draft in unpublished %}{% set _ = rows.append((draft.object_id, 'draft', draft)) %}{% endfor %}
+{% for name in removed %}{% set _ = rows.append((name, 'removed', name)) %}{% endfor %}
+{% for object in written if object.name not in drafted %}{% set _ = rows.append((object.name, 'written', object)) %}{% endfor %}
+{% for proxy in foreign %}{% set _ = rows.append((proxy.name, 'foreign', proxy)) %}{% endfor %}
+{% for _name, kind, item in rows | sort(attribute='0') %}
+{% if kind == 'draft' %}{% set draft = item %}
+      <tr class="proxy-draft" data-href="/proxies/{{ cluster }}/{{ draft.object_id }}"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol">{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% elif draft.object_id in failed %}{#
         A publish that was refused used to leave this row saying "Draft" and
         nothing else. The row stopped spinning, the work stayed, and the reason
         was on the jobs page behind a click nobody had a reason to make - so
@@ -22,9 +29,8 @@
         back into a draft. The reason is named here; the full text is one click
         away, where it has room.
       #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}</td><td data-label="Hosts / ports"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
-{% endfor %}
 {#
-  Then what a finished removal took out of the repository and the nodes have
+  What a finished removal took out of the repository and the nodes have
   not stopped serving. The object is gone, so there is nothing to link to and
   nothing to say about its backends - but the site is still answering, and a
   listing that dropped the row would say it was gone while it was up.
@@ -33,9 +39,8 @@
   something on its way in. This one is on its way out, and the deploy is what
   finishes it.
 #}
-{% for name in removed %}
+{% elif kind == 'removed' %}{% set name = item %}
       <tr class="proxy-waiting"><td data-label="Proxy"><strong>{{ name }}</strong></td><td data-label="Protocol"><span class="status-badge status-badge-warning waiting-badge">Active · deploy to remove</span></td><td data-label="Hosts / ports"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td></tr>
-{% endfor %}
 {#
   Three badges now, and the third took a wrong turn first: it sat beside the
   hostnames, which is exactly what the note above the cell says not to do. It
@@ -78,8 +83,8 @@
   the generator names those after the address and protocol they bind, and an
   https object that redirects plain HTTP takes two of them.
 #}
-{% for object in written if object.name not in drafted %}
-      <tr{% if not object.serving %} class="proxy-waiting"{% endif %}>
+{% elif kind == 'written' %}{% set object = item %}
+      <tr{% if not object.serving %} class="proxy-waiting"{% endif %}{% if role == 'admin' %} data-href="/proxies/{{ cluster }}/{{ object.name }}"{% endif %}>
         <td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ object.name }}"><strong>{{ object.name }}</strong></a>{% else %}<strong>{{ object.name }}</strong>{% endif %}</td>
         {#
           What the nodes are serving this as, and not what the document intends.
@@ -119,12 +124,12 @@
         <td data-label="Health">{% set lamp = lamps.get(object.name) if lamps else none %}{% if lamp %}<span class="backend-health" title="{{ lamp.detail }}"><span class="status-dot status-{{ lamp.tone }}" aria-hidden="true"></span>{% if lamp.label %} {{ lamp.label }}{% endif %}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
         <td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td>
       </tr>
-{% endfor %}
 {#
-  And what this platform does not own. Here the frontend is the only thing there
+  What this platform does not own. Here the frontend is the only thing there
   is to show, so it is shown as itself.
 #}
-{% for proxy in foreign %}
-      <tr><td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ proxy.name }}"><strong>{{ proxy.name }}</strong></a>{% else %}<strong>{{ proxy.name }}</strong>{% endif %}{% if not proxy.enabled %}<small class="warning-text">Disabled</small>{% endif %}</td><td data-label="Protocol"><span class="protocol-badge protocol-{{ proxy.protocol }}">{{ proxy.protocol | upper }}</span></td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ proxy.hostnames | join(', ') if proxy.hostnames else 'No hostname rule' }} · {{ proxy.ports | join(', ') if proxy.ports else '—' }}</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-unmanaged">Unmanaged</span></td></tr>
+{% else %}{% set proxy = item %}
+      <tr{% if role == 'admin' %} data-href="/proxies/{{ cluster }}/{{ proxy.name }}"{% endif %}><td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ proxy.name }}"><strong>{{ proxy.name }}</strong></a>{% else %}<strong>{{ proxy.name }}</strong>{% endif %}{% if not proxy.enabled %}<small class="warning-text">Disabled</small>{% endif %}</td><td data-label="Protocol"><span class="protocol-badge protocol-{{ proxy.protocol }}">{{ proxy.protocol | upper }}</span></td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ proxy.hostnames | join(', ') if proxy.hostnames else 'No hostname rule' }} · {{ proxy.ports | join(', ') if proxy.ports else '—' }}</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-unmanaged">Unmanaged</span></td></tr>
+{% endif %}
 {% endfor %}
 {% endmacro %}

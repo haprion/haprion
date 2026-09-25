@@ -549,9 +549,8 @@ def listed_objects(
 
     serving = {hostname for proxy in published for hostname in proxy.hostnames}
     #
-    # Not yet serving first, then alphabetical. It is the row that changed, and
-    # a cluster's list is long enough that an alphabetical position hides it. A
-    # row joins the ordinary order the moment the nodes are serving it.
+    # Alphabetical, served or not - the badge says what is waiting, not the
+    # position (see `_proxy-rows.html`).
     #
     return tuple(
         sorted(
@@ -573,7 +572,7 @@ def listed_objects(
                 )
                 for view in cluster_object_views(reading)
             ),
-            key=lambda listed: (listed.serving, listed.name),
+            key=lambda listed: listed.name,
         )
     )
 

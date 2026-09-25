@@ -453,6 +453,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    the 900px where the table becomes cards, protocol is still 198px against a
    badge of 155. */
 .proxy-table { table-layout: fixed; }
+/* A row with an address opens it anywhere on the row (proxy-rows.js). */
+.proxy-table tr[data-href] { cursor: pointer; }
 .proxy-table th:nth-child(1), .proxy-table td:nth-child(1) { width: 20%; }
 .proxy-table th:nth-child(2), .proxy-table td:nth-child(2) { width: 22%; }
 .proxy-table th:nth-child(3), .proxy-table td:nth-child(3) { width: 36%; }

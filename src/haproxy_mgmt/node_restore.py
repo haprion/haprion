@@ -528,7 +528,7 @@ class Checked:
     answers: str = ""
 
 
-def _inspect_header(source: RestoreSource, mode: str) -> dict[str, Any]:
+def _inspect_header(source: RestoreSource, mode: str, run: str) -> dict[str, Any]:
     header: dict[str, Any] = {
         "op": "inspect",
         "names": sorted({a.name for a in source.accounts} | {g.name for g in source.groups}),
@@ -539,6 +539,9 @@ def _inspect_header(source: RestoreSource, mode: str) -> dict[str, Any]:
         header["hash"] = sorted(entry.path for entry in source.owned() if entry.kind == "file")
         header["list"] = [restore_plan.NETPLAN_DIR, *restore_plan.PRODUCT_DIRECTORIES]
         header["packages"] = list(restore_plan.PRODUCT_PACKAGES)
+        # Root's keys hold this run's one-time key by now; the agent leaves that
+        # line out of the file's digest, so a node nobody touched compares equal.
+        header["run"] = run
     return header
 
 
@@ -651,7 +654,7 @@ def check(
     archive = archive_path(backup_root, node, request.archive)
     source = read(archive)
     inspected = session.call(
-        request.target, _inspect_header(source, request.mode), progress=progress
+        request.target, _inspect_header(source, request.mode, request.run), progress=progress
     )
     if not inspected.get("ok"):
         raise RestoreError(f"the target could not be inspected: {inspected.get('error')}")

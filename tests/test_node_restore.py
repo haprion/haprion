@@ -553,6 +553,8 @@ class Overwrite(RestoreTest):
         self.assertEqual(summary["overwrite"]["backup"], "done")
         self.assertTrue(summary["overwrite"]["vip_owner"])
         self.assertEqual(FakeSession.calls[0][1]["list"][0], "/etc/netplan")
+        # So the agent can leave this run's one-time key out of root's keys.
+        self.assertRegex(FakeSession.calls[0][1]["run"], r"^r\d{6}-[0-9a-f]{8}$")
 
     def test_the_archived_host_key_makes_it_the_node_itself(self) -> None:
         """B184: one restore as the node; the key it answers with says which case."""

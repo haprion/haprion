@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from haproxy_mgmt import restore_agent
 from haproxy_mgmt.restore_agent import Failed, Host
@@ -53,6 +54,8 @@ class FakeHost(Host):
         self.preinstalled: set[str] = set()
         # What the bundle's 04-node-prepare prints, and node.conf as it renders it.
         self.prepare_stderr = ""
+        # Whether starting keepalived writes its state file, as the notify script does.
+        self.notifies = True
         self.rendered_node_conf: str | None = None
         for name, text in {
             "/etc/passwd": "root:x:0:0:root:/root:/bin/bash\n"
@@ -145,6 +148,11 @@ class FakeHost(Host):
             self.path("/etc/shadow").write_text("\n".join(lines) + "\n")
         elif argv[:2] == ["systemctl", "is-active"]:
             out = self.active.get(argv[2], "inactive") + "\n"
+        elif argv == ["systemctl", "start", "keepalived"] and self.notifies:
+            # keepalived's notify script, as it runs on the state it enters.
+            state = self.path("/run/haproxy/keepalived.state")
+            state.parent.mkdir(parents=True, exist_ok=True)
+            state.write_text("BACKUP\n")
         errors = ""
         if argv[0] == "bash" and argv[1].endswith("/install/04-node-prepare"):
             errors = self.prepare_stderr
@@ -474,7 +482,14 @@ class Apply(AgentTest):
         enable = self.host.commands.index(["/usr/local/sbin/haproxy-traffic-log-enable"])
         self.assertLess(self.host.commands.index(self.prepared()), enable)
 
-    def test_the_node_preparation_s_warnings_are_reported(self) -> None:
+    def test_the_node_preparation_s_warnings_are_reported_but_the_state_file_s(self) -> None:
+        """The state file is asked about in `finish`, once keepalived runs.
+
+        In `apply` keepalived has not been started yet, so the preparation's
+        warning that its state file is missing was true on every new VM and
+        said nothing (2026-09-25).
+        """
+
         self.host.prepare_stderr = (
             "WARNING: /run/haproxy/keepalived.state does not exist yet. A config reload\n"
             "WARNING:   does not always produce a state transition - force one by\n"
@@ -485,12 +500,7 @@ class Apply(AgentTest):
         result = self.apply()
         self.assertEqual(
             [w for w in result["warnings"] if w.startswith("node preparation")],
-            [
-                "node preparation: /run/haproxy/keepalived.state does not exist yet. A config "
-                "reload does not always produce a state transition - force one by restarting "
-                "keepalived on this node once.",
-                "node preparation: nopreempt is not set.",
-            ],
+            ["node preparation: nopreempt is not set."],
         )
 
     def test_a_node_conf_rendered_differently_is_reported(self) -> None:
@@ -692,6 +702,31 @@ class Overwrite(AgentTest):
         self.assertIn("/etc/haproxy-manager/stray", result["listing"]["/etc/haproxy-manager"])
         self.assertEqual(result["product_installed"], ["haproxy", "rsync"])
 
+    def test_root_s_keys_are_compared_without_this_run_s_one_time_key(self) -> None:
+        """The paste appends the one-time key; the restore takes it away again.
+
+        Counted as a difference, every overwrite said "1 of 34 files differ"
+        on a node nobody had touched (2026-09-25). Only this run's key is left
+        out - an older run's line, or any other, still counts.
+        """
+
+        archived = b"ssh-ed25519 AAAAoperator operator@desk\n"
+        keys = self.host.path("/root/.ssh/authorized_keys")
+        keys.parent.mkdir(parents=True, exist_ok=True)
+        keys.write_bytes(
+            archived
+            + b'from="192.0.2.7",restrict ssh-ed25519 AAAAone haproxy-restore-r260925-5cbabcd3\n'
+        )
+        header = {"op": "inspect", "names": [], "ids": [], "hash": ["/root/.ssh/authorized_keys"]}
+        this_run = self.serve({**header, "run": "r260925-5cbabcd3"})
+        other_run = self.serve({**header, "run": "r260925-00000000"})
+        self.assertEqual(
+            this_run["hashes"]["/root/.ssh/authorized_keys"], hashlib.sha256(archived).hexdigest()
+        )
+        self.assertNotEqual(
+            other_run["hashes"]["/root/.ssh/authorized_keys"], hashlib.sha256(archived).hexdigest()
+        )
+
     def test_the_copy_comes_first_and_keepalived_stops_before_any_write(self) -> None:
         result = self.apply()
         self.assertTrue(result["ok"], result)
@@ -822,6 +857,28 @@ class Overwrite(AgentTest):
         result = self.finish()
         self.assertTrue(result["ok"], result)
         self.assertNotIn("rollback-cancelled", [step["step"] for step in result["steps"]])
+
+    def test_a_keepalived_that_reports_its_state_is_not_warned_about(self) -> None:
+        self.apply()
+        self.host.active.update({"haproxy": "active", "keepalived": "active"})
+        result = self.finish()
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(any("keepalived.state" in w for w in result["warnings"]), result)
+
+    def test_a_keepalived_that_reports_no_state_is_warned_about_after_it_starts(self) -> None:
+        self.apply()
+        self.host.active.update({"haproxy": "active", "keepalived": "active"})
+        self.host.notifies = False
+        with mock.patch.object(restore_agent, "KEEPALIVED_STATE_WAIT", 0.0):
+            result = self.finish()
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(
+            any(
+                w.startswith("/run/haproxy/keepalived.state does not exist yet.")
+                for w in result["warnings"]
+            ),
+            result,
+        )
 
     def test_a_node_that_does_not_come_up_is_put_back_and_keeps_the_one_time_key(self) -> None:
         self.apply()

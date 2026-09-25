@@ -67,6 +67,15 @@ STATE = "/var/lib/haproxy-restore"
 NOT_EMPTY_IF_INSTALLED = ("haproxy", "keepalived")
 NETPLAN = "/etc/netplan"
 ROOT_KEYS = "/root/.ssh/authorized_keys"
+#
+# What keepalived's notify script writes on each state it enters. 04-node-prepare
+# warns when it is missing - which it always is when the preparation runs inside
+# `apply`, before `finish` starts keepalived. So that warning is held back there
+# and the question is asked again once keepalived has started.
+#
+KEEPALIVED_STATE = "/run/haproxy/keepalived.state"
+KEEPALIVED_STATE_MISSING = f"{KEEPALIVED_STATE} does not exist yet."
+KEEPALIVED_STATE_WAIT = 10.0
 POLICY_RC = "/usr/sbin/policy-rc.d"
 NODE_CONF = "/etc/haproxy-manager/node.conf"
 #
@@ -337,10 +346,23 @@ def inspect(host: Host, header: dict[str, Any], _payload: IO[bytes]) -> dict[str
     }
 
 
-def _sha256(path: Path) -> str | None:
+def _sha256(path: Path, *, without: str | None = None) -> str | None:
+    """The file's digest; `without` leaves out the lines that end with it.
+
+    Used for root's keys at an overwrite's preview: the paste has appended this
+    run's one-time key, which the restore takes away again, so it is not a
+    difference between the node and its archive.
+    """
+
     if path.is_symlink() or not path.is_file():
         return None
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    data = path.read_bytes()
+    if without is not None:
+        marker = without.encode()
+        data = b"".join(
+            line for line in data.splitlines(keepends=True) if not line.rstrip().endswith(marker)
+        )
+    return hashlib.sha256(data).hexdigest()
 
 
 def _tree(host: Host, directory: str) -> list[str]:
@@ -367,8 +389,13 @@ def _holdings(host: Host, header: dict[str, Any]) -> dict[str, Any]:
             raise Refused(f"the inspect header's {key} is not a list of names")
     listing = {directory: _tree(host, directory) for directory in header.get("list", [])}
     wanted = set(header.get("hash", [])) | {p for paths in listing.values() for p in paths}
+    run = str(header.get("run", ""))
+    one_time = f" haproxy-restore-{run}" if RUN_ID.fullmatch(run) else None
     return {
-        "hashes": {path: _sha256(host.path(path)) for path in sorted(wanted)},
+        "hashes": {
+            path: _sha256(host.path(path), without=one_time if path == ROOT_KEYS else None)
+            for path in sorted(wanted)
+        },
         "listing": listing,
         "product_installed": installed(host, tuple(header.get("packages", []))),
     }
@@ -779,6 +806,7 @@ def _node_bundle(
             warnings[-1] += " " + text.strip()
         else:
             warnings.append(text.strip())
+    warnings = [line for line in warnings if not line.startswith(KEEPALIVED_STATE_MISSING)]
     report.warnings += [f"node preparation: {line}" for line in warnings]
     report.step("node-bundle", root=header["node_bundle"]["root"], warnings=len(warnings))
 
@@ -1253,7 +1281,14 @@ def finish(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, 
     return {"steps": report.steps, "warnings": report.warnings}
 
 
-def _start(host: Host, header: dict[str, Any], certificates: list[str], report: Report) -> None:
+def _start(
+    host: Host,
+    header: dict[str, Any],
+    certificates: list[str],
+    report: Report,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
     # Certificates before configuration: the published configuration names
     # them by path and does not validate without them. Both scripts reload,
     # so HAProxy runs on the bootstrap release first (see BOOTSTRAP_CONFIG).
@@ -1274,6 +1309,16 @@ def _start(host: Host, header: dict[str, Any], certificates: list[str], report: 
     expected_keepalived = "active" if header["keepalived"] == "start" else "inactive"
     if states["haproxy"] != "active" or states["keepalived"] != expected_keepalived:
         raise Failed(f"services are not as expected: {states}")
+    if header["keepalived"] == "start":
+        waited = 0.0
+        while not host.path(KEEPALIVED_STATE).is_file() and waited < KEEPALIVED_STATE_WAIT:
+            sleep(0.5)
+            waited += 0.5
+        if not host.path(KEEPALIVED_STATE).is_file():
+            report.warnings.append(
+                f"{KEEPALIVED_STATE_MISSING} keepalived is running but has not reported a"
+                " state; force one by restarting keepalived on this node once."
+            )
 
 
 # --------------------------------------------------------------------------

@@ -298,6 +298,22 @@ class SigningIn(LoginTestCase):
         self.assertIn("Archives 1–10 per node · page 1 of 2", page.text)
         self.assertIn("data-archive-page-next>Older</button>", page.text)
 
+    def test_the_archive_list_stays_as_the_reader_left_it_across_a_redraw(self) -> None:
+        """Back up now redraws the page, and the job finishing redraws it again.
+
+        Both used to arrive with the list closed on page one. The list is keyed
+        by cluster so the script can put back what was open.
+        """
+
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        page = client.get("/backups")
+        self.assertIn('data-archive-list data-archive-cluster="', page.text)
+        script = client.get("/static/backups.js").text
+        self.assertIn('list.addEventListener("toggle", remember)', script)
+        self.assertIn("list.open = Boolean(kept.open)", script)
+        self.assertIn('querySelectorAll("[data-backup-now]")', script)
+
     def test_the_backup_schedule_editor_speaks_the_timer_s_calendar(self) -> None:
         """An admin with writes sees the schedule in words, and the form pre-filled from it."""
 

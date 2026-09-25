@@ -51,7 +51,7 @@
       {% if editable %}
       <div class="backup-now">
         {% if running %}<span class="status-badge status-badge-info" data-busy="{{ cluster.cluster }}"><span class="badge-spinner" aria-hidden="true"></span>{{ running }}</span>{% else %}
-        <form method="post" action="/operations" class="inline-form">
+        <form method="post" action="/operations" class="inline-form" data-backup-now>
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="backup_run"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups">
           <button class="secondary-button" type="submit">Back up now</button>
         </form>
@@ -73,7 +73,7 @@
       {% endfor %}
     </tbody></table></div>
     {% if cluster.archives %}
-    <details class="archive-details" data-archive-list data-archive-per-page="{{ archives_per_page }}" data-archive-deepest="{{ cluster.deepest }}">
+    <details class="archive-details" data-archive-list data-archive-cluster="{{ cluster.cluster }}" data-archive-per-page="{{ archives_per_page }}" data-archive-deepest="{{ cluster.deepest }}">
       <summary>{% if cluster.truncated %}{{ cluster.shown_count }} of {% endif %}{{ cluster.retained_count }} retained archive{{ '' if cluster.retained_count == 1 else 's' }} on these nodes</summary>
     <div class="table-scroll"><table class="node-table archive-table{% if editable %} archive-table-restore{% endif %}"><thead><tr><th>Archive</th><th>Node</th><th>Taken</th><th>Age</th><th>Size</th>{% if editable %}<th><span class="visually-hidden">Restore</span></th>{% endif %}</tr></thead><tbody>
       {% for archive in cluster.archives %}

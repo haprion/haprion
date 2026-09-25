@@ -346,6 +346,20 @@ def _internal_error() -> dict[str, Any]:
     }
 
 
+def _no_result() -> dict[str, Any]:
+    #
+    # Nothing at all is a different answer from a wrong one: a helper behind a
+    # socket that went quiet leaves no document on purpose, and may have acted.
+    # Its sentence is in the stderr excerpt beside this.
+    #
+    return {
+        "error": {
+            "code": "internal_error",
+            "message": "the operation ended without a result document and may have acted",
+        }
+    }
+
+
 def _sealed_profile(
     connection: Any, profile_id: str, *, ndes: bool = False
 ) -> operations.SealedProfileRow | None:
@@ -466,7 +480,7 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
         result = None
     elif envelope is None:
         state = outcome = "unknown"
-        result = _internal_error()
+        result = _no_result() if not completed.stdout.strip() else _internal_error()
     else:
         outcome = str(envelope.get("outcome", "unknown"))
         state = outcome if outcome in {"done", "partial", "failed", "blocked"} else "unknown"

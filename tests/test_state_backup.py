@@ -87,6 +87,41 @@ class StateBackupTests(unittest.TestCase):
             self.assertEqual(kept[0].name, "2026-09-17_05-00-00.tar.gz")
             self.assertEqual(kept[-1].name, "2026-09-04_05-00-00.tar.gz")
 
+    def test_an_archive_a_restore_run_waits_on_is_never_pruned(self) -> None:
+        """Review 2026-09-25, finding 3: the oldest kept archive is a fair choice
+        to restore, and the next backup - the timer's or the overwrite's own -
+        must not remove it from under the prepared run."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw) / "archives"
+            runs = Path(raw) / "restore"
+            directory.mkdir()
+            for day in range(1, 18):
+                (directory / f"2026-09-{day:02d}_05-00-00.tar.gz").write_bytes(b"archive")
+            for run, node, archive in (
+                ("r260925-aaaaaaaa", "n1", "2026-09-01_05-00-00"),
+                ("r260925-bbbbbbbb", "n2", "2026-09-02_05-00-00"),
+            ):
+                (runs / run).mkdir(parents=True)
+                (runs / run / "request.json").write_text(
+                    f'{{"node": "{node}", "archive": "{archive}"}}', encoding="utf-8"
+                )
+            (runs / "r260925-cccccccc").mkdir()  # no request.json: protects nothing
+
+            held = state_backup.held_by_restores(runs)
+            self.assertEqual(held, {("n1", "2026-09-01_05-00-00"), ("n2", "2026-09-02_05-00-00")})
+            state_backup._retain(directory, 14, frozenset(v for name, v in held if name == "n1"))
+
+            kept = {path.name for path in directory.glob("*.tar.gz")}
+            self.assertEqual(len(kept), 15)
+            self.assertIn("2026-09-01_05-00-00.tar.gz", kept)
+            # Another node's run protects nothing here.
+            self.assertNotIn("2026-09-02_05-00-00.tar.gz", kept)
+
+    def test_no_restore_directory_protects_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            self.assertEqual(state_backup.held_by_restores(Path(raw) / "missing"), frozenset())
+
     def test_a_failed_export_never_becomes_a_backup(self) -> None:
         def failed(
             node: Node, identity: DeployIdentity, destination: BinaryIO

@@ -3279,7 +3279,9 @@ itself: no arguments, the request on stdin, the answer on stdout - the same
 shape every other helper is run in, so the queue, the lease and the output cap
 are unchanged. The client connects to the socket, writes the request, closes its
 write side and passes the answer through untouched. When nothing listens, the
-answer is an envelope that says so (`dependency_unavailable`), never `unknown`.
+answer is an envelope that says so (`dependency_unavailable`), never `unknown`;
+a helper that was asked and went quiet leaves the job `unknown` (see the backup
+and restore helpers below).
 The helper's own stderr goes to the journal (`journalctl -u
 'haproxy-cert-receiver-helper@*'`), not to the job.
 
@@ -3290,6 +3292,39 @@ read-only, `/etc` writable - because writing `/etc` is the job. `full` and
 directly.
 
 Step 07 installs the socket wherever it installs a worker. It reaches no node.
+
+#### The worker's way to the backup and restore helpers
+
+Node backups from the interface and node restores go the same way as receivers,
+for the same reason from the other direction: both read root-only state archives
+under `backup_root`, a restore keeps its run and one-time key under
+`/var/lib/haproxy-mgmt/restore`, and both reach nodes over SSH as root. A sudoed
+child of the worker would inherit its read-only mount namespace.
+
+```
+/run/haproxy-mgmt/backup-job.sock       root:<worker> 0660, created by haproxy-backup-job-helper.socket
+haproxy-backup-job-helper@.service      backup_run and backup_schedule, as root, one instance per connection
+/run/haproxy-mgmt/node-restore.sock     root:<worker> 0660, created by haproxy-node-restore-helper.socket
+haproxy-node-restore-helper@.service    node_restore_prepare, _preview, node_restore and _discard, as root
+```
+
+The worker runs `haproxy-backup-job-ask` and `haproxy-node-restore-ask` from its
+own environment, exactly as it runs the receiver client. Two answers differ from
+a helper that ran and refused. Nothing listening is an envelope that says so
+(`dependency_unavailable`, `failed`): nothing ran. A helper that was asked and
+then went quiet - the client's time ran out, or the connection dropped - is
+**no** envelope, and the job ends `unknown`: the root service carries on without
+the client and may have finished. The client's sentence is in the job's stderr
+excerpt; the helper's own lines are in the journal (`journalctl -u
+'haproxy-node-restore-helper@*'`).
+
+The restore service needs `AF_NETLINK` besides the usual families: `ip route
+get` names the address the target will see the manager come from, which is what
+the one-time key's `from=` is limited to. `update-platform-release` refuses to
+run while a restore or backup job holds a live lease, because activation
+restarts the worker. Step 07 installs both sockets wherever it installs a
+worker; `haproxy-node-restore` and `haproxy-state-backup` at the terminal do not
+go this way, root runs them directly.
 
 #### Which clusters get polled
 

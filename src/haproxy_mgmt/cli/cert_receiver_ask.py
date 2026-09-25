@@ -41,6 +41,7 @@ TIMEOUT_SECONDS = 120.0
 
 EXIT_REFUSED = 1
 EXIT_UNAVAILABLE = 78
+EXIT_SILENT = 1
 
 __all__ = ["SOCKET_PATH", "TIMEOUT_SECONDS", "main"]
 
@@ -87,6 +88,16 @@ def main(
         answer = helper_socket.ask(
             request, path=socket_path, timeout=timeout, what="the receiver service"
         )
+    except helper_socket.HelperSilent as exc:
+        #
+        # Asked, then silent: the root service carries on without this client
+        # and may have acted. No document - the worker records an answer that
+        # never came as `unknown`, with this sentence as its reason.
+        #
+        errors.write(
+            f"ERROR: [helper_silent] {exc} It may still be working; its outcome is unknown.\n"
+        )
+        return EXIT_SILENT
     except helper_socket.HelperUnavailable as exc:
         errors.write(f"ERROR: [dependency_unavailable] {exc}\n")
         write_document(

@@ -32,6 +32,16 @@ class HelperUnavailable(Exception):
     """
 
 
+class HelperSilent(HelperUnavailable):
+    """The helper was asked and then went quiet, or dropped the connection.
+
+    Not "it did not run": the request reached a root service that carries on
+    without this client, so the operation may be half done or finished. A
+    caller must not write that as a failure - the worker's word for an answer
+    that never came is `unknown` (review 2026-09-25, finding 1).
+    """
+
+
 def ask(
     request: dict[str, Any],
     *,
@@ -75,9 +85,9 @@ def ask(
                     break
                 chunks.append(chunk)
         except TimeoutError as error:
-            raise HelperUnavailable(f"{lead} did not answer in time.") from error
+            raise HelperSilent(f"{lead} did not answer in time.") from error
         except OSError as error:
-            raise HelperUnavailable(f"{lead} stopped answering: {error}.") from error
+            raise HelperSilent(f"{lead} stopped answering: {error}.") from error
     finally:
         connection.close()
 

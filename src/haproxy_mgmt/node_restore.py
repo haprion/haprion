@@ -66,7 +66,7 @@ from haproxy_mgmt.restore_plan import PlannedFile, RestorePlan, Target, TestProf
 from haproxy_mgmt.restore_source import RestoreSource, content, read
 from haproxy_mgmt.status_collect import ask_node, collect
 
-RUN_ROOT = Path("/var/lib/haproxy-mgmt/restore")
+RUN_ROOT = state_backup.RESTORE_RUN_ROOT
 SSH = "/usr/bin/ssh"
 SSH_KEYGEN = "/usr/bin/ssh-keygen"
 SSH_KEYSCAN = "/usr/bin/ssh-keyscan"
@@ -75,7 +75,12 @@ ENVIRONMENT = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": "/root", "LANG":
 FINGERPRINT = re.compile(r"^SHA256:[A-Za-z0-9+/]{43}$")
 VERSION = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 ROLLBACK_SECONDS = 180
-SESSION_TIMEOUT = 900.0
+#
+# One SSH session, bounded below the worker's client (`node_restore_ask`, 840 s)
+# so a session that hangs ends in the helper's own words rather than the
+# client giving up first. A step is expected to take about a minute.
+#
+SESSION_TIMEOUT = 600.0
 #
 # From `prepare` to the start of `run`. Past it the run is gone and the operator
 # starts again (B182): a key nobody is about to use is a key
@@ -146,6 +151,18 @@ class Request:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Request:
+        #
+        # Written by `prepare` alone, root-only - but a file that lost a key is
+        # still an answer the helper has to give in words, not a traceback
+        # (review 2026-09-25, finding 4).
+        #
+        try:
+            return cls._from_dict(raw)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RestoreError(f"request.json in the run directory is incomplete: {exc}") from exc
+
+    @classmethod
+    def _from_dict(cls, raw: dict[str, Any]) -> Request:
         profile = raw.get("profile")
         return cls(
             run=raw["run"],
@@ -478,7 +495,7 @@ def prepare(
     directory = root / request.run
     directory.mkdir(mode=0o700)
     key = directory / "key"
-    subprocess.run(  # noqa: S603 - fixed binary, paths built here
+    completed = subprocess.run(  # noqa: S603 - fixed binary, paths built here
         [
             keygen,
             "-q",
@@ -491,9 +508,19 @@ def prepare(
             "-f",
             str(key),
         ],
-        check=True,
+        check=False,
+        capture_output=True,
+        text=True,
         env=ENVIRONMENT,
     )
+    if completed.returncode != 0:
+        #
+        # The directory goes with it: a run without its key can never be used,
+        # and leaving it would make the same run ID "already exist".
+        #
+        shutil.rmtree(directory, ignore_errors=True)
+        detail = completed.stderr.strip().splitlines()[-1:] or [f"exit {completed.returncode}"]
+        raise RestoreError(f"the one-time key could not be made: {detail[0]}")
     public = (directory / "key.pub").read_text(encoding="utf-8").strip()
     manager = source_of(request.target)
     until = time.strftime("%Y%m%d%H%M", time.gmtime(at + KEY_LIFETIME))

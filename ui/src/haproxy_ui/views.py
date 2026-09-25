@@ -2474,7 +2474,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """The page behind *Renew…*: one row, renewed the way its source is made."""
 
-        gate = _certificate_delete_gate(request)
+        gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -2491,7 +2491,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue the certbot or NDES renewal the page offered; a file goes to the upload route."""
 
-        gate = _certificate_delete_gate(request)
+        gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -2556,7 +2556,13 @@ def build_router(config: Config) -> APIRouter:
         #
         return RedirectResponse("/certificates?view=registry", status_code=303)
 
-    def _certificate_delete_gate(request: Request) -> AuthenticatedSession | Response:
+    def _admin_write_gate(request: Request) -> AuthenticatedSession | Response:
+        """Signed in, writes on, and an admin - every page that queues a change.
+
+        Named for certificate deletion once, its first user; the backup and
+        restore pages were gated by a name that said otherwise.
+        """
+
         session = current_session(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
@@ -2619,7 +2625,7 @@ def build_router(config: Config) -> APIRouter:
 
         if action not in certificate_retarget.ACTIONS:
             return PlainTextResponse("Not found", status_code=404)
-        gate = _certificate_delete_gate(request)
+        gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -2648,7 +2654,7 @@ def build_router(config: Config) -> APIRouter:
 
         if action not in certificate_retarget.ACTIONS:
             return PlainTextResponse("Not found", status_code=404)
-        gate = _certificate_delete_gate(request)
+        gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -2822,7 +2828,7 @@ def build_router(config: Config) -> APIRouter:
     def certificate_receivers_page(request: Request) -> Response:
         """Who fetches from this manager, and what each host runs to do it."""
 
-        gate = _certificate_delete_gate(request)
+        gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         return _receivers_page(request, gate)
@@ -2831,7 +2837,7 @@ def build_router(config: Config) -> APIRouter:
     def certificate_receiver_form(request: Request) -> Response:
         """Register a receiver: its own page, like a new certificate is."""
 
-        gate = _certificate_delete_gate(request)
+        gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         if _registry_overview(request) is None:
@@ -2907,7 +2913,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue one `cert_receiver` add job, or draw the form again saying why not."""
 
-        gate = _certificate_delete_gate(request)
+        gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -2941,7 +2947,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue one `cert_receiver` remove job for a receiver nothing publishes to."""
 
-        gate = _certificate_delete_gate(request)
+        gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -2973,7 +2979,7 @@ def build_router(config: Config) -> APIRouter:
         about a change, not a view somebody should bookmark.
         """
 
-        gate = _certificate_delete_gate(request)
+        gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -2997,7 +3003,7 @@ def build_router(config: Config) -> APIRouter:
         on the job's rows.
         """
 
-        gate = _certificate_delete_gate(request)
+        gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -4046,7 +4052,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Start a restore from one archive row: the target and the mode."""
 
-        gate = _certificate_delete_gate(request)
+        gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         return _restore_form_page(request, gate, cluster=cluster, node=node, archive=archive)
@@ -4067,7 +4073,7 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         """Queue `node_restore_prepare` under a new run ID, then show the run."""
 
-        gate = _certificate_delete_gate(request)
+        gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")
@@ -4133,7 +4139,7 @@ def build_router(config: Config) -> APIRouter:
     def _restore_step(
         request: Request, run: str, csrf_token: str, idempotency_key: str
     ) -> tuple[AuthenticatedSession, node_restores.RestoreRun, UUID] | Response:
-        gate = _certificate_delete_gate(request)
+        gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
         token = request.cookies.get(auth.SESSION_COOKIE, "")

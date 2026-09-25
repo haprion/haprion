@@ -33,6 +33,50 @@ class ARealDatabase(unittest.TestCase):
         role = os.environ[role_variable]
         return psycopg.connect(f"{DSN} user={role}")
 
+    def test_the_release_guard_names_a_running_restore_and_nothing_else(self) -> None:
+        """`update-platform-release` asks this before it restarts the worker.
+
+        The query is read out of the script, so what is proved here is what
+        runs. A running restore with a live lease is named; a finished one, a
+        running deploy, and a restore whose lease has run out are not.
+        """
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/update-platform-release"
+        text = script.read_text()
+        start = text.index('-c "', text.index("no node restore or backup is running")) + 4
+        query = text[start : text.index('")"', start)]
+        #
+        # One cluster each: a cluster has one active job at a time.
+        #
+        rows = (
+            ("alpha", "node_restore", "running", "10 minutes"),
+            ("beta", "node_restore", "done", None),
+            ("gamma", "deploy", "running", "10 minutes"),
+            ("delta", "backup_run", "running", "-1 minute"),
+        )
+        with self.connect() as connection, connection.cursor() as cursor:
+            ids = []
+            for cluster, operation, state, lease in rows:
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "claim_token, worker_id, lease_until, started_at, finished_at) "
+                    "values (%(operation)s, %(cluster)s, '{}', %(key)s, %(state)s, %(token)s, "
+                    "'w', now() + %(lease)s::interval, now(), "
+                    "case when %(state)s = 'running' then null else now() end) returning id",
+                    {
+                        "cluster": cluster,
+                        "operation": operation,
+                        "key": uuid4(),
+                        "state": state,
+                        "token": uuid4() if lease else None,
+                        "lease": lease,
+                    },
+                )
+                ids.append(cursor.fetchone()[0])
+            cursor.execute(query)
+            self.assertEqual(cursor.fetchone(), (f"node_restore (job {ids[0]})",))
+            connection.rollback()
+
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")

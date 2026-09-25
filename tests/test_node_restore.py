@@ -175,6 +175,32 @@ class Prepare(RestoreTest):
         self.assertIn("sudo tail -n 1 /root/.ssh/authorized_keys", prepared["paste"])
         self.assertEqual(FakeSession.calls, [])
 
+    def test_a_key_that_cannot_be_made_is_a_refusal_that_leaves_no_run(self) -> None:
+        """Review 2026-09-25, finding 4: it went through the helper as a traceback."""
+
+        request = Request(
+            run="r260101-0000bbbb",
+            cluster="alpha",
+            node="node-a",
+            archive=VERSION,
+            target="192.0.2.120",
+            mode="new_vm",
+            profile=None,
+        )
+        with self.assertRaises(RestoreError) as raised:
+            node_restore.prepare(
+                self.root, request, source_of=lambda _: "192.0.2.7", keygen="/bin/false"
+            )
+
+        self.assertIn("one-time key could not be made", str(raised.exception))
+        self.assertFalse((self.root / "r260101-0000bbbb").exists())
+
+    def test_a_request_file_missing_a_key_is_a_refusal_in_words(self) -> None:
+        with self.assertRaises(RestoreError) as raised:
+            Request.from_dict({"run": "r260101-0000cccc", "cluster": "alpha"})
+
+        self.assertIn("request.json in the run directory is incomplete", str(raised.exception))
+
     def test_the_archive_must_be_in_the_nodes_own_listing(self) -> None:
         node = Node("node-a", "192.0.2.21")
         self.assertTrue(node_restore.archive_path(self.backups, node, VERSION).is_file())

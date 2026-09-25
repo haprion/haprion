@@ -38,6 +38,22 @@ version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "${source_tree}/ui/pyproject.tom
 [[ -n "$version" ]] || die "cannot read the version from ui/pyproject.toml"
 release_id="${version}-${commit}"
 
+#
+# Activation restarts the worker. A node restore or backup runs in a root
+# helper behind a socket, which carries on without the worker; the job then
+# has no answer and ends `unknown` for a run that changed a node. So the
+# release waits for them rather than orphaning one. Only a live lease counts:
+# a job whose worker is already gone is the worker's recovery to judge.
+#
+step "Checking that no node restore or backup is running"
+busy="$(psql -U "$DB_MIGRATION_ROLE" -d "$DB_NAME" -qtAX -c "
+    select string_agg(operation || ' (job ' || id || ')', ', ' order by id)
+    from job
+    where state = 'running' and lease_until > now()
+      and (operation like 'node_restore%' or operation = 'backup_run')")" \
+    || die "cannot read the job table to see whether a restore is running"
+[[ -z "$busy" ]] || die "wait for ${busy} to finish; this release restarts the worker"
+
 step "Preparing ${release_id}"
 ./install-ui-release --prepare "$answers" "$source_tree"
 

@@ -106,14 +106,23 @@ class AcrossTheSocket(unittest.TestCase):
         self.assertIn("haproxy-cert-receiver-helper.socket", document["error"]["message"])
         self.assertIn("not installed", err)
 
-    def test_a_service_that_never_answers_is_given_up_on(self) -> None:
+    def test_a_service_that_never_answers_is_given_up_on_without_a_verdict(self) -> None:
+        """Asked and silent is not "failed": the root service may have acted.
+
+        No document, so the worker records the job as `unknown`; the sentence
+        goes to stderr, which the job keeps (review 2026-09-25, finding 1).
+        """
+
         listener = Listener(self.path, None)
         self.addCleanup(listener.close)
 
-        code, out, _ = run(self.request, socket_path=self.path)
+        code, out, err = run(self.request, socket_path=self.path)
 
-        self.assertEqual(code, cert_receiver_ask.EXIT_UNAVAILABLE)
-        self.assertIn("did not answer in time", json.loads(out)["error"]["message"])
+        self.assertEqual(code, cert_receiver_ask.EXIT_SILENT)
+        self.assertEqual(out, "")
+        self.assertIn("[helper_silent]", err)
+        self.assertIn("did not answer in time", err)
+        self.assertNotIn("Install", err)
 
 
 class WhatItRefusesItself(unittest.TestCase):

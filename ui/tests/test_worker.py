@@ -269,6 +269,21 @@ class UndeterminedEndings(WorkerTestCase):
 
         self.assertEqual(self.finished[0]["state"], "unknown")
 
+    def test_no_document_at_all_is_unknown_and_says_it_may_have_acted(self) -> None:
+        """A helper behind a socket that went quiet leaves nothing on purpose.
+
+        Its reason is on stderr; the result must not call it an invalid
+        document, which reads as a bug rather than an answer that never came.
+        """
+
+        with mock.patch.object(
+            execution, "run", return_value=completed(stdout="", stderr="ERROR: [helper_silent] x")
+        ):
+            worker.run_one_job(self.connection, claimed(), worker=WORKER)
+
+        self.assertEqual(self.finished[0]["state"], "unknown")
+        self.assertIn("may have acted", self.finished[0]["result"]["error"]["message"])
+
     def test_oversized_stdout_is_an_internal_error_without_being_parsed(self) -> None:
         with mock.patch.object(
             execution,

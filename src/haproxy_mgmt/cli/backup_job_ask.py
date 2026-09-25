@@ -55,6 +55,16 @@ def main(
         answer = helper_socket.ask(
             request, path=socket_path, timeout=timeout, what="the backup job service"
         )
+    except helper_socket.HelperSilent as exc:
+        #
+        # Asked, then silent: the root service carries on without this client
+        # and may have acted. No document - the worker records an answer that
+        # never came as `unknown`, with this sentence as its reason.
+        #
+        errors.write(
+            f"ERROR: [helper_silent] {exc} It may still be working; its outcome is unknown.\n"
+        )
+        return 1
     except helper_socket.HelperUnavailable as exc:
         errors.write(f"ERROR: [dependency_unavailable] {exc}\n")
         write_document(

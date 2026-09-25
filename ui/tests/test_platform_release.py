@@ -89,6 +89,14 @@ class CoordinatedUpdateTests(unittest.TestCase):
         self.assertLess(database, candidate)
         self.assertLess(candidate, activate)
 
+    def test_a_running_restore_stops_the_release_before_anything_moves(self) -> None:
+        """Activation restarts the worker; a restore behind the socket would be orphaned."""
+
+        guard = self.update.index('step "Checking that no node restore or backup is running"')
+        prepare = self.update.index("install-ui-release --prepare")
+        self.assertLess(guard, prepare)
+        self.assertIn("lease_until > now()", self.update)
+
     def test_both_post_switch_failures_restore_the_previous_release(self) -> None:
         self.assertEqual(self.update.count("restore_previous\n"), 2)
         self.assertIn('"$rollback" --to "$previous_id"', self.update)

@@ -13,6 +13,8 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from haproxy_mgmt.cluster_status import keepalived_state
+
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.db import ClusterStatus
 
@@ -215,7 +217,7 @@ def _node_view(value: Any) -> NodeView:
     runtime = _mapping(status.get("runtime"))
     validation = _mapping(status.get("config_validation"))
 
-    keepalived_state = _text(keepalived.get("state"))
+    reported_state = _text(keepalived.get("state"))
     vip_label = "Owner" if vip.get("owner") is True else "Standby"
     if vip.get("owner") is None:
         vip_label = "Unknown"
@@ -225,7 +227,7 @@ def _node_view(value: Any) -> NodeView:
     detail: str
     if haproxy.get("active") is not True:
         label, tone, detail = "HAProxy stopped", "critical", "The proxy service is not active"
-    elif keepalived.get("active") is not True or keepalived_state not in {"MASTER", "BACKUP"}:
+    elif keepalived.get("active") is not True or reported_state not in {"MASTER", "BACKUP"}:
         label, tone, detail = (
             "Keepalived fault",
             "critical",
@@ -248,7 +250,7 @@ def _node_view(value: Any) -> NodeView:
         label=label,
         tone=tone,
         detail=detail,
-        keepalived=keepalived_state,
+        keepalived=_text(keepalived_state(keepalived)),
         vip=vip_label,
         version=_version(release.get("version")),
         runtime=f"{_text(runtime.get('version'))} · {_duration(runtime.get('uptime_sec'))}",

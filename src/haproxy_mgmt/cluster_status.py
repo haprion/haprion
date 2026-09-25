@@ -407,3 +407,20 @@ def parse_status(payload: object) -> ClusterStatus:
         warnings=tuple(str(item) for item in warnings) if isinstance(warnings, Sequence) else (),
         summary=summary,
     )
+
+
+def keepalived_state(keepalived: Any) -> str | None:
+    """The VRRP state to show for a node: STOPPED when keepalived is not running.
+
+    The node reports two facts - whether the service is active, and what its
+    notify script last wrote to the state file - and the file outlives a
+    stopped keepalived. Shown as it stood, a stopped node read MASTER beside
+    "Keepalived: INACTIVE" (2026-09-25). CLI and interface both show this.
+    """
+
+    if not isinstance(keepalived, dict):
+        return None
+    if keepalived.get("active") is False:
+        return "STOPPED"
+    state = keepalived.get("state")
+    return state if isinstance(state, str) and state else None

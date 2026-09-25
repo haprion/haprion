@@ -18,6 +18,7 @@ from pathlib import Path
 
 import yaml
 
+from haproxy_mgmt import cluster_status
 from haproxy_mgmt.cli import status, status_helper
 from haproxy_mgmt.config import Node
 from haproxy_mgmt.status_collect import NodeResponse
@@ -430,3 +431,19 @@ class CallerTests(HelperFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeepalivedStateTests(unittest.TestCase):
+    """The state file outlives a stopped keepalived; what is shown must not."""
+
+    def test_a_stopped_keepalived_reads_stopped_whatever_the_file_says(self) -> None:
+        self.assertEqual(
+            cluster_status.keepalived_state({"active": False, "state": "MASTER"}), "STOPPED"
+        )
+
+    def test_a_running_keepalived_reads_its_state(self) -> None:
+        self.assertEqual(
+            cluster_status.keepalived_state({"active": True, "state": "BACKUP"}), "BACKUP"
+        )
+        self.assertIsNone(cluster_status.keepalived_state({"active": True, "state": None}))
+        self.assertIsNone(cluster_status.keepalived_state(None))

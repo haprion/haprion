@@ -57,6 +57,33 @@ class HealthDerivation(unittest.TestCase):
         self.assertEqual(cluster.nodes[0].label, "HAProxy stopped")
         self.assertNotEqual(cluster.label, "Healthy")
 
+    def test_a_stopped_keepalived_reads_stopped_not_its_last_state(self) -> None:
+        """The state file outlives keepalived: a stopped owner still read MASTER."""
+
+        status = reading("done-single-owner.json")
+        result = dict(status.result)
+        nodes = [dict(node) for node in result["nodes"]]
+        nodes[0]["status"] = dict(nodes[0]["status"])
+        nodes[0]["status"]["keepalived"] = {
+            **nodes[0]["status"]["keepalived"],
+            "active": False,
+            "state": "MASTER",
+        }
+        result["nodes"] = nodes
+        cluster = self.dashboard(
+            ClusterStatus(
+                cluster=status.cluster,
+                observed_at=status.observed_at,
+                outcome=status.outcome,
+                result=result,
+                warnings=status.warnings,
+                error=status.error,
+                poll_error=None,
+            )
+        ).clusters[0]
+        self.assertEqual(cluster.nodes[0].keepalived, "STOPPED")
+        self.assertEqual(cluster.nodes[0].label, "Keepalived fault")
+
     def test_stats_failure_is_distinct_from_an_unreachable_node(self) -> None:
         status = reading("done-single-owner.json")
         result = dict(status.result)

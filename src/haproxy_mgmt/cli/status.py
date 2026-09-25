@@ -25,7 +25,7 @@ from collections.abc import Callable
 from typing import Any, TextIO
 
 from haproxy_mgmt.cli.caller import usage
-from haproxy_mgmt.cluster_status import StatusError, parse_status
+from haproxy_mgmt.cluster_status import StatusError, keepalived_state, parse_status
 from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.status_collect import EXIT_UNAVAILABLE, OPERATION
 
@@ -163,7 +163,7 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         writer.write(
             f"  Keepalived:   {'ACTIVE' if status['keepalived']['active'] else 'INACTIVE'}\n"
         )
-        writer.write(f"  KA state:     {status['keepalived']['state'] or 'UNKNOWN'}\n")
+        writer.write(f"  KA state:     {keepalived_state(status['keepalived']) or 'UNKNOWN'}\n")
         writer.write(f"  VIP owner:    {status['vip']['owner']}\n")
         writer.write(f"  Runtime:      {'OK' if status['stats_ok'] else 'FAILED'}\n")
         writer.write(f"  Version:      {_release_line(node)}\n")

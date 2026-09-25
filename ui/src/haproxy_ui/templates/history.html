@@ -40,7 +40,6 @@
       {% if running %}
       <div class="action-buttons" data-busy="{{ cluster.cluster }}">
         <span class="status-badge status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>{{ running }}</span>
-        <a class="secondary-button" href="/jobs">Follow it</a>
       </div>
       {% else %}
       <div class="action-buttons"><form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="history"><button class="secondary-button" type="submit">Deploy configuration</button></form></div>

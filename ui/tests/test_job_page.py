@@ -171,7 +171,7 @@ class JobPageTests(LoginTestCase):
         # updates has already said so, and a standing label about a mechanism
         # is one more thing to read on the page read most often.
         #
-        self.assertIn('<meta http-equiv="refresh" content="5">', page.text)
+        self.assertIn('<meta name="haproxy-live" content="5"><noscript><meta http-equiv="refresh" content="5"></noscript>', page.text)
         self.assertNotIn("Refreshing every 5 s", page.text)
 
     def test_a_reader_is_never_shown_the_operation_diagnostics(self) -> None:

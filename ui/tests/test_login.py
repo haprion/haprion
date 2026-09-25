@@ -313,6 +313,26 @@ class SigningIn(LoginTestCase):
         self.assertIn('list.addEventListener("toggle", remember)', script)
         self.assertIn("list.open = Boolean(kept.open)", script)
         self.assertIn('querySelectorAll("[data-backup-now]")', script)
+        self.assertIn('document.addEventListener("haproxy-ui:redrawn", wireAll)', script)
+
+    def test_a_finished_job_redraws_the_content_rather_than_reloading_the_page(self) -> None:
+        """A reload blinked the page twice after Back up now: the job, then the reading.
+
+        The content is swapped in place; a reload is left only as the answer to
+        a page that came back in another shape, such as a login form.
+        """
+
+        client = self.client(replace(configuration(), demo_fixture=True))
+        self.sign_in(client)
+        waiting = client.get("/static/waiting.js").text
+        self.assertEqual(waiting.count("redraw();"), 2)
+        self.assertIn("window.haproxyUi.redraw()", waiting)
+        live = client.get("/static/live.js").text
+        self.assertIn("response.redirected", live)
+        self.assertIn("parsed.title !== document.title", live)
+        self.assertIn('fresh.querySelectorAll("script").forEach((script) => script.remove())', live)
+        self.assertIn('meta[name="haproxy-live"]', live)
+        self.assertIn("/static/live.js", client.get("/backups").text)
 
     def test_the_backup_schedule_editor_speaks_the_timer_s_calendar(self) -> None:
         """An admin with writes sees the schedule in words, and the form pre-filled from it."""

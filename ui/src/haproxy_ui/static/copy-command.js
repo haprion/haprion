@@ -11,7 +11,13 @@
   // to miss.
   const COPY = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>';
   const DONE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 5 5L20 7"></path></svg>';
-  document.querySelectorAll(".receiver-command").forEach((box) => {
+  //
+  // Wired on load and again after live.js has swapped in the page's content,
+  // which arrives without the buttons this adds. A box that has one is left.
+  //
+  const wire = () => document.querySelectorAll(".receiver-command").forEach((box) => {
+    if (box.dataset.copyWired) return;
+    box.dataset.copyWired = "1";
     const beside = "copyBeside" in box.dataset;
     const idle = beside ? `${COPY}<span>Copy</span>` : COPY;
     const done = beside ? `${DONE}<span>Copied</span>` : DONE;
@@ -42,4 +48,6 @@
       box.appendChild(button);
     }
   });
+  wire();
+  document.addEventListener("haproxy-ui:redrawn", wire);
 })();

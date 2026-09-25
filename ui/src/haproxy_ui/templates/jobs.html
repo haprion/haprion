@@ -5,11 +5,11 @@
   nothing is. A page that reloaded forever would close the diagnostics somebody
   opened to read why a job failed - which is the moment this page matters most.
 
-  A meta refresh rather than a script: it needs no state, survives a browser
-  with JavaScript turned off, and a full reload is what actually re-reads the
-  job table anyway.
+  Redrawn in place by live.js, which keeps an opened diagnostics open by the
+  job's id; the meta refresh is the fallback inside <noscript>, for a browser
+  with JavaScript turned off.
 #}
-{% block head_extra %}{% if jobs.active_count %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block head_extra %}{% if jobs.active_count %}<meta name="haproxy-live" content="5"><noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}{% endblock %}
 {% block content %}
 <section class="page-heading">
   <div class="heading-title"><h1>Jobs</h1><p class="page-lede">The newest management requests and their recorded outcome.</p></div>
@@ -93,7 +93,7 @@
         <td colspan="8">
           {% if not job.error_code %}<span class="status-dot status-{{ job.tone }}" aria-hidden="true"></span><span>Job {{ job.id }}</span>{% endif %}
           {% if job.error_code %}<span class="status-dot status-critical" aria-hidden="true"></span><span>Job {{ job.id }} · Reason:</span> <code>{{ job.error_code }}</code>{% if job.error_message %} <span class="job-error-message">— {{ job.error_message }}</span>{% endif %}{% endif %}
-          {% if job.diagnostics %}<details class="job-diagnostics"><summary>Diagnostics</summary><pre>{{ job.diagnostics }}</pre></details>{% endif %}
+          {% if job.diagnostics %}<details class="job-diagnostics" data-keep="job-{{ job.id }}"><summary>Diagnostics</summary><pre>{{ job.diagnostics }}</pre></details>{% endif %}
         </td>
       </tr>
       {% endif %}

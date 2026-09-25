@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}NDES providers — HAProxy Manager{% endblock %}
-{% block head_extra %}{% if refresh %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
+{% block head_extra %}{% if refresh %}<meta name="haproxy-live" content="3"><noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endblock %}
 {% block content %}
 {#
   The DNS providers page, for the other credential (B152): one master

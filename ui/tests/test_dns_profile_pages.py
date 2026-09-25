@@ -415,7 +415,7 @@ class SavingAProfile(ProfileRouteTestCase):
         ):
             page = self.writing_client().get("/dns-profiles").text
         self.assertIn("Applying", page)
-        self.assertIn('http-equiv="refresh" content="3"', page)
+        self.assertIn('<meta name="haproxy-live" content="3"><noscript><meta http-equiv="refresh" content="3"></noscript>', page)
         self.assertNotIn('href="/jobs"', page.split("<main")[1])
 
     def test_a_refusal_redraws_the_form_without_the_secret(self) -> None:

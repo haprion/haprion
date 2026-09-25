@@ -21,6 +21,8 @@
     DOMContentLoaded, once the button exists.
   #}
   <script src="{{ url_for('static', path='/theme.js') }}?v={{ asset_token }}"></script>
+  {# Redraws a page's content in place when something on it moves; see live.js. #}
+  <script defer src="{{ url_for('static', path='/live.js') }}?v={{ asset_token }}"></script>
   {# A page that has something moving on it says so here. #}
   {% block head_extra %}{% endblock %}
 </head>

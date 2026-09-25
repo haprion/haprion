@@ -19,8 +19,9 @@
   //
   // A certificate job changes this page without a click. The old meta refresh
   // kept the address the document first loaded at, so switching views in place
-  // and then reaching its timer jumped back to that first view. Reload the
-  // browser's current address instead; history and the visible view now agree.
+  // and then reaching its timer jumped back to that first view. Redraw the
+  // browser's current address instead (live.js), in place rather than as a
+  // reload; history and the visible view now agree.
   //
   let refreshTimer = null;
   const wireRefresh = () => {
@@ -28,7 +29,10 @@
     refreshTimer = null;
     const region = document.querySelector(REGION);
     if (region && region.dataset.refresh === "true") {
-      refreshTimer = window.setTimeout(() => window.location.reload(), 3000);
+      refreshTimer = window.setTimeout(() => {
+        if (window.haproxyUi) window.haproxyUi.redraw();
+        else window.location.reload();
+      }, 3000);
     }
   };
 
@@ -114,6 +118,15 @@
   //
   window.addEventListener("popstate", () => {
     swap(window.location.href, false).catch(() => window.location.reload());
+  });
+
+  //
+  // A finished job redraws the page's content in place (waiting.js), and the
+  // region it brings is new.
+  //
+  document.addEventListener("haproxy-ui:redrawn", () => {
+    wireDeletion();
+    wireRefresh();
   });
 
   wireDeletion();

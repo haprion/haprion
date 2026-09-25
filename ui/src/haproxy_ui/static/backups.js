@@ -47,18 +47,19 @@
   };
 
   //
-  // A reload keeps its place by itself; the form's redirect lands at the top.
+  // The form's redirect lands at the top; this puts the reader back.
   //
-  const keepPosition = () => {
-    document.querySelectorAll("[data-backup-now]").forEach((form) => {
-      form.addEventListener("submit", () => {
-        try {
-          sessionStorage.setItem(POSITION, String(window.scrollY));
-        } catch (error) {
-          // As above.
-        }
-      });
+  const keepPosition = (form) => {
+    form.addEventListener("submit", () => {
+      try {
+        sessionStorage.setItem(POSITION, String(window.scrollY));
+      } catch (error) {
+        // As above.
+      }
     });
+  };
+
+  const restorePosition = () => {
     try {
       const saved = sessionStorage.getItem(POSITION);
       sessionStorage.removeItem(POSITION);
@@ -86,11 +87,7 @@
     const remember = () => keepView(cluster, { open: list.open, page: current });
     list.open = Boolean(kept.open);
     list.addEventListener("toggle", remember);
-    //
-    // The toggle event is queued, not immediate: a close followed at once by a
-    // redraw would otherwise bring the list back open.
-    //
-    window.addEventListener("pagehide", remember);
+    list.addEventListener(KEEP, remember);
     const perPage = Number(list.dataset.archivePerPage) || 10;
     const deepest = Number(list.dataset.archiveDeepest) || 0;
     const pages = Math.max(Math.ceil(deepest / perPage), 1);
@@ -124,9 +121,30 @@
     show();
   };
 
-  window.addEventListener("DOMContentLoaded", () => {
+  //
+  // The toggle event is queued, not immediate: a close followed at once by a
+  // reload would otherwise bring the list back open. Asked of the lists on the
+  // page when it is left, so a list a redraw replaced is not asked.
+  //
+  const KEEP = "archive-keep";
+  window.addEventListener("pagehide", () => {
+    document.querySelectorAll("[data-archive-list]").forEach((list) => {
+      list.dispatchEvent(new Event(KEEP));
+    });
+  });
+
+  //
+  // On load, and again when waiting.js has swapped in the page's content.
+  //
+  const wireAll = () => {
     document.querySelectorAll("[data-schedule-form]").forEach(wire);
     document.querySelectorAll("[data-archive-list]").forEach(page);
-    keepPosition();
+    document.querySelectorAll("[data-backup-now]").forEach(keepPosition);
+  };
+
+  window.addEventListener("DOMContentLoaded", () => {
+    wireAll();
+    restorePosition();
   });
+  document.addEventListener("haproxy-ui:redrawn", wireAll);
 })();

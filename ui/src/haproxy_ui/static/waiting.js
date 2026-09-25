@@ -33,8 +33,9 @@
   // page draws a spinner where its buttons were, and what it needs back is
   // those buttons - a form carrying a CSRF token and a fresh idempotency key,
   // neither of which a browser may mint. So that page asks the server for
-  // itself again, once, at the moment the answer changed. It is a redraw, but
-  // one per finished job rather than one every few seconds.
+  // itself again, once, at the moment the answer changed, and swaps in what
+  // came back. It is a redraw, but one per finished job rather than one every
+  // few seconds.
   //
   const rows = () => document.querySelectorAll("tbody[data-cluster]").length > 0;
 
@@ -110,6 +111,22 @@
     });
   };
 
+  //
+  // The page asked for again and its content swapped in, instead of a reload
+  // (live.js). A reload blanked the page and drew it again a few seconds after
+  // Back up now - twice, once for the job and once for the reading after it -
+  // and closed everything the reader had opened.
+  //
+  const redraw = () => {
+    if (!window.haproxyUi) {
+      window.location.reload();
+      return;
+    }
+    window.haproxyUi.redraw().then(() => {
+      asked = 0;
+    });
+  };
+
   let asked = 0;
 
   const tick = () => {
@@ -150,7 +167,7 @@
           // poller has read the nodes again.
           //
           watch(true);
-          window.location.reload();
+          redraw();
           return;
         }
         if (!watching()) return;
@@ -161,7 +178,7 @@
         );
         if (moved) {
           watch(false);
-          window.location.reload();
+          redraw();
         }
       })
       .catch(() => {

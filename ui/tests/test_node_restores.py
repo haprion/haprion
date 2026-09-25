@@ -527,7 +527,7 @@ class FollowingARun(RestoreRouteTestCase):
     def test_a_working_run_refreshes_itself(self) -> None:
         self.runs = [job("node_restore_prepare", "running")]
         page = self.writing_client().get(f"/backups/restore/{RUN}").text
-        self.assertIn('<meta http-equiv="refresh" content="5">', page)
+        self.assertIn('<meta name="haproxy-live" content="5"><noscript><meta http-equiv="refresh" content="5"></noscript>', page)
         self.assertIn("Preparing restore.", page)
 
     def test_a_prepared_run_shows_the_line_and_asks_for_the_fingerprint(self) -> None:

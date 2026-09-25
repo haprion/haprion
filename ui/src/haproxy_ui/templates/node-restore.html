@@ -1,10 +1,11 @@
 {% extends "layout.html" %}
 {% block title %}Restore {{ restore.node }} — HAProxy Manager{% endblock %}
 {#
-  A meta refresh while a job is queued or running, as /jobs does: no script,
-  no state, and a page left open in a tab ends up showing the answer.
+  Kept current while a job is queued or running, as /jobs is: redrawn in place
+  by live.js, with a meta refresh inside <noscript> for a browser without
+  JavaScript. A page left open in a tab ends up showing the answer.
 #}
-{% block head_extra %}{% if restore.active %}<meta http-equiv="refresh" content="5">{% endif %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block head_extra %}{% if restore.active %}<meta name="haproxy-live" content="5"><noscript><meta http-equiv="refresh" content="5"></noscript>{% endif %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
 {% set plan = restore.plan %}{% set facts = restore.target_facts %}
 <section class="page-heading">

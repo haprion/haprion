@@ -100,6 +100,31 @@ ensure_group() {
 }
 
 #
+# Rollback copies, `<file>.replaced-<yyyymmdd-hhmmss>`, are kept for
+# REPLACED_KEEP_DAYS and then removed by the next step that writes the same
+# file - the only time a new one appears, so nothing else has to run for it.
+# The newest copy of each file always stays, however old: a file that is
+# rarely changed keeps the version before its last change. The age is the
+# time in the name, not the file's own: `cp -a` keeps the original's mtime.
+#
+REPLACED_KEEP_DAYS=30
+
+prune_replaced() {
+    local path="$1" cutoff index
+    local -a copies
+    cutoff="$(date -d "-${REPLACED_KEEP_DAYS} days" +%Y%m%d-%H%M%S)"
+    mapfile -t copies < <(
+        compgen -G "${path}.replaced-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]" \
+            | LC_ALL=C sort
+    )
+    for ((index = 0; index < ${#copies[@]} - 1; index++)); do
+        [[ "${copies[index]##*.replaced-}" < "$cutoff" ]] || continue
+        rm -f -- "${copies[index]}"
+        log "  pruned   ${copies[index]}"
+    done
+}
+
+#
 # Write a file only if its content would change, so reruns do not churn
 # timestamps and so the output says something true.
 #
@@ -109,6 +134,7 @@ install_file() {
         chown "$owner" "$path"
         chmod "$mode" "$path"
         log "  ok       ${path}"
+        prune_replaced "$path"
         return
     fi
     [[ -f "$path" ]] && cp -a "$path" "${path}.replaced-$(date +%Y%m%d-%H%M%S)"
@@ -116,6 +142,7 @@ install_file() {
     chown "$owner" "$path"
     chmod "$mode" "$path"
     log "  written  ${path}"
+    prune_replaced "$path"
 }
 
 each_cluster() {

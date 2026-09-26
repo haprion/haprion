@@ -234,11 +234,13 @@ for script in "${SCRIPTS[@]}"; do
         chown root:root "$target"
         chmod 755 "$target"
         log "  ok       ${target}"
+        prune_replaced "$target"
         continue
     fi
     [[ -f "$target" ]] && cp -a "$target" "${target}.replaced-$(date +%Y%m%d-%H%M%S)"
     install -o root -g root -m 755 "node/${script}" "$target"
     log "  installed ${target}"
+    prune_replaced "$target"
 done
 
 #

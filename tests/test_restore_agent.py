@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -314,6 +315,26 @@ class Apply(AgentTest):
         self.assertEqual(
             self.host.path("/etc/apt/sources.list.d/ubuntu.sources").read_text(), "archive\n"
         )
+
+    def test_runs_older_than_thirty_days_are_removed_when_a_run_begins_writing(self) -> None:
+        state = self.host.path("/var/lib/haproxy-restore")
+        today = time.strftime("%y%m%d")
+        old = time.strftime("%y%m%d", time.localtime(time.time() - 40 * 86400))
+        recent = time.strftime("%y%m%d", time.localtime(time.time() - 20 * 86400))
+        for name in (f"r{old}-0000aaaa", f"r{recent}-0000bbbb", f"r{today}-0000cccc",
+                     "undated-old-run", "undated-new-run", "not a run"):  # fmt: skip
+            (state / name / "before").mkdir(parents=True)
+        month_ago = time.time() - 40 * 86400
+        os.utime(state / "undated-old-run", (month_ago, month_ago))
+        result = self.apply()
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            sorted(p.name for p in state.iterdir()),
+            sorted([f"r{recent}-0000bbbb", f"r{today}-0000cccc", "undated-new-run",
+                    "not a run", RUN]),
+        )  # fmt: skip
+        step = next(s for s in result["steps"] if s["step"] == "old-runs")
+        self.assertEqual(sorted(step["removed"]), [f"r{old}-0000aaaa", "undated-old-run"])
 
     def test_the_one_time_key_survives_apply(self) -> None:
         self.apply()

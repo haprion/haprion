@@ -34,7 +34,8 @@ release layout is not touched.
 
 Every check an operation makes happens before its first write.  A directory the
 plan names in ``equal_directories`` is made equal to the archive; what was there
-and is not in the archive is moved to a quarantine directory, never deleted.  A
+and is not in the archive is moved to a quarantine directory, not deleted; the
+run's directory, quarantine and all, goes after RUN_KEPT_DAYS (`prune_runs`).  A
 new VM's plan names none (B178): the product's files are written beside the
 target's own.
 """
@@ -152,6 +153,15 @@ APT_UPDATE_TRIES = 3
 APT_UPDATE_PAUSE = 20.0
 FETCH_FAILED = re.compile(r"^(?:Err:\d+|E: Failed to fetch)\s+(\S+)", re.MULTILINE)
 RUN_ID = re.compile(r"^[a-z0-9][a-z0-9-]{7,39}$")
+#
+# How long a run's directory stays on the node: its `before/` copy, its
+# quarantine and the node bundle it installed. The copy is for the days after a
+# run, until it has proved itself; after that the nightly state backup is the
+# node's history. Removed when a later run begins writing - the only time the
+# directory grows - so nothing else has to run on the node for it.
+#
+RUN_KEPT_DAYS = 30
+DATED_RUN = re.compile(r"^r(\d{6})-")
 NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}\$?$")
 CERTIFICATE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
 MAX_HEADER = 1024 * 1024
@@ -1112,6 +1122,39 @@ def _services(host: Host, header: dict[str, Any], report: Report) -> None:
     report.step("sshd", reloaded=True)
 
 
+def prune_runs(host: Host, current: str, now: float, report: Report) -> None:
+    """Remove the directories of runs older than RUN_KEPT_DAYS, never the current one.
+
+    A run is dated by its ID (`r<yymmdd>-`), which nothing on the node rewrites;
+    one without a date in its name is dated by its directory.
+    """
+
+    root = host.path(STATE)
+    if not root.is_dir():
+        return
+    cutoff = now - RUN_KEPT_DAYS * 86400
+    removed = []
+    for directory in sorted(root.iterdir()):
+        if directory.name == current or directory.is_symlink() or not directory.is_dir():
+            continue
+        if not RUN_ID.fullmatch(directory.name):
+            continue
+        dated = DATED_RUN.match(directory.name)
+        try:
+            started = (
+                time.mktime(time.strptime(dated.group(1), "%y%m%d"))
+                if dated
+                else directory.stat().st_mtime
+            )
+        except (ValueError, OSError):
+            continue
+        if started < cutoff:
+            shutil.rmtree(directory)
+            removed.append(directory.name)
+    if removed:
+        report.step("old-runs", removed=removed, kept_days=RUN_KEPT_DAYS)
+
+
 def apply(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, Any]:
     items = read_payload(payload)
     bundle = _validate_apply(header, items)
@@ -1120,6 +1163,7 @@ def apply(host: Host, header: dict[str, Any], payload: IO[bytes]) -> dict[str, A
     if problems:
         raise Refused("; ".join(problems))
     report = Report()
+    prune_runs(host, header["run"], time.time(), report)
     if not header.get("overwrite"):
         return _apply(host, header, items, bundle, report)
 

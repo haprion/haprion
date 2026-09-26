@@ -1879,6 +1879,33 @@ then reloads. If either validation or the reload fails, the symlink is swapped b
 requires it to exist but never changes its owner or permissions; HAProxy Manager owns only its
 root-created lock files inside the directory.
 
+### 2.4a What a node keeps, and for how long
+
+Two kinds of copies build up on a node. Both are removed automatically after **30 days**, and
+only at the moment a new copy of the same kind is made. Nothing runs on the node on a schedule
+for this. A node that is never reinstalled or restored keeps its copies until it is.
+
+| What | Where | Made by | Removed |
+|---|---|---|---|
+| rollback copy of a file an installer replaced | `<file>.replaced-<yyyymmdd-hhmmss>` beside the file, e.g. `/etc/haproxy-manager/node.conf.replaced-20260924-200115`, `/usr/local/sbin/haproxy-pull-deploy.replaced-…` | `04-node-prepare` (and so every node bundle installation and every restore) | when the same file is next installed, if the time in its name is more than 30 days old. **The newest copy of each file always stays, however old.** |
+| a restore run's directory: the `before/` copy an overwrite took, its `quarantine/`, and the node bundle it installed | `/var/lib/haproxy-restore/<run>/` | `haproxy-node-restore` (the terminal or the web page) | when a later restore run begins writing to the same node, if the run is more than 30 days old (by the date in its ID, `r<yymmdd>-…`). The current run is never removed. |
+
+Why 30 days: a copy is for the days after a change, until the change has proved itself. After
+that, the nightly state backup on the management host is the node's history and a node bundle
+rollback is done with the previous bundle (see [Rollback](#rollback)), not with these copies. The
+age of a `.replaced-` copy is the time in its name, not its modification time: `cp -a` keeps the
+original's.
+
+To keep something for longer, move it out of those names before the next installation or restore:
+anything not named `<file>.replaced-<yyyymmdd-hhmmss>`, and any directory under
+`/var/lib/haproxy-restore` that is not a run ID, is left alone. The periods are
+`REPLACED_KEEP_DAYS` in `install/lib.sh` and `RUN_KEPT_DAYS` in `haproxy_mgmt/restore_agent.py`.
+Each removal is printed: `pruned <path>` in the installer's output, and an `old-runs` step in the
+restore's `apply` session.
+
+The manager's own installers use the same `install_file` and so the same rule for the files they
+write; the manager is backed up as a whole machine and needs no older copies than that.
+
 ### 2.5 Installing and changing node scripts
 
 There is no unattended management-identity path for this, by design. Every management identity is
@@ -2069,7 +2096,8 @@ even when nothing on the management host ever runs again.
 **What the preview shows and what stops it.** The target's OS, interface and MAC address; the
 host key fingerprint; the name and address the VM will have; every file written, and every archived
 file that is not - the VM's own in a directory it shares with the image, the archive's APT sources,
-and old `.replaced-` copies; the node bundle that will prepare the node; every account with its IDs
+and old `.replaced-` copies (kept on the node, 30 days - see
+[2.4a](#24a-what-a-node-keeps-and-for-how-long)); the node bundle that will prepare the node; every account with its IDs
 and groups; and, in test mode, every rewritten field with its old and new value. It stops on: this
 manager's CLI release carrying no node bundle, or one that does not verify (see
 [Part 3](#part-3--the-versioned-cli-release)); a `node.conf` in the archive that cannot be read back
@@ -2145,12 +2173,14 @@ and the three steps are the same; over the node itself, what differs:
   the VIP while its neighbour is not healthy, unless `--break-traffic` - which is what it says;
 - before its first write the run copies every path it or the node bundle may change to
   `/var/lib/haproxy-restore/<run>/before/` on the node, then stops keepalived, so the VIP moves to
-  the neighbour before anything changes;
+  the neighbour before anything changes. The copy stays 30 days (see
+  [2.4a](#24a-what-a-node-keeps-and-for-how-long));
 - the node's software is its own: no repository file is written, and only a product package the
   node lacks is installed (`apt-get install --no-upgrade`, from the node's own sources). The HAProxy
   releases and `current` are not touched;
 - what `/etc/haproxy-manager` and `/etc/systemd/system/haproxy.service.d` hold beyond the archive
-  and the node bundle goes to quarantine on the node, never deleted; the directories the product
+  and the node bundle goes to quarantine on the node - not deleted by the run, and removed with the
+  run's directory after 30 days ([2.4a](#24a-what-a-node-keeps-and-for-how-long)); the directories the product
   shares with the OS image keep the image's files, as for a new VM;
 - Netplan is written only when the node's differs from the archive's; otherwise the network
   session is skipped and nothing is applied;

@@ -222,6 +222,26 @@
               "type": ["string", "null"],
               "maxLength": 253
             },
+            "interface_served": {
+              "description": "Additive (B188): what nginx serves the manager's interface with now, read from the configured pair - the registry's marked certificate once installed, the installer's self-signed pair before. Null where the helper could not read it.",
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": ["server_name", "fingerprint_sha256", "common_name", "sans", "issuer", "not_after", "self_signed"],
+                  "properties": {
+                    "server_name": { "type": "string", "maxLength": 253 },
+                    "fingerprint_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                    "common_name": { "type": ["string", "null"], "maxLength": 255 },
+                    "sans": { "type": "array", "items": { "type": "string", "maxLength": 255 } },
+                    "issuer": { "type": "string", "maxLength": 1024 },
+                    "not_after": { "type": "string", "format": "date-time" },
+                    "self_signed": { "type": "boolean" }
+                  },
+                  "additionalProperties": false
+                },
+                { "type": "null" }
+              ]
+            },
             "receiver_records": {
               "description": "One record per registered receiver, for the interface's receivers page (B142): how it fetches and which certificates name it. `flat` is the layout of a receiver registered before C7.",
               "type": "array",

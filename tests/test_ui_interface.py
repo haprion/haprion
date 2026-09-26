@@ -357,3 +357,47 @@ class TheSocketClient(unittest.TestCase):
             self.answer(helper_socket.HelperSilent("it stopped answering."))
         self.assertEqual(caught.exception.code, "helper_silent")
         self.assertIn("may still have installed", str(caught.exception))
+
+
+class WhatIsServed(unittest.TestCase):
+    """The listing's word on the pair nginx serves, self-signed or not."""
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.config = self.root / "ui-tls.conf"
+        self.config.write_text(
+            f"TLS_CERT={self.root / 'live' / 'mgr.example.net' / 'fullchain.pem'}\n"
+            f"TLS_KEY={self.root / 'live' / 'mgr.example.net' / 'privkey.pem'}\n"
+            "SERVER_NAME=mgr.example.net\n"
+        )
+
+    def test_the_installer_s_self_signed_pair_says_so(self) -> None:
+        issue(self.root / "live" / "mgr.example.net", "mgr.example.net", sans=("mgr.example.net",))
+
+        served = ui_interface.served_description(self.config)
+
+        assert served is not None
+        self.assertTrue(served["self_signed"])
+        self.assertEqual(served["server_name"], "mgr.example.net")
+        self.assertEqual(served["sans"], ["mgr.example.net"])
+        self.assertRegex(str(served["fingerprint_sha256"]), r"^[0-9a-f]{64}$")
+
+    def test_a_certificate_a_ca_signed_is_not_self_signed(self) -> None:
+        from tests.test_cert_import import Pki
+
+        pki = Pki(self.root / "pki", names=("mgr.example.net",))
+        target = self.root / "live" / "mgr.example.net"
+        target.mkdir(parents=True)
+        (target / "fullchain.pem").write_text(pki.leaf.read_text() + pki.intermediate.read_text())
+
+        served = ui_interface.served_description(self.config)
+
+        assert served is not None
+        self.assertFalse(served["self_signed"])
+        self.assertIn("Test Issuing CA", str(served["issuer"]))
+
+    def test_nothing_readable_is_none_not_an_error(self) -> None:
+        self.assertIsNone(ui_interface.served_description(self.config))
+        self.assertIsNone(ui_interface.served_description(self.root / "absent.conf"))

@@ -46,9 +46,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import cert_registry
+from haproxy_mgmt import cert_registry, ui_interface
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE, measure_registered
 from haproxy_mgmt.cert_lock import DEFAULT_LOCK_PATH
+from haproxy_mgmt.cert_publish import PublishError
 from haproxy_mgmt.config import (
     RECEIVER_ID,
     RECEIVER_TRANSPORTS,
@@ -479,29 +480,27 @@ def render_sshd_dropin(registry: Registry) -> str:
 
 
 def read_ui_tls(locations: Locations) -> dict[str, str]:
-    """The hostname and certificate the interface is served under (05-platform-nginx)."""
+    """The hostname and certificate the interface is served under (05-platform-nginx).
 
-    values: dict[str, str] = {}
+    Read by `ui_interface.read_config`, the one reader of that file: the
+    interface certificate's installer (B188) and this module must agree on
+    what it says, down to which lines they refuse.
+    """
+
     try:
-        for line in locations.ui_tls.read_text(encoding="utf-8").splitlines():
-            if "=" in line and not line.startswith("#"):
-                key, _, value = line.partition("=")
-                values[key.strip()] = value.strip()
-    except OSError as exc:
+        config = ui_interface.read_config(locations.ui_tls)
+    except PublishError as exc:
         raise ReceiverError(
             "dependency_unavailable",
-            f"{locations.ui_tls} could not be read; an https receiver is served under the "
-            "interface's own certificate, which that file names.",
+            f"{exc}; an https receiver is served under the interface's own certificate, "
+            "which that file names.",
             exit_code=78,
         ) from exc
-    missing = sorted({"TLS_CERT", "TLS_KEY", "SERVER_NAME"} - set(values))
-    if missing:
-        raise ReceiverError(
-            "dependency_unavailable",
-            f"{locations.ui_tls} does not name {', '.join(missing)}",
-            exit_code=78,
-        )
-    return values
+    return {
+        "TLS_CERT": str(config.cert),
+        "TLS_KEY": str(config.key),
+        "SERVER_NAME": config.server_name,
+    }
 
 
 def render_nginx_snippet(registry: Registry) -> str:

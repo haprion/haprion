@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -125,6 +126,12 @@ class Facts:
     not_before: datetime
     not_after: datetime
     issuer: str
+    #
+    # The subject as openssl prints it (RFC 2253). Read beside the issuer so
+    # a self-signed certificate - the interface's starting point - can be
+    # told from one a CA signed without a second openssl run.
+    #
+    subject: str = ""
 
 
 def _timestamp(moment: datetime) -> str:
@@ -189,6 +196,7 @@ def describe(leaf: str) -> Facts:
         not_before=_openssl_time(fields["notBefore"]),
         not_after=_openssl_time(fields["notAfter"]),
         issuer=fields["issuer"] or "unknown",
+        subject=fields["subject"],
     )
 
 
@@ -466,6 +474,7 @@ def registry_result(
     store: Path = IMPORT_STORE,
     request_root: Path | None = None,
     manager: str | None = None,
+    interface_served: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Every certificate the manager holds, measured at its source.
 
@@ -654,6 +663,12 @@ def registry_result(
         "certificates": entries,
         "receivers": sorted(registry.receivers),
         "manager": manager,
+        #
+        # What nginx serves the interface with now, read from the pair
+        # itself (B188): the registry's marked entry once it is installed,
+        # the installer's self-signed pair before that.
+        #
+        "interface_served": dict(interface_served) if interface_served is not None else None,
         "receiver_records": [
             {
                 "id": receiver_id,
@@ -718,6 +733,7 @@ def cert_list_result(
     import_store: Path = IMPORT_STORE,
     request_root: Path | None = None,
     manager: str | None = None,
+    interface_served: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The cluster's referenced certificates, then the rest of the directory.
 
@@ -776,5 +792,6 @@ def cert_list_result(
             store=import_store,
             request_root=request_root,
             manager=manager,
+            interface_served=interface_served,
         )
     return result

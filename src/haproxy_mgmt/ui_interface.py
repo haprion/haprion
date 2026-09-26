@@ -41,8 +41,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from haproxy_mgmt import helper_socket
+from haproxy_mgmt.cert_inventory import describe
 from haproxy_mgmt.cert_publish import Material, PublishError, Report
-from haproxy_mgmt.certificates import CertificateError, leaf_fingerprint
+from haproxy_mgmt.certificates import CertificateError, leaf_block, leaf_fingerprint
 from haproxy_mgmt.envelope import new_request_id
 
 UI_TLS_CONFIG = Path("/etc/haproxy-manager/ui-tls.conf")
@@ -280,3 +281,30 @@ def served(report: Report, certificate_id: str) -> bool:
         and any(target.kind == "interface" for target in row.targets)
         for row in report.certificates
     )
+
+
+def served_description(config_path: Path = UI_TLS_CONFIG) -> dict[str, object] | None:
+    """What nginx serves the interface with, read from the configured pair's certificate.
+
+    For the listing (B188): the interface's settings show this whether or
+    not the registry marks a certificate - before the first install it is the
+    installer's self-signed pair. None when the file cannot be read; the
+    listing is not refused for it.
+    """
+
+    try:
+        config = read_config(config_path)
+        text = config.cert.read_text(encoding="ascii")
+        facts = describe(leaf_block(text))
+        fingerprint = leaf_fingerprint(text)
+    except (PublishError, OSError, UnicodeDecodeError, CertificateError):
+        return None
+    return {
+        "server_name": config.server_name,
+        "fingerprint_sha256": fingerprint,
+        "common_name": facts.common_name,
+        "sans": list(facts.sans),
+        "issuer": facts.issuer,
+        "not_after": facts.not_after.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "self_signed": bool(facts.subject) and facts.subject == facts.issuer,
+    }

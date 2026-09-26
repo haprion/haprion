@@ -45,6 +45,15 @@ def chown(path: Path, uid: int, gid: int) -> None:
     os.chown(path, uid, gid, follow_symlinks=False)
 
 
+def _foreground_maintenance() -> dict[str, str]:
+    return {
+        **os.environ,
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "maintenance.autoDetach",
+        "GIT_CONFIG_VALUE_0": "false",
+    }
+
+
 class ResetError(Exception):
     def __init__(self, message: str, *, exit_code: int = 65):
         super().__init__(message)
@@ -196,7 +205,12 @@ def reset_history(
         _copy_configuration(archived_draft, draft)
 
         git(draft, "add", "-A")
-        git(draft, "commit", "--quiet", "-m", message)
+        #
+        # A commit starts `git maintenance run --auto` detached by default. Run
+        # it in the foreground instead, so its lock file is gone and whatever it
+        # writes exists before the ownership walk below.
+        #
+        git(draft, "commit", "--quiet", "-m", message, env=_foreground_maintenance())
     except BaseException:
         #
         # Put it back exactly as it was. A half finished reset is the one state

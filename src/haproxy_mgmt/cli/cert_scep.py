@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
-from haproxy_mgmt import cert_import, ndes, ndes_profiles
+from haproxy_mgmt import cert_import, ndes, ndes_profiles, ui_interface
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
 from haproxy_mgmt.cli import cert_job
@@ -283,6 +283,7 @@ def main(
     require_secure: bool = True,
     require_root: bool = True,
     deployer: Deployer | None = None,
+    installer: Installer | None = None,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
@@ -312,6 +313,12 @@ def main(
         "--abandon",
         action="store_true",
         help="give up a request the CA has not answered; its key is discarded",
+    )
+    parser.add_argument(
+        "--interface",
+        action="store_true",
+        help="this manager's own interface certificate: no targets, installed with "
+        "haproxy-ui-tls; takes the mark from the one that had it",
     )
     parser.add_argument("--json", action="store_true")
     try:
@@ -366,9 +373,12 @@ def main(
                 resume=args.resume,
                 request_id=request_id,
                 formats=formats,
+                interface=args.interface,
                 policy_path=policy_path,
                 require_secure=require_secure,
                 deployer=deployer or default_deployer(errors),
+                # Root at a terminal, outside any sandbox: installed directly.
+                installer=installer or ui_interface.install,
                 live=live,
                 store=store,
                 lock_path=lock_path,

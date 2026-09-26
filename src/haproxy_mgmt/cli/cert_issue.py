@@ -17,9 +17,10 @@ import sys
 from pathlib import Path
 from typing import Any, TextIO
 
+from haproxy_mgmt import ui_interface
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_issue import Certbot, IssueError, IssueResult, issue, run_certbot
-from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
+from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
 from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.cli.cert_publish import EXIT_NOT_ROOT, default_deployer
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
@@ -33,7 +34,8 @@ USAGE = (
     "Usage:\n"
     "  haproxy-cert-issue --domain <name> --method dns-01|http-01\n"
     "                     [--dns-profile <id>] [--cluster <id>]...\n"
-    "                     [--receiver <id>]... [--format <id>=<form>]... [--json]\n"
+    "                     [--receiver <id>]... [--format <id>=<form>]...\n"
+    "                     [--interface] [--json]\n"
     "\n"
     "Obtains a certificate from the ACME account this host already has, adds it\n"
     "to the certificate registry, publishes it to the named targets and rolls\n"
@@ -52,13 +54,16 @@ USAGE = (
     "  --cluster <id>        A cluster to publish to and roll out. May be repeated.\n"
     "  --receiver <id>       A registered receiver to publish to. May be repeated.\n"
     "  --format <id>=<form>  How that receiver is written: pem (default) or pkcs12.\n"
+    "  --interface           This manager's own interface certificate: no targets,\n"
+    "                        installed with haproxy-ui-tls. Takes the mark from the\n"
+    "                        one that had it, which is deleted once this one serves.\n"
     "  --json                Print the result envelope on stdout.\n"
 )
 
 
 def _parse(
     argv: list[str], writer: TextIO
-) -> tuple[str, str, str | None, list[str], list[str], list[str], bool]:
+) -> tuple[str, str, str | None, list[str], list[str], list[str], bool, bool]:
     domain: str | None = None
     method: str | None = None
     formats: list[str] = []
@@ -66,6 +71,7 @@ def _parse(
     clusters: list[str] = []
     receivers: list[str] = []
     json_mode = False
+    interface = False
     index = 0
 
     def value() -> str:
@@ -97,13 +103,16 @@ def _parse(
         elif argument == "--json":
             json_mode = True
             index += 1
+        elif argument == "--interface":
+            interface = True
+            index += 1
         else:
             writer.write(USAGE)
             raise SystemExit(EXIT_USAGE)
     if domain is None or method is None:
         writer.write(USAGE)
         raise SystemExit(EXIT_USAGE)
-    return domain, method, dns_profile, clusters, receivers, formats, json_mode
+    return domain, method, dns_profile, clusters, receivers, formats, json_mode, interface
 
 
 def _summary(result: IssueResult, writer: TextIO) -> None:
@@ -173,6 +182,7 @@ def main(
     require_root: bool = True,
     certbot: Certbot | None = None,
     deployer: Deployer | None = None,
+    installer: Installer | None = None,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
@@ -183,9 +193,16 @@ def main(
     request_id = new_request_id()
 
     try:
-        domain, method, dns_profile, clusters, receivers, format_flags, json_mode = _parse(
-            argv, writer
-        )
+        (
+            domain,
+            method,
+            dns_profile,
+            clusters,
+            receivers,
+            format_flags,
+            json_mode,
+            interface,
+        ) = _parse(argv, writer)
     except SystemExit as exc:
         return int(exc.code or 0)
 
@@ -240,9 +257,12 @@ def main(
             receivers=receivers,
             dns_profile=dns_profile,
             formats=formats,
+            interface=interface,
             policy=policy,
             runtime=runtime,
             deployer=deployer or default_deployer(errors),
+            # Root at a terminal, outside any sandbox: installed directly.
+            installer=installer or ui_interface.install,
             live=live,
             store=store,
             lock_path=lock_path,

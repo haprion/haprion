@@ -2614,6 +2614,15 @@ read-only; they name the entry by ID to `haproxy-ui-tls-helper` on
 material itself and refuses any entry not marked `interface: true`. The key never passes through
 the web process: the interface names a certificate, never bytes, never a path.
 
+At the terminal the mark is `--interface` on `haproxy-cert-issue`, `haproxy-cert-scep`,
+`haproxy-cert-request` and `haproxy-cert-import`, with no `--cluster` or `--receiver` beside it; a
+signing request or an NDES enrollment the CA is still holding remembers it until the certificate
+arrives. A rotated or renewed interface certificate keeps the mark. A new one under another ID takes
+it: the registry moves the mark, publishing installs the new certificate, and only once nginx
+serves it is the previous entry deleted, through the ordinary deletion. If the install is refused
+the previous pair keeps serving, and its entry stays in the listing without the mark and without
+targets. The entry that serves the interface cannot be deleted (`serves_interface`).
+
 `haproxy-ui-tls install` and `self-signed` stay the way back: running either replaces the served
 pair whatever the registry says, and the next publish of the marked entry puts it back.
 

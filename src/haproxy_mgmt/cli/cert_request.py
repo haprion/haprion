@@ -54,6 +54,7 @@ def request(
     receivers: Sequence[str],
     request_id: str,
     formats: Mapping[str, str] | None = None,
+    interface: bool = False,
     policy_path: Path = DEFAULT_POLICY_PATH,
     require_secure: bool = True,
     live: Path = LETSENCRYPT_LIVE,
@@ -85,6 +86,7 @@ def request(
             store=store,
             lock_path=lock_path,
             request_root=ndes.state_root if ndes is not None else None,
+            interface=interface,
         )
     except ConfigError as exc:
         raise RequestRefusal("dependency_unavailable", str(exc), exc.exit_code) from exc
@@ -140,6 +142,12 @@ def main(
         metavar="RECEIVER=FORMAT",
         help="how a --receiver is written once signed: pem (default) or pkcs12",
     )
+    parser.add_argument(
+        "--interface",
+        action="store_true",
+        help="for this manager's own interface certificate: no targets; the signed "
+        "certificate is installed with haproxy-ui-tls when it is imported",
+    )
     parser.add_argument("--json", action="store_true")
     try:
         args = parser.parse_args(sys.argv[1:] if argv is None else argv)
@@ -180,6 +188,7 @@ def main(
             receivers=args.receiver,
             request_id=request_id,
             formats=formats,
+            interface=args.interface,
             policy_path=policy_path,
             require_secure=require_secure,
             live=live,

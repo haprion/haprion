@@ -20,10 +20,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haproxy_mgmt import ui_interface
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_publish import (
     DEFAULT_LOCK_PATH,
     Deployer,
+    Installer,
     PublishError,
     Report,
     publish,
@@ -133,6 +135,7 @@ def main(
     require_secure: bool = True,
     require_root: bool = True,
     deployer: Deployer | None = None,
+    installer: Installer | None = None,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
@@ -184,6 +187,8 @@ def main(
             deployer=(deployer if deployer is not None else default_deployer(errors))
             if deploy
             else None,
+            # Inside the worker's sandbox: the root service installs it (B188).
+            installer=installer if installer is not None else ui_interface.socket_installer(),
             now=now,
         )
     except PublishError as exc:

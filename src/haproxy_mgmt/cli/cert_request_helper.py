@@ -25,7 +25,9 @@ from haproxy_mgmt.cli.cert_request import OPERATION, RequestRefusal, request
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH
 from haproxy_mgmt.helper_protocol import HelperProtocolError, write_document
 
-PARAMETERS = frozenset({"id", "domains", "key_type", "clusters", "receivers", "formats"})
+PARAMETERS = frozenset(
+    {"id", "domains", "key_type", "clusters", "receivers", "formats", "interface"}
+)
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-request-helper"
 SUDO = "/usr/bin/sudo"
 MAX_DOMAINS = 32
@@ -41,6 +43,7 @@ def build_request(
     clusters: tuple[str, ...] = (),
     receivers: tuple[str, ...] = (),
     formats: Mapping[str, str] | None = None,
+    interface: bool = False,
 ) -> str:
     """The exact bounded request the worker sends. Null cluster, by contract."""
 
@@ -53,6 +56,8 @@ def build_request(
     }
     if formats:
         parameters["formats"] = dict(formats)
+    if interface:
+        parameters["interface"] = True
     return json.dumps(
         {
             "schema_version": 1,
@@ -120,6 +125,7 @@ def main(
         clusters = cert_job.clusters(job.parameters)
         receivers = cert_job.receivers(job.parameters)
         formats = cert_job.formats(job.parameters, receivers)
+        interface = cert_job.interface(job.parameters)
     except HelperProtocolError as exc:
         return refuse("bad_input", str(exc), 65)
 
@@ -132,6 +138,7 @@ def main(
             receivers=receivers,
             request_id=job.request_id,
             formats=formats,
+            interface=interface,
             policy_path=policy_path,
             require_secure=require_secure,
             live=live,

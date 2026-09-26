@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haproxy_mgmt import cert_upload
+from haproxy_mgmt import cert_upload, ui_interface
 from haproxy_mgmt.cert_import import (
     ImportError_,
     assemble,
@@ -35,7 +35,7 @@ from haproxy_mgmt.cert_import import (
     stored_key,
 )
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
-from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
+from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
 from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.cli.cert_import import result_envelope
 from haproxy_mgmt.cli.cert_publish import default_deployer
@@ -45,7 +45,9 @@ from haproxy_mgmt.helper_protocol import HelperProtocolError, config_error_code,
 
 OPERATION = cert_upload.OPERATION
 HELPER = cert_upload.HELPER
-PARAMETERS = frozenset({"certificate", "key_id", "ciphertext", "clusters", "receivers", "formats"})
+PARAMETERS = frozenset(
+    {"certificate", "key_id", "ciphertext", "clusters", "receivers", "formats", "interface"}
+)
 
 
 def _key_id(value: object) -> str:
@@ -68,6 +70,7 @@ def main(
     require_secure: bool = True,
     require_root: bool = True,
     deployer: Deployer | None = None,
+    installer: Installer | None = None,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
@@ -100,6 +103,7 @@ def main(
         clusters = cert_job.clusters(request.parameters)
         receivers = cert_job.receivers(request.parameters)
         formats = cert_job.formats(request.parameters, receivers)
+        interface = cert_job.interface(request.parameters)
     except (HelperProtocolError, binascii.Error, ValueError) as exc:
         return refuse("bad_input", str(exc), 65)
 
@@ -160,9 +164,12 @@ def main(
             clusters=clusters,
             receivers=receivers,
             formats=formats,
+            interface=interface,
             policy=policy,
             runtime=runtime,
             deployer=deployer if deployer is not None else default_deployer(errors),
+            # Inside the worker's sandbox: the root service installs it (B188).
+            installer=installer if installer is not None else ui_interface.socket_installer(),
             live=live,
             store=store,
             lock_path=lock_path,

@@ -208,3 +208,17 @@ def flag(parameters: Mapping[str, JsonValue], key: str) -> bool:
     if not isinstance(value, bool):
         raise HelperProtocolError(f"parameters.{key} must be true or false", exit_code=65)
     return value
+
+
+def interface(parameters: Mapping[str, JsonValue]) -> bool:
+    """Whether the request is for the manager's own interface certificate (B188).
+
+    Absent is false, so every request written before the field existed means
+    what it meant. The certificate it names has no targets; the operation
+    refuses a request that names both.
+    """
+
+    value = parameters.get("interface", False)
+    if not isinstance(value, bool):
+        raise HelperProtocolError("parameters.interface must be true or false", exit_code=65)
+    return value

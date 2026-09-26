@@ -20,8 +20,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
+from haproxy_mgmt import ui_interface
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
-from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
+from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
 from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.cli.cert_publish import default_deployer
 from haproxy_mgmt.cli.cert_scep import OPERATION, ScepRefusal, enroll
@@ -29,7 +30,9 @@ from haproxy_mgmt.config import DEFAULT_POLICY_PATH
 from haproxy_mgmt.dns_profiles import ProfileError, check_profile_id
 from haproxy_mgmt.helper_protocol import HelperProtocolError, write_document
 
-PARAMETERS = frozenset({"id", "profile", "domains", "clusters", "receivers", "formats", "resume"})
+PARAMETERS = frozenset(
+    {"id", "profile", "domains", "clusters", "receivers", "formats", "resume", "interface"}
+)
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-scep-helper"
 SUDO = "/usr/bin/sudo"
 MAX_DOMAINS = 32
@@ -46,6 +49,7 @@ def build_request(
     receivers: tuple[str, ...] = (),
     resume: bool = False,
     formats: Mapping[str, str] | None = None,
+    interface: bool = False,
 ) -> str:
     """The exact bounded request the worker sends. Null cluster, by contract."""
 
@@ -59,6 +63,8 @@ def build_request(
     }
     if formats:
         parameters["formats"] = dict(formats)
+    if interface:
+        parameters["interface"] = True
     return json.dumps(
         {
             "schema_version": 1,
@@ -81,6 +87,7 @@ def main(
     require_secure: bool = True,
     require_root: bool = True,
     deployer: Deployer | None = None,
+    installer: Installer | None = None,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
@@ -127,6 +134,7 @@ def main(
         clusters = cert_job.clusters(request.parameters)
         receivers = cert_job.receivers(request.parameters)
         formats = cert_job.formats(request.parameters, receivers)
+        interface = cert_job.interface(request.parameters)
     except (HelperProtocolError, ProfileError) as exc:
         return refuse("bad_input", str(exc), 65)
 
@@ -140,9 +148,12 @@ def main(
             resume=resume,
             request_id=request.request_id,
             formats=formats,
+            interface=interface,
             policy_path=policy_path,
             require_secure=require_secure,
             deployer=deployer if deployer is not None else default_deployer(errors),
+            # Inside the worker's sandbox: the root service installs it (B188).
+            installer=installer if installer is not None else ui_interface.socket_installer(),
             live=live,
             store=store,
             lock_path=lock_path,

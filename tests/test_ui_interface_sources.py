@@ -319,3 +319,99 @@ class Deleting(ImportFixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheCommandsAndHelpers(ImportFixture):
+    """`--interface` at the terminal, `interface` in a job; nothing else changes."""
+
+    def test_every_issuing_helper_takes_the_field_and_the_publish_helper_does_not(self) -> None:
+        from haproxy_mgmt.cli import (
+            cert_import_helper,
+            cert_issue_helper,
+            cert_publish_helper,
+            cert_request_helper,
+            cert_scep_helper,
+        )
+
+        for helper in (
+            cert_issue_helper,
+            cert_import_helper,
+            cert_request_helper,
+            cert_scep_helper,
+        ):
+            self.assertIn("interface", helper.PARAMETERS, helper.__name__)
+        self.assertNotIn("interface", cert_publish_helper.PARAMETERS)
+
+    def test_the_field_is_a_boolean_and_absent_means_no(self) -> None:
+        from haproxy_mgmt.cli import cert_job
+        from haproxy_mgmt.helper_protocol import HelperProtocolError
+
+        self.assertFalse(cert_job.interface({}))
+        self.assertTrue(cert_job.interface({"interface": True}))
+        with self.assertRaises(HelperProtocolError):
+            cert_job.interface({"interface": "yes"})
+
+    def test_the_requests_the_worker_sends_carry_it_only_when_set(self) -> None:
+        from haproxy_mgmt.cli import cert_issue_helper, cert_request_helper, cert_scep_helper
+
+        plain = json.loads(
+            cert_issue_helper.build_request("r", domain="ui.example", method="dns-01")
+        )
+        marked = json.loads(
+            cert_issue_helper.build_request(
+                "r", domain="ui.example", method="dns-01", interface=True
+            )
+        )
+        self.assertNotIn("interface", plain["parameters"])
+        self.assertIs(marked["parameters"]["interface"], True)
+        for built in (
+            cert_request_helper.build_request(
+                "r", certificate_id="ui.example", domains=("ui.example",), interface=True
+            ),
+            cert_scep_helper.build_request(
+                "r",
+                certificate_id="ui.example",
+                profile_id="p",
+                domains=("ui.example",),
+                interface=True,
+            ),
+        ):
+            self.assertIs(json.loads(built)["parameters"]["interface"], True)
+
+    def test_import_at_the_terminal_marks_and_installs(self) -> None:
+        import io
+
+        from haproxy_mgmt.cli import cert_import as command
+
+        installed: list[str] = []
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cert_delete, "retire_displaced_interface", return_value=None):
+            code = command.main(
+                [
+                    "--id",
+                    "shop.example",
+                    "--certificate",
+                    str(self.pki.leaf),
+                    "--key",
+                    str(self.pki.leaf_key),
+                    "--chain",
+                    str(self.pki.intermediate),
+                    "--interface",
+                    "--json",
+                ],
+                policy_path=self.policy_path,
+                output_stream=out,
+                error_stream=err,
+                require_secure=False,
+                require_root=False,
+                deployer=lambda cluster: 0,
+                installer=lambda material: (installed.append(material.certificate_id), True)[1],
+                live=self.live,
+                store=self.store,
+                lock_path=self.lock,
+            )
+
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertTrue(self.registered()["shop.example"]["interface"])
+        self.assertEqual(installed, ["shop.example"])
+        self.assertTrue(json.loads(out.getvalue())["result"]["interface"])

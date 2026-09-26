@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haproxy_mgmt import dns_profiles
+from haproxy_mgmt import dns_profiles, ui_interface
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_issue import (
     RENEWAL_DIRECTORY,
@@ -28,7 +28,7 @@ from haproxy_mgmt.cert_issue import (
     renew,
     run_certbot,
 )
-from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
+from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
 from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.cli.cert_issue import result_envelope
 from haproxy_mgmt.cli.cert_publish import default_deployer
@@ -41,7 +41,7 @@ from haproxy_mgmt.helper_protocol import (
 
 OPERATION = "cert_issue"
 PARAMETERS = frozenset(
-    {"domain", "method", "clusters", "receivers", "formats", "dns_profile", "renew"}
+    {"domain", "method", "clusters", "receivers", "formats", "dns_profile", "renew", "interface"}
 )
 MAX_DOMAIN_BYTES = 255
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper"
@@ -58,6 +58,7 @@ def build_request(
     formats: Mapping[str, str] | None = None,
     dns_profile: str | None = None,
     renew: bool = False,
+    interface: bool = False,
 ) -> str:
     """The exact bounded request the worker sends. Null cluster, by contract.
 
@@ -78,6 +79,8 @@ def build_request(
         }
         if formats:
             parameters["formats"] = dict(formats)
+        if interface:
+            parameters["interface"] = True
     return json.dumps(
         {
             "schema_version": 1,
@@ -101,6 +104,7 @@ def main(
     require_root: bool = True,
     certbot: Certbot = run_certbot,
     deployer: Deployer | None = None,
+    installer: Installer | None = None,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
@@ -145,6 +149,7 @@ def main(
         clusters = cert_job.clusters(request.parameters)
         receivers = cert_job.receivers(request.parameters)
         formats = cert_job.formats(request.parameters, receivers)
+        interface = cert_job.interface(request.parameters)
         dns_profile_value = request.parameters.get("dns_profile")
         dns_profile = None
         if dns_profile_value is not None:
@@ -164,6 +169,11 @@ def main(
     # have, and the gate this phase lives or dies on is measured from the click
     # to a certificate that actually answers.
     #
+    #
+    # Inside the worker's sandbox, so the interface certificate (B188) is
+    # installed by the root service on its socket, not here.
+    #
+    install = installer if installer is not None else ui_interface.socket_installer()
     try:
         if renew_flag:
             result = renew(
@@ -172,6 +182,7 @@ def main(
                 runtime=runtime,
                 certbot=certbot,
                 deployer=deployer if deployer is not None else default_deployer(errors),
+                installer=install,
                 live=live,
                 store=store,
                 lock_path=lock_path,
@@ -186,10 +197,12 @@ def main(
                 receivers=receivers,
                 dns_profile=dns_profile,
                 formats=formats,
+                interface=interface,
                 policy=policy,
                 runtime=runtime,
                 certbot=certbot,
                 deployer=deployer if deployer is not None else default_deployer(errors),
+                installer=install,
                 live=live,
                 store=store,
                 lock_path=lock_path,

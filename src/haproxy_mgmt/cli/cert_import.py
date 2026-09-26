@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 from typing import Any, TextIO
 
+from haproxy_mgmt import ui_interface
 from haproxy_mgmt.cert_import import (
     OPERATION,
     ImportError_,
@@ -31,7 +32,7 @@ from haproxy_mgmt.cert_import import (
     stored_key,
 )
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
-from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
+from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
 from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.cli.cert_publish import EXIT_NOT_ROOT, default_deployer
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
@@ -44,10 +45,10 @@ USAGE = (
     "Usage:\n"
     "  haproxy-cert-import --id <id> --certificate <pem> [--key <pem>] [--chain <pem>]\n"
     "                      [--cluster <id>]... [--receiver <id>]...\n"
-    "                      [--format <id>=<form>]... [--json]\n"
+    "                      [--format <id>=<form>]... [--interface] [--json]\n"
     "  haproxy-cert-import --id <id> --pkcs12 <file> [--password-file <path>]\n"
     "                      [--cluster <id>]... [--receiver <id>]...\n"
-    "                      [--format <id>=<form>]... [--json]\n"
+    "                      [--format <id>=<form>]... [--interface] [--json]\n"
     "\n"
     "Imports a certificate issued elsewhere: writes it to the import store,\n"
     "registers it, publishes it to the named targets and rolls out the named\n"
@@ -67,6 +68,9 @@ USAGE = (
     "  --cluster <id>        A cluster to publish to and roll out. May be repeated.\n"
     "  --receiver <id>       A registered receiver to publish to. May be repeated.\n"
     "  --format <id>=<form>  How that receiver is written: pem (default) or pkcs12.\n"
+    "  --interface           This manager's own interface certificate: no targets,\n"
+    "                        installed with haproxy-ui-tls. Takes the mark from the\n"
+    "                        one that had it, which is deleted once this one serves.\n"
     "  --json                Print the result envelope on stdout.\n"
 )
 
@@ -83,6 +87,7 @@ class Arguments:
         self.receivers: list[str] = []
         self.formats: list[str] = []
         self.json_mode = False
+        self.interface = False
 
 
 def _parse(argv: list[str], writer: TextIO) -> Arguments:
@@ -121,6 +126,9 @@ def _parse(argv: list[str], writer: TextIO) -> Arguments:
             index += 2
         elif argument == "--json":
             parsed.json_mode = True
+            index += 1
+        elif argument == "--interface":
+            parsed.interface = True
             index += 1
         else:
             writer.write(USAGE)
@@ -190,6 +198,7 @@ def main(
     require_secure: bool = True,
     require_root: bool = True,
     deployer: Deployer | None = None,
+    installer: Installer | None = None,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
@@ -255,9 +264,12 @@ def main(
             clusters=arguments.clusters,
             receivers=arguments.receivers,
             formats=formats,
+            interface=arguments.interface,
             policy=policy,
             runtime=runtime,
             deployer=deployer or default_deployer(errors),
+            # Root at a terminal, outside any sandbox: installed directly.
+            installer=installer or ui_interface.install,
             live=live,
             store=store,
             lock_path=lock_path,

@@ -204,6 +204,10 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .icon-button:hover { border-color: var(--line); background: var(--panel-soft); color: var(--text); }
 .icon-button svg { width: 17px; height: 17px; }
 .icon-button span { font-size: 13px; font-weight: 600; }
+.settings-link { text-decoration: none; }
+.settings-link.active { border-color: var(--line); background: var(--panel-soft); color: var(--text); }
+.settings-card .cluster-facts .status-dot { margin-right: 6px; vertical-align: 1px; }
+.settings-notice { margin: 14px 20px 0; }
 
 .account-menu { position: relative; }
 .account-menu summary {
@@ -869,7 +873,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   .primary-nav a, .nav-item { padding: 0 10px; }
   .activity-entry { padding: 13px 14px 13px 11px; }
   .activity-copy { grid-template-columns: 1fr; gap: 2px; }
-  .theme-toggle span { display: none; }
+  .theme-toggle span, .settings-link span { display: none; }
   .icon-button { width: 36px; padding: 0; }
   .page-heading { align-items: flex-start; flex-direction: column; gap: 13px; }
   .metric-grid { grid-template-columns: 1fr; }

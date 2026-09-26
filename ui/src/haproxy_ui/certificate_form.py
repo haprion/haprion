@@ -29,6 +29,7 @@ from typing import Any
 from haproxy_mgmt.cert_issue import METHODS, IssueError, parse_domain
 from haproxy_mgmt.cert_request_state import DEFAULT_KEY_TYPE, KEY_TYPES
 from haproxy_mgmt.config import DEFAULT_RECEIVER_FORMAT, RECEIVER_FORMATS
+from haproxy_mgmt.ui_interface import covers
 
 
 class FormProblem(Exception):
@@ -54,6 +55,8 @@ class IssueForm:
     """The page's `format` fields as submitted, `<receiver>=<format>` each (B159)."""
     key_type: str = ""
     """The CSR method's one setting (C9b); empty means the engine's default."""
+    interface: bool = False
+    """For the manager's own interface certificate (B188): no targets, published to nginx."""
 
     @property
     def wildcard(self) -> bool:
@@ -135,6 +138,33 @@ class IssueChoices:
     # is taken, and the action that fits is on the row, not on this form.
     #
     waiting: tuple[str, ...] = ()
+    #
+    # The interface's own certificate (B188): the name it is served on, the
+    # entry that serves it now, and every ID in use - the registry's, the
+    # interface's and the waiting requests' - for the ID a new one gets.
+    #
+    manager: str | None = None
+    interface_id: str | None = None
+    taken: tuple[str, ...] = ()
+
+
+def interface_id_for(manager: str, taken: Iterable[str]) -> str:
+    """The ID a new interface certificate from NDES, a CSR or an import is given.
+
+    Not the domain: an ACME certificate's ID is its domain, so an interface
+    certificate that took the domain would leave no way to replace it with
+    one from Let's Encrypt (the entry that serves cannot be deleted first).
+    The first label and `-ui`, then `-ui-2` and on while the name is in use.
+    """
+
+    base = manager.split(".", 1)[0] + "-ui"
+    used = set(taken)
+    if base not in used:
+        return base
+    number = 2
+    while f"{base}-{number}" in used:
+        number += 1
+    return f"{base}-{number}"
 
 
 EMPTY_FORM = IssueForm(domain="", method="dns-01", dns_profile="", clusters=(), receivers=())
@@ -152,6 +182,7 @@ def normalise(form: IssueForm) -> IssueForm:
         receivers=tuple(dict.fromkeys(name.strip() for name in form.receivers if name.strip())),
         formats=tuple(value.strip() for value in form.formats if value.strip()),
         key_type=form.key_type.strip(),
+        interface=form.interface,
     )
 
 
@@ -196,6 +227,8 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
             "That is not a domain name the engine can issue for: lowercase labels "
             "separated by dots, optionally starting with *. for a wildcard."
         ) from problem
+    if form.interface:
+        return _interface_payload(form, choices, name)
     if name in choices.waiting:
         raise FormProblem(
             f"A signing request named {name} is already waiting for its certificate. "
@@ -306,6 +339,76 @@ def payload_from_form(form: IssueForm, choices: IssueChoices) -> dict[str, Any]:
         payload["dns_profile"] = form.dns_profile
     if formats:
         payload["formats"] = formats
+    return payload
+
+
+def _interface_payload(form: IssueForm, choices: IssueChoices, name: str) -> dict[str, Any]:
+    """The payload for the interface's own certificate (B188): no targets, the mark set.
+
+    The name must serve the interface: the engine refuses to install one that
+    does not, but only after the CA has issued it; this says so before.
+    """
+
+    if not choices.manager:
+        raise FormProblem("The interface's server name is not known yet; try again shortly.")
+    _base, names, _ = parse_domain(form.domain)
+    if not covers(names, choices.manager):
+        raise FormProblem(
+            f"The certificate must name {choices.manager}, the name this interface is served on."
+        )
+    if form.clusters or form.receivers:
+        raise FormProblem("The interface certificate has no targets.")
+    if form.method == NDES_METHOD:
+        if form.ndes_profile not in choices.ndes_profiles:
+            raise FormProblem("Choose an NDES provider profile that is in effect.")
+        identifier = interface_id_for(choices.manager, choices.taken)
+        return {
+            "id": identifier,
+            "profile": form.ndes_profile,
+            "domains": [name, *[n for n in names if n != name]],
+            "clusters": [],
+            "receivers": [],
+            "interface": True,
+        }
+    if form.method == CSR_METHOD:
+        if form.key_type and form.key_type not in KEY_TYPES:
+            raise FormProblem("Choose a key type from the list.")
+        return {
+            "id": interface_id_for(choices.manager, choices.taken),
+            "domains": [name, *[n for n in names if n != name]],
+            "key_type": form.key_type or DEFAULT_KEY_TYPE,
+            "clusters": [],
+            "receivers": [],
+            "interface": True,
+        }
+    if form.method not in METHODS:
+        raise FormProblem("Choose a challenge method.")
+    if name == choices.interface_id:
+        raise FormProblem(
+            f"{name} already serves this interface. Renew it on the settings page instead."
+        )
+    if name in choices.taken:
+        raise FormProblem(
+            f"A certificate named {name} is already in the registry. Let's Encrypt names a "
+            "certificate after its domain, so this one cannot be issued beside it."
+        )
+    if form.wildcard and form.method != "dns-01":
+        raise FormProblem("A wildcard certificate needs DNS-01.")
+    if (
+        form.method == "dns-01"
+        and choices.profiles_required
+        and form.dns_profile not in choices.dns_profiles
+    ):
+        raise FormProblem("Choose a DNS provider profile that is in effect.")
+    payload: dict[str, Any] = {
+        "domain": form.domain,
+        "method": form.method,
+        "clusters": [],
+        "receivers": [],
+        "interface": True,
+    }
+    if form.method == "dns-01" and form.dns_profile:
+        payload["dns_profile"] = form.dns_profile
     return payload
 
 

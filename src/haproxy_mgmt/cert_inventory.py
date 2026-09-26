@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from haproxy_mgmt.cert_registry import receiver_in_use
-from haproxy_mgmt.cert_request_state import pending_csrs
+from haproxy_mgmt.cert_request_state import pending_csrs, request_is_interface
 from haproxy_mgmt.certificates import (
     MAX_CERTIFICATE_BYTES,
     CertificateError,
@@ -627,6 +627,8 @@ def registry_result(
             {
                 "id": csr.certificate_id,
                 "source": {"kind": "import", "lineage": None},
+                # A request made for the interface's own certificate (B188).
+                **({"interface": True} if request_is_interface(store, csr.certificate_id) else {}),
                 "readable": False,
                 "validation_error": "no material at its source yet",
                 "request_state": "pending",

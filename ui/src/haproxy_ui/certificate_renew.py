@@ -110,5 +110,8 @@ def payload(renewal: Renewal) -> tuple[str, dict[str, Any]]:
             "clusters": [t.name for t in row.targets if t.kind == "cluster"],
             "receivers": [t.name for t in row.targets if t.kind == "receiver"],
         }
+        if row.interface:
+            # The interface's own certificate (B188): no targets, the mark kept.
+            body["interface"] = True
         return "cert_scep", body
     raise SelectionProblem("This certificate is renewed with a file, not a job.")

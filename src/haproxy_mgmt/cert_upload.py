@@ -154,6 +154,7 @@ def build_request(
     clusters: tuple[str, ...] = (),
     receivers: tuple[str, ...] = (),
     formats: Mapping[str, str] | None = None,
+    interface: bool = False,
 ) -> str:
     """The bounded request the worker sends. Null cluster, by contract."""
 
@@ -166,6 +167,8 @@ def build_request(
     }
     if formats:
         parameters["formats"] = dict(formats)
+    if interface:
+        parameters["interface"] = True
     return json.dumps(
         {
             "schema_version": 1,

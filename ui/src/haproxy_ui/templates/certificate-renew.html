@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% if renewal and renewal.row.interface %}{% set section = 'settings' %}{% endif %}
 {% block title %}{% if renewal %}{{ renewal.title }}{% else %}Renew certificate{% endif %} — HAProxy Manager{% endblock %}
 {% block content %}
 {#
@@ -44,7 +45,7 @@
     <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
     <input type="hidden" name="certificate" value="{{ renewal.identifier }}">
     <button class="secondary-button deploy-button" type="submit"{% if certificate_job %} disabled{% endif %}>Renew now</button>
-    <a class="secondary-button" href="/certificates?view=registry&open={{ renewal.identifier }}">Cancel</a>
+    <a class="secondary-button" href="{{ back }}">Cancel</a>
   </form>
   {% else %}
   <form method="post" action="/certificates/{{ renewal.identifier }}/upload" enctype="multipart/form-data" class="preview-form certificate-form certificate-renew-form">
@@ -55,7 +56,7 @@
     </div>
     {% if certificate_job %}<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> Wait for it to finish before uploading.</p>{% endif %}
     <div class="editor-actions editor-submit">
-      <div class="form-buttons"><a class="secondary-button" href="/certificates?view=registry&open={{ renewal.identifier }}">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Upload certificate</button></div>
+      <div class="form-buttons"><a class="secondary-button" href="{{ back }}">Cancel</a><button type="submit" class="secondary-button deploy-button"{% if certificate_job %} disabled{% endif %}>Upload certificate</button></div>
     </div>
   </form>
   {% endif %}

@@ -1759,6 +1759,17 @@ def build_router(config: Config) -> APIRouter:
     #
     @router.get("/certificates/new", response_class=HTMLResponse)
     def new_certificate_form(request: Request) -> Response:
+        if request.query_params.get("for") == "interface":
+            #
+            # The same form for the interface's own certificate (B188): the
+            # name it is served on filled in, no targets.
+            #
+            manager = _certificate_choices(request, config).manager or ""
+            return _certificate_form_page(
+                request,
+                config,
+                replace(certificate_form.EMPTY_FORM, domain=manager, interface=True),
+            )
         return _certificate_form_page(request, config, certificate_form.EMPTY_FORM)
 
     @router.post("/certificates/new", response_class=HTMLResponse)
@@ -1772,6 +1783,7 @@ def build_router(config: Config) -> APIRouter:
         dns_profile: str = Form(default="", max_length=32),
         ndes_profile: str = Form(default="", max_length=32),
         key_type: str = Form(default="", max_length=16),
+        interface: str = Form(default="", max_length=1),
         idempotency_key: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
@@ -1793,6 +1805,7 @@ def build_router(config: Config) -> APIRouter:
             receivers=tuple(receiver),
             formats=tuple(format),
             key_type=key_type,
+            interface=interface == "1",
         )
         session = current_session(request)
         if session is None:
@@ -1859,7 +1872,10 @@ def build_router(config: Config) -> APIRouter:
         # the CA's own words if the answer is no. Not opened - the detail
         # under a row that has no material yet is empty. The jobs page keeps
         # the full record, but it is not where a person expects to land.
+        # The interface's own certificate goes back to where it was asked for.
         #
+        if form.interface:
+            return RedirectResponse("/settings", status_code=303)
         return RedirectResponse("/certificates?view=registry", status_code=303)
 
     #
@@ -1894,6 +1910,18 @@ def build_router(config: Config) -> APIRouter:
     #
     @router.get("/certificates/import", response_class=HTMLResponse)
     def import_certificate_form(request: Request) -> Response:
+        if request.query_params.get("for") == "interface":
+            choices = _certificate_choices(request, config)
+            name = (
+                certificate_form.interface_id_for(choices.manager, choices.taken)
+                if choices.manager
+                else ""
+            )
+            return _certificate_import_page(
+                request,
+                config,
+                replace(certificate_import_form.EMPTY_FORM, name=name, interface=True),
+            )
         return _certificate_import_page(request, config, certificate_import_form.EMPTY_FORM)
 
     @router.post("/certificates/import", response_class=HTMLResponse)
@@ -1904,6 +1932,7 @@ def build_router(config: Config) -> APIRouter:
         cluster: Sequence[str] = Form(default=()),
         receiver: Sequence[str] = Form(default=()),
         format: Sequence[str] = Form(default=()),
+        interface: str = Form(default="", max_length=1),
         idempotency_key: str = Form(default="", max_length=64),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
         file: UploadFile | None = UPLOADED_FILE,
@@ -1924,6 +1953,7 @@ def build_router(config: Config) -> APIRouter:
             formats=tuple(format),
             filename=filename,
             data=data,
+            interface=interface == "1",
         )
         session = current_session(request)
         if session is None:
@@ -1959,7 +1989,9 @@ def build_router(config: Config) -> APIRouter:
             )
         except certificate_form.FormProblem as problem:
             return _certificate_import_page(request, config, form, problem=str(problem))
-        return _queue_import(request, session, key, payload, form=form)
+        return _queue_import(
+            request, session, key, payload, form=form, after="/settings" if form.interface else ""
+        )
 
     @router.post("/certificates/{certificate_id}/upload")
     async def upload_certificate(
@@ -2010,6 +2042,9 @@ def build_router(config: Config) -> APIRouter:
                 "uploaded. Import it with haproxy-cert-import on the manager.",
                 back=f"/certificates?view=registry&open={certificate_id}",
             )
+        back = (
+            "/settings" if row.interface else f"/certificates?view=registry&open={certificate_id}"
+        )
         try:
             certificate_import_form.check_file(data, key_allowed=False)
             payload = certificate_import_form.sealed_payload(
@@ -2020,12 +2055,14 @@ def build_router(config: Config) -> APIRouter:
                 receivers=[t.name for t in row.targets if t.kind == "receiver"],
             )
         except certificate_form.FormProblem as problem:
-            return _refusal_page(
-                request,
-                config,
-                str(problem),
-                back=f"/certificates?view=registry&open={certificate_id}",
-            )
+            return _refusal_page(request, config, str(problem), back=back)
+        if row.interface:
+            #
+            # The interface's own certificate (B188), or the answer to the
+            # request made for it: no targets, the mark carried.
+            #
+            payload["interface"] = True
+            return _queue_import(request, session, key, payload, after="/settings")
         return _queue_import(request, session, key, payload, open_row=certificate_id)
 
     async def _uploaded_bytes(file: UploadFile | None) -> tuple[bytes, str]:
@@ -2050,6 +2087,7 @@ def build_router(config: Config) -> APIRouter:
         *,
         form: certificate_import_form.ImportForm | None = None,
         open_row: str = "",
+        after: str = "",
     ) -> Response:
         """Queue the sealed upload; the same refusals the issue form makes, said the same way."""
 
@@ -2088,6 +2126,8 @@ def build_router(config: Config) -> APIRouter:
                 detail={"operation": "cert_import", "job": job.id, "certificate": payload["id"]},
             )
             connection.commit()
+        if after:
+            return RedirectResponse(after, status_code=303)
         if open_row:
             return RedirectResponse(f"/certificates?view=registry&open={open_row}", status_code=303)
         return RedirectResponse("/certificates?view=registry", status_code=303)
@@ -2315,7 +2355,11 @@ def build_router(config: Config) -> APIRouter:
             }
             if overview.registry
             else {},
-            registered=tuple(entry.identifier for entry in overview.registry.certificates)
+            registered=tuple(
+                entry.identifier
+                for entry in (*overview.registry.certificates, overview.registry.interface)
+                if entry is not None
+            )
             if overview.registry
             else (),
             imported=tuple(
@@ -2327,6 +2371,21 @@ def build_router(config: Config) -> APIRouter:
             else (),
             waiting=tuple(
                 entry.identifier for entry in overview.registry.certificates if entry.csr_pending
+            )
+            if overview.registry
+            else (),
+            manager=overview.registry.manager if overview.registry else None,
+            interface_id=overview.registry.interface.identifier
+            if overview.registry and overview.registry.interface
+            else None,
+            taken=tuple(
+                view.identifier
+                for view in (
+                    *overview.registry.certificates,
+                    overview.registry.interface,
+                    overview.registry.interface_request,
+                )
+                if view is not None
             )
             if overview.registry
             else (),
@@ -2393,7 +2452,16 @@ def build_router(config: Config) -> APIRouter:
         )
         if overview.registry is None:
             return {}
-        return {view.identifier: view for view in overview.registry.certificates}
+        registry = overview.registry
+        #
+        # The interface's own entry and its waiting request are rows too, for
+        # the routes that act on a row by ID - its CSR, its upload, its
+        # renewal - though the listing draws them on the settings page.
+        #
+        extra = tuple(
+            view for view in (registry.interface, registry.interface_request) if view is not None
+        )
+        return {view.identifier: view for view in (*registry.certificates, *extra)}
 
     def _certificate_delete_page(
         request: Request,
@@ -2456,9 +2524,16 @@ def build_router(config: Config) -> APIRouter:
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
                 "renewal": renewal,
+                "back": "/settings"
+                if renewal is not None and renewal.row.interface
+                else f"/certificates?view=registry&open={renewal.identifier}"
+                if renewal is not None
+                else "/certificates?view=registry",
                 "problem": problem,
                 "certificate_job": jobs.certificate_in_flight(recent),
-                "section": "certificates",
+                "section": "settings"
+                if renewal is not None and renewal.row.interface
+                else "certificates",
                 "management_writes": config.management_writes,
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
@@ -2553,7 +2628,10 @@ def build_router(config: Config) -> APIRouter:
         #
         # Back to the list, the row closed: its State cell says "Renewing"
         # from the table, and the detail was not asked for (2026-09-21).
+        # The interface's own certificate is renewed from, and back to, Settings.
         #
+        if renewal.row.interface:
+            return RedirectResponse("/settings", status_code=303)
         return RedirectResponse("/certificates?view=registry", status_code=303)
 
     def _admin_write_gate(request: Request) -> AuthenticatedSession | Response:
@@ -2821,6 +2899,44 @@ def build_router(config: Config) -> APIRouter:
                 "windows": entered["transport"] in certificate_receivers.WINDOWS_TRANSPORTS,
                 "form": entered,
                 "problem": problem,
+            },
+        )
+
+    #
+    # Settings (Fas 13, B161): what belongs to the application itself rather
+    # than to what it manages. First the interface's own certificate (B188):
+    # what nginx serves, the registry entry that serves it, a request made
+    # for it, and the ways to replace it - the certificate forms, in their
+    # interface mode.
+    #
+    @router.get("/settings", response_class=HTMLResponse)
+    def settings_page(request: Request) -> Response:
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        _token, registry, context = _page_context(request, gate)
+        entry = registry.interface if registry else None
+        served = registry.served if registry else None
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings.html",
+            {
+                **context,
+                "section": "settings",
+                "served": served,
+                "entry": entry,
+                "waiting": registry.interface_request if registry else None,
+                "manager": registry.manager if registry else None,
+                #
+                # The registry marks one certificate and nginx serves another:
+                # an install that has not happened yet, or a pair replaced by
+                # hand with haproxy-ui-tls. Said, not resolved here.
+                #
+                "mismatch": entry is not None
+                and served is not None
+                and entry.readable
+                and bool(entry.fingerprint)
+                and entry.fingerprint != served.fingerprint,
             },
         )
 

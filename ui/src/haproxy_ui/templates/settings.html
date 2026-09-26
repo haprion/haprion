@@ -1,0 +1,65 @@
+{% extends "layout.html" %}
+{% block title %}Settings — HAProxy Manager{% endblock %}
+{% block head_extra %}{% if certificate_job %}<meta name="haproxy-live" content="3"><noscript><meta http-equiv="refresh" content="3"></noscript>{% endif %}{% endblock %}
+{% block content %}
+{#
+  What belongs to the manager itself rather than to what it manages (Fas 13,
+  B161). First the certificate this page is served with (B188): what nginx
+  serves now, measured from the pair itself, and the ways to replace it -
+  the certificate forms in their interface mode, which take no targets.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Settings</h1></div>
+  <div class="heading-badges">{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot</span>{% endif %}</div>
+</section>
+
+{% if certificate_job %}
+<p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> This page refreshes until it has finished.</p>
+{% endif %}
+
+<section class="cluster-card settings-card">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Interface certificate</h3><p>{% if manager %}What <code>{{ manager }}</code> is served with.{% else %}What this interface is served with.{% endif %}</p></div></div></header>
+  {% if served %}
+  <dl class="cluster-facts">
+    <div><dt>Name</dt><dd title="{{ served.sans | join(', ') }}">{{ served.common_name }}</dd></div>
+    <div><dt>Issued by</dt><dd title="{{ served.issuer }}">{{ served.issuer }}</dd></div>
+    <div><dt>Expires</dt><dd><span class="status-dot status-{{ served.tone }}"></span>{{ served.expires }} <span class="optional">{{ served.expiry_label }}</span></dd></div>
+    <div><dt>Source</dt><dd>{% if entry and not mismatch %}{{ entry.source_label }} · <code>{{ entry.identifier }}</code>{% elif served.self_signed %}Made at installation{% else %}Installed by hand{% endif %}</dd></div>
+  </dl>
+  {% else %}
+  <p class="table-note">The served certificate could not be read. The listing is refreshed by the poller; if this stays, check <code>haproxy-ui-tls show</code> on the manager.</p>
+  {% endif %}
+  {% if mismatch %}
+  <p class="preview-notice settings-notice"><span class="status-orb status-warning" aria-hidden="true"></span><strong><code>{{ entry.identifier }}</code> is marked for the interface, but nginx serves another certificate.</strong></p>
+  {% elif entry and entry.state_active %}
+  <p class="preview-notice settings-notice"><span class="badge-spinner" aria-hidden="true"></span><strong>{{ entry.state_label }}</strong>{% if entry.state_detail %} — {{ entry.state_detail }}{% endif %}</p>
+  {% endif %}
+  {% if waiting %}
+  <div class="cluster-actions settings-request">
+    <div><strong>Signing request <code>{{ waiting.identifier }}</code> is waiting for its certificate</strong><span>{{ waiting.sans | join(', ') }}</span></div>
+    <div class="action-buttons">
+      <a class="secondary-button" href="/certificates/{{ waiting.identifier }}/csr">Download CSR</a>
+      <form method="post" action="/certificates/renew" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="certificate" value="{{ waiting.identifier }}">
+        <button type="submit" class="secondary-button"{% if certificate_job %} disabled{% endif %}>Upload certificate…</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+  <div class="cluster-actions">
+    <div><strong>Replace</strong><span>From Let's Encrypt or NDES, a signing request, or a file.</span></div>
+    <div class="action-buttons">
+      {% if entry and entry.readable %}
+      <form method="post" action="/certificates/renew" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="certificate" value="{{ entry.identifier }}">
+        <button type="submit" class="secondary-button"{% if certificate_job %} disabled{% endif %}>Renew…</button>
+      </form>
+      {% endif %}
+      <a class="secondary-button" href="/certificates/new?for=interface">New certificate</a>
+      <a class="secondary-button" href="/certificates/import?for=interface">Import</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

@@ -194,6 +194,11 @@ class RegistryCertificateView:
     # renewal that enrolls it again (C9c); empty for every other source.
     #
     ndes_profile: str = ""
+    #
+    # The manager's own interface certificate (B188). Drawn on the settings
+    # page, not in this list: it has no targets and is published to nginx.
+    #
+    interface: bool = False
 
     @property
     def csr_pending(self) -> bool:
@@ -204,6 +209,21 @@ class RegistryCertificateView:
         """The badge's word, under the name the cluster row uses for it."""
 
         return self.source_label
+
+
+@dataclass(frozen=True, slots=True)
+class ServedView:
+    """What nginx serves the interface with now, as the helper read it (B188)."""
+
+    server_name: str
+    common_name: str
+    sans: tuple[str, ...]
+    issuer: str
+    expires: str
+    expiry_label: str
+    tone: Tone
+    self_signed: bool
+    fingerprint: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +243,18 @@ class RegistryView:
     #
     receiver_rows: tuple[certificate_receivers.ReceiverRow, ...] = ()
     manager: str | None = None
+    #
+    # The registry's entry for the interface's own certificate, kept out of
+    # `certificates` - the list, its counts and its checkboxes - and what
+    # nginx actually serves (B188). Both None from an older helper.
+    #
+    interface: RegistryCertificateView | None = None
+    served: ServedView | None = None
+    #
+    # A signing request made for the interface, waiting for its signature:
+    # the settings page hands its CSR out and takes the certificate back.
+    #
+    interface_request: RegistryCertificateView | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1073,6 +1105,30 @@ def _registry_certificate(
         valid_from=_date(entry.get("not_before")) if readable else "—",
         csr_pem=csr_pem,
         ndes_profile=_text(source.get("ndes_profile"), ""),
+        interface=entry.get("interface") is True,
+    )
+
+
+def _served_view(value: Any, *, now: datetime) -> ServedView | None:
+    entry = _mapping(value)
+    fingerprint = _text(entry.get("fingerprint_sha256"), "")
+    server_name = _text(entry.get("server_name"), "")
+    if not fingerprint or not server_name:
+        return None
+    self_signed = entry.get("self_signed") is True
+    expires, expiry_label, tone = _expiry_state(
+        _expiry(entry.get("not_after")), lifecycle="static", now=now
+    )
+    return ServedView(
+        server_name=server_name,
+        common_name=_text(entry.get("common_name"), server_name),
+        sans=_sans(entry.get("sans")),
+        issuer="Self-signed" if self_signed else short_issuer(_text(entry.get("issuer"))),
+        expires=expires,
+        expiry_label=expiry_label,
+        tone=tone,
+        self_signed=self_signed,
+        fingerprint=fingerprint,
     )
 
 
@@ -1142,7 +1198,17 @@ def _registry_view(
             if certificate is not None:
                 parsed.append(certificate)
 
-    certificates = tuple(sorted(parsed, key=lambda entry: entry.identifier))
+    certificates = tuple(
+        sorted((entry for entry in parsed if not entry.interface), key=lambda e: e.identifier)
+    )
+    marked = sorted(
+        (entry for entry in parsed if entry.interface and not entry.csr_pending),
+        key=lambda e: e.identifier,
+    )
+    waiting = sorted(
+        (entry for entry in parsed if entry.interface and entry.csr_pending),
+        key=lambda e: e.identifier,
+    )
     receivers = block.get("receivers")
     manager, receiver_rows = certificate_receivers.parse_receiver_rows(block)
     return RegistryView(
@@ -1159,6 +1225,9 @@ def _registry_view(
         ),
         receiver_rows=receiver_rows,
         manager=manager,
+        interface=marked[0] if marked else None,
+        served=_served_view(block.get("interface_served"), now=now),
+        interface_request=waiting[0] if waiting else None,
     )
 
 

@@ -146,7 +146,9 @@ def _restore(
     return Prepared(argv=RESTORE_CLIENT, request=request)
 
 
-def _targets(payload: Mapping[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _targets(
+    payload: Mapping[str, Any], *, interface: bool = False
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """The two target lists, checked here as well as in the helper.
 
     Both ends check them for the reason this module's docstring gives: a payload
@@ -161,7 +163,13 @@ def _targets(payload: Mapping[str, Any]) -> tuple[tuple[str, ...], tuple[str, ..
         if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
             raise BadPayload(f"{name} must be a list of identifiers")
         lists.append(tuple(value))
-    if not lists[0] and not lists[1]:
+    #
+    # The manager's own interface certificate (B188) is the one that has no
+    # targets: it is published to nginx. Neither rule bends for the other.
+    #
+    if interface and (lists[0] or lists[1]):
+        raise BadPayload("the interface certificate has no targets")
+    if not interface and not lists[0] and not lists[1]:
         raise BadPayload("at least one target (cluster or receiver) is required")
     return lists[0], lists[1]
 
@@ -269,7 +277,15 @@ def _certificate_operation(
 
     if operation == "cert_issue":
         _only(
-            payload, "domain", "method", "dns_profile", "clusters", "receivers", "formats", "renew"
+            payload,
+            "domain",
+            "method",
+            "dns_profile",
+            "clusters",
+            "receivers",
+            "formats",
+            "renew",
+            "interface",
         )
         domain = payload.get("domain")
         if not isinstance(domain, str) or not domain:
@@ -306,7 +322,8 @@ def _certificate_operation(
                 raise BadPayload(str(exc)) from exc
             if method != "dns-01":
                 raise BadPayload("dns_profile belongs to dns-01 only")
-        clusters, receivers = _targets(payload)
+        interface = _flag(payload, "interface", default=False)
+        clusters, receivers = _targets(payload, interface=interface)
         formats = _formats(payload, receivers)
         return Prepared(
             argv=(cert_issue_helper.SUDO, *SUDO_FLAGS, cert_issue_helper.HELPER),
@@ -318,11 +335,22 @@ def _certificate_operation(
                 receivers=receivers,
                 dns_profile=dns_profile,
                 formats=formats,
+                interface=interface,
             ),
         )
 
     if operation == "cert_scep":
-        _only(payload, "id", "profile", "domains", "clusters", "receivers", "formats", "resume")
+        _only(
+            payload,
+            "id",
+            "profile",
+            "domains",
+            "clusters",
+            "receivers",
+            "formats",
+            "resume",
+            "interface",
+        )
         certificate_id = payload.get("id")
         if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
             raise BadPayload("id must be a certificate ID")
@@ -357,7 +385,8 @@ def _certificate_operation(
             raise BadPayload("domains must be a non-empty list of DNS names")
         if domains[0].startswith("*."):
             raise BadPayload("the first name is the CN and cannot be a wildcard")
-        clusters, receivers = _targets(payload)
+        interface = _flag(payload, "interface", default=False)
+        clusters, receivers = _targets(payload, interface=interface)
         formats = _formats(payload, receivers)
         return Prepared(
             argv=(cert_scep_helper.SUDO, *SUDO_FLAGS, cert_scep_helper.HELPER),
@@ -370,6 +399,7 @@ def _certificate_operation(
                 receivers=receivers,
                 resume=resume,
                 formats=formats,
+                interface=interface,
             ),
         )
 
@@ -381,7 +411,9 @@ def _certificate_operation(
         # travel beside it so the helper can hold the box to the job before
         # it looks inside; a job the payload cannot name is refused here.
         #
-        _only(payload, "id", "key_id", "ciphertext", "clusters", "receivers", "formats")
+        _only(
+            payload, "id", "key_id", "ciphertext", "clusters", "receivers", "formats", "interface"
+        )
         certificate_id = payload.get("id")
         if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
             raise BadPayload("id must be a certificate ID")
@@ -397,7 +429,8 @@ def _certificate_operation(
             raise BadPayload("ciphertext must be base64") from exc
         if not ciphertext or len(ciphertext) > cert_upload.MAX_CIPHERTEXT:
             raise BadPayload("ciphertext is empty or larger than an upload can be")
-        clusters, receivers = _targets(payload)
+        interface = _flag(payload, "interface", default=False)
+        clusters, receivers = _targets(payload, interface=interface)
         formats = _formats(payload, receivers)
         return Prepared(
             argv=(cert_upload.SUDO, *SUDO_FLAGS, cert_upload.HELPER),
@@ -409,6 +442,7 @@ def _certificate_operation(
                 clusters=clusters,
                 receivers=receivers,
                 formats=formats,
+                interface=interface,
             ),
         )
 
@@ -419,7 +453,7 @@ def _certificate_operation(
         # Nothing secret rides in the payload, and nothing secret comes
         # back - the envelope carries the CSR.
         #
-        _only(payload, "id", "domains", "key_type", "clusters", "receivers", "formats")
+        _only(payload, "id", "domains", "key_type", "clusters", "receivers", "formats", "interface")
         certificate_id = payload.get("id")
         if not isinstance(certificate_id, str) or not CERTIFICATE_ID.fullmatch(certificate_id):
             raise BadPayload("id must be a certificate ID")
@@ -435,7 +469,8 @@ def _certificate_operation(
         key_type = payload.get("key_type", cert_request_state.DEFAULT_KEY_TYPE)
         if not isinstance(key_type, str) or key_type not in cert_request_state.KEY_TYPES:
             raise BadPayload("key_type must be one of the offered key types")
-        clusters, receivers = _targets(payload)
+        interface = _flag(payload, "interface", default=False)
+        clusters, receivers = _targets(payload, interface=interface)
         formats = _formats(payload, receivers)
         return Prepared(
             argv=(cert_request_helper.SUDO, *SUDO_FLAGS, cert_request_helper.HELPER),
@@ -447,6 +482,7 @@ def _certificate_operation(
                 clusters=clusters,
                 receivers=receivers,
                 formats=formats,
+                interface=interface,
             ),
         )
 

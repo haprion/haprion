@@ -49,6 +49,8 @@ class ImportForm:
     formats: tuple[str, ...] = ()
     filename: str = ""
     data: bytes = b""
+    interface: bool = False
+    """For the manager's own interface certificate (B188): no targets, published to nginx."""
 
     def format_of(self, receiver_id: str) -> str:
         """What the page should show selected for a receiver when drawn again."""
@@ -74,6 +76,7 @@ def normalise(form: ImportForm) -> ImportForm:
         formats=tuple(value.strip() for value in form.formats if value.strip()),
         filename=form.filename,
         data=form.data,
+        interface=form.interface,
     )
 
 
@@ -121,6 +124,8 @@ def payload_from_form(
             "The name may hold lower-case letters, digits, dots and dashes, and must "
             "start with a letter or digit."
         )
+    if form.interface:
+        return _interface_payload(form, choices, public_key)
     if form.name in choices.registered and form.name not in set(replaceable):
         raise FormProblem(
             f"{form.name} is already registered and its material is not imported; "
@@ -150,6 +155,33 @@ def payload_from_form(
         receivers=form.receivers,
         formats=formats,
     )
+
+
+def _interface_payload(
+    form: ImportForm, choices: IssueChoices, public_key: DnsProfilePublicKey
+) -> dict[str, Any]:
+    """An import for the interface's own certificate (B188): no targets, the mark set.
+
+    The name may be the interface certificate's own - a rotated pair for the
+    one that serves - or one no other certificate uses. Whether the file
+    names the interface's server name is the engine's check: the file is
+    sealed here and read only by the helper.
+    """
+
+    if form.name != choices.interface_id and form.name in choices.taken:
+        raise FormProblem(f"{form.name} is already in use. Choose another name.")
+    check_file(form.data)
+    try:
+        cert_upload.check_password(form.password)
+    except cert_upload.UploadError as exc:
+        raise FormProblem(f"The password could not be used: {exc}.") from exc
+    if form.clusters or form.receivers:
+        raise FormProblem("The interface certificate has no targets.")
+    payload = sealed_payload(
+        public_key, certificate_id=form.name, data=form.data, password=form.password
+    )
+    payload["interface"] = True
+    return payload
 
 
 def sealed_payload(

@@ -45,7 +45,8 @@
     "socket_helpers": {
       "haproxy-cert-receiver-helper": "/run/haproxy-mgmt/cert-receiver.sock",
       "haproxy-backup-job-helper": "/run/haproxy-mgmt/backup-job.sock",
-      "haproxy-node-restore-helper": "/run/haproxy-mgmt/node-restore.sock"
+      "haproxy-node-restore-helper": "/run/haproxy-mgmt/node-restore.sock",
+      "haproxy-ui-tls-helper": "/run/haproxy-mgmt/ui-tls.sock"
     }
   }
 }

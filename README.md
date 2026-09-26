@@ -69,8 +69,10 @@ that request and stores nothing it can read back; only the root helper opens the
 also be made on the manager, with a signing request for any CA to sign; the key then never exists
 anywhere else, and the signed certificate is uploaded back without one. Renewal
 stays Certbot's own timer; certificates the manager enrolls from a Microsoft CA over NDES/SCEP
-are renewed by the same daily run through the same enrollment path. Disaster recovery and VM rebuild workflows are deliberately outside the
-application scope.
+are renewed by the same daily run through the same enrollment path. Node state is backed up on a
+schedule and a node can be restored from its archive onto an empty VM or over itself; providing that
+VM, backing up the management host and the rest of a recovery plan are the operator's, and
+[`docs/DISASTER-RECOVERY.md`](docs/DISASTER-RECOVERY.md) is the template for writing it down.
 
 ## Repository layout
 

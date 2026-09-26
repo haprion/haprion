@@ -2149,6 +2149,10 @@ than Ubuntu 26.04 or Debian 13; configure what is the environment's rather than 
 configuration-management baseline, monitoring agents, an operator's own sudo rules - which runs
 afterwards as it would on any new machine.
 
+The restore is one piece of a recovery plan; the rest - where the VM comes from, how the management
+host survives, who fails over - is yours to decide. [`DISASTER-RECOVERY.md`](DISASTER-RECOVERY.md)
+lists the questions.
+
 ## Releasing a change
 
 Three things install independently — the CLI engine, the web platform, and the

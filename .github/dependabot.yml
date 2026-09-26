@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # The workflow pins its actions by commit SHA; this keeps those pins current.
+  # Python dependencies are left to Dependabot alerts and pip-audit in the gate.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

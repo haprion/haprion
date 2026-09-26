@@ -899,6 +899,8 @@ def failures_since_last_success(
     Two bounds, and both are needed. The window keeps an old mistake from
     counting forever; "since the last success" keeps a person who has proved
     they know the password from being locked out by their own earlier typos.
+    An unlock (0039) counts as that success for every address: the failures
+    stay in the record, and stop counting.
     """
 
     with connection.cursor() as cursor:
@@ -909,12 +911,14 @@ def failures_since_last_success(
             "   and client_ip = %(client_ip)s "
             "   and succeeded = false "
             "   and at > statement_timestamp() - make_interval(mins => %(window)s) "
-            "   and at > coalesce( "
-            "         (select max(at) from login_attempt "
-            "           where username_normalised = lower(%(username)s) "
-            "             and client_ip = %(client_ip)s "
-            "             and succeeded = true), "
-            "         '-infinity'::timestamptz)",
+            "   and at > greatest( "
+            "         coalesce((select max(at) from login_attempt "
+            "                    where username_normalised = lower(%(username)s) "
+            "                      and client_ip = %(client_ip)s "
+            "                      and succeeded = true), '-infinity'::timestamptz), "
+            "         coalesce((select max(at) from login_unlock "
+            "                    where username_normalised = lower(%(username)s)), "
+            "                  '-infinity'::timestamptz))",
             {"username": username, "client_ip": client_ip, "window": window_minutes},
         )
         row = cursor.fetchone()

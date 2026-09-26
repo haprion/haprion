@@ -2666,11 +2666,14 @@ from whoever had it, which is usually why either command is being run.
 holding the database name and the role to connect as. Prod and dev therefore
 cannot be confused by an environment variable or a working directory.
 
-**Root connects as the migration role**, the one that owns the schema, because
-no application role holds `insert` or `update` on the account table. That is the
-same boundary the running services live behind rather than an exception carved
-out for tooling: the web process cannot create an administrator no matter what
-it is asked to do.
+**Root connects as the migration role**, the one that owns the schema, so the
+tool works when nobody can sign in. The web role may write accounts too (schema
+`0039`): name, hash and role on a new one; role, `disabled`, hash and time zone
+on an existing one — never `created_at` or `updated_at`, which the database
+sets, and never a delete. **The database refuses to leave no active admin**,
+from either path: demoting or disabling the last one fails, under a lock, so two
+admins disabling each other at once cannot both succeed. The break-glass answer
+to a lost last admin is `add`.
 
 #### What the two roles see
 
@@ -2731,8 +2734,10 @@ would let one address work through a list of names.
 
 The attempts table is **append-only by grant** — the web role can add a row and
 read rows, and holds no update or delete. A counter the web process could reset
-would be a lock whose key is kept behind the door. Clearing it is
-`haproxy-ui-user unlock`, which is root.
+would be a lock whose key is kept behind the door. An unlock therefore deletes
+nothing: `haproxy-ui-user unlock` (and, for an admin, the interface) adds a row
+to `login_unlock`, and the throttle counts failures since the latest success or
+unlock for that name. The failed attempts stay in the record.
 
 The client address is taken from `X-Forwarded-For`, which the nginx site
 *overwrites* rather than appends to, so a request cannot contribute its own. An

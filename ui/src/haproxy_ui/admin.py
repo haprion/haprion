@@ -10,10 +10,10 @@ So account creation is a local root action. It is also the break-glass path:
 when the only administrator is locked out, forgotten, or gone, this is what
 brings the interface back without touching the database by hand.
 
-Root connects as the migration role - the one that owns the schema - because no
-application role holds `insert` or `update` on `app_user`. That is the same
-boundary the running services live behind, not an exception carved for tooling:
-the web process cannot create an administrator no matter what it is asked to do.
+Root connects as the migration role - the one that owns the schema. Since 0039
+the web role may write accounts too, behind an admin session and the admin's own
+password (Fas 13, B187); this tool is what still works when no admin can sign in.
+The database refuses to leave no active admin from either path.
 """
 
 from __future__ import annotations
@@ -247,25 +247,22 @@ def command_enable(environment: Environment, args: argparse.Namespace) -> int:
 def command_unlock(environment: Environment, args: argparse.Namespace) -> int:
     """Clear the throttle for an account.
 
-    Deletes the failed attempts rather than writing a successful one. Recording
-    a login that did not happen would unlock the account too, and would put a
-    lie in the record that later reads as evidence somebody signed in.
-
-    The web role cannot do this - it holds no delete on the table - which is the
-    property that makes the lockout meaningful in the first place.
+    Adds an unlock row (0039) rather than deleting the failed attempts or
+    writing a successful one: the throttle counts failures since the latest of
+    the two, so the account is let in again and the record of what was tried
+    stays. A recorded login that did not happen would be a lie that later reads
+    as evidence somebody signed in. The web page's *Unlock* writes the same row.
     """
 
     with connect(environment) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
-                "delete from login_attempt "
-                " where username_normalised = lower(%s) and succeeded = false",
-                (args.username,),
+                "insert into login_unlock (username_normalised, actor) values (lower(%s), %s)",
+                (args.username, _actor()),
             )
-            cleared = cursor.rowcount
-        _audit(connection, "throttle_cleared", args.username, attempts_cleared=cleared)
+        _audit(connection, "throttle_cleared", args.username)
         connection.commit()
-    print(f"cleared {cleared} failed attempt(s) for {args.username}")
+    print(f"unlocked {args.username}")
     return 0
 
 

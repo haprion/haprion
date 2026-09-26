@@ -138,7 +138,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0038",))
+            self.assertEqual(cursor.fetchone(), ("0039",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -1263,4 +1263,193 @@ class NdesDatabase(unittest.TestCase):
                     payload={},
                     idempotency_key=uuid4(),
                 )
+            connection.rollback()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class AccountsFromTheWeb(unittest.TestCase):
+    """Migration 0039: the web writes accounts inside grants and a guard (B187)."""
+
+    HASH = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA"
+
+    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def setUp(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("delete from app_user")
+            cursor.execute("delete from login_attempt")
+            cursor.execute("delete from login_unlock")
+            for name, role in (("alice", "admin"), ("bob", "admin"), ("carol", "reader")):
+                cursor.execute(
+                    "insert into app_user (username, password_hash, role) values (%s, %s, %s)",
+                    (name, self.HASH, role),
+                )
+            connection.commit()
+
+    def tearDown(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("delete from app_user")
+            cursor.execute("delete from login_attempt")
+            cursor.execute("delete from login_unlock")
+            connection.commit()
+
+    def web(self, statement: str, parameters: tuple[Any, ...] = ()) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            connection.execute(statement, parameters)
+            connection.commit()
+
+    def test_the_web_creates_and_changes_an_account_but_never_its_dates_or_its_row(self) -> None:
+        self.web(
+            "insert into app_user (username, password_hash, role) values ('dave', %s, 'reader')",
+            (self.HASH,),
+        )
+        self.web("update app_user set role = 'admin', timezone = 'Europe/Stockholm' "
+                 "where username = 'dave'")  # fmt: skip
+        for statement in (
+            "insert into app_user (username, password_hash, role, created_at) "
+            "values ('eve', '" + self.HASH + "', 'reader', now() - interval '1 year')",
+            "update app_user set updated_at = now() - interval '1 year' where username = 'dave'",
+            "update app_user set username = 'mallory' where username = 'dave'",
+            "delete from app_user where username = 'carol'",
+        ):
+            with (
+                self.subTest(statement=statement),
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                self.web(statement)
+
+    def test_an_update_moves_updated_at_whoever_writes_it(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "update app_user set updated_at = now() - interval '1 year' where username = 'carol'"
+            )
+            connection.commit()
+        self.web("update app_user set disabled = true where username = 'carol'")
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select updated_at > now() - interval '1 minute' from app_user "
+                "where username = 'carol'"
+            )
+            self.assertEqual(cursor.fetchone(), (True,))
+
+    def test_a_zone_is_a_name_or_nothing(self) -> None:
+        self.web("update app_user set timezone = 'America/Argentina/Buenos_Aires' "
+                 "where username = 'carol'")  # fmt: skip
+        self.web("update app_user set timezone = null where username = 'carol'")
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.web("update app_user set timezone = '../etc/passwd' where username = 'carol'")
+
+    def test_the_last_active_admin_is_neither_disabled_nor_demoted(self) -> None:
+        self.web("update app_user set disabled = true where username = 'bob'")
+        for statement in (
+            "update app_user set disabled = true where username = 'alice'",
+            "update app_user set role = 'reader' where username = 'alice'",
+        ):
+            with (
+                self.subTest(statement=statement),
+                self.assertRaises(psycopg.errors.CheckViolation),
+            ):
+                self.web(statement)
+        # The migration role is held to the same rule: the CLI's disable.
+        with self.connect() as connection, self.assertRaises(psycopg.errors.CheckViolation):
+            connection.execute("update app_user set disabled = true where username = 'alice'")
+        # A reader, and enabling bob, pass.
+        self.web("update app_user set disabled = true where username = 'carol'")
+        self.web("update app_user set disabled = false where username = 'bob'")
+        self.web("update app_user set role = 'reader' where username = 'alice'")
+
+    def test_two_admins_disabling_each_other_at_once_cannot_both_pass(self) -> None:
+        import threading
+
+        first = self.connect("HAPROXY_UI_TEST_WEB_ROLE")
+        second = self.connect("HAPROXY_UI_TEST_WEB_ROLE")
+        outcome: list[BaseException | None] = []
+        try:
+            first.execute("update app_user set disabled = true where username = 'alice'")
+
+            def other() -> None:
+                try:
+                    second.execute("update app_user set disabled = true where username = 'bob'")
+                    second.commit()
+                    outcome.append(None)
+                except psycopg.Error as exc:
+                    second.rollback()
+                    outcome.append(exc)
+
+            thread = threading.Thread(target=other)
+            thread.start()
+            thread.join(0.5)
+            self.assertTrue(thread.is_alive(), "the second change must wait for the first")
+            first.commit()
+            thread.join(5)
+            self.assertEqual(len(outcome), 1)
+            self.assertIsInstance(outcome[0], psycopg.errors.CheckViolation)
+        finally:
+            first.close()
+            second.close()
+
+    def test_an_unlock_is_a_row_the_throttle_counts_from(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            for _ in range(3):
+                db.record_login_attempt(
+                    connection, username="Carol", client_ip="192.0.2.7", succeeded=False
+                )
+            connection.commit()
+            self.assertEqual(
+                db.failures_since_last_success(
+                    connection, username="carol", client_ip="192.0.2.7", window_minutes=15
+                ),
+                3,
+            )
+            connection.execute(
+                "insert into login_unlock (username_normalised, actor) values ('carol', 'alice')"
+            )
+            connection.commit()
+            self.assertEqual(
+                db.failures_since_last_success(
+                    connection, username="carol", client_ip="192.0.2.7", window_minutes=15
+                ),
+                0,
+            )
+        for statement in (
+            "delete from login_attempt",
+            "delete from login_unlock",
+            "update login_unlock set actor = 'x'",
+            "insert into login_unlock (username_normalised, actor, at) "
+            "values ('carol', 'alice', now() + interval '1 day')",
+        ):
+            with (
+                self.subTest(statement=statement),
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                self.web(statement)
+
+    def test_the_migration_downgrades_and_upgrades_cleanly(self) -> None:
+        migration_path = (
+            Path(__file__).resolve().parents[1]
+            / "migrations"
+            / "versions"
+            / "0039_accounts_from_the_web.py"
+        )
+        spec = importlib.util.spec_from_file_location("migration_0039", migration_path)
+        if spec is None or spec.loader is None:
+            self.fail(f"cannot load {migration_path}")
+        migration = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                migration.op = _Executes(cursor)
+                migration.downgrade()
+                cursor.execute("select to_regclass('login_unlock')")
+                self.assertEqual(cursor.fetchone(), (None,))
+                cursor.execute(
+                    "select count(*) from information_schema.columns "
+                    "where table_name = 'app_user' and column_name = 'timezone'"
+                )
+                self.assertEqual(cursor.fetchone(), (0,))
+                migration.upgrade()
+                cursor.execute("select to_regclass('login_unlock')")
+                self.assertEqual(cursor.fetchone(), ("login_unlock",))
             connection.rollback()

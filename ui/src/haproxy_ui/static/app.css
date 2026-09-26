@@ -167,7 +167,8 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .brand-mark { width: 30px; height: 30px; color: var(--brand); stroke-width: 2.2; }
 
 .primary-nav { background: var(--panel-soft); }
-.nav-inner { min-height: 42px; gap: 3px; }
+/* One row where it fits; a second row rather than a page pushed sideways where it does not. */
+.nav-inner { min-height: 42px; gap: 3px; flex-wrap: wrap; padding-block: 6px; }
 .primary-nav a, .nav-item {
   display: inline-flex;
   align-items: center;
@@ -178,6 +179,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   font-size: 14px;
   font-weight: 400;
   text-decoration: none;
+  white-space: nowrap;
 }
 .primary-nav svg { width: 16px; height: 16px; stroke-width: 1.9; }
 .primary-nav a, .nav-item { border-radius: 5px; }

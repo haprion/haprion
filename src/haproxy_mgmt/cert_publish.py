@@ -827,6 +827,13 @@ def _select(runtime: RuntimeConfig, only: Sequence[str] | None) -> list[Register
 
 
 type Deployer = Callable[[str], int]
+#
+# Makes nginx serve the interface certificate (B188) and says whether anything
+# changed. Injected like the deployer, because where it can run is the
+# caller's to know: root outside the worker's sandbox runs
+# `ui_interface.install` directly, the sandboxed helpers ask its socket.
+#
+type Installer = Callable[[Material], bool]
 
 
 def publish(
@@ -838,6 +845,7 @@ def publish(
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
     deployer: Deployer | None = None,
+    installer: Installer | None = None,
     now: datetime | None = None,
 ) -> Report:
     """Publish every selected certificate to every target it names.
@@ -879,8 +887,27 @@ def publish(
                 # whose material is refused must not leave one behind.
                 #
                 material = read_material(entry, live=live, store=store, now=now)
-                targets = targets_for(entry, runtime, policy)
-                outcomes = publish_to(targets, material)
+                outcomes: tuple[TargetResult, ...]
+                if entry.interface:
+                    if installer is None:
+                        results.append(
+                            CertificateResult(
+                                entry.certificate_id,
+                                "skipped",
+                                fingerprint=material.fingerprint,
+                                not_after=material.facts.not_after,
+                                error=(
+                                    "installer_unavailable",
+                                    "the interface certificate is installed by root, not by "
+                                    "this caller",
+                                ),
+                            )
+                        )
+                        continue
+                    outcomes = (TargetResult("interface", "interface", installer(material)),)
+                else:
+                    targets = targets_for(entry, runtime, policy)
+                    outcomes = publish_to(targets, material)
             except PublishError as exc:
                 results.append(
                     CertificateResult(entry.certificate_id, "failed", error=(exc.code, str(exc)))

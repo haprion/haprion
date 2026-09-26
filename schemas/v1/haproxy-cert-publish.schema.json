@@ -43,7 +43,7 @@
       "type": "object",
       "required": ["kind", "name", "changed"],
       "properties": {
-        "kind": { "enum": ["cluster", "receiver"] },
+        "kind": { "enum": ["cluster", "receiver", "interface"] },
         "name": { "type": "string", "minLength": 1, "maxLength": 255 },
         "changed": { "type": "boolean" }
       },

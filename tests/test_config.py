@@ -798,7 +798,10 @@ class TheCertificateRegistry(unittest.TestCase):
 
     def test_the_interface_certificate_is_read_and_holds_no_target(self) -> None:
         def mark(data):
-            data["certificates"]["ui.example.net"] = {"source": {"kind": "import"}, "interface": True}
+            data["certificates"]["ui.example.net"] = {
+                "source": {"kind": "import"},
+                "interface": True,
+            }
 
         registry = self.load(mutate_registry=mark).registry
         assert registry is not None
@@ -831,7 +834,10 @@ class TheCertificateRegistry(unittest.TestCase):
 
     def test_the_interface_flag_is_a_boolean(self) -> None:
         def text(data):
-            data["certificates"]["ui.example.net"] = {"source": {"kind": "import"}, "interface": "yes"}
+            data["certificates"]["ui.example.net"] = {
+                "source": {"kind": "import"},
+                "interface": "yes",
+            }
 
         with self.assertRaisesRegex(ConfigError, "interface must be true or false"):
             self.load(mutate_registry=text)

@@ -23,10 +23,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
+from haproxy_mgmt import ui_interface
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_publish import (
     DEFAULT_LOCK_PATH,
     Deployer,
+    Installer,
     PublishError,
     Report,
     publish,
@@ -149,6 +151,7 @@ def main(
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
     deployer: Deployer | None = None,
+    installer: Installer | None = None,
     now: datetime | None = None,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
@@ -200,6 +203,12 @@ def main(
             store=store,
             lock_path=lock_path,
             deployer=deployer if deploy else None,
+            #
+            # Always, not only with --deploy: this command runs as root outside
+            # any sandbox, and writing nginx's pair is this target's publish
+            # step - the one that makes the file it writes the file served.
+            #
+            installer=installer or ui_interface.install,
             now=now,
         )
     except PublishError as exc:

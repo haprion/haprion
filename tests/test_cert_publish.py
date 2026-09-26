@@ -41,10 +41,13 @@ BASE = Path(__file__).resolve().parents[1]
 ME = pwd.getpwuid(os.getuid()).pw_name
 
 
-def issue(directory: Path, common_name: str, *, days: int = 30) -> None:
+def issue(directory: Path, common_name: str, *, days: int = 30, sans: tuple[str, ...] = ()) -> None:
     """certbot's live layout: fullchain.pem and privkey.pem, freshly issued."""
 
     directory.mkdir(parents=True, exist_ok=True)
+    extension = (
+        ["-addext", "subjectAltName=" + ",".join(f"DNS:{name}" for name in sans)] if sans else []
+    )
     subprocess.run(
         [
             "/usr/bin/openssl",
@@ -63,6 +66,7 @@ def issue(directory: Path, common_name: str, *, days: int = 30) -> None:
             "-nodes",
             "-subj",
             f"/CN={common_name}",
+            *extension,
         ],
         capture_output=True,
         check=True,

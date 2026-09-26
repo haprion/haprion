@@ -22,6 +22,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -256,6 +257,21 @@ class WhatTheHelperWillNotBeCalledAs(HelperFixture):
         )
         self.assertNotEqual(code, 0)
         self.assertEqual(out.getvalue(), "")
+
+
+class ThePersonsWayIn(unittest.TestCase):
+    def test_sudo_may_ask_for_the_password(self) -> None:
+        """A person has a `%sudo` rule and a terminal, not a NOPASSWD line (B71).
+
+        `sudo -n` refused everybody without a cached sudo, while the
+        installation guide said the command goes through the person's own rule.
+        """
+
+        with mock.patch.object(probe.subprocess, "run") as run:
+            probe.run_probe_helper("alpha", "request", [])
+        argv = run.call_args.args[0]
+        self.assertEqual(argv, [probe.SUDO, "--", probe.HELPER])
+        self.assertNotIn("-n", argv)
 
 
 if __name__ == "__main__":

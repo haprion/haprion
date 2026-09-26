@@ -53,14 +53,17 @@ def run_probe_helper(
     """Ask the privileged helper to probe one cluster's pool.
 
     Through sudo, because a person running this command has a terminal and a
-    `%sudo` rule. The interface reaches the same helper over a socket instead -
-    its account is built so that it cannot gain privilege at all - but both
-    build the request in `build_request`, so the two cannot drift apart.
+    `%sudo` rule - so sudo may ask for the password, on the terminal, as
+    `haproxy-cert-deploy` lets it. There is no NOPASSWD rule for this helper,
+    and `-n` made the command fail for anyone without a cached sudo. The
+    interface reaches the same helper over a socket instead - its account is
+    built so that it cannot gain privilege at all - but both build the request
+    in `build_request`, so the two cannot drift apart.
     """
 
     request = build_request(cluster_id, request_id, targets, source=source, timeout_ms=timeout_ms)
     return subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
-        [SUDO, "-n", HELPER],
+        [SUDO, "--", HELPER],
         input=json.dumps(request, separators=(",", ":")),
         capture_output=True,
         text=True,

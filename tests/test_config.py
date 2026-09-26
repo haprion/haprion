@@ -796,6 +796,46 @@ class TheCertificateRegistry(unittest.TestCase):
             with self.assertRaisesRegex(ConfigError, "unknown field"):
                 self.load(mutate_registry=where)
 
+    def test_the_interface_certificate_is_read_and_holds_no_target(self) -> None:
+        def mark(data):
+            data["certificates"]["ui.example.net"] = {"source": {"kind": "import"}, "interface": True}
+
+        registry = self.load(mutate_registry=mark).registry
+        assert registry is not None
+        self.assertTrue(registry.certificates["ui.example.net"].interface)
+        self.assertFalse(registry.certificates["example.net"].interface)
+
+        def with_cluster(data):
+            data["certificates"]["ui.example.net"] = {
+                "source": {"kind": "import"},
+                "interface": True,
+                "clusters": ["alpha"],
+            }
+
+        with self.assertRaisesRegex(ConfigError, "cannot name clusters or receivers"):
+            self.load(mutate_registry=with_cluster)
+
+        def with_receiver(data):
+            data["certificates"]["lb-01.example.net"]["interface"] = True
+
+        with self.assertRaisesRegex(ConfigError, "cannot name clusters or receivers"):
+            self.load(mutate_registry=with_receiver)
+
+    def test_only_one_certificate_is_the_interface_s(self) -> None:
+        def two(data):
+            for name in ("ui-a.example.net", "ui-b.example.net"):
+                data["certificates"][name] = {"source": {"kind": "import"}, "interface": True}
+
+        with self.assertRaisesRegex(ConfigError, "ui-a.example.net is already the interface"):
+            self.load(mutate_registry=two)
+
+    def test_the_interface_flag_is_a_boolean(self) -> None:
+        def text(data):
+            data["certificates"]["ui.example.net"] = {"source": {"kind": "import"}, "interface": "yes"}
+
+        with self.assertRaisesRegex(ConfigError, "interface must be true or false"):
+            self.load(mutate_registry=text)
+
     def test_without_a_registry_the_allowlist_is_read_as_before(self) -> None:
         policy = load_policy(BASE / "examples" / "runtime-policy.yaml", require_secure=False)
         self.assertIsNone(policy.certificate_registry)

@@ -474,6 +474,13 @@ class RegisteredCertificate:
     #
     receivers: tuple[str, ...]
     formats: Mapping[str, str] = types.MappingProxyType({})
+    #
+    # The manager's own interface certificate (B188): renewed like every
+    # other entry, published to nginx instead of to targets. At most one entry
+    # carries it, and that entry names no cluster and no receiver - the
+    # certificate is the application's, not something it distributes.
+    #
+    interface: bool = False
 
     def format_for(self, receiver_id: str) -> str:
         """The form this certificate is written in for that receiver."""
@@ -1156,7 +1163,7 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             raise ConfigError(f"invalid certificate ID in certificate registry: {certificate_id!r}")
         location = f"certificates.{certificate_id}"
         raw = _mapping(raw_value, location)
-        _only_keys(raw, {"source", "clusters", "receivers"}, location)
+        _only_keys(raw, {"source", "clusters", "receivers", "interface"}, location)
 
         raw_source = _mapping(raw.get("source"), f"{location}.source")
         _only_keys(
@@ -1200,6 +1207,19 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             raise ConfigError(
                 f"{location}.receivers names unregistered receiver(s): {', '.join(unknown)}"
             )
+        interface = raw.get("interface", False)
+        if type(interface) is not bool:
+            raise ConfigError(f"{location}.interface must be true or false")
+        if interface and (clusters or named):
+            raise ConfigError(
+                f"{location} is the interface certificate and cannot name clusters or receivers"
+            )
+        if interface:
+            taken = [e.certificate_id for e in certificates.values() if e.interface]
+            if taken:
+                raise ConfigError(
+                    f"{location}.interface: {taken[0]} is already the interface certificate"
+                )
         certificates[certificate_id] = RegisteredCertificate(
             certificate_id=certificate_id,
             source=CertificateSource(
@@ -1208,6 +1228,7 @@ def load_registry(path: Path, *, require_secure: bool = True) -> Registry:
             clusters=clusters,
             receivers=named,
             formats=types.MappingProxyType(formats),
+            interface=interface,
         )
     return Registry(receivers=receivers, certificates=certificates)
 

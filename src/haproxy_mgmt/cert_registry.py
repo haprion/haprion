@@ -449,6 +449,17 @@ def set_targets(
         )
 
     registry = load_registry(path, require_secure=require_secure)
+    if registry.certificates[certificate_id].interface:
+        #
+        # The entry is the interface's own certificate (B188). It has no
+        # targets to replace, and the rewrite below keeps only `source` and the
+        # target lists - it would drop the flag and leave nginx's certificate
+        # looking like an ordinary one with nowhere to go.
+        #
+        raise RegistryError(
+            "bad_input",
+            f"{certificate_id} is the interface certificate and has no targets",
+        )
     #
     # Both target kinds are checked against what exists rather than against what
     # was asked for. A cluster comes from `clusters.yaml` and a receiver from the

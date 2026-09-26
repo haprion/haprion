@@ -165,6 +165,36 @@ class WhatRetargetingRefuses(RegistryFixture):
         self.assertEqual(self.registry.read_bytes(), self.before)
 
 
+class TheInterfaceCertificateHasNoTargets(RegistryFixture):
+    """B188: nginx's certificate is published to nginx, never retargeted."""
+
+    def test_retargeting_it_is_refused_and_nothing_is_written(self) -> None:
+        policy_path, registry = self.prepared(
+            {"ui.example": {"source": {"kind": "import"}, "interface": True}}
+        )
+        before = registry.read_bytes()
+
+        with self.assertRaises(RegistryError) as caught:
+            self.retarget(policy_path, registry, "ui.example", clusters=["alpha"])
+
+        self.assertEqual(caught.exception.code, "bad_input")
+        self.assertEqual(registry.read_bytes(), before)
+
+    def test_the_flag_survives_a_rewrite_for_another_certificate(self) -> None:
+        policy_path, registry = self.prepared(
+            {
+                "ui.example": {"source": {"kind": "import"}, "interface": True},
+                "example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]},
+            }
+        )
+
+        self.retarget(policy_path, registry, "example.com", clusters=["alpha", "beta"])
+
+        self.assertEqual(
+            self.entries(registry)["ui.example"], {"source": {"kind": "import"}, "interface": True}
+        )
+
+
 class WhatRetargetingDoes(RegistryFixture):
     def test_the_whole_target_set_is_replaced_and_the_move_is_named(self) -> None:
         policy_path, registry = self.prepared(

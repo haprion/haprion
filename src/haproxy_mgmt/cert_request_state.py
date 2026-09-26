@@ -189,3 +189,16 @@ def request_targets(
         else {}
     )
     return _ids(loaded.get("clusters"), CLUSTER_ID), receivers, formats
+
+
+def request_is_interface(store: Path, certificate_id: str) -> bool:
+    """Whether a pending request was made for the manager's own interface (B188).
+
+    Kept with the request's targets, because the answer arrives with the
+    signed certificate, which may be months later and through another form.
+    """
+
+    if not csr_is_pending(store, certificate_id):
+        return False
+    loaded = _bounded_json(store / certificate_id / TARGETS, MAX_RECORD_BYTES)
+    return isinstance(loaded, dict) and loaded.get("interface") is True

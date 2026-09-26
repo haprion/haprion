@@ -53,7 +53,9 @@
             "not_after": { "type": "string", "format": "date-time" },
             "chain_length": { "type": "integer", "minimum": 0 },
             "replaced": { "type": "boolean" },
-            "publish": { "$ref": "haproxy-cert-publish.schema.json#/$defs/publish_result" }
+            "publish": { "$ref": "haproxy-cert-publish.schema.json#/$defs/publish_result" },
+            "interface": { "description": "Additive (B188): present and true when this certificate is the manager's own interface certificate.", "const": true },
+            "retired": { "$ref": "haproxy-cert-publish.schema.json#/$defs/retired_interface" }
           },
           "additionalProperties": false
         }

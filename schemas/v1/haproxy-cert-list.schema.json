@@ -150,6 +150,10 @@
             { "type": "null" }
           ]
         },
+        "interface": {
+          "description": "Additive (B188): present and true on the one entry that is the manager's own interface certificate. It has no targets and is published to nginx.",
+          "const": true
+        },
         "readable": { "type": "boolean" },
         "validation_error": { "type": ["string", "null"], "maxLength": 2048 },
         "request_state": {

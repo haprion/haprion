@@ -55,6 +55,7 @@ class Candidate:
     receivers: tuple[str, ...]
     not_after: datetime
     days_left: int
+    interface: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +133,7 @@ def candidates(
                 entry.receivers,
                 facts.not_after,
                 days_left,
+                entry.interface,
             )
         )
     return due, problems

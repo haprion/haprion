@@ -234,6 +234,7 @@ def make_request(
     lock_path: Path = DEFAULT_LOCK_PATH,
     request_root: Path | None = None,
     now: datetime | None = None,
+    interface: bool = False,
 ) -> RequestResult:
     """Steps 1-4: check, make the key and the CSR into the store, report the CSR."""
 
@@ -248,6 +249,10 @@ def make_request(
         raise RequestError("bad_input", f"invalid certificate ID: {certificate_id!r}")
     requested = names(domains)
     kind = key_type(key_kind)
+    if interface and (clusters or receivers):
+        raise RequestError(
+            "bad_input", "the interface certificate has no targets; name no cluster or receiver"
+        )
     #
     # The targets are held to the same rule an import holds them to, before
     # anything is made: a request for a receiver that does not exist would
@@ -289,6 +294,11 @@ def make_request(
                     "clusters": list(clusters),
                     "receivers": list(receivers),
                     "formats": dict(formats or {}),
+                    #
+                    # Read back by the import when the signed certificate
+                    # arrives (B188): the request was made for the interface.
+                    #
+                    **({"interface": True} if interface else {}),
                 },
             )
     except cert_registry.RegistryError as exc:

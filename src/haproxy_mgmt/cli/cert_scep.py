@@ -13,7 +13,7 @@ from typing import Any, TextIO
 
 from haproxy_mgmt import cert_import, ndes, ndes_profiles
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
-from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer
+from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer
 from haproxy_mgmt.cli import cert_job
 from haproxy_mgmt.cli.cert_import import result_envelope
 from haproxy_mgmt.cli.cert_publish import default_deployer
@@ -29,6 +29,7 @@ from haproxy_mgmt.envelope import Message, envelope, failure, new_request_id
 from haproxy_mgmt.helper_protocol import HelperProtocolError
 from haproxy_mgmt.ndes_state import (
     request_formats,
+    request_is_interface,
     request_record,
     request_targets,
     write_targets,
@@ -60,9 +61,11 @@ def enroll(
     resume: bool,
     request_id: str,
     formats: Mapping[str, str] | None = None,
+    interface: bool = False,
     policy_path: Path = DEFAULT_POLICY_PATH,
     require_secure: bool = True,
     deployer: Deployer,
+    installer: Installer | None = None,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
@@ -105,6 +108,14 @@ def enroll(
             #
             clusters, receivers = request_targets(policy.ndes.state_root, certificate_id)
             formats = request_formats(policy.ndes.state_root, certificate_id)
+        if resume:
+            interface = interface or request_is_interface(policy.ndes.state_root, certificate_id)
+        if interface and (clusters or receivers):
+            raise ScepRefusal(
+                "bad_input",
+                "the interface certificate has no targets; name no cluster or receiver",
+                65,
+            )
         if any(name not in receivers for name in formats or ()):
             raise ScepRefusal("bad_input", "a format names a receiver that is not targeted", 65)
         requested = ndes.names(domains)
@@ -149,6 +160,7 @@ def enroll(
                     clusters=tuple(clusters),
                     receivers=tuple(receivers),
                     formats=formats,
+                    interface=interface,
                 )
                 doc = envelope(
                     operation=OPERATION,
@@ -199,6 +211,8 @@ def enroll(
                 require_secure=require_secure,
                 ndes_profile=profile.profile_id,
                 formats=formats,
+                interface=interface,
+                installer=installer,
             )
             doc, exit_code = result_envelope(imported, request_id=request_id)
             doc["operation"] = OPERATION

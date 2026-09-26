@@ -77,6 +77,7 @@ def write_targets(
     clusters: tuple[str, ...],
     receivers: tuple[str, ...],
     formats: Mapping[str, str] | None = None,
+    interface: bool = False,
 ) -> None:
     """Where the certificate goes once the CA answers, kept beside the request.
 
@@ -99,6 +100,7 @@ def write_targets(
                 "clusters": list(clusters),
                 "receivers": list(receivers),
                 "formats": dict(formats or {}),
+                **({"interface": True} if interface else {}),
             },
             handle,
         )
@@ -115,6 +117,14 @@ def request_targets(
     if not isinstance(loaded, dict):
         return (), ()
     return _ids(loaded.get("clusters"), CLUSTER_ID), _ids(loaded.get("receivers"), RECEIVER_ID)
+
+
+def request_is_interface(state_root: Path, certificate_id: str) -> bool:
+    """Whether the waiting request is for the manager's own interface (B188)."""
+
+    directory = request_directory(state_root, certificate_id)
+    loaded = _bounded_json(directory / TARGETS_FILE, MAX_RECORD_BYTES)
+    return isinstance(loaded, dict) and loaded.get("interface") is True
 
 
 def request_formats(state_root: Path, certificate_id: str) -> dict[str, str]:

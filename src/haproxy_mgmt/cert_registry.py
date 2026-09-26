@@ -231,6 +231,25 @@ def write(
         ) from exc
 
 
+def claim_interface(certificates: dict[str, Any], certificate_id: str) -> str | None:
+    """Mark this entry as the interface's, and take the mark from the one that had it (B188).
+
+    Returns the entry that lost it, if another did. That entry stays in the
+    registry, unmarked and with no targets, until the new certificate is
+    served (D5); only then is it deleted, so a replacement nginx refused
+    leaves the previous certificate where a person can see it.
+    """
+
+    displaced: str | None = None
+    for other_id, other in list(certificates.items()):
+        if other_id != certificate_id and isinstance(other, dict) and other.get("interface"):
+            certificates[other_id] = {k: v for k, v in other.items() if k != "interface"}
+            displaced = other_id
+    entry = certificates[certificate_id]
+    entry["interface"] = True
+    return displaced
+
+
 def check_receiver_rules(registry: Registry) -> None:
     """The rule B138 states for `flat` receivers, checked on the whole registry rather than on a delta.
 

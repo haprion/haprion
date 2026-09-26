@@ -67,6 +67,17 @@
       },
       "additionalProperties": true
     },
-    "certificate_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,254}$" }
+    "certificate_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,254}$" },
+    "retired_interface": {
+      "description": "Additive (B188, D5): the entry that served the manager's interface until this certificate took the mark, and what became of it - `removed` once the new one is served, `kept` (unmarked, no targets) when it is not, or the deletion's own `refused`/`incomplete` with its reason.",
+      "type": "object",
+      "required": ["id", "state", "reason"],
+      "properties": {
+        "id": { "$ref": "#/$defs/certificate_id" },
+        "state": { "enum": ["removed", "kept", "refused", "incomplete"] },
+        "reason": { "type": "string", "maxLength": 2048 }
+      },
+      "additionalProperties": false
+    }
   }
 }

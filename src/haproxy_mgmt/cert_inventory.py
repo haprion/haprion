@@ -485,6 +485,11 @@ def registry_result(
         row: dict[str, Any] = {
             "id": entry.certificate_id,
             "source": _source(entry),
+            #
+            # Additive (B188): only on the entry that is the interface's, so
+            # every other row reads exactly as it did.
+            #
+            **({"interface": True} if entry.interface else {}),
             "readable": False,
             "validation_error": None,
             "measured_at": None,

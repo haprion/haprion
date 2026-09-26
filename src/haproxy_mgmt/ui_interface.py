@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from haproxy_mgmt import helper_socket
-from haproxy_mgmt.cert_publish import Material, PublishError
+from haproxy_mgmt.cert_publish import Material, PublishError, Report
 from haproxy_mgmt.certificates import CertificateError, leaf_fingerprint
 from haproxy_mgmt.envelope import new_request_id
 
@@ -269,3 +269,14 @@ def socket_installer(*, path: str = SOCKET_PATH, timeout: float = SOCKET_TIMEOUT
         )
 
     return install_through_socket
+
+
+def served(report: Report, certificate_id: str) -> bool:
+    """Whether this publish left nginx serving the certificate: installed now, or already."""
+
+    return any(
+        row.certificate_id == certificate_id
+        and row.status in ("published", "unchanged")
+        and any(target.kind == "interface" for target in row.targets)
+        for row in report.certificates
+    )

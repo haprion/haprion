@@ -45,11 +45,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from haproxy_mgmt import cert_registry, dns_profiles, dns_provider_catalog
+from haproxy_mgmt import (
+    cert_delete,
+    cert_registry,
+    dns_profiles,
+    dns_provider_catalog,
+    ui_interface,
+)
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE, measure_registered
 from haproxy_mgmt.cert_publish import (
     DEFAULT_LOCK_PATH,
     Deployer,
+    Installer,
     PublishError,
     Report,
     publish,
@@ -114,6 +121,8 @@ class IssueRequest:
     dns_profile: str | None = None
     formats: Mapping[str, str] = field(default_factory=dict)
     """How each receiver is written; a receiver not named here gets `pem` (B159)."""
+    interface: bool = False
+    """The manager's own interface certificate (B188): no targets, published to nginx."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +154,11 @@ class IssueResult:
     #
     renewed: bool = False
     lineage: str | None = None
+    #
+    # D5: the entry that served the interface before this one, and what
+    # became of it - deleted once this one is served, kept otherwise.
+    #
+    retired: Mapping[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -161,6 +175,8 @@ class IssueResult:
             "total_seconds": round(self.total_seconds, 1),
             "publish": self.publish.as_dict(),
             "renewed": self.renewed,
+            "interface": self.request.interface,
+            "retired": dict(self.retired) if self.retired is not None else None,
         }
 
 
@@ -189,6 +205,7 @@ def build_request(
     runtime: RuntimeConfig,
     dns_profile: str | None = None,
     formats: Mapping[str, str] | None = None,
+    interface: bool = False,
 ) -> IssueRequest:
     certificate_id, domains, wildcard = parse_domain(domain)
     if method not in METHODS:
@@ -204,7 +221,11 @@ def build_request(
             raise IssueError("bad_input", str(exc)) from exc
         if method != "dns-01":
             raise IssueError("bad_input", "a DNS profile belongs to DNS-01 only")
-    if not clusters and not receivers:
+    if interface and (clusters or receivers):
+        raise IssueError(
+            "bad_input", "the interface certificate has no targets; name no cluster or receiver"
+        )
+    if not interface and not clusters and not receivers:
         raise IssueError("bad_input", "at least one target (cluster or receiver) is required")
 
     registry = runtime.registry
@@ -238,6 +259,7 @@ def build_request(
         receivers=tuple(dict.fromkeys(receivers)),
         dns_profile=dns_profile,
         formats=check_formats(formats, receivers),
+        interface=interface,
     )
 
 
@@ -477,8 +499,11 @@ def add_to_registry(
     *,
     require_secure: bool = True,
     lock_path: Path = DEFAULT_LOCK_PATH,
-) -> None:
+) -> str | None:
     """Add the entry through the one writer the registry has.
+
+    Returns the entry that served the interface until now, when this one
+    takes the mark from it (D5).
 
     The atomic rewrite, the load-back and the cluster cross-check all live in
     `cert_registry`, which the registry helper uses too. This function is the
@@ -488,7 +513,7 @@ def add_to_registry(
 
     try:
         with cert_registry.locked(lock_path):
-            _add_entry(path, request, runtime, require_secure=require_secure)
+            return _add_entry(path, request, runtime, require_secure=require_secure)
     except cert_registry.RegistryError as exc:
         #
         # The one failure that leaves something behind: certbot has issued the
@@ -507,7 +532,7 @@ def add_to_registry(
 
 def _add_entry(
     path: Path, request: IssueRequest, runtime: RuntimeConfig, *, require_secure: bool
-) -> None:
+) -> str | None:
     document = cert_registry.read_document(path)
     certificates = dict(document.get("certificates") or {})
     entry: dict[str, Any] = {"source": {"kind": "acme"}}
@@ -518,6 +543,11 @@ def _add_entry(
     if request.receivers:
         entry["receivers"] = cert_registry.receiver_elements(request.receivers, request.formats)
     certificates[request.certificate_id] = entry
+    displaced = (
+        cert_registry.claim_interface(certificates, request.certificate_id)
+        if request.interface
+        else None
+    )
     cert_registry.write(
         path,
         document=document,
@@ -525,6 +555,7 @@ def _add_entry(
         runtime=runtime,
         require_secure=require_secure,
     )
+    return displaced
 
 
 #
@@ -540,10 +571,12 @@ def issue(
     receivers: Sequence[str],
     dns_profile: str | None = None,
     formats: Mapping[str, str] | None = None,
+    interface: bool = False,
     policy: PathPolicy,
     runtime: RuntimeConfig,
     certbot: Certbot = run_certbot,
     deployer: Deployer | None = None,
+    installer: Installer | None = None,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
@@ -559,6 +592,7 @@ def issue(
         runtime=runtime,
         dns_profile=dns_profile,
         formats=formats,
+        interface=interface,
     )
     if (live / request.certificate_id).exists():
         raise IssueError(
@@ -594,7 +628,7 @@ def issue(
         )
 
     assert policy.certificate_registry is not None  # noqa: S101 - build_request checked it
-    add_to_registry(
+    displaced = add_to_registry(
         policy.certificate_registry,
         request,
         runtime,
@@ -616,16 +650,27 @@ def issue(
             store=store,
             lock_path=lock_path,
             deployer=deployer,
+            installer=installer,
             now=now or datetime.now(UTC),
         )
     except PublishError as exc:
         raise IssueError(exc.code, str(exc), exit_code=78) from exc
 
+    retired = cert_delete.retire_displaced_interface(
+        displaced,
+        served=ui_interface.served(report, request.certificate_id),
+        policy=policy,
+        certbot=certbot_binary(policy),
+        require_secure=require_secure,
+        store=store,
+        lock_path=lock_path,
+    )
     return IssueResult(
         request=request,
         certbot_seconds=certbot_seconds,
         total_seconds=time.monotonic() - started,
         publish=report,
+        retired=retired,
     )
 
 
@@ -636,6 +681,7 @@ def renew(
     runtime: RuntimeConfig,
     certbot: Certbot = run_certbot,
     deployer: Deployer | None = None,
+    installer: Installer | None = None,
     live: Path = LETSENCRYPT_LIVE,
     store: Path = IMPORT_STORE,
     lock_path: Path = DEFAULT_LOCK_PATH,
@@ -694,6 +740,7 @@ def renew(
         receivers=entry.receivers,
         dns_profile=entry.source.dns_profile,
         formats=dict(entry.formats),
+        interface=entry.interface,
     )
     invocation = renewal_invocation(
         lineage, policy, runtime, force=True, require_secure=require_secure
@@ -727,6 +774,7 @@ def renew(
             store=store,
             lock_path=lock_path,
             deployer=deployer,
+            installer=installer,
             now=now or datetime.now(UTC),
         )
     except PublishError as exc:

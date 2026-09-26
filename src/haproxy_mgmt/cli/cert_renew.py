@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
-from haproxy_mgmt import cert_issue, ndes_renew
+from haproxy_mgmt import cert_issue, ndes_renew, ui_interface
 from haproxy_mgmt.cert_inventory import IMPORT_STORE, LETSENCRYPT_LIVE
 from haproxy_mgmt.cert_issue import (
     CERTBOT_TIMEOUT,
@@ -163,10 +163,17 @@ def renew_ndes(
                 domains=candidate.domains,
                 clusters=candidate.clusters,
                 receivers=candidate.receivers,
+                interface=candidate.interface,
                 resume=request_is_pending(policy.ndes.state_root, candidate.certificate_id),
                 request_id=new_request_id(),
                 policy_path=policy_path,
                 deployer=default_deployer(errors),
+                #
+                # The timer is root outside any sandbox, so the interface
+                # certificate (B188) is installed directly, as the certbot
+                # hook's `haproxy-cert-publish` does.
+                #
+                installer=ui_interface.install,
                 live=live,
                 store=store,
             )
@@ -266,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
                 policy=policy,
                 runtime=runtime,
                 deployer=default_deployer(sys.stderr),
+                installer=ui_interface.install,
             )
         except cert_issue.IssueError as exc:
             print(f"ERROR: [{exc.code}] {certificate_id}: {exc}", file=sys.stderr)

@@ -295,6 +295,18 @@ def refusal(certificate_id: str, runtime: RuntimeConfig, guards: Guards) -> tupl
     entry = registry.certificates.get(certificate_id)
     if entry is None:
         return None
+    if entry.interface:
+        #
+        # The pair nginx serves this manager's own interface with (B188).
+        # Deleting its source would leave nginx serving a certificate that
+        # nothing renews; a replacement takes the mark first, and the entry
+        # it displaces is deleted once the new one is served.
+        #
+        return (
+            "serves_interface",
+            "this certificate serves the manager's own interface; make another certificate "
+            "the interface's first",
+        )
     defaults = guards.defaults.get(certificate_id, ())
     if defaults:
         return (
@@ -575,6 +587,55 @@ def delete(
             )
     except LockError as exc:
         raise DeleteError(exc.code, str(exc), exit_code=65) from exc
+
+
+def retire_displaced_interface(
+    displaced: str | None,
+    *,
+    served: bool,
+    policy: PathPolicy,
+    certbot: str,
+    require_secure: bool = True,
+    store: Path = IMPORT_STORE,
+    lock_path: Path = DEFAULT_LOCK_PATH,
+    lineage_remover: LineageRemover = run_certbot,
+    node_remover: NodeRemover = ask_node,
+    guards_reader: GuardsReader = read_guards,
+) -> dict[str, Any] | None:
+    """D5: the entry the interface was served from before, deleted once the new one serves.
+
+    Only after: when the new certificate is not yet what nginx serves - the
+    install was refused, or the service could not be reached - the previous
+    entry stays, unmarked, visible in the listing as a certificate with no
+    target, and the answer says so. The deletion is the ordinary one, guards
+    and all.
+    """
+
+    if displaced is None:
+        return None
+    if not served:
+        return {
+            "id": displaced,
+            "state": "kept",
+            "reason": "the new interface certificate is not served yet; the previous one is "
+            "kept, without the mark",
+        }
+    try:
+        report = delete(
+            [displaced],
+            policy,
+            require_secure=require_secure,
+            store=store,
+            certbot=certbot,
+            lock_path=lock_path,
+            lineage_remover=lineage_remover,
+            node_remover=node_remover,
+            guards_reader=guards_reader,
+        )
+    except DeleteError as exc:
+        return {"id": displaced, "state": "incomplete", "reason": str(exc)}
+    outcome = report.outcomes[0]
+    return {"id": displaced, "state": outcome.state, "reason": outcome.reason}
 
 
 def _delete_locked(

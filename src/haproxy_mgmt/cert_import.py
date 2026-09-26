@@ -49,7 +49,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import cert_registry, cert_request_state
+from haproxy_mgmt import cert_delete, cert_registry, cert_request_state, ui_interface
 from haproxy_mgmt.cert_inventory import (
     FULLCHAIN,
     IMPORT_STORE,
@@ -60,7 +60,8 @@ from haproxy_mgmt.cert_inventory import (
     Facts,
     describe,
 )
-from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer, Report, publish
+from haproxy_mgmt.cert_issue import certbot_binary
+from haproxy_mgmt.cert_publish import DEFAULT_LOCK_PATH, Deployer, Installer, Report, publish
 from haproxy_mgmt.certificates import (
     DELIMITER,
     MAX_CERTIFICATE_BYTES,
@@ -133,8 +134,20 @@ class ImportResult:
     """A previous import of the same ID was in the store and is gone."""
 
     publish: Report
+    interface: bool = False
+    #
+    # D5: the entry that served the interface before this one, and what
+    # became of it. Both fields are absent from the answer for every other
+    # import, so a certificate that is not the interface's reads as before.
+    #
+    retired: Mapping[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
+        extra: dict[str, Any] = {}
+        if self.interface:
+            extra["interface"] = True
+        if self.retired is not None:
+            extra["retired"] = dict(self.retired)
         return {
             "certificate": self.certificate_id,
             "fingerprint_sha256": self.fingerprint,
@@ -146,6 +159,7 @@ class ImportResult:
             "chain_length": self.chain_length,
             "replaced": self.replaced,
             "publish": self.publish.as_dict(),
+            **extra,
         }
 
 
@@ -552,7 +566,8 @@ def register(
     ndes_profile: str | None = None,
     formats: Mapping[str, str] | None = None,
     lock_path: Path = DEFAULT_LOCK_PATH,
-) -> None:
+    interface: bool = False,
+) -> str | None:
     """The entry, through the one writer the registry has, under the certificate lock.
 
     An entry that exists already keeps every target it has, and the targets
@@ -566,11 +581,14 @@ def register(
     An entry of another kind is refused: an ACME certificate's material
     belongs to certbot, and importing over it would give the publisher two
     sources for one ID.
+
+    An entry that is the interface's stays the interface's; one imported with
+    `interface` takes the mark, and the entry that had it is returned (D5).
     """
 
     try:
         with cert_registry.locked(lock_path):
-            _register_entry(
+            return _register_entry(
                 path,
                 certificate_id,
                 runtime,
@@ -579,6 +597,7 @@ def register(
                 require_secure=require_secure,
                 ndes_profile=ndes_profile,
                 formats=formats,
+                interface=interface,
             )
     except cert_registry.RegistryError as exc:
         raise ImportError_(
@@ -599,7 +618,8 @@ def _register_entry(
     require_secure: bool,
     ndes_profile: str | None,
     formats: Mapping[str, str] | None,
-) -> None:
+    interface: bool = False,
+) -> str | None:
     document = cert_registry.read_document(path)
     certificates = dict(document.get("certificates") or {})
     existing = certificates.get(certificate_id)
@@ -619,6 +639,12 @@ def _register_entry(
             )
         kept_clusters = [str(item) for item in existing.get("clusters") or ()]
         kept_receivers, kept_formats = cert_registry.named_receivers(existing)
+        #
+        # A rotated or renewed interface certificate is still the interface's.
+        # Rewriting the entry without the mark would have the next publish
+        # skip nginx and the listing show it as an ordinary certificate.
+        #
+        interface = interface or existing.get("interface") is True
     all_clusters = kept_clusters + [c for c in clusters if c not in kept_clusters]
     all_receivers = list(kept_receivers) + [r for r in receivers if r not in kept_receivers]
     #
@@ -631,6 +657,7 @@ def _register_entry(
     if all_receivers:
         entry["receivers"] = cert_registry.receiver_elements(all_receivers, all_formats)
     certificates[certificate_id] = entry
+    displaced = cert_registry.claim_interface(certificates, certificate_id) if interface else None
     cert_registry.write(
         path,
         document=document,
@@ -638,6 +665,7 @@ def _register_entry(
         runtime=runtime,
         require_secure=require_secure,
     )
+    return displaced
 
 
 def import_certificate(
@@ -656,6 +684,8 @@ def import_certificate(
     now: datetime | None = None,
     ndes_profile: str | None = None,
     formats: Mapping[str, str] | None = None,
+    interface: bool = False,
+    installer: Installer | None = None,
 ) -> ImportResult:
     """Steps 3-6: check, write, register, publish."""
 
@@ -712,6 +742,22 @@ def import_certificate(
     kept_clusters, kept_receivers, kept_formats = cert_request_state.request_targets(
         store, certificate_id
     )
+    interface = interface or cert_request_state.request_is_interface(store, certificate_id)
+    #
+    # The interface certificate has no targets: not the ones named now, and
+    # not the ones an entry of the same ID already had (B188). Refused before
+    # the store is written.
+    #
+    if interface and (
+        clusters
+        or receivers
+        or (existing is not None and (existing.clusters or existing.receivers))
+    ):
+        raise ImportError_(
+            "bad_input",
+            "the interface certificate has no targets; name no cluster or receiver, and "
+            "import it under an ID no other certificate uses",
+        )
     #
     # A target that has gone since the request was made is simply not one
     # any more; the request may have waited months for its signature.
@@ -724,7 +770,7 @@ def import_certificate(
         receivers = [*kept_receivers, *(r for r in receivers if r not in kept_receivers)]
         formats = {**kept_formats, **(formats or {})}
     replaced = write_store(store, certificate_id, material)
-    register(
+    displaced = register(
         policy.certificate_registry,
         certificate_id,
         runtime,
@@ -734,6 +780,7 @@ def import_certificate(
         ndes_profile=ndes_profile,
         formats=formats,
         lock_path=lock_path,
+        interface=interface,
     )
     try:
         refreshed = load_runtime_config(policy, require_secure=require_secure)
@@ -747,9 +794,29 @@ def import_certificate(
         store=store,
         lock_path=lock_path,
         deployer=deployer,
+        installer=installer,
         now=now,
     )
-    return ImportResult(certificate_id, facts, fingerprint, len(material.chain), replaced, report)
+    marked = interface or bool(existing is not None and existing.interface)
+    retired = cert_delete.retire_displaced_interface(
+        displaced,
+        served=ui_interface.served(report, certificate_id),
+        policy=policy,
+        certbot=certbot_binary(policy),
+        require_secure=require_secure,
+        store=store,
+        lock_path=lock_path,
+    )
+    return ImportResult(
+        certificate_id,
+        facts,
+        fingerprint,
+        len(material.chain),
+        replaced,
+        report,
+        interface=marked,
+        retired=retired,
+    )
 
 
 def read_material(

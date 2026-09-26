@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -125,3 +129,108 @@ class CoordinatedUpdateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+#
+# A release's Python, standing in for either module. The config read prints
+# what the wrapper asks for; `--help` says whether the module knows the
+# collector flags; the check itself records its arguments and, like argparse
+# in a module that predates them, refuses flags it does not know.
+#
+STUB_PYTHON = """#!/bin/bash
+if [[ "$1" == "-" ]]; then
+    cat >/dev/null
+    printf '%s\\n' "$TRAFFIC_LOGS" alpha
+    exit 0
+fi
+if [[ "$*" == "-m haproxy_ui.compatibility --help" ]]; then
+    echo "usage: compatibility --platform-root ROOT"
+    [[ "$MODULE" == new ]] && echo "  --collector-config PATH"
+    exit 0
+fi
+printf '%s\\n' "$0" "$@" > "$RECORD"
+if [[ "$MODULE" == old && "$*" == *--collector-config* ]]; then
+    echo "compatibility: error: unrecognized arguments: --collector-config" >&2
+    exit 2
+fi
+"""
+
+
+class TheWrapperRunsAgainstARelease(unittest.TestCase):
+    """`check-compatibility` run for real, against a stand-in release.
+
+    The tests above read the wrapper as text, which is how `5e1f942` passed
+    them while sending an installed release's module flags it did not know:
+    only running it shows what it hands the module. The wrapper is copied
+    unchanged; its `../lib.sh` is the real one with the root check alone left
+    out, because `$EUID` cannot be faked.
+    """
+
+    def setUp(self) -> None:
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        (work / "platform").mkdir()
+        shutil.copy2(ROOT / "install/platform/check-compatibility", work / "platform")
+        (work / "lib.sh").write_text(f'source "{ROOT / "install/lib.sh"}"\nneed_root() {{ :; }}\n')
+        self.root = work / "root"
+        for release in ("current-release", "candidate"):
+            python = self.root / "releases" / release / "venv/bin/python"
+            python.parent.mkdir(parents=True)
+            python.write_text(STUB_PYTHON)
+            python.chmod(0o755)
+        (self.root / "current").symlink_to(self.root / "releases/current-release")
+        self.answers = work / "answers.env"
+        self.answers.write_text(
+            f"PLATFORM_ROOT={self.root}\nDB_NAME=ui\nDB_MIGRATION_ROLE=ui_owner\n"
+            "WEB_USER=web\nWORKER_USER=worker\nPOLLER_USER=poller\n"
+        )
+        self.record = work / "arguments"
+        self.wrapper = work / "platform/check-compatibility"
+
+    def check(self, *arguments: str, module: str, traffic: str = "enabled") -> tuple[int, str]:
+        environment = {
+            **os.environ,
+            "MODULE": module,
+            "TRAFFIC_LOGS": traffic,
+            "RECORD": str(self.record),
+        }
+        environment.pop("ENVIRONMENT", None)
+        completed = subprocess.run(  # noqa: S603 - the copied wrapper, fixed arguments
+            ["/bin/bash", str(self.wrapper), str(self.answers), *arguments],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return completed.returncode, completed.stderr
+
+    def recorded(self) -> list[str]:
+        return self.record.read_text().splitlines()
+
+    def test_a_release_that_predates_the_inventory_check_is_not_handed_its_flags(self) -> None:
+        code, errors = self.check(module="old")
+        self.assertEqual(code, 0, errors)
+        self.assertNotIn("--collector-config", self.recorded())
+        self.assertIn("predates the traffic collector inventory check", errors)
+
+    def test_a_release_that_knows_the_check_is_asked_it(self) -> None:
+        code, errors = self.check(module="new")
+        self.assertEqual(code, 0, errors)
+        arguments = self.recorded()
+        self.assertIn("/etc/haproxy-manager/traffic-collector.json", arguments)
+        self.assertIn("/etc/haproxy-manager/runtime-policy.yaml", arguments)
+        self.assertEqual(arguments[arguments.index("--clusters") + 1], "alpha")
+
+    def test_without_traffic_logs_nothing_about_them_is_asked(self) -> None:
+        code, errors = self.check(module="new", traffic="disabled")
+        self.assertEqual(code, 0, errors)
+        self.assertNotIn("--collector-config", self.recorded())
+
+    def test_a_named_release_is_asked_through_its_own_python(self) -> None:
+        code, errors = self.check("--release", "candidate", "--before-migration", module="new")
+        self.assertEqual(code, 0, errors)
+        arguments = self.recorded()
+        self.assertEqual(arguments[0], str(self.root / "releases/candidate/venv/bin/python"))
+        for flag in ("--ui-release", "--skip-services", "--upgrade-from-current"):
+            self.assertIn(flag, arguments)
+        self.assertEqual(arguments[arguments.index("--environment") + 1], "prod")

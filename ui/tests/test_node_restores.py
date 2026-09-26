@@ -54,6 +54,7 @@ def job(
         "node_restore_preview": {"run": RUN, "fingerprint": FINGERPRINT},
         "node_restore": {"run": RUN, "confirm": "node-test"},
         "node_restore_discard": {"run": RUN},
+        "node_restore_status": {"run": RUN},
     }[operation]
     return queued(
         id=number,
@@ -410,6 +411,71 @@ class Discarding(unittest.TestCase):
         self.assertEqual(node_restores.discard_payload(RUN), {"run": RUN})
 
 
+LOST = job("node_restore", "unknown", number=3)
+
+
+def asked(state: str, name: str | None = None, *, body: dict[str, Any] | None = None) -> db.Job:
+    """A status job after the lost run job: a fixture's answer, or one standing."""
+
+    if name is not None:
+        result = fixture("haproxy-node-restore-status", name)
+    elif body is not None:
+        result = {**fixture("haproxy-node-restore-status", "not-started.json"), "result": body}
+    else:
+        result = None
+    return job("node_restore_status", state, result=result, number=4)
+
+
+class AskingForTheOutcome(unittest.TestCase):
+    """Review 2026-09-25, track 8: a run job that lost its answer may be asked again."""
+
+    def test_a_lost_run_is_unknown_and_may_be_asked_but_not_discarded(self) -> None:
+        restore = viewed([PREPARED, PREVIEWED, LOST], SOON)
+        self.assertEqual(restore.stage, "unknown")
+        self.assertTrue(restore.askable)
+        self.assertFalse(restore.discardable)
+        self.assertEqual(node_restores.step_states(restore)["run"], "current")
+        recent = node_restores.recent_runs([PREPARED, PREVIEWED, LOST], shown=lambda m: m, now=SOON)
+        self.assertEqual(recent["alpha"][0].label, "Outcome unknown")
+
+    def test_a_question_on_its_way_is_working(self) -> None:
+        restore = viewed([PREPARED, PREVIEWED, LOST, asked("pending")], SOON)
+        self.assertEqual((restore.stage, restore.working), ("working", "Asking for the outcome"))
+        self.assertEqual(node_restores.step_states(restore)["run"], "current")
+
+    def test_a_finished_answer_is_drawn_as_the_run_s_own(self) -> None:
+        restore = viewed([PREPARED, PREVIEWED, LOST, asked("done", "finished-done.json")], SOON)
+        self.assertEqual(restore.stage, "done")
+        self.assertEqual((restore.result or {}).get("address"), "192.0.2.29")
+        failed = viewed([PREPARED, PREVIEWED, LOST, asked("done", "finished-failed.json")], SOON)
+        self.assertEqual((failed.stage, failed.failed_stage, failed.rolled_back),
+                         ("failed", "network", True))  # fmt: skip
+        self.assertIn("never answered", failed.error)
+
+    def test_any_other_answer_leaves_it_unknown_with_what_was_found(self) -> None:
+        for name, words in (
+            ("running.json", "still running"),
+            ("stopped.json", "Look at the target"),
+            ("not-started.json", "never began writing"),
+            ("busy.json", "ask again when it has finished"),
+            ("gone.json", "no restore run"),
+        ):
+            with self.subTest(name=name):
+                state = "blocked" if name in {"busy.json", "gone.json"} else "done"
+                restore = viewed([PREPARED, PREVIEWED, LOST, asked(state, name)], SOON)
+                self.assertEqual(restore.stage, "unknown")
+                self.assertTrue(restore.askable)
+                self.assertIn(words, restore.standing)
+
+    def test_a_question_before_the_run_job_is_not_its_answer(self) -> None:
+        early = replace(asked("done", "finished-done.json"), id=3)
+        restore = viewed([PREPARED, PREVIEWED, early, replace(LOST, id=4)], SOON)
+        self.assertEqual(restore.stage, "unknown")
+
+    def test_the_payload_is_the_run_alone(self) -> None:
+        self.assertEqual(node_restores.status_payload(RUN), {"run": RUN})
+
+
 class RestoreRouteTestCase(DeleteRouteTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -741,11 +807,12 @@ class OverwritingANode(RestoreRouteTestCase):
         )
         self.assertEqual(node_restores.node_address([status], "beta", "node-a"), "")
 
-    def test_an_unreadable_answer_says_it_is_not_known_what_was_written(self) -> None:
+    def test_a_lost_answer_is_an_unknown_outcome_not_a_failure(self) -> None:
         unknown = job("node_restore", "unknown", number=3, confirm="node-a")
         self.runs = [OVERWRITE_PREPARED, OVERWRITE_PREVIEWED, unknown]
         page = self.writing_client().get(f"/backups/restore/{RUN}").text
-        self.assertIn("whether anything was written is not known", page)
+        self.assertIn("<strong>Outcome unknown.</strong>", page)
+        self.assertIn(f'action="/backups/restore/{RUN}/status"', page)
         self.assertNotIn("The node was not put back", page)
 
     def test_the_run_is_read_as_an_overwrite(self) -> None:
@@ -810,6 +877,39 @@ class OverwritingANode(RestoreRouteTestCase):
         self.runs = [OVERWRITE_PREPARED, OVERWRITE_PREVIEWED, failed]
         page = self.writing_client().get(f"/backups/restore/{RUN}").text
         self.assertIn("The node was put back from its copy", page)
+
+
+class AskingOnThePage(RestoreRouteTestCase):
+    def test_an_admin_is_offered_the_question_and_a_reader_is_not(self) -> None:
+        self.runs = [PREPARED, PREVIEWED, LOST]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn("Ask for the outcome", page)
+        self.assertNotIn(f'action="/backups/restore/{RUN}/discard"', page)
+        reader = self.writing_client(role="reader").get(f"/backups/restore/{RUN}").text
+        self.assertNotIn("/status", reader)
+
+    def test_it_queues_the_status_job_and_returns_to_the_run(self) -> None:
+        self.runs = [PREPARED, PREVIEWED, LOST]
+        response = self.post(self.writing_client(), f"/backups/restore/{RUN}/status")
+        self.assertEqual(response.headers["location"], f"/backups/restore/{RUN}")
+        self.assertEqual(
+            [(q["operation"], q["cluster"], q["payload"]) for q in self.queued],
+            [("node_restore_status", "alpha", {"run": RUN})],
+        )
+
+    def test_a_known_outcome_is_not_asked_for(self) -> None:
+        self.runs = [PREPARED, PREVIEWED, LOST, asked("done", "finished-done.json")]
+        client = self.writing_client()
+        self.assertIn("<strong>Restored.</strong>", client.get(f"/backups/restore/{RUN}").text)
+        response = self.post(client, f"/backups/restore/{RUN}/status")
+        self.assertIn("This run&#39;s outcome is already known.", response.text)
+        self.assertEqual(self.queued, [])
+
+    def test_what_asking_found_is_shown_beside_the_question(self) -> None:
+        self.runs = [PREPARED, PREVIEWED, LOST, asked("done", "stopped.json")]
+        page = self.writing_client().get(f"/backups/restore/{RUN}").text
+        self.assertIn("left no outcome. Look at the target.", page)
+        self.assertIn("Ask for the outcome", page)
 
 
 class DiscardingARun(RestoreRouteTestCase):

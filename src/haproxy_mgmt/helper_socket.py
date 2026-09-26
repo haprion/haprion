@@ -42,6 +42,16 @@ class HelperSilent(HelperUnavailable):
     """
 
 
+class HelperBusy(HelperSilent):
+    """The connection was dropped at once, before any answer: another holds the socket.
+
+    A socket unit with `MaxConnections` resets a connection past its limit
+    straight away (measured 2026-09-26, systemd 259). Still a HelperSilent, so
+    a caller that cannot tell this from a helper that died keeps treating it
+    as one; only a read-only question may take it to mean "ask again later".
+    """
+
+
 def ask(
     request: dict[str, Any],
     *,
@@ -75,10 +85,10 @@ def ask(
         except OSError as error:
             raise HelperUnavailable(f"{lead} could not be reached: {error}.") from error
 
+        chunks: list[bytes] = []
         try:
             connection.sendall(json.dumps(request, separators=(",", ":")).encode("utf-8"))
             connection.shutdown(socket.SHUT_WR)
-            chunks = []
             while True:
                 chunk = connection.recv(65536)
                 if not chunk:
@@ -86,6 +96,10 @@ def ask(
                 chunks.append(chunk)
         except TimeoutError as error:
             raise HelperSilent(f"{lead} did not answer in time.") from error
+        except (ConnectionResetError, BrokenPipeError) as error:
+            if chunks:
+                raise HelperSilent(f"{lead} stopped answering: {error}.") from error
+            raise HelperBusy(f"{lead} dropped the connection before answering.") from error
         except OSError as error:
             raise HelperSilent(f"{lead} stopped answering: {error}.") from error
     finally:

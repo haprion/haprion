@@ -821,6 +821,28 @@ def check_node_restore_semantics(document: dict[str, object], path: Path) -> Non
         raise AssertionError(f"{path}: a failed restore names the session it stopped in")
 
 
+def check_node_restore_status_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done node_restore_status says how the run stands")
+        return
+    assert isinstance(result, dict)
+    if document["outcome"] != "done":
+        raise AssertionError(f"{path}: only a done node_restore_status carries a result")
+    carried = {"outcome", "error", "result"}
+    if result["state"] != "finished":
+        if carried & set(result):
+            raise AssertionError(f"{path}: only a finished run carries an outcome")
+        return
+    if not carried <= set(result):
+        raise AssertionError(f"{path}: a finished run carries its outcome, error and result")
+    if (result["outcome"] == "done") != (result["error"] is None):
+        raise AssertionError(f"{path}: a finished run names an error exactly when it failed")
+    # The run's own rules, as `node_restore` would have answered.
+    check_node_restore_semantics({"outcome": result["outcome"], "result": result["result"]}, path)
+
+
 SEMANTIC_CHECKS = {
     "status": check_status_semantics,
     "list": check_list_semantics,
@@ -851,6 +873,7 @@ SEMANTIC_CHECKS = {
     "node_restore_preview": check_node_restore_preview_semantics,
     "node_restore": check_node_restore_semantics,
     "node_restore_discard": check_node_restore_discard_semantics,
+    "node_restore_status": check_node_restore_status_semantics,
 }
 
 
@@ -914,6 +937,11 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["problems"] = [] if result["problems"] else ["a problem the outcome ignores"]
     elif operation == "node_restore_discard":
         invalid["outcome"] = "blocked"
+    elif operation == "node_restore_status":
+        if result["state"] == "finished":
+            result["outcome"] = "failed" if result["outcome"] == "done" else "done"
+        else:
+            result["state"] = "finished"
     elif operation == "node_restore":
         if invalid["outcome"] == "done":
             result["rolled_back"] = True

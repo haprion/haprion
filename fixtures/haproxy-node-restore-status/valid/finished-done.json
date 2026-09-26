@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "node_restore_status",
+  "cluster": "alpha",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "run": "r260101-0000aaaa",
+    "state": "finished",
+    "outcome": "done",
+    "error": null,
+    "result": {
+      "run": "r260101-0000aaaa",
+      "rolled_back": false,
+      "address": "192.0.2.29",
+      "hostname": "node-test",
+      "sessions": {
+        "apply": {
+          "steps": [
+            {
+              "step": "files",
+              "written": 74
+            }
+          ],
+          "warnings": []
+        },
+        "network": {
+          "steps": [],
+          "warnings": [],
+          "rollback_unit": "haproxy-restore-rollback-r260101-0000aaaa"
+        },
+        "finish": {
+          "steps": [
+            {
+              "step": "root-keys",
+              "replaced": true
+            }
+          ],
+          "warnings": []
+        }
+      }
+    }
+  },
+  "warnings": [],
+  "error": null
+}

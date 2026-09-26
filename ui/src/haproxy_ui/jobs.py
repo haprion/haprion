@@ -108,7 +108,13 @@ class JobView:
 
 
 RESTORE_OPERATIONS = frozenset(
-    {"node_restore_prepare", "node_restore_preview", "node_restore", "node_restore_discard"}
+    {
+        "node_restore_prepare",
+        "node_restore_preview",
+        "node_restore",
+        "node_restore_discard",
+        "node_restore_status",
+    }
 )
 
 
@@ -160,6 +166,7 @@ def _operation(value: str) -> str:
         "node_restore_preview": "Preview node restore",
         "node_restore": "Restore node",
         "node_restore_discard": "Discard node restore",
+        "node_restore_status": "Ask node restore outcome",
     }.get(value, value.replace("_", " ").capitalize())
 
 
@@ -741,6 +748,7 @@ RUNNING_LABELS = {
     "node_restore_preview": "Previewing restore",
     "node_restore": "Restoring node",
     "node_restore_discard": "Discarding restore",
+    "node_restore_status": "Asking for the outcome",
     "deploy": "Deploying",
     "cert_deploy": "Deploying certificates",
     "revert": "Reverting",
@@ -782,6 +790,7 @@ FAILURE_LABELS = {
     "node_restore_preview": "Restore preview failed",
     "node_restore": "Restore failed",
     "node_restore_discard": "Discarding the restore failed",
+    "node_restore_status": "Asking for the outcome failed",
     "deploy": "Deploy failed",
     "cert_deploy": "Certificate deploy failed",
     "revert": "Revert failed",

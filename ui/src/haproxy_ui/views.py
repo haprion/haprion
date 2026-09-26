@@ -4279,6 +4279,39 @@ def build_router(config: Config) -> APIRouter:
             to_backups=return_to == "backups",
         )
 
+    @router.post("/backups/restore/{run}/status", response_class=HTMLResponse)
+    def node_restore_status(
+        request: Request,
+        run: str,
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Queue `node_restore_status`: ask how a run whose job lost its answer ended."""
+
+        step = _restore_step(request, run, csrf_token, idempotency_key)
+        if isinstance(step, Response):
+            return step
+        session, restore, key = step
+
+        def again(problem: str) -> Response:
+            return _restore_page(request, session, run, problem=problem)
+
+        if not restore.askable:
+            return again("This run's outcome is already known.")
+        try:
+            payload = node_restores.status_payload(run)
+        except node_restores.RestoreProblem as refused:
+            return again(str(refused))
+        return _queue_restore_job(
+            request,
+            session,
+            operation="node_restore_status",
+            cluster=restore.cluster,
+            payload=payload,
+            key=key,
+            again=again,
+        )
+
     @router.get("/history", response_class=HTMLResponse)
     def version_history(request: Request) -> Response:
         session = current_session(request)

@@ -2033,6 +2033,9 @@ sudo haproxy-node-restore run --run <run> --confirm node-a
 
 # To abandon a run: remove its directory and one-time key.
 sudo haproxy-node-restore discard --run <run>
+
+# How a run stands: running, finished (and how), stopped mid-run, or not started.
+sudo haproxy-node-restore status --run <run>
 ```
 
 **The same three steps from the interface.** An administrator with management writes gets
@@ -2045,10 +2048,21 @@ takes the node's name as confirmation. Each step is one job - `node_restore_prep
 nothing else is stored. While a job runs it holds the cluster's job slot, so a deploy to that
 cluster waits. *Discard* on the run's page is the fourth job, `node_restore_discard`.
 
+**When the run's job loses its answer.** The job ends `unknown` - the helper may have gone on as
+root and changed the node - and the page says *Outcome unknown* rather than failed. *Ask for the
+outcome* queues the fifth job, `node_restore_status`, which reads the run's directory and changes
+nothing. A finished run is then drawn as its own answer; otherwise the page says what was found:
+still running, stopped mid-run (look at the target), or never started. The helper's socket takes
+one connection at a time, so while a restore still holds it the question is answered *ask again
+when it has finished*.
+
 **A run has an hour.** From *prepare* to the start of *run*: past it the run has expired, the
 backup page stops listing it, its page takes nothing more, and the command and the helper refuse
-it and remove its directory - prepare a new one. Every call to either removes the directories of
-runs past their hour that no step is working in, done and failed runs included. The pasted line
+it and remove its directory - prepare a new one. Every call to either puts away the runs past
+their hour that no step is working in. A run that never began writing to the target goes whole;
+one that did loses its one-time key, `known_hosts` and preview at the hour and keeps
+`request.json`, `prepared.json`, `started.json` and `result.json` for seven days - as long as the
+web keeps its jobs - so its outcome can still be read with `status`. The pasted line
 carries `expiry-time` two hours after *prepare*, so the VM itself stops accepting the one-time key
 even when nothing on the management host ever runs again.
 
@@ -2102,9 +2116,10 @@ written.
    key.
 
 If the node never answers on its own address, the timer returns the VM to its temporary address
-and the run reports `failed` with the network rolled back. The run's result is kept in
-`/var/lib/haproxy-mgmt/restore/<run>/result.json` beside the key, both root-only `0600` in a
-`0700` directory. A restore takes about a minute; the longest part is the package installation.
+and the run reports `failed` with the network rolled back. A session that breaks or times out
+once writing has begun is a `failed` run in that session, never a refusal. The run's result is
+kept in `/var/lib/haproxy-mgmt/restore/<run>/result.json`, root-only `0600` in a `0700`
+directory, with `started.json` written just before the first write to the target. A restore takes about a minute; the longest part is the package installation.
 
 **Test mode proves a restore before it is needed.** Add `--test --test-hostname <name>
 --test-address <address/prefix> --test-vip <address/prefix>` to `prepare`. The node is restored as

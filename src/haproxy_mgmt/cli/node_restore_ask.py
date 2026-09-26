@@ -7,7 +7,7 @@ import sys
 from typing import Any, BinaryIO, TextIO
 
 from haproxy_mgmt import helper_socket
-from haproxy_mgmt.cli.node_restore_helper import OPERATIONS
+from haproxy_mgmt.cli.node_restore_helper import OPERATIONS, STATUS
 from haproxy_mgmt.envelope import failure
 from haproxy_mgmt.helper_protocol import MAX_REQUEST_BYTES, write_document
 
@@ -60,6 +60,31 @@ def main(
         answer = helper_socket.ask(
             request, path=socket_path, timeout=timeout, what="the node restore service"
         )
+    except helper_socket.HelperBusy as exc:
+        if operation != STATUS:
+            errors.write(
+                f"ERROR: [helper_silent] {exc} It may still be working; its outcome is unknown.\n"
+            )
+            return 1
+        #
+        # The socket takes one connection at a time, and a restore still
+        # running holds it. For a question that changes nothing, that is the
+        # answer: it is working - ask again when it has finished.
+        #
+        message = "A restore step is still running; ask again when it has finished."
+        errors.write(f"ERROR: [restore_busy] {message}\n")
+        write_document(
+            writer,
+            failure(
+                operation=operation,
+                cluster=cluster,
+                request_id=request_id,
+                code="restore_busy",
+                message=message,
+                exit_code=75,
+            ),
+        )
+        return 75
     except helper_socket.HelperSilent as exc:
         #
         # Asked, then silent: the root service carries on without this client

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "blocked",
+  "operation": "node_restore_status",
+  "cluster": "alpha",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": null,
+  "warnings": [],
+  "error": {
+    "code": "restore_refused",
+    "message": "there is no restore run r260101-0000aaaa; a run's outcome is kept for 7 days, and a discarded run is gone at once"
+  }
+}

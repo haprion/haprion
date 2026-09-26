@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import ipaddress
+import json
 import os
 import shutil
 import tarfile
@@ -12,6 +13,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
 from haproxy_mgmt import node_bundle, node_restore, restore_plan, restore_source
 from haproxy_mgmt.cli import node_restore as cli
@@ -713,9 +715,7 @@ class Overwrite(RestoreTest):
         self.assertIn("node was rolled back", result["error"])
 
 
-class TheHour(RestoreTest):
-    """B182: an hour from prepare to run, then the run and its key are gone."""
-
+class Timed(RestoreTest):
     def answering(self, address: str) -> bool:
         # The test address answers once the network session has run, as in Run.
         if address in self.silent and any(c[1]["op"] == "network" for c in FakeSession.calls):
@@ -724,6 +724,10 @@ class TheHour(RestoreTest):
 
     def later(self, run: str, seconds: float) -> float:
         return node_restore.prepared_at(self.root / run) + seconds
+
+
+class TheHour(Timed):
+    """B182: an hour from prepare to run, then the run and its key are gone."""
 
     def test_a_preview_past_the_hour_is_refused_and_removes_the_run(self) -> None:
         run = self.prepare()
@@ -777,6 +781,117 @@ class TheHour(RestoreTest):
 
     def test_a_missing_root_is_nothing_to_sweep(self) -> None:
         self.assertEqual(node_restore.sweep(self.root / "absent", time.time()), [])
+
+
+class Status(Timed):
+    """How a run stands, for a job that lost its answer (review 2026-09-25, track 8)."""
+
+    def previewed(self) -> str:
+        run = self.prepare()
+        self.preview(run)
+        FakeSession.answers["network"] = {"ok": True, "rollback_unit": "u"}
+        return run
+
+    def test_a_run_not_yet_started_and_one_that_stopped_mid_run(self) -> None:
+        run = self.prepare()
+        self.assertEqual(node_restore.status(self.root, run), {"run": run, "state": "not_started"})
+        (self.root / run / "started.json").write_text('{"at": 1000}\n')
+        self.assertEqual(node_restore.status(self.root, run), {"run": run, "state": "stopped"})
+
+    def test_a_run_a_step_is_working_in_is_running(self) -> None:
+        run = self.prepare()
+        with node_restore._Held(self.root / run, wait=True):
+            self.assertEqual(node_restore.status(self.root, run)["state"], "running")
+
+    def test_a_finished_run_answers_what_the_run_answered(self) -> None:
+        run = self.previewed()
+        carried = self.carry_out(run)
+        standing = node_restore.status(self.root, run)
+        self.assertEqual((standing["state"], standing["outcome"], standing["error"]),
+                         ("finished", "done", None))  # fmt: skip
+        self.assertEqual(
+            standing["result"], {k: v for k, v in carried.items() if k not in {"outcome", "error"}}
+        )
+
+    def test_a_failed_run_carries_its_error(self) -> None:
+        run = self.previewed()
+        FakeSession.answers["apply"] = {"ok": False, "error": "apt-get install exited 100"}
+        self.carry_out(run)
+        standing = node_restore.status(self.root, run)
+        self.assertEqual((standing["outcome"], standing["error"]),
+                         ("failed", "apt-get install exited 100"))  # fmt: skip
+        self.assertEqual(standing["result"]["stage"], "apply")
+
+    def test_a_session_that_breaks_after_writing_began_is_a_failure_in_that_session(
+        self,
+    ) -> None:
+        """Not the refusal that says nothing was written: apply had run."""
+
+        run = self.previewed()
+        original = FakeSession.call
+
+        def call(session: FakeSession, address: str, header: dict[str, Any], *a: Any,
+                 **k: Any) -> dict[str, Any]:  # fmt: skip
+            if header["op"] == "network":
+                raise RestoreError("the network session did not finish in time")
+            return original(session, address, header, *a, **k)
+
+        with mock.patch.object(FakeSession, "call", call):
+            result = self.carry_out(run)
+        self.assertEqual((result["outcome"], result["stage"]), ("failed", "network"))
+        self.assertIn("network", result["sessions"])
+        self.assertFalse(result["rolled_back"])
+        self.assertEqual(node_restore.status(self.root, run)["outcome"], "failed")
+
+    def test_the_hour_takes_the_key_and_keeps_the_outcome_for_a_week(self) -> None:
+        run = self.previewed()
+        self.carry_out(run)
+        hour = self.later(run, node_restore.START_WINDOW + 1)
+        self.assertEqual(node_restore.sweep(self.root, hour), [])
+        self.assertEqual(
+            sorted(p.name for p in (self.root / run).iterdir()),
+            ["prepared.json", "request.json", "result.json", "started.json"],
+        )
+        self.assertEqual(node_restore.status(self.root, run)["outcome"], "done")
+        week = self.later(run, node_restore.RESULT_KEPT + 1)
+        self.assertEqual(node_restore.sweep(self.root, week), [run])
+        with self.assertRaisesRegex(RestoreError, "no restore run"):
+            node_restore.status(self.root, run)
+
+    def test_a_step_past_the_hour_keeps_the_outcome_too(self) -> None:
+        run = self.previewed()
+        self.carry_out(run)
+        after = self.later(run, node_restore.START_WINDOW + 1)
+        with self.assertRaisesRegex(RestoreError, "more than an hour ago"):
+            self.preview(run, now=lambda: after)
+        self.assertFalse((self.root / run / "key").exists())
+        self.assertEqual(node_restore.status(self.root, run)["state"], "finished")
+
+    def test_a_run_that_never_began_writing_still_goes_whole_at_the_hour(self) -> None:
+        run = self.prepare()
+        self.assertEqual(node_restore.sweep(self.root, self.later(run, 3601)), [run])
+
+    def test_an_unusable_run_id_is_refused(self) -> None:
+        with self.assertRaisesRegex(RestoreError, "not usable"):
+            node_restore.status(self.root, "../elsewhere")
+
+    def test_the_command_line_reads_the_same_standing(self) -> None:
+        run = self.previewed()
+        self.carry_out(run)
+        out = io.StringIO()
+        code = cli.main(["status", "--run", run, "--json"], run_root=self.root,
+                        output_stream=out, require_root=False)  # fmt: skip
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.getvalue()), node_restore.status(self.root, run))
+        text = io.StringIO()
+        cli.main(["status", "--run", run], run_root=self.root, output_stream=text,
+                 require_root=False)  # fmt: skip
+        self.assertIn(f"restore {run}: done", text.getvalue())
+        other = self.prepare()
+        text = io.StringIO()
+        cli.main(["status", "--run", other], run_root=self.root, output_stream=text,
+                 require_root=False)  # fmt: skip
+        self.assertIn("never began writing", text.getvalue())
 
 
 class Cli(unittest.TestCase):

@@ -447,7 +447,7 @@ def operation_jobs(connection: Connection[Any], operation: str, *, limit: int = 
 def restore_jobs(connection: Connection[Any], run: str) -> list[Job]:
     """The jobs of one node restore run, oldest first.
 
-    A run is nothing but these rows: the four restore operations whose payload
+    A run is nothing but these rows: the five restore operations whose payload
     names it. Nothing else is stored, so the page cannot disagree with them.
     """
 
@@ -458,7 +458,8 @@ def restore_jobs(connection: Connection[Any], run: str) -> list[Job]:
             "       idempotency_key, attempts "
             "  from job "
             " where operation in ('node_restore_prepare', 'node_restore_preview', "
-            "                     'node_restore', 'node_restore_discard') "
+            "                     'node_restore', 'node_restore_discard', "
+            "                     'node_restore_status') "
             "   and payload->>'run' = %(run)s "
             " order by id",
             {"run": run},

@@ -1281,6 +1281,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 /* A refusal on the form it refused: the critical hue, where the notice above
  * the form is otherwise informational. */
 .form-problem { display: flex; align-items: center; gap: 10px; border-left-color: var(--critical); background: var(--critical-soft); }
+/* An orb opening a notice that is not a flex row: inline it had no width and did not show. */
+.preview-notice:not(.form-problem) > .status-orb:first-child { display: inline-block; margin-right: 8px; vertical-align: -1px; }
 /*
  * One row of buttons of one size. `.primary-button` is full width because the
  * login form has a single button and nothing to sit beside; here that made it

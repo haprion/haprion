@@ -1,7 +1,7 @@
 """Restoring a node from its archive: the form that starts a run, and the run's page.
 
 Nothing new is stored for a restore. A run is the jobs that carry its ID in
-their payload (B175) - prepare, preview, run, and discard (B182) - and the page is drawn from
+their payload (B175) - prepare, preview, run, discard (B182) and status - and the page is drawn from
 those rows alone, so what it says is what the helper answered and nothing a
 second table could disagree with. The steps a person takes between the jobs
 (pasting a line on the target, reading its fingerprint, typing the node's name)
@@ -14,6 +14,11 @@ A run has an hour from prepare to run (B182), read from the engine's own
 constant: past it the page says so and takes nothing more, the backup page
 stops listing it, and the helper refuses it and removes its key. Nobody has to
 click anything for that - the hour is a rule both ends read, not a job.
+
+A run job that lost its answer (`unknown`) may still have changed the node. The
+page then says the outcome is unknown and offers to ask the helper, which reads
+it from the run's directory (`node_restore_status`, review 2026-09-25 track 8);
+a finished answer is drawn as the run's own.
 """
 
 from __future__ import annotations
@@ -27,12 +32,12 @@ from typing import Any
 
 from haproxy_mgmt import node_restore, restore_agent
 from haproxy_mgmt.cli import node_restore_helper
-from haproxy_mgmt.cli.node_restore_helper import DISCARD, PREPARE, PREVIEW, RUN
+from haproxy_mgmt.cli.node_restore_helper import DISCARD, PREPARE, PREVIEW, RUN, STATUS
 
 from .db import Job
 from .jobs import RUNNING_LABELS
 
-OPERATIONS = (PREPARE, PREVIEW, RUN, DISCARD)
+OPERATIONS = (PREPARE, PREVIEW, RUN, DISCARD, STATUS)
 MODES = ("new_vm", "test")
 ACTIVE_STATES = frozenset({"pending", "running"})
 EXPIRES_AFTER = timedelta(seconds=node_restore.START_WINDOW)
@@ -146,6 +151,12 @@ def discard_payload(run: str) -> dict[str, Any]:
     return payload
 
 
+def status_payload(run: str) -> dict[str, Any]:
+    payload = {"run": run}
+    _checked(STATUS, payload)
+    return payload
+
+
 def run_payload(
     run: str,
     confirm: str,
@@ -197,6 +208,8 @@ class RestoreRun:
     ``fingerprint``        paste the line on the target, then enter its fingerprint
     ``confirm``            the preview found no problems; type the node's name
     ``done``               restored
+    ``unknown``            the run job lost its answer and may have changed the
+                           node; `standing` says what asking found so far
     ``failed``             the run stopped after writing; `rolled_back` says whether
                            the network was put back
     ``expired``            waited for a fingerprint or a confirmation past its hour
@@ -233,6 +246,8 @@ class RestoreRun:
     prepared_at: datetime | None = None
     # An overwrite's backup and pair, as its preview read them (B172, B183).
     overwrite: Mapping[str, Any] | None = None
+    # With stage `unknown`: what the last question found, or "" before one was asked.
+    standing: str = ""
 
     @property
     def backup_failed(self) -> bool:
@@ -251,6 +266,10 @@ class RestoreRun:
     @property
     def active(self) -> bool:
         return self.stage == "working"
+
+    @property
+    def askable(self) -> bool:
+        return self.stage == "unknown"
 
     @property
     def discardable(self) -> bool:
@@ -332,7 +351,7 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
     stage, working, error = "fingerprint", "", ""
     problems: tuple[str, ...] = ()
     rolled_back, failed_stage, result = False, "", None
-    latest = [job for job in jobs if job.operation != DISCARD][-1]
+    latest = [job for job in jobs if job.operation not in {DISCARD, STATUS}][-1]
     if latest.state in ACTIVE_STATES:
         stage = "working"
         working = RUNNING_LABELS.get(latest.operation, latest.operation)
@@ -359,10 +378,19 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
             # preview, or the confirmation did not match. Preview again.
             #
             error = _error(latest)
+        elif latest.state == "unknown":
+            stage, error = "unknown", _error(latest)
         else:
             stage, error, result = "failed", _error(latest), body
             rolled_back = body.get("rolled_back") is True
             failed_stage = str(body.get("stage") or "")
+    standing = ""
+    questions = [job for job in jobs if job.operation == STATUS and job.id > latest.id]
+    if stage == "unknown" and questions:
+        stage, working, error, result, standing = _asked(questions[-1], error)
+        if result is not None:
+            rolled_back = result.get("rolled_back") is True
+            failed_stage = str(result.get("stage") or "")
 
     if (
         now is not None
@@ -419,7 +447,35 @@ def run_view(run: str, rows: Sequence[Job], *, now: datetime | None = None) -> R
         renumbered=_strings(preview.get("renumbered")),
         prepared_at=prepared.created_at,
         overwrite=preview.get("overwrite") if isinstance(preview.get("overwrite"), dict) else None,
+        standing=standing,
     )
+
+
+STANDING = {
+    "running": "The restore is still running. Ask again when it has finished.",
+    "stopped": "It began writing to the target and left no outcome. Look at the target.",
+    "not_started": "It never began writing to the target.",
+}
+
+
+def _asked(job: Job, error: str) -> tuple[str, str, str, Mapping[str, Any] | None, str]:
+    """The run as the last status answer tells it: stage, working, error, result, standing.
+
+    Only a finished run changes the stage, into the run's own answer. Anything
+    else leaves it unknown, with what was found beside it.
+    """
+
+    if job.state in ACTIVE_STATES:
+        return "working", RUNNING_LABELS.get(STATUS, STATUS), "", None, ""
+    if job.state != "done":
+        return "unknown", "", error, None, _error(job)
+    body = _body(job)
+    carried = body.get("result")
+    if body.get("state") == "finished" and isinstance(carried, dict):
+        if body.get("outcome") == "done":
+            return "done", "", "", carried, ""
+        return "failed", "", str(body.get("error") or "The restore failed."), carried, ""
+    return "unknown", "", error, None, STANDING.get(str(body.get("state")), "")
 
 
 def step_states(restore: RestoreRun) -> dict[str, str]:
@@ -428,7 +484,7 @@ def step_states(restore: RestoreRun) -> dict[str, str]:
     order = ("prepare", "preview", "run")
     if restore.stage == "working" and restore.jobs[-1].operation != DISCARD:
         latest = restore.jobs[-1].operation
-        at = {PREPARE: 0, PREVIEW: 1, RUN: 2}[latest]
+        at = {PREPARE: 0, PREVIEW: 1, RUN: 2, STATUS: 2}[latest]
         return {
             name: "done" if index < at else "current" if index == at else "waiting"
             for index, name in enumerate(order)
@@ -439,6 +495,7 @@ def step_states(restore: RestoreRun) -> dict[str, str]:
         "confirm": {"prepare": "done", "preview": "done", "run": "current"},
         "done": {"prepare": "done", "preview": "done", "run": "done"},
         "failed": {"prepare": "done", "preview": "done", "run": "failed"},
+        "unknown": {"prepare": "done", "preview": "done", "run": "current"},
         # Given up, past its hour, or being discarded: the steps not taken stay grey.
         "expired": {"prepare": "done", "preview": "waiting", "run": "waiting"},
         "discarded": {"prepare": "done", "preview": "waiting", "run": "waiting"},
@@ -463,6 +520,7 @@ STAGE_LABELS: dict[str, tuple[str, str]] = {
     "confirm": ("Waiting for confirmation", "warning"),
     "done": ("Restored", "healthy"),
     "failed": ("Failed", "critical"),
+    "unknown": ("Outcome unknown", "warning"),
     "expired": ("Expired", "unknown"),
     "discarded": ("Discarded", "unknown"),
 }

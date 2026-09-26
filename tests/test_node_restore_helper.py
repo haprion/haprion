@@ -4,7 +4,10 @@ import hashlib
 import io
 import json
 import shutil
+import socket
+import struct
 import tempfile
+import threading
 import time
 import unittest
 from functools import partial
@@ -21,6 +24,7 @@ from haproxy_mgmt.cli.node_restore_helper import (
     PREPARE,
     PREVIEW,
     RUN,
+    STATUS,
     ParameterProblem,
 )
 from haproxy_mgmt.node_restore import Clock
@@ -43,6 +47,7 @@ COMMANDS = {
     PREVIEW: "haproxy-node-restore-preview",
     RUN: "haproxy-node-restore",
     DISCARD: "haproxy-node-restore-discard",
+    STATUS: "haproxy-node-restore-status",
 }
 
 
@@ -81,6 +86,7 @@ class HelperTest(unittest.TestCase):
             read_json=node_restore.read_json,
             run_directory=node_restore.run_directory,
             discard=node_restore.discard,
+            status=node_restore.status,
             sweep=node_restore.sweep,
             prepare=partial(node_restore.prepare, source_of=lambda _: "192.0.2.7"),
             preview=partial(
@@ -308,6 +314,29 @@ class Discard(HelperTest):
         self.assertTrue((self.root / other).is_dir())
 
 
+class Status(HelperTest):
+    def test_each_standing_is_in_contract(self) -> None:
+        document, code = self.ask(STATUS, {"run": RUN_ID})
+        self.assertEqual((document["outcome"], code), ("blocked", 75))
+        self.assertIn("no restore run", document["error"]["message"])
+        self.prepared()
+        document, _code = self.ask(STATUS, {"run": RUN_ID})
+        self.assertEqual(document["result"], {"run": RUN_ID, "state": "not_started"})
+        self.ask(PREVIEW, {"run": RUN_ID, "fingerprint": FINGERPRINT})
+        FakeSession.answers["network"] = {"ok": True, "rollback_unit": "u"}
+        carried, _code = self.ask(RUN, {"run": RUN_ID, "confirm": "node-test"})
+        document, code = self.ask(STATUS, {"run": RUN_ID})
+        self.assertEqual((document["outcome"], code), ("done", 0))
+        self.assertEqual(document["result"]["state"], "finished")
+        self.assertEqual(document["result"]["result"], carried["result"])
+
+    def test_a_run_of_another_cluster_is_not_read(self) -> None:
+        self.prepared()
+        document, code = self.ask(STATUS, {"run": RUN_ID}, cluster="beta")
+        self.assertEqual((document["outcome"], code), ("blocked", 75))
+        self.assertIn("belongs to cluster alpha", document["error"]["message"])
+
+
 class Parameters(unittest.TestCase):
     def test_each_operation_takes_exactly_its_keys(self) -> None:
         with self.assertRaises(ParameterProblem):
@@ -400,6 +429,48 @@ class Ask(unittest.TestCase):
         self.assertEqual(code, 78)
         document = assert_contract("haproxy-node-restore-preview", output.getvalue())
         self.assertEqual(document["error"]["code"], "dependency_unavailable")
+
+    def busy(self, operation: str, parameters: dict[str, Any]) -> tuple[int, str]:
+        """Ask a socket that resets the connection at once, as systemd does past MaxConnections."""
+
+        work = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, work)
+        path = str(work / "busy.sock")
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(server.close)
+        server.bind(path)
+        server.listen(1)
+
+        def drop() -> None:
+            connection, _ = server.accept()
+            connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            connection.close()
+
+        dropper = threading.Thread(target=drop)
+        dropper.start()
+        request = node_restore_helper.build_request(operation, "alpha", str(uuid4()), parameters)
+        output = io.StringIO()
+        code = node_restore_ask.main(
+            [],
+            input_stream=io.BytesIO(request.encode()),
+            output_stream=output,
+            error_stream=io.StringIO(),
+            socket_path=path,
+            timeout=5,
+        )
+        dropper.join()
+        return code, output.getvalue()
+
+    def test_a_busy_socket_is_asked_again_later_for_status(self) -> None:
+        code, output = self.busy(STATUS, {"run": RUN_ID})
+        self.assertEqual(code, 75)
+        document = assert_contract("haproxy-node-restore-status", output)
+        self.assertEqual(document["error"]["code"], "restore_busy")
+
+    def test_a_busy_socket_stays_unknown_for_a_step_that_acts(self) -> None:
+        # Past the limit and dead look alike from here; only a question may guess.
+        code, output = self.busy(DISCARD, {"run": RUN_ID})
+        self.assertEqual((code, output), (1, ""))
 
     def test_the_client_gives_up_no_later_than_systemd_stops_the_helper(self) -> None:
         unit = (

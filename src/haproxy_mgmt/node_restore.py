@@ -93,6 +93,14 @@ START_WINDOW = 3600
 # from a node it restored; this is what removes it from one it did not.
 #
 KEY_LIFETIME = 2 * START_WINDOW
+#
+# A run that began writing keeps its outcome after its hour, as long as the
+# web keeps its jobs (a week), so a job that lost its answer can still ask
+# for it (review 2026-09-25, track 8). Only these files stay: the key,
+# known_hosts and the preview's plan go at the hour, as before.
+#
+RESULT_KEPT = 7 * 24 * 3600
+KEPT_FILES = frozenset({"request.json", "prepared.json", "started.json", "result.json"})
 
 
 class RestoreError(RuntimeError):
@@ -227,6 +235,28 @@ def expired(directory: Path, now: float) -> bool:
     return now - prepared_at(directory) > START_WINDOW
 
 
+def _retire(directory: Path, now: float) -> bool:
+    """Put a run past its hour away; True when its directory is gone.
+
+    A run that began writing keeps its outcome files until RESULT_KEPT, and
+    everything else goes - the one-time key first among them. Any other run
+    past its hour goes whole.
+    """
+
+    began = (directory / "started.json").exists() or (directory / "result.json").exists()
+    if not began or now - prepared_at(directory) > RESULT_KEPT:
+        shutil.rmtree(directory)
+        return True
+    for entry in directory.iterdir():
+        if entry.name in KEPT_FILES:
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+    return False
+
+
 class _Held:
     """An exclusive lock on a run directory for as long as a step works in it.
 
@@ -254,7 +284,7 @@ def _unexpired(root: Path, run: str, now: float) -> Path:
 
     directory = run_directory(root, run)
     if expired(directory, now):
-        shutil.rmtree(directory, ignore_errors=True)
+        _retire(directory, now)
         raise RestoreError(
             f"run {run} was prepared more than an hour ago and has expired; prepare a new one"
         )
@@ -1154,91 +1184,113 @@ def _run(
             for a in plan.accounts
         ],
     }
-    stream.write(f"apply on {request.target}\n")
-    carried = PlannedFile(
-        path=f"{restore_agent.STATE}/{run_id}/{restore_agent.BUNDLE_FILE}",
-        kind="file",
-        mode=0o600,
-        uid=0,
-        gid=0,
-        data=bundle.path.read_bytes(),
-    )
-    applied = session.call(
-        request.target,
-        apply_header,
-        payload(checked.source, (*plan.files, carried)),
-        progress=stream,
-    )
-    result["sessions"]["apply"] = {k: v for k, v in applied.items() if k != "ok"}
-    if not applied.get("ok"):
-        return finish_with(
-            "failed",
-            error=applied.get("error"),
-            stage="apply",
-            rolled_back=bool(applied.get("rolled_back")),
+    #
+    # From here the target is written to. Whatever stops the run now is a
+    # failure in the session it reached, recorded in result.json - never the
+    # refusal the steps above give, which says nothing was written.
+    #
+    _write_json(directory / "started.json", {"at": time.time()})
+    stage = "apply"
+    try:
+        stream.write(f"apply on {request.target}\n")
+        carried = PlannedFile(
+            path=f"{restore_agent.STATE}/{run_id}/{restore_agent.BUNDLE_FILE}",
+            kind="file",
+            mode=0o600,
+            uid=0,
+            gid=0,
+            data=bundle.path.read_bytes(),
         )
-
-    final = str(plan.address.ip)
-    archived = None if plan.mode == "test" else _archived_host_key(checked.source)
-    if plan.mode != "test" and archived is None:
-        return finish_with("failed", error="the archive has no ed25519 host key", stage="apply")
-    if plan.mode == "new_vm":
-        # `apply` wrote the archive's host keys and reloaded sshd, so the VM on
-        # its temporary address now answers with the node's key, not the one
-        # verified at the preview. The network session is the first to meet it.
-        with (directory / "known_hosts").open("a", encoding="utf-8") as stream_hosts:
-            stream_hosts.write(f"{request.target} {archived}\n")
-    if overwrite and not plan.network:
-        # B183: the node's network is already the archive's; it is not applied again.
-        stream.write("network unchanged; not applied\n")
-        return _finish(
-            session, directory, checked, cluster, final, result, finish_with, stream, network=False
+        applied = session.call(
+            request.target,
+            apply_header,
+            payload(checked.source, (*plan.files, carried)),
+            progress=stream,
         )
-
-    stream.write(
-        f"network on {request.target}: {plan.address} after 3 s, rollback in {rollback_seconds} s\n"
-    )
-    changed = session.call(
-        request.target,
-        {"op": "network", "run": run_id, "rollback_seconds": rollback_seconds},
-        payload(checked.source, plan.network),
-        progress=stream,
-    )
-    result["sessions"]["network"] = {k: v for k, v in changed.items() if k != "ok"}
-    if not changed.get("ok"):
-        return finish_with("failed", error=changed.get("error"), stage="network")
-
-    key = read_json(directory / "target-key.json")["key"] if archived is None else archived
-    with (directory / "known_hosts").open("a", encoding="utf-8") as stream_hosts:
-        stream_hosts.write(f"{final} {key}\n")
-
-    started = clock.now()
-    clock.sleep(min(pause * 2, 6.0))
-    reached = _wait_for(final, started + rollback_seconds - 30, answering, pause, clock)
-    if not reached:
-        stream.write(f"{final} did not answer; waiting for the rollback timer\n")
-        clock.sleep(max(0.0, started + rollback_seconds + 20 - clock.now()))
-        back = _wait_for(request.target, clock.now() + 60, answering, pause, clock)
-        if back and overwrite:
-            # The network is the node's again; its files are put back from its copy.
-            undone = session.call(
-                request.target, {"op": "rollback", "run": run_id}, progress=stream
+        result["sessions"]["apply"] = {k: v for k, v in applied.items() if k != "ok"}
+        if not applied.get("ok"):
+            return finish_with(
+                "failed",
+                error=applied.get("error"),
+                stage="apply",
+                rolled_back=bool(applied.get("rolled_back")),
             )
-            result["sessions"]["rollback"] = {k: v for k, v in undone.items() if k != "ok"}
-            back = bool(undone.get("ok"))
-        return finish_with(
-            "failed",
-            rolled_back=back,
-            stage="network",
-            error=f"{final} never answered; the "
-            + ("node" if overwrite else "network")
-            + " was "
-            + ("rolled back" if back else "NOT confirmed rolled back - go to the console"),
-        )
 
-    return _finish(
-        session, directory, checked, cluster, final, result, finish_with, stream, network=True
-    )
+        final = str(plan.address.ip)
+        archived = None if plan.mode == "test" else _archived_host_key(checked.source)
+        if plan.mode != "test" and archived is None:
+            return finish_with("failed", error="the archive has no ed25519 host key", stage="apply")
+        if plan.mode == "new_vm":
+            # `apply` wrote the archive's host keys and reloaded sshd, so the VM on
+            # its temporary address now answers with the node's key, not the one
+            # verified at the preview. The network session is the first to meet it.
+            with (directory / "known_hosts").open("a", encoding="utf-8") as stream_hosts:
+                stream_hosts.write(f"{request.target} {archived}\n")
+        if overwrite and not plan.network:
+            # B183: the node's network is already the archive's; it is not applied again.
+            stream.write("network unchanged; not applied\n")
+            stage = "finish"
+            return _finish(
+                session,
+                directory,
+                checked,
+                cluster,
+                final,
+                result,
+                finish_with,
+                stream,
+                network=False,
+            )
+
+        stage = "network"
+        stream.write(
+            f"network on {request.target}: {plan.address} after 3 s, rollback in {rollback_seconds} s\n"
+        )
+        changed = session.call(
+            request.target,
+            {"op": "network", "run": run_id, "rollback_seconds": rollback_seconds},
+            payload(checked.source, plan.network),
+            progress=stream,
+        )
+        result["sessions"]["network"] = {k: v for k, v in changed.items() if k != "ok"}
+        if not changed.get("ok"):
+            return finish_with("failed", error=changed.get("error"), stage="network")
+
+        key = read_json(directory / "target-key.json")["key"] if archived is None else archived
+        with (directory / "known_hosts").open("a", encoding="utf-8") as stream_hosts:
+            stream_hosts.write(f"{final} {key}\n")
+
+        started = clock.now()
+        clock.sleep(min(pause * 2, 6.0))
+        reached = _wait_for(final, started + rollback_seconds - 30, answering, pause, clock)
+        if not reached:
+            stream.write(f"{final} did not answer; waiting for the rollback timer\n")
+            clock.sleep(max(0.0, started + rollback_seconds + 20 - clock.now()))
+            back = _wait_for(request.target, clock.now() + 60, answering, pause, clock)
+            if back and overwrite:
+                # The network is the node's again; its files are put back from its copy.
+                undone = session.call(
+                    request.target, {"op": "rollback", "run": run_id}, progress=stream
+                )
+                result["sessions"]["rollback"] = {k: v for k, v in undone.items() if k != "ok"}
+                back = bool(undone.get("ok"))
+            return finish_with(
+                "failed",
+                rolled_back=back,
+                stage="network",
+                error=f"{final} never answered; the "
+                + ("node" if overwrite else "network")
+                + " was "
+                + ("rolled back" if back else "NOT confirmed rolled back - go to the console"),
+            )
+
+        stage = "finish"
+        return _finish(
+            session, directory, checked, cluster, final, result, finish_with, stream, network=True
+        )
+    except (RestoreError, OSError) as exc:
+        result["sessions"].setdefault(stage, {})
+        return finish_with("failed", error=str(exc), stage=stage)
 
 
 def _finish(
@@ -1301,10 +1353,10 @@ def discard(root: Path, run_id: str) -> bool:
 
 
 def sweep(root: Path, now: float) -> list[str]:
-    """Remove every run directory past its hour that no step holds; the runs removed.
+    """Put away every run past its hour that no step holds; the runs removed whole.
 
-    Done or failed runs go too: `finish` has replaced the target's keys on a node
-    it restored, and a run that stopped is read from its job, not from here.
+    A run that began writing loses its key and plan at the hour and keeps its
+    outcome for `status` until RESULT_KEPT; see `_retire`.
     """
 
     if not root.is_dir():
@@ -1317,8 +1369,49 @@ def sweep(root: Path, now: float) -> list[str]:
             if not expired(directory, now):
                 continue
             with _Held(directory, wait=False):
-                shutil.rmtree(directory)
+                gone = _retire(directory, now)
         except (BlockingIOError, FileNotFoundError):
             continue
-        removed.append(directory.name)
+        if gone:
+            removed.append(directory.name)
     return removed
+
+
+def status(root: Path, run_id: str) -> dict[str, Any]:
+    """How a run stands, read from its directory; nothing is changed.
+
+    ``running``      a step holds the run's lock: it is working now
+    ``finished``     the run wrote its outcome; `outcome`, `error` and `result`
+                     are what `run` answered, or would have
+    ``stopped``      it began writing to the target and left no outcome - the
+                     helper was stopped mid-run; the target must be looked at
+    ``not_started``  it never began writing: waiting, refused, or past its hour
+    """
+
+    if not restore_agent.RUN_ID.fullmatch(run_id):
+        raise RestoreError("the run ID is not usable")
+    directory = root / run_id
+    if not directory.is_dir():
+        raise RestoreError(
+            f"there is no restore run {run_id}; a run's outcome is kept for "
+            f"{RESULT_KEPT // 86400} days, and a discarded run is gone at once"
+        )
+    _private_directory(directory)
+    try:
+        held = _Held(directory, wait=False)
+    except BlockingIOError:
+        return {"run": run_id, "state": "running"}
+    with held:
+        if (directory / "result.json").exists():
+            carried = read_json(directory / "result.json")
+            error = carried.get("error")
+            return {
+                "run": run_id,
+                "state": "finished",
+                "outcome": "done" if carried.get("outcome") == "done" else "failed",
+                "error": None if error is None else str(error),
+                "result": {k: v for k, v in carried.items() if k not in {"outcome", "error"}},
+            }
+        if (directory / "started.json").exists():
+            return {"run": run_id, "state": "stopped"}
+        return {"run": run_id, "state": "not_started"}

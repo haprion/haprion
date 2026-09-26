@@ -12,6 +12,9 @@ terminal's ``haproxy-node-restore`` runs - one implementation, two callers.
                           target's console and answers with the plan
 ``node_restore``          carries out the previewed plan
 ``node_restore_discard``  removes a run and its one-time key (B182)
+``node_restore_status``   reads how a run stands: working, finished (with the
+                          outcome `node_restore` answered), stopped mid-run,
+                          or not started - for a job that lost its answer
 
 Every call also sweeps away the runs past their hour (B182), after answering.
 
@@ -53,7 +56,8 @@ PREPARE = "node_restore_prepare"
 PREVIEW = "node_restore_preview"
 RUN = "node_restore"
 DISCARD = "node_restore_discard"
-OPERATIONS = frozenset({PREPARE, PREVIEW, RUN, DISCARD})
+STATUS = "node_restore_status"
+OPERATIONS = frozenset({PREPARE, PREVIEW, RUN, DISCARD, STATUS})
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-node-restore-helper"
 EXIT_NOT_ROOT = 77
 
@@ -62,6 +66,7 @@ KEYS = {
     PREVIEW: frozenset({"run", "fingerprint"}),
     RUN: frozenset({"run", "confirm"}),
     DISCARD: frozenset({"run"}),
+    STATUS: frozenset({"run"}),
 }
 #
 # Booleans an operation may carry, left out meaning false - so a request from
@@ -72,6 +77,7 @@ OPTIONAL = {
     PREVIEW: frozenset(),
     RUN: frozenset({"backup_failed_ok", "break_traffic"}),
     DISCARD: frozenset(),
+    STATUS: frozenset(),
 }
 NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
 TEST_KEYS = frozenset({"hostname", "address", "vip"})
@@ -90,6 +96,7 @@ __all__ = [
     "PREPARE",
     "PREVIEW",
     "RUN",
+    "STATUS",
     "ParameterProblem",
     "build_request",
     "fingerprint_in",
@@ -348,6 +355,24 @@ def _answer(
                     cluster=request.cluster,
                     request_id=request.request_id,
                     result={"run": run, "removed": removed},
+                ),
+            )
+            return 0
+
+        if operation == STATUS:
+            directory = run_root / run
+            if (directory / "request.json").is_file():
+                owner = Request.from_dict(engine.read_json(directory / "request.json")).cluster
+                if owner != request.cluster:
+                    raise RestoreError(f"run {run} belongs to cluster {owner}")
+            write_document(
+                writer,
+                envelope(
+                    operation=operation,
+                    outcome="done",
+                    cluster=request.cluster,
+                    request_id=request.request_id,
+                    result=engine.status(run_root, run),
                 ),
             )
             return 0

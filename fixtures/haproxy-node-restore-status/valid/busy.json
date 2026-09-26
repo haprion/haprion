@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "blocked",
+  "operation": "node_restore_status",
+  "cluster": "alpha",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": null,
+  "warnings": [],
+  "error": {
+    "code": "restore_busy",
+    "message": "A restore step is still running; ask again when it has finished."
+  }
+}

@@ -9,8 +9,11 @@ Three steps, in order, each a separate command (B175):
             exactly what the restore would write and rewrite
   run       carry out what the preview showed - refused if anything changed
 
+and ``status`` reads how a run stands, and ``discard`` gives one up.
+
 A run has an hour from prepare to run (B182); past it, prepare a new one. Every
-step also removes the directories of runs past their hour.
+step also puts away the runs past their hour: a run that began writing keeps
+its outcome for a week, for ``status``.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ Usage:
   haproxy-node-restore run     --run <id> --confirm <hostname>
                                [--backup-failed-ok] [--break-traffic]
   haproxy-node-restore discard --run <id>
+  haproxy-node-restore status  --run <id>
 
   prepare   prints a line to paste on the target's console as its administrator.
             It authorizes this run's one-time key for root, from this host only,
@@ -56,9 +60,12 @@ Usage:
   failed, unless --backup-failed-ok, and when the node may hold the VIP while
   its neighbour is not healthy, unless --break-traffic.
   discard   removes the run and its one-time key.
+  status    how the run stands: running, finished (and how), stopped mid-run,
+            or not started. Changes nothing.
 
   A run has an hour from prepare to run; after that it has expired and is
-  removed, and prepare starts again.
+  removed, and prepare starts again. A run that began writing keeps its
+  outcome for a week, for status; its one-time key goes at the hour.
 
   Add --json to any step for one JSON document instead of text.
 """
@@ -234,6 +241,21 @@ def _text_result(result: dict[str, Any], out: TextIO) -> None:
             out.write(f"  warning: {warning}\n")
 
 
+STATUS_WORDS = {
+    "running": "a step is working in it now",
+    "stopped": "it began writing to the target and left no outcome - look at the target",
+    "not_started": "it never began writing to the target",
+}
+
+
+def _text_status(standing: dict[str, Any], out: TextIO) -> None:
+    if standing["state"] == "finished":
+        carried = {**standing["result"], "outcome": standing["outcome"], "error": standing["error"]}
+        _text_result(carried, out)
+        return
+    out.write(f"run {standing['run']}: {STATUS_WORDS[standing['state']]}\n")
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -246,7 +268,7 @@ def main(
     argv = sys.argv[1:] if argv is None else argv
     out = output_stream or sys.stdout
     errors = error_stream or sys.stderr
-    if not argv or argv[0] not in {"prepare", "preview", "run", "discard"}:
+    if not argv or argv[0] not in {"prepare", "preview", "run", "discard", "status"}:
         errors.write(USAGE)
         return EXIT_USAGE
     step, rest = argv[0], argv[1:]
@@ -276,6 +298,7 @@ def main(
                 "preview": ("--run",),
                 "run": ("--run", "--confirm"),
                 "discard": ("--run",),
+                "status": ("--run",),
             }
             if not all(name in options for name in needed[step]):
                 raise ValueError("missing")
@@ -326,6 +349,13 @@ def _step(
                 if removed
                 else f"there is no run {options['--run']}; nothing to remove\n"
             )
+            return 0
+        if step == "status":
+            standing = node_restore.status(run_root, options["--run"])
+            if as_json:
+                out.write(json.dumps(standing) + "\n")
+            else:
+                _text_status(standing, out)
             return 0
         policy = load_policy(policy_path)
         runtime = load_runtime_config(policy)

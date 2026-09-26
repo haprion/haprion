@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -75,6 +76,63 @@ class ARealDatabase(unittest.TestCase):
                 ids.append(cursor.fetchone()[0])
             cursor.execute(query)
             self.assertEqual(cursor.fetchone(), (f"node_restore (job {ids[0]})",))
+            connection.rollback()
+
+    def test_retention_keeps_what_a_profile_s_state_is_read_from(self) -> None:
+        """A profile in effect for months must not read "Not applied" after a week.
+
+        The clause is printed by the retention command's own functions, so what
+        is proved here is what prunes. Everything is a month old and the floor
+        of recent rows is set to nothing, so only the profile rule keeps a row.
+        """
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        clause = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            [
+                "/bin/bash",
+                "-c",
+                'KEEP_DAYS=7; KEEP_MINIMUM=0; eval "$(sed -n'
+                " '/^profile_evidence() {/,/^}/p;/^where_removable() {/,/^}/p'"
+                ' "$0")"; where_removable',
+                str(script),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        jobs = (
+            ("old-apply", "dns_profile_apply", {"profile": "kept", "revision": 1}),
+            ("newest-apply", "dns_profile_apply", {"profile": "kept", "revision": 2}),
+            ("refused-removal", "dns_profile_apply", {"profile": "kept", "revision": 2,
+                                                      "remove": True}),
+            ("removed-profile", "dns_profile_apply", {"profile": "gone", "revision": 1}),
+            ("deploy", "deploy", {}),
+        )  # fmt: skip
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into dns_provider_profile (id, name, provider_id, schema_version, "
+                "key_id, revision, ciphertext, created_by, updated_by) values "
+                "('kept', 'kept', 'cloudflare', 1, '0123456789abcdef', 2, %(blob)s, 'a', 'a')",
+                {"blob": b"x" * 48},
+            )
+            named = {}
+            for name, operation, payload in jobs:
+                cursor.execute(
+                    "insert into job (operation, cluster, payload, idempotency_key, state, "
+                    "started_at, finished_at) values (%(operation)s, %(cluster)s, %(payload)s, "
+                    "%(key)s, 'done', now() - interval '30 days', now() - interval '30 days') "
+                    "returning id",
+                    {
+                        "operation": operation,
+                        "cluster": "alpha" if operation == "deploy" else None,
+                        "payload": json.dumps(payload),
+                        "key": uuid4(),
+                    },
+                )
+                named[cursor.fetchone()[0]] = name
+            cursor.execute(f"select id from job where {clause}")  # noqa: S608 - the script's own
+            removable = {named[row[0]] for row in cursor.fetchall() if row[0] in named}
+            self.assertEqual(removable, {"old-apply", "removed-profile", "deploy"})
             connection.rollback()
 
     def test_every_migration_reaches_the_declared_head(self) -> None:

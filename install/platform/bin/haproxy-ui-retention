@@ -494,11 +494,36 @@ psql_as() {
 # A rehearsal on 2026-08-31 found exactly this: ordered by id alone, a backdated
 # row the page would never list took one of the twenty places.
 #
+#
+# A profile's state is read from its apply jobs, not from its row: "In effect"
+# means the job that wrote the root-owned file is done for the current
+# revision. So the jobs that say so are kept for as long as the profile exists,
+# whatever their age - the newest job, and the newest apply under it, which a
+# refused removal on top leaves in charge. Pruned after a week, a profile that
+# had been in effect for months read "Not applied" and dropped out of the
+# certificate form (found 2026-09-26).
+#
+profile_evidence() {
+    local operation="$1" table="$2" applies_only="$3"
+    cat <<SQL
+    select distinct on (payload->>'profile') id from job
+     where operation = '${operation}'
+       and payload->>'profile' in (select id from ${table})
+       ${applies_only}
+     order by payload->>'profile', created_at desc, id desc
+SQL
+}
+
 where_removable() {
+    local applies="and coalesce(payload->>'remove', 'false') <> 'true'"
     cat <<SQL
     state not in ('pending', 'running')
     and finished_at < statement_timestamp() - make_interval(days => ${KEEP_DAYS})
     and id not in (select id from job order by created_at desc, id desc limit ${KEEP_MINIMUM})
+    and id not in ($(profile_evidence dns_profile_apply dns_provider_profile ""))
+    and id not in ($(profile_evidence dns_profile_apply dns_provider_profile "$applies"))
+    and id not in ($(profile_evidence ndes_profile_apply ndes_provider_profile ""))
+    and id not in ($(profile_evidence ndes_profile_apply ndes_provider_profile "$applies"))
 SQL
 }
 

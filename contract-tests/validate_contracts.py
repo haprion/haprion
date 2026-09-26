@@ -689,6 +689,16 @@ def check_cert_receiver_semantics(document: dict[str, object], path: Path) -> No
         raise AssertionError(f"{path}: a registration carries no instructions")
 
 
+def check_ui_tls_install_semantics(document: dict[str, object], path: Path) -> None:
+    # One certificate, installed or already served; anything else is a refusal
+    # and names no certificate as installed.
+    result = document["result"]
+    if document["outcome"] == "done" and result is None:
+        raise AssertionError(f"{path}: a done ui_tls_install carries no result")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(f"{path}: a {document['outcome']} ui_tls_install carries a result")
+
+
 def check_backup_run_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -869,6 +879,7 @@ SEMANTIC_CHECKS = {
     "cert_delete": check_cert_delete_semantics,
     "cert_scep": check_cert_scep_semantics,
     "cert_receiver": check_cert_receiver_semantics,
+    "ui_tls_install": check_ui_tls_install_semantics,
     "node_restore_prepare": check_node_restore_prepare_semantics,
     "node_restore_preview": check_node_restore_preview_semantics,
     "node_restore": check_node_restore_semantics,
@@ -931,6 +942,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["schedule"]["calendar"] = "*-*-* 00:00:00"
     elif operation == "cert_receiver":
         result["layers"] = [{"layer": "account", "state": "failed", "detail": "userdel: busy"}]
+    elif operation == "ui_tls_install":
+        invalid["outcome"] = "failed"
     elif operation == "node_restore_prepare":
         result["mode"] = "new_vm"
     elif operation == "node_restore_preview":

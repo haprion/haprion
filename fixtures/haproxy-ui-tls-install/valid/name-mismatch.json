@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "failed",
+  "operation": "ui_tls_install",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": null,
+  "warnings": [],
+  "error": {
+    "code": "name_mismatch",
+    "message": "the certificate does not name mgr.example.net, the name the interface is served on; not installed"
+  }
+}

@@ -1,0 +1,35 @@
+# The socket the interface certificate is installed through (B188).
+#
+# Owned by root, connectable by the worker's account. Each connection starts
+# one instance of haproxy-ui-tls-helper@.service, which reads one request -
+# a certificate ID - and writes one answer. What answers installs only the
+# registry entry marked `interface: true`, and only through haproxy-ui-tls.
+#
+# The callers are the certificate helpers the worker starts through sudo:
+# they run as root but inside the worker's ProtectSystem=strict namespace,
+# where /etc/haproxy-manager is read-only (B163). The renewal timer and an
+# operator's haproxy-cert-publish run outside it and install directly.
+#
+# Installed as /etc/systemd/system/haproxy-ui-tls-helper.socket, with
+# WORKER_USER rendered by 07-platform-services.
+
+[Unit]
+Description=Socket the HAProxy Manager interface certificate is installed through
+Documentation=file:///opt/haproxy-mgmt/current
+
+[Socket]
+ListenStream=/run/haproxy-mgmt/ui-tls.sock
+SocketUser=root
+SocketGroup=WORKER_USER
+SocketMode=0660
+
+Accept=yes
+
+# One at a time: two installs of the same pair have nothing to gain from
+# running side by side, and haproxy-ui-tls takes no lock of its own.
+MaxConnections=1
+
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

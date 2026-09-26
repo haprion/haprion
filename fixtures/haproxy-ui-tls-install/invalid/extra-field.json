@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "ui_tls_install",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "id": "mgr.example.net",
+    "changed": true,
+    "fingerprint_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "not_after": "2027-01-01T00:00:00Z",
+    "path": "/etc/example/ui.crt"
+  },
+  "warnings": [],
+  "error": null
+}

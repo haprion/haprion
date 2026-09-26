@@ -690,6 +690,11 @@ others. Which certificate goes to which already-registered receiver is the part 
 allowed to change, and it does so through a helper that accepts only targets registered in this
 file.
 
+One entry may carry `interface: true`: the certificate the management host's own interface is
+served with (4.5). It is issued, imported and renewed like every other entry, names no cluster and
+no receiver - the loader refuses either, and refuses a second such entry - and is published to
+nginx instead of to targets.
+
 `transport` says how the receiver fetches, `layout` how its directory is arranged, and `allow` -
 `https` only - which addresses may fetch at all. Both defaults describe the receivers registered
 before this command existed, so an older file means exactly what it meant before: `rsync` and
@@ -2592,23 +2597,25 @@ HSTS makes a certificate warning unclickable, so enabling it while the
 certificate is still self-signed locks every operator out of the UI — including
 whoever would fix it. Enable it after installing a trusted pair.
 
-#### Why there is no upload form
+#### From the certificate registry
 
-Replacing this certificate from the UI is planned, but never as a file upload.
-The web identity must not be able to read private key material — that is a line
-in the phase gate, verified as the real installed identity, and step 5 checks it
-for all three application accounts. A form that accepts a private key would make
-the web process a key handler, and a web intrusion sufficient to replace the
-management host's own certificate.
+The pair can instead come from the certificate registry (1.4.1): an entry marked
+`interface: true`, issued over ACME or NDES or imported like any other certificate, and renewed by
+the same timer. Publishing that entry runs `haproxy-ui-tls install` with it - the same checks and
+the same rollback as above - after two refusals the command does not make itself: the certificate
+must name this host's `SERVER_NAME` (a wildcard covers one label), and a certificate nginx already
+serves is not installed again, so a renewal of some other certificate costs no reload.
 
-The UI path being built instead: the pair is placed in a drop directory outside
-the web process, the poller lists what is there, an admin picks one, and the web
-process queues a job carrying only that candidate's id — never key bytes, never
-a path. The worker calls the same `haproxy-ui-tls`. The web process chooses
-*which*, never *what*. In practice the only difference is that the file arrives
-by scp or CLI rather than through the browser.
+Who runs it depends on where the publish runs. `haproxy-cert-publish` and the renewal timer are
+root outside any sandbox and install directly. The certificate helpers the worker starts through
+`sudo` run inside the worker's `ProtectSystem=strict` namespace, where `/etc/haproxy-manager` is
+read-only; they name the entry by ID to `haproxy-ui-tls-helper` on
+`/run/haproxy-mgmt/ui-tls.sock`, a root unit step 07 installs, which reads the registry and the
+material itself and refuses any entry not marked `interface: true`. The key never passes through
+the web process: the interface names a certificate, never bytes, never a path.
 
-Until then, replacement is the command above. See B21 in the decision log.
+`haproxy-ui-tls install` and `self-signed` stay the way back: running either replaces the served
+pair whatever the registry says, and the next publish of the marked entry puts it back.
 
 ### 4.6 Accounts and signing in
 
@@ -3341,6 +3348,25 @@ read-only, `/etc` writable - because writing `/etc` is the job. `full` and
 directly.
 
 Step 07 installs the socket wherever it installs a worker. It reaches no node.
+
+#### The way to the interface certificate
+
+The same boundary once more, with a different caller. The helpers that issue, enroll and import
+certificates run through `sudo` inside the worker's namespace, and publishing the entry marked
+`interface: true` (4.5) ends in `haproxy-ui-tls install`, which writes `/etc/haproxy-manager/tls`
+and a rollback directory beside it. So those helpers name the entry by ID on a socket:
+
+```
+/run/haproxy-mgmt/ui-tls.sock      root:<worker> 0660, created by haproxy-ui-tls-helper.socket
+haproxy-ui-tls-helper@.service     runs the helper as root, one instance per connection
+```
+
+The request carries the certificate ID and nothing else; the helper reads the registry and the
+material itself and refuses an entry without the mark. The socket takes one connection at a time,
+and the helper takes no lock: its callers hold the publisher's lock while they wait for it. The
+sandbox is `ProtectSystem=yes`, as for the receiver helper. The renewal timer and
+`haproxy-cert-publish` do not go this way; root runs them directly. Step 07 installs the socket
+wherever it installs a worker.
 
 #### The worker's way to the backup and restore helpers
 

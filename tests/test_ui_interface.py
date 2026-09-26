@@ -14,6 +14,7 @@ certificate - copies it into place - so the next call measures a real file.
 
 from __future__ import annotations
 
+import io
 import json
 import shutil
 import stat
@@ -22,10 +23,13 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
-from haproxy_mgmt import ui_interface
+from haproxy_mgmt import helper_socket, ui_interface
 from haproxy_mgmt.cert_publish import Material, PublishError, read_material
+from haproxy_mgmt.cli import ui_tls_helper
 from haproxy_mgmt.config import CertificateSource, RegisteredCertificate
+from tests.contract_schema import assert_contract
 from tests.test_cert_publish import Fixture, issue
 
 
@@ -216,3 +220,140 @@ class ThePublisher(Fixture):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheSocketHelper(Fixture):
+    """D3: an ID in, the marked entry installed, the contract's document out."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        issue(self.live / "mgr.example.net", "mgr.example.net", sans=("mgr.example.net",))
+        issue(self.live / "example.com", "example.com", sans=("example.com",))
+        self.policy = self.write_config(
+            self.keeper()
+            | {
+                "mgr.example.net": {"source": {"kind": "acme"}, "interface": True},
+                "example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]},
+            }
+        )
+        self.handed: list[str] = []
+
+    def ask(self, parameters: dict[str, Any], installer: Any = None) -> tuple[int, str, str]:
+        def fake(material: Material) -> bool:
+            self.handed.append(material.certificate_id)
+            return True
+
+        request = json.dumps(
+            {
+                "schema_version": 1,
+                "operation": "ui_tls_install",
+                "cluster": None,
+                "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                "parameters": parameters,
+            }
+        ).encode()
+        out, err = io.StringIO(), io.StringIO()
+        code = ui_tls_helper.main(
+            [],
+            policy_path=self.policy,
+            input_stream=io.BytesIO(request),
+            output_stream=out,
+            error_stream=err,
+            require_secure=False,
+            require_root=False,
+            live=self.live,
+            store=self.store,
+            installer=installer or fake,
+        )
+        return code, out.getvalue(), err.getvalue()
+
+    def test_the_marked_entry_is_installed_and_described(self) -> None:
+        code, out, _ = self.ask({"id": "mgr.example.net"})
+
+        self.assertEqual(code, 0)
+        document = assert_contract("haproxy-ui-tls-install", out)
+        self.assertEqual(document["outcome"], "done")
+        self.assertEqual(document["result"]["id"], "mgr.example.net")
+        self.assertTrue(document["result"]["changed"])
+        self.assertEqual(self.handed, ["mgr.example.net"])
+        self.assertNotIn("PRIVATE", out)
+
+    def test_any_other_certificate_is_refused_before_anything_runs(self) -> None:
+        for certificate_id, wanted in (
+            ("example.com", "bad_input"),
+            ("nobody.example.org", "unknown_certificate"),
+            ("../etc/passwd", "bad_input"),
+        ):
+            code, out, _ = self.ask({"id": certificate_id})
+            document = assert_contract("haproxy-ui-tls-install", out)
+            self.assertNotEqual(code, 0)
+            self.assertEqual(document["error"]["code"], wanted, certificate_id)
+        self.assertEqual(self.handed, [])
+
+    def test_nothing_but_the_id_is_taken(self) -> None:
+        code, out, err = self.ask({"id": "mgr.example.net", "cert": "/tmp/x.pem"})
+
+        self.assertNotEqual(code, 0)
+        self.assertEqual(out, "")
+        self.assertIn("cert", err)
+        self.assertEqual(self.handed, [])
+
+    def test_the_installer_s_refusal_is_the_answer(self) -> None:
+        def refusing(material: Material) -> bool:
+            raise PublishError("name_mismatch", "the certificate does not name mgr.example.net")
+
+        code, out, _ = self.ask({"id": "mgr.example.net"}, installer=refusing)
+
+        document = assert_contract("haproxy-ui-tls-install", out)
+        self.assertEqual(code, 64)
+        self.assertEqual(document["error"]["code"], "name_mismatch")
+
+
+class TheSocketClient(unittest.TestCase):
+    """The sandboxed side reads the helper's answer back into the publisher's terms."""
+
+    def material(self) -> Material:
+        return Material(
+            certificate_id="mgr.example.net",
+            fullchain=b"",
+            privkey=b"",
+            facts=mock.Mock(),
+            fingerprint="a" * 64,
+        )
+
+    def answer(self, document: dict[str, Any] | Exception) -> Any:
+        installer = ui_interface.socket_installer(path="/nonexistent/ui-tls.sock")
+        side = document if isinstance(document, Exception) else None
+        value = None if isinstance(document, Exception) else json.dumps(document)
+        with mock.patch.object(helper_socket, "ask", side_effect=side, return_value=value) as ask:
+            try:
+                return installer(self.material())
+            finally:
+                request = ask.call_args.args[0]
+                self.assertEqual(request["parameters"], {"id": "mgr.example.net"})
+
+    def test_done_says_whether_it_changed(self) -> None:
+        result = {"id": "mgr.example.net", "changed": False, "fingerprint_sha256": "a" * 64}
+        self.assertFalse(self.answer({"outcome": "done", "result": result}))
+
+    def test_a_different_leaf_installed_is_not_claimed(self) -> None:
+        result = {"id": "mgr.example.net", "changed": True, "fingerprint_sha256": "b" * 64}
+        with self.assertRaises(PublishError) as caught:
+            self.answer({"outcome": "done", "result": result})
+        self.assertEqual(caught.exception.code, "material_changed")
+
+    def test_a_refusal_keeps_the_helper_s_code(self) -> None:
+        with self.assertRaises(PublishError) as caught:
+            self.answer({"outcome": "failed", "error": {"code": "name_mismatch", "message": "no"}})
+        self.assertEqual(caught.exception.code, "name_mismatch")
+
+    def test_no_service_and_a_silent_one_read_differently(self) -> None:
+        with self.assertRaises(PublishError) as caught:
+            self.answer(helper_socket.HelperUnavailable("nothing listens."))
+        self.assertEqual(caught.exception.code, "dependency_unavailable")
+        self.assertIn("haproxy-ui-tls-helper.socket", str(caught.exception))
+
+        with self.assertRaises(PublishError) as caught:
+            self.answer(helper_socket.HelperSilent("it stopped answering."))
+        self.assertEqual(caught.exception.code, "helper_silent")
+        self.assertIn("may still have installed", str(caught.exception))

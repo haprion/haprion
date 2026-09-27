@@ -63,6 +63,31 @@ table cell is almost always wrong here. A summary card carries a number, a
 label and a qualifier; if it cannot show all three it is not a smaller card, it
 is a broken one, and its grid needs fixing rather than its text truncating.
 
+## Sortable tables
+
+A table that the reader may sort **sorts on every column**, not on a chosen few:
+a heading that is a link in one column and plain text in the next reads as a
+bug. Settings -> Users is the reference (`users.sort_links`, `users.ordered`,
+the `<thead>` loop in `settings.html`):
+
+- the order is chosen on the server with `?sort=<column>`, and `-<column>`
+  turns it round; no script, so the whole-row link and the page's own
+  refresh keep working
+- the first click gives the column's natural order: text and states from the
+  top, counts and times from the most and the newest; the second click turns it
+- the chosen heading carries ▲ (A-Z, least or oldest first) or ▼, and
+  `aria-sort`; the others carry nothing
+- rows that tie keep their name order, and a missing value ("Never", "—") comes
+  last in both directions: it is not a value to sort among values
+- an unknown `sort` falls back to the default rather than refusing
+- the choice is remembered in a cookie scoped to the page's path, so *Back*
+  from a row's page lands on the order the reader left
+- the default order stays alphabetical: a row never moves because its data
+  changed
+
+When a second table needs this, lift the column table and `sort_links` out of
+`users.py` into a shared module rather than copying them.
+
 ## Assets are versioned
 
 Every local asset URL carries `?v=<token>`, from `views.asset_token`. Without it

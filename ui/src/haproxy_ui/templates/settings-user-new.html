@@ -18,11 +18,11 @@
       <label><span class="field-title">Role</span><select name="role">{% for value in roles %}<option value="{{ value }}"{% if value == form.role %} selected{% endif %}>{{ value | capitalize }}</option>{% endfor %}</select></label>
       <label><span class="field-title">Password</span><input type="password" name="new_password" autocomplete="new-password" minlength="{{ minimum_length }}" required></label>
       <label><span class="field-title">Repeat password</span><input type="password" name="repeat_password" autocomplete="new-password" minlength="{{ minimum_length }}" required></label>
-      <label><span class="field-title">Your password</span><input type="password" name="your_password" autocomplete="current-password" required></label>
     </div>
     <div class="editor-actions editor-submit">
       <div class="form-buttons"><a class="secondary-button" href="/settings">Cancel</a><button type="submit" class="secondary-button deploy-button">Add user</button></div>
     </div>
   </section>
 </form>
+<script defer src="{{ url_for('static', path='/password-match.js') }}?v={{ asset_token }}"></script>
 {% endblock %}

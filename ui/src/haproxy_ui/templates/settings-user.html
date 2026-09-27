@@ -3,8 +3,9 @@
 {% block content %}
 {#
   One account, and what an admin may do to it: the verbs of haproxy-ui-user.
-  One form with a button per action, so "Your password" is typed once for
-  whichever is pressed. Password fields are always drawn empty.
+  The role and a new password are saved together; the account's switches -
+  end sessions, unlock, disable or enable - act at once. Password fields are
+  always drawn empty.
 #}
 <section class="page-heading">
   <div class="heading-title"><h1>{{ account.username }}</h1><p class="page-lede"><a href="/settings">Settings</a></p></div>
@@ -17,6 +18,7 @@
 <p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
 {% endif %}
 
+<div class="cluster-list">
 <section class="cluster-card">
   <dl class="cluster-facts">
     <div><dt>Role</dt><dd>{{ account.role | capitalize }}</dd></div>
@@ -25,26 +27,40 @@
     <div><dt>Last sign-in</dt><dd>{{ account.last_sign_in }}</dd></div>
   </dl>
   {% if account.own %}
-  <p class="table-note">Your own account. <a href="/account/password">Change password</a></p>
+  <div class="cluster-actions">
+    <div><strong>Your own account</strong></div>
+    <div class="action-buttons"><a class="secondary-button" href="/settings">Back</a><a class="secondary-button" href="/account/password">Change password</a></div>
+  </div>
   {% else %}
-  <form method="post" action="{{ account.href }}" class="preview-form">
+  <form method="post" action="{{ account.href }}" class="cluster-actions">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <div class="form-grid">
-      <label><span class="field-title">Role</span><select name="role">{% for value in roles %}<option value="{{ value }}"{% if value == account.role %} selected{% endif %}>{{ value | capitalize }}</option>{% endfor %}</select></label>
-      <label><span class="field-title">New password</span><input type="password" name="new_password" autocomplete="new-password" minlength="{{ minimum_length }}"></label>
-      <label><span class="field-title">Repeat new password</span><input type="password" name="repeat_password" autocomplete="new-password" minlength="{{ minimum_length }}"></label>
-      <label><span class="field-title">Your password</span><input type="password" name="your_password" autocomplete="current-password" required></label>
-    </div>
-    <div class="editor-actions editor-submit">
-      <div class="form-buttons">
-        <button type="submit" class="secondary-button" name="action" value="role">Change role</button>
-        <button type="submit" class="secondary-button" name="action" value="password">Set password</button>
-        <button type="submit" class="secondary-button" name="action" value="revoke">End sessions</button>
-        {% if account.locked %}<button type="submit" class="secondary-button" name="action" value="unlock">Unlock</button>{% endif %}
-        {% if account.disabled %}<button type="submit" class="secondary-button" name="action" value="enable">Enable</button>{% else %}<button type="submit" class="danger-button" name="action" value="disable">Disable</button>{% endif %}
-      </div>
+    <div><strong>Account</strong></div>
+    <div class="action-buttons">
+      <button type="submit" class="secondary-button" name="action" value="revoke">End sessions</button>
+      {% if account.locked %}<button type="submit" class="secondary-button" name="action" value="unlock">Unlock</button>{% endif %}
+      {% if account.disabled %}<button type="submit" class="secondary-button" name="action" value="enable">Enable</button>{% else %}<button type="submit" class="danger-button" name="action" value="disable">Disable</button>{% endif %}
     </div>
   </form>
   {% endif %}
 </section>
+{% if not account.own %}
+<form method="post" action="{{ account.href }}" class="preview-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="action" value="save">
+  <section class="cluster-card">
+    <div class="form-grid">
+      <label><span class="field-title">Role</span><select name="role">{% for value in roles %}<option value="{{ value }}"{% if value == account.role %} selected{% endif %}>{{ value | capitalize }}</option>{% endfor %}</select></label>
+      <label><span class="field-title">New password</span><input type="password" name="new_password" autocomplete="new-password" minlength="{{ minimum_length }}"></label>
+      <label><span class="field-title">Repeat new password</span><input type="password" name="repeat_password" autocomplete="new-password" minlength="{{ minimum_length }}"></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings">Back</a><button type="submit" class="secondary-button deploy-button">Save</button></div>
+    </div>
+  </section>
+</form>
+{% endif %}
+</div>
+{% if not account.own %}
+<script defer src="{{ url_for('static', path='/password-match.js') }}?v={{ asset_token }}"></script>
+{% endif %}
 {% endblock %}

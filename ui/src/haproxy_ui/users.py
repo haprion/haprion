@@ -20,19 +20,25 @@ type Tone = Literal["healthy", "warning", "critical"]
 ROLES = ("admin", "reader")
 
 #
-# What a finished action says on the account's page. The keys are the form's
-# `action` values; anything else is refused before it reaches the database.
+# What a finished change says on the account's page. `save` writes the role
+# and a new password together and lands on whichever of `role`, `password`
+# and `saved` it did; the other keys are the page's buttons.
 #
 DONE = {
     "created": "Account created.",
     "role": "Role changed.",
+    "password": "Password set. The account's sessions were ended.",
+    "saved": "Role changed and password set. The account's sessions were ended.",
     "disable": "Account disabled. Its sessions were ended.",
     "enable": "Account enabled.",
-    "password": "Password set. The account's sessions were ended.",
     "revoke": "Sessions ended.",
     "unlock": "Unlocked.",
 }
-ACTIONS = frozenset(DONE) - {"created"}
+#
+# The form's `action` values; anything else is refused before it reaches the
+# database.
+#
+ACTIONS = frozenset({"save", "disable", "enable", "revoke", "unlock"})
 
 
 @dataclass(frozen=True, slots=True)

@@ -206,6 +206,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .icon-button:hover { border-color: var(--line); background: var(--panel-soft); color: var(--text); }
 .icon-button svg { width: 17px; height: 17px; }
 .icon-button span { font-size: 13px; font-weight: 600; }
+.settings-card .cluster-facts { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .settings-card .cluster-facts .status-dot { margin-right: 6px; vertical-align: 1px; }
 .settings-notice { margin: 14px 20px 0; }
 
@@ -470,6 +471,10 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .users-table td:first-child strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .users-you { margin-left: 6px; color: var(--muted); font-size: 12px; font-weight: var(--font-weight-regular); }
 .users-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* No comment line under a name, so a row is one line of text: half the node table's height. */
+.users-table td { padding-top: 5px; padding-bottom: 5px; }
+.users-table th { padding-top: 7px; padding-bottom: 7px; }
+.users-table .status-badge { min-height: 0; padding: 1px 8px; }
 .proxy-table th:nth-child(1), .proxy-table td:nth-child(1) { width: 20%; }
 .proxy-table th:nth-child(2), .proxy-table td:nth-child(2) { width: 22%; }
 .proxy-table th:nth-child(3), .proxy-table td:nth-child(3) { width: 36%; }
@@ -899,6 +904,9 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   .cluster-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 0; }
   .cluster-facts > div:nth-child(2) { border-right: 0; }
   .cluster-facts > div:nth-child(3) { padding-left: 0; }
+  .settings-card .cluster-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-card .cluster-facts > div:nth-child(2n) { border-right: 0; }
+  .settings-card .cluster-facts > div:nth-child(2n+1) { padding-left: 0; }
   .node-table, .node-table tbody, .node-table tr, .node-table td { display: block; width: 100%; }
   .node-table thead { display: none; }
   .node-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding: 12px 18px; border-bottom: 1px solid var(--line); }

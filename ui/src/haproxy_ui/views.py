@@ -2955,8 +2955,9 @@ def build_router(config: Config) -> APIRouter:
 
     # - Settings -> Users (§16.4 U4, B189) ----------------------------------
     #
-    # Admin only, behind the same gate as the tab. Every change asks for the
-    # admin's own password again (`_prove_password`), refuses the admin's own
+    # Admin only, behind the same gate as the tab and the form's CSRF token.
+    # The signed-in session is the proof: no second password (decided
+    # 2026-09-27, reverses that part of B187). Refuses the admin's own
     # account - that is the account menu's - and leaves the last active admin
     # to the database, which refuses under a lock whichever path asks. The
     # verbs and audit names are `haproxy-ui-user`'s, with `via: web`.
@@ -3045,7 +3046,6 @@ def build_router(config: Config) -> APIRouter:
         role: str = Form(default="", max_length=16),
         new_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
         repeat_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
-        your_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
         gate = _admin_write_gate(request)
@@ -3065,19 +3065,6 @@ def build_router(config: Config) -> APIRouter:
             return _new_user_page(request, gate, problem=problem, form=form, status_code=400)
 
         with request.app.state.pool.connection() as connection:
-            refused = _prove_password(
-                connection,
-                config,
-                gate,
-                your_password,
-                address=client_address(request),
-                failed_action="account_change_failed",
-                wrong="Your password is not correct.",
-                detail={"account": username, "operation": "create"},
-            )
-            if refused:
-                connection.commit()
-                return _new_user_page(request, gate, problem=refused, form=form, status_code=400)
             if not db.create_account(
                 connection,
                 username=username,
@@ -3119,7 +3106,6 @@ def build_router(config: Config) -> APIRouter:
         role: str = Form(default="", max_length=16),
         new_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
         repeat_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
-        your_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
         gate = _admin_write_gate(request)
@@ -3137,72 +3123,68 @@ def build_router(config: Config) -> APIRouter:
         def again(problem: str, status_code: int = 400) -> Response:
             return _user_page(request, gate, row, problem=problem, status_code=status_code)
 
-        #
-        # Judged before the password is tried, so a mistake in the form never
-        # spends a throttle attempt.
-        #
         if row.username.lower() == gate.username.lower():
             return again("This is your own account. Change your password from the account menu.")
-        if action == "role" and role not in users.ROLES:
+        #
+        # Save writes what differs from the account: the role when another
+        # is chosen, the password when one is typed. Both in one transaction,
+        # so a refused role leaves the password as it was too.
+        #
+        new_role = action == "save" and role != row.role
+        new_secret = action == "save" and bool(new_password or repeat_password)
+        if action == "save" and role not in users.ROLES:
             return again("Choose a role.")
-        if action == "role" and role == row.role:
-            return again(f"The account is already {role}.")
+        if action == "save" and not (new_role or new_secret):
+            return again("Nothing to save: choose another role or type a new password.")
+        if new_secret:
+            problem = _new_password_problem(new_password, repeat_password)
+            if problem:
+                return again(problem)
         if action == "disable" and row.disabled:
             return again("The account is already disabled.")
         if action == "enable" and not row.disabled:
             return again("The account is already enabled.")
-        if action == "password":
-            problem = _new_password_problem(new_password, repeat_password)
-            if problem:
-                return again(problem)
 
         with request.app.state.pool.connection() as connection:
-            refused = _prove_password(
-                connection,
-                config,
-                gate,
-                your_password,
-                address=client_address(request),
-                failed_action="account_change_failed",
-                wrong="Your password is not correct.",
-                detail={"account": row.username, "operation": action},
-            )
-            if refused:
-                connection.commit()
-                return again(refused)
-            detail: dict[str, object] = {"account": row.username, "via": "web"}
+            changes: list[tuple[str, dict[str, object]]] = []
+
+            def detail(**fields: object) -> dict[str, object]:
+                return {"account": row.username, "via": "web", **fields}
+
             try:
-                if action == "role":
+                if new_role:
                     db.set_role(connection, user_id=row.id, role=role)
-                    audit_action = "role_changed"
-                    detail.update(role=role, previous=row.role)
-                elif action == "disable":
-                    ended = db.set_disabled(connection, user_id=row.id, disabled=True)
-                    audit_action = "account_disabled"
-                    detail["sessions_revoked"] = ended
-                elif action == "enable":
-                    db.set_disabled(connection, user_id=row.id, disabled=False)
-                    audit_action = "account_enabled"
-                elif action == "password":
+                    changes.append(("role_changed", detail(role=role, previous=row.role)))
+                if new_secret:
                     ended = db.reset_password(
                         connection, user_id=row.id, password_hash=auth.hash_password(new_password)
                     )
-                    audit_action = "password_reset"
-                    detail["sessions_revoked"] = ended
+                    changes.append(("password_reset", detail(sessions_revoked=ended)))
+                if action == "disable":
+                    ended = db.set_disabled(connection, user_id=row.id, disabled=True)
+                    changes.append(("account_disabled", detail(sessions_revoked=ended)))
+                elif action == "enable":
+                    db.set_disabled(connection, user_id=row.id, disabled=False)
+                    changes.append(("account_enabled", detail()))
                 elif action == "revoke":
-                    detail["sessions_revoked"] = db.revoke_sessions_for_user(connection, row.id)
-                    audit_action = "sessions_revoked"
-                else:
+                    ended = db.revoke_sessions_for_user(connection, row.id)
+                    changes.append(("sessions_revoked", detail(sessions_revoked=ended)))
+                elif action == "unlock":
                     db.unlock_account(connection, username=row.username, actor=gate.username)
-                    audit_action = "throttle_cleared"
+                    changes.append(("throttle_cleared", detail()))
             except db.LastAdmin:
                 connection.rollback()
                 return again("The last active admin cannot be demoted or disabled.", 409)
-            db.record_audit_event(
-                connection, actor=gate.username, action=audit_action, detail=detail
-            )
+            for audit_action, audit_detail in changes:
+                db.record_audit_event(
+                    connection, actor=gate.username, action=audit_action, detail=audit_detail
+                )
             connection.commit()
-        return RedirectResponse(f"{users.href(row.username)}?done={action}", status_code=303)
+        if action == "save":
+            done = "saved" if new_role and new_secret else "role" if new_role else "password"
+        else:
+            done = action
+        return RedirectResponse(f"{users.href(row.username)}?done={done}", status_code=303)
 
     @router.get("/certificates/receivers", response_class=HTMLResponse)
     def certificate_receivers_page(request: Request) -> Response:

@@ -1,9 +1,10 @@
 """Settings -> Users: accounts written from the web (Fas 13, §16.4 U4, B189).
 
-Held here: admin only, behind the tab's gate; every change needs the admin's
-own password and a wrong one is a failed sign-in; the admin's own account is
-refused; the last active admin is the database's to refuse; each change is
-the CLI's verb with the CLI's audit name and `via: web`.
+Held here: admin only, behind the tab's gate; the session is the proof and no
+second password is asked (2026-09-27); Save writes the role and a new
+password together; the admin's own account is refused; the last active admin
+is the database's to refuse; each change is the CLI's verb with the CLI's
+audit name and `via: web`.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from haproxy_ui import auth, db
 from haproxy_ui.db import AccountRow
-from tests.test_login import PASSWORD, LoginTestCase, configuration
+from tests.test_login import LoginTestCase, configuration
 
 NEW = "another sufficiently long password"
 
@@ -86,7 +87,7 @@ class SettingsUsers(LoginTestCase):
 
     def post(self, client: TestClient, path: str, **fields: str) -> Any:
         token = client.cookies[auth.SESSION_COOKIE]
-        data = {"your_password": PASSWORD, auth.CSRF_FIELD: auth.csrf_token(token), **fields}
+        data = {auth.CSRF_FIELD: auth.csrf_token(token), **fields}
         return client.post(path, data=data, follow_redirects=False)
 
     # - the list ---------------------------------------------------------
@@ -116,23 +117,24 @@ class SettingsUsers(LoginTestCase):
 
     def test_each_action_is_the_cli_verb_with_its_audit_name(self) -> None:
         client = self.admin()
-        for action, fields, call, audit in (
-            ("role", {"role": "admin"}, "role", "role_changed"),
-            ("disable", {}, "disabled", "account_disabled"),
+        for action, fields, done, call, audit in (
+            ("save", {"role": "admin"}, "role", "role", "role_changed"),
             (
+                "save",
+                {"role": "reader", "new_password": NEW, "repeat_password": NEW},
                 "password",
-                {"new_password": NEW, "repeat_password": NEW},
                 "password",
                 "password_reset",
             ),
-            ("revoke", {}, "revoke", "sessions_revoked"),
-            ("unlock", {}, "unlock", "throttle_cleared"),
+            ("disable", {}, "disable", "disabled", "account_disabled"),
+            ("revoke", {}, "revoke", "revoke", "sessions_revoked"),
+            ("unlock", {}, "unlock", "unlock", "throttle_cleared"),
         ):
-            with self.subTest(action=action):
+            with self.subTest(action=action, done=done):
                 response = self.post(client, "/settings/users/bob", action=action, **fields)
 
                 self.assertEqual(response.status_code, 303)
-                self.assertEqual(response.headers["location"], f"/settings/users/bob?done={action}")
+                self.assertEqual(response.headers["location"], f"/settings/users/bob?done={done}")
                 self.assertEqual(self.calls[-1][0], call)
                 name, detail = self.audit_details[-1]
                 self.assertEqual(name, audit)
@@ -147,46 +149,78 @@ class SettingsUsers(LoginTestCase):
         self.assertEqual(self.post(client, "/settings/users/bob", action="enable").status_code, 303)
         self.assertEqual(self.calls[-1], ("disabled", {"user_id": 3, "disabled": False}))
 
-    def test_a_wrong_own_password_is_a_failed_sign_in_and_changes_nothing(self) -> None:
+    def test_save_writes_the_role_and_the_password_together(self) -> None:
         client = self.admin()
 
         response = self.post(
-            client, "/settings/users/bob", action="revoke", your_password="not it at all"
+            client,
+            "/settings/users/bob",
+            action="save",
+            role="admin",
+            new_password=NEW,
+            repeat_password=NEW,
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("Your password is not correct.", response.text)
-        self.assertEqual(self.attempts[-1][0], "operator")
-        self.assertFalse(self.attempts[-1][2])
-        self.assertEqual(self.audit_details[-1][0], "account_change_failed")
-        self.assertEqual(self.calls, [])
+        self.assertEqual(response.headers["location"], "/settings/users/bob?done=saved")
+        self.assertEqual([name for name, _ in self.calls], ["role", "password"])
+        self.assertEqual(self.audit[-2:], ["role_changed", "password_reset"])
+        page = client.get("/settings/users/bob").text
+        self.assertIn('value="save"', page)
+        self.assertIn(">Save</button>", page)
+        self.assertIn('href="/settings">Back</a>', page)
+        self.assertNotIn("Change role", page)
+
+    def test_no_second_password_is_asked(self) -> None:
+        client = self.admin()
+        attempts = len(self.attempts)
+
+        self.assertNotIn("your_password", client.get("/settings/users/bob").text)
+        self.assertNotIn("your_password", client.get("/settings/new-user").text)
+        self.assertEqual(self.post(client, "/settings/users/bob", action="revoke").status_code, 303)
+        self.assertEqual(len(self.attempts), attempts)
 
     def test_the_admin_s_own_account_is_the_account_menu_s(self) -> None:
         client = self.admin()
 
         self.assertIn('href="/account/password"', client.get("/settings/users/operator").text)
-        response = self.post(client, "/settings/users/operator", action="role", role="reader")
+        response = self.post(client, "/settings/users/operator", action="save", role="reader")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.calls, [])
 
     def test_the_last_active_admin_is_refused_with_a_sentence(self) -> None:
         client = self.admin()
         with mock.patch("haproxy_ui.db.set_role", side_effect=db.LastAdmin()):
-            response = self.post(client, "/settings/users/alice", action="role", role="reader")
+            response = self.post(
+                client,
+                "/settings/users/alice",
+                action="save",
+                role="reader",
+                new_password=NEW,
+                repeat_password=NEW,
+            )
 
         self.assertEqual(response.status_code, 409)
         self.assertIn("The last active admin cannot be demoted or disabled.", response.text)
         self.assertNotIn("role_changed", self.audit)
+        self.assertNotIn("password_reset", self.audit)
 
-    def test_mistakes_in_the_form_are_refused_before_the_password_is_tried(self) -> None:
+    def test_mistakes_in_the_form_are_refused_before_anything_is_written(self) -> None:
         client = self.admin()
-        attempts = len(self.attempts)
         for fields, sentence in (
-            ({"action": "role", "role": "reader"}, "already reader"),
-            ({"action": "role", "role": "root"}, "Choose a role."),
+            ({"action": "save", "role": "reader"}, "Nothing to save"),
+            ({"action": "save", "role": "root"}, "Choose a role."),
             (
-                {"action": "password", "new_password": "short", "repeat_password": "short"},
+                {
+                    "action": "save",
+                    "role": "reader",
+                    "new_password": "short",
+                    "repeat_password": "short",
+                },
                 "at least",
+            ),
+            (
+                {"action": "save", "role": "reader", "new_password": NEW, "repeat_password": "x"},
+                "do not match",
             ),
             ({"action": "enable"}, "already enabled"),
         ):
@@ -194,13 +228,12 @@ class SettingsUsers(LoginTestCase):
                 response = self.post(client, "/settings/users/bob", **fields)
                 self.assertEqual(response.status_code, 400)
                 self.assertIn(sentence, response.text)
-        self.assertEqual(len(self.attempts), attempts)
         self.assertEqual(self.calls, [])
 
     def test_an_unknown_action_or_account_is_refused(self) -> None:
         client = self.admin()
 
-        self.assertEqual(self.post(client, "/settings/users/bob", action="drop").status_code, 400)
+        self.assertEqual(self.post(client, "/settings/users/bob", action="role").status_code, 400)
         self.assertEqual(
             self.post(client, "/settings/users/nobody", action="revoke").status_code, 404
         )

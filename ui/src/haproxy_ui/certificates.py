@@ -312,7 +312,7 @@ def _date(value: Any) -> str:
     """A measured timestamp as a date, or the dash the other unknown cells use."""
 
     moment = _expiry(value)
-    return "—" if moment is None else moment.astimezone(UTC).date().isoformat()
+    return "—" if moment is None else metrics.shown(moment).date().isoformat()
 
 
 def _expiry(value: Any) -> datetime | None:
@@ -350,7 +350,7 @@ def _expiry_state(
 
     if expires_at is None:
         return "—", "No expiry date", "unknown"
-    date = expires_at.astimezone(UTC).strftime("%Y-%m-%d")
+    date = metrics.shown(expires_at).strftime("%Y-%m-%d")
     left = expires_at - now
     if left <= timedelta(0):
         return date, "Expired", "critical"
@@ -806,7 +806,7 @@ def _published_label(published_at: datetime | None) -> str:
 
     if published_at is None:
         return "Not published"
-    return f"Published {published_at.astimezone(UTC).strftime('%Y-%m-%d')}"
+    return f"Published {metrics.shown(published_at).strftime('%Y-%m-%d')}"
 
 
 def _target_views(entry: Mapping[str, Any]) -> tuple[TargetView, ...]:

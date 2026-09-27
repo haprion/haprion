@@ -65,6 +65,11 @@ class AuthenticatedSession:
     last_seen_at: datetime
     expires_at: datetime
     revoked_at: datetime | None
+    #
+    # The zone the account reads its times in; None is the host's (B189). Last
+    # and defaulted so a session built outside this query needs no zone.
+    #
+    timezone: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -955,7 +960,7 @@ def session_by_hash(connection: Connection[Any], token_hash: bytes) -> Authentic
     with connection.cursor(row_factory=class_row(AuthenticatedSession)) as cursor:
         cursor.execute(
             "select s.token_hash, s.user_id, u.username, u.role, u.disabled, "
-            "       s.created_at, s.last_seen_at, s.expires_at, s.revoked_at "
+            "       s.created_at, s.last_seen_at, s.expires_at, s.revoked_at, u.timezone "
             "  from app_session s "
             "  join app_user u on u.id = s.user_id "
             " where s.token_hash = %(token_hash)s",

@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {% block title %}Node backups — HAProxy Manager{% endblock %}
 {% block content %}
-{% macro schedule_line(schedule) %}<span class="status-dot status-{{ schedule.tone }}" aria-hidden="true"></span><strong>{{ schedule.label }}</strong><span class="schedule-facts"><span title="{{ schedule.calendar }}">{{ schedule.readable }}</span>{% if schedule.retention %} · keeps {{ schedule.retention }} per node{% endif %} · last backup {{ schedule.last_run }}{% if schedule.outcome != '—' %} ({{ schedule.outcome }}){% endif %} · next {{ schedule.next_run }}</span>{% endmacro %}
+{% macro schedule_line(schedule) %}<span class="status-dot status-{{ schedule.tone }}" aria-hidden="true"></span><strong>{{ schedule.label }}</strong><span class="schedule-facts"><span title="{{ schedule.calendar }}">{{ schedule.readable }}{% if schedule.reader_time %} {{ clock }} ({{ schedule.reader_time }}){% endif %}</span>{% if schedule.retention %} · keeps {{ schedule.retention }} per node{% endif %} · last backup {{ schedule.last_run }}{% if schedule.outcome != '—' %} ({{ schedule.outcome }}){% endif %} · next {{ schedule.next_run }}</span>{% endmacro %}
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 <script defer src="{{ url_for('static', path='/backups.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
@@ -19,7 +19,7 @@
   <article class="cluster-card backup-cluster-card cluster-accent-{{ cluster.accent }}" data-observed="{{ cluster.observed_iso or '' }}">
     <header class="cluster-header">
       <div class="cluster-identity"><span class="status-orb status-{{ cluster.tone }}" aria-hidden="true"></span><div><h3>{{ cluster.cluster }}</h3><p>{{ cluster.detail }}</p></div></div>
-      <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
+      <div class="cluster-state"><span class="status-badge status-badge-{{ cluster.tone }}">{{ cluster.label }}</span>{% if cluster.observed_at %}<time datetime="{{ cluster.observed_iso }}" title="{{ cluster.observed_at | shown_at }}">{{ cluster.age_label }}</time>{% else %}<span class="observation-age">Never observed</span>{% endif %}</div>
     </header>
     {% set running = in_flight.get(cluster.cluster) if in_flight else none %}
     {% set editable = management_writes and role == 'admin' and not demo_fixture and not production_snapshot %}
@@ -35,7 +35,7 @@
             <label>Run <select name="backup_frequency" data-schedule-frequency>{% for value, name in (('daily', 'every day'), ('weekly', 'on weekdays'), ('monthly', 'monthly')) %}<option value="{{ value }}"{% if schedule.frequency == value %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
             <fieldset class="schedule-weekdays" data-schedule-when="weekly"><legend class="visually-hidden">Weekdays</legend>{% for value, name in weekdays %}<label class="schedule-chip"><input type="checkbox" name="backup_weekday" value="{{ value }}"{% if value in schedule.weekdays %} checked{% endif %}><span title="{{ name }}">{{ value }}</span></label>{% endfor %}</fieldset>
             <label data-schedule-when="monthly">on day <select name="backup_day_of_month">{% for day in range(1, day_of_month_max + 1) %}<option value="{{ day }}"{% if schedule.day_of_month == day %} selected{% endif %}>{{ day }}</option>{% endfor %}</select></label>
-            <label class="schedule-time">at <select name="backup_hour" aria-label="Hour">{% for hour in range(24) %}{% set text = '%02d' % hour %}<option value="{{ text }}"{% if schedule.time[:2] == text %} selected{% endif %}>{{ text }}</option>{% endfor %}</select><b>:</b><select name="backup_minute" aria-label="Minute">{% for minute in range(0, 60, 5) %}{% set text = '%02d' % minute %}<option value="{{ text }}"{% if schedule.time[3:] == text %} selected{% endif %}>{{ text }}</option>{% endfor %}</select> {{ clock }}</label>
+            <label class="schedule-time">at <select name="backup_hour" aria-label="Hour">{% for hour in range(24) %}{% set text = '%02d' % hour %}<option value="{{ text }}"{% if schedule.time[:2] == text %} selected{% endif %}>{{ text }}</option>{% endfor %}</select><b>:</b><select name="backup_minute" aria-label="Minute">{% for minute in range(0, 60, 5) %}{% set text = '%02d' % minute %}<option value="{{ text }}"{% if schedule.time[3:] == text %} selected{% endif %}>{{ text }}</option>{% endfor %}</select> {{ clock }}{% if schedule.reader_time %} ({{ schedule.reader_time }}){% endif %}</label>
           </div>
           <div class="schedule-row">
             <label>Keep <input type="number" name="backup_retention" value="{{ schedule.retention or 14 }}" min="{{ retention_bounds[0] }}" max="{{ retention_bounds[1] }}" required> archives per node</label>

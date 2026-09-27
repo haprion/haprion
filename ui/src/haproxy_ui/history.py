@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from haproxy_ui import metrics
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterHistory
@@ -77,11 +78,11 @@ def _text(value: Any, fallback: str = "—") -> str:
 
 
 def _saved_at(value: Any) -> str:
-    """The contract's timestamp, shown the way the command line shows it.
+    """The contract's timestamp, in the reader's clock like every other time.
 
-    Rendered in UTC rather than in the browser's zone: the page is read beside
-    `haproxy-list` output and a RELEASE stamp, and a time that silently differs
-    from both by an hour is worse than one an operator has to convert.
+    Once UTC, to match `haproxy-list` beside it; since B189 every page shows
+    one clock, the reader's, and a history that alone kept another was the
+    time that differed by an hour without saying so.
     """
 
     text = _text(value, "")
@@ -93,7 +94,7 @@ def _saved_at(value: Any) -> str:
         return text[:32]
     if parsed.tzinfo is None:
         return parsed.strftime("%Y-%m-%d %H:%M")
-    return parsed.astimezone(UTC).strftime("%Y-%m-%d %H:%M")
+    return metrics.shown(parsed).strftime("%Y-%m-%d %H:%M")
 
 
 def _version_view(value: Any, published_hash: str | None) -> VersionView | None:

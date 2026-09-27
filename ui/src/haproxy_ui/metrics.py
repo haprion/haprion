@@ -18,10 +18,12 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from haproxy_mgmt.generate import PREFIX, REDIRECT_PREFIX
 from haproxy_mgmt.guid import redirect_name
@@ -1172,12 +1174,49 @@ def shown(at: datetime) -> datetime:
     journal two hours away. A card whose times cannot be lined up against
     `journalctl` or a deploy is a card that sends people to the wrong minute.
 
-    The host's own zone rather than a configured one: this page is read on the
-    machine's terms by whoever runs it, and a second setting to keep in step
-    would be a second way to be wrong.
+    The host's own zone unless the reader chose one (B189): the account's zone
+    is set for the request by `read_in`, and everyone who has not chosen - the
+    poller, the worker, an account with no zone - reads the machine's clock,
+    the one `journalctl` and the timers keep.
     """
 
-    return at.astimezone()
+    return at.astimezone(_READER_ZONE.get())
+
+
+def wall(moment: datetime) -> datetime:
+    """A time without a zone, typed by the reader, placed in the reader's clock.
+
+    The inverse of `shown`: a filter field says "14:05" and means the clock
+    the page printed its times in, so it is read in the same one.
+    """
+
+    zone = _READER_ZONE.get()
+    return moment.replace(tzinfo=zone) if zone is not None else moment.astimezone()
+
+
+def read_in(name: str | None) -> None:
+    """Show the rest of this request's times in the named zone, or the host's.
+
+    A name the database let through but this host's zone data does not know
+    falls back to the host's clock rather than failing the page: a wrong
+    offset on every time is worse than the manager's own.
+    """
+
+    zone: ZoneInfo | None = None
+    if name:
+        try:
+            zone = ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError):
+            zone = None
+    _READER_ZONE.set(zone)
+
+
+#
+# Per request, not per process: a context variable is copied into each request's
+# task and each threadpool call, so one reader's zone never reaches another's
+# page. Unset means the host's zone.
+#
+_READER_ZONE: ContextVar[ZoneInfo | None] = ContextVar("reader_zone", default=None)
 
 
 def unread_at(at: datetime) -> str:

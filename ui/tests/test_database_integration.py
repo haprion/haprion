@@ -23,7 +23,7 @@ from haproxy_mgmt.traffic_collector import (
     _mirror_window,
 )
 
-from haproxy_ui import db, traffic_logs
+from haproxy_ui import auth, db, traffic_logs
 
 DSN = os.environ.get("HAPROXY_UI_TEST_DATABASE_DSN", "")
 
@@ -1339,6 +1339,29 @@ class AccountsFromTheWeb(unittest.TestCase):
         self.web("update app_user set timezone = null where username = 'carol'")
         with self.assertRaises(psycopg.errors.CheckViolation):
             self.web("update app_user set timezone = '../etc/passwd' where username = 'carol'")
+
+    def test_the_web_reads_the_account_s_zone_with_its_session(self) -> None:
+        """U2: the one join per request carries the zone, under the web's grants."""
+
+        self.web("update app_user set timezone = 'America/New_York' where username = 'carol'")
+        token = auth.token_hash(uuid4().hex)
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            user_id = connection.execute(
+                "select id from app_user where username = 'carol'"
+            ).fetchone()[0]  # type: ignore[index]
+            db.create_session(
+                connection,
+                token_hash=token,
+                user_id=user_id,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+            )
+            connection.commit()
+            session = db.session_by_hash(connection, token)
+        with self.connect() as connection:
+            connection.execute("delete from app_session where token_hash = %s", (token,))
+            connection.commit()
+
+        self.assertEqual(getattr(session, "timezone", None), "America/New_York")
 
     def test_the_last_active_admin_is_neither_disabled_nor_demoted(self) -> None:
         self.web("update app_user set disabled = true where username = 'bob'")

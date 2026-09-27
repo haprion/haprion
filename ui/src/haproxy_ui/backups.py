@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Any, Literal
 
 from haproxy_mgmt import backup_schedule
@@ -125,6 +125,12 @@ class ScheduleView:
     #
     readable: str
     time: str
+    #
+    # The schedule's time in the reader's clock, or empty when it reads the
+    # same there: the timer runs on the manager's clock (B169), a reader in
+    # another zone chose not to convert it by hand (B189).
+    #
+    reader_time: str
     frequency: str
     weekdays: tuple[str, ...]
     day_of_month: int
@@ -316,7 +322,7 @@ def _node_view(value: Any, *, now: datetime) -> tuple[NodeBackupsView, tuple[Arc
 
 
 def _stamp(value: Any) -> str:
-    """A scheduled moment, on the manager's clock like the schedule it comes from."""
+    """A scheduled moment, in the reader's clock like every other time on the page."""
 
     moment = _moment(value)
     return "—" if moment is None else metrics.shown(moment).strftime("%Y-%m-%d %H:%M")
@@ -410,12 +416,37 @@ def _schedule_view(
         if label == "Not scheduled"
         else (_readable(shape) if shape else calendar),
         time=shape.time if shape else "05:00",
+        reader_time=_in_reader_clock(shape.time, now) if shape and label != "Not scheduled" else "",
         frequency=shape.frequency if shape else "daily",
         weekdays=shape.weekdays if shape else (),
         day_of_month=shape.day_of_month or 1 if shape else 1,
         retention=retention,
         enabled=schedule.get("enabled") is True,
     )
+
+
+def _in_reader_clock(clock: str, now: datetime) -> str:
+    """Today's `HH:MM` on the manager, as the reader's clock reads it, or ''.
+
+    Today's, because the difference moves with daylight saving on either side.
+    Empty when both clocks print the same, so a reader on the manager's zone -
+    or one like it - sees the schedule exactly as before.
+    """
+
+    hour, _, minute = clock.partition(":")
+    try:
+        wall = time(int(hour), int(minute))
+    except ValueError:
+        #
+        # A hand-edited calendar can say 29:00; the expression beside it is
+        # already shown as written, and there is no moment to convert.
+        #
+        return ""
+    manager = datetime.combine(now.astimezone().date(), wall).astimezone()
+    reader = metrics.shown(manager)
+    if reader.strftime("%H:%M %Z") == manager.strftime("%H:%M %Z"):
+        return ""
+    return reader.strftime("%H:%M %Z")
 
 
 WEEKDAY_NAMES = {

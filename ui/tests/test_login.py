@@ -93,6 +93,8 @@ class LoginTestCase(unittest.TestCase):
         )
         self.pool = FakePool()
         self.sessions: dict[bytes, AuthenticatedSession] = {}
+        # The zone the account has chosen; None reads the host's clock.
+        self.reader_timezone: str | None = None
         self.attempts: list[tuple[str, str, bool]] = []
         self.audit: list[str] = []
         self.failures = 0
@@ -163,6 +165,7 @@ class LoginTestCase(unittest.TestCase):
             last_seen_at=now,
             expires_at=expires_at,
             revoked_at=None,
+            timezone=self.reader_timezone,
         )
 
     def _session(self, _c: object, token_hash: bytes) -> AuthenticatedSession | None:

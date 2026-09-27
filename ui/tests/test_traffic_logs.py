@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from haproxy_mgmt.proxy_model import load_proxy
 
+from haproxy_ui import metrics
 from haproxy_ui.config import TrafficLogs
 from haproxy_ui.db import ClusterObjects
 from haproxy_ui.traffic_logs import (
@@ -653,6 +654,44 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertNotIn('type="datetime-local"', page)
         self.assertLess(page.index("<span>Mon</span>"), page.index("<span>Sun</span>"))
         self.assertIn("logs.js", page)
+
+    def test_a_reader_with_a_zone_of_their_own_reads_and_filters_in_it(self) -> None:
+        """The account's zone, not the host's, on every time and every filter (B189)."""
+
+        self.host_zone("Europe/Stockholm")
+        self.reader_timezone = "America/New_York"
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
+
+        page = self.page(
+            query="?from=26-09-08%2007:59&to=26-09-08%2008:00", now=NOW + timedelta(hours=1)
+        )
+
+        # 12:00 UTC is 08:00 in New York in September, and 14:00 on the host.
+        self.assertIn("26-09-08 08:00:00", page)
+        self.assertNotIn("26-09-08 14:00:00", page)
+        self.assertIn("app.example.com", page)
+        self.assertIn(f'datetime="{NOW.isoformat()}"', page)
+
+    def test_a_zone_the_host_does_not_know_reads_the_host_s_clock(self) -> None:
+        self.host_zone("Europe/Stockholm")
+        self.reader_timezone = "Nowhere/Atlantis"
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
+
+        page = self.page()
+
+        self.assertIn("26-09-08 14:00:00", page)
+
+    def test_a_reader_s_zone_ends_with_the_request(self) -> None:
+        """A context variable per request: the next reader starts on the host's clock."""
+
+        self.host_zone("Europe/Stockholm")
+        self.reader_timezone = "America/New_York"
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
+        self.assertIn("26-09-08 08:00:00", self.page())
+
+        self.reader_timezone = None
+        self.assertIn("26-09-08 14:00:00", self.page())
+        self.assertEqual(metrics.shown(NOW).utcoffset(), timedelta(hours=2))
 
     def test_malformed_records_are_silently_discarded_from_the_page(self) -> None:
         (self.root / "alpha--node-a.jsonl").write_bytes(b"not json\n" + record())

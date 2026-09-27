@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
+from haproxy_ui import metrics
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterNetwork, Job
@@ -325,7 +326,7 @@ def _unavailable(reading: ClusterNetwork, *, stale: bool, age_label: str) -> Net
         label="Could not be read",
         tone="critical",
         detail=_text(message or reading.poll_error, "The helper did not answer"),
-        observed_at=reading.observed_at.strftime("%Y-%m-%d %H:%M"),
+        observed_at=metrics.shown(reading.observed_at).strftime("%Y-%m-%d %H:%M"),
         observed_iso=reading.observed_at.isoformat(),
         age_label=age_label,
         stale=stale,
@@ -360,7 +361,7 @@ def _view(reading: ClusterNetwork, *, stale: bool, age_label: str) -> NetworkClu
         label="Read-only" if not editable else "Editable",
         tone="healthy" if editable else "warning",
         detail=detail,
-        observed_at=reading.observed_at.strftime("%Y-%m-%d %H:%M"),
+        observed_at=metrics.shown(reading.observed_at).strftime("%Y-%m-%d %H:%M"),
         observed_iso=reading.observed_at.isoformat(),
         age_label=age_label,
         stale=stale,

@@ -38,7 +38,7 @@
 <article class="cluster-card cluster-accent-{{ object.accent }}">
   <header class="cluster-header">
     <div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div class="section-title"><h3>An unpublished draft</h3><p>Last changed by {{ draft.updated_by }}, revision {{ draft.revision }}</p></div></div>
-    <div class="cluster-state">{% if management_writes %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Open in the editor</a>{% endif %}{% if draft.updated_at %}<time datetime="{{ draft.updated_at.isoformat() }}" title="{{ draft.updated_at }}">{{ draft.updated_at.strftime('%H:%M:%S') }}</time>{% endif %}</div>
+    <div class="cluster-state">{% if management_writes %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Open in the editor</a>{% endif %}{% if draft.updated_at %}<time datetime="{{ draft.updated_at.isoformat() }}" title="{{ draft.updated_at | shown_at }}">{{ (draft.updated_at | shown).strftime('%H:%M:%S') }}</time>{% endif %}</div>
   </header>
   <p class="preview-notice">{% if draft.deleted %}This draft says the object should be <strong>removed</strong> when it is published.{% else %}The stored object below is unchanged until this draft is published.{% endif %}</p>
 </article>
@@ -59,7 +59,7 @@
       "Stored object", "Edit" reads as a way to edit the stored text, which is
       not what opens.
     #}
-    <div class="cluster-state">{% if management_writes and object.stored %}{% if not draft %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Edit</a>{% endif %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/remove">Remove</a>{% endif %}{% if object.observed_iso %}<time datetime="{{ object.observed_iso }}" title="{{ object.observed_at }}">{{ object.age_label }}</time>{% else %}<span class="observation-age">Never read</span>{% endif %}</div>
+    <div class="cluster-state">{% if management_writes and object.stored %}{% if not draft %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Edit</a>{% endif %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/remove">Remove</a>{% endif %}{% if object.observed_iso %}<time datetime="{{ object.observed_iso }}" title="{{ object.observed_at | shown_at }}">{{ object.age_label }}</time>{% else %}<span class="observation-age">Never read</span>{% endif %}</div>
   </header>
 
   {% if object.stored %}

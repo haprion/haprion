@@ -30,6 +30,7 @@ from typing import Any, Literal
 from haproxy_mgmt.deploy_run import CERTIFICATES_NOT_DEPLOYED
 from haproxy_mgmt.restore_agent import RUN_ID
 
+from haproxy_ui import metrics
 from haproxy_ui.dashboard import relative_age
 from haproxy_ui.db import ClusterStatus, Job
 
@@ -46,6 +47,7 @@ class JobView:
     tone: Tone
     requested: str
     requested_iso: str
+    requested_at: str
     started: str
     finished: str
     outcome: str
@@ -558,6 +560,7 @@ def _view(
         tone=tone,
         requested=_stamp(job.created_at, now),
         requested_iso=job.created_at.astimezone(UTC).isoformat(),
+        requested_at=metrics.shown(job.created_at).strftime(metrics.TIMESTAMP),
         started=_stamp(job.started_at, now),
         finished=_stamp(job.finished_at, now),
         outcome=job.outcome.replace("_", " ") if job.outcome else "—",

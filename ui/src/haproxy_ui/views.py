@@ -183,12 +183,13 @@ def shown_at(moment: datetime) -> str:
 
 
 TEMPLATES.env.filters["shown_at"] = shown_at
+TEMPLATES.env.filters["shown"] = metrics.shown
 
 
 def _log_time_filter(
     value: str, *, earliest: datetime, latest: datetime, end_of_minute: bool = False
 ) -> datetime | None:
-    """Turn a browser-local date and time into the UTC used by log records."""
+    """Turn a date and time in the reader's clock into the UTC used by log records."""
 
     if not value:
         return None
@@ -200,7 +201,7 @@ def _log_time_filter(
         raise ValueError("Choose a valid date and time.") from exc
     if local.tzinfo is not None:
         raise ValueError("Choose a local date and time.")
-    result = local.astimezone(UTC)
+    result = metrics.wall(local).astimezone(UTC)
     if result < earliest or result > latest:
         raise ValueError("Choose a date and time within the available 14 days.")
     if end_of_minute:
@@ -419,6 +420,11 @@ def current_session(request: Request) -> AuthenticatedSession | None:
     The distinction is kept where it is useful, in the audit trail.
     """
 
+    #
+    # The reader's clock is set here because this is the one call every signed-in
+    # page makes before it formats a time; a page drawn for nobody keeps the host's.
+    #
+    metrics.read_in(None)
     token = request.cookies.get(auth.SESSION_COOKIE)
     if not token:
         return None
@@ -430,6 +436,7 @@ def current_session(request: Request) -> AuthenticatedSession | None:
         verdict = auth.evaluate_session(session, config.session)
         if not verdict.usable or session is None:
             return None
+        metrics.read_in(session.timezone)
         #
         # The inactivity clock is moved forward in its own transaction, after
         # the read, and only when it has actually gone stale.
@@ -1547,10 +1554,12 @@ def build_router(config: Config) -> APIRouter:
         selected_to = request.query_params.get("to", "")[:14]
         now = datetime.now(UTC)
         local_now = metrics.shown(now)
-        local_earliest = datetime.combine(
-            local_now.date() - timedelta(days=config.traffic_logs.retention_days - 1),
-            datetime.min.time(),
-        ).astimezone()
+        local_earliest = metrics.wall(
+            datetime.combine(
+                local_now.date() - timedelta(days=config.traffic_logs.retention_days - 1),
+                datetime.min.time(),
+            )
+        )
         earliest = local_earliest.astimezone(UTC)
         time_filter_error: str | None
         try:
@@ -3974,9 +3983,10 @@ def build_router(config: Config) -> APIRouter:
                 ),
                 #
                 # The zone the schedule form's time is read in: the manager's,
-                # named so an operator on another clock is not left guessing.
+                # named so an operator on another clock is not left guessing -
+                # the host's own, not the reader's `shown`.
                 #
-                "clock": metrics.shown(datetime.now(UTC)).tzname() or "local time",
+                "clock": datetime.now(UTC).astimezone().tzname() or "local time",
                 "weekdays": tuple(
                     (day, backups.WEEKDAY_NAMES[day]) for day in backup_schedule.WEEKDAYS
                 ),

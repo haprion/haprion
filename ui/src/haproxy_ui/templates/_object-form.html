@@ -423,7 +423,7 @@
         </tbody>
       </table>
       {% endif %}
-      <p class="node-health-note">{% if backend_health.observed_at %}Read {{ backend_health.observed_at.strftime('%H:%M:%S') }}.{% endif %}</p>
+      <p class="node-health-note">{% if backend_health.observed_at %}Read {{ (backend_health.observed_at | shown).strftime('%H:%M:%S') }}.{% endif %}</p>
     </div>
     {% endif %}
   </section>

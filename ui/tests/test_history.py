@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import contextvars
 import unittest
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
+from haproxy_ui import metrics
 from haproxy_ui.db import ClusterHistory
 from haproxy_ui.history import build_history_overview
 
@@ -136,9 +139,19 @@ class FreshnessAndFailureTests(unittest.TestCase):
         self.assertFalse(view.clusters[0].configured)
 
 
+def read_in[T](zone: str, draw: Callable[[], T]) -> T:
+    """Draw as a reader on `zone` would see it, without leaving the zone set."""
+
+    def run() -> T:
+        metrics.read_in(zone)
+        return draw()
+
+    return contextvars.copy_context().run(run)
+
+
 class RenderingTests(unittest.TestCase):
     def test_versions_are_labelled_and_commits_shortened_for_reading(self) -> None:
-        version = overview(reading()).clusters[0].versions[0]
+        version = read_in("UTC", lambda: overview(reading()).clusters[0].versions[0])
 
         self.assertEqual(version.version, "v12")
         self.assertEqual(version.commit, "a" * 12)
@@ -146,6 +159,11 @@ class RenderingTests(unittest.TestCase):
         self.assertEqual(version.comment, "Add a maintenance backend")
         self.assertEqual(version.date, "2026-08-28 14:02")
         self.assertTrue(version.current)
+
+    def test_a_version_is_dated_in_the_readers_clock(self) -> None:
+        version = read_in("Europe/Stockholm", lambda: overview(reading()).clusters[0].versions[0])
+
+        self.assertEqual(version.date, "2026-08-28 16:02")
 
     def test_a_version_without_a_number_is_dropped_rather_than_guessed(self) -> None:
         cluster = overview(

@@ -23,7 +23,7 @@ from haproxy_mgmt.traffic_collector import (
     _mirror_window,
 )
 
-from haproxy_ui import auth, db, traffic_logs
+from haproxy_ui import db, traffic_logs
 
 DSN = os.environ.get("HAPROXY_UI_TEST_DATABASE_DSN", "")
 
@@ -1304,8 +1304,7 @@ class AccountsFromTheWeb(unittest.TestCase):
             "insert into app_user (username, password_hash, role) values ('dave', %s, 'reader')",
             (self.HASH,),
         )
-        self.web("update app_user set role = 'admin', timezone = 'Europe/Stockholm' "
-                 "where username = 'dave'")  # fmt: skip
+        self.web("update app_user set role = 'admin' where username = 'dave'")
         for statement in (
             "insert into app_user (username, password_hash, role, created_at) "
             "values ('eve', '" + self.HASH + "', 'reader', now() - interval '1 year')",
@@ -1332,36 +1331,6 @@ class AccountsFromTheWeb(unittest.TestCase):
                 "where username = 'carol'"
             )
             self.assertEqual(cursor.fetchone(), (True,))
-
-    def test_a_zone_is_a_name_or_nothing(self) -> None:
-        self.web("update app_user set timezone = 'America/Argentina/Buenos_Aires' "
-                 "where username = 'carol'")  # fmt: skip
-        self.web("update app_user set timezone = null where username = 'carol'")
-        with self.assertRaises(psycopg.errors.CheckViolation):
-            self.web("update app_user set timezone = '../etc/passwd' where username = 'carol'")
-
-    def test_the_web_reads_the_account_s_zone_with_its_session(self) -> None:
-        """U2: the one join per request carries the zone, under the web's grants."""
-
-        self.web("update app_user set timezone = 'America/New_York' where username = 'carol'")
-        token = auth.token_hash(uuid4().hex)
-        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
-            user_id = connection.execute(
-                "select id from app_user where username = 'carol'"
-            ).fetchone()[0]  # type: ignore[index]
-            db.create_session(
-                connection,
-                token_hash=token,
-                user_id=user_id,
-                expires_at=datetime.now(UTC) + timedelta(hours=1),
-            )
-            connection.commit()
-            session = db.session_by_hash(connection, token)
-        with self.connect() as connection:
-            connection.execute("delete from app_session where token_hash = %s", (token,))
-            connection.commit()
-
-        self.assertEqual(getattr(session, "timezone", None), "America/New_York")
 
     def test_the_last_active_admin_is_neither_disabled_nor_demoted(self) -> None:
         self.web("update app_user set disabled = true where username = 'bob'")
@@ -1467,11 +1436,6 @@ class AccountsFromTheWeb(unittest.TestCase):
                 migration.downgrade()
                 cursor.execute("select to_regclass('login_unlock')")
                 self.assertEqual(cursor.fetchone(), (None,))
-                cursor.execute(
-                    "select count(*) from information_schema.columns "
-                    "where table_name = 'app_user' and column_name = 'timezone'"
-                )
-                self.assertEqual(cursor.fetchone(), (0,))
                 migration.upgrade()
                 cursor.execute("select to_regclass('login_unlock')")
                 self.assertEqual(cursor.fetchone(), ("login_unlock",))

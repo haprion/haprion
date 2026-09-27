@@ -25,6 +25,7 @@ from haproxy_ui.traffic_logs import (
     read,
     resolve_server_addresses,
 )
+from haproxy_ui.views import ZONE_COOKIE
 from tests.test_login import LoginTestCase, configuration
 
 NOW = datetime(2026, 9, 8, 12, 0, 0, tzinfo=UTC)
@@ -447,6 +448,8 @@ class TheTrafficLogPage(LoginTestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        # What zone.js would have written; None is a browser that has not yet.
+        self.browser_zone: str | None = None
 
     def host_zone(self, name: str) -> None:
         """Run this test as if the machine stood somewhere in particular.
@@ -492,6 +495,8 @@ class TheTrafficLogPage(LoginTestCase):
             ),
         )
         client = self.client(config)
+        if self.browser_zone is not None:
+            client.cookies.set(ZONE_COOKIE, self.browser_zone)
         self.sign_in(client)
 
         def file_read(
@@ -655,11 +660,11 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertLess(page.index("<span>Mon</span>"), page.index("<span>Sun</span>"))
         self.assertIn("logs.js", page)
 
-    def test_a_reader_with_a_zone_of_their_own_reads_and_filters_in_it(self) -> None:
-        """The account's zone, not the host's, on every time and every filter (B189)."""
+    def test_a_browser_s_zone_is_read_and_filtered_in(self) -> None:
+        """The browser's zone, not the host's, on every time and every filter (B190)."""
 
         self.host_zone("Europe/Stockholm")
-        self.reader_timezone = "America/New_York"
+        self.browser_zone = "America/New_York"
         (self.root / "alpha--node-a.jsonl").write_bytes(record())
 
         page = self.page(
@@ -674,22 +679,29 @@ class TheTrafficLogPage(LoginTestCase):
 
     def test_a_zone_the_host_does_not_know_reads_the_host_s_clock(self) -> None:
         self.host_zone("Europe/Stockholm")
-        self.reader_timezone = "Nowhere/Atlantis"
+        self.browser_zone = "Nowhere/Atlantis"
         (self.root / "alpha--node-a.jsonl").write_bytes(record())
 
         page = self.page()
 
         self.assertIn("26-09-08 14:00:00", page)
 
+    def test_a_cookie_that_is_not_a_zone_name_reads_the_host_s_clock(self) -> None:
+        self.host_zone("Europe/Stockholm")
+        self.browser_zone = "../../etc/localtime"
+        (self.root / "alpha--node-a.jsonl").write_bytes(record())
+
+        self.assertIn("26-09-08 14:00:00", self.page())
+
     def test_a_reader_s_zone_ends_with_the_request(self) -> None:
         """A context variable per request: the next reader starts on the host's clock."""
 
         self.host_zone("Europe/Stockholm")
-        self.reader_timezone = "America/New_York"
+        self.browser_zone = "America/New_York"
         (self.root / "alpha--node-a.jsonl").write_bytes(record())
         self.assertIn("26-09-08 08:00:00", self.page())
 
-        self.reader_timezone = None
+        self.browser_zone = None
         self.assertIn("26-09-08 14:00:00", self.page())
         self.assertEqual(metrics.shown(NOW).utcoffset(), timedelta(hours=2))
 

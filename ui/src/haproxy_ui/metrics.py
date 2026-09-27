@@ -1174,10 +1174,10 @@ def shown(at: datetime) -> datetime:
     journal two hours away. A card whose times cannot be lined up against
     `journalctl` or a deploy is a card that sends people to the wrong minute.
 
-    The host's own zone unless the reader chose one (B189): the account's zone
-    is set for the request by `read_in`, and everyone who has not chosen - the
-    poller, the worker, an account with no zone - reads the machine's clock,
-    the one `journalctl` and the timers keep.
+    The host's own zone unless the reader's browser has said its own (B190):
+    that zone is set for the request by `read_in`, and everything else - the
+    poller, the worker, a browser that has not said yet - reads the machine's
+    clock, the one `journalctl` and the timers keep.
     """
 
     return at.astimezone(_READER_ZONE.get())
@@ -1197,13 +1197,13 @@ def wall(moment: datetime) -> datetime:
 def read_in(name: str | None) -> None:
     """Show the rest of this request's times in the named zone, or the host's.
 
-    A name the database let through but this host's zone data does not know
-    falls back to the host's clock rather than failing the page: a wrong
-    offset on every time is worse than the manager's own.
+    The name comes from a cookie, so from anyone: it is held to the shape of an
+    IANA name before zoneinfo sees it, and a name this host's zone data does
+    not know falls back to the host's clock rather than failing the page.
     """
 
     zone: ZoneInfo | None = None
-    if name:
+    if name and ZONE_NAME.fullmatch(name):
         try:
             zone = ZoneInfo(name)
         except (ZoneInfoNotFoundError, ValueError):
@@ -1217,6 +1217,7 @@ def read_in(name: str | None) -> None:
 # page. Unset means the host's zone.
 #
 _READER_ZONE: ContextVar[ZoneInfo | None] = ContextVar("reader_zone", default=None)
+ZONE_NAME = re.compile(r"(?=.{1,64}$)[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}")
 
 
 def unread_at(at: datetime) -> str:

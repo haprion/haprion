@@ -37,17 +37,6 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute("""
-    --
-    -- An IANA name, or nothing for the manager's own zone. The shape is
-    -- checked here and the name against zoneinfo by the application; a zone
-    -- the database cannot know about is not a reason to refuse a row.
-    --
-    alter table app_user add column timezone text
-        constraint app_user_timezone_shape
-            check (timezone is null
-                   or (length(timezone) between 1 and 64
-                       and timezone ~ '^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$'));
-
     create function app_user_touch() returns trigger
         language plpgsql as $$
     begin
@@ -105,9 +94,9 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-    grant select (timezone, created_at, updated_at) on app_user to app_web;
+    grant select (created_at, updated_at) on app_user to app_web;
     grant insert (username, password_hash, role) on app_user to app_web;
-    grant update (role, disabled, password_hash, timezone) on app_user to app_web;
+    grant update (role, disabled, password_hash) on app_user to app_web;
 
     --
     -- Insert and select, as on login_attempt; `at` is not insertable.
@@ -118,16 +107,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Chosen zones and unlock rows go; an account unlocked through a row may
+    # Unlock rows go; an account unlocked through a row may
     # read as throttled again until its window passes.
     op.execute("""
-    revoke update (role, disabled, password_hash, timezone) on app_user from app_web;
+    revoke update (role, disabled, password_hash) on app_user from app_web;
     revoke insert (username, password_hash, role) on app_user from app_web;
-    revoke select (timezone, created_at, updated_at) on app_user from app_web;
+    revoke select (created_at, updated_at) on app_user from app_web;
     drop table if exists login_unlock;
     drop trigger if exists app_user_keep_an_admin on app_user;
     drop function if exists app_user_keep_an_admin();
     drop trigger if exists app_user_touch on app_user;
     drop function if exists app_user_touch();
-    alter table app_user drop column if exists timezone;
     """)

@@ -127,8 +127,8 @@ class ScheduleView:
     time: str
     #
     # The schedule's time in the reader's clock, or empty when it reads the
-    # same there: the timer runs on the manager's clock (B169), a reader in
-    # another zone chose not to convert it by hand (B189).
+    # same there: the timer runs on the manager's clock (B169), and a reader
+    # in another zone should not have to convert it by hand (B190).
     #
     reader_time: str
     frequency: str

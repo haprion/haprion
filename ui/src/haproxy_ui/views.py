@@ -151,6 +151,8 @@ TEMPLATES.env.globals["check_phrase"] = health.check_phrase
 # navigation, and every tab here is a full page load.
 #
 THEME_COOKIE = "haproxy_ui_theme"
+# The browser's IANA zone, written by zone.js; read, never set, by the server.
+ZONE_COOKIE = "haproxy_ui_zone"
 THEMES = ("light", "dark")
 
 
@@ -422,9 +424,10 @@ def current_session(request: Request) -> AuthenticatedSession | None:
 
     #
     # The reader's clock is set here because this is the one call every signed-in
-    # page makes before it formats a time; a page drawn for nobody keeps the host's.
+    # page makes before it formats a time: the browser's own zone, which zone.js
+    # keeps in a cookie (B190), and the host's until it has.
     #
-    metrics.read_in(None)
+    metrics.read_in(request.cookies.get(ZONE_COOKIE))
     token = request.cookies.get(auth.SESSION_COOKIE)
     if not token:
         return None
@@ -436,7 +439,6 @@ def current_session(request: Request) -> AuthenticatedSession | None:
         verdict = auth.evaluate_session(session, config.session)
         if not verdict.usable or session is None:
             return None
-        metrics.read_in(session.timezone)
         #
         # The inactivity clock is moved forward in its own transaction, after
         # the read, and only when it has actually gone stale.

@@ -2668,8 +2668,8 @@ cannot be confused by an environment variable or a working directory.
 
 **Root connects as the migration role**, the one that owns the schema, so the
 tool works when nobody can sign in. The web role may write accounts too (schema
-`0039`): name, hash and role on a new one; role, `disabled`, hash and time zone
-on an existing one — never `created_at` or `updated_at`, which the database
+`0039`): name, hash and role on a new one; role, `disabled` and hash on an
+existing one — never `created_at` or `updated_at`, which the database
 sets, and never a delete. **The database refuses to leave no active admin**,
 from either path: demoting or disabling the last one fails, under a lock, so two
 admins disabling each other at once cannot both succeed. The break-glass answer

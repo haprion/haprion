@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -12,6 +14,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest import mock
 from uuid import uuid4
 
 import psycopg
@@ -1960,3 +1963,142 @@ class OidcAccounts(unittest.TestCase):
                 cursor.execute("select count(*) from oidc_provider")
                 self.assertEqual(cursor.fetchone(), (1,))
             connection.rollback()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheAccountToolAgainstARealDatabase(unittest.TestCase):
+    """`haproxy-ui-user`'s verbs from 0041 (B196, B197), through `main`, on the real schema."""
+
+    HASH = OidcAccounts.HASH
+
+    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def setUp(self) -> None:
+        from haproxy_ui import admin
+
+        self.admin = admin
+        with self.connect() as connection:
+            connection.execute("truncate app_user cascade")
+            connection.commit()
+        for patch in (
+            mock.patch("os.geteuid", return_value=0),
+            mock.patch.object(
+                admin,
+                "load_environment",
+                return_value=admin.Environment(name="test", database="test", role="test"),
+            ),
+            mock.patch.object(admin, "connect", side_effect=lambda _e: self.connect()),
+            mock.patch.dict(os.environ, {"SUDO_USER": "operator"}),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def tearDown(self) -> None:
+        with self.connect() as connection:
+            connection.execute("truncate app_user cascade")
+            connection.commit()
+
+    def run_tool(self, *argv: str) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            code = self.admin.main(list(argv))
+        return code, out.getvalue()
+
+    def account(self, name: str) -> tuple[Any, ...] | None:
+        with self.connect() as connection:
+            return connection.execute(
+                "select role, source, break_glass, password_hash from app_user where username = %s",
+                (name,),
+            ).fetchone()
+
+    def add(self, name: str, role: str = "admin", **fields: Any) -> None:
+        columns = {"username": name, "password_hash": self.HASH, "role": role, **fields}
+        with self.connect() as connection:
+            connection.execute(
+                f"insert into app_user ({', '.join(columns)}) "  # noqa: S608 - our own names
+                f"values ({', '.join(['%s'] * len(columns))})",
+                tuple(columns.values()),
+            )
+            connection.commit()
+
+    def test_init_admin_makes_a_break_glass_admin_once_and_prints_its_password(self) -> None:
+        code, output = self.run_tool("init-admin")
+
+        self.assertEqual(code, 0)
+        role, source, break_glass, password_hash = self.account("admin") or ()
+        self.assertEqual((role, source, break_glass), ("admin", "local", True))
+        printed = re.search(r"password  (\S+)", output)
+        if printed is None:
+            self.fail(f"no password in: {output}")
+        self.assertRegex(printed.group(1), r"^[A-Za-z2-9]{4}-[A-Za-z2-9]{4}-[A-Za-z2-9]{4}$")
+        self.assertTrue(auth.verify_password(password_hash, printed.group(1)))
+
+        again, output = self.run_tool("init-admin")
+        self.assertEqual(again, 0)
+        self.assertIn("accounts exist", output)
+        with self.connect() as connection:
+            self.assertEqual(connection.execute("select count(*) from app_user").fetchone(), (1,))
+
+    def test_init_admin_does_nothing_where_any_account_exists(self) -> None:
+        self.add("operator", role="reader")
+        code, output = self.run_tool("init-admin")
+        self.assertEqual(code, 0)
+        self.assertIsNone(self.account("admin"))
+        self.assertNotIn("password  ", output)
+
+    def test_add_makes_break_glass_accounts_unless_told_not_to(self) -> None:
+        with mock.patch.object(self.admin, "read_new_password", return_value="long enough pw"):
+            self.run_tool("add", "alice", "--role", "admin")
+            self.run_tool("add", "bob", "--role", "reader", "--no-break-glass")
+        self.assertTrue((self.account("alice") or ())[2])
+        self.assertFalse((self.account("bob") or ())[2])
+
+    def test_delete_says_what_without_yes_and_does_it_with(self) -> None:
+        self.add("alice")
+        self.add("bob", role="reader")
+
+        code, output = self.run_tool("delete", "bob")
+        self.assertEqual(code, 64)
+        self.assertIn("repeat with --yes", output)
+        self.assertIsNotNone(self.account("bob"))
+
+        self.assertEqual(self.run_tool("delete", "bob", "--yes")[0], 0)
+        self.assertIsNone(self.account("bob"))
+
+    def test_delete_refuses_the_last_active_admin(self) -> None:
+        self.add("alice")
+        code, output = self.run_tool("delete", "alice", "--yes")
+        self.assertEqual(code, 74)
+        self.assertIn("last active admin", output)
+        self.assertIsNotNone(self.account("alice"))
+
+    def test_break_glass_marks_and_unmarks_a_local_account_only(self) -> None:
+        self.add("alice")
+        self.add("bob", role="reader", source="oidc", password_hash=None)
+
+        self.assertEqual(self.run_tool("break-glass", "alice")[0], 0)
+        self.assertTrue((self.account("alice") or ())[2])
+        self.assertEqual(self.run_tool("break-glass", "alice", "--off")[0], 0)
+        self.assertFalse((self.account("alice") or ())[2])
+
+        code, output = self.run_tool("break-glass", "bob")
+        self.assertEqual(code, 64)
+        self.assertIn("only local accounts", output)
+
+    def test_reset_refuses_a_provider_account_before_asking_for_a_password(self) -> None:
+        self.add("bob", role="reader", source="oidc", password_hash=None)
+        with mock.patch.object(self.admin, "read_new_password") as asked:
+            code, output = self.run_tool("reset", "bob")
+        self.assertEqual(code, 64)
+        self.assertIn("has no password", output)
+        asked.assert_not_called()
+
+    def test_list_names_each_account_s_kind(self) -> None:
+        self.add("alice", break_glass=True)
+        self.add("bob", role="reader", source="oidc", password_hash=None)
+        self.add("carol", role="reader")
+        output = self.run_tool("list")[1]
+        self.assertRegex(output, r"alice\s+admin\s+break-glass")
+        self.assertRegex(output, r"bob\s+reader\s+sso")
+        self.assertRegex(output, r"carol\s+reader\s+local")

@@ -21,7 +21,7 @@
 <div class="cluster-list">
 <section class="cluster-card">
   <dl class="cluster-facts">
-    <div><dt>Role</dt><dd>{{ account.role | capitalize }}</dd></div>
+    <div><dt>Role</dt><dd>{{ account.role | capitalize }}{% if account.provider %}<span class="users-you">SSO</span>{% elif account.break_glass %}<span class="users-you">break-glass</span>{% endif %}</dd></div>
     <div><dt>State</dt><dd><span class="status-badge status-badge-{{ account.tone }}">{{ account.state }}</span></dd></div>
     <div><dt>Sessions</dt><dd>{{ account.sessions }}</dd></div>
     <div><dt>Last sign-in</dt><dd>{{ account.last_sign_in }}</dd></div>
@@ -29,7 +29,7 @@
   {% if account.own %}
   <div class="cluster-actions">
     <div><strong>Your own account</strong></div>
-    <div class="action-buttons"><a class="secondary-button" href="/settings">Back</a><a class="secondary-button" href="/account/password">Change password</a></div>
+    <div class="action-buttons"><a class="secondary-button" href="/settings">Back</a>{% if not account.provider %}<a class="secondary-button" href="/account/password">Change password</a>{% endif %}</div>
   </div>
   {% else %}
   <form method="post" action="{{ account.href }}" class="cluster-actions">
@@ -39,11 +39,12 @@
       <button type="submit" class="secondary-button" name="action" value="revoke">End sessions</button>
       {% if account.locked %}<button type="submit" class="secondary-button" name="action" value="unlock">Unlock</button>{% endif %}
       {% if account.disabled %}<button type="submit" class="secondary-button" name="action" value="enable">Enable</button>{% else %}<button type="submit" class="danger-button" name="action" value="disable">Disable</button>{% endif %}
+      <a class="danger-button" href="{{ account.href }}/delete">Delete…</a>
     </div>
   </form>
   {% endif %}
 </section>
-{% if not account.own %}
+{% if not account.own and not account.provider %}
 <form method="post" action="{{ account.href }}" class="preview-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="action" value="save">
@@ -53,6 +54,9 @@
       <label><span class="field-title">New password</span><input type="password" name="new_password" autocomplete="new-password" minlength="{{ minimum_length }}"></label>
       <label><span class="field-title">Repeat new password</span><input type="password" name="repeat_password" autocomplete="new-password" minlength="{{ minimum_length }}"></label>
     </div>
+    <div class="form-checks">
+      <label class="check"><input type="checkbox" name="break_glass" value="on"{% if account.break_glass %} checked{% endif %}> <span>Break-glass account</span></label>
+    </div>
     <div class="editor-actions editor-submit">
       <div class="form-buttons"><a class="secondary-button" href="/settings">Back</a><button type="submit" class="secondary-button deploy-button">Save</button></div>
     </div>
@@ -60,7 +64,7 @@
 </form>
 {% endif %}
 </div>
-{% if not account.own %}
+{% if not account.own and not account.provider %}
 <script defer src="{{ url_for('static', path='/password-match.js') }}?v={{ asset_token }}"></script>
 {% endif %}
 {% endblock %}

@@ -192,7 +192,8 @@ this project; here it is the point, because a test that derives its expectation
 from the thing it is testing proves nothing.
 
 It also checks the negative half, one line per item in the phase gate — the web
-role cannot edit or delete the audit trail, cannot write accounts and cannot
+role cannot edit or delete the audit trail, cannot rename an account, change
+its kind or date it, cannot set the OIDC provider's revision, and cannot
 backdate a session; the worker cannot read the audit trail; the poller can
 neither read accounts nor write audit. Those are the ways the separation could
 be lost with nothing looking wrong.
@@ -461,7 +462,11 @@ backup. Nothing there survives losing the host.
 ## The first account
 
 Nothing can sign in until an account exists, and creating one is a root action
-rather than a page the interface offers:
+rather than a page the interface offers. `install-ui-release` makes the first
+one: on an installation with no account at all it runs
+`haproxy-ui-user init-admin`, which creates `admin` as a break-glass admin and
+prints its password once. Later releases find accounts and do nothing. More
+accounts:
 
 ```bash
 sudo haproxy-ui-user -e prod add operator --role admin
@@ -478,8 +483,8 @@ account tool back with it. `-e prod` reads
 database and the role root connects as — the migration role, because no
 application role may write the account table.
 
-The same tool handles `reset`, `disable`, `enable`, `unlock`, `revoke` and
-`list`. Reset and disable end every session the account has: an account that
+The same tool handles `reset`, `disable`, `enable`, `unlock`, `revoke`,
+`delete`, `break-glass` and `list`. Reset and disable end every session the account has: an account that
 cannot sign in again while its cookie keeps working has not been taken back
 from anyone.
 

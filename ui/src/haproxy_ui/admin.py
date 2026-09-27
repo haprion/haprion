@@ -8,7 +8,15 @@ installation to be useful for the first thirty seconds of it.
 
 So account creation is a local root action. It is also the break-glass path:
 when the only administrator is locked out, forgotten, or gone, this is what
-brings the interface back without touching the database by hand.
+brings the interface back without touching the database by hand. An account
+made here is a break-glass account unless told otherwise (B196): it signs in
+with its password even while sign-in goes through an OIDC provider.
+
+The installation makes the first one itself, `admin`, with `init-admin`: a
+password drawn at random and printed once, on the terminal of the person
+installing, and nowhere else. That is neither a default password nor a setup
+page - nothing about it is the same on two installations, and nothing answers
+on the network before it exists.
 
 Root connects as the migration role - the one that owns the schema. Since 0039
 the web role may write accounts too, behind an admin session and the admin's own
@@ -160,32 +168,132 @@ def _revoke_sessions(connection: psycopg.Connection[tuple[Any, ...]], user_id: i
         return cursor.rowcount
 
 
+def _insert_local(
+    connection: psycopg.Connection[tuple[Any, ...]],
+    username: str,
+    password: str,
+    role: str,
+    *,
+    break_glass: bool,
+) -> bool:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into app_user (username, password_hash, role, break_glass) "
+            "values (%(username)s, %(hash)s, %(role)s, %(break_glass)s) "
+            "on conflict do nothing returning id",
+            {
+                "username": username,
+                "hash": auth.hash_password(password),
+                "role": role,
+                "break_glass": break_glass,
+            },
+        )
+        return cursor.fetchone() is not None
+
+
 def command_add(environment: Environment, args: argparse.Namespace) -> int:
     password = read_new_password()
+    break_glass = not args.no_break_glass
+    with connect(environment) as connection:
+        if not _insert_local(
+            connection, args.username, password, args.role, break_glass=break_glass
+        ):
+            raise AdminError(f"an account named {args.username} already exists")
+        _audit(
+            connection, "account_created", args.username, role=args.role, break_glass=break_glass
+        )
+        connection.commit()
+    kind = "break-glass " if break_glass else ""
+    print(f"created {kind}{args.username} with role {args.role}")
+    return 0
+
+
+FIRST_ADMIN = "admin"
+
+
+def command_init_admin(environment: Environment, _: argparse.Namespace) -> int:
+    """The installation's first account, when there is none (B196).
+
+    Does nothing on an installation that has any account at all, so the
+    release that calls it every time is harmless after the first. The password
+    is printed once and kept nowhere.
+    """
+
+    password = auth.break_glass_password()
     with connect(environment) as connection:
         with connection.cursor() as cursor:
-            cursor.execute(
-                "insert into app_user (username, password_hash, role) "
-                "values (%(username)s, %(hash)s, %(role)s) "
-                "on conflict do nothing returning id",
-                {
-                    "username": args.username,
-                    "hash": auth.hash_password(password),
-                    "role": args.role,
-                },
-            )
-            if cursor.fetchone() is None:
-                raise AdminError(f"an account named {args.username} already exists")
-        _audit(connection, "account_created", args.username, role=args.role)
+            #
+            # Under the same lock as the last-admin guard, so two installers
+            # running at once cannot both see an empty table.
+            #
+            cursor.execute("select pg_advisory_xact_lock(hashtext('app_user_keep_an_admin'))")
+            cursor.execute("select exists (select 1 from app_user)")
+            row = cursor.fetchone()
+        if row is not None and row[0]:
+            print("accounts exist; no first account created")
+            return 0
+        _insert_local(connection, FIRST_ADMIN, password, "admin", break_glass=True)
+        _audit(connection, "account_created", FIRST_ADMIN, role="admin", break_glass=True)
         connection.commit()
-    print(f"created {args.username} with role {args.role}")
+    print()
+    print("  The first account, shown once and stored nowhere:")
+    print()
+    print(f"    username  {FIRST_ADMIN}")
+    print(f"    password  {password}")
+    print()
+    print("  It is a break-glass admin. Keep the password where you keep such things,")
+    print(f"  or change it after signing in. Reset it with: haproxy-ui-user reset {FIRST_ADMIN}")
+    print()
+    return 0
+
+
+def command_delete(environment: Environment, args: argparse.Namespace) -> int:
+    """Remove an account for good (B197). Asks for `--yes` rather than a prompt,
+    so a script cannot delete by forgetting to answer."""
+
+    with connect(environment) as connection:
+        user_id = _user_id(connection, args.username)
+        if not args.yes:
+            print(f"would delete {args.username} and its sessions; repeat with --yes to do it")
+            return 64
+        with connection.cursor() as cursor:
+            cursor.execute("delete from app_user where id = %s", (user_id,))
+        _audit(connection, "account_deleted", args.username)
+        connection.commit()
+    print(f"deleted {args.username}")
+    return 0
+
+
+def command_break_glass(environment: Environment, args: argparse.Namespace) -> int:
+    break_glass = not args.off
+    with connect(environment) as connection:
+        user_id = _user_id(connection, args.username)
+        with connection.cursor() as cursor:
+            cursor.execute("select source from app_user where id = %s", (user_id,))
+            row = cursor.fetchone()
+            if row is not None and row[0] != "local":
+                raise AdminError(
+                    f"{args.username} signs in through the provider; only local "
+                    "accounts can be break-glass"
+                )
+            cursor.execute(
+                "update app_user set break_glass = %s where id = %s", (break_glass, user_id)
+            )
+        _audit(connection, "break_glass_changed", args.username, break_glass=break_glass)
+        connection.commit()
+    print(f"{args.username} is {'now' if break_glass else 'no longer'} a break-glass account")
     return 0
 
 
 def command_reset(environment: Environment, args: argparse.Namespace) -> int:
-    password = read_new_password()
     with connect(environment) as connection:
         user_id = _user_id(connection, args.username)
+        with connection.cursor() as cursor:
+            cursor.execute("select source from app_user where id = %s", (user_id,))
+            row = cursor.fetchone()
+        if row is not None and row[0] != "local":
+            raise AdminError(f"{args.username} signs in through the provider and has no password")
+        password = read_new_password()
         with connection.cursor() as cursor:
             cursor.execute(
                 "update app_user set password_hash = %(hash)s, "
@@ -270,7 +378,7 @@ def command_revoke(environment: Environment, args: argparse.Namespace) -> int:
 def command_list(environment: Environment, _: argparse.Namespace) -> int:
     with connect(environment) as connection, connection.cursor() as cursor:
         cursor.execute(
-            "select u.username, u.role, u.disabled, u.created_at::date, "
+            "select u.username, u.role, u.disabled, u.source, u.break_glass, u.created_at::date, "
             "       (select count(*) from app_session s "
             "         where s.user_id = u.id and s.revoked_at is null "
             "           and s.expires_at > statement_timestamp()) "
@@ -281,15 +389,19 @@ def command_list(environment: Environment, _: argparse.Namespace) -> int:
         print("no accounts. Create the first one with:")
         print(f"  sudo haproxy-ui-user -e {environment.name} add <username> --role admin")
         return 0
-    print(f"{'USERNAME':<24} {'ROLE':<8} {'STATE':<9} {'CREATED':<12} SESSIONS")
-    for username, role, disabled, created, sessions in rows:
+    print(f"{'USERNAME':<24} {'ROLE':<8} {'KIND':<12} {'STATE':<9} {'CREATED':<12} SESSIONS")
+    for username, role, disabled, source, break_glass, created, sessions in rows:
         state = "disabled" if disabled else "active"
-        print(f"{username:<24} {role:<8} {state:<9} {str(created):<12} {sessions}")
+        kind = "sso" if source == "oidc" else "break-glass" if break_glass else "local"
+        print(f"{username:<24} {role:<8} {kind:<12} {state:<9} {str(created):<12} {sessions}")
     return 0
 
 
 COMMANDS = {
     "add": command_add,
+    "init-admin": command_init_admin,
+    "delete": command_delete,
+    "break-glass": command_break_glass,
     "reset": command_reset,
     "disable": command_disable,
     "enable": command_enable,
@@ -315,6 +427,25 @@ def build_parser() -> argparse.ArgumentParser:
     add = subcommands.add_parser("add", help="create an account")
     add.add_argument("username")
     add.add_argument("--role", choices=ROLES, required=True)
+    add.add_argument(
+        "--no-break-glass",
+        action="store_true",
+        help="an ordinary account, which cannot sign in with a password while SSO is on",
+    )
+
+    subcommands.add_parser(
+        "init-admin", help="create the break-glass admin 'admin' if there is no account at all"
+    )
+
+    delete = subcommands.add_parser("delete", help="remove an account and its sessions for good")
+    delete.add_argument("username")
+    delete.add_argument("--yes", action="store_true", help="do it; without it, only say what")
+
+    glass = subcommands.add_parser(
+        "break-glass", help="mark a local account as break-glass (or --off to unmark)"
+    )
+    glass.add_argument("username")
+    glass.add_argument("--off", action="store_true")
 
     for name, help_text in (
         ("reset", "set a new password and end every session"),

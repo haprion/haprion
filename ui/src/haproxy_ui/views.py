@@ -3376,6 +3376,7 @@ def build_router(config: Config) -> APIRouter:
         role: str = Form(default="", max_length=16),
         new_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
         repeat_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
+        break_glass: str = Form(default="", max_length=8),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
         gate = _admin_write_gate(request)
@@ -3395,17 +3396,22 @@ def build_router(config: Config) -> APIRouter:
 
         if row.username.lower() == gate.username.lower():
             return again("This is your own account. Change your password from the account menu.")
+        provider = row.source == "oidc"
+        if action == "save" and provider:
+            return again("The provider sets this account's role, and it has no password here.")
         #
         # Save writes what differs from the account: the role when another
-        # is chosen, the password when one is typed. Both in one transaction,
-        # so a refused role leaves the password as it was too.
+        # is chosen, the password when one is typed, the break-glass mark when
+        # it is changed. All in one transaction, so a refused role leaves the
+        # rest as it was too.
         #
         new_role = action == "save" and role != row.role
         new_secret = action == "save" and bool(new_password or repeat_password)
+        new_break_glass = action == "save" and (break_glass == "on") != row.break_glass
         if action == "save" and role not in users.ROLES:
             return again("Choose a role.")
-        if action == "save" and not (new_role or new_secret):
-            return again("Nothing to save: choose another role or type a new password.")
+        if action == "save" and not (new_role or new_secret or new_break_glass):
+            return again("Nothing to save: change the role, the password or break-glass.")
         if new_secret:
             problem = _new_password_problem(new_password, repeat_password)
             if problem:
@@ -3430,7 +3436,15 @@ def build_router(config: Config) -> APIRouter:
                         connection, user_id=row.id, password_hash=auth.hash_password(new_password)
                     )
                     changes.append(("password_reset", detail(sessions_revoked=ended)))
-                if action == "disable":
+                if new_break_glass:
+                    db.set_break_glass(connection, user_id=row.id, break_glass=not row.break_glass)
+                    changes.append(("break_glass_changed", detail(break_glass=not row.break_glass)))
+                if action == "delete":
+                    if db.delete_account(connection, user_id=row.id):
+                        changes.append(
+                            ("account_deleted", detail(role=row.role, source=row.source))
+                        )
+                elif action == "disable":
                     ended = db.set_disabled(connection, user_id=row.id, disabled=True)
                     changes.append(("account_disabled", detail(sessions_revoked=ended)))
                 elif action == "enable":
@@ -3442,19 +3456,53 @@ def build_router(config: Config) -> APIRouter:
                 elif action == "unlock":
                     db.unlock_account(connection, username=row.username, actor=gate.username)
                     changes.append(("throttle_cleared", detail()))
+            except db.NoBreakGlass:
+                connection.rollback()
+                return again(
+                    "Sign-in through the provider is on and needs an active break-glass admin.",
+                    409,
+                )
             except db.LastAdmin:
                 connection.rollback()
-                return again("The last active admin cannot be demoted or disabled.", 409)
+                return again("The last active admin cannot be demoted, disabled or deleted.", 409)
             for audit_action, audit_detail in changes:
                 db.record_audit_event(
                     connection, actor=gate.username, action=audit_action, detail=audit_detail
                 )
             connection.commit()
+        if action == "delete":
+            # The account's page is gone; back to the list it no longer stands in.
+            return RedirectResponse("/settings#users", status_code=303)
         if action == "save":
-            done = "saved" if new_role and new_secret else "role" if new_role else "password"
+            made = [new_role, new_secret, new_break_glass].count(True)
+            if made > 1:
+                done = "saved_password" if new_secret else "saved"
+            else:
+                done = "role" if new_role else "password" if new_secret else "break_glass"
         else:
             done = action
         return RedirectResponse(f"{users.href(row.username)}?done={done}", status_code=303)
+
+    @router.get("/settings/users/{name}/delete", response_class=HTMLResponse)
+    def delete_user_page(request: Request, name: str) -> Response:
+        """The question before an account is removed for good (B197)."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        row = _account_row(request, name)
+        if row is None:
+            return PlainTextResponse("Not found", status_code=404)
+        if row.username.lower() == gate.username.lower():
+            return RedirectResponse(users.href(row.username), status_code=303)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings-user-delete.html",
+            {
+                **_users_context(request, gate),
+                "account": users.user_view(row, signed_in_as=gate.username),
+            },
+        )
 
     @router.get("/certificates/receivers", response_class=HTMLResponse)
     def certificate_receivers_page(request: Request) -> Response:
@@ -5080,11 +5128,11 @@ def build_router(config: Config) -> APIRouter:
             throttled = failures >= config.throttle.max_failures
 
             account = None if throttled else db.account_by_username(connection, username)
-            if account is None or account.disabled:
+            if account is None or account.disabled or account.password_hash is None:
                 #
                 # The same time is spent whether the account is missing,
-                # disabled or throttled, so the three cannot be told apart from
-                # outside.
+                # disabled, throttled or the provider's (which has no
+                # password), so none of them can be told apart from outside.
                 #
                 auth.burn_absent_user_time(password)
                 accepted = False
@@ -6568,7 +6616,7 @@ def _prove_password(
     )
     throttled = failures >= config.throttle.max_failures
     account = None if throttled else db.account_by_username(connection, session.username)
-    if account is None or account.disabled:
+    if account is None or account.disabled or account.password_hash is None:
         auth.burn_absent_user_time(password)
         accepted = False
     else:

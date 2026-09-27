@@ -20,14 +20,17 @@ type Tone = Literal["healthy", "warning", "critical"]
 ROLES = ("admin", "reader")
 
 #
-# What a finished change says on the account's page. `save` writes the role
-# and a new password together and lands on whichever of `role`, `password`
-# and `saved` it did; the other keys are the page's buttons.
+# What a finished change says on the account's page. `save` writes the role,
+# a new password and the break-glass mark together and lands on whichever of
+# `role`, `password`, `break_glass` or `saved` it did; the other keys are the
+# page's buttons.
 #
 DONE = {
     "role": "Role changed.",
     "password": "Password set. The account's sessions were ended.",
-    "saved": "Role changed and password set. The account's sessions were ended.",
+    "break_glass": "Break-glass changed.",
+    "saved": "Changes saved.",
+    "saved_password": "Changes saved. The account's sessions were ended.",
     "disable": "Account disabled. Its sessions were ended.",
     "enable": "Account enabled.",
     "revoke": "Sessions ended.",
@@ -37,7 +40,7 @@ DONE = {
 # The form's `action` values; anything else is refused before it reaches the
 # database.
 #
-ACTIONS = frozenset({"save", "disable", "enable", "revoke", "unlock"})
+ACTIONS = frozenset({"save", "disable", "enable", "revoke", "unlock", "delete"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +55,12 @@ class UserView:
     sessions: int
     last_sign_in: str
     own: bool
+    #
+    # `oidc` accounts belong to the provider (0041): no password here, and the
+    # role comes from their groups at every sign-in.
+    #
+    provider: bool
+    break_glass: bool
 
 
 def href(username: str) -> str:
@@ -83,6 +92,8 @@ def user_view(row: AccountRow, *, signed_in_as: str) -> UserView:
         if row.last_sign_in is None
         else metrics.shown(row.last_sign_in).strftime(metrics.TIMESTAMP),
         own=row.username.lower() == signed_in_as.lower(),
+        provider=row.source == "oidc",
+        break_glass=row.break_glass,
     )
 
 

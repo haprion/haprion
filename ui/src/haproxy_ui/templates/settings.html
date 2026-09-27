@@ -79,7 +79,7 @@
     <tbody>
       {% for user in users %}
       <tr data-href="{{ user.href }}">
-        <td data-label="User"><a class="proxy-link" href="{{ user.href }}" title="{{ user.username }}"><strong>{{ user.username }}{% if user.own %}<span class="users-you">you</span>{% endif %}</strong></a></td>
+        <td data-label="User"><a class="proxy-link" href="{{ user.href }}" title="{{ user.username }}"><strong>{{ user.username }}{% if user.own %}<span class="users-you">you</span>{% endif %}{% if user.provider %}<span class="users-you">SSO</span>{% elif user.break_glass %}<span class="users-you">break-glass</span>{% endif %}</strong></a></td>
         <td data-label="Role">{{ user.role | capitalize }}</td>
         <td data-label="State"><span class="status-badge status-badge-{{ user.tone }}">{{ user.state }}</span></td>
         <td data-label="Sessions">{{ user.sessions }}</td>

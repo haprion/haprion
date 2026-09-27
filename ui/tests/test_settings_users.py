@@ -74,6 +74,8 @@ class SettingsUsers(LoginTestCase):
             mock.patch("haproxy_ui.db.reset_password", side_effect=record("password", 1)),
             mock.patch("haproxy_ui.db.revoke_sessions_for_user", side_effect=record("revoke", 3)),
             mock.patch("haproxy_ui.db.unlock_account", side_effect=record("unlock")),
+            mock.patch("haproxy_ui.db.set_break_glass", side_effect=record("break_glass")),
+            mock.patch("haproxy_ui.db.delete_account", side_effect=record("delete", True)),
             mock.patch("haproxy_ui.db.record_audit_event", side_effect=audit),
         ]
         for patch in patches:
@@ -204,7 +206,7 @@ class SettingsUsers(LoginTestCase):
             repeat_password=NEW,
         )
 
-        self.assertEqual(response.headers["location"], "/settings/users/bob?done=saved")
+        self.assertEqual(response.headers["location"], "/settings/users/bob?done=saved_password")
         self.assertEqual([name for name, _ in self.calls], ["role", "password"])
         self.assertEqual(self.audit[-2:], ["role_changed", "password_reset"])
         page = client.get("/settings/users/bob").text
@@ -243,7 +245,9 @@ class SettingsUsers(LoginTestCase):
             )
 
         self.assertEqual(response.status_code, 409)
-        self.assertIn("The last active admin cannot be demoted or disabled.", response.text)
+        self.assertIn(
+            "The last active admin cannot be demoted, disabled or deleted.", response.text
+        )
         self.assertNotIn("role_changed", self.audit)
         self.assertNotIn("password_reset", self.audit)
 
@@ -329,3 +333,101 @@ class SettingsUsers(LoginTestCase):
         self.assertIn('value="alice"', response.text)
         self.assertNotIn(NEW, response.text)
         self.assertNotIn("account_created", self.audit)
+
+    # - break-glass, deletion and the provider's accounts (0041, B195-B197) ----
+
+    def test_save_marks_and_unmarks_break_glass(self) -> None:
+        client = self.admin()
+
+        marked = self.post(
+            client, "/settings/users/bob", action="save", role="reader", break_glass="on"
+        )
+        self.assertEqual(marked.headers["location"], "/settings/users/bob?done=break_glass")
+        self.assertEqual(self.calls[-1], ("break_glass", {"user_id": 3, "break_glass": True}))
+        self.assertEqual(
+            self.audit_details[-1],
+            ("break_glass_changed", {"account": "bob", "via": "web", "break_glass": True}),
+        )
+
+        self.rows["bob"] = row("bob", break_glass=True)
+        page = client.get("/settings/users/bob").text
+        self.assertIn('name="break_glass" value="on" checked', page)
+        self.assertIn('Reader<span class="users-you">break-glass</span>', page)
+        unmarked = self.post(client, "/settings/users/bob", action="save", role="reader")
+        self.assertEqual(unmarked.status_code, 303)
+        self.assertEqual(self.calls[-1], ("break_glass", {"user_id": 3, "break_glass": False}))
+
+    def test_the_list_says_which_accounts_are_break_glass_or_the_provider_s(self) -> None:
+        self.rows["alice"] = row("alice", role="admin", break_glass=True)
+        self.rows["bob"] = row("bob", source="oidc")
+        page = self.admin().get("/settings").text
+
+        self.assertIn('alice<span class="users-you">break-glass</span>', page)
+        self.assertIn('bob<span class="users-you">SSO</span>', page)
+
+    def test_delete_asks_first_then_removes_and_returns_to_the_list(self) -> None:
+        client = self.admin()
+        self.assertIn(
+            'href="/settings/users/bob/delete">Delete…</a>', client.get("/settings/users/bob").text
+        )
+
+        question = client.get("/settings/users/bob/delete")
+        self.assertEqual(question.status_code, 200)
+        self.assertIn('name="action" value="delete"', question.text)
+        self.assertIn("Jobs and the audit trail keep the name.", question.text)
+
+        response = self.post(client, "/settings/users/bob", action="delete")
+        self.assertEqual(response.status_code, 303)
+        self.assertEqual(response.headers["location"], "/settings#users")
+        self.assertEqual(self.calls[-1], ("delete", {"user_id": 3}))
+        self.assertEqual(
+            self.audit_details[-1],
+            (
+                "account_deleted",
+                {"account": "bob", "via": "web", "role": "reader", "source": "local"},
+            ),
+        )
+
+    def test_one_s_own_account_is_not_deleted_from_here(self) -> None:
+        client = self.admin()
+        self.assertEqual(
+            client.get("/settings/users/operator/delete", follow_redirects=False).status_code, 303
+        )
+        response = self.post(client, "/settings/users/operator", action="delete")
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("delete", [name for name, _ in self.calls])
+
+    def test_the_database_s_refusals_to_delete_are_sentences(self) -> None:
+        client = self.admin()
+        for error, sentence in (
+            (db.LastAdmin(), "The last active admin cannot be demoted, disabled or deleted."),
+            (
+                db.NoBreakGlass(),
+                "Sign-in through the provider is on and needs an active break-glass admin.",
+            ),
+        ):
+            with (
+                self.subTest(error=type(error).__name__),
+                mock.patch("haproxy_ui.db.delete_account", side_effect=error),
+            ):
+                response = self.post(client, "/settings/users/alice", action="delete")
+                self.assertEqual(response.status_code, 409)
+                self.assertIn(sentence, response.text)
+        self.assertNotIn("account_deleted", self.audit)
+
+    def test_a_provider_account_has_no_role_or_password_form(self) -> None:
+        self.rows["bob"] = row("bob", source="oidc")
+        client = self.admin()
+        page = client.get("/settings/users/bob").text
+
+        self.assertIn('Reader<span class="users-you">SSO</span>', page)
+        self.assertNotIn('name="new_password"', page)
+        self.assertNotIn('name="break_glass"', page)
+        self.assertIn(">End sessions</button>", page)
+        self.assertIn("Delete…", page)
+        response = self.post(
+            client, "/settings/users/bob", action="save", role="admin", break_glass="on"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("The provider sets this account", response.text)
+        self.assertEqual(self.calls, [])

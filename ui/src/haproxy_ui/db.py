@@ -42,7 +42,13 @@ class Account:
     username: str
     role: str
     disabled: bool
-    password_hash: str
+    #
+    # None for an account the provider owns (0041): it has no password, and
+    # the sign-in form treats it as it treats a disabled one.
+    #
+    password_hash: str | None
+    source: str = "local"
+    break_glass: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +62,8 @@ class AccountRow:
     sessions: int
     last_sign_in: datetime | None
     locked: bool
+    source: str = "local"
+    break_glass: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -877,7 +885,7 @@ def account_by_username(connection: Connection[Any], username: str) -> Account |
 
     with connection.cursor(row_factory=class_row(Account)) as cursor:
         cursor.execute(
-            "select id, username, role, disabled, password_hash "
+            "select id, username, role, disabled, password_hash, source, break_glass "
             "  from app_user "
             " where username_normalised = lower(%(username)s)",
             {"username": username},
@@ -1036,7 +1044,7 @@ def change_password(
 # bounds as `failures_since_last_success`, which is what the sign-in reads.
 #
 _ACCOUNT_ROWS = """
-    select u.id, u.username, u.role, u.disabled,
+    select u.id, u.username, u.role, u.disabled, u.source, u.break_glass,
            (select count(*) from app_session s
              where s.user_id = u.id and s.revoked_at is null
                and s.expires_at > statement_timestamp()) as sessions,
@@ -1136,19 +1144,35 @@ def set_feature_switch(
 
 
 class LastAdmin(Exception):
-    """The database refused to leave no active admin (0039's trigger)."""
+    """The database refused to leave no active admin (0039's trigger, widened by 0041)."""
+
+
+class NoBreakGlass(LastAdmin):
+    """The same trigger, refusing to leave no active break-glass admin while
+    sign-in through the provider is on (0041)."""
 
 
 def create_account(
-    connection: Connection[Any], *, username: str, password_hash: str, role: str
+    connection: Connection[Any],
+    *,
+    username: str,
+    password_hash: str,
+    role: str,
+    break_glass: bool = False,
 ) -> bool:
-    """A new account, or False when the name is taken. The CLI's `add`."""
+    """A new local account, or False when the name is taken. The CLI's `add`."""
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "insert into app_user (username, password_hash, role) "
-            "values (%(username)s, %(hash)s, %(role)s) on conflict do nothing returning id",
-            {"username": username, "hash": password_hash, "role": role},
+            "insert into app_user (username, password_hash, role, break_glass) "
+            "values (%(username)s, %(hash)s, %(role)s, %(break_glass)s) "
+            "on conflict do nothing returning id",
+            {
+                "username": username,
+                "hash": password_hash,
+                "role": role,
+                "break_glass": break_glass,
+            },
         )
         return cursor.fetchone() is not None
 
@@ -1167,8 +1191,11 @@ def _guarded_update(connection: Connection[Any], statement: str, values: dict[st
         #
         # The trigger raises without a constraint name; a named one is a
         # table constraint (a role outside the list) and stays what it is.
+        # Its two refusals are told apart by what it says.
         #
         if error.diag.constraint_name is None:
+            if "break-glass" in (error.diag.message_primary or ""):
+                raise NoBreakGlass from error
             raise LastAdmin from error
         raise
 
@@ -1190,6 +1217,30 @@ def set_disabled(connection: Connection[Any], *, user_id: int, disabled: bool) -
         {"disabled": disabled, "user_id": user_id},
     )
     return revoke_sessions_for_user(connection, user_id) if disabled else 0
+
+
+def set_break_glass(connection: Connection[Any], *, user_id: int, break_glass: bool) -> None:
+    """Mark a local account as one that signs in with a password whatever else is on (B195)."""
+
+    _guarded_update(
+        connection,
+        "update app_user set break_glass = %(break_glass)s where id = %(user_id)s",
+        {"break_glass": break_glass, "user_id": user_id},
+    )
+
+
+def delete_account(connection: Connection[Any], *, user_id: int) -> bool:
+    """Remove an account for good (B197). Its sessions go with it; jobs and the
+    audit trail keep the name. False when it was already gone."""
+
+    try:
+        with connection.transaction(), connection.cursor() as cursor:
+            cursor.execute("delete from app_user where id = %s", (user_id,))
+            return cursor.rowcount == 1
+    except psycopg.errors.CheckViolation as error:
+        if "break-glass" in (error.diag.message_primary or ""):
+            raise NoBreakGlass from error
+        raise LastAdmin from error
 
 
 def reset_password(connection: Connection[Any], *, user_id: int, password_hash: str) -> int:

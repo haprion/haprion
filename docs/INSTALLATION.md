@@ -2634,7 +2634,18 @@ thirty seconds: a shipped password survives in the field, and an
 unauthenticated page that creates an administrator is exactly what it sounds
 like.
 
-So the first account is a local root action:
+So the first account is made by the installation itself, on the terminal of
+whoever installs it: when `install-ui-release` activates a release on an
+installation that has **no account at all**, it runs `haproxy-ui-user init-admin`,
+which creates `admin` as a break-glass admin with a password drawn at random and
+printed **once**, in the form `xxxx-xxxx-xxxx` — twelve characters from an
+alphabet without `0 O 1 l I`, short enough to copy by hand. It is stored
+nowhere. Every later release finds accounts and does nothing. Nothing about it
+is the same on two installations, and nothing answers on the network before it
+exists.
+
+Further accounts are a local root action too, or an admin's in the interface
+(below):
 
 ```bash
 sudo haproxy-ui-user -e prod add operator --role admin
@@ -2645,17 +2656,22 @@ to pass it as an argument — that would put it in the shell history and the
 process list.
 
 The same tool is the break-glass path when the only administrator is locked
-out, forgotten, or gone:
+out, forgotten, or gone. An account it creates is a **break-glass** account
+unless `--no-break-glass` is given: one that signs in with its password even
+while sign-in goes through an OIDC provider (schema `0041`).
 
 | Command | What it does |
 |---|---|
-| `add <user> --role admin\|reader` | create an account |
+| `add <user> --role admin\|reader [--no-break-glass]` | create an account |
+| `init-admin` | create `admin`, a break-glass admin, if there is no account at all |
+| `delete <user> --yes` | remove an account and its sessions for good; without `--yes` it only says what it would do |
+| `break-glass <user> [--off]` | mark a local account break-glass, or unmark it |
 | `reset <user>` | set a new password **and end every session that account has** |
 | `disable <user>` | block sign-in and end every session |
 | `enable <user>` | allow sign-in again |
 | `unlock <user>` | clear the sign-in throttle |
 | `revoke <user>` | end every session without changing the password |
-| `list` | accounts, roles, and how many live sessions each has |
+| `list` | accounts, roles, kind (`local`, `break-glass`, `sso`), and how many live sessions each has |
 
 Reset and disable revoke sessions on purpose. An account that cannot sign in
 again while its existing cookie keeps working has not actually been taken back
@@ -2670,12 +2686,20 @@ is recorded as `password_changed` with `via: web`.
 
 An admin manages the other accounts under **Settings → Users**, on
 installations with `management_writes` on: add, change role, disable and
-enable, set a new password, end sessions, and unlock — the same verbs as the
-table above, recorded under the same audit names plus `role_changed`, with the
-admin as actor and `via: web`. The signed-in admin session is the proof; no
-second password is asked. A new role and a new password are saved together, in
-one transaction. The admin's own account is not changed there, and the
-database still refuses to leave no active admin. There is no delete, in the interface or the tool.
+enable, set a new password, mark break-glass, end sessions, unlock and delete —
+the same verbs as the table above, recorded under the same audit names plus
+`role_changed`, `break_glass_changed` and `account_deleted`, with the admin as
+actor and `via: web`. The signed-in admin session is the proof; no second
+password is asked. A new role, a new password and the break-glass mark are saved
+together, in one transaction. Delete asks first, on its own page. The admin's
+own account is not changed there.
+
+The database refuses to leave no active admin, from either path: the last one
+cannot be demoted, disabled or deleted. Since `0041` the web role holds `delete`
+on the account table — the one table where an application role does. Sessions
+go with a deleted account; jobs and the audit trail name it as text and keep
+it. An account that signs in through an OIDC provider has no password here, and
+its role comes from the provider.
 
 Two capabilities can be turned off under **Settings → Features** (schema
 `0040`), by an admin on an installation with `management_writes` on. Off hides

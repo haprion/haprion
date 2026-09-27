@@ -376,6 +376,19 @@ exec ${PLATFORM_ROOT}/current/venv/bin/haproxy-ui-user "\$@"
 EOF
 )"
 
+step "The first account"
+#
+# `admin`, a break-glass admin with a password drawn now and printed once, on
+# an installation with no account at all (B196). Every later release finds
+# accounts and does nothing, so this runs every time rather than being a step
+# someone has to remember on the first.
+#
+# A warning rather than a stop: the release is already active, and an
+# installation that has not migrated yet makes the account after it has.
+#
+/usr/local/sbin/haproxy-ui-user -e "$ENVIRONMENT" init-admin \
+    || warn "no first account was made; after ./migrate, run: haproxy-ui-user -e ${ENVIRONMENT} init-admin"
+
 step "The rollback command"
 #
 # Installed as a rendered copy rather than a shim into `current`. A rollback

@@ -1,0 +1,19 @@
+{% extends "layout.html" %}
+{% block title %}Delete {{ account.username }} — HAProxy Manager{% endblock %}
+{% block content %}
+{# The question before an account is removed for good (B197). #}
+<section class="page-heading">
+  <div class="heading-title"><h1>Delete {{ account.username }}</h1><p class="page-lede"><a href="/settings#users">Settings</a></p></div>
+</section>
+
+<form method="post" action="{{ account.href }}" class="preview-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="action" value="delete">
+  <section class="cluster-card">
+    <p class="feature-consequence">The account and its sessions are removed. Jobs and the audit trail keep the name.</p>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="{{ account.href }}">Back</a><button type="submit" class="danger-button">Delete</button></div>
+    </div>
+  </section>
+</form>
+{% endblock %}

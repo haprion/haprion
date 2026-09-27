@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "operation": "oidc",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "result": {
+    "issuer": "https://id.example.com/application/o/manager/",
+    "authorization_endpoint": "https://id.example.com/application/o/authorize/",
+    "token_endpoint": "https://id.example.com/application/o/token/",
+    "jwks_uri": "https://id.example.com/application/o/manager/jwks/",
+    "userinfo_endpoint": "https://id.example.com/application/o/userinfo/",
+    "end_session_endpoint": null,
+    "auth_methods": [
+      "client_secret_basic",
+      "client_secret_post"
+    ],
+    "algorithms": [
+      "RS256"
+    ]
+  },
+  "error": null
+}

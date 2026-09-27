@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "operation": "oidc",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "result": {
+    "ok": true,
+    "checks": [
+      {
+        "name": "discovery",
+        "ok": true,
+        "message": "https://id.example.com/application/o/manager/ describes itself as this issuer"
+      },
+      {
+        "name": "keys",
+        "ok": true,
+        "message": "1 signing key(s)"
+      },
+      {
+        "name": "method",
+        "ok": true,
+        "message": "client_secret_basic is offered"
+      },
+      {
+        "name": "algorithm",
+        "ok": true,
+        "message": "signs with RS256"
+      },
+      {
+        "name": "client",
+        "ok": true,
+        "message": "the provider accepted the client and its secret"
+      }
+    ]
+  },
+  "error": null
+}

@@ -88,11 +88,17 @@ def read_public_key(path: Path) -> DnsProfilePublicKey:
     return parse_public_key(text, str(path))
 
 
-def read_private_key(path: Path, *, require_secure: bool = True) -> DnsProfilePrivateKey:
-    """The private key, refused unless the file is root's alone.
+def read_private_key(
+    path: Path, *, require_secure: bool = True, owner: int = 0
+) -> DnsProfilePrivateKey:
+    """The private key, refused unless the file is its owner's alone.
+
+    The owner is root for the DNS profile helper. The OIDC helper runs as an
+    account of its own (B196), and passes that account's uid: the file must
+    still be that one account's, 0600.
 
     `require_secure` is only ever relaxed by tests that build the files in a
-    temporary directory; the helper always holds it to root and 0600.
+    temporary directory; the helpers always hold it.
     """
 
     try:
@@ -101,9 +107,10 @@ def read_private_key(path: Path, *, require_secure: bool = True) -> DnsProfilePr
     except OSError as exc:
         raise KeyFileError(f"cannot read private key {path}: {exc.strerror}") from exc
     if require_secure and (
-        status.st_uid != 0 or (status.st_mode & 0o777) != 0o600 or not path.is_file()
+        status.st_uid != owner or (status.st_mode & 0o777) != 0o600 or not path.is_file()
     ):
-        raise KeyFileError(f"private key {path} must be a regular file owned by root, mode 0600")
+        who = "root" if owner == 0 else f"uid {owner}"
+        raise KeyFileError(f"private key {path} must be a regular file owned by {who}, mode 0600")
     return parse_private_key(text, str(path))
 
 

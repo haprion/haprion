@@ -699,6 +699,21 @@ def check_ui_tls_install_semantics(document: dict[str, object], path: Path) -> N
         raise AssertionError(f"{path}: a {document['outcome']} ui_tls_install carries a result")
 
 
+def check_oidc_semantics(document: dict[str, object], path: Path) -> None:
+    # An answer or a refusal, never both; and Verify's verdict is its checks',
+    # so a page reading `ok` cannot show green over a failed check.
+    result = document["result"]
+    if document["outcome"] == "done" and result is None:
+        raise AssertionError(f"{path}: a done oidc carries no result")
+    if document["outcome"] != "done" and result is not None:
+        raise AssertionError(f"{path}: a {document['outcome']} oidc carries a result")
+    if isinstance(result, dict) and "checks" in result:
+        checks = result["checks"]
+        assert isinstance(checks, list)
+        if result["ok"] != all(check["ok"] for check in checks):
+            raise AssertionError(f"{path}: verify's ok disagrees with its checks")
+
+
 def check_backup_run_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -880,6 +895,7 @@ SEMANTIC_CHECKS = {
     "cert_scep": check_cert_scep_semantics,
     "cert_receiver": check_cert_receiver_semantics,
     "ui_tls_install": check_ui_tls_install_semantics,
+    "oidc": check_oidc_semantics,
     "node_restore_prepare": check_node_restore_prepare_semantics,
     "node_restore_preview": check_node_restore_preview_semantics,
     "node_restore": check_node_restore_semantics,
@@ -944,6 +960,11 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["layers"] = [{"layer": "account", "state": "failed", "detail": "userdel: busy"}]
     elif operation == "ui_tls_install":
         invalid["outcome"] = "failed"
+    elif operation == "oidc":
+        if "checks" in result:
+            result["ok"] = not result["ok"]
+        else:
+            invalid["outcome"] = "failed"
     elif operation == "node_restore_prepare":
         result["mode"] = "new_vm"
     elif operation == "node_restore_preview":

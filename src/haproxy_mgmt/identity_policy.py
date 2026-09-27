@@ -21,6 +21,12 @@ class IdentityPolicy:
     worker: str
     poller: str
     collector: str | None = None
+    #
+    # The OIDC helper's account (Fas 13 part 4, O3). Optional like the
+    # collector, and like it in no group: it reads its own key directory and
+    # nothing of the configuration.
+    #
+    oidc: str | None = None
 
     def account(self, role: str) -> str:
         if role not in ROLES:
@@ -52,7 +58,7 @@ def load_identity_policy(path: Path, *, require_secure: bool = True) -> Identity
         raise ConfigError("identity policy.account_prefix is invalid")
     config_group = _account_name(data.get("config_group"), "identity policy.config_group")
     roles = _mapping(data.get("roles"), "identity policy.roles")
-    _only_keys(roles, {*ROLES, "collector"}, "identity policy.roles")
+    _only_keys(roles, {*ROLES, "collector", "oidc"}, "identity policy.roles")
     missing = sorted(set(ROLES) - roles.keys())
     if missing:
         raise ConfigError(f"identity policy.roles is missing role(s): {', '.join(missing)}")
@@ -63,7 +69,9 @@ def load_identity_policy(path: Path, *, require_secure: bool = True) -> Identity
         if "collector" in roles
         else None
     )
-    all_names = [config_group, *accounts.values(), *(() if collector is None else (collector,))]
+    oidc = _account_name(roles["oidc"], "identity policy.roles.oidc") if "oidc" in roles else None
+    optional = tuple(name for name in (collector, oidc) if name is not None)
+    all_names = [config_group, *accounts.values(), *optional]
     if any(not name.startswith(account_prefix) for name in all_names):
         raise ConfigError("identity policy group and role accounts must use account_prefix")
     if len(set(all_names)) != len(all_names):
@@ -73,6 +81,7 @@ def load_identity_policy(path: Path, *, require_secure: bool = True) -> Identity
         account_prefix=account_prefix,
         config_group=config_group,
         collector=collector,
+        oidc=oidc,
         **accounts,
     )
 
@@ -97,5 +106,7 @@ def render_sysusers(policy: IdentityPolicy) -> str:
         lines.append(
             f'u {policy.collector} - "HAProxy Manager traffic log collector" - /usr/sbin/nologin'
         )
+    if policy.oidc is not None:
+        lines.append(f'u {policy.oidc} - "HAProxy Manager OIDC helper" - /usr/sbin/nologin')
     lines.extend((f"m {policy.worker} {policy.config_group}", ""))
     return "\n".join(lines)

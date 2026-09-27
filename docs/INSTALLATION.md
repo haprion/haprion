@@ -2809,6 +2809,41 @@ says, on the other hand, is one sentence for every kind of failure — unknown
 account, wrong password, disabled account and throttled address are
 indistinguishable from outside, and the same amount of time is spent on each.
 
+### 4.6a Signing in through an OpenID Connect provider
+
+Sign-in through a provider — authentik, Keycloak, Entra ID, ADFS, Authelia,
+Okta, Zitadel, or any other that follows OpenID Connect Core and Discovery —
+arrives in parts (schema `0041`). What is installed first is the path to the
+provider, and it does not go through the web service.
+
+The web service reaches localhost and nothing else (`IPAddressDeny=any`), and
+keeps doing so. Every request to the provider goes through
+`/run/haproxy-mgmt/oidc.sock` to `haproxy-oidc-helper`, installed by platform
+step 17. It runs as an account of its own (`OIDC_USER`, the identity policy's
+`roles.oidc`), not root, and is the one part that may reach the network. It
+takes no URL from the web: the issuer comes from the settings, every other
+address from that issuer's own discovery document, over verified TLS — the
+system's authorities plus, when set, a CA certificate pasted into the
+settings. It follows no redirect, uses no proxy from the environment, and
+bounds every answer to ten seconds and one megabyte.
+
+The client secret is sealed by the web against the public key step 17 made,
+and only the helper opens it. The sealed text names the issuer and the client
+it was saved for, and the helper refuses to open it for any other: changing
+the issuer means typing the secret again, so a session that changes where
+sign-in goes cannot also send the old secret there.
+
+The helper verifies the id_token as OpenID Connect Core lays out for the authorization code flow (section 3.1.3, step 7) —
+signature (RSA, RSA-PSS or ECDSA against the provider's key set; HMAC with the
+client secret, which authentik uses when no signing key is chosen; never
+`none`), issuer, audience, `azp`, expiry with one minute's leeway, and the
+sign-in's own nonce. Userinfo is added when it names the same subject and
+ignored otherwise; it is never a reason to refuse. Names and groups are read
+from the claims the settings name, as a dotted path (`realm_access.roles`); a
+claim that is an object counts as its keys. A provider that sends a pointer to
+the groups instead of the groups (Entra's overage, above 200 groups) is refused
+with a sentence that says to use app roles.
+
 ### 4.6b Rolling a release back
 
 ```bash

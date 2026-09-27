@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "operation": "oidc",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": false,
+  "outcome": "failed",
+  "result": null,
+  "error": {
+    "code": "issuer_mismatch",
+    "message": "the provider calls itself 'https://id.example.com/application/o/manager', not 'https://id.example.com/application/o/manager/'; use its value exactly"
+  }
+}

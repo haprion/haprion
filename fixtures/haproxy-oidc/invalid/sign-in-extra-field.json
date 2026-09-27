@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "operation": "oidc",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "ok": true,
+  "outcome": "done",
+  "result": {
+    "issuer": "https://id.example.com/application/o/manager/",
+    "subject": "8a1f",
+    "username": "operator",
+    "groups": [],
+    "id_token": "x",
+    "userinfo": "userinfo used",
+    "access_token": "x"
+  },
+  "error": null
+}

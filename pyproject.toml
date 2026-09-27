@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "UI-independent HAProxy management engine"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["PyNaCl>=1.5,<2", "PyYAML>=6,<7", "psycopg>=3.3,<4"]
+dependencies = ["PyNaCl>=1.5,<2", "PyYAML>=6,<7", "psycopg>=3.3,<4", "PyJWT[crypto]>=2.10,<3"]
 
 [dependency-groups]
 dev = [
@@ -71,6 +71,7 @@ haproxy-cert-target-helper = "haproxy_mgmt.cli.cert_target_helper:main"
 haproxy-cert-receiver-helper = "haproxy_mgmt.cli.cert_receiver_helper:main"
 haproxy-cert-receiver-ask = "haproxy_mgmt.cli.cert_receiver_ask:main"
 haproxy-ui-tls-helper = "haproxy_mgmt.cli.ui_tls_helper:main"
+haproxy-oidc-helper = "haproxy_mgmt.cli.oidc_helper:main"
 haproxy-ndes-profile-apply-helper = "haproxy_mgmt.cli.ndes_profile_apply_helper:main"
 haproxy-cert-scep-helper = "haproxy_mgmt.cli.cert_scep_helper:main"
 haproxy-dns-profile-apply-helper = "haproxy_mgmt.cli.dns_profile_apply_helper:main"

@@ -532,6 +532,24 @@ otherwise create a file the interface can read.
 `ENVIRONMENT` is `prod`. A dev platform is built not to reach the real nodes,
 and a key plus an inventory would undo the property that makes it safe.
 
+## Step 17 — the OIDC helper
+
+`./17-platform-oidc <answers-file> <source-tree>` prepares sign-in through an
+OpenID Connect provider (schema `0041`). The web service reaches localhost and
+nothing else, and keeps doing so: every request to the provider goes through
+`/run/haproxy-mgmt/oidc.sock` to `haproxy-oidc-helper`, which runs as
+`OIDC_USER` — an account of its own, not root, in no group, with no sudo rule.
+
+The step makes the key pair the web seals the client secret against: the
+private key in `/etc/haproxy-manager/oidc/` (the helper's account, 0600, in a
+0500 directory), the public key in `config/oidc-keys/`. A second run keeps the
+pair; `ROTATE=1` adds one, and the client secret is then saved again. It
+installs the socket (group `WEB_USER`) and the per-request service.
+
+The account must exist first: add `oidc: <name>` under `roles` in the identity
+policy, render the sysusers fragment and apply it. The CLI release must carry
+`haproxy-oidc-helper`. Production only.
+
 ### Optional SCEP client bundle
 
 `16-platform-scep <bundle.zip> <verified-sha256>` installs a reviewed native Certmonger

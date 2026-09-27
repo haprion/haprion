@@ -1,0 +1,123 @@
+#!/bin/bash
+#
+# Platform step 17 - the OIDC helper: its key pair, its directory and its socket.
+#
+#     sudo ./17-platform-oidc <answers-file> <source-tree>
+#
+# Sign-in through an OpenID Connect provider (Fas 13 part 4, B195-B199) needs
+# the provider, and the web service must not reach the network. So the requests
+# go through /run/haproxy-mgmt/oidc.sock to haproxy-oidc-helper, which runs as an
+# account of its own - the identity policy's `oidc` role, OIDC_USER here - and
+# is the one holder of the key that opens the client secret the web sealed.
+#
+# This step makes:
+#
+#   /etc/haproxy-manager/oidc/<key id>.key    OIDC_USER, 0600 (directory 0500)
+#   PLATFORM_ROOT/config/oidc-keys/<id>.pub   root:PLATFORM_GROUP, 0640
+#   haproxy-oidc-helper.socket and @.service  the socket group is WEB_USER
+#
+# An installation that already has a pair keeps it; ROTATE=1 adds a second one
+# beside it, and the client secret is then saved again under the new key.
+#
+# Production only. The development platform is built not to reach the outside,
+# and its sign-in stays local.
+#
+set -Eeuo pipefail
+cd "$(dirname "$0")"
+# shellcheck source=../lib.sh
+source ../lib.sh
+need_root
+load_answers "${1:-}"
+require_vars PLATFORM_ROOT PLATFORM_GROUP WEB_USER OIDC_USER
+
+source_tree="${2:-}"
+[[ -n "$source_tree" && -d "$source_tree" ]] || die "usage: $0 <answers-file> <source-tree>"
+source_tree="$(cd "$source_tree" && pwd)"
+tool="${source_tree}/tools/dns-profile-keys.py"
+[[ -f "$tool" ]] || die "${tool} is missing; this is not a source tree with the key tool"
+
+[[ "${ENVIRONMENT:-prod}" == "prod" ]] \
+    || die "the OIDC helper is production-only; ENVIRONMENT is ${ENVIRONMENT}"
+valid_id "$OIDC_USER" || die "invalid OIDC account: ${OIDC_USER}"
+for role in "$WEB_USER" "${WORKER_USER:-}" "${POLLER_USER:-}" "${COLLECTOR_USER:-}"; do
+    [[ -z "$role" || "$OIDC_USER" != "$role" ]] \
+        || die "OIDC_USER must be distinct from the other service accounts"
+done
+id -u "$OIDC_USER" >/dev/null 2>&1 \
+    || die "service account ${OIDC_USER} does not exist. Add it to the identity policy as
+  roles.oidc, render the sysusers fragment and apply it:
+  haproxy-render-sysusers --policy <file> > /etc/sysusers.d/haproxy-manager.conf
+  systemd-sysusers"
+
+KEY_DIR="/etc/haproxy-manager/oidc"
+PUBLIC_DIR="${PLATFORM_ROOT}/config/oidc-keys"
+BINARY="/opt/haproxy-mgmt/current/bin/haproxy-oidc-helper"
+
+step "The helper"
+[[ -x "$BINARY" ]] \
+    || die "${BINARY} is missing; install a CLI release that carries haproxy-oidc-helper first"
+log "  ok       ${BINARY}"
+
+step "The interpreter"
+if /usr/bin/python3 -I -c 'import nacl.public' 2>/dev/null; then
+    log "  ok       /usr/bin/python3 imports nacl"
+else
+    die "/usr/bin/python3 cannot import nacl; install the distribution's package: apt install python3-nacl"
+fi
+
+step "Directories"
+[[ -d "${PLATFORM_ROOT}/config" ]] || die "${PLATFORM_ROOT}/config is missing; run 01-platform-prepare first"
+ensure_dir "$PUBLIC_DIR" "root:${PLATFORM_GROUP}" 750
+#
+# Root's while the pair is written, the helper's afterwards: the key tool
+# writes as root, and the helper refuses a key that is not its account's alone.
+#
+if [[ ! -d "$KEY_DIR" ]]; then
+    install -d -o root -g root -m 700 "$KEY_DIR"
+    log "  created  ${KEY_DIR}"
+fi
+
+step "The key pair"
+existing=()
+while IFS= read -r file; do
+    [[ -n "$file" ]] && existing+=("$file")
+done < <(find "$KEY_DIR" -maxdepth 1 -name '*.key' -type f | sort)
+
+if (( ${#existing[@]} > 0 )) && [[ "${ROTATE:-0}" != "1" ]]; then
+    for file in "${existing[@]}"; do
+        key_id="$(basename "$file" .key)"
+        [[ -f "${PUBLIC_DIR}/${key_id}.pub" ]] \
+            || die "${file} has no public half at ${PUBLIC_DIR}/${key_id}.pub"
+        log "  ok       ${key_id}"
+    done
+    log "  kept     ${#existing[@]} pair(s); run with ROTATE=1 to add a new one"
+else
+    chown root:root "$KEY_DIR"
+    chmod 700 "$KEY_DIR"
+    key_id="$(/usr/bin/python3 -I "$tool" create \
+        --private "$KEY_DIR" --public "$PUBLIC_DIR" --group "$PLATFORM_GROUP")"
+    log "  created  ${key_id}"
+fi
+
+for file in "$KEY_DIR"/*.key; do
+    chown "${OIDC_USER}:${OIDC_USER}" "$file"
+    chmod 600 "$file"
+done
+chown "${OIDC_USER}:${OIDC_USER}" "$KEY_DIR"
+chmod 500 "$KEY_DIR"
+log "  ok       ${KEY_DIR}  (${OIDC_USER}, 0500; keys 0600)"
+
+step "The socket"
+install_file /etc/systemd/system/haproxy-oidc-helper@.service root:root 644 \
+    "$(sed "s|OIDC_USER|${OIDC_USER}|g" 'examples/haproxy-oidc-helper@.service.example')"
+install_file /etc/systemd/system/haproxy-oidc-helper.socket root:root 644 \
+    "$(sed "s|WEB_USER|${WEB_USER}|g" examples/haproxy-oidc-helper.socket.example)"
+systemctl daemon-reload
+systemctl enable --quiet haproxy-oidc-helper.socket
+systemctl restart haproxy-oidc-helper.socket
+systemctl is-active --quiet haproxy-oidc-helper.socket \
+    || die "haproxy-oidc-helper.socket did not start"
+log "  listening on /run/haproxy-mgmt/oidc.sock  (group ${WEB_USER})"
+
+step "Done"
+log "  the web reads the public key from ${PUBLIC_DIR}"

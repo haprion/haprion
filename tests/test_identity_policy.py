@@ -49,6 +49,29 @@ class IdentityPolicyTests(unittest.TestCase):
         self.assertIn('u svc-collector - "HAProxy Manager traffic log collector"', rendered)
         self.assertNotIn("m svc-collector", rendered)
 
+    def test_optional_oidc_account_is_distinct_and_gets_no_config_membership(self):
+        with tempfile.TemporaryDirectory() as raw:
+            path = self.write_policy(
+                Path(raw),
+                "schema_version: 1\naccount_prefix: svc-\nconfig_group: svc-mgmt\nroles:\n"
+                "  web: svc-web\n  worker: svc-worker\n  poller: svc-poller\n"
+                "  oidc: svc-oidc\n",
+            )
+            policy = load_identity_policy(path, require_secure=False)
+            clash = self.write_policy(
+                Path(raw),
+                "schema_version: 1\naccount_prefix: svc-\nconfig_group: svc-mgmt\nroles:\n"
+                "  web: svc-web\n  worker: svc-worker\n  poller: svc-poller\n"
+                "  oidc: svc-web\n",
+            )
+            with self.assertRaises(ConfigError):
+                load_identity_policy(clash, require_secure=False)
+
+        self.assertEqual(policy.oidc, "svc-oidc")
+        rendered = render_sysusers(policy)
+        self.assertIn('u svc-oidc - "HAProxy Manager OIDC helper"', rendered)
+        self.assertNotIn("m svc-oidc", rendered)
+
     def test_unknown_role_lookup_is_rejected(self):
         policy = load_identity_policy(
             BASE / "examples" / "identity-policy.yaml", require_secure=False

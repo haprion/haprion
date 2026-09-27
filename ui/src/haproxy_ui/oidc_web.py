@@ -16,8 +16,11 @@ from __future__ import annotations
 import base64
 import json
 import re
+import secrets
+import urllib.parse
 import uuid
 from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -245,3 +248,95 @@ def summary(provider: OidcProvider | None) -> str:
         return ""
     state = "on" if provider.enabled else "off"
     return f"SSO {state} · {provider.issuer}"
+
+
+# - signing in (O5) -------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class LoginTokens:
+    state: str
+    nonce: str
+    verifier: str
+
+
+def new_login_tokens() -> LoginTokens:
+    """Three unguessable values for one sign-in: 43 characters each (RFC 7636)."""
+
+    return LoginTokens(
+        state=secrets.token_urlsafe(32),
+        nonce=secrets.token_urlsafe(32),
+        verifier=secrets.token_urlsafe(32),
+    )
+
+
+def discovery(result: Mapping[str, Any]) -> oidc.Discovery:
+    """The helper's `discover` answer as the engine's own type."""
+
+    return oidc.Discovery(
+        issuer=str(result["issuer"]),
+        authorization_endpoint=str(result["authorization_endpoint"]),
+        token_endpoint=str(result["token_endpoint"]),
+        jwks_uri=str(result["jwks_uri"]),
+        userinfo_endpoint=result.get("userinfo_endpoint"),
+        end_session_endpoint=result.get("end_session_endpoint"),
+        auth_methods=tuple(result.get("auth_methods") or ()),
+        algorithms=tuple(result.get("algorithms") or ()),
+    )
+
+
+def authorization_url(
+    provider: OidcProvider, found: Mapping[str, Any], tokens: LoginTokens, *, redirect: str
+) -> str:
+    return oidc.authorization_url(
+        discovery(found),
+        client_id=provider.client_id or "",
+        redirect_uri=redirect,
+        scopes=provider.scopes,
+        state=tokens.state,
+        nonce=tokens.nonce,
+        verifier=tokens.verifier,
+        prompt_login=provider.prompt_login,
+    )
+
+
+def role_for(provider: OidcProvider, groups: list[str]) -> str | None:
+    """The role the provider's groups give, admin before reader; None for neither (B195)."""
+
+    if provider.admin_group is not None and provider.admin_group in groups:
+        return "admin"
+    if provider.reader_group is not None and provider.reader_group in groups:
+        return "reader"
+    return None
+
+
+def end_session_url(
+    found: Mapping[str, Any], provider: OidcProvider, *, id_token: str, back_to: str
+) -> str | None:
+    """Where signing out at the provider goes (RP-initiated logout), or None."""
+
+    endpoint = found.get("end_session_endpoint")
+    if not isinstance(endpoint, str) or not endpoint.startswith("https://"):
+        return None
+    parameters = {
+        "id_token_hint": id_token,
+        "post_logout_redirect_uri": back_to,
+        "client_id": provider.client_id or "",
+    }
+    separator = "&" if urllib.parse.urlsplit(endpoint).query else "?"
+    return endpoint + separator + urllib.parse.urlencode(parameters)
+
+
+#
+# Whether the person signed in on this request came through the provider, for
+# the account menu: such an account has no password here to change.
+#
+_THROUGH_PROVIDER: ContextVar[bool] = ContextVar("through_provider", default=False)
+
+
+def note_session(source: str) -> None:
+    _THROUGH_PROVIDER.set(source == "oidc")
+
+
+def through_provider() -> bool:
+    return _THROUGH_PROVIDER.get()

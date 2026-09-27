@@ -14,7 +14,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"></path><circle cx="12" cy="12" r="4"></circle></svg>
           <span data-theme-label>Light</span>
         </button>
-        <details class="account-menu"><summary><span class="avatar" aria-hidden="true">{{ username[:1] | upper }}</span><span class="account-copy"><strong>{{ username }}</strong><small>{{ role }}</small></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg></summary><div class="account-popover"><div class="account-popover-title"><strong>{{ username }}</strong><span>{{ role }}</span></div><a class="menu-link" href="/account/password">Change password</a><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="menu-button" type="submit">Sign out</button></form></div></details>
+        <details class="account-menu"><summary><span class="avatar" aria-hidden="true">{{ username[:1] | upper }}</span><span class="account-copy"><strong>{{ username }}</strong><small>{{ role }}</small></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg></summary><div class="account-popover"><div class="account-popover-title"><strong>{{ username }}</strong><span>{{ role }}</span></div>{% if not through_provider() %}<a class="menu-link" href="/account/password">Change password</a>{% endif %}<form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="menu-button" type="submit">Sign out</button></form></div></details>
       </div>
     </div>
   </div>

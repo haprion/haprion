@@ -49,6 +49,7 @@ class Account:
     password_hash: str | None
     source: str = "local"
     break_glass: bool = False
+    oidc_issuer: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +87,11 @@ class AuthenticatedSession:
     last_seen_at: datetime
     expires_at: datetime
     revoked_at: datetime | None
+    #
+    # `oidc` for an account the provider owns (0041): it has no password here,
+    # so the account menu offers none to change.
+    #
+    source: str = "local"
 
 
 @dataclass(frozen=True, slots=True)
@@ -885,7 +891,7 @@ def account_by_username(connection: Connection[Any], username: str) -> Account |
 
     with connection.cursor(row_factory=class_row(Account)) as cursor:
         cursor.execute(
-            "select id, username, role, disabled, password_hash, source, break_glass "
+            "select id, username, role, disabled, password_hash, source, break_glass, oidc_issuer "
             "  from app_user "
             " where username_normalised = lower(%(username)s)",
             {"username": username},
@@ -947,7 +953,12 @@ def failures_since_last_success(
 
 
 def create_session(
-    connection: Connection[Any], *, token_hash: bytes, user_id: int, expires_at: datetime
+    connection: Connection[Any],
+    *,
+    token_hash: bytes,
+    user_id: int,
+    expires_at: datetime,
+    id_token: str | None = None,
 ) -> None:
     """Store the hash of a session token, never the token.
 
@@ -958,9 +969,14 @@ def create_session(
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "insert into app_session (token_hash, user_id, expires_at) "
-            "values (%(token_hash)s, %(user_id)s, %(expires_at)s)",
-            {"token_hash": token_hash, "user_id": user_id, "expires_at": expires_at},
+            "insert into app_session (token_hash, user_id, expires_at, id_token) "
+            "values (%(token_hash)s, %(user_id)s, %(expires_at)s, %(id_token)s)",
+            {
+                "token_hash": token_hash,
+                "user_id": user_id,
+                "expires_at": expires_at,
+                "id_token": id_token,
+            },
         )
 
 
@@ -976,7 +992,7 @@ def session_by_hash(connection: Connection[Any], token_hash: bytes) -> Authentic
     with connection.cursor(row_factory=class_row(AuthenticatedSession)) as cursor:
         cursor.execute(
             "select s.token_hash, s.user_id, u.username, u.role, u.disabled, "
-            "       s.created_at, s.last_seen_at, s.expires_at, s.revoked_at "
+            "       s.created_at, s.last_seen_at, s.expires_at, s.revoked_at, u.source "
             "  from app_session s "
             "  join app_user u on u.id = s.user_id "
             " where s.token_hash = %(token_hash)s",
@@ -2973,3 +2989,112 @@ def set_oidc_enabled(connection: Connection[Any], *, enabled: bool, actor: str) 
             "Verify the settings first: sign-in through the provider turns on only with "
             "settings that passed Verify."
         ) from error
+
+
+# - signing in through the provider (O5) --------------------------------------
+
+
+def account_by_oidc(connection: Connection[Any], *, issuer: str, subject: str) -> Account | None:
+    """The account bound to this provider identity (B199: bound to `sub`, not the name)."""
+
+    with connection.cursor(row_factory=class_row(Account)) as cursor:
+        cursor.execute(
+            "select id, username, role, disabled, password_hash, source, break_glass, oidc_issuer "
+            "  from app_user where oidc_issuer = %(issuer)s and oidc_subject = %(subject)s",
+            {"issuer": issuer, "subject": subject},
+        )
+        return cursor.fetchone()
+
+
+def create_oidc_account(
+    connection: Connection[Any],
+    *,
+    username: str,
+    role: str,
+    issuer: str | None,
+    subject: str | None,
+) -> bool:
+    """A provider's account: no password; bound now, or later at its first sign-in
+    when an admin prepares it. False when the name or the identity is taken."""
+
+    try:
+        with connection.transaction(), connection.cursor() as cursor:
+            cursor.execute(
+                "insert into app_user (username, role, source, oidc_issuer, oidc_subject) "
+                "values (%(username)s, %(role)s, 'oidc', %(issuer)s, %(subject)s) "
+                "on conflict do nothing returning id",
+                {"username": username, "role": role, "issuer": issuer, "subject": subject},
+            )
+            return cursor.fetchone() is not None
+    except psycopg.errors.UniqueViolation:
+        return False
+
+
+def bind_oidc_account(
+    connection: Connection[Any], *, user_id: int, issuer: str, subject: str
+) -> bool:
+    """Bind a prepared provider account to the identity that first signs in as it."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update app_user set oidc_issuer = %(issuer)s, oidc_subject = %(subject)s "
+            " where id = %(user_id)s and source = 'oidc' and oidc_issuer is null",
+            {"issuer": issuer, "subject": subject, "user_id": user_id},
+        )
+        return cursor.rowcount == 1
+
+
+@dataclass(frozen=True, slots=True)
+class OidcLogin:
+    nonce: str
+    verifier: str
+    mode: str
+    pre_session_hash: bytes
+
+
+def start_oidc_login(
+    connection: Connection[Any],
+    *,
+    state: str,
+    nonce: str,
+    verifier: str,
+    mode: str,
+    pre_session_hash: bytes,
+) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into oidc_login (state, nonce, verifier, mode, pre_session_hash) "
+            "values (%(state)s, %(nonce)s, %(verifier)s, %(mode)s, %(pre)s)",
+            {
+                "state": state,
+                "nonce": nonce,
+                "verifier": verifier,
+                "mode": mode,
+                "pre": pre_session_hash,
+            },
+        )
+
+
+def use_oidc_login(
+    connection: Connection[Any], *, state: str, max_age_minutes: int = 10
+) -> OidcLogin | None:
+    """The sign-in `state` names, once: used here, so a second answer finds nothing."""
+
+    with connection.cursor(row_factory=class_row(OidcLogin)) as cursor:
+        cursor.execute(
+            "update oidc_login set used_at = statement_timestamp() "
+            " where state = %(state)s and used_at is null "
+            "   and created_at > statement_timestamp() - make_interval(mins => %(age)s) "
+            "returning nonce, verifier, mode, pre_session_hash",
+            {"state": state, "age": max_age_minutes},
+        )
+        return cursor.fetchone()
+
+
+def session_id_token(connection: Connection[Any], token_hash: bytes) -> str | None:
+    """The provider's id_token a session kept for signing out there, if any."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("select id_token from app_session where token_hash = %s", (token_hash,))
+        row = cursor.fetchone()
+    return None if row is None else row[0]

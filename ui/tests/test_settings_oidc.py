@@ -113,6 +113,9 @@ class SettingsOidc(LoginTestCase):
             self.addCleanup(patch.stop)
 
     def admin(self, *, installed: bool = True) -> TestClient:
+        # With sign-in through the provider on, only a break-glass account
+        # signs in with a password (B195); the operator is made one here.
+        self.account = replace(self.account, break_glass=True)
         settings = replace(
             configuration(),
             management_writes=True,

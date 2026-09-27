@@ -39,6 +39,11 @@
         <input type="hidden" name="action" value="verify">
         <button type="submit" class="secondary-button"{% if not provider.issuer or not installed %} disabled{% endif %}>Verify</button>
       </form>
+      <form method="post" action="/settings/oidc" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="test">
+        <button type="submit" class="secondary-button"{% if not provider.verified or not installed %} disabled{% endif %}>Test sign-in</button>
+      </form>
     </div>
   </div>
   {% if checks %}

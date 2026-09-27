@@ -102,6 +102,7 @@ class LoginTestCase(unittest.TestCase):
         #
         self.switches: dict[str, Any] = {}
         self.provider: Any = None
+        self.id_tokens: dict[bytes, str | None] = {}
 
         self.patches = [
             mock.patch("haproxy_ui.db.pool", return_value=self.pool),
@@ -133,6 +134,10 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haproxy_ui.db.feature_switches", side_effect=lambda _c: self.switches),
             # No OIDC provider row unless a test gives one (0041).
             mock.patch("haproxy_ui.db.oidc_provider", side_effect=lambda _c: self.provider),
+            mock.patch(
+                "haproxy_ui.db.session_id_token",
+                side_effect=lambda _c, token_hash: self.id_tokens.get(token_hash),
+            ),
             #
             # The profile pages read a profile's own apply jobs. Answered out
             # of whatever `recent_jobs` a test has patched in, so a test that
@@ -161,9 +166,16 @@ class LoginTestCase(unittest.TestCase):
         return self.failures
 
     def _create_session(
-        self, _c: object, *, token_hash: bytes, user_id: int, expires_at: datetime
+        self,
+        _c: object,
+        *,
+        token_hash: bytes,
+        user_id: int,
+        expires_at: datetime,
+        id_token: str | None = None,
     ) -> None:
         now = datetime.now(UTC)
+        self.id_tokens[token_hash] = id_token
         self.sessions[token_hash] = AuthenticatedSession(
             token_hash=token_hash,
             user_id=user_id,
@@ -174,6 +186,7 @@ class LoginTestCase(unittest.TestCase):
             last_seen_at=now,
             expires_at=expires_at,
             revoked_at=None,
+            source=self.account.source,
         )
 
     def _session(self, _c: object, token_hash: bytes) -> AuthenticatedSession | None:

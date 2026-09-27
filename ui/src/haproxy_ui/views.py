@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import ipaddress
 import json
 import logging
@@ -146,6 +147,7 @@ TEMPLATES.env.globals["new_request_key"] = lambda: str(uuid4())
 #
 TEMPLATES.env.globals["check_phrase"] = health.check_phrase
 TEMPLATES.env.globals["feature_on"] = features.is_on
+TEMPLATES.env.globals["through_provider"] = oidc_web.through_provider
 
 #
 # The theme is rendered into the document by the server, from a cookie the
@@ -449,6 +451,7 @@ def current_session(request: Request) -> AuthenticatedSession | None:
         verdict = auth.evaluate_session(session, config.session)
         if not verdict.usable or session is None:
             return None
+        oidc_web.note_session(session.source)
         #
         # The inactivity clock is moved forward in its own transaction, after
         # the read, and only when it has actually gone stale.
@@ -3302,6 +3305,10 @@ def build_router(config: Config) -> APIRouter:
                 **_users_context(request, session),
                 "problem": problem,
                 "form": {"username": "", "role": "reader", **(form or {})},
+                # Offered once a provider is set up: an account prepared for
+                # its first sign-in, when accounts are not created then (B198).
+                "sso_configured": (provider := _oidc_provider(request)) is not None
+                and provider.issuer is not None,
             },
             status_code=status_code,
         )
@@ -3320,6 +3327,7 @@ def build_router(config: Config) -> APIRouter:
         role: str = Form(default="", max_length=16),
         new_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
         repeat_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
+        provider_account: str = Form(default="", max_length=8),
         csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
     ) -> Response:
         gate = _admin_write_gate(request)
@@ -3329,14 +3337,43 @@ def build_router(config: Config) -> APIRouter:
         if not auth.csrf_token_is_valid(token, csrf_token):
             return PlainTextResponse("Refused", status_code=403)
         form = {"username": username, "role": role}
+        prepared = provider_account == "on"
         if not username:
             problem = "Name the account."
         elif role not in users.ROLES:
             problem = "Choose a role."
+        elif prepared:
+            problem = (
+                ""
+                if not (new_password or repeat_password)
+                else ("An account that signs in through the provider has no password here.")
+            )
         else:
             problem = _new_password_problem(new_password, repeat_password)
         if problem:
             return _new_user_page(request, gate, problem=problem, form=form, status_code=400)
+
+        if prepared:
+            with request.app.state.pool.connection() as connection:
+                if not db.create_oidc_account(
+                    connection, username=username, role=role, issuer=None, subject=None
+                ):
+                    connection.rollback()
+                    return _new_user_page(
+                        request,
+                        gate,
+                        problem="An account with that name already exists.",
+                        form=form,
+                        status_code=409,
+                    )
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="account_created",
+                    detail={"account": username, "role": role, "source": "oidc", "via": "web"},
+                )
+                connection.commit()
+            return RedirectResponse("/settings#users", status_code=303)
 
         with request.app.state.pool.connection() as connection:
             if not db.create_account(
@@ -3676,6 +3713,16 @@ def build_router(config: Config) -> APIRouter:
                 problem="" if ok else "Verify found a problem.",
                 status_code=200 if ok else 409,
             )
+
+        if action == "test":
+            #
+            # A sign-in that creates no session and shows what came back,
+            # bound to this admin's session rather than a pre-sign-in cookie.
+            #
+            started = _start_oidc(request, provider, mode="test", bound_to=token)
+            if isinstance(started, str):
+                return again(started, status_code=409)
+            return started
 
         if action in ("on", "off"):
             with request.app.state.pool.connection() as connection:
@@ -5300,7 +5347,7 @@ def build_router(config: Config) -> APIRouter:
         response: Response = TEMPLATES.TemplateResponse(
             request,
             "login.html",
-            {"error": None, "csrf_token": auth.csrf_token(pre_token)},
+            {"error": None, "csrf_token": auth.csrf_token(pre_token), "sso": _sso_button(request)},
         )
         response.set_cookie(
             auth.PRE_SESSION_COOKIE,
@@ -5340,11 +5387,25 @@ def build_router(config: Config) -> APIRouter:
             throttled = failures >= config.throttle.max_failures
 
             account = None if throttled else db.account_by_username(connection, username)
-            if account is None or account.disabled or account.password_hash is None:
+            provider = db.oidc_provider(connection)
+            #
+            # While sign-in goes through the provider, a password signs in a
+            # break-glass account only (B195) - unless the installation chose
+            # all local accounts. Refused exactly as a wrong password is, so the
+            # form does not say which accounts are break-glass.
+            #
+            held_back = (
+                account is not None
+                and provider is not None
+                and provider.enabled
+                and provider.local_login == "break_glass_only"
+                and not account.break_glass
+            )
+            if account is None or account.disabled or account.password_hash is None or held_back:
                 #
                 # The same time is spent whether the account is missing,
-                # disabled, throttled or the provider's (which has no
-                # password), so none of them can be told apart from outside.
+                # disabled, throttled, the provider's (which has no password)
+                # or held back, so none of them can be told apart from outside.
                 #
                 auth.burn_absent_user_time(password)
                 accepted = False
@@ -5624,6 +5685,9 @@ def build_router(config: Config) -> APIRouter:
         session = current_session(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
+        if session.source == "oidc":
+            # The provider's account has no password here to change.
+            return PlainTextResponse("Not found", status_code=404)
         return _password_page(
             request, config, session, changed=request.query_params.get("changed") == "1"
         )
@@ -5648,6 +5712,8 @@ def build_router(config: Config) -> APIRouter:
         session = current_session(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
+        if session.source == "oidc":
+            return PlainTextResponse("Not found", status_code=404)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         if not auth.csrf_token_is_valid(token, csrf_token):
             return PlainTextResponse("Refused", status_code=403)
@@ -5696,6 +5762,287 @@ def build_router(config: Config) -> APIRouter:
         # 303, so a refresh of the answer cannot send the form again.
         return RedirectResponse("/account/password?changed=1", status_code=303)
 
+    def _oidc_redirect(request: Request) -> str:
+        return oidc_web.redirect_uri(str(request.base_url))
+
+    def _start_oidc(
+        request: Request,
+        provider: db.OidcProvider,
+        *,
+        mode: str,
+        bound_to: str,
+    ) -> Response | str:
+        """Record a sign-in in progress and answer where the browser goes (O5).
+
+        `bound_to` is the cookie the answer must come back with: the
+        pre-sign-in cookie for a sign-in, the session for Test sign-in. Its
+        hash is kept, never the token.
+        """
+
+        tokens = oidc_web.new_login_tokens()
+        redirect = _oidc_redirect(request)
+        try:
+            found = oidc_web.ask("discover", provider, redirect=redirect)
+        except (oidc_web.OidcUnavailable, oidc_web.OidcRefused) as error:
+            return f"Sign-in through the provider is not available: {error}"
+        with request.app.state.pool.connection() as connection:
+            db.start_oidc_login(
+                connection,
+                state=tokens.state,
+                nonce=tokens.nonce,
+                verifier=tokens.verifier,
+                mode=mode,
+                pre_session_hash=auth.token_hash(bound_to),
+            )
+            connection.commit()
+        return RedirectResponse(
+            oidc_web.authorization_url(provider, found, tokens, redirect=redirect), status_code=303
+        )
+
+    @router.get("/login/oidc")
+    def oidc_sign_in(request: Request) -> Response:
+        """The provider button: off to the provider, bound to this browser."""
+
+        if current_session(request) is not None:
+            return RedirectResponse("/", status_code=303)
+        provider = _oidc_provider(request)
+        if provider is None or not provider.enabled:
+            return RedirectResponse("/login", status_code=303)
+        pre_token = request.cookies.get(auth.PRE_SESSION_COOKIE, "") or auth.new_session_token()
+        started = _start_oidc(request, provider, mode="sign_in", bound_to=pre_token)
+        if isinstance(started, str):
+            return _login_again(request, config, error=started)
+        started.set_cookie(
+            auth.PRE_SESSION_COOKIE,
+            pre_token,
+            max_age=600,
+            httponly=True,
+            secure=config.session.cookie_secure,
+            samesite="lax",
+            path="/login",
+        )
+        return started
+
+    @router.get("/login/oidc/callback", response_class=HTMLResponse)
+    def oidc_callback(request: Request) -> Response:
+        """The provider's answer: a code to exchange, or why it said no (O5, B195-B199)."""
+
+        state = request.query_params.get("state", "")[:128]
+        code = request.query_params.get("code", "")[:4096]
+        address = client_address(request)
+        with request.app.state.pool.connection() as connection:
+            pending = db.use_oidc_login(connection, state=state) if state else None
+            connection.commit()
+        if pending is None:
+            return _login_again(
+                request, config, error="That sign-in expired or was already used. Try again."
+            )
+        #
+        # The answer must come back to the browser that asked: a sign-in to
+        # the pre-sign-in cookie, a Test sign-in to the admin's session. Else
+        # a code obtained elsewhere could be finished here.
+        #
+        bound = request.cookies.get(
+            auth.SESSION_COOKIE if pending.mode == "test" else auth.PRE_SESSION_COOKIE, ""
+        )
+        if not bound or not hmac.compare_digest(auth.token_hash(bound), pending.pre_session_hash):
+            return _login_again(
+                request, config, error="That sign-in was started in another browser. Try again."
+            )
+
+        gate: AuthenticatedSession | Response | None = None
+        if pending.mode == "test":
+            gate = _admin_write_gate(request)
+            if not isinstance(gate, AuthenticatedSession):
+                return gate
+
+        provider = _oidc_provider(request)
+        if provider is None or provider.issuer is None:
+            return _login_again(
+                request, config, error="Sign-in through the provider is not set up."
+            )
+        refusal = request.query_params.get("error", "")[:64]
+        if refusal:
+            said = request.query_params.get("error_description", "")[:256] or refusal
+            message = f"The provider did not sign you in: {said}"
+            if isinstance(gate, AuthenticatedSession):
+                return _oidc_page(request, gate, provider, problem=message, status_code=409)
+            return _login_again(request, config, error=message)
+        if not code:
+            return _login_again(
+                request, config, error="The provider answered without a code. Try again."
+            )
+
+        try:
+            signed_in = oidc_web.ask(
+                "exchange",
+                provider,
+                redirect=_oidc_redirect(request),
+                code=code,
+                verifier=pending.verifier,
+                nonce=pending.nonce,
+                username_claim=provider.username_claim,
+                groups_claim=provider.groups_claim,
+                claims=pending.mode == "test",
+            )
+        except (oidc_web.OidcUnavailable, oidc_web.OidcRefused) as error:
+            message = f"The provider's answer was refused: {error}"
+            if isinstance(gate, AuthenticatedSession):
+                return _oidc_page(request, gate, provider, problem=message, status_code=409)
+            with request.app.state.pool.connection() as connection:
+                db.record_audit_event(
+                    connection,
+                    actor=None,
+                    action="login_failed",
+                    detail={
+                        "client_ip": address,
+                        "reason": "oidc_refused",
+                        "via": "oidc",
+                        "error": str(error),
+                    },
+                )
+                connection.commit()
+            return _login_again(request, config, error=message)
+
+        groups = [group for group in signed_in.get("groups", []) if isinstance(group, str)]
+        role = oidc_web.role_for(provider, groups)
+        username = str(signed_in.get("username", ""))[:64]
+        issuer, subject = str(signed_in.get("issuer", "")), str(signed_in.get("subject", ""))
+
+        if isinstance(gate, AuthenticatedSession):
+            with request.app.state.pool.connection() as connection:
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="oidc_tested",
+                    detail={"issuer": issuer, "username": username, "role": role, "via": "web"},
+                )
+                connection.commit()
+            return TEMPLATES.TemplateResponse(
+                request,
+                "settings-oidc-test.html",
+                {
+                    "username": gate.username,
+                    "role": gate.role,
+                    "csrf_token": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
+                    "section": "settings",
+                    "management_writes": config.management_writes,
+                    "result": signed_in,
+                    "groups": groups,
+                    "granted": role,
+                    "provider": provider,
+                    "claims": json.dumps(
+                        signed_in.get("claims", {}), indent=2, sort_keys=True, default=str
+                    ),
+                },
+            )
+
+        def refuse(message: str, reason: str) -> Response:
+            with request.app.state.pool.connection() as connection:
+                db.record_audit_event(
+                    connection,
+                    actor=username or None,
+                    action="login_failed",
+                    detail={
+                        "client_ip": address,
+                        "reason": reason,
+                        "via": "oidc",
+                        "issuer": issuer,
+                    },
+                )
+                connection.commit()
+            return _login_again(request, config, error=message)
+
+        if not provider.enabled:
+            return refuse("Sign-in through the provider is off.", "oidc_off")
+        if role is None:
+            return refuse(
+                "Your account at the provider is in neither group that gives access here.",
+                "no_group",
+            )
+        if not username or not subject:
+            return refuse("The provider sent no name for you.", "no_username")
+
+        with request.app.state.pool.connection() as connection:
+            account = db.account_by_oidc(connection, issuer=issuer, subject=subject)
+            if account is None:
+                named = db.account_by_username(connection, username)
+                if named is not None:
+                    #
+                    # A prepared provider account is bound once, to whoever
+                    # first signs in as it; any other account of the same
+                    # name is never taken over (B196).
+                    #
+                    if (
+                        named.source != "oidc"
+                        or named.oidc_issuer is not None
+                        or not db.bind_oidc_account(
+                            connection, user_id=named.id, issuer=issuer, subject=subject
+                        )
+                    ):
+                        connection.rollback()
+                        return refuse(
+                            f"An account named {username} already exists here.", "name_taken"
+                        )
+                elif not provider.auto_create:
+                    connection.rollback()
+                    return refuse(f"There is no account here for {username}.", "no_account")
+                elif not db.create_oidc_account(
+                    connection, username=username, role=role, issuer=issuer, subject=subject
+                ):
+                    connection.rollback()
+                    return refuse(f"An account named {username} already exists here.", "name_taken")
+                account = db.account_by_oidc(connection, issuer=issuer, subject=subject)
+            if account is None or account.disabled:
+                connection.rollback()
+                return refuse("That account is disabled here.", "disabled")
+            if account.role != role:
+                try:
+                    db.set_role(connection, user_id=account.id, role=role)
+                except db.LastAdmin:
+                    connection.rollback()
+                    return refuse(
+                        "Your role at the provider changed, and this is the last active admin here.",
+                        "last_admin",
+                    )
+                db.record_audit_event(
+                    connection,
+                    actor=account.username,
+                    action="role_changed",
+                    detail={
+                        "account": account.username,
+                        "role": role,
+                        "previous": account.role,
+                        "via": "oidc",
+                    },
+                )
+            token = auth.new_session_token()
+            expires_at = auth.absolute_expiry(config.session)
+            db.create_session(
+                connection,
+                token_hash=auth.token_hash(token),
+                user_id=account.id,
+                expires_at=expires_at,
+                id_token=str(signed_in.get("id_token"))
+                if provider.logout_mode == "provider"
+                else None,
+            )
+            db.record_login_attempt(
+                connection, username=account.username, client_ip=address, succeeded=True
+            )
+            db.record_audit_event(
+                connection,
+                actor=account.username,
+                action="login",
+                detail={"client_ip": address, "role": role, "via": "oidc", "issuer": issuer},
+            )
+            connection.commit()
+
+        response = RedirectResponse("/", status_code=303)
+        _cookie(response, config, token, expires_at)
+        response.delete_cookie(auth.PRE_SESSION_COOKIE, path="/login")
+        return response
+
     @router.post("/logout")
     def logout(
         request: Request,
@@ -5709,6 +6056,8 @@ def build_router(config: Config) -> APIRouter:
         with request.app.state.pool.connection() as connection:
             digest = auth.token_hash(token)
             session = db.session_by_hash(connection, digest)
+            id_token = db.session_id_token(connection, digest)
+            provider = db.oidc_provider(connection)
             db.revoke_session(connection, digest)
             db.record_audit_event(
                 connection,
@@ -5717,6 +6066,29 @@ def build_router(config: Config) -> APIRouter:
                 detail={"client_ip": client_address(request)},
             )
             connection.commit()
+        #
+        # Signing out at the provider too, when the installation chose it
+        # (B197): the session here is already ended; the provider's is its own
+        # to end, and a provider that cannot be asked leaves this one done.
+        #
+        if (
+            id_token
+            and provider is not None
+            and provider.enabled
+            and provider.logout_mode == "provider"
+        ):
+            try:
+                found = oidc_web.ask("discover", provider, redirect=_oidc_redirect(request))
+            except (oidc_web.OidcUnavailable, oidc_web.OidcRefused):
+                found = {}
+            onward = oidc_web.end_session_url(
+                found,
+                provider,
+                id_token=id_token,
+                back_to=str(request.base_url).rstrip("/") + "/login",
+            )
+            if onward is not None:
+                response = RedirectResponse(onward, status_code=303)
         response.delete_cookie(auth.SESSION_COOKIE, path="/")
         return response
 
@@ -7001,6 +7373,14 @@ def _network_page(request: Request, config: Config) -> Response:
     )
 
 
+def _sso_button(request: Request) -> str | None:
+    """The provider button's text while sign-in goes through one, else None."""
+
+    with request.app.state.pool.connection() as connection:
+        provider = db.oidc_provider(connection)
+    return provider.button_text if provider is not None and provider.enabled else None
+
+
 def _login_again(request: Request, config: Config, *, error: str | None = None) -> Response:
     """Render a fresh login form, with a fresh token to post it with."""
 
@@ -7008,7 +7388,7 @@ def _login_again(request: Request, config: Config, *, error: str | None = None) 
     response: Response = TEMPLATES.TemplateResponse(
         request,
         "login.html",
-        {"error": error, "csrf_token": auth.csrf_token(pre_token)},
+        {"error": error, "csrf_token": auth.csrf_token(pre_token), "sso": _sso_button(request)},
         status_code=401 if error else 200,
     )
     response.set_cookie(

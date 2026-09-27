@@ -2207,3 +2207,149 @@ class TheProviderRowFromTheWeb(unittest.TestCase):
             after = self.row(connection)
         self.assertEqual((after.enabled, after.button_text, after.verified), (True, "Other", True))
         self.assertEqual(after.revision, provider.revision + 1)
+
+
+# Three dotted words, the shape of an id_token and nothing more.
+DOTTED_FIXTURE = "header.payload.signature"
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class SigningInThroughTheProviderInTheDatabase(unittest.TestCase):
+    """O5's database functions, under the web role's grants (B195-B199)."""
+
+    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def setUp(self) -> None:
+        OidcAccounts.reset(self)  # type: ignore[arg-type]
+        with self.connect() as connection:
+            connection.execute(
+                "insert into app_user (username, password_hash, role, break_glass) "
+                "values ('admin', %s, 'admin', true)",
+                (OidcAccounts.HASH,),
+            )
+            connection.commit()
+
+    def tearDown(self) -> None:
+        OidcAccounts.reset(self)  # type: ignore[arg-type]
+
+    def web(self) -> psycopg.Connection:
+        return self.connect("HAPROXY_UI_TEST_WEB_ROLE")
+
+    def test_an_account_is_created_found_by_identity_and_never_twice(self) -> None:
+        with self.web() as connection:
+            self.assertTrue(
+                db.create_oidc_account(
+                    connection,
+                    username="alice",
+                    role="admin",
+                    issuer="https://id.example/",
+                    subject="s1",
+                )
+            )
+            self.assertFalse(
+                db.create_oidc_account(
+                    connection,
+                    username="alice2",
+                    role="admin",
+                    issuer="https://id.example/",
+                    subject="s1",
+                )
+            )
+            self.assertFalse(
+                db.create_oidc_account(
+                    connection,
+                    username="ADMIN",
+                    role="reader",
+                    issuer="https://id.example/",
+                    subject="s2",
+                )
+            )
+            connection.commit()
+            found = db.account_by_oidc(connection, issuer="https://id.example/", subject="s1")
+        if found is None:
+            self.fail("no account for the identity")
+        self.assertEqual(
+            (found.username, found.source, found.password_hash), ("alice", "oidc", None)
+        )
+
+    def test_a_prepared_account_is_bound_once(self) -> None:
+        with self.web() as connection:
+            db.create_oidc_account(
+                connection, username="bob", role="reader", issuer=None, subject=None
+            )
+            bob = db.account_by_username(connection, "bob")
+            if bob is None:
+                self.fail("no prepared account")
+            self.assertTrue(
+                db.bind_oidc_account(
+                    connection, user_id=bob.id, issuer="https://id.example/", subject="s9"
+                )
+            )
+            self.assertFalse(
+                db.bind_oidc_account(
+                    connection, user_id=bob.id, issuer="https://id.example/", subject="s10"
+                )
+            )
+            admin = db.account_by_username(connection, "admin")
+            if admin is None:
+                self.fail("no admin")
+            self.assertFalse(
+                db.bind_oidc_account(
+                    connection, user_id=admin.id, issuer="https://id.example/", subject="s11"
+                )
+            )
+            connection.commit()
+
+    def test_a_sign_in_in_progress_is_used_once_and_expires(self) -> None:
+        pre = auth.token_hash("pre")
+        with self.web() as connection:
+            for state in ("a" * 43, "b" * 43):
+                db.start_oidc_login(
+                    connection,
+                    state=state,
+                    nonce="n" * 43,
+                    verifier="v" * 43,
+                    mode="sign_in",
+                    pre_session_hash=pre,
+                )
+            connection.commit()
+            used = db.use_oidc_login(connection, state="a" * 43)
+            again = db.use_oidc_login(connection, state="a" * 43)
+            connection.commit()
+        if used is None:
+            self.fail("the sign-in was not found")
+        self.assertEqual((used.nonce, used.mode, used.pre_session_hash), ("n" * 43, "sign_in", pre))
+        self.assertIsNone(again)
+        with self.connect() as connection:
+            connection.execute("update oidc_login set created_at = now() - interval '11 minutes'")
+            connection.commit()
+        with self.web() as connection:
+            self.assertIsNone(db.use_oidc_login(connection, state="b" * 43))
+
+    def test_a_session_keeps_the_id_token_and_says_its_account_s_kind(self) -> None:
+        with self.web() as connection:
+            db.create_oidc_account(
+                connection,
+                username="alice",
+                role="admin",
+                issuer="https://id.example/",
+                subject="s1",
+            )
+            account = db.account_by_oidc(connection, issuer="https://id.example/", subject="s1")
+            if account is None:
+                self.fail("no account")
+            digest = auth.token_hash("session")
+            db.create_session(
+                connection,
+                token_hash=digest,
+                user_id=account.id,
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                **{"id_token": DOTTED_FIXTURE},
+            )
+            connection.commit()
+            session = db.session_by_hash(connection, digest)
+            self.assertEqual(db.session_id_token(connection, digest), DOTTED_FIXTURE)
+        if session is None:
+            self.fail("no session")
+        self.assertEqual(session.source, "oidc")

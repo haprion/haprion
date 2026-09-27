@@ -1,0 +1,29 @@
+{% extends "layout.html" %}
+{% block title %}Test sign-in — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  What the provider answered to a Test sign-in (B197): who, which groups, the
+  role those give here, and the claims as they came. No session was made.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Test sign-in</h1><p class="page-lede"><a href="/settings/oidc">OIDC configuration</a></p></div>
+</section>
+
+<p class="preview-notice{% if not granted %} form-problem{% endif %}"><span class="status-orb status-{{ 'healthy' if granted else 'critical' }}" aria-hidden="true"></span><strong>{% if granted %}{{ result.username }} would sign in as {{ granted }}.{% else %}{{ result.username }} would be refused: in neither group.{% endif %}</strong></p>
+
+<div class="cluster-list">
+<section class="cluster-card">
+  <dl class="cluster-facts">
+    <div><dt>Username</dt><dd>{{ result.username }}</dd></div>
+    <div><dt>Subject</dt><dd>{{ result.subject }}</dd></div>
+    <div><dt>Groups</dt><dd>{{ groups | join(', ') if groups else 'None' }}</dd></div>
+    <div><dt>Userinfo</dt><dd>{{ result.userinfo }}</dd></div>
+  </dl>
+  <div class="cluster-actions">
+    <div><strong>Claims</strong><span>{{ provider.username_claim }} and {{ provider.groups_claim }} are read from these.</span></div>
+    <div class="action-buttons"><a class="secondary-button" href="/settings/oidc">Back</a></div>
+  </div>
+  <pre class="oidc-claims"><code>{{ claims }}</code></pre>
+</section>
+</div>
+{% endblock %}

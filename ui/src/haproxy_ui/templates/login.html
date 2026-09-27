@@ -18,16 +18,20 @@
     <p>Sign in to view cluster health and configuration state.</p>
   </div>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  {% if sso %}
+  <a class="primary-button login-sso" href="/login/oidc">{{ sso }}</a>
+  <p class="login-divider"><span>or with a local account</span></p>
+  {% endif %}
   <form method="post" action="/login" autocomplete="on" class="login-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label for="username">Username</label>
-    <input id="username" name="username" type="text" maxlength="64" required autofocus
+    <input id="username" name="username" type="text" maxlength="64" required{% if not sso %} autofocus{% endif %}
            autocapitalize="none" autocorrect="off" spellcheck="false"
            autocomplete="username">
     <label for="password">Password</label>
     <input id="password" name="password" type="password" required
            autocomplete="current-password">
-    <button class="primary-button" type="submit">Sign in</button>
+    <button class="{{ 'secondary-button' if sso else 'primary-button' }}" type="submit">Sign in</button>
   </form>
   <p class="login-footnote">Access is restricted to authorised operators.</p>
 </section>

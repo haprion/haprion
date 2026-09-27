@@ -77,7 +77,7 @@
   2026-09-21): the providers, the receivers, and the two ways a certificate
   comes in - with *New* rightmost, where the eye ends.
 #}
-{% macro page_actions() %}<span class="action-group"><a class="secondary-button" href="/dns-profiles">DNS providers</a><a class="secondary-button" href="/ndes-profiles">NDES providers</a></span>{% if certificates.registry %}<span class="action-group"><a class="secondary-button" href="/certificates/receivers">Receivers</a></span><span class="action-group"><a class="secondary-button" href="/certificates/import">Import certificate</a><a class="secondary-button" href="/certificates/new">New certificate</a></span>{% endif %}{% endmacro %}
+{% macro page_actions() %}<span class="action-group"><a class="secondary-button" href="/dns-profiles">DNS providers</a><a class="secondary-button" href="/ndes-profiles">NDES providers</a></span>{% if certificates.registry %}{% if feature_on('cert_receivers') %}<span class="action-group"><a class="secondary-button" href="/certificates/receivers">Receivers</a></span>{% endif %}<span class="action-group"><a class="secondary-button" href="/certificates/import">Import certificate</a><a class="secondary-button" href="/certificates/new">New certificate</a></span>{% endif %}{% endmacro %}
 
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
 <script defer src="{{ url_for('static', path='/certificates.js') }}?v={{ asset_token }}"></script>
@@ -106,10 +106,10 @@
   and the detail row opens the same way. See `certificates.js`.
 #}
 {% if certificates.registry %}
-<div class="page-ranges-sticky certificate-strip"><nav class="traffic-ranges page-ranges certificate-views" aria-label="Certificate views">
+<div class="page-ranges-sticky certificate-strip">{% if feature_on('cert_receivers') %}<nav class="traffic-ranges page-ranges certificate-views" aria-label="Certificate views">
   <a href="?view=registry"{% if chosen_view == 'registry' %} class="is-current" aria-current="true"{% endif %}><span>All certificates <b>{{ certificates.registry.certificate_count }}</b></span><span class="segment-reserve" aria-hidden="true">All certificates <b>{{ certificates.registry.certificate_count }}</b></span></a>
   <a href="?view=clusters"{% if chosen_view == 'clusters' %} class="is-current" aria-current="true"{% endif %}><span>Certificates on clusters <b>{{ certificates.on_clusters_count }}</b></span><span class="segment-reserve" aria-hidden="true">Certificates on clusters <b>{{ certificates.on_clusters_count }}</b></span></a>
-</nav>{% if management_writes and role == 'admin' %}<div class="certificate-actions">{{ page_actions() }}</div>{% endif %}</div>
+</nav>{% endif %}{% if management_writes and role == 'admin' %}<div class="certificate-actions">{{ page_actions() }}</div>{% endif %}</div>
 {% endif %}
 
 <section class="metric-grid certificate-summary" aria-label="Certificate summary">

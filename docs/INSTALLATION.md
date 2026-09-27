@@ -2677,6 +2677,23 @@ second password is asked. A new role and a new password are saved together, in
 one transaction. The admin's own account is not changed there, and the
 database still refuses to leave no active admin. There is no delete, in the interface or the tool.
 
+Two capabilities can be turned off under **Settings → Features** (schema
+`0040`), by an admin on an installation with `management_writes` on. Off hides
+the capability's tab, pages and operations; a kept URL answers 404.
+
+- **Certificate receivers** off hides the receivers page, the receiver choices
+  in the certificate forms and in *Publish to…*/*Remove from…*, and the
+  certificates page's second view. Receivers already registered go on getting
+  renewed certificates, and a certificate's *Used by* still names them.
+- **Node backups** off also stops every cluster's backup timer: one
+  `backup_schedule` job per running timer, with its schedule unchanged and
+  `enabled: false`. The schedules it stopped are remembered, and turning it on
+  starts exactly those again. Archives already taken are kept. It is refused
+  while a cluster has a job running, while a restore is running or waiting,
+  and for a cluster whose schedule the form cannot write back.
+
+`haproxy-state-backup` and the restore commands on the manager work either way.
+
 `-e` names the environment, and each one is a root-owned file written by
 `02-platform-database`: `/etc/haproxy-manager/ui-admin-<environment>.conf`,
 holding the database name and the role to connect as. Prod and dev therefore

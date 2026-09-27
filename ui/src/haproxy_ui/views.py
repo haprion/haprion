@@ -33,7 +33,7 @@ from typing import Annotated, Any
 from urllib.parse import quote
 from uuid import UUID, uuid4, uuid5
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from haproxy_mgmt import backup_retention, backup_schedule, proxy_model
@@ -64,6 +64,7 @@ from haproxy_ui import (
     db,
     demo,
     dns_profile_form,
+    features,
     health,
     history,
     jobs,
@@ -143,6 +144,7 @@ TEMPLATES.env.globals["new_request_key"] = lambda: str(uuid4())
 # a web page words something is not the engine's business.
 #
 TEMPLATES.env.globals["check_phrase"] = health.check_phrase
+TEMPLATES.env.globals["feature_on"] = features.is_on
 
 #
 # The theme is rendered into the document by the server, from a cookie the
@@ -453,6 +455,12 @@ def current_session(request: Request) -> AuthenticatedSession | None:
         if datetime.now(UTC) - session.last_seen_at > TOUCH_AFTER:
             db.touch_session(connection, digest)
             connection.commit()
+        #
+        # What this installation has turned off, for the menu and the pages
+        # alike (B193). Beside the clock for the same reason: every signed-in
+        # page passes through here before it draws anything.
+        #
+        features.read_in(db.feature_switches(connection))
     return session
 
 
@@ -471,8 +479,38 @@ def require_session(request: Request) -> AuthenticatedSession:
     return session
 
 
+#
+# What Settings says after a switch has been flipped, by `?switched=`.
+#
+SWITCHED = {
+    "cert_receivers-off": "Certificate receivers turned off. Registered receivers still get new certificates.",
+    "cert_receivers-on": "Certificate receivers turned on.",
+    "node_backups-off": "Node backups turned off. The clusters' schedules are being stopped; see Jobs.",
+    "node_backups-on": "Node backups turned on. The schedules that were stopped are being started again.",
+}
+
+
+def hidden_by_a_switch(request: Request) -> None:
+    """Answer 404 for a page a switched-off feature hides (B193).
+
+    A dependency of the whole router, so no handler under a hidden path can be
+    reached by a URL somebody kept - not the page, not a form's POST. The
+    switches are read only for those paths; every other request costs nothing.
+    """
+
+    path = request.url.path
+    if not any(
+        path == prefix or path.startswith(f"{prefix}/") for prefix, _ in features.HIDDEN_PATHS
+    ):
+        return
+    with request.app.state.pool.connection() as connection:
+        features.read_in(db.feature_switches(connection))
+    if features.hiding(path):
+        raise HTTPException(status_code=404, detail="Not found")
+
+
 def build_router(config: Config) -> APIRouter:
-    router = APIRouter()
+    router = APIRouter(dependencies=[Depends(hidden_by_a_switch)])
 
     @router.get("/", response_class=HTMLResponse)
     def index(request: Request) -> Response:
@@ -1753,6 +1791,12 @@ def build_router(config: Config) -> APIRouter:
         # the complete list, and the one the certificate actions return to.
         #
         chosen = "clusters" if request.query_params.get("view") == "clusters" else "registry"
+        #
+        # With receivers switched off the registry is the one view (B193): the
+        # complete list, where every certificate action lives.
+        #
+        if not features.is_on(features.CERT_RECEIVERS):
+            chosen = "registry"
         if overview.registry is None:
             chosen = "clusters"
         sort, asked = certificates.TABLE.chosen(request)
@@ -2383,9 +2427,19 @@ def build_router(config: Config) -> APIRouter:
                 for profile in ndes_rows
                 if ndes_profile_form.profile_status(profile.id, profile.revision, recent).usable
             )
+        #
+        # With receivers switched off (B193) no form offers one and every
+        # form refuses one as not registered: the issue, import and upload
+        # forms and Publish to... / Remove from... all read this.
+        #
+        offered = (
+            overview.registry.receivers
+            if overview.registry is not None and features.is_on(features.CERT_RECEIVERS)
+            else ()
+        )
         return certificate_form.IssueChoices(
             clusters=tuple(clusters),
-            receivers=overview.registry.receivers if overview.registry else (),
+            receivers=offered,
             dns_profiles=usable_profiles,
             profiles_required=profiles_required,
             ndes_profiles=usable_ndes,
@@ -2953,10 +3007,23 @@ def build_router(config: Config) -> APIRouter:
         gate = _admin_write_gate(request)
         if not isinstance(gate, AuthenticatedSession):
             return gate
+        switched = request.query_params.get("switched", "")[:32]
+        return _settings_page(request, gate, done=SWITCHED.get(switched, ""))
+
+    def _settings_page(
+        request: Request,
+        gate: AuthenticatedSession,
+        *,
+        problem: str = "",
+        done: str = "",
+        status_code: int = 200,
+    ) -> Response:
         _token, registry, context = _page_context(request, gate)
         entry = registry.interface if registry else None
         served = registry.served if registry else None
         sort, asked = users.TABLE.chosen(request)
+        with request.app.state.pool.connection() as connection:
+            switches = db.feature_switches(connection)
         response = TEMPLATES.TemplateResponse(
             request,
             "settings.html",
@@ -2981,11 +3048,179 @@ def build_router(config: Config) -> APIRouter:
                     _account_rows(request), signed_in_as=gate.username, sort=sort
                 ),
                 "user_sorts": users.TABLE.links(sort),
+                "features": [
+                    (feature, switches[feature.name].enabled)
+                    for feature in features.FEATURES
+                    if feature.name in switches
+                ],
+                "problem": problem,
+                "done": done,
             },
+            status_code=status_code,
         )
         if asked:
             users.TABLE.remember(response, sort, secure=config.session.cookie_secure)
         return response
+
+    # - Settings -> Features (§16.5, B193) ---------------------------------
+    #
+    # Two switches. Receivers off hides them; node backups off also stops
+    # every cluster's backup timer with the schedule job the backup page
+    # queues, remembers what it stopped, and on starts exactly that again.
+    # The flip and its jobs are one transaction: a busy cluster refuses all of
+    # it, so a switch never reads off while a timer it meant to stop still runs.
+    #
+
+    def _backup_overview(request: Request) -> Any:
+        clusters, backup_rows, captured_at = read_source(request, config, BACKUP_SOURCE)
+        return backups.build_backup_overview(
+            clusters,
+            backup_rows,
+            now=captured_at,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            captured=captured_at is not None,
+        )
+
+    def _restore_waiting(request: Request) -> bool:
+        with request.app.state.pool.connection() as connection:
+            rows = [
+                job
+                for operation in node_restores.OPERATIONS
+                for job in db.operation_jobs(connection, operation, limit=100)
+            ]
+        runs = node_restores.recent_runs(rows, shown=metrics.shown, now=datetime.now(UTC))
+        waiting = {
+            node_restores.STAGE_LABELS[stage][0] for stage in ("working", "fingerprint", "confirm")
+        }
+        return any(run.label in waiting for listed in runs.values() for run in listed)
+
+    @router.get("/settings/features/{name}", response_class=HTMLResponse)
+    def feature_page(request: Request, name: str) -> Response:
+        """The question before turning a feature off, when off does more than hide."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        feature = features.BY_NAME.get(name)
+        if feature is None:
+            return PlainTextResponse("Not found", status_code=404)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings-feature.html",
+            {
+                "username": gate.username,
+                "role": gate.role,
+                "csrf_token": auth.csrf_token(token),
+                "section": "settings",
+                "management_writes": config.management_writes,
+                "feature": feature,
+            },
+        )
+
+    @router.post("/settings/features/{name}", response_class=HTMLResponse)
+    def switch_feature(
+        request: Request,
+        name: str,
+        enabled: str = Form(default="", max_length=3),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        feature = features.BY_NAME.get(name)
+        if feature is None or enabled not in ("on", "off"):
+            return PlainTextResponse("Not found", status_code=404)
+        want = enabled == "on"
+
+        def refused(problem: str, status_code: int = 409) -> Response:
+            return _settings_page(request, gate, problem=problem, status_code=status_code)
+
+        with request.app.state.pool.connection() as connection:
+            current = db.feature_switches(connection).get(name)
+        if current is None:
+            return PlainTextResponse("Not found", status_code=404)
+        if current.enabled == want:
+            return RedirectResponse(f"/settings?switched={name}-{enabled}", status_code=303)
+
+        remembered: dict[str, Any] = {}
+        schedules: dict[str, dict[str, Any]] = {}
+        if name == features.NODE_BACKUPS and not want:
+            if _restore_waiting(request):
+                return refused("A node restore is running or waiting. Finish or discard it first.")
+            try:
+                schedules = features.schedules_to_stop(_backup_overview(request))
+            except features.SwitchRefused as problem:
+                return refused(str(problem))
+            remembered = {"schedules": schedules}
+        elif name == features.NODE_BACKUPS:
+            schedules = features.remembered_schedules(current.remembered)
+        asked = [
+            (cluster, {**schedule, "enabled": want})
+            for cluster, schedule in sorted(schedules.items())
+        ]
+        try:
+            for cluster, payload in asked:
+                operations.prepare(
+                    operation="backup_schedule",
+                    cluster=cluster,
+                    request_id=uuid4(),
+                    payload=payload,
+                )
+        except operations.BadPayload:
+            return refused("A remembered backup schedule could not be written back.")
+
+        with request.app.state.pool.connection() as connection:
+            if not db.set_feature_switch(
+                connection,
+                name=name,
+                enabled=want,
+                remembered=remembered,
+                actor=gate.username,
+            ):
+                connection.rollback()
+                return RedirectResponse(f"/settings?switched={name}-{enabled}", status_code=303)
+            try:
+                queued = [
+                    db.queue_job(
+                        connection,
+                        operation="backup_schedule",
+                        cluster=cluster,
+                        payload=payload,
+                        idempotency_key=uuid4(),
+                    )
+                    for cluster, payload in asked
+                ]
+            except db.ClusterBusy:
+                connection.rollback()
+                return refused(
+                    "A job is running on one of the clusters. Try again when it has finished."
+                )
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="feature_switched",
+                detail={
+                    "feature": name,
+                    "enabled": want,
+                    "schedules": sorted(schedules),
+                    "via": "web",
+                },
+            )
+            for job in queued:
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="queue_job",
+                    cluster=job.cluster,
+                    request_id=job.request_id,
+                    detail={"operation": job.operation, "job": job.id},
+                )
+            connection.commit()
+        return RedirectResponse(f"/settings?switched={name}-{enabled}", status_code=303)
 
     # - Settings -> Users (§16.4 U4, B189) ----------------------------------
     #
@@ -4975,6 +5210,13 @@ def build_router(config: Config) -> APIRouter:
             return PlainTextResponse("Refused", status_code=403)
         if session.role != "admin":
             return PlainTextResponse("Refused", status_code=403)
+        #
+        # A switched-off feature has no operations either (B193), for the
+        # reason `management_writes` gives above: no such endpoint.
+        #
+        owner = features.HIDDEN_OPERATIONS.get(operation)
+        if owner is not None and not features.is_on(owner):
+            return PlainTextResponse("Not found", status_code=404)
 
         payload: dict[str, Any] = {}
         if operation in {"deploy", "cert_deploy"}:

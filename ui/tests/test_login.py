@@ -96,6 +96,11 @@ class LoginTestCase(unittest.TestCase):
         self.attempts: list[tuple[str, str, bool]] = []
         self.audit: list[str] = []
         self.failures = 0
+        #
+        # Every feature on unless a test turns one off (0040, B193): an empty
+        # table reads as all on.
+        #
+        self.switches: dict[str, Any] = {}
 
         self.patches = [
             mock.patch("haproxy_ui.db.pool", return_value=self.pool),
@@ -124,6 +129,7 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
             # Settings draws its Users card from this; none unless a test says.
             mock.patch("haproxy_ui.db.account_rows", return_value=[]),
+            mock.patch("haproxy_ui.db.feature_switches", side_effect=lambda _c: self.switches),
             #
             # The profile pages read a profile's own apply jobs. Answered out
             # of whatever `recent_jobs` a test has patched in, so a test that

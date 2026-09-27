@@ -1085,6 +1085,56 @@ def account_row(
         return cursor.fetchone()
 
 
+@dataclass(frozen=True, slots=True)
+class FeatureSwitch:
+    """One of the capabilities an installation may turn off (0040, B193)."""
+
+    name: str
+    enabled: bool
+    remembered: dict[str, Any]
+    updated_at: datetime
+    updated_by: str | None
+
+
+def feature_switches(connection: Connection[Any]) -> dict[str, FeatureSwitch]:
+    """Every switch by name. Before 0040 there are none, and everything is on."""
+
+    with connection.cursor(row_factory=class_row(FeatureSwitch)) as cursor:
+        cursor.execute(
+            "select name, enabled, remembered, updated_at, updated_by from feature_switch"
+        )
+        return {row.name: row for row in cursor.fetchall()}
+
+
+def set_feature_switch(
+    connection: Connection[Any],
+    *,
+    name: str,
+    enabled: bool,
+    remembered: Mapping[str, Any],
+    actor: str,
+) -> bool:
+    """Flip one switch, if it is not already where it is asked to go.
+
+    The condition is in the statement, so two admins pressing the same button
+    at once flip it once: the second finds it already flipped and is told so.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update feature_switch "
+            "   set enabled = %(enabled)s, remembered = %(remembered)s, updated_by = %(actor)s "
+            " where name = %(name)s and enabled is distinct from %(enabled)s",
+            {
+                "name": name,
+                "enabled": enabled,
+                "remembered": Jsonb(dict(remembered)),
+                "actor": actor,
+            },
+        )
+        return cursor.rowcount == 1
+
+
 class LastAdmin(Exception):
     """The database refused to leave no active admin (0039's trigger)."""
 

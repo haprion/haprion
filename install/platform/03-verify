@@ -46,7 +46,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_network\ncluster_objects\ncluster_status\ndns_provider_profile\njob\nlogin_attempt\nlogin_unlock\nmetric_backend_hour\nmetric_backend_member\nmetric_frontend\nmetric_rollup_state\nndes_provider_profile\nproxy_draft\ntraffic_log'
+expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_network\ncluster_objects\ncluster_status\ndns_provider_profile\nfeature_switch\njob\nlogin_attempt\nlogin_unlock\nmetric_backend_hour\nmetric_backend_member\nmetric_frontend\nmetric_rollup_state\nndes_provider_profile\nproxy_draft\ntraffic_log'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -133,6 +133,8 @@ app_web	cluster_status	SELECT	cluster, error, observed_at, outcome, poll_error, 
 app_web	dns_provider_profile	INSERT	ciphertext, created_by, id, key_id, name, provider_id, revision, schema_version, updated_by
 app_web	dns_provider_profile	SELECT	created_at, created_by, id, key_id, name, provider_id, revision, schema_version, updated_at, updated_by
 app_web	dns_provider_profile	UPDATE	ciphertext, key_id, name, revision, schema_version, updated_at, updated_by
+app_web	feature_switch	SELECT	enabled, name, remembered, updated_at, updated_by
+app_web	feature_switch	UPDATE	enabled, remembered, updated_by
 app_web	job	INSERT	cluster, idempotency_key, operation, payload
 app_web	job	SELECT	attempts, cluster, created_at, exit_code, finished_at, id, idempotency_key, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt
 app_web	login_attempt	INSERT	client_ip, succeeded, username_normalised
@@ -222,6 +224,16 @@ refuse "$WEB_USER"    "cannot remove an unlock" \
        "delete from login_unlock"
 refuse "$WEB_USER"    "cannot remove a sign-in attempt" \
        "delete from login_attempt"
+#
+# Since 0040 the web flips the two feature switches and nothing more: no new
+# switch, no removed one, and no date of its own choosing.
+#
+refuse "$WEB_USER"    "cannot add a feature switch" \
+       "insert into feature_switch (name) values ('probe')"
+refuse "$WEB_USER"    "cannot remove a feature switch" \
+       "delete from feature_switch"
+refuse "$WEB_USER"    "cannot set a feature switch's date" \
+       "update feature_switch set updated_at = now()"
 refuse "$WEB_USER"    "cannot backdate a session" \
        "insert into app_session (token_hash, user_id, expires_at, created_at)
         values (repeat('x', 32)::bytea, 1, now(), now())"
@@ -315,6 +327,11 @@ allow "$WEB_USER" "receives the database-derived payload hash" \
 allow "$WEB_USER" "can change an account's role, state and password" \
       "update app_user set role = role, disabled = disabled, password_hash = password_hash
         where false" \
+      ""
+
+allow "$WEB_USER" "can flip a feature switch" \
+      "update feature_switch set enabled = enabled, remembered = remembered,
+              updated_by = updated_by where false" \
       ""
 
 allow "$WEB_USER" "can record an unlock" \

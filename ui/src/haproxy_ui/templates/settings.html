@@ -17,6 +17,12 @@
 {% if certificate_job %}
 <p class="preview-notice"><strong>{{ certificate_job }} is in progress.</strong> This page refreshes until it has finished.</p>
 {% endif %}
+{% if done %}
+<p class="preview-notice"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>{{ done }}</strong></p>
+{% endif %}
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
 
 <div class="cluster-list">
 <section class="cluster-card settings-card">
@@ -83,6 +89,32 @@
     </tbody>
   </table></div>
 </section>
+{#
+  What this installation offers (B193). Off hides a feature; node backups off
+  also stops the clusters' timers, so that one asks first on its own page.
+#}
+{% if features %}
+<section class="cluster-card settings-card" id="features">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Features</h3></div></div></header>
+  {% for feature, on in features %}
+  <div class="cluster-actions feature-row">
+    <div><strong>{{ feature.title }}</strong></div>
+    <div class="action-buttons">
+      <span class="status-badge status-badge-{{ 'healthy' if on else 'unknown' }}">{{ 'On' if on else 'Off' }}</span>
+      {% if on and feature.consequence %}
+      <a class="secondary-button" href="/settings/features/{{ feature.name }}">Turn off…</a>
+      {% else %}
+      <form method="post" action="/settings/features/{{ feature.name }}" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="enabled" value="{{ 'off' if on else 'on' }}">
+        <button type="submit" class="secondary-button">{{ 'Turn off' if on else 'Turn on' }}</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
 </div>
 <script defer src="{{ url_for('static', path='/proxy-rows.js') }}?v={{ asset_token }}"></script>
 {% endblock %}

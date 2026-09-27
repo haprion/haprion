@@ -64,8 +64,8 @@
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Targets</h3><p>Where the certificate is published. At least one.</p></div></div></header>
     <div class="form-grid certificate-target-stack">
       <div class="field">
-        <div class="receiver-heading"><span class="field-title">Clusters and receivers</span>{% if choices.receivers %}<span class="optional" data-receiver-count aria-live="polite">{{ form.receivers | length }} selected</span>{% endif %}</div>
-        <small>A cluster's nodes pull the certificate and reload; a receiver is a host outside the clusters that fetches on its own. <a href="/certificates/receivers">Manage receivers</a>. PKCS#12 publishes a <code>.pfx</code> and a <code>.password</code> file.</small>
+        <div class="receiver-heading"><span class="field-title">{% if feature_on('cert_receivers') %}Clusters and receivers{% else %}Clusters{% endif %}</span>{% if choices.receivers %}<span class="optional" data-receiver-count aria-live="polite">{{ form.receivers | length }} selected</span>{% endif %}</div>
+        <small>{% if feature_on('cert_receivers') %}A cluster's nodes pull the certificate and reload; a receiver is a host outside the clusters that fetches on its own. <a href="/certificates/receivers">Manage receivers</a>. PKCS#12 publishes a <code>.pfx</code> and a <code>.password</code> file.{% else %}A cluster's nodes pull the certificate and reload.{% endif %}</small>
         {% if choices.receivers | length > 8 %}<label class="receiver-search" data-receiver-search hidden><span class="visually-hidden">Search receivers</span><input type="search" placeholder="Search receivers…" autocomplete="off" spellcheck="false"></label>{% endif %}
         <div class="target-list{% if choices.receivers | length > 8 %} receiver-options-many{% endif %}" data-receiver-options>
           {% for name in choices.clusters %}
@@ -76,7 +76,7 @@
           {% for name in choices.receivers %}
           {{ target_row('receiver', name, checked=name in form.receivers, transport=choices.receiver_transports.get(name, ''), format_value=form.format_of(name), show_format=True, effect='Fetches on its own schedule', attrs='data-receiver-option') }}
           {% else %}
-          <span class="optional">No receiver is registered. <a href="/certificates/receivers/new">Register one</a>.</span>
+          {% if feature_on('cert_receivers') %}<span class="optional">No receiver is registered. <a href="/certificates/receivers/new">Register one</a>.</span>{% endif %}
           {% endfor %}
         </div>
         {% if choices.receivers | length > 8 %}<span class="optional receiver-no-results" data-receiver-empty hidden>No receivers match.</span>{% endif %}

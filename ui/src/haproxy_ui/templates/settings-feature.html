@@ -1,0 +1,19 @@
+{% extends "layout.html" %}
+{% block title %}{{ feature.title }} — HAProxy Manager{% endblock %}
+{% block content %}
+{# The question before a feature is turned off, when off does more than hide it (B193). #}
+<section class="page-heading">
+  <div class="heading-title"><h1>Turn off {{ feature.title | lower }}</h1><p class="page-lede"><a href="/settings#features">Settings</a></p></div>
+</section>
+
+<form method="post" action="/settings/features/{{ feature.name }}" class="preview-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="enabled" value="off">
+  <section class="cluster-card">
+    <p class="feature-consequence">{{ feature.consequence }}</p>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings#features">Back</a><button type="submit" class="danger-button">Turn off</button></div>
+    </div>
+  </section>
+</form>
+{% endblock %}

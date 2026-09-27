@@ -139,7 +139,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0039",))
+            self.assertEqual(cursor.fetchone(), ("0040",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -1628,3 +1628,69 @@ class AccountsFromTheWeb(unittest.TestCase):
                 cursor.execute("select to_regclass('login_unlock')")
                 self.assertEqual(cursor.fetchone(), ("login_unlock",))
             connection.rollback()
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class FeatureSwitchesFromTheWeb(unittest.TestCase):
+    """Migration 0040: two switches the web flips and nothing more (B193)."""
+
+    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def tearDown(self) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "update feature_switch set enabled = true, remembered = '{}', updated_by = null"
+            )
+            connection.commit()
+
+    def test_both_switches_exist_and_start_on(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            switches = db.feature_switches(connection)
+
+        self.assertEqual(sorted(switches), ["cert_receivers", "node_backups"])
+        self.assertTrue(all(switch.enabled for switch in switches.values()))
+
+    def test_the_web_flips_a_switch_once_and_remembers_what_it_is_given(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            first = db.set_feature_switch(
+                connection,
+                name="node_backups",
+                enabled=False,
+                remembered={"schedules": {"alpha": {"time": "04:00"}}},
+                actor="operator",
+            )
+            again = db.set_feature_switch(
+                connection, name="node_backups", enabled=False, remembered={}, actor="operator"
+            )
+            connection.commit()
+            switch = db.feature_switches(connection)["node_backups"]
+
+        self.assertEqual((first, again), (True, False))
+        self.assertFalse(switch.enabled)
+        self.assertEqual(switch.remembered, {"schedules": {"alpha": {"time": "04:00"}}})
+        self.assertEqual(switch.updated_by, "operator")
+        self.assertLess(datetime.now(UTC) - switch.updated_at, timedelta(minutes=1))
+
+    def test_the_web_cannot_add_remove_rename_or_date_a_switch(self) -> None:
+        for statement in (
+            "insert into feature_switch (name) values ('cert_receivers')",
+            "delete from feature_switch",
+            "update feature_switch set name = 'node_backups' where name = 'cert_receivers'",
+            "update feature_switch set updated_at = now() - interval '1 year'",
+        ):
+            with (
+                self.subTest(statement=statement),
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+                self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection,
+            ):
+                connection.execute(statement)
+
+    def test_the_worker_and_the_poller_do_not_read_the_switches(self) -> None:
+        for role in ("HAPROXY_UI_TEST_WORKER_ROLE", "HAPROXY_UI_TEST_POLLER_ROLE"):
+            with (
+                self.subTest(role=role),
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+                self.connect(role) as connection,
+            ):
+                connection.execute("select enabled from feature_switch")

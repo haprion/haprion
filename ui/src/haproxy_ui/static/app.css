@@ -476,6 +476,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .users-table th { padding-top: 7px; padding-bottom: 7px; }
 .users-table .status-badge { min-height: 0; padding: 1px 8px; }
 .sort-link { color: inherit; text-decoration: none; }
+.feature-consequence { margin: 0; padding: 18px 20px 8px; color: var(--text-strong); font-size: 13px; }
 .sort-link:hover { color: var(--text-strong); }
 .proxy-table th:nth-child(1), .proxy-table td:nth-child(1) { width: 20%; }
 .proxy-table th:nth-child(2), .proxy-table td:nth-child(2) { width: 22%; }
@@ -778,7 +779,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    long registry. Buttons to the right, and the row folds to two lines rather
    than ever overflowing sideways when the screen is narrow. */
 .certificate-strip { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
-.certificate-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.certificate-actions { display: inline-flex; margin-left: auto; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 /* Within a group the buttons sit as before; the strip's larger gap is between groups (C10b). */
 .certificate-actions .action-group, .heading-badges .action-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .certificate-views a { padding: 7px 15px; font-size: 13.5px; }

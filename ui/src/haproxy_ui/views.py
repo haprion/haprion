@@ -3355,7 +3355,8 @@ def build_router(config: Config) -> APIRouter:
                 detail={"account": username, "role": role, "via": "web"},
             )
             connection.commit()
-        return RedirectResponse(f"{users.href(username)}?done=created", status_code=303)
+        # Back to the list the account now stands in, not to the account itself.
+        return RedirectResponse("/settings#users", status_code=303)
 
     @router.get("/settings/users/{name}", response_class=HTMLResponse)
     def user_page(request: Request, name: str) -> Response:

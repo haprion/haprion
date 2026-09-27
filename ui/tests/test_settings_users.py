@@ -303,7 +303,7 @@ class SettingsUsers(LoginTestCase):
         )
 
         self.assertEqual(response.status_code, 303)
-        self.assertEqual(response.headers["location"], "/settings/users/carol?done=created")
+        self.assertEqual(response.headers["location"], "/settings#users")
         name, fields = self.calls[-1]
         self.assertEqual((name, fields["username"], fields["role"]), ("create", "carol", "reader"))
         self.assertTrue(auth.verify_password(fields["password_hash"], NEW))

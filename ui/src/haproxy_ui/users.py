@@ -25,7 +25,6 @@ ROLES = ("admin", "reader")
 # and `saved` it did; the other keys are the page's buttons.
 #
 DONE = {
-    "created": "Account created.",
     "role": "Role changed.",
     "password": "Password set. The account's sessions were ended.",
     "saved": "Role changed and password set. The account's sessions were ended.",

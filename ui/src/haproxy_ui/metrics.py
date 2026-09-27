@@ -1203,7 +1203,7 @@ def read_in(name: str | None) -> None:
     """
 
     zone: ZoneInfo | None = None
-    if name and ZONE_NAME.fullmatch(name):
+    if name and len(name) <= 64 and ZONE_NAME.fullmatch(name):
         try:
             zone = ZoneInfo(name)
         except (ZoneInfoNotFoundError, ValueError):
@@ -1217,7 +1217,11 @@ def read_in(name: str | None) -> None:
 # page. Unset means the host's zone.
 #
 _READER_ZONE: ContextVar[ZoneInfo | None] = ContextVar("reader_zone", default=None)
-ZONE_NAME = re.compile(r"(?=.{1,64}$)[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}")
+#
+# Bounded parts and the length tested before it, so a hostile cookie cannot make
+# the match itself the expensive step (CodeQL py/polynomial-redos, 2026-09-27).
+#
+ZONE_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_+-]{0,63}(?:/[A-Za-z0-9_+-]{1,63}){0,2}")
 
 
 def unread_at(at: datetime) -> str:

@@ -475,6 +475,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .users-table td { padding-top: 5px; padding-bottom: 5px; }
 .users-table th { padding-top: 7px; padding-bottom: 7px; }
 .users-table .status-badge { min-height: 0; padding: 1px 8px; }
+.sort-link { color: inherit; text-decoration: none; }
+.sort-link:hover { color: var(--text-strong); }
 .proxy-table th:nth-child(1), .proxy-table td:nth-child(1) { width: 20%; }
 .proxy-table th:nth-child(2), .proxy-table td:nth-child(2) { width: 22%; }
 .proxy-table th:nth-child(3), .proxy-table td:nth-child(3) { width: 36%; }

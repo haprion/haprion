@@ -102,6 +102,48 @@ class SettingsUsers(LoginTestCase):
         self.assertIn("Locked", page)
         self.assertIn('href="/settings/new-user"', whole)
 
+    def test_every_column_sorts_and_a_second_click_turns_it_round(self) -> None:
+        early, late = datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 9, 20, tzinfo=UTC)
+        self.rows = {
+            "alice": row("alice", role="admin", sessions=0, last_sign_in=early),
+            "bob": row("bob", locked=True, sessions=3, last_sign_in=None),
+            "carol": row("carol", disabled=True, sessions=0, last_sign_in=late),
+            "operator": row("operator", role="admin", sessions=1, last_sign_in=late),
+        }
+        client = self.admin()
+
+        def order(sort: str) -> list[str]:
+            page = client.get(f"/settings?sort={sort}").text
+            page = page[page.index("<tbody>") :]
+            return sorted(self.rows, key=lambda name: page.index(f">{name}<"))
+
+        for sort, names in (
+            ("name", ["alice", "bob", "carol", "operator"]),
+            ("-name", ["operator", "carol", "bob", "alice"]),
+            ("role", ["alice", "operator", "bob", "carol"]),
+            ("state", ["alice", "operator", "bob", "carol"]),
+            ("-state", ["carol", "bob", "alice", "operator"]),
+            ("sessions", ["bob", "operator", "alice", "carol"]),
+            ("signin", ["carol", "operator", "alice", "bob"]),
+            ("-signin", ["alice", "carol", "operator", "bob"]),
+            ("nonsense", ["alice", "bob", "carol", "operator"]),
+        ):
+            with self.subTest(sort=sort):
+                self.assertEqual(order(sort), names)
+
+        page = client.get("/settings?sort=signin").text
+        self.assertIn('href="/settings?sort=-signin#users"', page)
+        self.assertIn('href="/settings?sort=sessions#users"', page)
+        self.assertIn('aria-sort="descending"', page)
+
+    def test_the_chosen_order_is_kept_when_the_page_is_opened_again(self) -> None:
+        client = self.admin()
+
+        client.get("/settings?sort=-name")
+        page = client.get("/settings").text
+        page = page[page.index("<tbody>") :]
+        self.assertLess(page.index(">operator<"), page.index(">alice<"))
+
     def test_a_reader_and_an_installation_without_writes_get_no_users(self) -> None:
         self.account = replace(self.account, role="reader")
         client = self.client(replace(configuration(), management_writes=True))

@@ -65,10 +65,10 @@
   </div>
 </section>
 
-<section class="cluster-card settings-card">
+<section class="cluster-card settings-card" id="users">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Users</h3></div></div><div class="cluster-state"><a class="secondary-button" href="/settings/new-user">Add user</a></div></header>
   <div class="table-scroll"><table class="node-table users-table">
-    <thead><tr><th>User</th><th>Role</th><th>State</th><th>Sessions</th><th>Last sign-in</th></tr></thead>
+    <thead><tr>{% for column, title in (("name", "User"), ("role", "Role"), ("state", "State"), ("sessions", "Sessions"), ("signin", "Last sign-in")) %}{% set link = user_sorts[column] %}<th{% if link.arrow %} aria-sort="{{ 'descending' if link.arrow == '▼' else 'ascending' }}"{% endif %}><a class="sort-link" href="{{ link.href }}#users">{{ title }}{% if link.arrow %} <span aria-hidden="true">{{ link.arrow }}</span>{% endif %}</a></th>{% endfor %}</tr></thead>
     <tbody>
       {% for user in users %}
       <tr data-href="{{ user.href }}">

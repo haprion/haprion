@@ -2679,7 +2679,9 @@ database still refuses to leave no active admin. There is no delete, in the inte
 
 Two capabilities can be turned off under **Settings → Features** (schema
 `0040`), by an admin on an installation with `management_writes` on. Off hides
-the capability's tab, pages and operations; a kept URL answers 404.
+the capability's tab, pages and operations; a kept URL answers 404. Both are
+off on a new installation, which enables no backup timer either; an
+installation opts in.
 
 - **Certificate receivers** off hides the receivers page, the receiver choices
   in the certificate forms and in *Publish to…*/*Remove from…*, and the

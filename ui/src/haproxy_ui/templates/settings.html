@@ -72,8 +72,8 @@
   </div>
 </section>
 
-<section class="cluster-card settings-card" id="users">
-  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Users</h3></div></div><div class="cluster-state"><a class="secondary-button" href="/settings/new-user">Add user</a></div></header>
+<section class="cluster-card settings-card users-card" id="users">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Users</h3></div></div><div class="cluster-state">{% if sso %}<span class="users-sso">{{ sso }}</span>{% endif %}<a class="secondary-button" href="/settings/oidc">OIDC configuration</a><a class="secondary-button" href="/settings/new-user">Add user</a></div></header>
   <div class="table-scroll"><table class="node-table users-table">
     <thead><tr>{{ sort.heading(user_sorts.name, "User") }}{{ sort.heading(user_sorts.role, "Role") }}{{ sort.heading(user_sorts.state, "State") }}{{ sort.heading(user_sorts.sessions, "Sessions") }}{{ sort.heading(user_sorts.signin, "Last sign-in") }}</tr></thead>
     <tbody>

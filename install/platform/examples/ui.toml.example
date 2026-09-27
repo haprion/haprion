@@ -89,3 +89,11 @@ port = 8080
 # stored; the private half is root's, under secrets/, and this process never
 # reads it. Absent, the interface offers no provider profiles.
 # public_key = "/apps/haproxy-manager/config/dns-profile-keys/<key id>.pub"
+
+
+# [oidc]
+# The public half of the key pair platform step 17 made. The OIDC client
+# secret typed in the interface is sealed against it before it is stored; the
+# OIDC helper holds the private half and this process never reads it. Absent,
+# Settings -> Users -> OIDC configuration says the helper is not installed.
+# public_key = "/apps/haproxy-manager/config/oidc-keys/<key id>.pub"

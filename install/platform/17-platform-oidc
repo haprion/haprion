@@ -119,5 +119,14 @@ systemctl is-active --quiet haproxy-oidc-helper.socket \
     || die "haproxy-oidc-helper.socket did not start"
 log "  listening on /run/haproxy-mgmt/oidc.sock  (group ${WEB_USER})"
 
-step "Done"
-log "  the web reads the public key from ${PUBLIC_DIR}"
+step "The web's half"
+for file in "$PUBLIC_DIR"/*.pub; do
+    key_id="$(basename "$file" .pub)"
+done
+if grep -Eq '^\s*\[oidc\]\s*$' "${PLATFORM_ROOT}/config/ui.toml"; then
+    log "  ok       [oidc] in ${PLATFORM_ROOT}/config/ui.toml"
+else
+    warn "give the web interface the public key in ${PLATFORM_ROOT}/config/ui.toml and restart it:"
+    warn "    [oidc]"
+    warn "    public_key = \"${PUBLIC_DIR}/${key_id}.pub\""
+fi

@@ -2844,6 +2844,30 @@ claim that is an object counts as its keys. A provider that sends a pointer to
 the groups instead of the groups (Entra's overage, above 200 groups) is refused
 with a sentence that says to use app roles.
 
+The settings are an admin's, under **Settings → Users → OIDC configuration**,
+on installations with `management_writes` on: issuer, client ID and secret,
+client authentication (`client_secret_basic` or `client_secret_post`),
+scopes, the claims for the name and the groups, the admin and reader groups,
+the button text, sign-out (this interface only, or also at the provider),
+local sign-in (break-glass accounts only, or all), an optional CA
+certificate, whether accounts are created at first sign-in, and whether the
+provider is always asked to sign in again. The redirect URI to register at the
+provider is shown there, to copy. The web's `ui.toml` names the public key
+step 17 made (`[oidc] public_key`); without it the page says the helper is not
+installed.
+
+**Verify** asks the helper: discovery against the issuer, the key set, the
+client's method, the signing algorithm, and whether the provider accepts the
+client and its secret — by sending a code that was never issued, which a
+provider answers with `invalid_grant` when it accepted the client and
+`invalid_client` when it did not. Each check is listed. The database records
+the revision that passed, and every change to the settings raises the
+revision, so sign-in through the provider can be turned on only at settings
+that passed Verify, and only while an active admin is break-glass. Saving
+while it is on runs Verify first and saves as verified, or saves nothing.
+Each change is audited (`oidc_configured`, `oidc_verified`, `oidc_enabled`,
+`oidc_disabled`); the secret never is.
+
 ### 4.6b Rolling a release back
 
 ```bash

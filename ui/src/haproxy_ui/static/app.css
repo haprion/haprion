@@ -471,6 +471,15 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .users-table th:nth-child(4), .users-table td:nth-child(4) { width: 100px; }
 .users-table th:nth-child(5), .users-table td:nth-child(5) { width: 170px; }
 .users-table td:first-child strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The provider sign-in goes through, beside the buttons that change it (B197). */
+.users-sso { margin-right: 4px; color: var(--text-secondary); font-size: 12px; }
+/* Three things in the Users header fold rather than push past the edge. */
+.users-card .cluster-state { flex-wrap: wrap; justify-content: flex-end; row-gap: 8px; min-width: 0; }
+.oidc-checks { margin: 0; padding: 10px 20px 14px; list-style: none; display: grid; gap: 6px; color: var(--text-secondary); font-size: 12px; }
+.oidc-checks strong { margin-right: 6px; color: var(--text-primary); }
+.oidc-checks .status-dot { margin-right: 8px; }
+.form-grid .oidc-wide { grid-column: 1 / -1; }
+.oidc-redirect { display: grid; gap: 6px; padding: 14px 20px 0; color: var(--text-secondary); font-weight: 620; }
 .users-you { margin-left: 6px; color: var(--muted); font-size: 12px; font-weight: var(--font-weight-regular); }
 .users-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* No comment line under a name, so a row is one line of text: half the node table's height. */
@@ -901,6 +910,8 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
   .proxy-summary { grid-template-columns: 1fr; }
   .cluster-header { align-items: flex-start; flex-direction: column; gap: 12px; }
   .cluster-state { width: 100%; justify-content: space-between; }
+  .users-card .cluster-state { justify-content: flex-start; }
+  .users-card .users-sso { flex-basis: 100%; overflow-wrap: anywhere; }
   .cluster-actions { align-items: flex-start; flex-direction: column; }
   .cluster-actions span { white-space: normal; }
   /* A feature's name and its switch fit one line at any width. */

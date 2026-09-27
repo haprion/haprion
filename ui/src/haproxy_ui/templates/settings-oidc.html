@@ -1,0 +1,84 @@
+{% extends "layout.html" %}
+{% block title %}OIDC configuration — HAProxy Manager{% endblock %}
+{% block head_extra %}<script defer src="{{ url_for('static', path='/copy-command.js') }}?v={{ asset_token }}"></script>{% endblock %}
+{% block content %}
+{#
+  Settings -> Users -> OIDC configuration (B197-B199). The state and Verify
+  first, then the settings. The secret is never drawn: only whether one is set.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>OIDC configuration</h1><p class="page-lede"><a href="/settings#users">Settings</a></p></div>
+</section>
+
+{% if done %}
+<p class="preview-notice"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>{{ done }}</strong></p>
+{% endif %}
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+{% if not installed %}
+<p class="preview-notice form-problem"><span class="status-orb status-warning" aria-hidden="true"></span><strong>The OIDC helper is not installed here. Run platform step 17.</strong></p>
+{% endif %}
+
+<div class="cluster-list">
+<section class="cluster-card" id="oidc-state">
+  <div class="cluster-actions feature-row">
+    <div><strong>Sign-in through the provider</strong></div>
+    <form method="post" action="/settings/oidc" class="inline-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="action" value="{{ 'off' if provider.enabled else 'on' }}">
+      <button type="submit" class="toggle-switch" role="switch" aria-checked="{{ 'true' if provider.enabled else 'false' }}" aria-label="Sign-in through the provider"><span class="toggle-track" aria-hidden="true"></span>{{ 'On' if provider.enabled else 'Off' }}</button>
+    </form>
+  </div>
+  <div class="cluster-actions">
+    <div><strong>Settings</strong></div>
+    <div class="action-buttons">
+      {% if provider.issuer %}<span class="status-badge status-badge-{{ 'healthy' if provider.verified else 'warning' }}">{{ 'Verified' if provider.verified else 'Not verified' }}</span>{% endif %}
+      <form method="post" action="/settings/oidc" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="action" value="verify">
+        <button type="submit" class="secondary-button"{% if not provider.issuer or not installed %} disabled{% endif %}>Verify</button>
+      </form>
+    </div>
+  </div>
+  {% if checks %}
+  <ul class="oidc-checks">
+    {% for check in checks %}<li><span class="status-dot status-{{ 'healthy' if check.ok else 'critical' }}" aria-hidden="true"></span><strong>{{ check.name | capitalize }}</strong> {{ check.message }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<form method="post" action="/settings/oidc" class="preview-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="action" value="save">
+  <section class="cluster-card">
+    <div class="form-grid">
+      <label><span class="field-title">Issuer</span><input name="issuer" value="{{ values.issuer or '' }}" placeholder="https://id.example.com/application/o/manager/" required></label>
+      <label><span class="field-title">Client ID</span><input name="client_id" value="{{ values.client_id or '' }}" autocomplete="off" required></label>
+      <label><span class="field-title">Client secret</span><input type="password" name="client_secret" autocomplete="new-password" placeholder="{{ 'Set — type to replace' if secret_set else '' }}"></label>
+      <label><span class="field-title">Client authentication</span><select name="auth_method">{% for value, label in auth_methods.items() %}<option value="{{ value }}"{% if value == values.auth_method %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label><span class="field-title">Scopes</span><input name="scopes" value="{{ values.scopes or '' }}" required></label>
+      <label><span class="field-title">Button text</span><input name="button_text" value="{{ values.button_text or '' }}" maxlength="64" required></label>
+      <label><span class="field-title">Username claim</span><input name="username_claim" value="{{ values.username_claim or '' }}" required></label>
+      <label><span class="field-title">Groups claim</span><input name="groups_claim" value="{{ values.groups_claim or '' }}" required></label>
+      <label><span class="field-title">Admin group</span><input name="admin_group" value="{{ values.admin_group or '' }}"></label>
+      <label><span class="field-title">Reader group</span><input name="reader_group" value="{{ values.reader_group or '' }}"></label>
+      <label><span class="field-title">Sign out</span><select name="logout_mode">{% for value, label in logout_modes.items() %}<option value="{{ value }}"{% if value == values.logout_mode %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label><span class="field-title">Local sign-in</span><select name="local_login">{% for value, label in local_logins.items() %}<option value="{{ value }}"{% if value == values.local_login %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="oidc-wide"><span class="field-title">CA certificate <span class="optional">(optional)</span></span><textarea name="ca_pem" rows="3" spellcheck="false" autocomplete="off">{{ values.ca_pem or '' }}</textarea></label>
+    </div>
+    <div class="form-checks">
+      <label class="check"><input type="checkbox" name="auto_create" value="on"{% if values.auto_create %} checked{% endif %}> <span>Create accounts at first sign-in</span></label>
+      <label class="check"><input type="checkbox" name="prompt_login" value="on"{% if values.prompt_login %} checked{% endif %}> <span>Always ask the provider to sign in again</span></label>
+    </div>
+    <div class="oidc-redirect">
+      <span class="field-title">Redirect URI</span>
+      <div class="copy-row"><pre class="receiver-command"><code>{{ redirect_uri }}</code></pre></div>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings#users">Back</a><button type="submit" class="secondary-button deploy-button">Save</button></div>
+    </div>
+  </section>
+</form>
+</div>
+{% endblock %}

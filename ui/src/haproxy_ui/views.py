@@ -73,6 +73,7 @@ from haproxy_ui import (
     network,
     node_restores,
     objects,
+    oidc_web,
     operations,
     proxies,
     snapshot,
@@ -3024,6 +3025,7 @@ def build_router(config: Config) -> APIRouter:
         sort, asked = users.TABLE.chosen(request)
         with request.app.state.pool.connection() as connection:
             switches = db.feature_switches(connection)
+            provider = db.oidc_provider(connection)
         response = TEMPLATES.TemplateResponse(
             request,
             "settings.html",
@@ -3048,6 +3050,9 @@ def build_router(config: Config) -> APIRouter:
                     _account_rows(request), signed_in_as=gate.username, sort=sort
                 ),
                 "user_sorts": users.TABLE.links(sort),
+                # Which provider sign-in goes through, said where accounts are
+                # (B197): a change to it is a change to who can be admin.
+                "sso": oidc_web.summary(provider),
                 "features": [
                     (feature, switches[feature.name].enabled)
                     for feature in features.FEATURES
@@ -3482,6 +3487,213 @@ def build_router(config: Config) -> APIRouter:
         else:
             done = action
         return RedirectResponse(f"{users.href(row.username)}?done={done}", status_code=303)
+
+    def _oidc_page(
+        request: Request,
+        session: AuthenticatedSession,
+        provider: db.OidcProvider,
+        *,
+        form: Mapping[str, Any] | None = None,
+        problem: str = "",
+        done: str = "",
+        checks: list[dict[str, Any]] | None = None,
+        status_code: int = 200,
+    ) -> Response:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        values: dict[str, Any] = {
+            name: getattr(provider, name)
+            for name in db.OIDC_SETTINGS
+            if name != "client_secret_sealed"
+        }
+        values.update(form or {})
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings-oidc.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "section": "settings",
+                "management_writes": config.management_writes,
+                "provider": provider,
+                "values": values,
+                "secret_set": provider.client_secret_sealed is not None,
+                "installed": config.oidc_public_key is not None,
+                "redirect_uri": oidc_web.redirect_uri(str(request.base_url)),
+                "auth_methods": oidc_web.AUTH_METHODS,
+                "logout_modes": oidc_web.LOGOUT_MODES,
+                "local_logins": oidc_web.LOCAL_LOGINS,
+                "checks": checks,
+                "problem": problem,
+                "done": done,
+            },
+            status_code=status_code,
+        )
+
+    def _oidc_provider(request: Request) -> db.OidcProvider | None:
+        with request.app.state.pool.connection() as connection:
+            return db.oidc_provider(connection)
+
+    @router.get("/settings/oidc", response_class=HTMLResponse)
+    def oidc_settings_page(request: Request) -> Response:
+        """Settings -> Users -> OIDC configuration (B197)."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        provider = _oidc_provider(request)
+        if provider is None:
+            return PlainTextResponse("Not found", status_code=404)
+        done = {
+            "saved": "Saved.",
+            "on": "Sign-in through the provider is on.",
+            "off": "Sign-in through the provider is off.",
+        }
+        return _oidc_page(
+            request, gate, provider, done=done.get(request.query_params.get("done", ""), "")
+        )
+
+    @router.post("/settings/oidc", response_class=HTMLResponse)
+    async def change_oidc_settings(request: Request) -> Response:
+        """Save, Verify, and turn on or off. Each is audited; the secret never is."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        posted = await request.form()
+        form = {key: value for key, value in posted.items() if isinstance(value, str)}
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, form.get(auth.CSRF_FIELD, "")):
+            return PlainTextResponse("Refused", status_code=403)
+        provider = _oidc_provider(request)
+        if provider is None:
+            return PlainTextResponse("Not found", status_code=404)
+        action = form.get("action", "")
+        redirect = oidc_web.redirect_uri(str(request.base_url))
+
+        def again(
+            problem: str,
+            *,
+            shown: Mapping[str, Any] | None = None,
+            checks: list[dict[str, Any]] | None = None,
+            status_code: int = 400,
+        ) -> Response:
+            return _oidc_page(
+                request,
+                gate,
+                provider,
+                form=shown,
+                problem=problem,
+                checks=checks,
+                status_code=status_code,
+            )
+
+        def verify(candidate: db.OidcProvider) -> tuple[bool, list[dict[str, Any]], str]:
+            try:
+                result = oidc_web.ask("verify", candidate, redirect=redirect)
+            except oidc_web.OidcUnavailable as error:
+                return False, [], str(error)
+            except oidc_web.OidcRefused as error:
+                return False, [], str(error)
+            checks = [check for check in result.get("checks", []) if isinstance(check, dict)]
+            return result.get("ok") is True, checks, ""
+
+        if action == "save":
+            shown = {
+                key: (
+                    form.get(key) == "on"
+                    if key in ("auto_create", "prompt_login")
+                    else form.get(key, "")
+                )
+                for key in db.OIDC_SETTINGS
+                if key not in ("client_secret_sealed", "key_id")
+            }
+            parsed = oidc_web.parse(form, provider, public_key=config.oidc_public_key)
+            if parsed.problem:
+                return again(parsed.problem, shown=shown)
+            verified = False
+            if provider.enabled:
+                #
+                # On, the row accepts only verified settings: these are
+                # verified first, and saved as verified in one statement.
+                #
+                candidate = replace(provider, **parsed.settings)
+                verified, checks, trouble = verify(candidate)
+                if not verified:
+                    return again(
+                        trouble
+                        or "Sign-in through the provider is on, and these settings did not pass Verify. Nothing was saved.",
+                        shown=shown,
+                        checks=checks,
+                    )
+            with request.app.state.pool.connection() as connection:
+                try:
+                    db.save_oidc_provider(
+                        connection, settings=parsed.settings, actor=gate.username, verified=verified
+                    )
+                except db.ProviderRefused as error:
+                    connection.rollback()
+                    return again(str(error), shown=shown, status_code=409)
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="oidc_configured",
+                    detail={
+                        "issuer": parsed.settings["issuer"],
+                        "client_id": parsed.settings["client_id"],
+                        "secret_replaced": "client_secret_sealed" in parsed.settings,
+                        "via": "web",
+                    },
+                )
+                connection.commit()
+            return RedirectResponse("/settings/oidc?done=saved", status_code=303)
+
+        if action == "verify":
+            ok, checks, trouble = verify(provider)
+            if trouble:
+                return again(trouble, status_code=409)
+            with request.app.state.pool.connection() as connection:
+                recorded = ok and db.record_oidc_verified(connection, revision=provider.revision)
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="oidc_verified",
+                    detail={
+                        "issuer": provider.issuer,
+                        "ok": ok,
+                        "revision": provider.revision,
+                        "via": "web",
+                    },
+                )
+                connection.commit()
+            refreshed = _oidc_provider(request) or provider
+            return _oidc_page(
+                request,
+                gate,
+                refreshed,
+                checks=checks,
+                done="Verified." if recorded else "",
+                problem="" if ok else "Verify found a problem.",
+                status_code=200 if ok else 409,
+            )
+
+        if action in ("on", "off"):
+            with request.app.state.pool.connection() as connection:
+                try:
+                    db.set_oidc_enabled(connection, enabled=action == "on", actor=gate.username)
+                except db.ProviderRefused as error:
+                    connection.rollback()
+                    return again(str(error), status_code=409)
+                db.record_audit_event(
+                    connection,
+                    actor=gate.username,
+                    action="oidc_enabled" if action == "on" else "oidc_disabled",
+                    detail={"issuer": provider.issuer, "via": "web"},
+                )
+                connection.commit()
+            return RedirectResponse(f"/settings/oidc?done={action}", status_code=303)
+
+        return PlainTextResponse("Unknown action", status_code=400)
 
     @router.get("/settings/users/{name}/delete", response_class=HTMLResponse)
     def delete_user_page(request: Request, name: str) -> Response:

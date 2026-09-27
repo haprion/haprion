@@ -1874,6 +1874,14 @@ class OidcAccounts(unittest.TestCase):
     def test_the_provider_is_on_only_when_complete_and_verified(self) -> None:
         with self.assertRaises(psycopg.errors.CheckViolation):
             self.web("update oidc_provider set enabled = true")
+        # Complete, and never verified: the case a check passing on null let through.
+        self.web(
+            "update oidc_provider set issuer = 'https://auth.example/', client_id = 'client', "
+            "client_secret_sealed = %s, key_id = 'k1', admin_group = 'haproxy-admins'",
+            (self.SECRET,),
+        )
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.web("update oidc_provider set enabled = true")
 
         self.configure_and_verify()
         # Not together with a change: the new text is a revision nobody verified.
@@ -2102,3 +2110,100 @@ class TheAccountToolAgainstARealDatabase(unittest.TestCase):
         self.assertRegex(output, r"alice\s+admin\s+break-glass")
         self.assertRegex(output, r"bob\s+reader\s+sso")
         self.assertRegex(output, r"carol\s+reader\s+local")
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheProviderRowFromTheWeb(unittest.TestCase):
+    """O4's database functions, under the web role's grants (B197)."""
+
+    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    SETTINGS: dict[str, Any] = {
+        "issuer": "https://id.example.com/",
+        "client_id": "c",
+        "client_secret_sealed": b"sealed",
+        "key_id": "0123456789abcdef",
+        "admin_group": "haproxy-admins",
+    }
+
+    def setUp(self) -> None:
+        OidcAccounts.reset(self)  # type: ignore[arg-type]
+        with self.connect() as connection:
+            connection.execute(
+                "insert into app_user (username, password_hash, role, break_glass) "
+                "values ('alice', %s, 'admin', true)",
+                (OidcAccounts.HASH,),
+            )
+            connection.commit()
+
+    def tearDown(self) -> None:
+        OidcAccounts.reset(self)  # type: ignore[arg-type]
+
+    def web(self) -> psycopg.Connection:
+        return self.connect("HAPROXY_UI_TEST_WEB_ROLE")
+
+    def row(self, connection: psycopg.Connection) -> db.OidcProvider:
+        provider = db.oidc_provider(connection)
+        if provider is None:
+            self.fail("no provider row")
+        return provider
+
+    def test_the_row_reads_back_with_its_secret_as_bytes(self) -> None:
+        with self.web() as connection:
+            db.save_oidc_provider(connection, settings=self.SETTINGS, actor="alice")
+            connection.commit()
+            provider = self.row(connection)
+        self.assertEqual(provider.client_secret_sealed, b"sealed")
+        self.assertEqual(provider.updated_by, "alice")
+        self.assertFalse(provider.verified)
+
+    def test_verify_is_recorded_only_at_the_revision_it_passed(self) -> None:
+        with self.web() as connection:
+            db.save_oidc_provider(connection, settings=self.SETTINGS, actor="alice")
+            provider = self.row(connection)
+            self.assertFalse(db.record_oidc_verified(connection, revision=provider.revision - 1))
+            self.assertTrue(db.record_oidc_verified(connection, revision=provider.revision))
+            connection.commit()
+            verified = self.row(connection)
+        self.assertTrue(verified.verified)
+
+    def test_on_needs_verified_settings_and_says_so(self) -> None:
+        with self.web() as connection:
+            db.save_oidc_provider(connection, settings=self.SETTINGS, actor="alice")
+            with self.assertRaisesRegex(db.ProviderRefused, "Verify the settings first"):
+                db.set_oidc_enabled(connection, enabled=True, actor="alice")
+            provider = self.row(connection)
+            db.record_oidc_verified(connection, revision=provider.revision)
+            db.set_oidc_enabled(connection, enabled=True, actor="alice")
+            connection.commit()
+            self.assertTrue(self.row(connection).enabled)
+
+    def test_on_needs_a_break_glass_admin_and_says_so(self) -> None:
+        with self.connect() as connection:
+            connection.execute("update app_user set break_glass = false")
+            connection.commit()
+        with self.web() as connection:
+            db.save_oidc_provider(connection, settings=self.SETTINGS, actor="alice")
+            provider = self.row(connection)
+            db.record_oidc_verified(connection, revision=provider.revision)
+            with self.assertRaisesRegex(db.ProviderRefused, "break-glass"):
+                db.set_oidc_enabled(connection, enabled=True, actor="alice")
+
+    def test_while_on_a_change_saves_only_as_verified(self) -> None:
+        with self.web() as connection:
+            db.save_oidc_provider(connection, settings=self.SETTINGS, actor="alice")
+            provider = self.row(connection)
+            db.record_oidc_verified(connection, revision=provider.revision)
+            db.set_oidc_enabled(connection, enabled=True, actor="alice")
+            connection.commit()
+
+            with self.assertRaises(db.ProviderRefused):
+                db.save_oidc_provider(connection, settings={"button_text": "Other"}, actor="alice")
+            db.save_oidc_provider(
+                connection, settings={"button_text": "Other"}, actor="alice", verified=True
+            )
+            connection.commit()
+            after = self.row(connection)
+        self.assertEqual((after.enabled, after.button_text, after.verified), (True, "Other", True))
+        self.assertEqual(after.revision, provider.revision + 1)

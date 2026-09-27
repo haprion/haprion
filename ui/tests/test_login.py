@@ -101,6 +101,7 @@ class LoginTestCase(unittest.TestCase):
         # table reads as all on.
         #
         self.switches: dict[str, Any] = {}
+        self.provider: Any = None
 
         self.patches = [
             mock.patch("haproxy_ui.db.pool", return_value=self.pool),
@@ -130,6 +131,8 @@ class LoginTestCase(unittest.TestCase):
             # Settings draws its Users card from this; none unless a test says.
             mock.patch("haproxy_ui.db.account_rows", return_value=[]),
             mock.patch("haproxy_ui.db.feature_switches", side_effect=lambda _c: self.switches),
+            # No OIDC provider row unless a test gives one (0041).
+            mock.patch("haproxy_ui.db.oidc_provider", side_effect=lambda _c: self.provider),
             #
             # The profile pages read a profile's own apply jobs. Answered out
             # of whatever `recent_jobs` a test has patched in, so a test that

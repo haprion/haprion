@@ -133,13 +133,15 @@ def upgrade() -> None:
             check (updated_by is null or length(updated_by) between 1 and 64),
         --
         -- On only when there is something complete to be on with, and only
-        -- the revision that was verified.
+        -- the revision that was verified. `is not null` is spelled out for
+        -- the same reason as on the account hash: never verified makes the
+        -- comparison null, and a check passes on null.
         --
         constraint oidc_provider_enabled_complete check (
             not enabled
             or (issuer is not null and client_id is not null and client_secret_sealed is not null
                 and (admin_group is not null or reader_group is not null)
-                and verified_revision = revision))
+                and verified_revision is not null and verified_revision = revision))
     );
 
     insert into oidc_provider default values;

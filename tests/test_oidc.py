@@ -90,6 +90,7 @@ def _certificate_authority() -> tuple[str, ssl.SSLContext]:
         )
     )
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(directory / "server.pem")
     return ca.public_bytes(serialization.Encoding.PEM).decode("ascii"), context
 

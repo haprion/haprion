@@ -648,6 +648,17 @@ class TheInstallCheckMatchesTheMigrations(unittest.TestCase):
             re.MULTILINE,
         )
         self.assertGreater(len(probes), 5)
+        #
+        # `allow` reads its expected answer as $4 under `set -u`: a call with
+        # three arguments stops the install step at that line (2026-09-27).
+        #
+        calls = re.findall(
+            r'^allow "[^"]+"\s+"[^"]+" \\\n\s+"(?:[^"\\]|\\.)*"( \\\n\s+"[^"]*")?',
+            text,
+            re.MULTILINE,
+        )
+        self.assertTrue(calls)
+        self.assertNotIn("", calls, "an allow call without its expected answer")
         role = os.environ["HAPROXY_UI_TEST_WEB_ROLE"]
         for kind, description, statement in probes:
             statement = statement.replace('\\"', '"')

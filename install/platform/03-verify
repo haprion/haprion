@@ -314,11 +314,13 @@ allow "$WEB_USER" "receives the database-derived payload hash" \
 #
 allow "$WEB_USER" "can change an account's role, state and password" \
       "update app_user set role = role, disabled = disabled, password_hash = password_hash
-        where false"
+        where false" \
+      ""
 
 allow "$WEB_USER" "can record an unlock" \
       "insert into login_unlock (username_normalised, actor)
-       select 'probe', 'probe' where false"
+       select 'probe', 'probe' where false" \
+      ""
 
 #
 # The claim, exactly as the worker will write it, against however many pending

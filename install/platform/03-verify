@@ -46,7 +46,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_network\ncluster_objects\ncluster_status\ndns_provider_profile\nfeature_switch\njob\nlogin_attempt\nlogin_unlock\nmetric_backend_hour\nmetric_backend_member\nmetric_frontend\nmetric_rollup_state\nndes_provider_profile\nproxy_draft\ntraffic_log'
+expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_network\ncluster_objects\ncluster_status\ndns_provider_profile\nfeature_switch\njob\nlogin_attempt\nlogin_unlock\nmetric_backend_hour\nmetric_backend_member\nmetric_frontend\nmetric_rollup_state\nndes_provider_profile\noidc_login\noidc_provider\nproxy_draft\ntraffic_log'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -115,12 +115,12 @@ app_poller	metric_listener	SELECT	bin, bout, cluster, dreq, dresp, econ, ereq, e
 app_poller	metric_pool_hour	SELECT	backend, bin, bout, bucket_at, check_code, check_status, cluster, dreq, dresp, econ, ereq, eresp, floor_uptime_sec, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, member, node, observed_at, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
 app_poller	metric_pool_member	INSERT	backend, bin, bout, check_code, check_status, cluster, dreq, dresp, econ, ereq, eresp, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, member, node, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
 app_poller	metric_pool_member	SELECT	backend, bin, bout, check_code, check_status, cluster, dreq, dresp, econ, ereq, eresp, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, member, node, observed_at, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
-app_web	app_session	INSERT	expires_at, token_hash, user_id
-app_web	app_session	SELECT	created_at, expires_at, last_seen_at, revoked_at, token_hash, user_id
+app_web	app_session	INSERT	expires_at, id_token, token_hash, user_id
+app_web	app_session	SELECT	created_at, expires_at, id_token, last_seen_at, revoked_at, token_hash, user_id
 app_web	app_session	UPDATE	last_seen_at, revoked_at
-app_web	app_user	INSERT	password_hash, role, username
-app_web	app_user	SELECT	created_at, disabled, id, password_hash, role, updated_at, username, username_normalised
-app_web	app_user	UPDATE	disabled, password_hash, role
+app_web	app_user	INSERT	break_glass, oidc_issuer, oidc_subject, password_hash, role, source, username
+app_web	app_user	SELECT	break_glass, created_at, disabled, id, oidc_issuer, oidc_subject, password_hash, role, source, updated_at, username, username_normalised
+app_web	app_user	UPDATE	break_glass, disabled, oidc_issuer, oidc_subject, password_hash, role
 app_web	audit_event	INSERT	action, actor, cluster, detail, request_id
 app_web	audit_event	SELECT	action, actor, at, cluster, detail, id, request_id
 app_web	cluster_backups	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
@@ -151,6 +151,11 @@ app_web	metric_rollup_state	SELECT	complete_before, rollup_name
 app_web	ndes_provider_profile	INSERT	ciphertext, created_by, endpoint, id, key_id, name, provider_id, revision, schema_version, updated_by
 app_web	ndes_provider_profile	SELECT	created_at, created_by, endpoint, id, key_id, name, provider_id, revision, schema_version, updated_at, updated_by
 app_web	ndes_provider_profile	UPDATE	ciphertext, endpoint, key_id, name, revision, schema_version, updated_at, updated_by
+app_web	oidc_login	INSERT	mode, nonce, pre_session_hash, state, verifier
+app_web	oidc_login	SELECT	created_at, mode, nonce, pre_session_hash, state, used_at, verifier
+app_web	oidc_login	UPDATE	used_at
+app_web	oidc_provider	SELECT	admin_group, auth_method, auto_create, button_text, ca_pem, client_id, client_secret_sealed, enabled, groups_claim, issuer, key_id, local_login, logout_mode, prompt_login, reader_group, revision, scopes, updated_at, updated_by, username_claim, verified_revision
+app_web	oidc_provider	UPDATE	admin_group, auth_method, auto_create, button_text, ca_pem, client_id, client_secret_sealed, enabled, groups_claim, issuer, key_id, local_login, logout_mode, prompt_login, reader_group, scopes, updated_by, username_claim, verified_revision
 app_web	proxy_draft	INSERT	base_hash, base_version, cluster, deleted, object_id, updated_by, yaml
 app_web	proxy_draft	SELECT	base_hash, base_version, cluster, deleted, id, object_id, revision, updated_at, updated_by, yaml
 app_web	proxy_draft	UPDATE	base_hash, base_version, deleted, updated_by, yaml
@@ -211,11 +216,12 @@ refuse "$WEB_USER"    "cannot delete from the audit trail" \
        "delete from audit_event"
 #
 # Since 0039 the web writes accounts - name, hash and role on a new one; role,
-# disabled and hash on an existing one - and nothing else about them: no
-# delete, no rename, no dates, and the unlock and attempt records are append-only.
+# disabled and hash on an existing one - and since 0041 it may delete one and
+# mark it break-glass (B197). Still no rename, no dates, no change of kind, and
+# the unlock and attempt records are append-only.
 #
-refuse "$WEB_USER"    "cannot delete an account" \
-       "delete from app_user"
+refuse "$WEB_USER"    "cannot turn an account into another kind" \
+       "update app_user set source = source"
 refuse "$WEB_USER"    "cannot rename an account" \
        "update app_user set username = username || 'x'"
 refuse "$WEB_USER"    "cannot set an account's dates" \
@@ -234,6 +240,28 @@ refuse "$WEB_USER"    "cannot remove a feature switch" \
        "delete from feature_switch"
 refuse "$WEB_USER"    "cannot set a feature switch's date" \
        "update feature_switch set updated_at = now()"
+#
+# Since 0041 the web writes the provider's settings; the revision and the date
+# are the database's, so a Verify cannot be made to cover a later change. There
+# is one provider: none added, none removed. A sign-in in progress can be used
+# and not removed or rewritten.
+#
+refuse "$WEB_USER"    "cannot set the provider's revision" \
+       "update oidc_provider set revision = revision"
+refuse "$WEB_USER"    "cannot set the provider's date" \
+       "update oidc_provider set updated_at = now()"
+refuse "$WEB_USER"    "cannot add a provider" \
+       "insert into oidc_provider (singleton) values (true)"
+refuse "$WEB_USER"    "cannot remove the provider" \
+       "delete from oidc_provider"
+refuse "$WEB_USER"    "cannot rewrite a sign-in in progress" \
+       "update oidc_login set nonce = nonce"
+refuse "$WEB_USER"    "cannot remove a sign-in in progress" \
+       "delete from oidc_login"
+refuse "$WORKER_USER" "cannot read the provider" \
+       "select client_id from oidc_provider"
+refuse "$POLLER_USER" "cannot read the provider" \
+       "select client_id from oidc_provider"
 refuse "$WEB_USER"    "cannot backdate a session" \
        "insert into app_session (token_hash, user_id, expires_at, created_at)
         values (repeat('x', 32)::bytea, 1, now(), now())"
@@ -327,6 +355,24 @@ allow "$WEB_USER" "receives the database-derived payload hash" \
 allow "$WEB_USER" "can change an account's role, state and password" \
       "update app_user set role = role, disabled = disabled, password_hash = password_hash
         where false" \
+      ""
+
+allow "$WEB_USER" "can delete an account and mark one break-glass" \
+      "delete from app_user where false;
+       update app_user set break_glass = break_glass, oidc_issuer = oidc_issuer,
+              oidc_subject = oidc_subject where false" \
+      ""
+
+allow "$WEB_USER" "can write the provider's settings" \
+      "update oidc_provider set enabled = enabled, issuer = issuer, client_id = client_id,
+              client_secret_sealed = client_secret_sealed, key_id = key_id,
+              verified_revision = verified_revision, updated_by = updated_by where false" \
+      ""
+
+allow "$WEB_USER" "can start and use a sign-in through the provider" \
+      "insert into oidc_login (state, nonce, verifier, mode, pre_session_hash)
+       select 'probe', 'probe', 'probe', 'sign_in', '\\x00' where false;
+       update oidc_login set used_at = now() where false" \
       ""
 
 allow "$WEB_USER" "can flip a feature switch" \

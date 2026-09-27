@@ -139,7 +139,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0040",))
+            self.assertEqual(cursor.fetchone(), ("0041",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -803,6 +803,19 @@ class _Executes:
         self.cursor.execute(sql)
 
 
+def _migration(filename: str, cursor: psycopg.Cursor) -> Any:
+    """One migration module, loaded by file, with `op` bound to this cursor."""
+
+    path = Path(__file__).resolve().parents[1] / "migrations" / "versions" / filename
+    spec = importlib.util.spec_from_file_location(f"migration_{filename[:4]}", path)
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.op = _Executes(cursor)
+    return module
+
+
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class TheQueueCarriesCertificateJobs(unittest.TestCase):
     """Migration 0024: a job whose scope is a certificate rather than a cluster.
@@ -1359,7 +1372,9 @@ class AccountsFromTheWeb(unittest.TestCase):
 
     def setUp(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("delete from app_user")
+            # Not `delete`: since 0041 the last active admin cannot be deleted,
+            # and truncate is the owner's reset, which fires no row trigger.
+            cursor.execute("truncate app_user cascade")
             cursor.execute("delete from login_attempt")
             cursor.execute("delete from login_unlock")
             for name, role in (("alice", "admin"), ("bob", "admin"), ("carol", "reader")):
@@ -1371,7 +1386,9 @@ class AccountsFromTheWeb(unittest.TestCase):
 
     def tearDown(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
-            cursor.execute("delete from app_user")
+            # Not `delete`: since 0041 the last active admin cannot be deleted,
+            # and truncate is the owner's reset, which fires no row trigger.
+            cursor.execute("truncate app_user cascade")
             cursor.execute("delete from login_attempt")
             cursor.execute("delete from login_unlock")
             connection.commit()
@@ -1392,7 +1409,6 @@ class AccountsFromTheWeb(unittest.TestCase):
             "values ('eve', '" + self.HASH + "', 'reader', now() - interval '1 year')",
             "update app_user set updated_at = now() - interval '1 year' where username = 'dave'",
             "update app_user set username = 'mallory' where username = 'dave'",
-            "delete from app_user where username = 'carol'",
         ):
             with (
                 self.subTest(statement=statement),
@@ -1620,6 +1636,10 @@ class AccountsFromTheWeb(unittest.TestCase):
 
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                # 0041 builds on 0039's guard, so it steps back first and
+                # forward last, as a real downgrade to 0038 would.
+                later = _migration("0041_oidc_accounts.py", cursor)
+                later.downgrade()
                 migration.op = _Executes(cursor)
                 migration.downgrade()
                 cursor.execute("select to_regclass('login_unlock')")
@@ -1627,6 +1647,7 @@ class AccountsFromTheWeb(unittest.TestCase):
                 migration.upgrade()
                 cursor.execute("select to_regclass('login_unlock')")
                 self.assertEqual(cursor.fetchone(), ("login_unlock",))
+                later.upgrade()
             connection.rollback()
 
 
@@ -1697,3 +1718,245 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
                 self.connect(role) as connection,
             ):
                 connection.execute("select enabled from feature_switch")
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class OidcAccounts(unittest.TestCase):
+    """Migration 0041: two kinds of account, break-glass, deletion and the provider row (B195-B199)."""
+
+    HASH = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA"
+    SECRET = b"sealed"
+
+    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def setUp(self) -> None:
+        self.reset()
+        with self.connect() as connection, connection.cursor() as cursor:
+            for name, role, break_glass in (
+                ("alice", "admin", True),
+                ("bob", "admin", False),
+                ("carol", "reader", False),
+            ):
+                cursor.execute(
+                    "insert into app_user (username, password_hash, role, break_glass) "
+                    "values (%s, %s, %s, %s)",
+                    (name, self.HASH, role, break_glass),
+                )
+            connection.commit()
+
+    def tearDown(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("update oidc_provider set enabled = false")
+            cursor.execute(
+                "update oidc_provider set issuer = null, client_id = null, "
+                "client_secret_sealed = null, key_id = null, admin_group = null, "
+                "reader_group = null, verified_revision = null"
+            )
+            cursor.execute("truncate app_user cascade")
+            cursor.execute("truncate oidc_login")
+            connection.commit()
+
+    def web(self, statement: str, parameters: tuple[Any, ...] = ()) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            connection.execute(statement, parameters)
+            connection.commit()
+
+    def one(self, statement: str, parameters: tuple[Any, ...] = ()) -> Any:
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(statement, parameters)
+            row = cursor.fetchone()
+            return None if row is None else row[0]
+
+    def configure_and_verify(self) -> None:
+        """A complete provider, verified at its current revision, still off."""
+
+        self.web(
+            "update oidc_provider set issuer = 'https://auth.example/application/o/app/', "
+            "client_id = 'client', client_secret_sealed = %s, key_id = 'k1', "
+            "admin_group = 'haproxy-admins', updated_by = 'alice'",
+            (self.SECRET,),
+        )
+        self.web("update oidc_provider set verified_revision = revision")
+
+    def test_the_web_deletes_an_account_and_its_sessions_go_with_it(self) -> None:
+        carol = self.one("select id from app_user where username = 'carol'")
+        with self.connect() as connection:
+            connection.execute(
+                "insert into app_session (token_hash, user_id, expires_at) "
+                "values (%s, %s, now() + interval '1 hour')",
+                (auth.token_hash("carol"), carol),
+            )
+            connection.commit()
+
+        self.web("delete from app_user where username = 'carol'")
+
+        self.assertIsNone(self.one("select id from app_user where username = 'carol'"))
+        self.assertEqual(
+            self.one("select count(*) from app_session where user_id = %s", (carol,)), 0
+        )
+
+    def test_the_last_active_admin_cannot_be_deleted(self) -> None:
+        self.web("delete from app_user where username = 'bob'")
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.web("delete from app_user where username = 'alice'")
+        self.assertEqual(self.one("select count(*) from app_user where role = 'admin'"), 1)
+
+    def test_a_disabled_admin_can_be_deleted_while_another_is_active(self) -> None:
+        self.web("update app_user set disabled = true where username = 'bob'")
+        self.web("delete from app_user where username = 'bob'")
+        self.assertIsNone(self.one("select id from app_user where username = 'bob'"))
+
+    def test_an_account_s_hash_follows_its_kind(self) -> None:
+        for statement, parameters in (
+            (
+                "insert into app_user (username, role, source) values ('dave', 'reader', 'local')",
+                (),
+            ),
+            (
+                "insert into app_user (username, password_hash, role, source) "
+                "values ('dave', %s, 'reader', 'oidc')",
+                (self.HASH,),
+            ),
+            (
+                "insert into app_user (username, role, source, break_glass) "
+                "values ('dave', 'admin', 'oidc', true)",
+                (),
+            ),
+            (
+                "insert into app_user (username, role, source, oidc_issuer) "
+                "values ('dave', 'reader', 'oidc', 'https://auth.example/')",
+                (),
+            ),
+            (
+                "insert into app_user (username, password_hash, role, oidc_issuer, oidc_subject) "
+                "values ('dave', %s, 'reader', 'https://auth.example/', 'sub')",
+                (self.HASH,),
+            ),
+        ):
+            with (
+                self.subTest(statement=statement),
+                self.assertRaises(psycopg.errors.CheckViolation),
+            ):
+                self.web(statement, parameters)
+
+    def test_an_oidc_account_is_one_per_provider_identity(self) -> None:
+        insert = (
+            "insert into app_user (username, role, source, oidc_issuer, oidc_subject) "
+            "values (%s, 'reader', 'oidc', 'https://auth.example/', 'sub-1')"
+        )
+        self.web(insert, ("dave",))
+        with self.assertRaises(psycopg.errors.UniqueViolation):
+            self.web(insert, ("erin",))
+        # Prepared by an admin, before its first sign-in: neither half yet.
+        self.web("insert into app_user (username, role, source) values ('frank', 'reader', 'oidc')")
+
+    def test_the_web_cannot_turn_a_local_account_into_a_provider_one(self) -> None:
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            self.web("update app_user set source = 'oidc' where username = 'carol'")
+
+    def test_a_setting_raises_the_revision_and_a_verify_does_not(self) -> None:
+        before = self.one("select revision from oidc_provider")
+        self.configure_and_verify()
+        after = self.one("select revision from oidc_provider")
+        self.assertEqual(after, before + 1)
+        self.assertEqual(self.one("select verified_revision from oidc_provider"), after)
+
+        self.web("update oidc_provider set enabled = true")
+        self.assertEqual(self.one("select revision from oidc_provider"), after)
+
+    def test_the_provider_is_on_only_when_complete_and_verified(self) -> None:
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.web("update oidc_provider set enabled = true")
+
+        self.configure_and_verify()
+        # Not together with a change: the new text is a revision nobody verified.
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.web(
+                "update oidc_provider set enabled = true, button_text = 'Sign in with authentik'"
+            )
+        self.assertFalse(self.one("select enabled from oidc_provider"))
+
+    def test_turning_on_needs_an_active_break_glass_admin(self) -> None:
+        self.configure_and_verify()
+        self.web("update app_user set break_glass = false where username = 'alice'")
+        with self.assertRaises(psycopg.errors.CheckViolation):
+            self.web("update oidc_provider set enabled = true")
+
+        self.web("update app_user set break_glass = true where username = 'bob'")
+        self.web("update oidc_provider set enabled = true")
+        self.assertTrue(self.one("select enabled from oidc_provider"))
+
+    def test_while_on_the_last_break_glass_admin_stays(self) -> None:
+        self.configure_and_verify()
+        self.web("update oidc_provider set enabled = true")
+        for statement in (
+            "update app_user set break_glass = false where username = 'alice'",
+            "update app_user set disabled = true where username = 'alice'",
+            "update app_user set role = 'reader' where username = 'alice'",
+            "delete from app_user where username = 'alice'",
+        ):
+            with (
+                self.subTest(statement=statement),
+                self.assertRaises(psycopg.errors.CheckViolation),
+            ):
+                self.web(statement)
+        # Bob is no break-glass account, so he may go.
+        self.web("delete from app_user where username = 'bob'")
+
+    def test_a_sign_in_in_progress_is_used_once_and_never_rewritten(self) -> None:
+        state = "s" * 43
+        self.web(
+            "insert into oidc_login (state, nonce, verifier, mode, pre_session_hash) "
+            "values (%s, %s, %s, 'sign_in', %s)",
+            (state, "n" * 43, "v" * 43, auth.token_hash("pre")),
+        )
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            used = connection.execute(
+                "update oidc_login set used_at = now() "
+                "where state = %s and used_at is null returning state",
+                (state,),
+            ).fetchall()
+            again = connection.execute(
+                "update oidc_login set used_at = now() "
+                "where state = %s and used_at is null returning state",
+                (state,),
+            ).fetchall()
+            connection.commit()
+        self.assertEqual((len(used), len(again)), (1, 0))
+        for statement in (
+            "update oidc_login set nonce = 'x'",
+            "delete from oidc_login",
+        ):
+            with (
+                self.subTest(statement=statement),
+                self.assertRaises(psycopg.errors.InsufficientPrivilege),
+            ):
+                self.web(statement)
+
+    def test_the_downgrade_refuses_while_a_provider_account_exists(self) -> None:
+        self.web("insert into app_user (username, role, source) values ('dave', 'reader', 'oidc')")
+        with self.connect() as connection:
+            with connection.cursor() as cursor, self.assertRaises(psycopg.errors.RaiseException):
+                _migration("0041_oidc_accounts.py", cursor).downgrade()
+            connection.rollback()
+
+    def test_the_migration_downgrades_and_upgrades_cleanly(self) -> None:
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                migration = _migration("0041_oidc_accounts.py", cursor)
+                migration.downgrade()
+                cursor.execute("select to_regclass('oidc_provider'), to_regclass('oidc_login')")
+                self.assertEqual(cursor.fetchone(), (None, None))
+                cursor.execute(
+                    "select count(*) from information_schema.columns "
+                    "where table_name = 'app_user' and column_name = 'source'"
+                )
+                self.assertEqual(cursor.fetchone(), (0,))
+                migration.upgrade()
+                cursor.execute("select count(*) from oidc_provider")
+                self.assertEqual(cursor.fetchone(), (1,))
+            connection.rollback()

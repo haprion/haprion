@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -589,6 +590,76 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual(set(by_node), {"node-a", "node-b"})
         self.assertEqual(by_node["node-a"].floor_uptime_sec, 5000)
         self.assertEqual(by_node["node-b"].floor_uptime_sec, 10)
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheInstallCheckMatchesTheMigrations(unittest.TestCase):
+    """`03-verify`'s tables and grants, held against a database at head.
+
+    The step is a second description of the privilege surface on purpose, and
+    it is written by hand from what a migration grants. Twice (2026-09-04 and
+    2026-09-27, `0039`) it was not, and the gap showed as a failed production
+    install after every gate had passed. Read out of the script, so what is
+    proved here is the list the install compares with; the list itself is still
+    written by hand, never from this test's diff.
+    """
+
+    SCRIPT = Path(__file__).resolve().parents[2] / "install/platform/03-verify"
+
+    def expected(self) -> tuple[list[str], list[str]]:
+        text = self.SCRIPT.read_text()
+        tables = re.search(r"^expected_tables=\$'([^']*)'$", text, re.MULTILINE)
+        grants = re.search(
+            r"^expected_grants=\$\(cat <<'EOF'\n(.*?)\nEOF$", text, re.MULTILINE | re.DOTALL
+        )
+        if tables is None or grants is None:
+            self.fail("03-verify no longer states its lists in the shape this reads")
+        return tables.group(1).split("\\n"), grants.group(1).split("\n")
+
+    def test_the_tables_and_grants_are_the_ones_the_install_step_expects(self) -> None:
+        tables, grants = self.expected()
+        role = os.environ["HAPROXY_UI_TEST_MIGRATION_ROLE"]
+        with psycopg.connect(f"{DSN} user={role}") as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select c.relname from pg_class c"
+                "  join pg_namespace n on n.oid = c.relnamespace"
+                " where n.nspname = 'public' and c.relkind in ('r', 'p')"
+                "   and not c.relispartition order by 1"
+            )
+            actual_tables = [name for (name,) in cursor.fetchall()]
+            cursor.execute(
+                "select grantee, table_name, privilege_type,"
+                "       string_agg(column_name, ', ' order by column_name)"
+                "  from information_schema.column_privileges"
+                " where table_schema = 'public' and grantee like 'app\\_%'"
+                " group by grantee, table_name, privilege_type"
+                " order by grantee, table_name, privilege_type"
+            )
+            actual_grants = ["\t".join(row) for row in cursor.fetchall()]
+
+        self.assertEqual(actual_tables, tables)
+        self.assertEqual(actual_grants, grants)
+
+    def test_what_the_step_says_the_web_cannot_do_it_cannot_and_what_it_can_it_can(self) -> None:
+        text = self.SCRIPT.read_text()
+        probes = re.findall(
+            r'^(refuse|allow) "\$WEB_USER"\s+"([^"]+)" \\\n\s+"((?:[^"\\]|\\.)*)"',
+            text,
+            re.MULTILINE,
+        )
+        self.assertGreater(len(probes), 5)
+        role = os.environ["HAPROXY_UI_TEST_WEB_ROLE"]
+        for kind, description, statement in probes:
+            statement = statement.replace('\\"', '"')
+            with self.subTest(description=description):
+                with psycopg.connect(f"{DSN} user={role}") as connection:
+                    try:
+                        connection.execute(statement)
+                        refused = False
+                    except psycopg.Error:
+                        refused = True
+                    connection.rollback()
+                self.assertEqual(refused, kind == "refuse")
 
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")

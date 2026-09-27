@@ -46,7 +46,7 @@ failures=0
 fail() { echo "  FAIL     $*" >&2; failures=$((failures + 1)); }
 
 step "Tables"
-expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_network\ncluster_objects\ncluster_status\ndns_provider_profile\njob\nlogin_attempt\nmetric_backend_hour\nmetric_backend_member\nmetric_frontend\nmetric_rollup_state\nndes_provider_profile\nproxy_draft\ntraffic_log'
+expected_tables=$'alembic_version\napp_session\napp_user\naudit_event\ncluster_backups\ncluster_certificates\ncluster_history\ncluster_inventory\ncluster_network\ncluster_objects\ncluster_status\ndns_provider_profile\njob\nlogin_attempt\nlogin_unlock\nmetric_backend_hour\nmetric_backend_member\nmetric_frontend\nmetric_rollup_state\nndes_provider_profile\nproxy_draft\ntraffic_log'
 #
 # Partitions are excluded, and only partitions. They are tables in `pg_tables`
 # and there are dozens of them - one per day per metric table, made and dropped
@@ -118,7 +118,9 @@ app_poller	metric_pool_member	SELECT	backend, bin, bout, check_code, check_statu
 app_web	app_session	INSERT	expires_at, token_hash, user_id
 app_web	app_session	SELECT	created_at, expires_at, last_seen_at, revoked_at, token_hash, user_id
 app_web	app_session	UPDATE	last_seen_at, revoked_at
-app_web	app_user	SELECT	disabled, id, password_hash, role, username, username_normalised
+app_web	app_user	INSERT	password_hash, role, username
+app_web	app_user	SELECT	created_at, disabled, id, password_hash, role, updated_at, username, username_normalised
+app_web	app_user	UPDATE	disabled, password_hash, role
 app_web	audit_event	INSERT	action, actor, cluster, detail, request_id
 app_web	audit_event	SELECT	action, actor, at, cluster, detail, id, request_id
 app_web	cluster_backups	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
@@ -135,6 +137,8 @@ app_web	job	INSERT	cluster, idempotency_key, operation, payload
 app_web	job	SELECT	attempts, cluster, created_at, exit_code, finished_at, id, idempotency_key, operation, outcome, payload, payload_hash, request_id, result, started_at, state, stderr_excerpt
 app_web	login_attempt	INSERT	client_ip, succeeded, username_normalised
 app_web	login_attempt	SELECT	at, client_ip, id, succeeded, username_normalised
+app_web	login_unlock	INSERT	actor, username_normalised
+app_web	login_unlock	SELECT	actor, at, id, username_normalised
 app_web	metric_backend_hour	SELECT	backend, bin, bout, bucket_at, check_code, check_status, cluster, dreq, dresp, econ, ereq, eresp, floor_uptime_sec, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, member, node, observed_at, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
 app_web	metric_backend_member	SELECT	backend, bin, bout, check_code, check_status, cluster, dreq, dresp, econ, ereq, eresp, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, member, node, observed_at, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
 app_web	metric_frontend	SELECT	bin, bout, cluster, dreq, dresp, econ, ereq, eresp, frontend, hrsp_2xx, hrsp_3xx, hrsp_4xx, hrsp_5xx, node, observed_at, owns_vip, qcur, req_tot, scur, status, stot, uptime_sec, wredis, wretr
@@ -203,8 +207,21 @@ refuse "$WEB_USER"    "cannot update the audit trail" \
        "update audit_event set action = 'tampered'"
 refuse "$WEB_USER"    "cannot delete from the audit trail" \
        "delete from audit_event"
-refuse "$WEB_USER"    "cannot write accounts" \
-       "update app_user set role = 'admin'"
+#
+# Since 0039 the web writes accounts - name, hash and role on a new one; role,
+# disabled and hash on an existing one - and nothing else about them: no
+# delete, no rename, no dates, and the unlock and attempt records are append-only.
+#
+refuse "$WEB_USER"    "cannot delete an account" \
+       "delete from app_user"
+refuse "$WEB_USER"    "cannot rename an account" \
+       "update app_user set username = username || 'x'"
+refuse "$WEB_USER"    "cannot set an account's dates" \
+       "update app_user set updated_at = now()"
+refuse "$WEB_USER"    "cannot remove an unlock" \
+       "delete from login_unlock"
+refuse "$WEB_USER"    "cannot remove a sign-in attempt" \
+       "delete from login_attempt"
 refuse "$WEB_USER"    "cannot backdate a session" \
        "insert into app_session (token_hash, user_id, expires_at, created_at)
         values (repeat('x', 32)::bytea, 1, now(), now())"
@@ -289,6 +306,19 @@ allow "$WEB_USER" "receives the database-derived payload hash" \
        values ('deploy', 'alpha', '{}'::jsonb, gen_random_uuid())
        returning payload_hash is not null" \
       "t"
+
+#
+# The account writes 0039 grants, planned against no row: PostgreSQL checks the
+# column privileges when it plans, so this proves them without touching an
+# account or waking the last-admin trigger.
+#
+allow "$WEB_USER" "can change an account's role, state and password" \
+      "update app_user set role = role, disabled = disabled, password_hash = password_hash
+        where false"
+
+allow "$WEB_USER" "can record an unlock" \
+      "insert into login_unlock (username_normalised, actor)
+       select 'probe', 'probe' where false"
 
 #
 # The claim, exactly as the worker will write it, against however many pending

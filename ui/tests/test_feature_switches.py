@@ -209,7 +209,8 @@ class Switched(LoginTestCase):
         client = self.admin()
 
         page = client.get("/settings").text
-        self.assertIn('href="/settings/features/node_backups">Turn off…</a>', page)
+        self.assertIn('<form method="get" action="/settings/features/node_backups"', page)
+        self.assertIn('role="switch" aria-checked="true" aria-label="Node backups"', page)
         answer = self.post(client, "/settings/features/cert_receivers", enabled="off")
 
         self.assertEqual(answer.status_code, 303)

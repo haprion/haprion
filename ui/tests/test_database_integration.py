@@ -1640,18 +1640,21 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
     def tearDown(self) -> None:
         with self.connect() as connection:
             connection.execute(
-                "update feature_switch set enabled = true, remembered = '{}', updated_by = null"
+                "update feature_switch set enabled = false, remembered = '{}', updated_by = null"
             )
             connection.commit()
 
-    def test_both_switches_exist_and_start_on(self) -> None:
+    def test_both_switches_exist_and_start_off(self) -> None:
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
             switches = db.feature_switches(connection)
 
         self.assertEqual(sorted(switches), ["cert_receivers", "node_backups"])
-        self.assertTrue(all(switch.enabled for switch in switches.values()))
+        self.assertFalse(any(switch.enabled for switch in switches.values()))
 
     def test_the_web_flips_a_switch_once_and_remembers_what_it_is_given(self) -> None:
+        with self.connect() as connection:
+            connection.execute("update feature_switch set enabled = true")
+            connection.commit()
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
             first = db.set_feature_switch(
                 connection,

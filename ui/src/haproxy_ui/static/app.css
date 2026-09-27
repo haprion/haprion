@@ -38,6 +38,7 @@
   --brand: #2fb344;
   --brand-strong: #258d36;
   --brand-soft: #eaf7ec;
+  --toggle-knob: #ffffff;
   --healthy: #2fb344;
   --healthy-soft: #eaf7ec;
   --warning: #f59f00;
@@ -75,6 +76,7 @@
   --brand: #49c462;
   --brand-strong: #67d47d;
   --brand-soft: #1b3d27;
+  --toggle-knob: #f3f6fb;
   --healthy: #49c462;
   --healthy-soft: #1b3d27;
   --warning: #ffb020;
@@ -901,6 +903,8 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   .cluster-state { width: 100%; justify-content: space-between; }
   .cluster-actions { align-items: flex-start; flex-direction: column; }
   .cluster-actions span { white-space: normal; }
+  /* A feature's name and its switch fit one line at any width. */
+  .cluster-actions.feature-row { align-items: center; flex-direction: row; }
   .schedule-strip { padding: 10px 16px; }
   .backup-now { position: static; padding: 0 16px 12px; }
   .backup-schedule-form { padding: 4px 16px 14px; }
@@ -1221,6 +1225,22 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
 .receiver-table .link-button { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
 .receiver-table .link-button:disabled { color: var(--muted); cursor: default; text-decoration: none; }
 .receiver-table .inline-form { display: inline; }
+/*
+ * A feature's switch: its state and the way to change it in one control, rather
+ * than a badge beside a button that says the opposite. Green on, red off, so
+ * the state reads at a glance. A real button underneath,
+ * so it submits without script and announces itself as a switch.
+ */
+.toggle-switch { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0; border: 0; background: none; color: var(--critical); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.toggle-switch .toggle-track { overflow: visible; margin-top: 0; }
+.toggle-track { position: relative; width: 34px; height: 20px; border-radius: 10px; background: var(--critical); transition: background .15s; }
+.toggle-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--toggle-knob); box-shadow: 0 1px 2px rgb(0 0 0 / .25); transition: transform .15s; }
+.toggle-switch[aria-checked="true"] { color: var(--healthy); }
+.toggle-switch[aria-checked="true"] .toggle-track { background: var(--healthy); }
+.toggle-switch[aria-checked="true"] .toggle-track::after { transform: translateX(14px); }
+.toggle-switch:hover .toggle-track { box-shadow: 0 0 0 3px var(--hover-surface); }
+.toggle-switch:focus-visible { outline: none; }
+.toggle-switch:focus-visible .toggle-track { outline: 2px solid var(--brand); outline-offset: 2px; }
 .receiver-commands td { padding-top: 4px; padding-bottom: 16px; background: var(--panel-soft); }
 .receiver-commands .table-note { padding-left: 0; padding-right: 0; }
 .receiver-commands .table-note code { font-size: inherit; }

@@ -99,18 +99,16 @@
   {% for feature, on in features %}
   <div class="cluster-actions feature-row">
     <div><strong>{{ feature.title }}</strong></div>
-    <div class="action-buttons">
-      <span class="status-badge status-badge-{{ 'healthy' if on else 'unknown' }}">{{ 'On' if on else 'Off' }}</span>
-      {% if on and feature.consequence %}
-      <a class="secondary-button" href="/settings/features/{{ feature.name }}">Turn off…</a>
-      {% else %}
-      <form method="post" action="/settings/features/{{ feature.name }}" class="inline-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="enabled" value="{{ 'off' if on else 'on' }}">
-        <button type="submit" class="secondary-button">{{ 'Turn off' if on else 'Turn on' }}</button>
-      </form>
+    {# One switch per row, its state and its action in one control. A switch whose off does more than hide
+       the feature asks first, on its own page (B193). #}
+    {% set asks = on and feature.consequence %}
+    <form method="{{ 'get' if asks else 'post' }}" action="/settings/features/{{ feature.name }}" class="inline-form">
+      {% if not asks %}
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="enabled" value="{{ 'off' if on else 'on' }}">
       {% endif %}
-    </div>
+      <button type="submit" class="toggle-switch" role="switch" aria-checked="{{ 'true' if on else 'false' }}" aria-label="{{ feature.title }}"><span class="toggle-track" aria-hidden="true"></span>{{ 'On' if on else 'Off' }}</button>
+    </form>
   </div>
   {% endfor %}
 </section>

@@ -1,6 +1,10 @@
 """Feature switches: two capabilities an installation may turn off (Fas 13 part 3, B193).
 
-Two rows, both on to begin with, and never more than the check allows:
+Two rows, both off to begin with, and never more than the check allows. Both
+are odd for an HAProxy interface in itself, so an installation opts in; the
+installer enables no backup timer, so off is also what the machine is. Changed
+after 0040 reached the first installation, whose rows were already written on
+and stay as they are.
 
 * `cert_receivers` - certificate publication to receivers outside the
   clusters. Off hides it from the interface; receivers already registered go
@@ -44,7 +48,7 @@ def upgrade() -> None:
             check (updated_by is null or length(updated_by) between 1 and 64)
     );
 
-    insert into feature_switch (name) values ('cert_receivers'), ('node_backups');
+    insert into feature_switch (name, enabled) values ('cert_receivers', false), ('node_backups', false);
 
     create function feature_switch_touch() returns trigger
         language plpgsql as $$

@@ -1,0 +1,28 @@
+{% extends "layout.html" %}
+{% block title %}Add user — HAProxy Manager{% endblock %}
+{% block content %}
+{# The CLI's `add`. Password fields are always drawn empty. #}
+<section class="page-heading">
+  <div class="heading-title"><h1>Add user</h1><p class="page-lede"><a href="/settings">Settings</a></p></div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+<form method="post" action="/settings/new-user" class="preview-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="cluster-card">
+    <div class="form-grid">
+      <label><span class="field-title">Name</span><input name="username" value="{{ form.username }}" maxlength="64" spellcheck="false" required></label>
+      <label><span class="field-title">Role</span><select name="role">{% for value in roles %}<option value="{{ value }}"{% if value == form.role %} selected{% endif %}>{{ value | capitalize }}</option>{% endfor %}</select></label>
+      <label><span class="field-title">Password</span><input type="password" name="new_password" autocomplete="new-password" minlength="{{ minimum_length }}" required></label>
+      <label><span class="field-title">Repeat password</span><input type="password" name="repeat_password" autocomplete="new-password" minlength="{{ minimum_length }}" required></label>
+      <label><span class="field-title">Your password</span><input type="password" name="your_password" autocomplete="current-password" required></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings">Cancel</a><button type="submit" class="secondary-button deploy-button">Add user</button></div>
+    </div>
+  </section>
+</form>
+{% endblock %}

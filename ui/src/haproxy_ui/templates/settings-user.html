@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+{% block title %}{{ account.username }} — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  One account, and what an admin may do to it: the verbs of haproxy-ui-user.
+  One form with a button per action, so "Your password" is typed once for
+  whichever is pressed. Password fields are always drawn empty.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>{{ account.username }}</h1><p class="page-lede"><a href="/settings">Settings</a></p></div>
+</section>
+
+{% if done %}
+<p class="preview-notice"><span class="status-orb status-healthy" aria-hidden="true"></span><strong>{{ done }}</strong></p>
+{% endif %}
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+<section class="cluster-card">
+  <dl class="cluster-facts">
+    <div><dt>Role</dt><dd>{{ account.role | capitalize }}</dd></div>
+    <div><dt>State</dt><dd><span class="status-badge status-badge-{{ account.tone }}">{{ account.state }}</span></dd></div>
+    <div><dt>Sessions</dt><dd>{{ account.sessions }}</dd></div>
+    <div><dt>Last sign-in</dt><dd>{{ account.last_sign_in }}</dd></div>
+  </dl>
+  {% if account.own %}
+  <p class="table-note">Your own account. <a href="/account/password">Change password</a></p>
+  {% else %}
+  <form method="post" action="{{ account.href }}" class="preview-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="form-grid">
+      <label><span class="field-title">Role</span><select name="role">{% for value in roles %}<option value="{{ value }}"{% if value == account.role %} selected{% endif %}>{{ value | capitalize }}</option>{% endfor %}</select></label>
+      <label><span class="field-title">New password</span><input type="password" name="new_password" autocomplete="new-password" minlength="{{ minimum_length }}"></label>
+      <label><span class="field-title">Repeat new password</span><input type="password" name="repeat_password" autocomplete="new-password" minlength="{{ minimum_length }}"></label>
+      <label><span class="field-title">Your password</span><input type="password" name="your_password" autocomplete="current-password" required></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons">
+        <button type="submit" class="secondary-button" name="action" value="role">Change role</button>
+        <button type="submit" class="secondary-button" name="action" value="password">Set password</button>
+        <button type="submit" class="secondary-button" name="action" value="revoke">End sessions</button>
+        {% if account.locked %}<button type="submit" class="secondary-button" name="action" value="unlock">Unlock</button>{% endif %}
+        {% if account.disabled %}<button type="submit" class="secondary-button" name="action" value="enable">Enable</button>{% else %}<button type="submit" class="danger-button" name="action" value="disable">Disable</button>{% endif %}
+      </div>
+    </div>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

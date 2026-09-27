@@ -62,4 +62,23 @@
     </div>
   </div>
 </section>
+
+<section class="cluster-card settings-card">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Users</h3></div></div><div class="cluster-state"><a class="secondary-button" href="/settings/new-user">Add user</a></div></header>
+  <div class="table-scroll"><table class="node-table users-table">
+    <thead><tr><th>User</th><th>Role</th><th>State</th><th>Sessions</th><th>Last sign-in</th></tr></thead>
+    <tbody>
+      {% for user in users %}
+      <tr data-href="{{ user.href }}">
+        <td data-label="User"><a class="proxy-link" href="{{ user.href }}" title="{{ user.username }}"><strong>{{ user.username }}{% if user.own %}<span class="users-you">you</span>{% endif %}</strong></a></td>
+        <td data-label="Role">{{ user.role | capitalize }}</td>
+        <td data-label="State"><span class="status-badge status-badge-{{ user.tone }}">{{ user.state }}</span></td>
+        <td data-label="Sessions">{{ user.sessions }}</td>
+        <td data-label="Last sign-in"><span class="users-date">{{ user.last_sign_in }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+<script defer src="{{ url_for('static', path='/proxy-rows.js') }}?v={{ asset_token }}"></script>
 {% endblock %}

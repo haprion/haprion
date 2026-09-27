@@ -2668,6 +2668,15 @@ throttle, so a session someone else is holding cannot be used to guess it. The
 change ends the account's other sessions and keeps the one it was made from; it
 is recorded as `password_changed` with `via: web`.
 
+An admin manages the other accounts under **Settings → Users**, on
+installations with `management_writes` on: add, change role, disable and
+enable, set a new password, end sessions, and unlock — the same verbs as the
+table above, recorded under the same audit names plus `role_changed`, with the
+admin as actor and `via: web`. Every change asks for the admin's own password
+again, and a wrong one counts as a failed sign-in, as above. The admin's own
+account is not changed there, and the database still refuses to leave no
+active admin. There is no delete, in the interface or the tool.
+
 `-e` names the environment, and each one is a root-owned file written by
 `02-platform-database`: `/etc/haproxy-manager/ui-admin-<environment>.conf`,
 holding the database name and the role to connect as. Prod and dev therefore

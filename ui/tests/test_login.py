@@ -122,6 +122,8 @@ class LoginTestCase(unittest.TestCase):
             #
             mock.patch("haproxy_ui.db.cluster_drafts", return_value=[]),
             mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
+            # Settings draws its Users card from this; none unless a test says.
+            mock.patch("haproxy_ui.db.account_rows", return_value=[]),
             #
             # The profile pages read a profile's own apply jobs. Answered out
             # of whatever `recent_jobs` a test has patched in, so a test that

@@ -76,6 +76,7 @@ from haproxy_ui import (
     proxies,
     snapshot,
     traffic_logs,
+    users,
 )
 from haproxy_ui import editor as editor_module
 from haproxy_ui import preview as preview_module
@@ -2948,8 +2949,260 @@ def build_router(config: Config) -> APIRouter:
                 and entry.readable
                 and bool(entry.fingerprint)
                 and entry.fingerprint != served.fingerprint,
+                "users": users.user_views(_account_rows(request), signed_in_as=gate.username),
             },
         )
+
+    # - Settings -> Users (§16.4 U4, B189) ----------------------------------
+    #
+    # Admin only, behind the same gate as the tab. Every change asks for the
+    # admin's own password again (`_prove_password`), refuses the admin's own
+    # account - that is the account menu's - and leaves the last active admin
+    # to the database, which refuses under a lock whichever path asks. The
+    # verbs and audit names are `haproxy-ui-user`'s, with `via: web`.
+    #
+
+    def _account_rows(request: Request) -> list[db.AccountRow]:
+        with request.app.state.pool.connection() as connection:
+            return db.account_rows(
+                connection,
+                window_minutes=config.throttle.window_minutes,
+                max_failures=config.throttle.max_failures,
+            )
+
+    def _account_row(request: Request, username: str) -> db.AccountRow | None:
+        with request.app.state.pool.connection() as connection:
+            return db.account_row(
+                connection,
+                username,
+                window_minutes=config.throttle.window_minutes,
+                max_failures=config.throttle.max_failures,
+            )
+
+    def _users_context(request: Request, session: AuthenticatedSession) -> dict[str, Any]:
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        return {
+            "username": session.username,
+            "role": session.role,
+            "csrf_token": auth.csrf_token(token),
+            "section": "settings",
+            "management_writes": config.management_writes,
+            "minimum_length": auth.MINIMUM_PASSWORD_LENGTH,
+            "roles": users.ROLES,
+        }
+
+    def _user_page(
+        request: Request,
+        session: AuthenticatedSession,
+        row: db.AccountRow,
+        *,
+        problem: str = "",
+        done: str = "",
+        status_code: int = 200,
+    ) -> Response:
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings-user.html",
+            {
+                **_users_context(request, session),
+                "account": users.user_view(row, signed_in_as=session.username),
+                "problem": problem,
+                "done": users.DONE.get(done, ""),
+            },
+            status_code=status_code,
+        )
+
+    def _new_user_page(
+        request: Request,
+        session: AuthenticatedSession,
+        *,
+        problem: str = "",
+        form: Mapping[str, str] | None = None,
+        status_code: int = 200,
+    ) -> Response:
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings-user-new.html",
+            {
+                **_users_context(request, session),
+                "problem": problem,
+                "form": {"username": "", "role": "reader", **(form or {})},
+            },
+            status_code=status_code,
+        )
+
+    @router.get("/settings/new-user", response_class=HTMLResponse)
+    def new_user_page(request: Request) -> Response:
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        return _new_user_page(request, gate)
+
+    @router.post("/settings/new-user", response_class=HTMLResponse)
+    def create_user(
+        request: Request,
+        username: str = Form(default="", max_length=64),
+        role: str = Form(default="", max_length=16),
+        new_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
+        repeat_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
+        your_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        form = {"username": username, "role": role}
+        if not username:
+            problem = "Name the account."
+        elif role not in users.ROLES:
+            problem = "Choose a role."
+        else:
+            problem = _new_password_problem(new_password, repeat_password)
+        if problem:
+            return _new_user_page(request, gate, problem=problem, form=form, status_code=400)
+
+        with request.app.state.pool.connection() as connection:
+            refused = _prove_password(
+                connection,
+                config,
+                gate,
+                your_password,
+                address=client_address(request),
+                failed_action="account_change_failed",
+                wrong="Your password is not correct.",
+                detail={"account": username, "operation": "create"},
+            )
+            if refused:
+                connection.commit()
+                return _new_user_page(request, gate, problem=refused, form=form, status_code=400)
+            if not db.create_account(
+                connection,
+                username=username,
+                password_hash=auth.hash_password(new_password),
+                role=role,
+            ):
+                connection.rollback()
+                return _new_user_page(
+                    request,
+                    gate,
+                    problem="An account with that name already exists.",
+                    form=form,
+                    status_code=409,
+                )
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="account_created",
+                detail={"account": username, "role": role, "via": "web"},
+            )
+            connection.commit()
+        return RedirectResponse(f"{users.href(username)}?done=created", status_code=303)
+
+    @router.get("/settings/users/{name}", response_class=HTMLResponse)
+    def user_page(request: Request, name: str) -> Response:
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        row = _account_row(request, name)
+        if row is None:
+            return PlainTextResponse("Not found", status_code=404)
+        return _user_page(request, gate, row, done=request.query_params.get("done", "")[:16])
+
+    @router.post("/settings/users/{name}", response_class=HTMLResponse)
+    def change_user(
+        request: Request,
+        name: str,
+        action: str = Form(default="", max_length=16),
+        role: str = Form(default="", max_length=16),
+        new_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
+        repeat_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
+        your_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        if action not in users.ACTIONS:
+            return PlainTextResponse("Unknown action", status_code=400)
+        row = _account_row(request, name)
+        if row is None:
+            return PlainTextResponse("Not found", status_code=404)
+
+        def again(problem: str, status_code: int = 400) -> Response:
+            return _user_page(request, gate, row, problem=problem, status_code=status_code)
+
+        #
+        # Judged before the password is tried, so a mistake in the form never
+        # spends a throttle attempt.
+        #
+        if row.username.lower() == gate.username.lower():
+            return again("This is your own account. Change your password from the account menu.")
+        if action == "role" and role not in users.ROLES:
+            return again("Choose a role.")
+        if action == "role" and role == row.role:
+            return again(f"The account is already {role}.")
+        if action == "disable" and row.disabled:
+            return again("The account is already disabled.")
+        if action == "enable" and not row.disabled:
+            return again("The account is already enabled.")
+        if action == "password":
+            problem = _new_password_problem(new_password, repeat_password)
+            if problem:
+                return again(problem)
+
+        with request.app.state.pool.connection() as connection:
+            refused = _prove_password(
+                connection,
+                config,
+                gate,
+                your_password,
+                address=client_address(request),
+                failed_action="account_change_failed",
+                wrong="Your password is not correct.",
+                detail={"account": row.username, "operation": action},
+            )
+            if refused:
+                connection.commit()
+                return again(refused)
+            detail: dict[str, object] = {"account": row.username, "via": "web"}
+            try:
+                if action == "role":
+                    db.set_role(connection, user_id=row.id, role=role)
+                    audit_action = "role_changed"
+                    detail.update(role=role, previous=row.role)
+                elif action == "disable":
+                    ended = db.set_disabled(connection, user_id=row.id, disabled=True)
+                    audit_action = "account_disabled"
+                    detail["sessions_revoked"] = ended
+                elif action == "enable":
+                    db.set_disabled(connection, user_id=row.id, disabled=False)
+                    audit_action = "account_enabled"
+                elif action == "password":
+                    ended = db.reset_password(
+                        connection, user_id=row.id, password_hash=auth.hash_password(new_password)
+                    )
+                    audit_action = "password_reset"
+                    detail["sessions_revoked"] = ended
+                elif action == "revoke":
+                    detail["sessions_revoked"] = db.revoke_sessions_for_user(connection, row.id)
+                    audit_action = "sessions_revoked"
+                else:
+                    db.unlock_account(connection, username=row.username, actor=gate.username)
+                    audit_action = "throttle_cleared"
+            except db.LastAdmin:
+                connection.rollback()
+                return again("The last active admin cannot be demoted or disabled.", 409)
+            db.record_audit_event(
+                connection, actor=gate.username, action=audit_action, detail=detail
+            )
+            connection.commit()
+        return RedirectResponse(f"{users.href(row.username)}?done={action}", status_code=303)
 
     @router.get("/certificates/receivers", response_class=HTMLResponse)
     def certificate_receivers_page(request: Request) -> Response:
@@ -4884,64 +5137,27 @@ def build_router(config: Config) -> APIRouter:
         # The new password is judged before the current one is tried, so a
         # typing mistake in the new one never spends a throttle attempt.
         #
-        if len(new_password) < auth.MINIMUM_PASSWORD_LENGTH:
-            problem = (
-                f"The new password must be at least {auth.MINIMUM_PASSWORD_LENGTH} characters."
-            )
-        elif len(new_password.encode("utf-8")) > auth.MAX_PASSWORD_BYTES:
-            problem = f"The new password must be under {auth.MAX_PASSWORD_BYTES} bytes."
-        elif new_password != repeat_password:
-            problem = "The two new passwords do not match."
-        else:
-            problem = ""
+        problem = _new_password_problem(new_password, repeat_password)
         if problem:
             return _password_page(request, config, session, problem=problem, status_code=400)
 
         address = client_address(request)
         with request.app.state.pool.connection() as connection:
-            failures = db.failures_since_last_success(
+            refused = _prove_password(
                 connection,
-                username=session.username,
-                client_ip=address,
-                window_minutes=config.throttle.window_minutes,
+                config,
+                session,
+                current_password,
+                address=address,
+                failed_action="password_change_failed",
+                wrong="The current password is not correct.",
             )
-            throttled = failures >= config.throttle.max_failures
-            account = None if throttled else db.account_by_username(connection, session.username)
-            if account is None or account.disabled:
-                auth.burn_absent_user_time(current_password)
-                accepted = False
-            else:
-                accepted = auth.verify_password(account.password_hash, current_password)
-
-            if not accepted:
-                db.record_login_attempt(
-                    connection, username=session.username, client_ip=address, succeeded=False
-                )
-                db.record_audit_event(
-                    connection,
-                    actor=session.username,
-                    action="password_change_failed",
-                    detail={
-                        "client_ip": address,
-                        "reason": "throttled" if throttled else "rejected",
-                        "via": "web",
-                    },
-                )
+            if refused:
                 connection.commit()
-                return _password_page(
-                    request,
-                    config,
-                    session,
-                    problem="Too many failed attempts. Try again later."
-                    if throttled
-                    else "The current password is not correct.",
-                    status_code=400,
-                )
-
-            assert account is not None  # noqa: S101 - accepted implies an account was found
+                return _password_page(request, config, session, problem=refused, status_code=400)
             ended = db.change_password(
                 connection,
-                user_id=account.id,
+                user_id=session.user_id,
                 password_hash=auth.hash_password(new_password),
                 keep=auth.token_hash(token),
             )
@@ -6052,6 +6268,69 @@ def _return_path(name: str, *, open: str = "") -> str:
     if name == "certificates" and open and CERTIFICATE_ID.fullmatch(open):
         return f"{path}&open={open}"
     return path
+
+
+def _new_password_problem(new_password: str, repeat_password: str) -> str:
+    """The sentence a new password is refused with, or ''. The CLI's same rules."""
+
+    if len(new_password) < auth.MINIMUM_PASSWORD_LENGTH:
+        return f"The new password must be at least {auth.MINIMUM_PASSWORD_LENGTH} characters."
+    if len(new_password.encode("utf-8")) > auth.MAX_PASSWORD_BYTES:
+        return f"The new password must be under {auth.MAX_PASSWORD_BYTES} bytes."
+    if new_password != repeat_password:
+        return "The two new passwords do not match."
+    return ""
+
+
+def _prove_password(
+    connection: Any,
+    config: Config,
+    session: AuthenticatedSession,
+    password: str,
+    *,
+    address: str,
+    failed_action: str,
+    wrong: str,
+    detail: Mapping[str, object] | None = None,
+) -> str:
+    """'' when `password` is the signed-in account's own; else why not, recorded.
+
+    A wrong one is a failed sign-in for this name and address - the same row
+    the sign-in writes and the same throttle it reads - so a session somebody
+    else is holding cannot be used to guess the password behind it. Throttled,
+    the password is not even tried. The caller commits either way.
+    """
+
+    failures = db.failures_since_last_success(
+        connection,
+        username=session.username,
+        client_ip=address,
+        window_minutes=config.throttle.window_minutes,
+    )
+    throttled = failures >= config.throttle.max_failures
+    account = None if throttled else db.account_by_username(connection, session.username)
+    if account is None or account.disabled:
+        auth.burn_absent_user_time(password)
+        accepted = False
+    else:
+        accepted = auth.verify_password(account.password_hash, password)
+    if accepted:
+        return ""
+    db.record_login_attempt(
+        connection, username=session.username, client_ip=address, succeeded=False
+    )
+    db.record_audit_event(
+        connection,
+        actor=session.username,
+        action=failed_action,
+        detail={
+            **(detail or {}),
+            "client_ip": address,
+            "reason": "throttled" if throttled else "rejected",
+            "via": "web",
+        },
+    )
+    return "Too many failed attempts. Try again later." if throttled else wrong
 
 
 def _password_page(

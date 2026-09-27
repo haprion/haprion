@@ -460,7 +460,16 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
    badge of 155. */
 .proxy-table { table-layout: fixed; }
 /* A row with an address opens it anywhere on the row (proxy-rows.js). */
-.proxy-table tr[data-href] { cursor: pointer; }
+.proxy-table tr[data-href], .users-table tr[data-href] { cursor: pointer; }
+/* Settings -> Users: the name takes what is left and is cut, never pushed into Role. */
+.users-table { table-layout: fixed; }
+.users-table th:nth-child(2), .users-table td:nth-child(2) { width: 110px; }
+.users-table th:nth-child(3), .users-table td:nth-child(3) { width: 120px; }
+.users-table th:nth-child(4), .users-table td:nth-child(4) { width: 100px; }
+.users-table th:nth-child(5), .users-table td:nth-child(5) { width: 170px; }
+.users-table td:first-child strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.users-you { margin-left: 6px; color: var(--muted); font-size: 12px; font-weight: var(--font-weight-regular); }
+.users-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .proxy-table th:nth-child(1), .proxy-table td:nth-child(1) { width: 20%; }
 .proxy-table th:nth-child(2), .proxy-table td:nth-child(2) { width: 22%; }
 .proxy-table th:nth-child(3), .proxy-table td:nth-child(3) { width: 36%; }
@@ -898,7 +907,7 @@ a.secondary-button { display: inline-flex; align-items: center; justify-content:
   .node-table td::before { position: absolute; top: 10px; left: 8px; color: var(--muted); content: attr(data-label); font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
   .node-table td:nth-child(1), .node-table td:nth-child(2) { grid-column: 1 / -1; }
   /* The wide layout's column widths outrank `.node-table td` and would squeeze every card to a quarter of its width. */
-  .backup-node-table td:nth-child(n), .archive-table td:nth-child(n), .registry-table td:nth-child(n) { width: 100%; }
+  .backup-node-table td:nth-child(n), .archive-table td:nth-child(n), .registry-table td:nth-child(n), .users-table td:nth-child(n) { width: 100%; }
   .registry-table, .registry-table.selectable-table { min-width: 0; }
   /* "Newest backup" is the longest label on the page; its field is widened rather than the label cut or wrapped. */
   .backup-node-table td:nth-child(n), .archive-table td:nth-child(n) { padding-left: 116px; }

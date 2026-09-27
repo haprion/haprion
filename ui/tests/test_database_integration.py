@@ -1372,6 +1372,72 @@ class AccountsFromTheWeb(unittest.TestCase):
         self.assertEqual(sessions, [(kept, False), (other, True)])
         self.assertEqual(account, (self.HASH + "x", True))
 
+    def web_connection(self) -> Any:
+        return self.connect("HAPROXY_UI_TEST_WEB_ROLE")
+
+    def test_settings_lists_accounts_and_reads_a_lock_from_any_one_address(self) -> None:
+        with self.web_connection() as connection:
+            for address in ("192.0.2.1", "192.0.2.1", "192.0.2.2"):
+                db.record_login_attempt(
+                    connection, username="carol", client_ip=address, succeeded=False
+                )
+            db.record_login_attempt(
+                connection, username="bob", client_ip="192.0.2.1", succeeded=True
+            )
+            connection.commit()
+            rows = db.account_rows(connection, window_minutes=15, max_failures=2)
+            self.assertEqual([r.username for r in rows], ["alice", "bob", "carol"])
+            by_name = {r.username: r for r in rows}
+            self.assertTrue(by_name["carol"].locked)
+            self.assertFalse(by_name["bob"].locked)
+            self.assertIsNotNone(by_name["bob"].last_sign_in)
+            self.assertIsNone(by_name["alice"].last_sign_in)
+
+            db.unlock_account(connection, username="Carol", actor="alice")
+            connection.commit()
+            carol = db.account_row(connection, "carol", window_minutes=15, max_failures=2)
+            self.assertIsNotNone(carol)
+            self.assertFalse(getattr(carol, "locked", True))
+
+    def test_the_web_s_account_verbs_under_its_own_grants(self) -> None:
+        with self.web_connection() as connection:
+            self.assertTrue(
+                db.create_account(
+                    connection, username="dave", password_hash=self.HASH, role="reader"
+                )
+            )
+            self.assertFalse(
+                db.create_account(
+                    connection, username="DAVE", password_hash=self.HASH, role="admin"
+                )
+            )
+            dave = db.account_row(connection, "dave", window_minutes=15, max_failures=10)
+            assert dave is not None  # noqa: S101 - the row was just created
+            db.set_role(connection, user_id=dave.id, role="admin")
+            self.assertEqual(db.set_disabled(connection, user_id=dave.id, disabled=True), 0)
+            db.set_disabled(connection, user_id=dave.id, disabled=False)
+            self.assertEqual(
+                db.reset_password(connection, user_id=dave.id, password_hash=self.HASH + "y"), 0
+            )
+            connection.commit()
+            dave = db.account_row(connection, "dave", window_minutes=15, max_failures=10)
+            self.assertEqual(
+                (getattr(dave, "role", None), getattr(dave, "disabled", None)), ("admin", False)
+            )
+
+    def test_the_last_admin_refusal_reaches_the_web_as_last_admin(self) -> None:
+        with self.web_connection() as connection:
+            rows = {
+                r.username: r
+                for r in db.account_rows(connection, window_minutes=15, max_failures=10)
+            }
+            db.set_disabled(connection, user_id=rows["bob"].id, disabled=True)
+            with self.assertRaises(db.LastAdmin):
+                db.set_role(connection, user_id=rows["alice"].id, role="reader")
+            # The savepoint leaves the transaction usable for what comes after.
+            db.record_audit_event(connection, actor="alice", action="probe", detail={})
+            connection.commit()
+
     def test_the_last_active_admin_is_neither_disabled_nor_demoted(self) -> None:
         self.web("update app_user set disabled = true where username = 'bob'")
         for statement in (

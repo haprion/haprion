@@ -46,6 +46,19 @@ class Account:
 
 
 @dataclass(frozen=True, slots=True)
+class AccountRow:
+    """One line of Settings -> Users: an account and what is true of it now."""
+
+    id: int
+    username: str
+    role: str
+    disabled: bool
+    sessions: int
+    last_sign_in: datetime | None
+    locked: bool
+
+
+@dataclass(frozen=True, slots=True)
 class AuthenticatedSession:
     """A live session and the account it belongs to, read in one statement.
 
@@ -1014,6 +1027,140 @@ def change_password(
             {"user_id": user_id, "keep": keep},
         )
         return cursor.rowcount
+
+
+#
+# *Locked* is the throttle's own question asked for every address at once: a
+# name is locked when any one address has reached the limit of failures since
+# the latest of its last success there and the name's last unlock. The same
+# bounds as `failures_since_last_success`, which is what the sign-in reads.
+#
+_ACCOUNT_ROWS = """
+    select u.id, u.username, u.role, u.disabled,
+           (select count(*) from app_session s
+             where s.user_id = u.id and s.revoked_at is null
+               and s.expires_at > statement_timestamp()) as sessions,
+           (select max(a.at) from login_attempt a
+             where a.username_normalised = u.username_normalised and a.succeeded) as last_sign_in,
+           exists (
+             select 1 from login_attempt a
+              where a.username_normalised = u.username_normalised
+                and not a.succeeded
+                and a.at > statement_timestamp() - make_interval(mins => %(window)s)
+                and a.at > greatest(
+                      coalesce((select max(b.at) from login_attempt b
+                                 where b.username_normalised = a.username_normalised
+                                   and b.client_ip = a.client_ip and b.succeeded),
+                               '-infinity'::timestamptz),
+                      coalesce((select max(l.at) from login_unlock l
+                                 where l.username_normalised = a.username_normalised),
+                               '-infinity'::timestamptz))
+              group by a.client_ip
+             having count(*) >= %(limit)s) as locked
+      from app_user u
+"""
+
+
+def account_rows(
+    connection: Connection[Any], *, window_minutes: int, max_failures: int
+) -> list[AccountRow]:
+    """Every account, in the order a person reads names: alphabetical."""
+
+    with connection.cursor(row_factory=class_row(AccountRow)) as cursor:
+        cursor.execute(
+            _ACCOUNT_ROWS + " order by u.username_normalised",
+            {"window": window_minutes, "limit": max_failures},
+        )
+        return cursor.fetchall()
+
+
+def account_row(
+    connection: Connection[Any], username: str, *, window_minutes: int, max_failures: int
+) -> AccountRow | None:
+    with connection.cursor(row_factory=class_row(AccountRow)) as cursor:
+        cursor.execute(
+            _ACCOUNT_ROWS + " where u.username_normalised = lower(%(username)s)",
+            {"window": window_minutes, "limit": max_failures, "username": username},
+        )
+        return cursor.fetchone()
+
+
+class LastAdmin(Exception):
+    """The database refused to leave no active admin (0039's trigger)."""
+
+
+def create_account(
+    connection: Connection[Any], *, username: str, password_hash: str, role: str
+) -> bool:
+    """A new account, or False when the name is taken. The CLI's `add`."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into app_user (username, password_hash, role) "
+            "values (%(username)s, %(hash)s, %(role)s) on conflict do nothing returning id",
+            {"username": username, "hash": password_hash, "role": role},
+        )
+        return cursor.fetchone() is not None
+
+
+def _guarded_update(connection: Connection[Any], statement: str, values: dict[str, Any]) -> None:
+    """An update the last-admin trigger may refuse, turned into `LastAdmin`.
+
+    Run under a savepoint so the refusal leaves the caller's transaction usable
+    for the audit row that says what was refused.
+    """
+
+    try:
+        with connection.transaction(), connection.cursor() as cursor:
+            cursor.execute(statement, values)
+    except psycopg.errors.CheckViolation as error:
+        #
+        # The trigger raises without a constraint name; a named one is a
+        # table constraint (a role outside the list) and stays what it is.
+        #
+        if error.diag.constraint_name is None:
+            raise LastAdmin from error
+        raise
+
+
+def set_role(connection: Connection[Any], *, user_id: int, role: str) -> None:
+    _guarded_update(
+        connection,
+        "update app_user set role = %(role)s where id = %(user_id)s",
+        {"role": role, "user_id": user_id},
+    )
+
+
+def set_disabled(connection: Connection[Any], *, user_id: int, disabled: bool) -> int:
+    """Disable or enable; a disable ends every session, as the CLI's does."""
+
+    _guarded_update(
+        connection,
+        "update app_user set disabled = %(disabled)s where id = %(user_id)s",
+        {"disabled": disabled, "user_id": user_id},
+    )
+    return revoke_sessions_for_user(connection, user_id) if disabled else 0
+
+
+def reset_password(connection: Connection[Any], *, user_id: int, password_hash: str) -> int:
+    """Another account's new password, and every session it had. The CLI's `reset`."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update app_user set password_hash = %(hash)s where id = %(user_id)s",
+            {"hash": password_hash, "user_id": user_id},
+        )
+    return revoke_sessions_for_user(connection, user_id)
+
+
+def unlock_account(connection: Connection[Any], *, username: str, actor: str) -> None:
+    """The row the throttle counts from. The CLI's `unlock` writes the same one."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into login_unlock (username_normalised, actor) values (lower(%s), %s)",
+            (username, actor),
+        )
 
 
 def revoke_sessions_for_user(connection: Connection[Any], user_id: int) -> int:

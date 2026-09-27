@@ -23,7 +23,7 @@ from haproxy_mgmt.traffic_collector import (
     _mirror_window,
 )
 
-from haproxy_ui import db, traffic_logs
+from haproxy_ui import auth, db, traffic_logs
 
 DSN = os.environ.get("HAPROXY_UI_TEST_DATABASE_DSN", "")
 
@@ -1331,6 +1331,46 @@ class AccountsFromTheWeb(unittest.TestCase):
                 "where username = 'carol'"
             )
             self.assertEqual(cursor.fetchone(), (True,))
+
+    def test_the_web_changes_its_own_password_and_ends_only_the_other_sessions(self) -> None:
+        """U3's one statement pair, under the web's grants and nothing more."""
+
+        kept, other = auth.token_hash("kept"), auth.token_hash("other")
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            user_id = connection.execute(
+                "select id from app_user where username = 'carol'"
+            ).fetchone()[0]  # type: ignore[index]
+            for token in (kept, other):
+                db.create_session(
+                    connection,
+                    token_hash=token,
+                    user_id=user_id,
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                )
+            connection.commit()
+            ended = db.change_password(
+                connection, user_id=user_id, password_hash=self.HASH + "x", keep=kept
+            )
+            connection.commit()
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select token_hash, revoked_at is not null from app_session "
+                "where user_id = %s order by revoked_at nulls first",
+                (user_id,),
+            )
+            sessions = cursor.fetchall()
+            cursor.execute(
+                "select password_hash, updated_at > now() - interval '1 minute' "
+                "from app_user where id = %s",
+                (user_id,),
+            )
+            account = cursor.fetchone()
+            cursor.execute("delete from app_session where user_id = %s", (user_id,))
+            connection.commit()
+
+        self.assertEqual(ended, 1)
+        self.assertEqual(sessions, [(kept, False), (other, True)])
+        self.assertEqual(account, (self.HASH + "x", True))
 
     def test_the_last_active_admin_is_neither_disabled_nor_demoted(self) -> None:
         self.web("update app_user set disabled = true where username = 'bob'")

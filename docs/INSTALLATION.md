@@ -2661,6 +2661,13 @@ Reset and disable revoke sessions on purpose. An account that cannot sign in
 again while its existing cookie keeps working has not actually been taken back
 from whoever had it, which is usually why either command is being run.
 
+Anyone signed in, reader or admin, can also change their own password from the
+account menu (**Change password**). It asks for the current password, and a
+wrong one counts as a failed sign-in for that name and address, under the same
+throttle, so a session someone else is holding cannot be used to guess it. The
+change ends the account's other sessions and keeps the one it was made from; it
+is recorded as `password_changed` with `via: web`.
+
 `-e` names the environment, and each one is a root-owned file written by
 `02-platform-database`: `/etc/haproxy-manager/ui-admin-<environment>.conf`,
 holding the database name and the role to connect as. Prod and dev therefore

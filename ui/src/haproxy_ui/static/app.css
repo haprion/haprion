@@ -254,6 +254,8 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .account-popover form { margin: 0; padding: 6px; }
 .menu-button { width: 100%; padding: 8px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .menu-button:hover { background: var(--panel-soft); color: var(--critical); }
+.menu-link { display: block; margin: 6px 6px 0; padding: 8px 10px; border-radius: 5px; color: var(--text); text-decoration: none; }
+.menu-link:hover, .menu-link:focus-visible { background: var(--panel-soft); color: var(--text-strong); }
 
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
 .heading-badges { display: inline-flex; align-items: center; gap: 8px; }

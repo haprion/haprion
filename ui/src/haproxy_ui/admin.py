@@ -33,17 +33,8 @@ from haproxy_ui import auth
 ADMIN_CONFIG_DIRECTORY = Path("/etc/haproxy-manager")
 ROLES = ("admin", "reader")
 
-#
-# The NIST SP 800-63B floor, and no composition rules for the reason that
-# document gives: rules mostly produce one predictable substitution per class
-# and a password nobody can remember, while length is what actually costs an
-# attacker something against a memory-hard hash.
-#
-# Eight is a floor rather than a recommendation. Online guessing is already
-# bounded by the throttle; this number is what stands between a stolen database
-# dump and the accounts in it, together with Argon2id.
-#
-MINIMUM_PASSWORD_LENGTH = 8
+# The floor is shared with the web's own password change; see auth.
+MINIMUM_PASSWORD_LENGTH = auth.MINIMUM_PASSWORD_LENGTH
 
 
 class AdminError(Exception):

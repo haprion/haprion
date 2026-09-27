@@ -4847,6 +4847,120 @@ def build_router(config: Config) -> APIRouter:
         #
         return RedirectResponse(_return_path(return_to, open=return_open), status_code=303)
 
+    @router.get("/account/password", response_class=HTMLResponse)
+    def account_password(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        return _password_page(
+            request, config, session, changed=request.query_params.get("changed") == "1"
+        )
+
+    @router.post("/account/password", response_class=HTMLResponse)
+    def change_password(
+        request: Request,
+        current_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
+        new_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
+        repeat_password: str = Form(default="", max_length=auth.MAX_PASSWORD_BYTES),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """An account's own new password, proved by the one it replaces (B189).
+
+        Every role may, and it is not a management write: the switch that turns
+        those off leaves a person able to change their own password. A wrong
+        current password is a failed sign-in for this name and address - the
+        same row, the same throttle - so a session somebody else is holding
+        cannot be used to guess the password behind it.
+        """
+
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+
+        #
+        # The new password is judged before the current one is tried, so a
+        # typing mistake in the new one never spends a throttle attempt.
+        #
+        if len(new_password) < auth.MINIMUM_PASSWORD_LENGTH:
+            problem = (
+                f"The new password must be at least {auth.MINIMUM_PASSWORD_LENGTH} characters."
+            )
+        elif len(new_password.encode("utf-8")) > auth.MAX_PASSWORD_BYTES:
+            problem = f"The new password must be under {auth.MAX_PASSWORD_BYTES} bytes."
+        elif new_password != repeat_password:
+            problem = "The two new passwords do not match."
+        else:
+            problem = ""
+        if problem:
+            return _password_page(request, config, session, problem=problem, status_code=400)
+
+        address = client_address(request)
+        with request.app.state.pool.connection() as connection:
+            failures = db.failures_since_last_success(
+                connection,
+                username=session.username,
+                client_ip=address,
+                window_minutes=config.throttle.window_minutes,
+            )
+            throttled = failures >= config.throttle.max_failures
+            account = None if throttled else db.account_by_username(connection, session.username)
+            if account is None or account.disabled:
+                auth.burn_absent_user_time(current_password)
+                accepted = False
+            else:
+                accepted = auth.verify_password(account.password_hash, current_password)
+
+            if not accepted:
+                db.record_login_attempt(
+                    connection, username=session.username, client_ip=address, succeeded=False
+                )
+                db.record_audit_event(
+                    connection,
+                    actor=session.username,
+                    action="password_change_failed",
+                    detail={
+                        "client_ip": address,
+                        "reason": "throttled" if throttled else "rejected",
+                        "via": "web",
+                    },
+                )
+                connection.commit()
+                return _password_page(
+                    request,
+                    config,
+                    session,
+                    problem="Too many failed attempts. Try again later."
+                    if throttled
+                    else "The current password is not correct.",
+                    status_code=400,
+                )
+
+            assert account is not None  # noqa: S101 - accepted implies an account was found
+            ended = db.change_password(
+                connection,
+                user_id=account.id,
+                password_hash=auth.hash_password(new_password),
+                keep=auth.token_hash(token),
+            )
+            db.record_audit_event(
+                connection,
+                actor=session.username,
+                action="password_changed",
+                detail={
+                    "account": session.username,
+                    "client_ip": address,
+                    "sessions_revoked": ended,
+                    "via": "web",
+                },
+            )
+            connection.commit()
+
+        # 303, so a refresh of the answer cannot send the form again.
+        return RedirectResponse("/account/password?changed=1", status_code=303)
+
     @router.post("/logout")
     def logout(
         request: Request,
@@ -5938,6 +6052,34 @@ def _return_path(name: str, *, open: str = "") -> str:
     if name == "certificates" and open and CERTIFICATE_ID.fullmatch(open):
         return f"{path}&open={open}"
     return path
+
+
+def _password_page(
+    request: Request,
+    config: Config,
+    session: AuthenticatedSession,
+    *,
+    problem: str = "",
+    changed: bool = False,
+    status_code: int = 200,
+) -> Response:
+    """The own-password form. Never echoes a password, not even a wrong one."""
+
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    return TEMPLATES.TemplateResponse(
+        request,
+        "account-password.html",
+        {
+            "username": session.username,
+            "role": session.role,
+            "management_writes": config.management_writes,
+            "csrf_token": auth.csrf_token(token),
+            "problem": problem,
+            "changed": changed,
+            "minimum_length": auth.MINIMUM_PASSWORD_LENGTH,
+        },
+        status_code=status_code,
+    )
 
 
 def _refusal_page(

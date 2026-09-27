@@ -992,6 +992,30 @@ def revoke_session(connection: Connection[Any], token_hash: bytes) -> None:
         )
 
 
+def change_password(
+    connection: Connection[Any], *, user_id: int, password_hash: str, keep: bytes
+) -> int:
+    """Set an account's own new password and end its other sessions.
+
+    The one it was changed from stays signed in; every other cookie goes, as a
+    reset on the command line does, because a password is usually changed when
+    somebody else may have had it. `updated_at` is the database's to set.
+    Returns how many sessions were ended.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "update app_user set password_hash = %(hash)s where id = %(user_id)s",
+            {"hash": password_hash, "user_id": user_id},
+        )
+        cursor.execute(
+            "update app_session set revoked_at = statement_timestamp() "
+            " where user_id = %(user_id)s and token_hash <> %(keep)s and revoked_at is null",
+            {"user_id": user_id, "keep": keep},
+        )
+        return cursor.rowcount
+
+
 def revoke_sessions_for_user(connection: Connection[Any], user_id: int) -> int:
     """End every live session an account has, and say how many that was.
 

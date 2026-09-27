@@ -68,6 +68,18 @@ _ABSENT_USER_HASH = _HASHER.hash(secrets.token_urlsafe(32))
 #
 MAX_PASSWORD_BYTES = 1024
 
+#
+# The NIST SP 800-63B floor, and no composition rules for the reason that
+# document gives: rules mostly produce one predictable substitution per class
+# and a password nobody can remember, while length is what actually costs an
+# attacker something against a memory-hard hash.
+#
+# Eight is a floor rather than a recommendation. Online guessing is already
+# bounded by the throttle; this number is what stands between a stolen database
+# dump and the accounts in it, together with Argon2id.
+#
+MINIMUM_PASSWORD_LENGTH = 8
+
 
 class PasswordTooLong(ValueError):
     """The submitted password is longer than anything a person types."""

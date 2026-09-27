@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from haproxy_ui import sorting
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterInventory
@@ -238,3 +239,49 @@ def build_proxy_overview(
         )
 
     return ProxyOverview(clusters=tuple(clusters))
+
+
+#
+# The proxy tables are sortable (THEME.md). A row is the macro's
+# `(name, kind, item)`: a draft, a removal waiting for its deploy, a managed
+# object or an unmanaged frontend. A draft and a removal have no protocol,
+# hostnames or health to sort on and come last in those columns. One choice
+# orders every cluster's table on the page, and the rows' refresh keeps it.
+#
+def _served(row: tuple[str, str, Any]) -> Any:
+    _name, kind, item = row
+    return item if kind in ("written", "foreign") else None
+
+
+def _protocol(row: tuple[str, str, Any], _context: Any) -> str | None:
+    item = _served(row)
+    return sorting.text(item.protocol) if item is not None else None
+
+
+def _hosts(row: tuple[str, str, Any], _context: Any) -> str | None:
+    item = _served(row)
+    return sorting.text(", ".join(item.hostnames)) if item is not None else None
+
+
+def _health(row: tuple[str, str, Any], lamps: Any) -> tuple[int, str] | None:
+    name, kind, _item = row
+    lamp = (lamps or {}).get(name) if kind == "written" else None
+    return None if lamp is None else (sorting.tone_rank(lamp.tone), lamp.label or "")
+
+
+def _ownership(row: tuple[str, str, Any], _context: Any) -> str | None:
+    kind = row[1]
+    return {"written": "managed", "removed": "managed", "foreign": "unmanaged"}.get(kind)
+
+
+TABLE = sorting.Table(
+    columns=(
+        sorting.Column("name", lambda row, _: sorting.text(row[0])),
+        sorting.Column("protocol", _protocol),
+        sorting.Column("hosts", _hosts),
+        sorting.Column("health", _health),
+        sorting.Column("ownership", _ownership),
+    ),
+    cookie="haproxy_ui_proxies_sort",
+    path="/proxies",
+)

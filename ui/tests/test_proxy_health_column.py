@@ -103,7 +103,7 @@ class TheHealthColumn(LoginTestCase):
         page = self.page(CHECKED, status(("a", "UP"), ("b", "UP")))
 
         self.assertEqual(page.status_code, 200)
-        self.assertIn("<th>Health</th>", page.text)
+        self.assertIn(">Health</a></th>", page.text)
         self.assertIn("status-dot status-healthy", page.text)
         self.assertIn("2/2 up", page.text)
 

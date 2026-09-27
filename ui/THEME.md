@@ -67,26 +67,27 @@ is a broken one, and its grid needs fixing rather than its text truncating.
 
 A table that the reader may sort **sorts on every column**, not on a chosen few:
 a heading that is a link in one column and plain text in the next reads as a
-bug. Settings -> Users is the reference (`users.sort_links`, `users.ordered`,
-the `<thead>` loop in `settings.html`):
+bug. One mechanism serves every such table - `sorting.Table` for the order and
+the links, `_sort.html`'s `heading` macro for the `<th>` - so Users, Proxies
+and Certificates cannot drift apart. A new sortable table declares its columns
+as a `sorting.Table` beside its view code and draws its headings with the macro.
 
+- the default order is **the first column, A-Z**; a row never moves because its
+  data changed
 - the order is chosen on the server with `?sort=<column>`, and `-<column>`
   turns it round; no script, so the whole-row link and the page's own
   refresh keep working
-- the first click gives the column's natural order: text and states from the
-  top, counts and times from the most and the newest; the second click turns it
+- the first click gives the order a reader most often wants: text from the
+  top, states and health with the problems first, counts from the most, past
+  times from the newest, expiry from the soonest; the second click turns it
 - the chosen heading carries ▲ (A-Z, least or oldest first) or ▼, and
   `aria-sort`; the others carry nothing
-- rows that tie keep their name order, and a missing value ("Never", "—") comes
+- rows that tie keep the default order, and a missing value ("Never", "—") comes
   last in both directions: it is not a value to sort among values
-- an unknown `sort` falls back to the default rather than refusing
+- an unknown `sort` falls back to the remembered choice, then the default
 - the choice is remembered in a cookie scoped to the page's path, so *Back*
-  from a row's page lands on the order the reader left
-- the default order stays alphabetical: a row never moves because its data
-  changed
-
-When a second table needs this, lift the column table and `sort_links` out of
-`users.py` into a shared module rather than copying them.
+  from a row's page, and the rows' own refresh, keep the order the reader left
+- a checkbox column is not a column to sort on
 
 ## Assets are versioned
 

@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% import "_sort.html" as sort %}
 {% block title %}Certificates — HAProxy Manager{% endblock %}
 {% block head_extra %}{% endblock %}
 {% block content %}
@@ -17,9 +18,9 @@
 #}
 {% macro certificate_table(rows, view, opened, selectable=false) %}
   <div class="table-scroll"><table class="node-table certificate-table registry-table{% if selectable %} selectable-table{% endif %}">
-    <thead><tr>{% if selectable %}<th class="select-column"><span class="visually-hidden">Select</span></th>{% endif %}<th>Certificate</th><th>Names</th><th>Source</th><th>Used by</th><th>Valid from</th><th>Expires</th><th>State</th></tr></thead>
+    {% set links = certificate_sorts[view] %}<thead><tr>{% if selectable %}<th class="select-column"><span class="visually-hidden">Select</span></th>{% endif %}{{ sort.heading(links.certificate, "Certificate") }}{{ sort.heading(links.names, "Names") }}{{ sort.heading(links.source, "Source") }}{{ sort.heading(links.usedby, "Used by") }}{{ sort.heading(links.validfrom, "Valid from") }}{{ sort.heading(links.expires, "Expires") }}{{ sort.heading(links.state, "State") }}</tr></thead>
     <tbody>
-      {% for certificate in rows %}
+      {% for certificate in rows | certificate_order(certificate_sort) %}
       {% set open = certificate.identifier == opened %}
       {% set href = '?view=' ~ view ~ ('' if open else '&open=' ~ certificate.identifier) %}
       <tr class="registry-row{% if open %} registry-open{% endif %}" data-href="{{ href }}">

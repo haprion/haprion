@@ -154,8 +154,6 @@ TEMPLATES.env.globals["check_phrase"] = health.check_phrase
 THEME_COOKIE = "haproxy_ui_theme"
 # The browser's IANA zone, written by zone.js; read, never set, by the server.
 ZONE_COOKIE = "haproxy_ui_zone"
-# The order the reader last picked for Settings -> Users, so Back keeps it.
-USERS_SORT_COOKIE = "haproxy_ui_users_sort"
 THEMES = ("light", "dark")
 
 
@@ -189,6 +187,12 @@ def shown_at(moment: datetime) -> str:
 
 TEMPLATES.env.filters["shown_at"] = shown_at
 TEMPLATES.env.filters["shown"] = metrics.shown
+TEMPLATES.env.filters["certificate_order"] = lambda rows, sort: certificates.TABLE.ordered(
+    rows, sort
+)
+TEMPLATES.env.filters["proxy_order"] = lambda rows, sort, lamps: proxies.TABLE.ordered(
+    rows, sort, lamps
+)
 
 
 def _log_time_filter(
@@ -837,7 +841,8 @@ def build_router(config: Config) -> APIRouter:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         listing = _proxy_listing(request, session.role)
         captured_at = listing.pop("captured_at")
-        return TEMPLATES.TemplateResponse(
+        sort, asked = proxies.TABLE.chosen(request)
+        response = TEMPLATES.TemplateResponse(
             request,
             "proxies.html",
             {
@@ -851,8 +856,13 @@ def build_router(config: Config) -> APIRouter:
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
                 "snapshot_age": snapshot_age(captured_at),
+                "proxy_sort": sort,
+                "proxy_sorts": proxies.TABLE.links(sort),
             },
         )
+        if asked:
+            proxies.TABLE.remember(response, sort, secure=config.session.cookie_secure)
+        return response
 
     #
     # The rows on their own, so a listing can catch up without the page being
@@ -878,6 +888,11 @@ def build_router(config: Config) -> APIRouter:
         #
         template: Any = TEMPLATES.env.get_template("_proxy-rows.html").module
         macro = template.proxy_rows
+        #
+        # In the order the page was drawn in: the cookie the heading set comes
+        # with this request too.
+        #
+        order, _asked = proxies.TABLE.chosen(request)
         clusters = {
             view.cluster: str(
                 macro(
@@ -893,6 +908,7 @@ def build_router(config: Config) -> APIRouter:
                     listing["reconfigured"].get(view.cluster, frozenset())
                     if view.cluster in listing["behind"]
                     else frozenset(),
+                    order,
                 )
             )
             for view in listing["proxies"].clusters
@@ -1739,7 +1755,8 @@ def build_router(config: Config) -> APIRouter:
         chosen = "clusters" if request.query_params.get("view") == "clusters" else "registry"
         if overview.registry is None:
             chosen = "clusters"
-        return TEMPLATES.TemplateResponse(
+        sort, asked = certificates.TABLE.chosen(request)
+        response = TEMPLATES.TemplateResponse(
             request,
             "certificates.html",
             {
@@ -1762,8 +1779,16 @@ def build_router(config: Config) -> APIRouter:
                 "demo_fixture": config.demo_fixture,
                 "production_snapshot": config.production_snapshot,
                 "snapshot_age": snapshot_age(captured_at),
+                "certificate_sort": sort,
+                "certificate_sorts": {
+                    view: certificates.TABLE.links(sort, {"view": view})
+                    for view in ("registry", "clusters")
+                },
             },
         )
+        if asked:
+            certificates.TABLE.remember(response, sort, secure=config.session.cookie_secure)
+        return response
 
     #
     # Phase 11's gate, as a page: a form, a button, a certificate. The page is
@@ -2931,8 +2956,7 @@ def build_router(config: Config) -> APIRouter:
         _token, registry, context = _page_context(request, gate)
         entry = registry.interface if registry else None
         served = registry.served if registry else None
-        asked = request.query_params.get("sort")
-        sort = users.sort_of(asked or request.cookies.get(USERS_SORT_COOKIE))
+        sort, asked = users.TABLE.chosen(request)
         response = TEMPLATES.TemplateResponse(
             request,
             "settings.html",
@@ -2956,19 +2980,11 @@ def build_router(config: Config) -> APIRouter:
                 "users": users.user_views(
                     _account_rows(request), signed_in_as=gate.username, sort=sort
                 ),
-                "user_sorts": users.sort_links(sort),
+                "user_sorts": users.TABLE.links(sort),
             },
         )
-        if asked == sort:
-            response.set_cookie(
-                USERS_SORT_COOKIE,
-                sort,
-                max_age=31536000,
-                httponly=True,
-                secure=config.session.cookie_secure,
-                samesite="lax",
-                path="/settings",
-            )
+        if asked:
+            users.TABLE.remember(response, sort, secure=config.session.cookie_secure)
         return response
 
     # - Settings -> Users (§16.4 U4, B189) ----------------------------------

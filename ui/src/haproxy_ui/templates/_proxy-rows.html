@@ -4,10 +4,11 @@
   its way. A second copy of this markup would drift from the first, and the
   drift would show as a row that changes shape when it updates.
 #}
-{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=()) %}
+{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=(), order='name') %}
 {% set drafted = unpublished | map(attribute='object_id') | list %}
 {#
-  One alphabetical list, whatever state a row is in. Drafts and rows waiting
+  One list in the order the reader chose (alphabetical unless a heading was
+  clicked; `proxies.TABLE`), whatever state a row is in. Drafts and rows waiting
   for a deploy used to go first so the one that changed could not be missed,
   and editing an object then moved it - which read as the list reshuffling
   itself (2026-09-25). The badge in the protocol cell says what is
@@ -19,7 +20,7 @@
 {% for name in removed %}{% set _ = rows.append((name, 'removed', name)) %}{% endfor %}
 {% for object in written if object.name not in drafted %}{% set _ = rows.append((object.name, 'written', object)) %}{% endfor %}
 {% for proxy in foreign %}{% set _ = rows.append((proxy.name, 'foreign', proxy)) %}{% endfor %}
-{% for _name, kind, item in rows | sort(attribute='0') %}
+{% for _name, kind, item in rows | proxy_order(order, lamps) %}
 {% if kind == 'draft' %}{% set draft = item %}
       <tr class="proxy-draft" data-href="/proxies/{{ cluster }}/{{ draft.object_id }}"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol">{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% elif draft.object_id in failed %}{#
         A publish that was refused used to leave this row saying "Draft" and

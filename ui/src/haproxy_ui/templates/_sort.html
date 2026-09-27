@@ -1,0 +1,6 @@
+{#
+  A heading a reader sorts by (THEME.md, Sortable tables). The link, arrow and
+  aria-sort come from `sorting.Table.links`; every sortable table draws its
+  headings with this, so none of them looks or behaves differently.
+#}
+{% macro heading(link, title) %}<th{% if link.aria %} aria-sort="{{ link.aria }}"{% endif %}><a class="sort-link" href="{{ link.href }}">{{ title }}{% if link.arrow %} <span aria-hidden="true">{{ link.arrow }}</span>{% endif %}</a></th>{% endmacro %}

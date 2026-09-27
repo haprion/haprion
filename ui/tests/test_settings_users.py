@@ -118,15 +118,16 @@ class SettingsUsers(LoginTestCase):
             return sorted(self.rows, key=lambda name: page.index(f">{name}<"))
 
         for sort, names in (
+            ("nonsense", ["alice", "bob", "carol", "operator"]),
             ("name", ["alice", "bob", "carol", "operator"]),
             ("-name", ["operator", "carol", "bob", "alice"]),
             ("role", ["alice", "operator", "bob", "carol"]),
-            ("state", ["alice", "operator", "bob", "carol"]),
-            ("-state", ["carol", "bob", "alice", "operator"]),
+            ("state", ["carol", "bob", "alice", "operator"]),
+            ("-state", ["alice", "operator", "bob", "carol"]),
             ("sessions", ["bob", "operator", "alice", "carol"]),
             ("signin", ["carol", "operator", "alice", "bob"]),
             ("-signin", ["alice", "carol", "operator", "bob"]),
-            ("nonsense", ["alice", "bob", "carol", "operator"]),
+            ("nonsense", ["alice", "carol", "operator", "bob"]),
         ):
             with self.subTest(sort=sort):
                 self.assertEqual(order(sort), names)

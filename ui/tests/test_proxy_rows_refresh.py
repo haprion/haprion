@@ -96,7 +96,7 @@ class TheRowsCatchUpWithoutTheWholePageBeingDrawn(LoginTestCase):
     never reshuffles it (2026-09-25; it used to put waiting rows first).
     """
 
-    def rows(self, *, served: tuple[str, ...]) -> Any:
+    def rows(self, *, served: tuple[str, ...], sort: str = "") -> Any:
         client = self.client(replace(configuration(), clusters=("alpha",)))
         self.sign_in(client)
         with (
@@ -106,6 +106,8 @@ class TheRowsCatchUpWithoutTheWholePageBeingDrawn(LoginTestCase):
             ),
             mock.patch("haproxy_ui.db.cluster_inventories", return_value=[inventory(*served)]),
         ):
+            if sort:
+                self.assertEqual(client.get(f"/proxies?sort={sort}").status_code, 200)
             return client.get("/proxies/rows")
 
     def order(self, markup: str) -> list[str]:
@@ -122,6 +124,13 @@ class TheRowsCatchUpWithoutTheWholePageBeingDrawn(LoginTestCase):
         self.assertEqual(answer.status_code, 200)
         self.assertEqual(
             self.order(answer.json()["clusters"]["alpha"]), ["alpha-site", "middle", "zeta"]
+        )
+
+    def test_the_refresh_keeps_the_order_the_reader_chose(self) -> None:
+        answer = self.rows(served=(), sort="-name")
+
+        self.assertEqual(
+            self.order(answer.json()["clusters"]["alpha"]), ["zeta", "middle", "alpha-site"]
         )
 
     def test_a_row_waiting_for_a_deploy_keeps_its_alphabetical_place(self) -> None:

@@ -25,7 +25,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from haproxy_ui import certificate_receivers, metrics
+from haproxy_ui import certificate_receivers, metrics, sorting
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterCertificates
@@ -1347,3 +1347,32 @@ def build_certificate_overview(
         else sum(entry.tone in {"critical", "warning"} for entry in distinct.values()),
         registry=registry,
     )
+
+
+#
+# Both certificate views are sortable (THEME.md), with one choice for both:
+# they are the same rows seen two ways. Dates are ISO strings and sort as
+# text; "—" is a missing value and comes last.
+#
+def _known(value: str) -> str | None:
+    return None if value in ("", "—") else value
+
+
+TABLE = sorting.Table(
+    columns=(
+        sorting.Column("certificate", lambda row, _: sorting.text(row.identifier)),
+        sorting.Column("names", lambda row, _: sorting.text(", ".join(row.sans))),
+        sorting.Column("source", lambda row, _: sorting.text(row.lifecycle_label)),
+        sorting.Column(
+            "usedby",
+            lambda row, _: sorting.text(", ".join(target.name for target in row.targets)),
+        ),
+        sorting.Column("validfrom", lambda row, _: _known(row.valid_from), descending_first=True),
+        sorting.Column("expires", lambda row, _: _known(row.expires)),
+        sorting.Column(
+            "state", lambda row, _: (sorting.tone_rank(row.state_tone), row.state_label.casefold())
+        ),
+    ),
+    cookie="haproxy_ui_certificates_sort",
+    path="/certificates",
+)

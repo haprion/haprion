@@ -113,11 +113,17 @@ type SourceStatus = Literal["published", "unchanged", "skipped", "failed"]
 
 
 class PublishError(Exception):
-    """One certificate could not be read, checked or written."""
+    """One certificate could not be read, checked or written.
 
-    def __init__(self, code: str, message: str):
+    `written` is what was written before or despite the failure. A cluster
+    among them has a new file its nodes have not been told about, and that
+    does not stop being true because a receiver's directory refused a write.
+    """
+
+    def __init__(self, code: str, message: str, *, written: tuple[TargetResult, ...] = ()):
         super().__init__(message)
         self.code = code
+        self.written = written
 
 
 @dataclass(frozen=True, slots=True)
@@ -758,35 +764,51 @@ def publish_to(targets: Sequence[Target], material: Material) -> tuple[TargetRes
 
     written: dict[Path, bool] = {}
     bundles: dict[str, bool] = {}
+    failed: set[tuple[str, str]] = set()
+    first: PublishError | None = None
+    #
+    # A failing target does not stop the others. Stopping would leave the
+    # targets after it on the old certificate for no reason of their own, and
+    # the ones before it already written - so the report has to say which
+    # were, whichever way it goes.
+    #
     for target in targets:
-        if target.form == "pkcs12":
-            #
-            # Its own idempotence, and its own entry: two receivers wanting a
-            # bundle of the same certificate get two bundles, in two
-            # directories, with two passwords - the password belongs to the
-            # pair, not to the certificate.
-            #
-            bundles[target.name] = publish_bundle(target, material)
-            continue
-        for path, content in target.files(material.certificate_id, material):
-            if path in written:
+        try:
+            if target.form == "pkcs12":
+                #
+                # Its own idempotence, and its own entry: two receivers wanting a
+                # bundle of the same certificate get two bundles, in two
+                # directories, with two passwords - the password belongs to the
+                # pair, not to the certificate.
+                #
+                bundles[target.name] = publish_bundle(target, material)
                 continue
-            try:
-                written[path] = write_file(
-                    path, content, uid=target.uid, gid=target.gid, mode=target.mode
-                )
-            except OSError as exc:
-                raise PublishError("write_failed", f"{path}: {exc}") from exc
-    return tuple(
-        TargetResult(
-            target.kind,
-            target.name,
-            bundles[target.name]
-            if target.form == "pkcs12"
-            else any(written[path] for path, _ in target.files(material.certificate_id, material)),
-        )
+            for path, content in target.files(material.certificate_id, material):
+                if path in written:
+                    continue
+                try:
+                    written[path] = write_file(
+                        path, content, uid=target.uid, gid=target.gid, mode=target.mode
+                    )
+                except OSError as exc:
+                    raise PublishError("write_failed", f"{path}: {exc}") from exc
+        except PublishError as exc:
+            failed.add((target.kind, target.name))
+            first = first or exc
+
+    def changed(target: Target) -> bool:
+        if target.form == "pkcs12":
+            return bundles[target.name]
+        return any(written[path] for path, _ in target.files(material.certificate_id, material))
+
+    outcomes = tuple(
+        TargetResult(target.kind, target.name, changed(target))
         for target in targets
+        if (target.kind, target.name) not in failed
     )
+    if first is not None:
+        raise PublishError(first.code, str(first), written=outcomes) from first
+    return outcomes
 
 
 #
@@ -909,8 +931,20 @@ def publish(
                     targets = targets_for(entry, runtime, policy)
                     outcomes = publish_to(targets, material)
             except PublishError as exc:
+                for outcome in exc.written:
+                    if (
+                        outcome.kind == "cluster"
+                        and outcome.changed
+                        and outcome.name not in changed_clusters
+                    ):
+                        changed_clusters.append(outcome.name)
                 results.append(
-                    CertificateResult(entry.certificate_id, "failed", error=(exc.code, str(exc)))
+                    CertificateResult(
+                        entry.certificate_id,
+                        "failed",
+                        targets=exc.written,
+                        error=(exc.code, str(exc)),
+                    )
                 )
                 continue
             for outcome in outcomes:

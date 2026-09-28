@@ -436,6 +436,42 @@ class NothingHalfWritten(Fixture):
         self.assertIn("world-writable", report.certificates[1].error[1])  # type: ignore[index]
         self.assertEqual(list(self.receiver_dir.iterdir()), [])
 
+    def test_a_receiver_that_cannot_be_written_does_not_hide_the_cluster_s_rollout(self) -> None:
+        #
+        # The cluster's file is written before the receiver's write fails. The
+        # certificate is failed, but the cluster has a new file all the same -
+        # and a retry would find it unchanged, so this run is the only one that
+        # can tell the nodes.
+        #
+        issue(self.live / "example.com", "example.com")
+        policy = self.write_config(
+            {
+                "example.com": {
+                    "source": {"kind": "acme"},
+                    "clusters": ["alpha"],
+                    "receivers": ["lb-01"],
+                }
+            }
+        )
+        real_write = cert_publish.write_file
+
+        def write_file(path: Path, *args: Any, **kwargs: Any) -> bool:
+            if self.receiver_dir in path.parents:
+                raise OSError(28, "No space left on device")
+            return real_write(path, *args, **kwargs)
+
+        deployed: list[str] = []
+        with mock.patch.object(cert_publish, "write_file", side_effect=write_file):
+            report = self.run_publish(policy, deployer=lambda c: deployed.append(c) or 0)
+
+        entry = report.certificates[0]
+        self.assertEqual(entry.status, "failed")
+        self.assertEqual(entry.error[0], "write_failed")  # type: ignore[index]
+        self.assertEqual([t.as_dict() for t in entry.targets],
+                         [{"kind": "cluster", "name": "alpha", "changed": True}])  # fmt: skip
+        self.assertEqual(report.changed_clusters, ("alpha",))
+        self.assertEqual(deployed, ["alpha"])
+
     def test_one_failure_does_not_stop_the_next_certificate(self) -> None:
         issue(self.live / "example.net", "example.net")
         policy = self.write_config(

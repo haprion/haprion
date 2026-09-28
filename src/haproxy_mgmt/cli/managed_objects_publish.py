@@ -340,6 +340,17 @@ def _publish(
     version = count_versions(repo, head)
 
     if snapshot.unchanged:
+        #
+        # The same policy as a change: an unchanged tree is how a retry
+        # arrives, and it must not install what the first attempt refused.
+        #
+        stale = tls_policy.core_defaults_problem(
+            published_files["core/haproxy.cfg"],
+            cluster=request.cluster,
+            config_path=str(cluster.config_path),
+        )
+        if stale is not None:
+            return refuse("tls_defaults_stale", stale, BLOCKED_EXIT)
         installed = install_release(
             cluster.publish_path,
             node_path=cluster.node_path,
@@ -398,6 +409,23 @@ def _publish(
             {"diagnostics": validation.diagnostics},
         )
 
+    #
+    # After the sandbox, deliberately. A `core/haproxy.cfg` can be both stale and
+    # syntactically broken, and the broken half is the one that stops HAProxy
+    # from starting - reporting the cipher list first would hide it behind the
+    # smaller problem. Checked on the bytes about to be published, so a refusal
+    # describes what would have gone out - and before the commit, so a refusal
+    # leaves no version behind that a retry would then find unchanged and
+    # publish without asking again.
+    #
+    stale = tls_policy.core_defaults_problem(
+        published_files["core/haproxy.cfg"],
+        cluster=request.cluster,
+        config_path=str(cluster.config_path),
+    )
+    if stale is not None:
+        return refuse("tls_defaults_stale", stale, BLOCKED_EXIT)
+
     commit = commit_and_swap(
         repo,
         branch=branch,
@@ -417,21 +445,6 @@ def _publish(
         commit=commit,
         timestamp=clock().strftime(TIMESTAMP_FORMAT),
     )
-    #
-    # After the sandbox, deliberately. A `core/haproxy.cfg` can be both stale and
-    # syntactically broken, and the broken half is the one that stops HAProxy
-    # from starting - reporting the cipher list first would hide it behind the
-    # smaller problem. Checked on the bytes about to be published, so a refusal
-    # describes what would have gone out.
-    #
-    stale = tls_policy.core_defaults_problem(
-        published_files["core/haproxy.cfg"],
-        cluster=request.cluster,
-        config_path=str(cluster.config_path),
-    )
-    if stale is not None:
-        return refuse("tls_defaults_stale", stale, BLOCKED_EXIT)
-
     installed = install_release(
         cluster.publish_path,
         node_path=cluster.node_path,

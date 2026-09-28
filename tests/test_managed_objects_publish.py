@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from haproxy_mgmt import tls_policy
 from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli import managed_objects_publish
 from haproxy_mgmt.version_history import request_id_of
@@ -235,6 +236,48 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.assertEqual(document["error"]["code"], "candidate_invalid")
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
             self.assertFalse((self.repo / "managed/proxies/shop.yaml").exists())
+
+    def stale_core(self) -> None:
+        """A human commit that drops the line the TLS policy requires."""
+
+        core = self.repo / "core/haproxy.cfg"
+        core.write_text(
+            core.read_text().replace(f"  {tls_policy.DEFAULT_PATH_LINE}\n", ""), encoding="utf-8"
+        )
+        git(self.repo, "commit", "-qam", "Human edit to core")
+
+    def test_a_stale_core_is_refused_before_a_version_is_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            self.stale_core()
+            before = git(self.repo, "rev-parse", "HEAD")
+
+            code, document, _err = self.run_publish(policy, self.request())
+
+            self.assertEqual(code, 75)
+            self.assertEqual(document["error"]["code"], "tls_defaults_stale")
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+            self.assertFalse((self.repo / "managed/proxies/shop.yaml").exists())
+
+            again, document, _err = self.run_publish(policy, self.request())
+            self.assertEqual(again, 75)
+            self.assertEqual(document["error"]["code"], "tls_defaults_stale")
+
+    def test_an_unchanged_retry_is_held_to_the_same_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            first, _document, _err = self.run_publish(policy, self.request())
+            self.assertEqual(first, 0)
+            self.stale_core()
+            releases_before = sorted(self.publish_path.rglob("*"))
+
+            code, document, _err = self.run_publish(policy, self.request())
+
+            self.assertEqual(code, 75)
+            self.assertEqual(document["error"]["code"], "tls_defaults_stale")
+            self.assertEqual(sorted(self.publish_path.rglob("*")), releases_before)
 
     def test_removing_an_object_takes_its_generated_configuration_with_it(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

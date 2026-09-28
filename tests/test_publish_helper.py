@@ -280,6 +280,36 @@ class PublishTests(PublishFixture):
             self.assertEqual(result["version"], 2)
             self.assertEqual(git(self.repo, "status", "--porcelain"), "")
 
+    def test_a_stale_core_is_refused_before_a_version_is_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            before = git(self.repo, "rev-parse", "HEAD")
+            self.edit(
+                "core/haproxy.cfg",
+                HAPROXY_CFG.replace(f"  {tls_policy.DEFAULT_PATH_LINE}\n".encode(), b""),
+            )
+
+            code, stdout, _stderr = self.run_publish(policy_path, self.request())
+
+            self.assertEqual(code, 75)
+            self.assertEqual(json.loads(stdout)["error"]["code"], "tls_defaults_stale")
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+
+    def test_an_unchanged_retry_is_held_to_the_same_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy_path = self.runtime(Path(raw))
+            self.edit(
+                "core/haproxy.cfg",
+                HAPROXY_CFG.replace(f"  {tls_policy.DEFAULT_PATH_LINE}\n".encode(), b""),
+            )
+            git(self.repo, "commit", "-qam", "Human edit to core")
+
+            code, stdout, _stderr = self.run_publish(policy_path, self.request())
+
+            self.assertEqual(code, 75)
+            self.assertEqual(json.loads(stdout)["error"]["code"], "tls_defaults_stale")
+            self.assertFalse((self.publish_path / "current").exists())
+
     def test_an_unchanged_candidate_creates_no_version(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             policy_path = self.runtime(Path(raw))

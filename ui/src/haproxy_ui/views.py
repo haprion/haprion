@@ -280,6 +280,7 @@ TOUCH_AFTER = timedelta(minutes=1)
 def touch_after(inactivity_minutes: int) -> timedelta:
     return min(TOUCH_AFTER, timedelta(minutes=inactivity_minutes) / 2)
 
+
 # How long saving a DNS profile waits for its apply job before the list is
 # drawn. The job is one root helper call; when the queue is idle it is done
 # within a second, and the page should say so rather than send the operator

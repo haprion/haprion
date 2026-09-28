@@ -122,7 +122,10 @@ class Schedule:
 
         if self.frequency == "weekly":
             days = sorted(WEEKDAYS.index(day) for day in self.weekdays)
-            gaps = ((later - earlier) % 7 or 7 for earlier, later in zip(days, days[1:] + days[:1], strict=True))
+            gaps = (
+                (later - earlier) % 7 or 7
+                for earlier, later in zip(days, days[1:] + days[:1], strict=True)
+            )
             return timedelta(days=max(gaps))
         if self.frequency == "monthly":
             return timedelta(days=31)

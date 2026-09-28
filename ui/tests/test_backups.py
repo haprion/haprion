@@ -164,9 +164,7 @@ class NodeStateTests(unittest.TestCase):
         )
 
     def test_a_weekly_schedule_is_judged_by_its_longest_gap(self) -> None:
-        self.assertEqual(
-            self.state_under("Mon,Thu *-*-* 05:00:00", 24 * 4), ("Current", "healthy")
-        )
+        self.assertEqual(self.state_under("Mon,Thu *-*-* 05:00:00", 24 * 4), ("Current", "healthy"))
         self.assertEqual(
             self.state_under("Mon,Thu *-*-* 05:00:00", 24 * 5), ("Backup overdue", "warning")
         )

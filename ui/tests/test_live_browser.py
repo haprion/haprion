@@ -62,11 +62,15 @@ class TypedValuesStayWithTheirForm(unittest.TestCase):
         tab.goto(f"{ORIGIN}/backups")
         tab.add_script_tag(path=str(STATIC_DIRECTORY / "live.js"))
         for cluster, value in typing.items():
-            field = tab.locator(f'form:has(input[name=cluster][value="{cluster}"]) input[name=backup_retention]')
+            field = tab.locator(
+                f'form:has(input[name=cluster][value="{cluster}"]) input[name=backup_retention]'
+            )
             field.fill(value)
         tab.evaluate("document.activeElement && document.activeElement.blur()")
         tab.evaluate("() => { window.haproxyUi.redraw(); }")
-        tab.wait_for_function(f"document.querySelectorAll('main form').length === {second.count('<form')}")
+        tab.wait_for_function(
+            f"document.querySelectorAll('main form').length === {second.count('<form')}"
+        )
         return tab.evaluate(
             """() => Object.fromEntries(Array.from(document.querySelectorAll('main form'), (form) => [
                 form.querySelector('input[name=cluster]').value,

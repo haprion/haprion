@@ -149,8 +149,16 @@ class ARealDatabase(unittest.TestCase):
             user = cursor.fetchone()[0]
             sessions = {
                 b"live": ("now() - interval '1 day'", "now() + interval '1 day'", "null"),
-                b"expired-recently": ("now() - interval '9 days'", "now() - interval '2 days'", "null"),
-                b"expired-long-ago": ("now() - interval '60 days'", "now() - interval '40 days'", "null"),
+                b"expired-recently": (
+                    "now() - interval '9 days'",
+                    "now() - interval '2 days'",
+                    "null",
+                ),
+                b"expired-long-ago": (
+                    "now() - interval '60 days'",
+                    "now() - interval '40 days'",
+                    "null",
+                ),
                 b"revoked-long-ago": (
                     "now() - interval '60 days'",
                     "now() + interval '1 day'",

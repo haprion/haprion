@@ -79,6 +79,7 @@ def _age_limits(schedule: Any) -> AgeLimits:
         critical=max(BACKUP_CRITICAL_FLOOR, 2 * gap + LATE_MARGIN),
     )
 
+
 #
 # The archive list opens on this many archives per node, newest first, and
 # pages back through the rest. Per node rather than per page of rows, so a

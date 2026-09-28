@@ -58,7 +58,7 @@
   <input type="hidden" name="action" value="save">
   <section class="cluster-card">
     <div class="form-grid">
-      <label><span class="field-title">Issuer</span><input name="issuer" value="{{ values.issuer or '' }}" placeholder="https://id.example.com/application/o/manager/" required></label>
+      <label class="oidc-wide"><span class="field-title">Issuer</span><input name="issuer" value="{{ values.issuer or '' }}" placeholder="https://id.example.com/application/o/manager/" required></label>
       <label><span class="field-title">Client ID</span><input name="client_id" value="{{ values.client_id or '' }}" autocomplete="off" required></label>
       <label><span class="field-title">Client secret</span><input type="password" name="client_secret" autocomplete="new-password" placeholder="{{ 'Set — type to replace' if secret_set else '' }}"></label>
       <label><span class="field-title">Client authentication</span><select name="auth_method">{% for value, label in auth_methods.items() %}<option value="{{ value }}"{% if value == values.auth_method %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>

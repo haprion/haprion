@@ -66,7 +66,7 @@ class TypedValuesStayWithTheirForm(unittest.TestCase):
             field.fill(value)
         tab.evaluate("document.activeElement && document.activeElement.blur()")
         tab.evaluate("() => { window.haproxyUi.redraw(); }")
-        tab.wait_for_function("document.querySelectorAll('main form').length === %d" % second.count("<form"))
+        tab.wait_for_function(f"document.querySelectorAll('main form').length === {second.count('<form')}")
         return tab.evaluate(
             """() => Object.fromEntries(Array.from(document.querySelectorAll('main form'), (form) => [
                 form.querySelector('input[name=cluster]').value,

@@ -378,8 +378,8 @@ EOF
 
 step "The first account"
 #
-# `admin`, a break-glass admin with a password drawn now and printed once, on
-# an installation with no account at all (B196). Every later release finds
+# `admin`, a break-glass admin whose password the installer types here, on an
+# installation with no account at all (B196). Every later release finds
 # accounts and does nothing, so this runs every time rather than being a step
 # someone has to remember on the first.
 #

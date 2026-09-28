@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from fastapi.testclient import TestClient
 
-from haproxy_ui import auth, db
+from haproxy_ui import auth, db, oidc_web
 from haproxy_ui.db import Account
 from haproxy_ui.views import SIGN_IN_FAILED
 from tests.test_login import PASSWORD, LoginTestCase, configuration
@@ -191,6 +191,15 @@ class SigningInThroughTheProvider(LoginTestCase):
             started["pre_session_hash"], auth.token_hash(client.cookies[auth.PRE_SESSION_COOKIE])
         )
 
+    def test_the_button_never_sends_the_browsers_own_cookie_back(self) -> None:
+        client = self.client()
+        client.cookies.set(auth.PRE_SESSION_COOKIE, "planted", path="/login")
+        response = client.get("/login/oidc", follow_redirects=False)
+
+        self.assertEqual(response.status_code, 303)
+        self.assertNotIn("planted", response.headers["set-cookie"])
+        self.assertNotEqual(self.started[-1]["pre_session_hash"], auth.token_hash("planted"))
+
     def test_a_first_sign_in_creates_the_account_and_a_session(self) -> None:
         client = self.client()
         response = self.back(client, self.go(client))
@@ -344,7 +353,41 @@ class SigningInThroughTheProvider(LoginTestCase):
         self.assertNotIn('href="/account/password"', page)
         self.assertEqual(client.get("/account/password").status_code, 404)
 
+    def test_an_unreachable_provider_is_a_sentence_on_the_login_page(self) -> None:
+        client = self.client()
+        with mock.patch(
+            "haproxy_ui.oidc_web.ask",
+            side_effect=oidc_web.OidcUnavailable("The OIDC helper is not installed here."),
+        ):
+            response = client.get("/login/oidc", follow_redirects=False)
+
+        self.assertIn(
+            "Sign-in through the provider is not available: The OIDC helper is not installed here.",
+            response.text,
+        )
+        self.assertEqual(self.started, [])
+
     # - Test sign-in --------------------------------------------------------
+
+    def test_test_sign_in_against_an_unreachable_provider_is_a_sentence(self) -> None:
+        client = self.client(replace(configuration(), management_writes=True))
+        self.sign_in(client, password=PASSWORD)
+        token = client.cookies[auth.SESSION_COOKIE]
+        with mock.patch(
+            "haproxy_ui.oidc_web.ask",
+            side_effect=oidc_web.OidcRefused("bad_input", "No issuer is set."),
+        ):
+            response = client.post(
+                "/settings/oidc",
+                data={auth.CSRF_FIELD: auth.csrf_token(token), "action": "test"},
+                follow_redirects=False,
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn(
+            "Sign-in through the provider is not available: No issuer is set.", response.text
+        )
+        self.assertEqual(self.started, [])
 
     def test_test_sign_in_shows_what_came_back_and_makes_no_session(self) -> None:
         self.exchanged["claims"] = {"sub": "sub-1", "groups": ["haproxy-admins"]}

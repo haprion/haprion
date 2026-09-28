@@ -465,7 +465,7 @@ Nothing can sign in until an account exists, and creating one is a root action
 rather than a page the interface offers. `install-ui-release` makes the first
 one: on an installation with no account at all it runs
 `haproxy-ui-user init-admin`, which creates `admin` as a break-glass admin and
-prints its password once. Later releases find accounts and do nothing. More
+asks for its password. Later releases find accounts and do nothing. More
 accounts:
 
 ```bash

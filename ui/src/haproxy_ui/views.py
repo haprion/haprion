@@ -279,6 +279,7 @@ TOUCH_AFTER = timedelta(minutes=1)
 DNS_PROFILE_APPLY_WAIT = 6.0
 
 SIGN_IN_FAILED = "Sign-in failed. Check the username and password and try again."
+UNAVAILABLE_PROVIDER = "Sign-in through the provider is not available"
 EXPIRED = (
     "This run has expired: it was prepared more than an hour ago. Start a new restore from the "
     "backup page."
@@ -3719,10 +3720,10 @@ def build_router(config: Config) -> APIRouter:
             # A sign-in that creates no session and shows what came back,
             # bound to this admin's session rather than a pre-sign-in cookie.
             #
-            started = _start_oidc(request, provider, mode="test", bound_to=token)
-            if isinstance(started, str):
-                return again(started, status_code=409)
-            return started
+            try:
+                return _start_oidc(request, provider, mode="test", bound_to=token)
+            except oidc_web.OidcProblem as error:
+                return again(f"{UNAVAILABLE_PROVIDER}: {error}", status_code=409)
 
         if action in ("on", "off"):
             with request.app.state.pool.connection() as connection:
@@ -5771,20 +5772,18 @@ def build_router(config: Config) -> APIRouter:
         *,
         mode: str,
         bound_to: str,
-    ) -> Response | str:
+    ) -> Response:
         """Record a sign-in in progress and answer where the browser goes (O5).
 
         `bound_to` is the cookie the answer must come back with: the
         pre-sign-in cookie for a sign-in, the session for Test sign-in. Its
-        hash is kept, never the token.
+        hash is kept, never the token. A provider that cannot be reached is
+        the caller's to say, as `oidc_web.OidcProblem`.
         """
 
         tokens = oidc_web.new_login_tokens()
         redirect = _oidc_redirect(request)
-        try:
-            found = oidc_web.ask("discover", provider, redirect=redirect)
-        except (oidc_web.OidcUnavailable, oidc_web.OidcRefused) as error:
-            return f"Sign-in through the provider is not available: {error}"
+        found = oidc_web.ask("discover", provider, redirect=redirect)
         with request.app.state.pool.connection() as connection:
             db.start_oidc_login(
                 connection,
@@ -5808,10 +5807,16 @@ def build_router(config: Config) -> APIRouter:
         provider = _oidc_provider(request)
         if provider is None or not provider.enabled:
             return RedirectResponse("/login", status_code=303)
-        pre_token = request.cookies.get(auth.PRE_SESSION_COOKIE, "") or auth.new_session_token()
-        started = _start_oidc(request, provider, mode="sign_in", bound_to=pre_token)
-        if isinstance(started, str):
-            return _login_again(request, config, error=started)
+        #
+        # Always a fresh token, never the browser's own cookie sent back: the
+        # tab leaves for the provider, and a login form still open in another
+        # tab gets a fresh form, as a stale one always does.
+        #
+        pre_token = auth.new_session_token()
+        try:
+            started = _start_oidc(request, provider, mode="sign_in", bound_to=pre_token)
+        except oidc_web.OidcProblem as error:
+            return _login_again(request, config, error=f"{UNAVAILABLE_PROVIDER}: {error}")
         started.set_cookie(
             auth.PRE_SESSION_COOKIE,
             pre_token,
@@ -5885,7 +5890,7 @@ def build_router(config: Config) -> APIRouter:
                 groups_claim=provider.groups_claim,
                 claims=pending.mode == "test",
             )
-        except (oidc_web.OidcUnavailable, oidc_web.OidcRefused) as error:
+        except oidc_web.OidcProblem as error:
             message = f"The provider's answer was refused: {error}"
             if isinstance(gate, AuthenticatedSession):
                 return _oidc_page(request, gate, provider, problem=message, status_code=409)
@@ -6079,7 +6084,7 @@ def build_router(config: Config) -> APIRouter:
         ):
             try:
                 found = oidc_web.ask("discover", provider, redirect=_oidc_redirect(request))
-            except (oidc_web.OidcUnavailable, oidc_web.OidcRefused):
+            except oidc_web.OidcProblem:
                 found = {}
             onward = oidc_web.end_session_url(
                 found,

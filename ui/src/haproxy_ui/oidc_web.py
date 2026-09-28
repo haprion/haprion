@@ -50,11 +50,15 @@ AUTH_METHODS = {
 }
 
 
-class OidcUnavailable(Exception):
+class OidcProblem(Exception):
+    """Either of the two below: a sentence of ours, fit to show on the page."""
+
+
+class OidcUnavailable(OidcProblem):
     """The helper could not be asked: not installed, not running, or silent."""
 
 
-class OidcRefused(Exception):
+class OidcRefused(OidcProblem):
     """The helper answered with a refusal, as its code and sentence."""
 
     def __init__(self, code: str, message: str) -> None:

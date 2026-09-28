@@ -2030,30 +2030,38 @@ class TheAccountToolAgainstARealDatabase(unittest.TestCase):
             )
             connection.commit()
 
-    def test_init_admin_makes_a_break_glass_admin_once_and_prints_its_password(self) -> None:
-        code, output = self.run_tool("init-admin")
+    def test_init_admin_makes_a_break_glass_admin_once_with_the_typed_password(self) -> None:
+        with mock.patch.object(self.admin, "read_new_password", return_value="long enough pw"):
+            code, output = self.run_tool("init-admin")
 
         self.assertEqual(code, 0)
         role, source, break_glass, password_hash = self.account("admin") or ()
         self.assertEqual((role, source, break_glass), ("admin", "local", True))
-        printed = re.search(r"password  (\S+)", output)
-        if printed is None:
-            self.fail(f"no password in: {output}")
-        self.assertRegex(printed.group(1), r"^[A-Za-z2-9]{4}-[A-Za-z2-9]{4}-[A-Za-z2-9]{4}$")
-        self.assertTrue(auth.verify_password(password_hash, printed.group(1)))
+        self.assertTrue(auth.verify_password(password_hash, "long enough pw"))
+        self.assertNotIn("long enough pw", output)
 
-        again, output = self.run_tool("init-admin")
+        with mock.patch.object(self.admin, "read_new_password") as asked:
+            again, output = self.run_tool("init-admin")
         self.assertEqual(again, 0)
         self.assertIn("accounts exist", output)
+        asked.assert_not_called()
         with self.connect() as connection:
             self.assertEqual(connection.execute("select count(*) from app_user").fetchone(), (1,))
 
     def test_init_admin_does_nothing_where_any_account_exists(self) -> None:
         self.add("operator", role="reader")
-        code, output = self.run_tool("init-admin")
+        with mock.patch.object(self.admin, "read_new_password") as asked:
+            code, output = self.run_tool("init-admin")
         self.assertEqual(code, 0)
         self.assertIsNone(self.account("admin"))
-        self.assertNotIn("password  ", output)
+        asked.assert_not_called()
+
+    def test_init_admin_without_a_terminal_makes_no_account(self) -> None:
+        with mock.patch("sys.stdin.isatty", return_value=False):
+            code, output = self.run_tool("init-admin")
+        self.assertNotEqual(code, 0)
+        self.assertIn("terminal", output)
+        self.assertIsNone(self.account("admin"))
 
     def test_add_makes_break_glass_accounts_unless_told_not_to(self) -> None:
         with mock.patch.object(self.admin, "read_new_password", return_value="long enough pw"):

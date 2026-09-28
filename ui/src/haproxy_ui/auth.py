@@ -80,25 +80,6 @@ MAX_PASSWORD_BYTES = 1024
 #
 MINIMUM_PASSWORD_LENGTH = 8
 
-#
-# The break-glass password the installation makes for `admin` (B196). Short
-# enough to copy by hand from a screen to paper when nothing else works, long
-# enough behind the throttle: 12 characters from 57 is about 70 bits. The
-# alphabet leaves out what reads as something else - 0 O 1 l I - and the dashes
-# are only there to keep the reader's place.
-#
-BREAK_GLASS_ALPHABET = "".join(
-    c for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz23456789" if c not in "OIl"
-)
-
-
-def break_glass_password() -> str:
-    """Three groups of four, `xxxx-xxxx-xxxx`, drawn by `secrets`."""
-
-    return "-".join(
-        "".join(secrets.choice(BREAK_GLASS_ALPHABET) for _ in range(4)) for _ in range(3)
-    )
-
 
 class PasswordTooLong(ValueError):
     """The submitted password is longer than anything a person types."""

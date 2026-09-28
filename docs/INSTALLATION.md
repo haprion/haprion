@@ -2637,12 +2637,12 @@ like.
 So the first account is made by the installation itself, on the terminal of
 whoever installs it: when `install-ui-release` activates a release on an
 installation that has **no account at all**, it runs `haproxy-ui-user init-admin`,
-which creates `admin` as a break-glass admin with a password drawn at random and
-printed **once**, in the form `xxxx-xxxx-xxxx` — twelve characters from an
-alphabet without `0 O 1 l I`, short enough to copy by hand. It is stored
-nowhere. Every later release finds accounts and does nothing. Nothing about it
-is the same on two installations, and nothing answers on the network before it
-exists.
+which creates `admin` as a break-glass admin and asks for its password, twice,
+as `add` does. It is never printed and stored nowhere but as a hash. Every later
+release finds accounts and does nothing, and asks nothing. Without a terminal —
+the installer run with its input redirected — no account is made and the
+installer says to run `init-admin` by hand. Nothing about it is the same on two
+installations, and nothing answers on the network before it exists.
 
 Further accounts are a local root action too, or an admin's in the interface
 (below):

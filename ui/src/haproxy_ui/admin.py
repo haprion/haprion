@@ -12,9 +12,9 @@ brings the interface back without touching the database by hand. An account
 made here is a break-glass account unless told otherwise (B196): it signs in
 with its password even while sign-in goes through an OIDC provider.
 
-The installation makes the first one itself, `admin`, with `init-admin`: a
-password drawn at random and printed once, on the terminal of the person
-installing, and nowhere else. That is neither a default password nor a setup
+The installation makes the first one itself, `admin`, with `init-admin`: the
+person installing types its password at the terminal, and it is never printed.
+That is neither a default password nor a setup
 page - nothing about it is the same on two installations, and nothing answers
 on the network before it exists.
 
@@ -211,15 +211,31 @@ def command_add(environment: Environment, args: argparse.Namespace) -> int:
 FIRST_ADMIN = "admin"
 
 
+def _any_account(connection: psycopg.Connection[tuple[Any, ...]]) -> bool:
+    with connection.cursor() as cursor:
+        cursor.execute("select exists (select 1 from app_user)")
+        row = cursor.fetchone()
+    return row is not None and bool(row[0])
+
+
 def command_init_admin(environment: Environment, _: argparse.Namespace) -> int:
     """The installation's first account, when there is none (B196).
 
     Does nothing on an installation that has any account at all, so the
     release that calls it every time is harmless after the first. The password
-    is printed once and kept nowhere.
+    is typed by the person installing, as `add` takes it; nothing is drawn,
+    printed or kept anywhere else.
     """
 
-    password = auth.break_glass_password()
+    with connect(environment) as connection:
+        if _any_account(connection):
+            print("accounts exist; no first account created")
+            return 0
+    #
+    # Asked outside any transaction, so no lock waits on a person typing.
+    #
+    print(f"The first account is {FIRST_ADMIN}, a break-glass admin. Choose its password.")
+    password = read_new_password()
     with connect(environment) as connection:
         with connection.cursor() as cursor:
             #
@@ -227,23 +243,13 @@ def command_init_admin(environment: Environment, _: argparse.Namespace) -> int:
             # running at once cannot both see an empty table.
             #
             cursor.execute("select pg_advisory_xact_lock(hashtext('app_user_keep_an_admin'))")
-            cursor.execute("select exists (select 1 from app_user)")
-            row = cursor.fetchone()
-        if row is not None and row[0]:
+        if _any_account(connection):
             print("accounts exist; no first account created")
             return 0
         _insert_local(connection, FIRST_ADMIN, password, "admin", break_glass=True)
         _audit(connection, "account_created", FIRST_ADMIN, role="admin", break_glass=True)
         connection.commit()
-    print()
-    print("  The first account, shown once and stored nowhere:")
-    print()
-    print(f"    username  {FIRST_ADMIN}")
-    print(f"    password  {password}")
-    print()
-    print("  It is a break-glass admin. Keep the password where you keep such things,")
-    print(f"  or change it after signing in. Reset it with: haproxy-ui-user reset {FIRST_ADMIN}")
-    print()
+    print(f"created break-glass {FIRST_ADMIN} with role admin")
     return 0
 
 

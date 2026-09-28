@@ -15,7 +15,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_ui import auth, health
+from haproxy_ui import auth, db, health
 from haproxy_ui import probe as probe_module
 from haproxy_ui.db import ClusterNetwork, ClusterObjects, DraftConflict, Job, ProxyDraft
 from tests.test_login import LoginTestCase, configuration
@@ -799,6 +799,17 @@ class SaveAndPublish(EditorTestCase):
         self.assertEqual(len(self.queued), 1)
         self.assertEqual(self.queued[0]["operation"], "objects_publish")
         self.assertEqual(self.queued[0]["cluster"], "alpha")
+
+    def test_a_busy_cluster_says_the_draft_was_saved(self) -> None:
+        """Review 2026-09-28 F05: the heading said nothing was written."""
+
+        with mock.patch("haproxy_ui.db.queue_job", side_effect=db.ClusterBusy("alpha")):
+            answer = self.publish()
+
+        self.assertEqual(answer.status_code, 400)
+        self.assertEqual(len(self.saved), 1)
+        self.assertIn("<h1>Draft saved, not published</h1>", answer.text)
+        self.assertNotIn("Nothing was written", answer.text)
 
     def test_the_object_is_published_under_its_own_name(self) -> None:
         self.publish()

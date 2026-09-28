@@ -276,6 +276,7 @@ class RefusedBeforeAnythingIsWritten(QueueRouteTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("A cluster needs at least one VIP.", response.text)
         self.assertIn('href="/network"', response.text)
+        self.assertIn("<h1>Not done</h1>", response.text)
         self.assertIn("Nothing was written", response.text)
 
     def test_a_default_pointing_at_a_row_that_lost_its_name_is_refused(self) -> None:

@@ -6796,6 +6796,7 @@ def _editor_submit(
             config,
             "The draft was saved, but this interface could not build a publish for it.",
             back=_proxy_path(cluster, object_id, "edit"),
+            saved=True,
         )
 
     with request.app.state.pool.connection() as connection:
@@ -6815,6 +6816,7 @@ def _editor_submit(
                 "This cluster is already running a job. The draft is saved; publish it when "
                 "that job has finished.",
                 back=_proxy_path(cluster, object_id, "edit"),
+                saved=True,
             )
         except db.RequestConflict:
             connection.rollback()
@@ -6823,6 +6825,7 @@ def _editor_submit(
                 config,
                 "That publish was already asked for with different content.",
                 back=_proxy_path(cluster, object_id, "edit"),
+                saved=True,
             )
         db.record_audit_event(
             connection,
@@ -6925,6 +6928,7 @@ def _removal_submit(
             config,
             "This interface could not build a removal for that object.",
             back=_proxy_path(cluster, name),
+            saved=True,
         )
 
     with request.app.state.pool.connection() as connection:
@@ -6944,6 +6948,7 @@ def _removal_submit(
                 "This cluster is already running a job. The removal is saved as a draft; "
                 "publish it when that job has finished.",
                 back=_proxy_path(cluster, name),
+                saved=True,
             )
         except db.RequestConflict:
             connection.rollback()
@@ -6952,6 +6957,7 @@ def _removal_submit(
                 config,
                 "That removal was already asked for with different content.",
                 back=_proxy_path(cluster, name),
+                saved=True,
             )
         db.record_audit_event(
             connection,
@@ -7267,7 +7273,13 @@ def _password_page(
 
 
 def _refusal_page(
-    request: Request, config: Config, message: str, *, back: str, stale: bool = False
+    request: Request,
+    config: Config,
+    message: str,
+    *,
+    back: str,
+    stale: bool = False,
+    saved: bool = False,
 ) -> Response:
     """A refusal a person met mid-form, drawn inside the interface's own chrome.
 
@@ -7283,6 +7295,10 @@ def _refusal_page(
     going back submits that same revision again for the same refusal. The page
     said "go back" to everybody, which made the one case it could not help the
     one it advised most confidently.
+
+    `saved` is for the refusals that come after the draft was stored. The page
+    said "Nothing was written" above a message saying the draft was saved, and
+    only one of the two was true (review 2026-09-28 F05).
     """
 
     session = current_session(request)
@@ -7299,6 +7315,7 @@ def _refusal_page(
             "csrf_token": auth.csrf_token(token),
             "message": message,
             "stale": stale,
+            "saved": saved,
             "back": back,
             "back_label": back.lstrip("/") or "the dashboard",
             "section": back.lstrip("/").split("/")[0],

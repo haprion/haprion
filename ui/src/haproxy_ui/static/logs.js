@@ -243,10 +243,10 @@
     document.addEventListener("click", (event) => {
       if (event.button !== 0 || event.defaultPrevented) return;
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      const clear = event.target.closest?.("[data-log-clear-filters]");
-      if (!clear) return;
+      const link = event.target.closest?.(`[data-log-clear-filters], ${REGION} .sort-link`);
+      if (!link) return;
       event.preventDefault();
-      follow(clear.href);
+      follow(link.href);
     });
     window.addEventListener("popstate", () => {
       swap(window.location.href, false).catch(() => window.location.reload());

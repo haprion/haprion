@@ -140,6 +140,35 @@ class LogControlsInABrowser(unittest.TestCase):
         self.assertEqual(self.page.locator("[data-result]").inner_text(), "All rows")
         self.assertEqual(self.page.url, "https://example.test/logs")
 
+    def test_a_heading_replaces_only_the_log_region_and_updates_the_address(self) -> None:
+        def markup(value: str) -> str:
+            return f"""
+            <html><body><nav data-site-navigation>Navigation stays</nav>
+              <div data-log-region>
+                <a class="sort-link" href="/logs?status=2xx&sort=bytes">Bytes</a>
+                <p data-result>{value}</p>
+              </div>
+            </body></html>
+            """
+
+        def answer(route: Any) -> None:
+            value = "Largest first" if "sort=bytes" in route.request.url else "Newest first"
+            route.fulfill(status=200, content_type="text/html", body=markup(value))
+
+        self.page.route("https://example.test/**", answer)
+        self.page.goto("https://example.test/logs?status=2xx")
+        self.page.locator("[data-site-navigation]").evaluate("node => { node.heldByTest = true; }")
+        self.page.add_script_tag(path=str(STATIC_DIRECTORY / "logs.js"))
+
+        self.page.click(".sort-link")
+        self.page.wait_for_function(
+            "document.querySelector('[data-result]')?.textContent === 'Largest first'"
+        )
+        self.assertEqual(self.page.url, "https://example.test/logs?status=2xx&sort=bytes")
+        self.assertTrue(
+            self.page.locator("[data-site-navigation]").evaluate("node => node.heldByTest === true")
+        )
+
     def test_pagination_keeps_cross_page_selection_and_selects_only_the_visible_page(self) -> None:
         rows = "".join(
             f'<tr data-log-row data-row="{number}"><td><input type="checkbox" data-log-select></td></tr>'

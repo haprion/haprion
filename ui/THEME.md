@@ -68,12 +68,13 @@ is a broken one, and its grid needs fixing rather than its text truncating.
 A table that the reader may sort **sorts on every column**, not on a chosen few:
 a heading that is a link in one column and plain text in the next reads as a
 bug. One mechanism serves every such table - `sorting.Table` for the order and
-the links, `_sort.html`'s `heading` macro for the `<th>` - so Users, Proxies
-and Certificates cannot drift apart. A new sortable table declares its columns
+the links, `_sort.html`'s `heading` macro for the `<th>` - so Users, Proxies,
+Certificates and Traffic logs cannot drift apart. A new sortable table declares its columns
 as a `sorting.Table` beside its view code and draws its headings with the macro.
 
-- the default order is **the first column, A-Z**; a row never moves because its
-  data changed
+- the default order is **the first column, in its first click's order** - A-Z
+  for a table named after something, newest first for the traffic log; a row
+  never moves because its data changed
 - the order is chosen on the server with `?sort=<column>`, and `-<column>`
   turns it round; no script, so the whole-row link and the page's own
   refresh keep working

@@ -97,18 +97,15 @@ class Table:
 
     def ordered(self, rows: Iterable[Any], sort: str, context: Any = None) -> list[Any]:
         first = self.columns[0]
-        base = sorted(rows, key=lambda row: _ascending(first.key(row, context)))
+        #
+        # The default order is the first column's first click: A-Z for the
+        # tables named after something, newest first for the traffic log.
+        #
+        base = _by(first, list(rows), context, descending=first.descending_first)
         column = self._column(sort)
-        if column is first and not self.descending(sort):
+        if column is first and self.descending(sort) == first.descending_first:
             return base
-        present = [row for row in base if column.key(row, context) is not None]
-        missing = [row for row in base if column.key(row, context) is None]
-        #
-        # Stable in both directions: `reverse` keeps equal rows in the order
-        # they came, which is the default order.
-        #
-        present.sort(key=lambda row: column.key(row, context), reverse=self.descending(sort))
-        return present + missing
+        return _by(column, base, context, descending=self.descending(sort))
 
     def links(self, sort: str, query: Mapping[str, str] | None = None) -> dict[str, SortLink]:
         """Each heading's link, and the arrow on the chosen one (▲ A-Z or least first)."""
@@ -128,8 +125,15 @@ class Table:
         return links
 
 
-def _ascending(value: Any) -> tuple[bool, Any]:
-    return (value is None, value if value is not None else 0)
+def _by(column: Column, rows: list[Any], context: Any, *, descending: bool) -> list[Any]:
+    present = [row for row in rows if column.key(row, context) is not None]
+    missing = [row for row in rows if column.key(row, context) is None]
+    #
+    # Stable in both directions: `reverse` keeps equal rows in the order they
+    # came, which is the default order.
+    #
+    present.sort(key=lambda row: column.key(row, context), reverse=descending)
+    return present + missing
 
 
 def text(value: str | None) -> str | None:

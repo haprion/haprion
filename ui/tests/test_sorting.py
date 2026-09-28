@@ -1,4 +1,4 @@
-"""Sortable tables: one mechanism for Users, Proxies and Certificates (THEME.md)."""
+"""Sortable tables: one mechanism for every table a reader sorts (THEME.md)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
-from haproxy_ui import certificates, proxies, sorting
+from haproxy_ui import certificates, proxies, sorting, traffic_log_table
 
 TABLE = sorting.Table(
     columns=(
@@ -144,6 +144,56 @@ class TheUserTable(unittest.TestCase):
 
         order = [row.username for row in users.TABLE.ordered(rows, "state")]
         self.assertEqual(order, ["carol", "bob", "alice"])
+
+
+def entry(at: int, **fields: Any) -> SimpleNamespace:
+    values: dict[str, Any] = {
+        "at": datetime(2026, 9, 28, 12, 0, at, tzinfo=UTC),
+        "cluster": "alpha",
+        "node": "node-a",
+        "client": "192.0.2.5",
+        "method": "GET",
+        "host": "app.example.com",
+        "path": f"/{at}",
+        "server": "198.51.100.10:8080",
+        "status": 200,
+        "bytes": 100,
+    }
+    values.update(fields)
+    return SimpleNamespace(**values)
+
+
+class TheTrafficLogTable(unittest.TestCase):
+    """The traffic log's default runs the other way: newest first."""
+
+    def order(self, rows: list[Any], sort: str) -> list[str]:
+        return [row.path for row in traffic_log_table.TABLE.ordered(rows, sort)]
+
+    def test_newest_first_by_default_and_oldest_first_turned(self) -> None:
+        rows = [entry(1), entry(3), entry(2)]
+        self.assertEqual(self.order(rows, traffic_log_table.TABLE.default), ["/3", "/2", "/1"])
+        self.assertEqual(self.order(rows, "-time"), ["/1", "/2", "/3"])
+        self.assertEqual(traffic_log_table.TABLE.links("time")["time"].arrow, "▼")
+
+    def test_ties_keep_newest_first_in_both_directions(self) -> None:
+        rows = [entry(1, bytes=5), entry(2, bytes=9), entry(3, bytes=5), entry(4, bytes=9)]
+        self.assertEqual(self.order(rows, "bytes"), ["/4", "/2", "/3", "/1"])
+        self.assertEqual(self.order(rows, "-bytes"), ["/3", "/1", "/4", "/2"])
+
+    def test_errors_first_and_the_largest_first(self) -> None:
+        rows = [entry(1, status=200), entry(2, status=503), entry(3, status=404)]
+        self.assertEqual(self.order(rows, "status"), ["/2", "/3", "/1"])
+
+    def test_addresses_by_number_and_a_missing_destination_last(self) -> None:
+        rows = [
+            entry(1, client="192.0.2.10", server=""),
+            entry(2, client="192.0.2.9", server="198.51.100.10:8080"),
+            entry(3, client="2001:db8::1", server="198.51.100.9:443"),
+            entry(4, client="192.0.2.100", server="backend.example.net:80"),
+        ]
+        self.assertEqual(self.order(rows, "client"), ["/2", "/1", "/4", "/3"])
+        self.assertEqual(self.order(rows, "destination"), ["/3", "/2", "/4", "/1"])
+        self.assertEqual(self.order(rows, "-destination"), ["/4", "/2", "/3", "/1"])
 
 
 if __name__ == "__main__":

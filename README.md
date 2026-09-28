@@ -39,7 +39,9 @@ re-verification of a rebuild from this repository, and documentation. What is bu
 - metrics collected from the nodes and kept as time series
 - an optional, manager-pulled traffic-log view backed by seven days of indexed, daily PostgreSQL
   partitions; each cluster must explicitly set `traffic_logging: true`, and the setting reaches
-  its nodes with the next object publication
+  its nodes with the next object publication. It is a basic log viewer for the recent requests;
+  analysis, dashboards and alerting belong in an external log platform, which the product does
+  not feed yet
 - certificate issuance from one form: a domain, a challenge method and the targets; DNS-01
   through a provider profile whose credentials the web process sealed and only root's helper
   opens, from a catalogue of locked Certbot plugins; and certificate cleanup as one job for a

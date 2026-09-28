@@ -78,6 +78,7 @@ from haproxy_ui import (
     operations,
     proxies,
     snapshot,
+    traffic_log_table,
     traffic_logs,
     users,
 )
@@ -1696,6 +1697,25 @@ def build_router(config: Config) -> APIRouter:
             reading = traffic_logs.Reading((), (), 0, False)
         if time_filter_error is not None:
             reading = replace(reading, entries=(), filter_error=time_filter_error)
+        sort, asked = traffic_log_table.TABLE.chosen(request)
+        reading = replace(
+            reading, entries=tuple(traffic_log_table.TABLE.ordered(reading.entries, sort))
+        )
+        #
+        # A heading keeps the filter: sorting reorders the matches the filter
+        # found, it does not start a new reading.
+        #
+        filters = {
+            name: value
+            for name, value in (
+                ("cluster", selected_cluster),
+                ("status", selected_status),
+                ("q", selected_query),
+                ("from", selected_from),
+                ("to", selected_to),
+            )
+            if value
+        }
         freshness = tuple(
             (node, node.stale_seconds(now=now), node.attempt_seconds(now=now))
             for node in reading.nodes
@@ -1717,7 +1737,7 @@ def build_router(config: Config) -> APIRouter:
             for offset in range((calendar_end - calendar_start).days + 1)
             for day in (calendar_start + timedelta(days=offset),)
         )
-        return TEMPLATES.TemplateResponse(
+        response = TEMPLATES.TemplateResponse(
             request,
             "logs.html",
             {
@@ -1739,8 +1759,12 @@ def build_router(config: Config) -> APIRouter:
                 "time_max": local_now.strftime("%y-%m-%d %H:%M"),
                 "calendar_days": calendar_days,
                 "max_lines": config.traffic_logs.max_lines,
+                "log_sorts": traffic_log_table.TABLE.links(sort, filters),
             },
         )
+        if asked:
+            traffic_log_table.TABLE.remember(response, sort, secure=config.session.cookie_secure)
+        return response
 
     @router.get("/network", response_class=HTMLResponse)
     def network_overview(request: Request) -> Response:

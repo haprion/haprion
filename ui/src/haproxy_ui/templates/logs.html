@@ -1,4 +1,5 @@
 {% extends "layout.html" %}
+{% import "_sort.html" as sort %}
 {% block title %}Traffic logs — HAProxy Manager{% endblock %}
 {% block head_extra %}<script defer src="{{ url_for('static', path='/logs.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
@@ -64,7 +65,7 @@
 {% if reading.filter_error %}<p class="notice notice-warning">{{ reading.filter_error }}</p>{% endif %}
 <div class="table-scroll log-table-wrap">
   <table class="node-table log-table">
-    <thead><tr><th class="log-select"><input type="checkbox" data-log-select-all aria-label="Select all visible requests"></th><th>Time</th><th>Cluster / node</th><th>Client</th><th>Request</th><th>Status</th><th>Destination</th><th>Bytes</th></tr></thead>
+    <thead><tr><th class="log-select"><input type="checkbox" data-log-select-all aria-label="Select all visible requests"></th>{{ sort.heading(log_sorts.time, 'Time') }}{{ sort.heading(log_sorts.node, 'Cluster / node') }}{{ sort.heading(log_sorts.client, 'Client') }}{{ sort.heading(log_sorts.request, 'Request') }}{{ sort.heading(log_sorts.status, 'Status') }}{{ sort.heading(log_sorts.destination, 'Destination') }}{{ sort.heading(log_sorts.bytes, 'Bytes') }}</tr></thead>
     <tbody>{% for entry in reading.entries %}<tr data-log-row data-export-time="{{ entry.at | shown_at }}" data-export-cluster="{{ entry.cluster }}" data-export-node="{{ entry.node }}" data-export-client="{{ entry.client }}" data-export-method="{{ entry.method }}" data-export-host="{{ entry.host }}" data-export-path="{{ entry.path }}" data-export-status="{{ entry.status }}" data-export-destination="{{ entry.server or 'Destination unavailable' }}" data-export-bytes="{{ entry.bytes }}">
       <td class="log-select"><input type="checkbox" data-log-select aria-label="Select request at {{ entry.at | shown_at }}"></td>
       <td><time datetime="{{ entry.at.isoformat() }}">{{ entry.at | shown_at }}</time></td>

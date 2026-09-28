@@ -3229,6 +3229,22 @@ node and how old its mirror is **before** the records, because a node that
 stopped answering renders an empty table that otherwise reads as calm. Log text
 is written by whoever made the request and is escaped as text, never as markup.
 
+#### A basic log viewer, on purpose
+
+The page answers one question: what did the recent requests look like. A filter —
+cluster, status class, search, a from/to time — searches every day the database
+holds, and the page shows the newest matches, at most `max_lines` of them (500 by
+default, at most 10 000). A column heading reorders **those rows**; it does not ask
+the database for another order, so sorting on *Bytes* shows the largest of the
+newest matches, not the largest of the week. Each row shows the time, cluster and
+node, client, request, status, destination and size, and nothing more.
+
+That is deliberate. Aggregation over time, dashboards, alerting, long retention
+and correlation with other systems are what dedicated log platforms such as Loki
+or Elasticsearch do well, and rebuilding them here would be a second, weaker copy.
+An installation that needs them should send the logs to such a platform. **A feed
+from this product to an external platform is planned but not built yet.**
+
 #### Sizing the traffic table
 
 The numbers below were measured, not estimated, on a management host at the

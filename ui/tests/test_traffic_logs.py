@@ -536,6 +536,25 @@ class TheTrafficLogPage(LoginTestCase):
             )
         )
 
+    def test_a_heading_reorders_the_rows_and_keeps_the_filter(self) -> None:
+        self.healthy_meta()
+        with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
+            mirror.write(record(request=1, path="/small", bytes=10))
+            mirror.write(record(request=2, path="/large", bytes=9000))
+            mirror.write(record(request=3, path="/middle", bytes=500))
+
+        newest = self.page(query="?status=2xx&sort=time")
+        largest = self.page(query="?status=2xx&sort=bytes")
+
+        def order(page: str) -> list[str]:
+            paths = ["/small", "/large", "/middle"]
+            return sorted(paths, key=lambda path: page.index(f">{path}<"))
+
+        self.assertEqual(order(newest), ["/middle", "/large", "/small"])
+        self.assertEqual(order(largest), ["/large", "/middle", "/small"])
+        self.assertIn('href="/logs?status=2xx&amp;sort=-bytes"', largest)
+        self.assertIn('aria-sort="descending"', largest)
+
     def test_a_hostile_path_reaches_the_browser_as_text(self) -> None:
         hostile = "/<script>alert(1)</script>"
         (self.root / "alpha--node-a.jsonl").write_bytes(record(path=hostile))
@@ -580,7 +599,7 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertNotIn("Timers (ms)", page)
         self.assertNotIn("be-app", page)
         self.assertNotIn("1/0/0/2/3", page)
-        self.assertIn("<th>Destination</th>", page)
+        self.assertIn('href="/logs?sort=destination">Destination</a></th>', page)
         self.assertIn('<td class="log-request"', page)
 
     def test_a_hostile_host_header_reaches_the_browser_as_text(self) -> None:
@@ -649,7 +668,7 @@ class TheTrafficLogPage(LoginTestCase):
 
         # The record is stored as 12:00 UTC and read on a host two hours ahead.
         self.assertIn("26-09-08 14:00:00", page)
-        self.assertIn("<th>Time</th>", page)
+        self.assertIn('href="/logs?sort=-time">Time <span', page)
         self.assertNotIn("Time (CEST)", page)
         self.assertNotIn("26-09-08 12:00:00", page)
         self.assertIn(f'datetime="{NOW.isoformat()}"', page)

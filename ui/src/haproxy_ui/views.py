@@ -269,7 +269,16 @@ def snapshot_age(captured_at: datetime | None) -> str:
 # read-only page view into database traffic and contention on one row. A minute
 # of imprecision against a ten-hour timeout is not a meaningful difference.
 #
+# Never more than half the inactivity timeout, though. The configuration allows
+# a one-minute timeout, and with a one-minute touch the clock was written only
+# after the session had already expired, so an active session was signed out
+# (review 2026-09-28 F08).
+#
 TOUCH_AFTER = timedelta(minutes=1)
+
+
+def touch_after(inactivity_minutes: int) -> timedelta:
+    return min(TOUCH_AFTER, timedelta(minutes=inactivity_minutes) / 2)
 
 # How long saving a DNS profile waits for its apply job before the list is
 # drawn. The job is one root helper call; when the queue is idle it is done
@@ -457,7 +466,9 @@ def current_session(request: Request) -> AuthenticatedSession | None:
         # The inactivity clock is moved forward in its own transaction, after
         # the read, and only when it has actually gone stale.
         #
-        if datetime.now(UTC) - session.last_seen_at > TOUCH_AFTER:
+        if datetime.now(UTC) - session.last_seen_at > touch_after(
+            config.session.inactivity_minutes
+        ):
             db.touch_session(connection, digest)
             connection.commit()
         #

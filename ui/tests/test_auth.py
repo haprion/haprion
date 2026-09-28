@@ -128,6 +128,35 @@ class SessionPolicyTests(unittest.TestCase):
         )
         self.assertEqual(verdict.reason, "inactive")
 
+    def test_the_shortest_allowed_timeout_keeps_an_active_session(self) -> None:
+        """Review 2026-09-28 F08: a request every 20 seconds, a one-minute timeout.
+
+        The same rule the page applies - evaluate, then touch once the clock is
+        older than the touch interval - walked for five minutes. With a
+        one-minute touch interval the clock was never written before the
+        session had already expired.
+        """
+
+        from dataclasses import replace
+
+        from haproxy_ui.views import touch_after
+
+        policy = SessionPolicy(inactivity_minutes=1, absolute_hours=168, cookie_secure=True)
+        start = datetime.now(UTC)
+        current = session(last_seen_at=start, expires_at=start + timedelta(hours=1))
+        for step in range(15):
+            moment = start + timedelta(seconds=20 * step)
+            with self.subTest(seconds=20 * step):
+                self.assertTrue(auth.evaluate_session(current, policy, now=moment).usable)
+            if moment - current.last_seen_at > touch_after(policy.inactivity_minutes):
+                current = replace(current, last_seen_at=moment)
+
+    def test_the_default_timeout_keeps_the_one_minute_touch(self) -> None:
+        from haproxy_ui.views import TOUCH_AFTER, touch_after
+
+        self.assertEqual(touch_after(600), TOUCH_AFTER)
+        self.assertEqual(touch_after(1), timedelta(seconds=30))
+
     def test_the_issued_expiry_follows_the_configured_lifetime(self) -> None:
         now = datetime.now(UTC)
         self.assertEqual(

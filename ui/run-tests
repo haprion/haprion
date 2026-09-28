@@ -31,5 +31,7 @@ fi
 export PLAYWRIGHT_BROWSERS_PATH
 
 cd "$base"
-"$HAPROXY_UI_PYTHON" -m unittest discover -s tests -t . -v
+python3 "$base/../tools/run_test_modules.py" \
+    --durations "${XDG_CACHE_HOME:-$HOME/.cache}/haproxy-manager/test-durations-ui.json" \
+    --suite ui "$base/tests" "$HAPROXY_UI_PYTHON -m unittest discover -s tests -t . -v"
 "$(dirname -- "$HAPROXY_UI_PYTHON")/mypy"

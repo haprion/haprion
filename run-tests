@@ -7,6 +7,19 @@ if [ -z "${HAPROXY_MANAGER_SECRET_RULES:-}" ]; then
     echo "run-tests: HAPROXY_MANAGER_SECRET_RULES is required" >&2
     exit 2
 fi
+#
+# The interface's suite needs its own environment and a browser; named, not
+# defaulted, for the reasons ui/run-tests gives.
+#
+if [ -z "${HAPROXY_UI_PYTHON:-}" ] || [ ! -x "${HAPROXY_UI_PYTHON}" ]; then
+    echo "run-tests: set HAPROXY_UI_PYTHON to the python of the interface environment" >&2
+    exit 2
+fi
+if [ -z "${PLAYWRIGHT_BROWSERS_PATH:-}" ]; then
+    echo "run-tests: set PLAYWRIGHT_BROWSERS_PATH to the Playwright browser directory" >&2
+    exit 2
+fi
+export PLAYWRIGHT_BROWSERS_PATH
 
 for command_name in actionlint coverage mypy pip-audit ruff shellcheck uv zizmor; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -51,17 +64,24 @@ shellcheck -x -P SCRIPTDIR "$base/run-checks" "$base/run-tests" "$base/tools/ins
 actionlint "$base/.github/workflows"/*.yml
 zizmor --pedantic "$base/.github/workflows"
 mypy
-coverage_file=$(mktemp)
-trap 'rm -f -- "$coverage_file"' EXIT HUP INT TERM
-COVERAGE_FILE="$coverage_file" coverage run -m unittest discover -s "$base/tests" -v
-COVERAGE_FILE="$coverage_file" coverage report
+(cd "$base/ui" && "$(dirname -- "$HAPROXY_UI_PYTHON")/mypy")
 python3 "$base/contract-tests/validate_contracts.py"
 #
-# The interface has its own suite and its own environment. Run, never
-# skipped: a gate that passes because it could not import what it was meant
-# to check is the failure this repository already had once this week.
+# Both suites share one pool of processes, one test module each, so the gate
+# takes as long as its cores allow rather than as long as its tests add up to.
+# The interface's suite runs in its own environment, never skipped: a gate
+# that passes because it could not import what it was meant to check is the
+# failure this repository already had once. Each module's coverage is written
+# to its own file and combined before the report.
 #
-"$base/ui/run-tests"
+coverage_dir=$(mktemp -d)
+trap 'rm -rf -- "$coverage_dir"' EXIT HUP INT TERM
+COVERAGE_FILE="$coverage_dir/.coverage" python3 "$base/tools/run_test_modules.py" \
+    --durations "${XDG_CACHE_HOME:-$HOME/.cache}/haproxy-manager/test-durations.json" \
+    --suite engine "$base/tests" "coverage run --parallel-mode -m unittest discover -s tests -v" \
+    --suite ui "$base/ui/tests" "$HAPROXY_UI_PYTHON -m unittest discover -s tests -t . -v"
+COVERAGE_FILE="$coverage_dir/.coverage" coverage combine --quiet
+COVERAGE_FILE="$coverage_dir/.coverage" coverage report
 python3 "$base/tools/build_smoke.py"
 #
 # --skip-editable: the project itself is installed editable here and is not on

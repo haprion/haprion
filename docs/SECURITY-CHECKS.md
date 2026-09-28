@@ -18,9 +18,11 @@ The repository has complementary gates. No single scanner replaces the others.
 6. `ui/run-tests` runs the interface's own suite and type checking in the environment holding its
    dependencies, including the browser suite that drives the traffic chart in a real Chromium -
    `PLAYWRIGHT_BROWSERS_PATH` must name where the browsers are installed, and the gate refuses to
-   start without it. `run-tests` calls it rather than skipping it: a gate that passes because it could
-   not import what it was meant to check is not a gate. It needs `HAPROXY_UI_PYTHON` and fails
-   closed without it.
+   start without it. `run-tests` runs the same suite and type check rather than skipping them: a
+   gate that passes because it could not import what it was meant to check is not a gate. Both need
+   `HAPROXY_UI_PYTHON` and fail closed without it. The engine's and the interface's test modules
+   run through one pool, one module per process (`tools/run_test_modules.py`), heaviest first by
+   the previous run's timings; each module's coverage is combined before the report.
 7. `install/platform/03-verify` checks the database privilege surface against the running database,
    in both directions. It is a deployment check rather than a repository one, so it is not part of
    `run-checks` — but it belongs to the same family, and the reason it checks both directions is in

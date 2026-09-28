@@ -191,18 +191,30 @@ class WhatACheckSendsInItsHandshake(unittest.TestCase):
         deadline = time.monotonic() + 15
         status = 0
         while time.monotonic() < deadline:
-            connection = HTTPConnection("127.0.0.1", port, timeout=5)
-            try:
-                connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
-                connection.putheader("Host", "secure.example.com")
-                connection.endheaders()
-                status = int(connection.getresponse().status)
-            finally:
-                connection.close()
+            status = self.status(port)
             if status == 200:
                 return status
             time.sleep(0.5)
         return status
+
+    def status(self, port: int) -> int:
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            connection.putrequest("GET", "/", skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", "secure.example.com")
+            connection.endheaders()
+            return int(connection.getresponse().status)
+        finally:
+            connection.close()
+
+    def checked(self, seen: list[str | None], count: int) -> None:
+        """Wait until the pool has seen `count` handshakes from the checks."""
+
+        deadline = time.monotonic() + 15
+        while len(seen) < count:
+            if time.monotonic() > deadline:
+                self.fail(f"the pool saw {len(seen)} checks, not {count}")
+            time.sleep(0.1)
 
     def test_a_name_on_the_server_line_does_not_reach_the_check(self) -> None:
         """The incident, reproduced at last, and it is not what it was read as.
@@ -217,7 +229,14 @@ class WhatACheckSendsInItsHandshake(unittest.TestCase):
 
         port, seen = self.serving(f" sni str({POOL_NAME})")
 
-        self.assertEqual(self.answered(port), 503)
+        #
+        # Waiting for a 200 that never comes would wait out the deadline. The
+        # generated line has `rise 2`: had two of these checks carried a name
+        # the server would be up, and the third is there so that the second's
+        # result is in before the site is asked.
+        #
+        self.checked(seen, 3)
+        self.assertEqual(self.status(port), 503)
         self.assertEqual({name for name in seen}, {None})
 
     def test_check_sni_is_what_makes_the_check_carry_one(self) -> None:

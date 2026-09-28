@@ -32,7 +32,7 @@ BASE = Path(__file__).resolve().parents[1]
 REQUEST_ID = "44444444-4444-4444-8444-444444444444"
 
 
-def request(cluster: str = "alpha", **parameters: bool) -> bytes:
+def request(cluster: str = "alpha", **parameters: bool | int | str) -> bytes:
     return json.dumps(
         {
             "schema_version": 1,
@@ -271,6 +271,42 @@ class HelperBehaviourTests(HelperFixture):
         self.assertEqual(code, 0)
         self.assertEqual(self.triggered, [])
         self.assertIn("already runs this version", shown)
+
+    def test_the_version_the_caller_saw_is_deployed(self) -> None:
+        code, _shown, _ = self.run_helper(request(expected_version=8))
+
+        self.assertEqual(code, 0)
+        self.assertNotEqual(self.triggered, [])
+
+    def test_a_version_published_since_the_caller_looked_is_not_rolled_out(self) -> None:
+        #
+        # Review 2026-09-26: a job queued while v7 was published ran after v8
+        # was published from the command line, and deployed v8. The request
+        # names what the page showed; the helper reads what is published, under
+        # the lock, and refuses the difference without touching a node.
+        #
+        code, out, err = self.run_helper(request(expected_version=7, json=True))
+
+        self.assertEqual(code, 75)
+        document = assert_contract("haproxy-deploy", out)
+        self.assertEqual(document["outcome"], "blocked")
+        self.assertEqual(document["error"]["code"], "expected_target_changed")
+        self.assertIn("now v8, not v7", err)
+        self.assertEqual(self.triggered, [])
+
+    def test_without_an_expected_version_the_published_one_is_deployed(self) -> None:
+        code, _shown, _ = self.run_helper(request())
+
+        self.assertEqual(code, 0)
+        self.assertNotEqual(self.triggered, [])
+
+    def test_an_expected_version_that_is_not_a_version_is_refused(self) -> None:
+        for value in (True, 0, -3, "8"):
+            with self.subTest(value=value):
+                code, _, err = self.run_helper(request(expected_version=value))
+                self.assertEqual(code, 65)
+                self.assertIn("expected_version must be a positive integer", err)
+                self.assertEqual(self.triggered, [])
 
     def test_json_mode_prints_one_document_and_no_progress(self) -> None:
         code, shown, _ = self.run_helper(request(json=True))

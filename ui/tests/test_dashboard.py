@@ -57,6 +57,10 @@ class HealthDerivation(unittest.TestCase):
         self.assertEqual(cluster.nodes[0].label, "HAProxy stopped")
         self.assertNotEqual(cluster.label, "Healthy")
 
+    def test_the_target_version_is_kept_as_a_number_for_the_deploy_button(self) -> None:
+        cluster = self.dashboard(reading("done-single-owner.json")).clusters[0]
+        self.assertEqual((cluster.version, cluster.target_version), ("v7", 7))
+
     def test_a_stopped_keepalived_reads_stopped_not_its_last_state(self) -> None:
         """The state file outlives keepalived: a stopped owner still read MASTER."""
 

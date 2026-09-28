@@ -74,6 +74,35 @@ from haproxy_mgmt.config import (
 
 CERTBOT = "/usr/bin/certbot"
 CERTBOT_TIMEOUT = 600
+#
+# What certbot needs on top of the provider's own wait: the ACME dialogue, the
+# DNS API calls either side of the wait, and the deploy hook. The wait itself
+# is the catalogue's and runs once per invocation, however many names.
+#
+CERTBOT_WORK_SECONDS = 300
+
+
+def certbot_timeout(propagation_seconds: int) -> int:
+    """How long one certbot run may take when its DNS plugin waits this long.
+
+    Never below `CERTBOT_TIMEOUT`, which is what an HTTP-01 run or a fast
+    provider has always had. A provider whose wait is 600 or 900 seconds would
+    otherwise be killed during the wait, every time - and on the nightly
+    renewal as much as on the form.
+    """
+
+    return max(CERTBOT_TIMEOUT, propagation_seconds + CERTBOT_WORK_SECONDS)
+
+
+def longest_certbot_timeout() -> int:
+    """The budget of the slowest provider in the catalogue: what a caller must outlast."""
+
+    return max(
+        certbot_timeout(provider.propagation_seconds)
+        for provider in dns_provider_catalog.load_catalog()
+    )
+
+
 RENEWAL_DIRECTORY = Path("/etc/letsencrypt/renewal")
 FIXED_ENVIRONMENT = {
     "HOME": "/root",
@@ -131,7 +160,7 @@ class CertbotResult:
     output: str
 
 
-type Certbot = Callable[[Sequence[str], Mapping[str, str]], CertbotResult]
+type Certbot = Callable[[Sequence[str], Mapping[str, str], int], CertbotResult]
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +168,7 @@ class CertbotInvocation:
     arguments: tuple[str, ...]
     environment: Mapping[str, str]
     redactions: tuple[str, ...] = ()
+    timeout: int = CERTBOT_TIMEOUT
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,6 +355,7 @@ def certbot_invocation(
             authenticator.extend(
                 [f"--{provider.plugin}-propagation-seconds", str(provider.propagation_seconds)]
             )
+            timeout = certbot_timeout(provider.propagation_seconds)
         else:
             if acme is None or acme.dns_cloudflare_credentials is None:
                 raise IssueError(
@@ -342,6 +373,7 @@ def certbot_invocation(
                 "--dns-cloudflare-propagation-seconds",
                 str(cloudflare.propagation_seconds),
             ]
+            timeout = certbot_timeout(cloudflare.propagation_seconds)
             environment = {}
             redactions = ()
     else:
@@ -354,6 +386,7 @@ def certbot_invocation(
         authenticator = ["--webroot", "-w", str(acme.webroot)]
         environment = {}
         redactions = ()
+        timeout = CERTBOT_TIMEOUT
 
     arguments = [
         certbot_binary(policy),
@@ -368,7 +401,9 @@ def certbot_invocation(
     ]
     for domain in request.domains:
         arguments.extend(["-d", domain])
-    return CertbotInvocation(tuple(arguments), {**FIXED_ENVIRONMENT, **environment}, redactions)
+    return CertbotInvocation(
+        tuple(arguments), {**FIXED_ENVIRONMENT, **environment}, redactions, timeout
+    )
 
 
 def renewal_invocation(
@@ -422,6 +457,11 @@ def renewal_invocation(
         arguments.append("--force-renewal")
     environment = dict(FIXED_ENVIRONMENT)
     redactions: tuple[str, ...] = ()
+    #
+    # A lineage without a profile is the policy file's Cloudflare road or
+    # HTTP-01; both fit the standing budget.
+    #
+    timeout = CERTBOT_TIMEOUT
     if profile_id is not None:
         profile_policy = policy.acme.dns_profiles if policy.acme is not None else None
         if profile_policy is None:
@@ -440,7 +480,8 @@ def renewal_invocation(
             raise IssueError("dependency_unavailable", str(exc), exit_code=78) from exc
         if materialized.provider.credentials_env is not None:
             environment[materialized.provider.credentials_env] = materialized.credentials_path
-    return CertbotInvocation(tuple(arguments), environment, redactions)
+        timeout = certbot_timeout(materialized.provider.propagation_seconds)
+    return CertbotInvocation(tuple(arguments), environment, redactions, timeout)
 
 
 def renewal_method(conf: Path) -> Method:
@@ -469,20 +510,22 @@ def certbot_arguments(request: IssueRequest, policy: PathPolicy) -> list[str]:
     return list(certbot_invocation(request, policy, require_secure=False).arguments)
 
 
-def run_certbot(command: Sequence[str], environment: Mapping[str, str]) -> CertbotResult:
+def run_certbot(
+    command: Sequence[str], environment: Mapping[str, str], timeout: int = CERTBOT_TIMEOUT
+) -> CertbotResult:
     try:
         completed = subprocess.run(  # noqa: S603 - binary from the policy, arguments assembled above
             list(command),
             capture_output=True,
             text=True,
             env=dict(environment),
-            timeout=CERTBOT_TIMEOUT,
+            timeout=timeout,
             check=False,
         )
     except OSError as exc:
         return CertbotResult(127, f"certbot could not be started: {exc}")
     except subprocess.TimeoutExpired:
-        return CertbotResult(124, f"certbot did not finish within {CERTBOT_TIMEOUT} seconds")
+        return CertbotResult(124, f"certbot did not finish within {timeout} seconds")
     output = (completed.stdout or "") + (completed.stderr or "")
     return CertbotResult(completed.returncode, output.strip())
 
@@ -603,7 +646,7 @@ def issue(
     invocation = certbot_invocation(request, policy, require_secure=require_secure)
 
     certbot_started = time.monotonic()
-    result = certbot(invocation.arguments, invocation.environment)
+    result = certbot(invocation.arguments, invocation.environment, invocation.timeout)
     certbot_seconds = time.monotonic() - certbot_started
     if result.returncode != 0:
         #
@@ -747,7 +790,7 @@ def renew(
     )
 
     certbot_started = time.monotonic()
-    result = certbot(invocation.arguments, invocation.environment)
+    result = certbot(invocation.arguments, invocation.environment, invocation.timeout)
     certbot_seconds = time.monotonic() - certbot_started
     if result.returncode != 0:
         diagnostics = result.output

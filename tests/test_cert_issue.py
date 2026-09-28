@@ -25,7 +25,7 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cert_issue
+from haproxy_mgmt import cert_issue, dns_provider_catalog
 from haproxy_mgmt.cert_issue import CertbotResult, IssueError, certbot_arguments, parse_domain
 from haproxy_mgmt.cli import cert_issue as command
 from haproxy_mgmt.cli import cert_issue_helper, cert_renew
@@ -43,10 +43,14 @@ class FakeCertbot:
         self.output = output
         self.calls: list[list[str]] = []
         self.environments: list[dict[str, str]] = []
+        self.timeouts: list[int] = []
 
-    def __call__(self, arguments: Sequence[str], environment: Mapping[str, str]) -> CertbotResult:
+    def __call__(
+        self, arguments: Sequence[str], environment: Mapping[str, str], timeout: int
+    ) -> CertbotResult:
         self.calls.append(list(arguments))
         self.environments.append(dict(environment))
+        self.timeouts.append(timeout)
         if self.returncode == 0:
             name = arguments[list(arguments).index("--cert-name") + 1]
             issue(self.live / name, name)
@@ -238,6 +242,82 @@ class WhatReachesCertbot(IssueFixture):
         self.assertEqual(
             registry["certificates"]["new.example"]["source"]["dns_profile"], "cf-main"
         )
+
+    def test_a_slow_provider_gets_its_wait_plus_the_work_around_it(self) -> None:
+        #
+        # Loopia waits 900 seconds for propagation. Under the old fixed 600
+        # certbot was killed during the wait, every time.
+        #
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        document = yaml.safe_load(policy_path.read_text())
+        profile_dir = self.root / "profiles"
+        profile_dir.mkdir()
+        document["acme"]["dns_profiles"] = {
+            "directory": str(profile_dir),
+            "private_keys": [str(self.root / "unused.key")],
+        }
+        policy_path.write_text(yaml.safe_dump(document))
+        policy = load_policy(policy_path, require_secure=False)
+        assert policy.acme is not None and policy.acme.dns_profiles is not None
+        from haproxy_mgmt.dns_profiles import OpenedProfile, materialize
+
+        fields = {"user": "user@loopiaapi", "password": "example"}
+        materialize(
+            policy.acme.dns_profiles,
+            OpenedProfile(
+                profile_id="loopia-main",
+                provider_id="loopia",
+                schema_version=1,
+                key_id="0123456789abcdef",
+                revision=1,
+                fields=fields,
+                credentials=dns_provider_catalog.render_credentials(
+                    dns_provider_catalog.provider_by_id("loopia"), fields
+                ),
+            ),
+            require_secure=False,
+        )
+        certbot = FakeCertbot(self.live)
+
+        code, _, errors, _ = self.run_issue(
+            policy_path,
+            "--domain",
+            "new.example",
+            "--method",
+            "dns-01",
+            "--dns-profile",
+            "loopia-main",
+            "--cluster",
+            "alpha",
+            "--json",
+            certbot=certbot,
+        )
+
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(certbot.timeouts, [900 + cert_issue.CERTBOT_WORK_SECONDS])
+
+    def test_every_catalogue_provider_s_wait_fits_inside_its_budget(self) -> None:
+        for provider in dns_provider_catalog.load_catalog():
+            with self.subTest(provider=provider.id):
+                budget = cert_issue.certbot_timeout(provider.propagation_seconds)
+                self.assertGreaterEqual(
+                    budget - provider.propagation_seconds, cert_issue.CERTBOT_WORK_SECONDS
+                )
+                self.assertLessEqual(budget, cert_issue.longest_certbot_timeout())
+
+    def test_http_01_keeps_the_standing_budget(self) -> None:
+        policy_path = self.policy_with_acme(
+            {"example.net": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        certbot = FakeCertbot(self.live)
+        code, _, errors, _ = self.run_issue(
+            policy_path, "--domain", "www.example.com", "--method", "http-01",
+            "--cluster", "alpha", "--json", certbot=certbot,
+        )  # fmt: skip
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(certbot.timeouts, [cert_issue.CERTBOT_TIMEOUT])
 
     def test_profile_secrets_are_removed_from_certbot_diagnostics(self) -> None:
         policy_path = self.policy_with_acme(

@@ -2416,7 +2416,7 @@ def build_router(config: Config) -> APIRouter:
         if profiles_required:
             with request.app.state.pool.connection() as connection:
                 profile_rows = db.dns_profiles(connection)
-                recent = db.operation_jobs(connection, "dns_profile_apply")
+                recent = db.profile_jobs(connection, "dns_profile_apply")
             usable_profiles = tuple(
                 profile.id
                 for profile in profile_rows
@@ -2426,7 +2426,7 @@ def build_router(config: Config) -> APIRouter:
         if profiles_required:
             with request.app.state.pool.connection() as connection:
                 ndes_rows = db.ndes_profiles(connection)
-                recent = db.operation_jobs(connection, "ndes_profile_apply")
+                recent = db.profile_jobs(connection, "ndes_profile_apply")
             usable_ndes = tuple(
                 profile.id
                 for profile in ndes_rows
@@ -4074,7 +4074,7 @@ def build_router(config: Config) -> APIRouter:
         token = request.cookies.get(auth.SESSION_COOKIE, "")
         with request.app.state.pool.connection() as connection:
             profiles = db.dns_profiles(connection)
-            recent = db.operation_jobs(connection, "dns_profile_apply")
+            recent = db.profile_jobs(connection, "dns_profile_apply")
         public_key = _dns_public_key()
         catalogue = {provider.id: provider for provider in dns_profile_form.providers()}
         _, certificate_rows, _ = read_source(request, config, CERTIFICATE_SOURCE)
@@ -4466,7 +4466,7 @@ def build_router(config: Config) -> APIRouter:
             return gate
         with request.app.state.pool.connection() as connection:
             profiles = db.ndes_profiles(connection)
-            recent = db.operation_jobs(connection, "ndes_profile_apply")
+            recent = db.profile_jobs(connection, "ndes_profile_apply")
         _, certificate_rows, _ = read_source(request, config, CERTIFICATE_SOURCE)
         references = certificates.profile_references(certificate_rows, field="ndes_profile")
         statuses = {
@@ -5478,6 +5478,7 @@ def build_router(config: Config) -> APIRouter:
         version: str = Form(default="", max_length=16),
         expected_commit: str = Form(default="", max_length=64),
         allow_vip_unknown: str = Form(default=""),
+        expected_version: str = Form(default="", max_length=12),
         backup_hour: str = Form(default="", max_length=2),
         backup_minute: str = Form(default="", max_length=2),
         backup_frequency: str = Form(default="daily", max_length=8),
@@ -5544,6 +5545,14 @@ def build_router(config: Config) -> APIRouter:
         payload: dict[str, Any] = {}
         if operation in {"deploy", "cert_deploy"}:
             payload["allow_vip_unknown"] = allow_vip_unknown == "on"
+        if operation == "deploy" and expected_version:
+            #
+            # Text that is not a number goes on as it came, so `prepare`
+            # refuses it the way it refuses any other bad value.
+            #
+            payload["expected_version"] = (
+                int(expected_version) if expected_version.isdigit() else expected_version
+            )
         elif operation == "backup_run":
             payload = {}
         elif operation == "backup_schedule":
@@ -7370,6 +7379,7 @@ def _network_page(request: Request, config: Config) -> Response:
             "clusters": overview,
             "awaiting_deploy": awaiting,
             "deployment": state,
+            "targets": {name: view.target_version for name, view in serving.items()},
             "management_writes": config.management_writes,
             "demo_fixture": config.demo_fixture,
             "production_snapshot": config.production_snapshot,

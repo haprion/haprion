@@ -61,7 +61,13 @@ from haproxy_mgmt.helper_protocol import (
 from haproxy_mgmt.status_collect import ask_node, collect, read_target
 
 OPERATION = "deploy_cluster"
-PARAMETERS = frozenset({"allow_vip_unknown", "json"})
+PARAMETERS = frozenset({"allow_vip_unknown", "json", "expected_version"})
+FLAGS = ("allow_vip_unknown", "json")
+#
+# The version the caller saw has moved: nothing was touched, and the operator
+# decides about the new one. Blocked, like a busy cluster.
+#
+EXIT_TARGET_CHANGED = 75
 
 SSH = "/usr/bin/ssh"
 
@@ -106,10 +112,15 @@ EXIT_NO_IDENTITY = 78
 
 
 def _validate(parameters: Mapping[str, JsonValue]) -> None:
-    for key in PARAMETERS:
+    for key in FLAGS:
         value = parameters.get(key, False)
         if not isinstance(value, bool):
             raise HelperProtocolError(f"{key} must be a boolean", exit_code=65)
+    expected = parameters.get("expected_version")
+    if expected is not None and (
+        not isinstance(expected, int) or isinstance(expected, bool) or expected < 1
+    ):
+        raise HelperProtocolError("expected_version must be a positive integer", exit_code=65)
 
 
 def read_status(cluster: Cluster, identity: DeployIdentity) -> ClusterStatus:
@@ -204,6 +215,7 @@ def main(
 
     allow_vip_unknown = bool(request.parameters.get("allow_vip_unknown", False))
     json_mode = bool(request.parameters.get("json", False))
+    expected_version = request.parameters.get("expected_version")
 
     def refuse(code: str, message: str, exit_code: int) -> int:
         """End the run with a result, not just an exit code.
@@ -335,11 +347,29 @@ def main(
 
     try:
         with hold(request.cluster, operation="deploy", root=lock_root):
+            #
+            # Read here, under the lock, and never taken from the caller: root
+            # decides what is published. The caller's version is a condition on
+            # that reading, not a description of it - so a job queued while the
+            # version was A cannot roll out B that somebody published since.
+            #
+            target = read_target(Path(cluster.publish_path), cluster.node_path)
+            if expected_version is not None and (
+                target is None or target.version != expected_version
+            ):
+                now = f"v{target.version}" if target is not None else "nothing readable"
+                return refuse(
+                    "expected_target_changed",
+                    f"the published version is now {now}, not v{expected_version}, which this "
+                    "deploy was started for. No node was touched; look at the new version and "
+                    "deploy again.",
+                    EXIT_TARGET_CHANGED,
+                )
             outcome = run(
                 read,
                 trigger,
                 stream,
-                target=read_target(Path(cluster.publish_path), cluster.node_path),
+                target=target,
                 allow_vip_unknown=allow_vip_unknown,
                 lifeline=lifeline,
                 preflight=preflight,

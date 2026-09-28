@@ -922,6 +922,27 @@ class TheQueueCarriesCertificateJobs(unittest.TestCase):
         self.assertEqual([job.id for job in found], [applied.id])
         self.assertEqual(db.operation_jobs(self.connection, "ndes_profile_apply"), [])
 
+    def test_a_profile_s_evidence_is_found_behind_any_number_of_other_profiles_jobs(
+        self,
+    ) -> None:
+        """Review 2026-09-26: 500 newer applies for another profile hid this one's."""
+
+        applied = self.queue("dns_profile_apply", None, profile="cf-main", revision=1)
+        self.finish(applied)
+        refused = self.queue("dns_profile_apply", None, profile="cf-main", revision=1, remove=True)
+        self.finish(refused)
+        for index in range(501):
+            self.finish(self.queue("dns_profile_apply", None, profile="cf-other", revision=index))
+
+        found = db.profile_jobs(self.connection, "dns_profile_apply")
+        mine = [job.id for job in found if job.payload.get("profile") == "cf-main"]
+        self.assertEqual(mine, [refused.id, applied.id])
+        others = [job for job in found if job.payload.get("profile") == "cf-other"]
+        self.assertEqual(len(others), 1)
+        self.assertNotIn(
+            applied.id, [j.id for j in db.operation_jobs(self.connection, "dns_profile_apply")]
+        )
+
     def test_a_receiver_job_is_queued_with_no_cluster(self) -> None:
         """Migration 0032: `cert_receiver` is on the list, and clusterless."""
 

@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 from uuid import UUID, uuid4
 
+from haproxy_mgmt import cert_issue
 from haproxy_mgmt.cli import (
     cert_deploy,
     cert_receiver_helper,
@@ -81,6 +82,24 @@ class TheCommandComesFromTheEngine(unittest.TestCase):
                 )
             ),
         )
+
+    def test_a_deploy_carries_the_version_the_page_showed(self) -> None:
+        prepared = operations.prepare(
+            operation="deploy",
+            cluster="alpha",
+            request_id=REQUEST,
+            payload={"expected_version": 12},
+        )
+        self.assertEqual(json.loads(prepared.request)["parameters"]["expected_version"], 12)
+
+        for value in ("12", True, 0, -1, 1.5):
+            with self.subTest(value=value), self.assertRaises(operations.BadPayload):
+                operations.prepare(
+                    operation="deploy",
+                    cluster="alpha",
+                    request_id=REQUEST,
+                    payload={"expected_version": value},
+                )
 
     def test_the_worker_declares_a_lifeline(self) -> None:
         """The worker holds stdin open; the command line does not.
@@ -176,6 +195,28 @@ class TheCommandComesFromTheEngine(unittest.TestCase):
         parameters = json.loads(prepared.request)["parameters"]
         self.assertEqual(parameters["dns_profile"], "cf-main")
         self.assertNotIn("provider", parameters)
+
+    def test_a_certificate_job_outlasts_the_slowest_provider_s_certbot_run(self) -> None:
+        issue = operations.prepare(
+            operation="cert_issue",
+            cluster=None,
+            request_id=REQUEST,
+            payload={"domain": "app.example.com", "method": "dns-01", "clusters": ["alpha"]},
+        )
+        renew = operations.prepare(
+            operation="cert_issue",
+            cluster=None,
+            request_id=REQUEST,
+            payload={"domain": "app.example.com", "renew": True},
+        )
+        deploy = operations.prepare(
+            operation="deploy", cluster="alpha", request_id=REQUEST, payload={}
+        )
+
+        slowest = cert_issue.longest_certbot_timeout()
+        for prepared in (issue, renew):
+            self.assertGreaterEqual(prepared.timeout_seconds - slowest, operations.TIMEOUT_SECONDS)
+        self.assertEqual(deploy.timeout_seconds, operations.TIMEOUT_SECONDS)
 
     def test_profile_removal_is_bound_to_the_exact_stored_revision(self) -> None:
         row = operations.SealedProfileRow(

@@ -42,7 +42,7 @@
         <span class="status-badge status-badge-info"><span class="badge-spinner" aria-hidden="true"></span>{{ running }}</span>
       </div>
       {% else %}
-      <div class="action-buttons"><form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="history"><button class="secondary-button" type="submit">Deploy configuration</button></form></div>
+      <div class="action-buttons"><form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}">{% if cluster.target_version %}<input type="hidden" name="expected_version" value="{{ cluster.target_version }}">{% endif %}<input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="history"><button class="secondary-button" type="submit">Deploy configuration</button></form></div>
       {% endif %}
     </footer>{% endif %}
     {% else %}

@@ -70,6 +70,7 @@ def build_request(
     allow_vip_unknown: bool,
     json_mode: bool,
     lifeline: bool = False,
+    expected_version: int | None = None,
 ) -> str:
     """The exact request this operation sends, built in one place.
 
@@ -87,8 +88,17 @@ def build_request(
     command line leaves it False and closes stdin as it always has: a person at
     a terminal has Ctrl-C and holds no lease, so there is nothing for a lifeline
     to express. The worker sets it, because it has both.
+
+    `expected_version` is the published version the caller saw. The helper
+    deploys it or nothing: a job that waited in the queue while somebody
+    published again must not roll out what nobody looked at. Left out, the
+    request means "the published version, whichever it is" - which is what a
+    person at a terminal who types the command is asking for.
     """
 
+    parameters: dict[str, object] = {"allow_vip_unknown": allow_vip_unknown, "json": json_mode}
+    if expected_version is not None:
+        parameters["expected_version"] = expected_version
     return json.dumps(
         {
             "schema_version": 1,
@@ -96,7 +106,7 @@ def build_request(
             "cluster": cluster_id,
             "request_id": request_id,
             "lifeline": lifeline,
-            "parameters": {"allow_vip_unknown": allow_vip_unknown, "json": json_mode},
+            "parameters": parameters,
         }
     )
 

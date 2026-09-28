@@ -149,6 +149,12 @@ class LoginTestCase(unittest.TestCase):
                     job for job in db.recent_jobs(connection) if job.operation == operation
                 ],
             ),
+            mock.patch(
+                "haproxy_ui.db.profile_jobs",
+                side_effect=lambda connection, operation: [
+                    job for job in db.recent_jobs(connection) if job.operation == operation
+                ],
+            ),
         ]
         for patch in self.patches:
             patch.start()

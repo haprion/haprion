@@ -85,6 +85,19 @@ class AskingForAnOperation(QueueRouteTestCase):
         self.assertEqual(response.headers["location"], "/jobs")
         self.assertEqual(len(self.queued), 1)
 
+    def test_a_deploy_is_queued_with_the_version_on_the_page(self) -> None:
+        self.post(self.writing_client(), expected_version="12")
+
+        self.assertEqual(
+            self.queued[0]["payload"], {"allow_vip_unknown": False, "expected_version": 12}
+        )
+
+    def test_a_version_that_is_not_a_number_is_refused_before_the_queue(self) -> None:
+        response = self.post(self.writing_client(), expected_version="12abc")
+
+        self.assertNotEqual(response.status_code, 303)
+        self.assertEqual(self.queued, [])
+
     def test_the_form_key_is_what_reaches_the_database(self) -> None:
         self.post(self.writing_client())
 

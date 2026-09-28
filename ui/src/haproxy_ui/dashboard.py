@@ -70,6 +70,11 @@ class ClusterView:
     # known, and a card that said 0 would be wrong the other way.
     #
     vip_count: int = 1
+    #
+    # The published version the reading names, as a number: what the deploy
+    # buttons send, so the helper can refuse to roll out anything else.
+    #
+    target_version: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +121,14 @@ def _text(value: Any, fallback: str = "Unknown") -> str:
 
 def _version(value: Any) -> str:
     return f"v{value}" if isinstance(value, int | str) and str(value) else "—"
+
+
+def _positive(value: Any) -> int | None:
+    """A version number as a number, or nothing: what a deploy button binds to."""
+
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
 
 
 def _duration(seconds: Any) -> str:
@@ -390,6 +403,7 @@ def _cluster_view(
         vip=vip_label,
         version=_version(target.get("version")),
         release_state=release_state.replace("_", " ").title(),
+        target_version=_positive(target.get("version")),
     )
 
 

@@ -48,6 +48,7 @@ class RenewalInvocation:
     arguments: tuple[str, ...]
     environment: Mapping[str, str]
     redactions: tuple[str, ...] = ()
+    timeout: int = CERTBOT_TIMEOUT
 
 
 def invocations(
@@ -88,7 +89,9 @@ def invocations(
         except IssueError as exc:
             raise ConfigError(str(exc), exit_code=exc.exit_code) from exc
         commands.append(
-            RenewalInvocation(lineage, built.arguments, built.environment, built.redactions)
+            RenewalInvocation(
+                lineage, built.arguments, built.environment, built.redactions, built.timeout
+            )
         )
     return tuple(commands)
 
@@ -252,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
                 capture_output=True,
                 text=True,
                 env=dict(invocation.environment),
-                timeout=CERTBOT_TIMEOUT,
+                timeout=invocation.timeout,
                 check=False,
             )
             output = (completed.stdout or "") + (completed.stderr or "")

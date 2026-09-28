@@ -471,6 +471,36 @@ def operation_jobs(connection: Connection[Any], operation: str, *, limit: int = 
         return cursor.fetchall()
 
 
+def profile_jobs(connection: Connection[Any], operation: str) -> list[Job]:
+    """Each profile's own apply jobs, newest first, down to its newest apply.
+
+    What `profile_status` reads and no more: it walks a profile's jobs newest
+    first and stops at the first one that is not a refused removal, which at
+    the latest is the newest job that applied a revision. Read per profile
+    rather than as the newest N of the operation, so no number of jobs for
+    other profiles can push a profile's evidence out of reach - the same rows
+    the retention keeps (`haproxy-ui-retention`, `profile_evidence`).
+    """
+
+    with connection.cursor(row_factory=class_row(Job)) as cursor:
+        cursor.execute(
+            "select id, request_id, operation, cluster, payload, state, created_at, "
+            "       started_at, finished_at, exit_code, outcome, result, stderr_excerpt, "
+            "       idempotency_key, attempts "
+            "  from job "
+            " where operation = %(operation)s "
+            "   and created_at >= coalesce(("
+            "       select max(applied.created_at) from job applied "
+            "        where applied.operation = job.operation "
+            "          and applied.payload->>'profile' = job.payload->>'profile' "
+            "          and coalesce(applied.payload->>'remove', 'false') <> 'true'"
+            "   ), '-infinity') "
+            " order by created_at desc, id desc",
+            {"operation": operation},
+        )
+        return cursor.fetchall()
+
+
 def restore_jobs(connection: Connection[Any], run: str) -> list[Job]:
     """The jobs of one node restore run, oldest first.
 

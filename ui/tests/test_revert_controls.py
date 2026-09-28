@@ -44,6 +44,11 @@ class RevertControlsTests(LoginTestCase):
         #
         self.assertIn('name="operation" value="deploy"', page.text)
         self.assertIn("Deploy configuration", page.text)
+        #
+        # Bound to the published version this page shows, so a deploy that
+        # waits in the queue cannot roll out one published after it.
+        #
+        self.assertIn('name="expected_version" value="12"', page.text)
 
     def test_read_only_and_reader_views_do_not_render_a_revert_control(self) -> None:
         client = self.client(replace(configuration(), clusters=("alpha",)))

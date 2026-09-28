@@ -17,7 +17,7 @@ from typing import Any
 from unittest import mock
 from uuid import uuid4
 
-from haproxy_ui import db, execution, worker
+from haproxy_ui import db, execution, operations, worker
 
 TOKEN = uuid4()
 WORKER = "mgr/4242"
@@ -173,6 +173,19 @@ class GoodAnswers(WorkerTestCase):
         self.assertEqual(self.finished[0]["state"], "done")
         self.assertEqual(self.finished[0]["outcome"], "done")
         self.assertEqual(self.finished[0]["result"], document)
+
+    def test_the_job_runs_under_its_own_operation_s_budget(self) -> None:
+        job = replace(
+            claimed(
+                "cert_issue",
+                {"domain": "app.example.com", "method": "http-01", "clusters": ["alpha"]},
+            ),
+            cluster=None,
+        )
+        with mock.patch.object(execution, "run", return_value=completed(stdout=answer(job))) as run:
+            worker.run_one_job(self.connection, job, worker=WORKER)
+
+        self.assertEqual(run.call_args.kwargs["timeout_seconds"], operations.CERT_TIMEOUT_SECONDS)
 
     def test_partial_is_carried_through_and_not_flattened(self) -> None:
         job = claimed()

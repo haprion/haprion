@@ -55,6 +55,11 @@ class HistoryClusterView:
     total: int
     truncated: bool
     versions: tuple[VersionView, ...]
+    #
+    # The published version as a number: what the deploy button sends, so the
+    # helper refuses to roll out a version this page did not show.
+    #
+    target_version: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,6 +254,9 @@ def _cluster_view(
         total=total,
         truncated=result.get("truncated") is True,
         versions=versions,
+        target_version=published_version
+        if published_version is not None and published_version > 0
+        else None,
     )
 
 

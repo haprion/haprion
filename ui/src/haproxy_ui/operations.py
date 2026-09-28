@@ -26,6 +26,7 @@ from uuid import UUID
 
 from haproxy_mgmt import (
     backup_schedule_write,
+    cert_issue,
     cert_request_state,
     cert_upload,
     dns_profiles,
@@ -62,6 +63,14 @@ KEY_ID = re.compile(r"^[0-9a-f]{16}$")
 # that fires during normal work would turn a slow day into an `unknown` job.
 #
 TIMEOUT_SECONDS = 900.0
+
+#
+# A certificate job holds a certbot run inside it, and that run's own budget
+# follows the slowest DNS provider's propagation wait (`cert_issue`). The
+# worker has to outlast it with room for the publish and the rollout after it,
+# or it stops a job that is still doing exactly what it was asked.
+#
+CERT_TIMEOUT_SECONDS = float(cert_issue.longest_certbot_timeout()) + TIMEOUT_SECONDS
 
 #
 # `-n` because a worker has no terminal to answer a password prompt with, and
@@ -108,6 +117,7 @@ class Prepared:
     argv: tuple[str, ...]
     request: str
     lifeline: bool = False
+    timeout_seconds: float = TIMEOUT_SECONDS
 
 
 def _flag(payload: Mapping[str, Any], name: str, *, default: bool) -> bool:
@@ -304,6 +314,7 @@ def _certificate_operation(
                 request=cert_issue_helper.build_request(
                     str(request_id), domain=domain, method="", renew=True
                 ),
+                timeout_seconds=CERT_TIMEOUT_SECONDS,
             )
         method = payload.get("method")
         #
@@ -337,6 +348,7 @@ def _certificate_operation(
                 formats=formats,
                 interface=interface,
             ),
+            timeout_seconds=CERT_TIMEOUT_SECONDS,
         )
 
     if operation == "cert_scep":
@@ -813,7 +825,14 @@ def prepare(
         return _restore(operation, cluster, request_id, payload)
 
     if operation == "deploy":
-        _only(payload, "allow_vip_unknown")
+        _only(payload, "allow_vip_unknown", "expected_version")
+        expected_version = payload.get("expected_version")
+        if expected_version is not None and (
+            not isinstance(expected_version, int)
+            or isinstance(expected_version, bool)
+            or expected_version < 1
+        ):
+            raise BadPayload("expected_version must be a positive whole number")
         return Prepared(
             argv=(deploy.SUDO, *SUDO_FLAGS, deploy.HELPER),
             request=deploy.build_request(
@@ -821,6 +840,12 @@ def prepare(
                 str(request_id),
                 allow_vip_unknown=_flag(payload, "allow_vip_unknown", default=False),
                 json_mode=True,
+                #
+                # The version the page showed when the button was pressed. The
+                # helper deploys that one or refuses; a retry after a lost
+                # answer carries the same payload, so it is bound the same way.
+                #
+                expected_version=expected_version,
                 #
                 # The worker holds a lease it can lose, and it cannot signal a
                 # helper running as root. Holding stdin open is how it keeps a

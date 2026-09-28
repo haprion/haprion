@@ -452,7 +452,7 @@ def run_one_job(connection: Any, job: db.ClaimedJob, *, worker: str) -> None:
     completed = execution.run(
         prepared.argv,
         request=prepared.request,
-        timeout_seconds=operations.TIMEOUT_SECONDS,
+        timeout_seconds=prepared.timeout_seconds,
         still_ours=lease_is_ours,
         lifeline=prepared.lifeline,
     )

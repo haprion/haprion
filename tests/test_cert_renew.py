@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import dns_profiles
+from haproxy_mgmt import cert_issue, dns_profiles, dns_provider_catalog
 from haproxy_mgmt.cli import cert_renew
 from haproxy_mgmt.config import load_policy, load_runtime_config
 from haproxy_mgmt.dns_profile_keys import generate, render_private_key
@@ -102,6 +103,19 @@ class RenewalInvocations(Fixture):
         self.assertIn("--run-deploy-hooks", profiled.arguments)
         self.assertNotIn("AWS_SHARED_CREDENTIALS_FILE", commands[1].environment)
         self.assertNotIn("AWS_SHARED_CREDENTIALS_FILE", commands[2].environment)
+
+    def test_the_nightly_renewal_waits_as_long_as_the_profile_s_provider(self) -> None:
+        #
+        # Route53's own wait is short, so the budget is made to depend on it
+        # visibly: the profiled lineage must carry what its provider asks for.
+        #
+        with mock.patch.object(cert_issue, "certbot_timeout", lambda seconds: 5000 + seconds):
+            commands = cert_renew.invocations(
+                self.policy, self.runtime, renewal_directory=self.renewal, require_secure=False
+            )
+        route53 = dns_provider_catalog.provider_by_id("route53").propagation_seconds
+        self.assertEqual(commands[0].timeout, 5000 + route53)
+        self.assertEqual(commands[1].timeout, cert_issue.CERTBOT_TIMEOUT)
 
     def test_scrubbing_is_literal_and_longest_first(self) -> None:
         self.assertEqual(

@@ -347,6 +347,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="operation" value="deploy">
       <input type="hidden" name="cluster" value="{{ cluster.cluster }}">
+      {% if targets and targets.get(cluster.cluster) %}<input type="hidden" name="expected_version" value="{{ targets.get(cluster.cluster) }}">{% endif %}
       <input type="hidden" name="return_to" value="network">
       <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
     </form>
@@ -363,7 +364,7 @@
     <footer class="cluster-actions" aria-label="{{ cluster.cluster }} operations">
       <div><strong>Operations</strong></div>
       <div class="action-buttons">
-        <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="return_to" value="network"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Deploy {{ cluster.cluster }}</button></form>
+        <form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="deploy"><input type="hidden" name="cluster" value="{{ cluster.cluster }}">{% if targets and targets.get(cluster.cluster) %}<input type="hidden" name="expected_version" value="{{ targets.get(cluster.cluster) }}">{% endif %}<input type="hidden" name="return_to" value="network"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Deploy {{ cluster.cluster }}</button></form>
       </div>
     </footer>
     {% endif %}

@@ -508,6 +508,11 @@ class ThePageIsReachableAndWritesNothing(LoginTestCase):
         self.assertIn("Deploy before writing another change", card)
         self.assertNotIn("Validate and publish network", card)
 
+    def test_the_owed_deploy_is_bound_to_the_version_the_page_shows(self) -> None:
+        card = self.owed_page().text.split("service-demo", 1)[0]
+
+        self.assertIn('name="expected_version" value="24"', card)
+
     def test_a_cluster_with_nothing_owed_keeps_its_publish_button(self) -> None:
         """And the swap is only ever one of the two, never both at once."""
 

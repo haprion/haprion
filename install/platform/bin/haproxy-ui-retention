@@ -88,6 +88,15 @@ TRAFFIC_KEEP_DAYS=7
 TRAFFIC_AHEAD_DAYS=7
 
 #
+# A sign-in through the OIDC provider leaves one row (0041): usable for ten
+# minutes and once. A day is kept so that a failed sign-in can still be looked
+# at the morning after; beyond that a row is only a nonce and a PKCE verifier
+# nobody will ever present again. The web role inserts and marks them used but
+# holds no `delete`, the same boundary as the job table.
+#
+OIDC_LOGIN_KEEP_HOURS=24
+
+#
 # HAProxy's own counter column names, in the order the rest of the project
 # lists them. A fourth copy of this list - the node reads it, the reader keeps
 # it, the migration stores it, and this rolls it up - and it cannot be shared:
@@ -165,6 +174,36 @@ rollup_state_present() {
 
 traffic_logs_present() {
     [[ "$(psql_as -c "select to_regclass('public.traffic_log') is not null")" == "t" ]]
+}
+
+oidc_logins_present() {
+    [[ "$(psql_as -c "select to_regclass('public.oidc_login') is not null")" == "t" ]]
+}
+
+#
+# One predicate for the count and the delete, as with the jobs below.
+#
+where_oidc_login_expired() {
+    echo "created_at < statement_timestamp() - make_interval(hours => ${OIDC_LOGIN_KEEP_HOURS})"
+}
+
+oidc_logins() {
+    local expired removed
+    oidc_logins_present || return 0
+    expired="$(psql_as -c "select count(*) from oidc_login where $(where_oidc_login_expired)")"
+    if [[ "$command" == "report" ]]; then
+        log "  oidc_login: $(psql_as -c 'select count(*) from oidc_login') row(s), ${expired} older than ${OIDC_LOGIN_KEEP_HOURS} hour(s)"
+        return 0
+    fi
+    if [[ "$dry_run" -eq 1 ]]; then
+        log "  oidc_login: dry run, would remove ${expired} row(s)"
+        return 0
+    fi
+    removed="$(psql_as -c "with removed as (
+                              delete from oidc_login where $(where_oidc_login_expired)
+                              returning 1
+                           ) select count(*) from removed")"
+    log "  oidc_login: removed ${removed} row(s) older than ${OIDC_LOGIN_KEEP_HOURS} hour(s)"
 }
 
 traffic_partitions_expired() {
@@ -545,6 +584,7 @@ main() {
             if traffic_logs_present; then
                 log "  traffic_log: $(psql_as -c 'select count(*) from traffic_log') row(s), retention ${TRAFFIC_KEEP_DAYS} day(s)"
             fi
+            oidc_logins
             ;;
         prune)
             #
@@ -566,6 +606,7 @@ main() {
                 rollup
                 metric_partitions_prune
             fi
+            oidc_logins
             if [[ "$dry_run" -eq 1 ]]; then
                 log "  dry run: nothing was deleted"
             elif [[ "$removable" -eq 0 ]]; then

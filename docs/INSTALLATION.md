@@ -3026,6 +3026,9 @@ being ungranted would matter.
   them**, so the floor is exactly the set a reader can see. Ordered any other
   way it would select a different twenty rows and quietly stop promising
   anything.
+- **OIDC sign-ins in progress older than a day** (schema `0041`). Each sign-in
+  through the provider leaves one row, usable for ten minutes and once; a day
+  is kept so a failed sign-in can still be looked at the next morning.
 
 The timer runs daily, after the daily dump rather than before it, so the newest
 dump still contains the rows the prune removes.

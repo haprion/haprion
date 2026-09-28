@@ -82,6 +82,44 @@ class ARealDatabase(unittest.TestCase):
             self.assertEqual(cursor.fetchone(), (f"node_restore (job {ids[0]})",))
             connection.rollback()
 
+    def test_retention_removes_oidc_sign_ins_older_than_a_day(self) -> None:
+        """The clause is printed by the retention command itself, as above."""
+
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        clause = subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            [
+                "/bin/bash",
+                "-c",
+                'eval "$(sed -n'
+                " '/^OIDC_LOGIN_KEEP_HOURS=/p;/^where_oidc_login_expired() {/,/^}/p'"
+                ' "$0")"; where_oidc_login_expired',
+                str(script),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        ages = {"fresh": "1 minute", "used-today": "23 hours", "yesterday": "25 hours"}
+        with self.connect() as connection, connection.cursor() as cursor:
+            for name, age in ages.items():
+                cursor.execute(
+                    "insert into oidc_login (state, nonce, verifier, mode, pre_session_hash, "
+                    "created_at, used_at) values (%(state)s, %(filler)s, %(filler)s, 'sign_in', "
+                    "%(hash)s, now() - %(age)s::interval, "
+                    "case when %(name)s = 'used-today' then now() end)",
+                    {
+                        "state": name.ljust(32, "-"),
+                        "filler": "v" * 43,
+                        "hash": b"h" * 32,
+                        "age": age,
+                        "name": name,
+                    },
+                )
+            cursor.execute(f"select state from oidc_login where {clause}")  # noqa: S608 - the script's own
+            removable = {row[0].rstrip("-") for row in cursor.fetchall()}
+            self.assertEqual(removable, {"yesterday"})
+            connection.rollback()
+
     def test_retention_keeps_what_a_profile_s_state_is_read_from(self) -> None:
         """A profile in effect for months must not read "Not applied" after a week.
 

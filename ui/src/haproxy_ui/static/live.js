@@ -25,30 +25,52 @@
   const WAIT = 1000;
 
   //
-  // Fields the reader has changed since the page was drawn, by their place on
-  // the page: the form's position, the field's name and which of that name it
-  // is. A fresh page of the same shape has the same places.
+  // Fields the reader has changed since the page was drawn, by what they
+  // belong to: the form's identity, the field's name and which of that name it
+  // is.
   //
+  // A form is known by where it posts and what its hidden fields say it is
+  // about - the cluster, the operation, the certificate - or by `data-keep`
+  // where the page names it outright. Not by its position: the backup page
+  // drops a cluster's forms while that cluster has a job and draws them again
+  // when it is done, and a value typed for one cluster then landed in the next
+  // cluster's form, under that cluster's hidden fields (review 2026-09-28 F04).
+  // A form that is no longer on the page takes its values with it.
+  //
+  // The token and the request key are drawn new with every page, so they say
+  // nothing about which form this is.
+  //
+  const VOLATILE = new Set(["csrf_token", "idempotency_key"]);
   const touched = new Set();
+
+  const identity = (form) => {
+    if (form.dataset.keep) return `keep:${form.dataset.keep}`;
+    const hidden = Array.from(form.querySelectorAll("input[type=hidden]"))
+      .filter((input) => input.name && !VOLATILE.has(input.name))
+      .map((input) => `${input.name}=${input.value}`);
+    return JSON.stringify([form.getAttribute("action") || "", ...hidden]);
+  };
 
   const place = (field) => {
     const main = document.querySelector("main");
     const form = field.form || field.closest("form");
-    const forms = main ? Array.from(main.querySelectorAll("form")) : [];
     const scope = form || main;
     const same = scope
       ? Array.from(scope.querySelectorAll(FIELDS)).filter((other) => other.name === field.name)
       : [];
-    return `${forms.indexOf(form)}|${field.name}|${same.indexOf(field)}`;
+    if (!form) return JSON.stringify([null, 0, field.name, same.indexOf(field)]);
+    const id = identity(form);
+    const twins = main ? Array.from(main.querySelectorAll("form")).filter((other) => identity(other) === id) : [];
+    return JSON.stringify([id, twins.indexOf(form), field.name, same.indexOf(field)]);
   };
 
   const find = (root, key) => {
-    const [formIndex, name, index] = key.split("|");
-    const forms = Array.from(root.querySelectorAll("form"));
-    const scope = Number(formIndex) >= 0 ? forms[Number(formIndex)] : root;
+    const [id, twin, name, index] = JSON.parse(key);
+    const scope =
+      id === null ? root : Array.from(root.querySelectorAll("form")).filter((form) => identity(form) === id)[twin];
     if (!scope) return null;
     const same = Array.from(scope.querySelectorAll(FIELDS)).filter((field) => field.name === name);
-    return same[Number(index)] || null;
+    return same[index] || null;
   };
 
   const remember = (event) => {

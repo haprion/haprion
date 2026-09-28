@@ -2986,7 +2986,7 @@ crash-consistent rather than transactionally clean, and restoring a single table
 out of a machine image is not something anyone does under pressure. The dump is
 what makes "put that one table back" an ordinary afternoon.
 
-### 4.8 Keeping jobs and metric history bounded
+### 4.8 Keeping jobs, sessions and metric history bounded
 
 `install/platform/11-platform-retention` installs `haproxy-ui-retention` and a
 daily timer. It is optional, and it is separate from the backup step because
@@ -3029,6 +3029,14 @@ being ungranted would matter.
 - **OIDC sign-ins in progress older than a day** (schema `0041`). Each sign-in
   through the provider leaves one row, usable for ten minutes and once; a day
   is kept so a failed sign-in can still be looked at the next morning.
+- **Sessions that ended more than thirty days ago**, expired or signed out. A
+  live session is never touched.
+- **Sign-in attempts older than ninety days**, far outside any throttle window
+  (at most a day) — **except each name's newest successful attempt**, which is
+  what *Last sign-in* on the Users page reads. A break-glass account may go
+  unused for longer than ninety days and must not then read as never used.
+- **Never the audit trail.** It is the record of what every identity did and
+  is kept for the life of the installation.
 
 The timer runs daily, after the daily dump rather than before it, so the newest
 dump still contains the rows the prune removes.
@@ -3329,19 +3337,18 @@ a node is down, or the reverse.
 
 #### The worker
 
-It starts, connects, reports which database role it is actually running as, and
-claims nothing, because management writes are off. That is deliberate rather
-than unfinished: it is the state a rollback of the write path returns to, so it
-has to be a state that runs.
+It starts, connects and reports which database role it is actually running as.
+With `management_writes` off it claims nothing: that is the state a rollback of
+the write path returns to, so it has to be a state that runs.
 
-Its unit is held **more tightly than the worker will eventually need** —
-`NoNewPrivileges=yes`, an empty capability set, `AF_UNIX` only. The phase that
-turns writes on has to relax that on purpose, in a diff somebody reviews, rather
-than inheriting a permission nobody chose. What it will need is written in the
-unit file so it is not rediscovered.
-
-If management writes are switched on before that phase exists, the worker exits
-78 and says so rather than pretending to work.
+With writes on it runs each job through an exact privileged helper, over `sudo`
+for most and over a root-owned socket for the few that write under `/etc`. Its
+unit therefore allows `sudo` to raise privilege (`NoNewPrivileges=no` and a
+short, named capability set); every capability is explained in the unit file
+beside it. The real limit is not the sandbox but
+`/etc/sudoers.d/haproxy-ui-worker`, which names each helper and permits no
+arguments: widening the unit does not widen what may be run, only that file
+does.
 
 Once writes are on, each pass first settles jobs whose worker died. An expired
 lease says only that the process holding a job stopped renewing its authority,
@@ -3636,9 +3643,12 @@ Do the last two on a cluster that carries no traffic if you have one.
 
 This guide is honest about its gaps rather than complete on paper:
 
-- **Certificate distribution** is an interface this project consumes, not one it provides.
-  Issuance is planned; renewal is deliberately out of scope and belongs to an ACME client.
+- **Certificate renewal** is deliberately out of scope and belongs to the ACME client:
+  certificates issued through Certbot renew on Certbot's own timer, and those enrolled from a
+  Microsoft CA over NDES/SCEP renew through the same daily run. Issuance, import and
+  distribution are built and described above.
+- **A rebuild from this repository alone** has not yet been re-verified end to end since the
+  latest phases; that is the last step before 1.0.
 
-Each gap is tracked in the implementation plan. The acceptance criterion for closing them is
-mechanical: a new management host and a new pair of nodes, with names of your own choosing, built
+The acceptance criterion for closing them is mechanical: a new management host and a new pair of nodes, with names of your own choosing, built
 from this repository alone by someone who has never seen the maintainer's environment.

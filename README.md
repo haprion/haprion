@@ -1,14 +1,15 @@
 # HAProxy Manager
 
-HAProxy Manager is an environment-neutral management engine and planned web interface for
-operating small HAProxy clusters safely. The command-line engine is the authoritative control
-plane; the web application will call the same versioned commands rather than implementing a
-second configuration path.
+HAProxy Manager is an environment-neutral management engine and web interface for operating
+small HAProxy clusters safely. The command-line engine is the authoritative control plane; the
+web application calls the same versioned commands rather than implementing a second
+configuration path.
 
 ## Project status
 
-The project is in early implementation and is **not yet ready for production deployment**. The
-current foundation provides:
+The project has not reached 1.0 and is **not yet declared ready for production deployment**:
+everything below is built and tested, and the remaining work before 1.0 is polish, a full
+re-verification of a rebuild from this repository, and documentation. What is built:
 
 - frozen v1 JSON schemas and command semantics
 - a strict runtime-policy and cluster-configuration model
@@ -29,8 +30,13 @@ current foundation provides:
 - the web platform's foundation: a versioned application release, a database whose schema and
   column-level grants are versioned together, and separate service identities that cannot do each
   other's work
-- a read-only web interface over that foundation, fed by a poller rather than by reads made while
-  somebody is looking at a screen
+- a web interface over that foundation, fed by a poller rather than by reads made while
+  somebody is looking at a screen; it reads for everyone and writes only for an admin on an
+  installation that sets `management_writes = true`
+- proxy objects edited as drafts and published as versions, a cluster's network and VIPs, and
+  deploys that roll a published version out node by node and are bound to the version the
+  person saw; every write is a job, and every job is also a command at the terminal
+- metrics collected from the nodes and kept as time series
 - an optional, manager-pulled traffic-log view backed by seven days of indexed, daily PostgreSQL
   partitions; each cluster must explicitly set `traffic_logging: true`, and the setting reaches
   its nodes with the next object publication
@@ -39,15 +45,18 @@ current foundation provides:
   opens, from a catalogue of locked Certbot plugins; and certificate cleanup as one job for a
   whole selection, refusing row by row anything a committed object, a draft or a cluster still
   depends on; a certificate issued elsewhere is imported from PEM or PKCS#12 on the command line
-  and taken to its targets the same way
-- the job path management operations will run through: an immutable queue, an atomic claim held
+  and taken to its targets the same way; certificates are also distributed from the manager to
+  the nodes and to registered receivers that fetch them
+- scheduled node-state backups, and restoring a node from its archive onto an empty VM or over
+  itself, with a preview before anything is written
+- settings for the interface's own certificate, local accounts, feature switches, and sign-in
+  through an OpenID Connect provider with a local break-glass account kept
+- the job path every management operation runs through: an immutable queue, an atomic claim held
   under a renewable lease, and a worker that records how every job ended — including recovering a
   job whose worker died, which is decided from readable evidence rather than retried on assumption
 
-Management operations from the web remain **disabled**. The worker is installed, running, and
-provably unable to act, which is a stronger statement than not installing it: it is the state
-turning the feature off returns to. Enabling them waits on the worker's own privilege being
-installed and its gate passed.
+With `management_writes` off, the interface is read-only and the worker claims nothing; that is
+the state turning the switch off returns to, so it is a rollback rather than a pause.
 
 ## Security model
 

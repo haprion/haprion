@@ -563,10 +563,11 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    cluster card per row: their order is the operational fact.  The operation
    description may be long, so it gets the flexible column. */
 .job-table { table-layout: fixed; }
-.job-table th:nth-child(1), .job-table td:nth-child(1) { width: 210px; }
-.job-table th:nth-child(2), .job-table td:nth-child(2) { width: 140px; }
-.job-table th:nth-child(3), .job-table td:nth-child(3) { width: 170px; }
-.job-table th:nth-child(n+4), .job-table td:nth-child(n+4) { width: 125px; }
+/* Shares of the row, not pixels: fixed widths added up to 1145 px and pushed Exit off a 1050 px window. */
+.job-table th:nth-child(1), .job-table td:nth-child(1) { width: 19%; }
+.job-table th:nth-child(2), .job-table td:nth-child(2) { width: 11%; }
+.job-table th:nth-child(3), .job-table td:nth-child(3) { width: 15%; }
+.job-table th:nth-child(n+4), .job-table td:nth-child(n+4) { width: 11%; }
 .job-table td { padding-top: 7px; padding-bottom: 7px; }
 .job-table td:nth-child(1) { overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .job-table time { font-variant-numeric: tabular-nums; }
@@ -630,9 +631,15 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .archive-table-restore th:nth-child(5), .archive-table-restore td:nth-child(5) { width: 10%; }
 .archive-table-restore th:nth-child(6), .archive-table-restore td:nth-child(6) { width: 12%; text-align: right; }
 /* Newest backup carries an age and an archive name side by side; it gets the room, Kept needs a number's. */
-.backup-node-table th:nth-child(1), .backup-node-table td:nth-child(1) { width: 20%; }
-.backup-node-table th:nth-child(2), .backup-node-table td:nth-child(2) { width: 26%; }
-.backup-node-table th:nth-child(3), .backup-node-table td:nth-child(3) { width: 34%; }
+/*
+ * State carries a badge and a sentence ("Newest archive is 5d ago"); at 26 %
+ * it ran into Newest backup at 1050 px (2026-09-28). A cell clips rather than
+ * draws over its neighbour, and the whole state is in its title.
+ */
+.backup-node-table th:nth-child(1), .backup-node-table td:nth-child(1) { width: 16%; }
+.backup-node-table th:nth-child(2), .backup-node-table td:nth-child(2) { width: 36%; }
+.backup-node-table th:nth-child(3), .backup-node-table td:nth-child(3) { width: 28%; }
+.backup-node-table td { overflow: hidden; text-overflow: ellipsis; }
 .backup-node-table th:nth-child(4), .backup-node-table td:nth-child(4) { width: 8%; }
 .backup-node-table th:nth-child(5), .backup-node-table td:nth-child(5) { width: 12%; }
 /* The native disclosure triangle is drawn by the platform and matches nothing
@@ -917,7 +924,7 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
   .metric-grid { grid-template-columns: 1fr; }
   .proxy-summary { grid-template-columns: 1fr; }
   .cluster-header { align-items: flex-start; flex-direction: column; gap: 12px; }
-  .cluster-state { width: 100%; justify-content: space-between; }
+  .cluster-state { width: 100%; flex-wrap: wrap; justify-content: space-between; }
   .users-card .cluster-state { justify-content: flex-start; }
   .users-card .users-sso { flex-basis: 100%; overflow-wrap: anywhere; }
   .cluster-actions { align-items: flex-start; flex-direction: column; }
@@ -933,26 +940,6 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
   .settings-card .cluster-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settings-card .cluster-facts > div:nth-child(2n) { border-right: 0; }
   .settings-card .cluster-facts > div:nth-child(2n+1) { padding-left: 0; }
-  .node-table, .node-table tbody, .node-table tr, .node-table td { display: block; width: 100%; }
-  .node-table thead { display: none; }
-  .node-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding: 12px 18px; border-bottom: 1px solid var(--line); }
-  .node-table tbody tr:last-child { border-bottom: 0; }
-  .node-table td, .node-table td:first-child, .node-table td:last-child { position: relative; min-width: 0; padding: 9px 8px 9px 88px; border: 0; white-space: normal; }
-  .node-table td::before { position: absolute; top: 10px; left: 8px; color: var(--muted); content: attr(data-label); font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
-  .node-table td:nth-child(1), .node-table td:nth-child(2) { grid-column: 1 / -1; }
-  /* The wide layout's column widths outrank `.node-table td` and would squeeze every card to a quarter of its width. */
-  .backup-node-table td:nth-child(n), .archive-table td:nth-child(n), .registry-table td:nth-child(n), .users-table td:nth-child(n) { width: 100%; }
-  .registry-table, .registry-table.selectable-table { min-width: 0; }
-  /* "Newest backup" is the longest label on the page; its field is widened rather than the label cut or wrapped. */
-  .backup-node-table td:nth-child(n), .archive-table td:nth-child(n) { padding-left: 116px; }
-  /* The checkbox column's padding would otherwise pull every card's value under its label. */
-  .selectable-table td:nth-child(n) { padding: 9px 8px 9px 88px; }
-  /*
-   * The follow-up cells carry no data-label, so they need neither the room a
-   * label takes nor the centring that placed the button under a column that
-   * no longer exists at this width.
-   */
-  .job-follow-up td, .follow-up-cell { padding-left: 8px; text-align: left; }
   .login-card { padding: 27px 23px; }
 }
 
@@ -981,10 +968,6 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 }
 @media (max-width: 680px) {
   .registry-table tr { grid-template-columns: 1fr 1fr; }
-}
-@media (max-width: 430px) {
-  .node-table tr { grid-template-columns: 1fr; }
-  .node-table td:nth-child(n) { grid-column: 1; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -1193,7 +1176,7 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 .dns-profile-table td:nth-child(1), .dns-profile-table td:nth-child(2), .dns-profile-table td:nth-child(3) { overflow: hidden; text-overflow: ellipsis; }
 /* The NDES list shows a URL where the DNS list shows a provider name; a 36ch cell cuts it. */
 .ndes-profile-table th:nth-child(1), .ndes-profile-table td:nth-child(1) { width: 20ch; }
-.ndes-profile-table th:nth-child(2), .ndes-profile-table td:nth-child(2) { width: 60ch; }
+.ndes-profile-table th:nth-child(2), .ndes-profile-table td:nth-child(2) { width: 44ch; }
 .certificate-form .receiver-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .certificate-form .receiver-heading .field-title { color: var(--text-secondary); font-weight: 620; }
 .certificate-form .receiver-search { margin-top: 4px; }
@@ -1895,18 +1878,76 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 .restore-rewrite-table th:nth-child(4), .restore-rewrite-table td:nth-child(4) { width: 22%; }
 @media (max-width: 680px) {
   .restore-plan > div { grid-template-columns: 1fr; padding: 10px 16px; }
-  .restore-rewrite-table td:nth-child(n) { width: 100%; }
-}
-@media (max-width: 680px) {
-  /* The card layout gives every cell the row; the wide layout's fixed widths would squeeze it. */
-  .job-table td:nth-child(n) { width: 100%; }
-}
-@media (max-width: 680px) {
-  /* The button says what it does; a label beside it would say it twice. */
-  .archive-table td.archive-restore { padding-left: 8px; text-align: left; }
 }
 @media (max-width: 680px) {
   /* Beside the box there is no room for both; under it, the button keeps its size and the line its width. */
   .copy-row { flex-direction: column; }
   .copy-button-beside { justify-content: center; min-height: 40px; }
+}
+
+/*
+ * Below 1050 px every table becomes cards (2026-09-28). A table never scrolls
+ * sideways: what does not fit is cut or changes form. The breakpoint was
+ * 680 px, which left tables from a half-width window down to a phone scrolling
+ * or cut at the right edge.
+ *
+ * Last in the file on purpose. Each table's own column widths above have the
+ * same specificity as the reset here, so only the later rule wins; a reset
+ * placed before them was the reason some cards were squeezed to a quarter.
+ * `:where()` keeps the exclusions from raising the specificity, so each
+ * table's own card adjustments below still apply.
+ *
+ * Two tables keep their columns. The traffic log scrolls sideways instead
+ * (seven dense columns; decided 2026-09-28). The editor tables are rows of
+ * fields and keep the phone breakpoint.
+ */
+@media (max-width: 1049px) {
+  .node-table:not(:where(.log-table, .editor-table)),
+  .node-table:not(:where(.log-table, .editor-table)) tbody,
+  .node-table:not(:where(.log-table, .editor-table)) tr,
+  .node-table:not(:where(.log-table, .editor-table)) td { display: block; width: 100%; min-width: 0; }
+  .node-table:not(:where(.log-table, .editor-table)) thead { display: none; }
+  .node-table:not(:where(.log-table, .editor-table)) tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+  .node-table:not(:where(.log-table, .editor-table)) tbody tr:last-child { border-bottom: 0; }
+  .node-table:not(:where(.log-table, .editor-table)) td,
+  .node-table:not(:where(.log-table, .editor-table)) td:first-child,
+  .node-table:not(:where(.log-table, .editor-table)) td:last-child { position: relative; min-width: 0; padding: 9px 8px 9px 88px; border: 0; white-space: normal; }
+  .node-table:not(:where(.log-table, .editor-table)) td:nth-child(n) { width: 100%; }
+  .node-table:not(:where(.log-table, .editor-table)) td::before { position: absolute; top: 10px; left: 8px; color: var(--muted); content: attr(data-label); font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+  .node-table:not(:where(.log-table, .editor-table)) td:nth-child(1),
+  .node-table:not(:where(.log-table, .editor-table)) td:nth-child(2) { grid-column: 1 / -1; }
+  /* A cell without a label - an empty-table note - needs no room for one. */
+  .node-table:not(:where(.log-table, .editor-table)) td:not([data-label]) { padding-left: 8px; }
+  /* "Newest backup" is the longest label on the page; its field is widened rather than the label cut or wrapped. */
+  .backup-node-table td:nth-child(n), .archive-table td:nth-child(n) { padding-left: 116px; }
+  /* The checkbox column's padding would otherwise pull every card's value under its label. */
+  .selectable-table td:nth-child(n) { padding: 9px 8px 9px 88px; }
+  /*
+   * The follow-up cells carry no data-label, so they need neither the room a
+   * label takes nor the centring that placed the button under a column that
+   * no longer exists at this width.
+   */
+  .job-follow-up td, .follow-up-cell { padding-left: 8px; text-align: left; }
+  /* The button says what it does; a label beside it would say it twice. */
+  .archive-table td.archive-restore { padding-left: 8px; text-align: left; }
+  /* Labels longer than the default room: "Hosts / ports", "Default source". */
+  .proxy-table td:nth-child(n), .network-table td:nth-child(n) { padding-left: 112px; }
+  /* A proxy's host names are its longest value; they take the card's width. */
+  .proxy-table td:nth-child(3) { grid-column: 1 / -1; }
+  /* A sign-in time does not fit a third of a card beside its label. */
+  .users-table tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 680px) {
+  .node-table:not(:where(.log-table, .editor-table)) tr { grid-template-columns: 1fr 1fr; }
+  .editor-table, .editor-table tbody, .editor-table tr, .editor-table td { display: block; width: 100%; }
+  .editor-table thead { display: none; }
+  .editor-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 0; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+  .editor-table tbody tr:last-child { border-bottom: 0; }
+  .editor-table td, .editor-table td:first-child, .editor-table td:last-child { position: relative; min-width: 0; padding: 9px 8px 9px 88px; border: 0; white-space: normal; }
+  .editor-table td::before { position: absolute; top: 10px; left: 8px; color: var(--muted); content: attr(data-label); font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+  .editor-table td:nth-child(1), .editor-table td:nth-child(2) { grid-column: 1 / -1; }
+}
+@media (max-width: 430px) {
+  .node-table tr { grid-template-columns: 1fr; }
+  .node-table td:nth-child(n) { grid-column: 1; }
 }

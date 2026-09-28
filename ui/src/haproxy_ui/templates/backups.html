@@ -65,7 +65,7 @@
       {% for node in cluster.nodes %}
       <tr>
         <td data-label="Node"><strong>{{ node.name }}</strong></td>
-        <td data-label="State"><span class="status-badge status-badge-{{ node.tone }}">{{ node.label }}</span><span class="node-detail">{{ node.detail }}</span></td>
+        <td data-label="State" title="{{ node.label }}{% if node.detail %} · {{ node.detail }}{% endif %}"><span class="status-badge status-badge-{{ node.tone }}">{{ node.label }}</span><span class="node-detail">{{ node.detail }}</span></td>
         <td data-label="Newest backup">{{ node.age_label }}<span class="node-detail">{{ node.latest }}</span></td>
         <td data-label="Kept">{{ node.count }}</td>
         <td data-label="On disk">{{ node.total_size }}</td>

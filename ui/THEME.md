@@ -63,6 +63,20 @@ table cell is almost always wrong here. A summary card carries a number, a
 label and a qualifier; if it cannot show all three it is not a smaller card, it
 is a broken one, and its grid needs fixing rather than its text truncating.
 
+## Tables never scroll sideways
+
+Below 1050 px every table becomes cards: one card per row, each value under its
+column's name from the cell's `data-label`. From 1050 px up a table keeps its
+columns and must fit - give its columns shares of the row rather than pixels,
+and let a long value end in an ellipsis with the whole of it in the cell's
+`title`. A cell clips; it never draws over its neighbour. Every cell of a
+`node-table` therefore carries a `data-label`.
+
+Two exceptions, both deliberate: the traffic log keeps its seven columns and
+scrolls sideways below 1280 px, and the editor tables, whose cells are fields,
+become cards only on a phone (680 px). `tests/test_table_cards_browser.py`
+holds the breakpoints.
+
 ## Sortable tables
 
 A table that the reader may sort **sorts on every column**, not on a chosen few:

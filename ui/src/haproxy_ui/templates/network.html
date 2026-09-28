@@ -51,15 +51,15 @@
       <tbody>
         {% for vip in cluster.vips %}
         <tr>
-          <td><code>{{ vip.name }}</code></td>
-          <td>{{ vip.address }}</td>
-          <td>{% if vip.source %}{{ vip.source }}{% else %}<span class="table-empty">whatever routing picks</span>{% endif %}</td>
+          <td data-label="Name"><code>{{ vip.name }}</code></td>
+          <td data-label="IP address">{{ vip.address }}</td>
+          <td data-label="Default source">{% if vip.source %}{{ vip.source }}{% else %}<span class="table-empty">whatever routing picks</span>{% endif %}</td>
           {#
             The same words the editor offers, so a reader and an editor are
             looking at one value and not at two descriptions of it.
           #}
-          <td>{{ {'intermediate': 'TLS 1.2 and 1.3', 'modern': 'TLS 1.3 only', 'tls12only': 'TLS 1.2 only'}.get(vip.tls_policy) or '' }}{% if not vip.tls_policy %}<span class="table-empty">not set</span>{% endif %}</td>
-          <td>{% if vip.is_default %}<span class="status-badge status-badge-info">default</span>{% endif %}</td>
+          <td data-label="TLS version">{{ {'intermediate': 'TLS 1.2 and 1.3', 'modern': 'TLS 1.3 only', 'tls12only': 'TLS 1.2 only'}.get(vip.tls_policy) or '' }}{% if not vip.tls_policy %}<span class="table-empty">not set</span>{% endif %}</td>
+          <td data-label="Default">{% if vip.is_default %}<span class="status-badge status-badge-info">default</span>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -71,7 +71,7 @@
       <thead><tr><th>Name</th><th>IP address</th><th>Used by</th></tr></thead>
       <tbody>
         {% for source in cluster.sources %}
-        <tr><td><code>{{ source.name }}</code></td><td>{{ source.address }}</td><td>{{ source.used_by }}</td></tr>
+        <tr><td data-label="Name"><code>{{ source.name }}</code></td><td data-label="IP address">{{ source.address }}</td><td data-label="Used by">{{ source.used_by }}</td></tr>
         {% else %}
         <tr><td colspan="3" class="table-empty">None. Connections out leave from whatever address the nodes' routing picks.</td></tr>
         {% endfor %}
@@ -84,7 +84,7 @@
       <thead><tr><th>Name</th><th>Members</th></tr></thead>
       <tbody>
         {% for group in cluster.groups %}
-        <tr><td><code>{{ group.name }}</code></td><td>{% for member in group.members %}<code>{{ member }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
+        <tr><td data-label="Name"><code>{{ group.name }}</code></td><td data-label="Members">{% for member in group.members %}<code>{{ member }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
         {% else %}
         <tr><td colspan="2" class="table-empty">None. Every site here is reachable from anywhere that can route to its VIP.</td></tr>
         {% endfor %}

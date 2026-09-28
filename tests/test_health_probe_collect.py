@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 import unittest
 
 from haproxy_mgmt.config import DeployIdentity, Node
@@ -55,6 +56,39 @@ def answered(**fields: object) -> str:
     }
     payload.update(fields)
     return json.dumps(payload)
+
+
+class BothNodesAtOnce(unittest.TestCase):
+    """Two SSH calls of up to 30 s in a row met the web's and nginx's 60 s
+    exactly; asked together, the probe takes as long as the slower node
+    (review 2026-09-28)."""
+
+    def test_the_nodes_are_asked_together_and_answer_in_configured_order(self) -> None:
+        waits = {"node-a": 0.4, "node-b": 0.1}
+
+        def slow(node: Node, _identity: object, _request: str) -> subprocess.CompletedProcess[str]:
+            time.sleep(waits[node.name])
+            return completed(answered(node=node.name))
+
+        started = time.monotonic()
+        answers = probe(NODES, IDENTITY, [Target(host="198.51.100.10", port=8080)], ask=slow)
+        elapsed = time.monotonic() - started
+
+        self.assertEqual([answer.node for answer in answers], ["node-a", "node-b"])
+        # In a row it would be 0.5 s; together it is the slower one.
+        self.assertLess(elapsed, 0.48)
+
+    def test_a_node_that_times_out_does_not_take_the_other_with_it(self) -> None:
+        def one_silent(node: Node, _i: object, _r: str) -> subprocess.CompletedProcess[str]:
+            if node.name == "node-a":
+                raise subprocess.TimeoutExpired(cmd="ssh", timeout=30)
+            return completed(answered(node=node.name))
+
+        answers = probe(NODES, IDENTITY, [Target(host="198.51.100.10", port=8080)], ask=one_silent)
+        self.assertEqual(
+            [(answer.node, answer.reachable) for answer in answers],
+            [("node-a", False), ("node-b", True)],
+        )
 
 
 class TheRequestSentToANode(unittest.TestCase):

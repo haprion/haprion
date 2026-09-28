@@ -21,8 +21,14 @@ ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-oidc-helper
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal
-# Three calls to the provider at ten seconds each, and a margin.
 TimeoutStartSec=45
+#
+# The whole answer, not only the start: with Type=exec the start timeout ends
+# once the helper runs, and a provider that answers a byte at a time keeps
+# each read inside its own ten seconds. The web stops waiting at the same 45
+# (oidc_web.TIMEOUT_SECONDS); this makes the helper stop too.
+#
+RuntimeMaxSec=45
 TimeoutStopSec=10
 
 NoNewPrivileges=yes

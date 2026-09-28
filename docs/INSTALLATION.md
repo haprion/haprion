@@ -2844,6 +2844,68 @@ claim that is an object counts as its keys. A provider that sends a pointer to
 the groups instead of the groups (Entra's overage, above 200 groups) is refused
 with a sentence that says to use app roles.
 
+The role is read from the groups at every sign-in through the provider, and
+not between two of them. A session made that way therefore ends after at most
+`oidc_absolute_hours` (under `[session]` in `ui.toml`, default 10), whatever
+the activity, so a group taken away at the provider stops counting here by
+then. The provider's own token lifetime is not used for this; to end someone's
+access sooner, **Revoke sessions** on the account does it at once.
+
+An account made through the provider is bound to the issuer and the subject it
+first signed in with, not to its name. Changing the issuer — another provider,
+or the same provider's application under a new name — therefore leaves every
+such account bound to the old one, and sign-in says so. Remove those accounts
+under **Settings → Users**; each is made again at its next sign-in.
+
+#### Examples: three providers
+
+In every case the provider gets a confidential client (one with a secret),
+the authorization code flow, and exactly one redirect URI: the one the
+settings page shows, `https://<SERVER_NAME>/login/oidc/callback`. The issuer
+must be typed exactly as the provider states it — **Verify** says so when it is
+not, and quotes the provider's own value. Menu names change between provider
+versions; what matters is what ends up in the id_token, which **Test sign-in**
+shows.
+
+**authentik** (checked against 2026.8)
+
+- Applications → New Application, provider type OAuth2/OIDC, client type
+  confidential, redirect URI in strict mode, a signing key chosen (RS256).
+- Issuer: `https://id.example.com/application/o/<application slug>/`, with the
+  trailing slash. The provider's page shows the discovery URL ending in
+  `/.well-known/openid-configuration`; the issuer is what comes before it.
+- Scopes, claims: the defaults here (`openid profile email`,
+  `preferred_username`, `groups`). authentik's `profile` scope carries the
+  groups by name.
+- Groups: authentik's own, or those an LDAP source synchronises from Active
+  Directory; the claim carries the group's name as authentik shows it.
+- Binding the application to the two groups keeps everyone else out at the
+  provider as well.
+
+**Keycloak**
+
+- Clients → Create client, OpenID Connect, client authentication on, standard
+  flow on, the redirect URI under valid redirect URIs.
+- Issuer: `https://id.example.com/realms/<realm>`.
+- Groups: add a *Group Membership* mapper to the client's dedicated scope with
+  token claim name `groups`, added to the ID token. With *Full group path* on,
+  which is the default, groups arrive as paths — type the admin group as
+  `/haproxy-admins` here, or turn the option off and type `haproxy-admins`.
+- Username claim: `preferred_username` (the default here).
+
+**Microsoft Entra ID**
+
+- App registrations → New registration, platform *Web*, the redirect URI, and
+  a client secret under Certificates & secrets.
+- Issuer: `https://login.microsoftonline.com/<tenant ID>/v2.0`.
+- Groups: Token configuration → Add groups claim. By default the claim carries
+  group **object IDs**, not names; type the IDs as the admin and reader
+  groups, or, for groups synchronised from on-premises AD, choose
+  `sAMAccountName` for the ID token. Someone in more than 200 groups gets a
+  pointer instead of the groups, which is refused; choose *Groups assigned to
+  the application*, or use app roles with the groups claim set to `roles`.
+- Username claim: `preferred_username` (the user's UPN).
+
 The settings are an admin's, under **Settings → Users → OIDC configuration**,
 on installations with `management_writes` on: issuer, client ID and secret,
 client authentication (`client_secret_basic` or `client_secret_post`),

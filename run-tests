@@ -63,4 +63,10 @@ python3 "$base/contract-tests/validate_contracts.py"
 #
 "$base/ui/run-tests"
 python3 "$base/tools/build_smoke.py"
-pip-audit --local
+#
+# --skip-editable: the project itself is installed editable here and is not on
+# PyPI. Asking for it anyway made the gate fail whenever PyPI answered that
+# lookup with a 503 instead of a 404 - three times on 2026-09-28 - while it
+# audits nothing: this project's own code is what the rest of the gate reads.
+#
+pip-audit --local --skip-editable

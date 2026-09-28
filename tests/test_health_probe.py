@@ -18,6 +18,7 @@ import socket
 import subprocess as sp
 import tempfile
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -142,6 +143,91 @@ class WhatTheProbeAnswers(unittest.TestCase):
         )
         self.assertEqual(code, 0)
         self.assertEqual([entry["ok"] for entry in answer["results"]], [True, False])
+
+
+class SlowServers:
+    """Listeners that accept and then say nothing, or say it a byte at a time."""
+
+    def __init__(self, count: int, *, drip: float | None = None) -> None:
+        self.stop = threading.Event()
+        self.listeners: list[socket.socket] = []
+        for _ in range(count):
+            listener = socket.socket()
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(8)
+            listener.settimeout(0.1)
+            self.listeners.append(listener)
+            threading.Thread(target=self._serve, args=(listener, drip), daemon=True).start()
+
+    @property
+    def ports(self) -> list[int]:
+        return [int(listener.getsockname()[1]) for listener in self.listeners]
+
+    def _serve(self, listener: socket.socket, drip: float | None) -> None:
+        held = []
+        while not self.stop.is_set():
+            try:
+                connection, _ = listener.accept()
+            except OSError:
+                continue
+            held.append(connection)
+            if drip is not None:
+                threading.Thread(target=self._drip, args=(connection, drip), daemon=True).start()
+        for connection in held:
+            connection.close()
+
+    def _drip(self, connection: socket.socket, every: float) -> None:
+        while not self.stop.is_set():
+            try:
+                connection.sendall(b"H")
+            except OSError:
+                return
+            time.sleep(every)
+
+    def close(self) -> None:
+        self.stop.set()
+        for listener in self.listeners:
+            listener.close()
+
+
+class HowLongAProbeTakes(unittest.TestCase):
+    """All targets at once, and none longer than three timeouts (review 2026-09-28).
+
+    One after the other, twenty silent servers took 40 s at the default
+    timeout - past the manager's 30 s for the node - and the answer was lost
+    exactly when the whole pool was down.
+    """
+
+    def test_silent_servers_are_waited_for_together(self) -> None:
+        servers = SlowServers(5)
+        self.addCleanup(servers.close)
+        started = time.monotonic()
+        code, answer = ask(
+            {
+                "schema_version": 1,
+                "timeout_ms": 300,
+                "targets": [target(port=port) for port in servers.ports],
+            }
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(code, 0)
+        self.assertEqual([entry["port"] for entry in answer["results"]], servers.ports)
+        self.assertTrue(all(not entry["ok"] for entry in answer["results"]))
+        # One after the other would be 1.5 s; together it is one timeout.
+        self.assertLess(elapsed, 1.2)
+
+    def test_a_server_sending_a_byte_at_a_time_is_cut_off(self) -> None:
+        # Each byte arrives inside the timeout, so only the deadline stops it.
+        servers = SlowServers(1, drip=0.1)
+        self.addCleanup(servers.close)
+        started = time.monotonic()
+        code, answer = ask(
+            {"schema_version": 1, "timeout_ms": 300, "targets": [target(port=servers.ports[0])]}
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(code, 0)
+        self.assertEqual(answer["results"][0]["error"], "no answer within 300 ms")
+        self.assertLess(elapsed, 2.0)
 
 
 class WhichNodeTheQuestionBelongsTo(unittest.TestCase):

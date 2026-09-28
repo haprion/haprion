@@ -3662,6 +3662,13 @@ def build_router(config: Config) -> APIRouter:
             parsed = oidc_web.parse(form, provider, public_key=config.oidc_public_key)
             if parsed.problem:
                 return again(parsed.problem, shown=shown)
+            #
+            # Said here rather than left to the row: the trigger raises the
+            # revision only when a setting changes, so an unchanged save while
+            # on would be refused as unverified settings - which they are not.
+            #
+            if all(getattr(provider, name) == value for name, value in parsed.settings.items()):
+                return again("Nothing to save: no setting was changed.", shown=shown)
             verified = False
             if provider.enabled:
                 #
@@ -6050,7 +6057,7 @@ def build_router(config: Config) -> APIRouter:
                     },
                 )
             token = auth.new_session_token()
-            expires_at = auth.absolute_expiry(config.session)
+            expires_at = auth.absolute_expiry(config.session, through_provider=True)
             db.create_session(
                 connection,
                 token_hash=auth.token_hash(token),
@@ -7453,6 +7460,18 @@ def _oidc_account_refusal(
     if account is None:
         named = db.account_by_username(connection, username)
         if named is not None:
+            #
+            # Bound to another issuer: the provider was changed, or its
+            # application renamed, since this account first signed in. Said
+            # as that, since "already exists" sends everyone looking for a
+            # local account (review 2026-09-28 F5).
+            #
+            if named.source == "oidc" and named.oidc_issuer not in (None, issuer):
+                return (
+                    f"The account {username} here belongs to another provider's sign-in. "
+                    "An admin can remove it so that it is made again.",
+                    "other_issuer",
+                )
             if named.source != "oidc" or named.oidc_issuer is not None:
                 return f"An account named {username} already exists here.", "name_taken"
             account = named

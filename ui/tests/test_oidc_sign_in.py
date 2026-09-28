@@ -13,6 +13,7 @@ chosen; an account the provider owns has no password to change here.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
@@ -216,6 +217,15 @@ class SigningInThroughTheProvider(LoginTestCase):
         self.assertEqual((action, detail["via"], detail["role"]), ("login", "oidc", "admin"))
         self.assertEqual((self.attempts[-1][0], self.attempts[-1][2]), ("alice", True))
 
+    def test_a_session_through_the_provider_ends_at_its_own_cap(self) -> None:
+        # B203: ten hours, not the local accounts' 168, whatever the activity.
+        before = datetime.now(UTC)
+        client = self.client()
+        self.back(client, self.go(client))
+        (session,) = self.sessions.values()
+        self.assertLessEqual(session.expires_at - before, timedelta(hours=10, seconds=5))
+        self.assertGreaterEqual(session.expires_at - before, timedelta(hours=10))
+
     def test_the_answer_must_come_back_to_the_browser_that_asked(self) -> None:
         state = self.go(self.client())
         other = self.client()
@@ -265,6 +275,29 @@ class SigningInThroughTheProvider(LoginTestCase):
         self.assertEqual(response.status_code, 401)
         self.assertIn("An account named operator already exists here.", response.text)
         self.assertEqual((self.created, self.bound), ([], []))
+
+    def test_an_account_from_another_issuer_is_named_as_that(self) -> None:
+        # The issuer changed - another provider, or the application renamed -
+        # since this account first signed in (review 2026-09-28 F5).
+        bound_elsewhere = Account(
+            id=9,
+            username="alice",
+            role="admin",
+            disabled=False,
+            password_hash=None,
+            source="oidc",
+            oidc_issuer="https://old.example.com/",
+        )
+        with mock.patch(
+            "haproxy_ui.db.account_by_username",
+            side_effect=lambda _c, name: bound_elsewhere if name == "alice" else None,
+        ):
+            client = self.client()
+            response = self.back(client, self.go(client))
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("belongs to another provider&#39;s sign-in", response.text)
+        self.assertEqual((self.created, self.bound), ([], []))
+        self.assertEqual(self.audit_details[-1][1]["reason"], "other_issuer")
 
     def test_a_prepared_provider_account_is_bound_once(self) -> None:
         prepared = Account(

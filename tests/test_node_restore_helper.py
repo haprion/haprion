@@ -474,13 +474,18 @@ class Ask(unittest.TestCase):
         code, output = self.busy(DISCARD, {"run": RUN_ID})
         self.assertEqual((code, output), (1, ""))
 
-    def test_the_client_gives_up_no_later_than_systemd_stops_the_helper(self) -> None:
+    def test_a_step_is_bounded_by_its_session_not_by_systemd(self) -> None:
+        # With Type=exec, TimeoutStartSec ends at the start; systemd does not
+        # stop a running step, and is not asked to: a root step stopped midway
+        # would skip its own roll-back (review 2026-09-28). The bound is the SSH
+        # session's, and the client outlasts one session before it says so.
         unit = (
             Path(__file__).resolve().parents[1]
             / "install/platform/examples/haproxy-node-restore-helper@.service.example"
         ).read_text()
-        minutes = int(unit.split("TimeoutStartSec=", 1)[1].split("min", 1)[0])
-        self.assertLessEqual(node_restore_ask.TIMEOUT_SECONDS, minutes * 60)
+        self.assertIn("Type=exec", unit)
+        self.assertNotIn("\nRuntimeMaxSec=", unit)
+        self.assertLess(node_restore.SESSION_TIMEOUT, node_restore_ask.TIMEOUT_SECONDS)
         # And the worker's 900 s job timeout is longer still (ui/.../operations.py).
         self.assertLess(node_restore_ask.TIMEOUT_SECONDS, 900)
 

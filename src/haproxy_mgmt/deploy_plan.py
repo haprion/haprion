@@ -469,6 +469,19 @@ def next_step(
     blocked = _blocking_reason(observation, allow_vip_unknown=allow_vip_unknown)
     if blocked is not None:
         reason, code = blocked
+        #
+        # `blocked` says nothing was touched. Once a node carries the target it
+        # is no longer true, whatever stopped the rest: the run is partial, as
+        # a caller letting go after a deploy already is (review 2026-09-28 F4).
+        #
+        if progress.deployed:
+            done = ", ".join(sorted(progress.deployed))
+            return Step(
+                action=Action.BLOCKED,
+                reason=f"{reason}; {done} already carries the target",
+                outcome=Outcome.PARTIAL,
+                exit_code=EXIT_INCOMPLETE,
+            )
         return Step(action=Action.BLOCKED, reason=reason, outcome=Outcome.BLOCKED, exit_code=code)
 
     for node in _ordered(_candidates(observation, progress), observation.vip_state):

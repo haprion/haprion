@@ -24,9 +24,9 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haproxy-network-publish-helper` | `network_publish` | `done`, `failed`, `blocked` | Bounded publication of `managed/network.yaml` |
 | `haproxy-objects-publish-helper` | `objects_publish` | `done`, `failed`, `blocked` | Bounded publication of `managed/proxies/` |
 | `haproxy-publish` | `publish` | `done`, `failed`, `blocked` | Validation and new immutable release |
-| `haproxy-deploy` | `deploy` | `done`, `partial`, `failed`, `blocked` | Config reconcile per node |
+| `haproxy-deploy` | `deploy` | `done`, `partial`, `failed`, `blocked` | Config reconcile per node. `blocked` means no node was touched (split brain, unknown VIP owner, no usable status, missing certificates); a block met after a node already carries the target is `partial`, naming it |
 | `haproxy-revert` | `revert` | `done`, `failed`, `blocked` | New release built from an older version |
-| `haproxy-cert-deploy` | `cert_deploy` | `done`, `partial`, `failed`, `blocked` | Certificate reconcile per node |
+| `haproxy-cert-deploy` | `cert_deploy` | `done`, `partial`, `failed`, `blocked` | Certificate reconcile per node; `blocked` and `partial` as for `deploy` |
 | `haproxy-cert-publish` | `cert_publish` | `done`, `partial`, `failed`, `blocked` | Registry-wide publication to clusters and receivers; `cluster` is always null |
 | `haproxy-cert-issue` | `cert_issue` | `done`, `failed` | One ACME certificate issued, registered, published and rolled out; `cluster` is always null |
 | `haproxy-dns-profile-apply-helper` | `dns_profile_apply` | `done`, `failed`, `blocked` | One sealed DNS provider profile opened by root and written as the plugin's credentials file; `cluster` is always null; the result names the profile, never its contents |

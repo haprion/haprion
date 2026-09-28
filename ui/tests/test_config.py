@@ -69,6 +69,15 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("password", config.database.connection_string)
         self.assertNotIn("user", config.database.connection_string)
 
+    def test_a_provider_session_is_capped_at_ten_hours_unless_set(self) -> None:
+        # B203: a group taken away at the provider counts here until the next
+        # sign-in through it, so those sessions have a cap of their own.
+        self.assertEqual(self.load(VALID).session.oidc_absolute_hours, 10)
+        config = self.load(VALID + "\n[session]\noidc_absolute_hours = 4\n")
+        self.assertEqual(config.session.oidc_absolute_hours, 4)
+        with self.assertRaises(ConfigError):
+            self.load(VALID + "\n[session]\noidc_absolute_hours = 0\n")
+
     def test_management_writes_defaults_to_off(self) -> None:
         config = self.load(VALID.replace("management_writes = false\n", ""))
         self.assertFalse(config.management_writes)

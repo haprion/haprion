@@ -183,9 +183,11 @@ class ReplanningTests(unittest.TestCase):
 
         trace, outcome, code = drive([before, after, after])
 
+        # node-b already carries the target: partial, not "nothing was touched"
+        # (review 2026-09-28 F4).
         self.assertEqual(trace, ["deploy:node-b"])
-        self.assertIs(outcome, Outcome.BLOCKED)
-        self.assertEqual(code, 65)
+        self.assertIs(outcome, Outcome.PARTIAL)
+        self.assertEqual(code, 69)
 
     def test_ownership_becoming_unknown_mid_run_stops_the_rest(self) -> None:
         before = pair(
@@ -201,9 +203,11 @@ class ReplanningTests(unittest.TestCase):
 
         trace, outcome, code = drive([before, after, after])
 
+        # node-b already carries the target: partial, not "nothing was touched"
+        # (review 2026-09-28 F4).
         self.assertEqual(trace, ["deploy:node-b"])
-        self.assertIs(outcome, Outcome.BLOCKED)
-        self.assertEqual(code, 65)
+        self.assertIs(outcome, Outcome.PARTIAL)
+        self.assertEqual(code, 69)
 
     def test_a_node_that_stops_answering_mid_run_is_skipped_not_blocked(self) -> None:
         before = pair(

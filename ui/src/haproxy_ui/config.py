@@ -41,7 +41,9 @@ ALLOWED_KEYS = frozenset(
 )
 ALLOWED_DATABASE_KEYS = frozenset({"name", "socket_directory"})
 ALLOWED_LISTEN_KEYS = frozenset({"host", "port"})
-ALLOWED_SESSION_KEYS = frozenset({"inactivity_minutes", "absolute_hours", "cookie_secure"})
+ALLOWED_SESSION_KEYS = frozenset(
+    {"inactivity_minutes", "absolute_hours", "cookie_secure", "oidc_absolute_hours"}
+)
 ALLOWED_THROTTLE_KEYS = frozenset({"max_failures", "window_minutes"})
 ALLOWED_POLLER_KEYS = frozenset({"interval_seconds"})
 ALLOWED_TRAFFIC_LOG_KEYS = frozenset({"enabled", "directory", "max_lines", "retention_days"})
@@ -116,6 +118,14 @@ class Session:
     # must never be a quiet state.
     #
     cookie_secure: bool
+    #
+    # A session made through the provider carries the role its groups gave at
+    # sign-in, and the provider is not asked again until the next one. This
+    # caps how long a group taken away at the provider still counts here
+    # (B203); the provider's own token lifetime is not used, as other OIDC
+    # applications do not use it either.
+    #
+    oidc_absolute_hours: int = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,6 +396,9 @@ def load(path: Path = DEFAULT_CONFIG_PATH, *, require_secure: bool = True) -> Co
                 session, "absolute_hours", "session", low=1, high=720, default=168
             ),
             cookie_secure=_boolean(session, "cookie_secure", "session", default=True),
+            oidc_absolute_hours=_bounded_int(
+                session, "oidc_absolute_hours", "session", low=1, high=720, default=10
+            ),
         ),
         throttle=Throttle(
             max_failures=_bounded_int(

@@ -306,9 +306,15 @@ def run(
 
         if step.action is Action.BLOCKED:
             writer.write(f"\nERROR: {step.reason}\n")
-            report.outcome = Outcome.BLOCKED
+            # Partial when a node was deployed before the block; see next_step.
+            report.outcome = step.outcome or Outcome.BLOCKED
             report.final_summary = status.summary
             report.error = Message(code="deploy_blocked", message=step.reason)
+            if step.outcome is Outcome.PARTIAL:
+                writer.write(
+                    "Some nodes carry the target and some do not. "
+                    "Run the same command again once the cluster allows it.\n"
+                )
             return DeployRun(step.exit_code, report)
 
         #

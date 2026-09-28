@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import subprocess
 from collections.abc import Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -241,19 +242,26 @@ def probe(
 
     request = build_request(targets, source=source, timeout_ms=timeout_ms)
     caller = ask if ask is not None else ask_node
-    answers = []
-    for node in nodes:
+
+    def one(node: Node) -> NodeAnswer:
         try:
             completed = caller(node, identity, request)  # type: ignore[operator]
         except subprocess.TimeoutExpired:
-            answers.append(
-                NodeAnswer(
-                    node=node.name,
-                    reachable=False,
-                    error="the node did not answer in time",
-                    results=(),
-                )
+            return NodeAnswer(
+                node=node.name,
+                reachable=False,
+                error="the node did not answer in time",
+                results=(),
             )
-            continue
-        answers.append(read_answer(node.name, completed))
-    return tuple(answers)
+        return read_answer(node.name, completed)
+
+    #
+    # The nodes at once rather than one after the other: two SSH calls of up
+    # to 30 s each in a row met the web's 60 s, and nginx's, exactly (review
+    # 2026-09-28). `map` keeps the configured order.
+    #
+    listed = list(nodes)
+    if not listed:
+        return ()
+    with ThreadPoolExecutor(max_workers=len(listed)) as pool:
+        return tuple(pool.map(one, listed))

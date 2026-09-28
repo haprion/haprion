@@ -33,8 +33,8 @@ from haproxy_ui.db import OidcProvider
 
 SOCKET_PATH = "/run/haproxy-mgmt/oidc.sock"
 #
-# The helper's own bound is ten seconds a call and three calls; this is its
-# unit's start timeout, so a helper that hangs becomes a sentence.
+# The helper's unit ends it after 45 seconds (RuntimeMaxSec), whatever the
+# provider does; the web waits as long and then says so.
 #
 TIMEOUT_SECONDS = 45.0
 CALLBACK_PATH = "/login/oidc/callback"

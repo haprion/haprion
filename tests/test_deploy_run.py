@@ -115,9 +115,13 @@ class BlockedStateTests(unittest.TestCase):
 
         code, shown = deploy(cluster)
 
+        # node-b was deployed before the block: partial, and said so (review
+        # 2026-09-28 F4). The block before anything is touched stays 65, above.
         self.assertEqual(cluster.triggered, ["node-b"])
-        self.assertEqual(code, 65)
+        self.assertEqual(code, 69)
         self.assertIn("split brain", shown)
+        self.assertIn("node-b already carries the target", shown)
+        self.assertIn("Some nodes carry the target and some do not.", shown)
 
     def test_an_indeterminate_answer_blocks_and_the_override_releases_it(self) -> None:
         cluster = pair()

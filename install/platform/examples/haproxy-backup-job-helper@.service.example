@@ -9,6 +9,11 @@ ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-backup-job-helper
 StandardInput=socket
 StandardOutput=socket
 StandardError=journal
+# With Type=exec this bounds the start only; systemd does not end a run that
+# has begun. What bounds a run is each node's fetch, 300 s over SSH
+# with a ten-second connect. No RuntimeMaxSec on
+# purpose: a root step stopped midway would skip its own clean-up
+# (review 2026-09-28).
 TimeoutStartSec=13min
 TimeoutStopSec=15
 UMask=0077

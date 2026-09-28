@@ -235,6 +235,37 @@ class SettingsOidc(LoginTestCase):
         self.assertIn("did not pass Verify", response.text)
         self.assertEqual(len(self.saved), 1)
 
+    def test_systemd_ends_the_helper_when_the_web_stops_waiting(self) -> None:
+        # With Type=exec the start timeout ends once the helper runs; only
+        # RuntimeMaxSec bounds a provider that answers a byte at a time
+        # (review 2026-09-28 F2).
+        unit = (
+            Path(__file__).resolve().parents[2]
+            / "install/platform/examples/haproxy-oidc-helper@.service.example"
+        ).read_text()
+        self.assertIn("Type=exec", unit)
+        seconds = int(unit.split("\nRuntimeMaxSec=", 1)[1].split("\n", 1)[0])
+        self.assertEqual(seconds, oidc_web.TIMEOUT_SECONDS)
+
+    def test_a_save_that_changes_nothing_says_so(self) -> None:
+        # While on, the row took it as unverified settings, because an unchanged
+        # save does not raise the revision (review 2026-09-28 F1).
+        typed = {**FORM, "client_secret": "", "reader_group": ""}
+        self.provider = provider(
+            enabled=True,
+            issuer=ISSUER,
+            client_id="haproxy-manager",
+            client_secret_sealed=b"x",
+            key_id="0123456789abcdef",
+            admin_group="haproxy-admins",
+            button_text="Sign in with authentik",
+        )
+        response = self.post(self.admin(), action="save", **typed)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Nothing to save: no setting was changed.", response.text)
+        self.assertEqual(self.saved, [])
+        self.assertFalse(hasattr(self, "asked"), "nothing to verify when nothing changed")
+
     def test_verify_shows_each_check_and_records_the_revision(self) -> None:
         self.provider = provider(
             issuer=ISSUER, client_id="c", client_secret_sealed=b"x", revision=4

@@ -38,8 +38,11 @@ StandardInput=socket
 StandardOutput=socket
 StandardError=journal
 
-# Longer than the client's own bound on a request, so a run that is merely slow
-# is never cut off mid-answer. A run that hangs is still stopped.
+# With Type=exec this bounds the start only; systemd does not end a run that
+# has begun. What bounds a run is each command it runs (useradd,
+# sshd, nginx), 30 s. No RuntimeMaxSec on
+# purpose: a root step stopped midway would skip its own clean-up
+# (review 2026-09-28).
 TimeoutStartSec=180
 TimeoutStopSec=10
 

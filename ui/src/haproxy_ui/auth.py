@@ -225,7 +225,16 @@ def evaluate_session(
     return SessionVerdict(True)
 
 
-def absolute_expiry(policy: SessionPolicy, *, now: datetime | None = None) -> datetime:
-    """When a session issued now must end, whatever happens in between."""
+def absolute_expiry(
+    policy: SessionPolicy, *, now: datetime | None = None, through_provider: bool = False
+) -> datetime:
+    """When a session issued now must end, whatever happens in between.
 
-    return (now or datetime.now(UTC)) + timedelta(hours=policy.absolute_hours)
+    A sign-in through the provider ends at the shorter of the two limits: its
+    role came from groups the provider is not asked about again (B203).
+    """
+
+    hours = policy.absolute_hours
+    if through_provider:
+        hours = min(hours, policy.oidc_absolute_hours)
+    return (now or datetime.now(UTC)) + timedelta(hours=hours)

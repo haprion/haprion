@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from haproxy_ui import auth
@@ -161,6 +162,17 @@ class SessionPolicyTests(unittest.TestCase):
         now = datetime.now(UTC)
         self.assertEqual(
             auth.absolute_expiry(POLICY, now=now), now + timedelta(hours=POLICY.absolute_hours)
+        )
+
+    def test_a_sign_in_through_the_provider_takes_the_shorter_limit(self) -> None:
+        # B203: the provider's groups are not asked about again until the next one.
+        now = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
+        self.assertEqual(
+            auth.absolute_expiry(POLICY, now=now, through_provider=True), now + timedelta(hours=10)
+        )
+        short = replace(POLICY, absolute_hours=2)
+        self.assertEqual(
+            auth.absolute_expiry(short, now=now, through_provider=True), now + timedelta(hours=2)
         )
 
 

@@ -37,6 +37,7 @@ import ssl
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 SCHEMA_VERSION = 1
 
@@ -296,7 +297,7 @@ def connect(target, timeout, source):
     return context.wrap_socket(sock, server_hostname=server_name)
 
 
-def http_status(stream, target, timeout):
+def http_status(stream, target, timeout, deadline):
     """The status line of a GET, and nothing else that came back.
 
     The body is not read and never reported. This runs on a proxy node with a
@@ -318,6 +319,12 @@ def http_status(stream, target, timeout):
 
     line = b""
     while b"\r\n" not in line and len(line) < 256:
+        #
+        # Each recv has the timeout; the line as a whole has the deadline, or
+        # a server sending a byte at a time would hold the probe for minutes.
+        #
+        if time.monotonic() > deadline:
+            raise socket.timeout
         chunk = stream.recv(64)
         if not chunk:
             break
@@ -331,6 +338,11 @@ def http_status(stream, target, timeout):
 def probe(target, timeout_ms, source):
     timeout = timeout_ms / 1000
     started = time.monotonic()
+    #
+    # One timeout each for the connection, the TLS handshake and the answer:
+    # the most one target may take, whatever it does (review 2026-09-28).
+    #
+    deadline = started + 3 * timeout
     result = {
         "host": target["host"],
         "port": target["port"],
@@ -343,7 +355,7 @@ def probe(target, timeout_ms, source):
     try:
         stream = connect(target, timeout, source)
         if target["type"] == "http":
-            status = http_status(stream, target, timeout)
+            status = http_status(stream, target, timeout, deadline)
             result["status"] = status
             #
             # The same range HAProxy's own default expects. A 500 is a server
@@ -404,11 +416,23 @@ def main(argv=None, stdin=None, stdout=None):
     # produce would describe the binding rather than the pool.
     #
     source_held = holds(request["source"], local_addresses())
-    results = (
-        [probe(target, request["timeout_ms"], request["source"]) for target in request["targets"]]
-        if source_held
-        else []
-    )
+    #
+    # All targets at once, as HAProxy checks its servers: one after the other,
+    # twenty that do not answer took 40 s at the default timeout and 100 s at
+    # the most, past the manager's 30 s for the whole node, and the answer was
+    # lost exactly when every server was down (review 2026-09-28). Now a node
+    # answers in about the time of its slowest target, three timeouts at most.
+    # The results keep the request's order.
+    #
+    results = []
+    if source_held and request["targets"]:
+        with ThreadPoolExecutor(max_workers=len(request["targets"])) as pool:
+            results = list(
+                pool.map(
+                    lambda target: probe(target, request["timeout_ms"], request["source"]),
+                    request["targets"],
+                )
+            )
     json.dump(
         {
             "schema_version": SCHEMA_VERSION,

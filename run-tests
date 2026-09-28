@@ -8,7 +8,7 @@ if [ -z "${HAPROXY_MANAGER_SECRET_RULES:-}" ]; then
     exit 2
 fi
 
-for command_name in actionlint coverage mypy pip-audit ruff shellcheck zizmor; do
+for command_name in actionlint coverage mypy pip-audit ruff shellcheck uv zizmor; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "run-tests: required command is missing: $command_name" >&2
         exit 2
@@ -70,3 +70,11 @@ python3 "$base/tools/build_smoke.py"
 # audits nothing: this project's own code is what the rest of the gate reads.
 #
 pip-audit --local --skip-editable
+#
+# The interface's dependencies - the web framework, the database driver - live
+# in ui/uv.lock and its own environment, which the audit above never sees. uv
+# reads the lockfile itself: exactly what a release installs, whatever is in
+# any environment here. `audit` is a preview command in uv 0.12; the flag says
+# so on purpose rather than printing it as a warning each run.
+#
+(cd "$base/ui" && uv audit --locked --preview-features audit-command)

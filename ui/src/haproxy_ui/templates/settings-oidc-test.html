@@ -9,7 +9,8 @@
   <div class="heading-title"><h1>Test sign-in</h1><p class="page-lede"><a href="/settings/oidc">OIDC configuration</a></p></div>
 </section>
 
-<p class="preview-notice{% if not granted %} form-problem{% endif %}"><span class="status-orb status-{{ 'healthy' if granted else 'critical' }}" aria-hidden="true"></span><strong>{% if granted %}{{ result.username }} would sign in as {{ granted }}.{% else %}{{ result.username }} would be refused: in neither group.{% endif %}</strong></p>
+{% set allowed = granted and not refused %}
+<p class="preview-notice{% if not allowed %} form-problem{% endif %}"><span class="status-orb status-{{ 'healthy' if allowed else 'critical' }}" aria-hidden="true"></span><strong>{% if allowed %}{{ result.username }} would sign in as {{ granted }}.{% elif refused %}{{ result.username }} would be refused: {{ refused }}{% else %}{{ result.username }} would be refused: in neither group.{% endif %}</strong></p>
 
 <div class="cluster-list">
 <section class="cluster-card">

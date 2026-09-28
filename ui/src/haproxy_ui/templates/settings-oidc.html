@@ -27,7 +27,9 @@
     <form method="post" action="/settings/oidc" class="inline-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="action" value="{{ 'off' if provider.enabled else 'on' }}">
-      <button type="submit" class="toggle-switch" role="switch" aria-checked="{{ 'true' if provider.enabled else 'false' }}" aria-label="Sign-in through the provider"><span class="toggle-track" aria-hidden="true"></span>{{ 'On' if provider.enabled else 'Off' }}</button>
+      {# On only at settings that passed Verify, as the server holds it: a refused On
+         reloaded the page and took whatever was typed below with it (2026-09-28). #}
+      <button type="submit" class="toggle-switch" role="switch" aria-checked="{{ 'true' if provider.enabled else 'false' }}" aria-label="Sign-in through the provider"{% if not provider.enabled and (not provider.verified or not installed) %} disabled{% endif %}><span class="toggle-track" aria-hidden="true"></span>{{ 'On' if provider.enabled else 'Off' }}</button>
     </form>
   </div>
   <div class="cluster-actions">

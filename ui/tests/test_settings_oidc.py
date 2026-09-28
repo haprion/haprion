@@ -10,6 +10,7 @@ sentence; each change is audited without the secret.
 
 from __future__ import annotations
 
+import re
 import tempfile
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -136,6 +137,13 @@ class SettingsOidc(LoginTestCase):
         self.assertIn('href="/settings/oidc">OIDC configuration</a>', page)
         self.assertIn(f"SSO on · {ISSUER}", page)
 
+    def test_the_users_card_marks_whether_sso_is_on(self) -> None:
+        dot = '<span class="users-sso"><span class="status-dot status-{}"'
+        self.provider = provider(issuer=ISSUER, enabled=True)
+        self.assertIn(dot.format("healthy"), self.admin().get("/settings").text)
+        self.provider = provider(issuer=ISSUER, enabled=False)
+        self.assertIn(dot.format("unknown"), self.admin().get("/settings").text)
+
     def test_a_reader_is_refused(self) -> None:
         self.account = replace(self.account, role="reader")
         client = self.client(replace(configuration(), management_writes=True))
@@ -258,6 +266,18 @@ class SettingsOidc(LoginTestCase):
         response = self.post(self.admin(), action="verify")
         self.assertEqual(response.status_code, 409)
         self.assertIn("The OIDC helper is not installed here.", response.text)
+
+    def test_the_switch_turns_on_only_at_verified_settings(self) -> None:
+        # A refused On reloaded the page and took what was typed below with it
+        # (2026-09-28): the switch is off-limits until Verify has passed.
+        switch = re.compile(r'<button type="submit" class="toggle-switch"[^>]*>')
+        self.provider = provider(issuer=ISSUER, revision=2, verified_revision=1)
+        self.assertIn(" disabled", switch.search(self.admin().get("/settings/oidc").text)[0])
+        self.provider = provider(issuer=ISSUER, revision=2, verified_revision=2)
+        self.assertNotIn(" disabled", switch.search(self.admin().get("/settings/oidc").text)[0])
+        # Off is always there to be had, whatever Verify last said.
+        self.provider = provider(issuer=ISSUER, enabled=True, revision=3, verified_revision=2)
+        self.assertNotIn(" disabled", switch.search(self.admin().get("/settings/oidc").text)[0])
 
     def test_turning_on_is_the_database_s_to_refuse(self) -> None:
         self.provider = provider(issuer=ISSUER)

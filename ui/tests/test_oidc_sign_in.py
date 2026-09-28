@@ -413,6 +413,29 @@ class SigningInThroughTheProvider(LoginTestCase):
         self.assertEqual(self.sessions, sessions_before)
         self.assertEqual(self.created, [])
 
+    def test_test_sign_in_says_so_when_a_local_account_holds_the_name(self) -> None:
+        # The real sign-in refuses this name (above); the test said "would sign
+        # in as admin" for it until 2026-09-28.
+        self.exchanged["username"] = "operator"
+        client = self.client(replace(configuration(), management_writes=True))
+        self.sign_in(client, password=PASSWORD)
+        token = client.cookies[auth.SESSION_COOKIE]
+        started = client.post(
+            "/settings/oidc",
+            data={auth.CSRF_FIELD: auth.csrf_token(token), "action": "test"},
+            follow_redirects=False,
+        )
+        state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+
+        page = self.back(client, state)
+        self.assertEqual(page.status_code, 200, page.text)
+        self.assertIn(
+            "operator would be refused: An account named operator already exists here.",
+            page.text,
+        )
+        self.assertNotIn("would sign in as", page.text)
+        self.assertEqual((self.created, self.bound), ([], []))
+
     def test_a_prepared_account_can_be_added_without_a_password(self) -> None:
         client = self.client(replace(configuration(), management_writes=True))
         self.sign_in(client, password=PASSWORD)

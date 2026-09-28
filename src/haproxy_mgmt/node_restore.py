@@ -51,6 +51,7 @@ from typing import Any, TextIO
 
 from haproxy_mgmt import (
     backup_retention,
+    cluster_lock,
     haproxy_repository,
     node_bundle,
     restore_agent,
@@ -1052,32 +1053,44 @@ def run(
     checks: OverwriteChecks | None = None,
     backup_failed_ok: bool = False,
     break_traffic: bool = False,
+    lock_root: Path = cluster_lock.DEFAULT_LOCK_ROOT,
 ) -> dict[str, Any]:
     """Carry out the previewed plan, holding the run's directory throughout.
 
     The hour is checked once, here at the start: a run that has begun is
     carried to its end however long its sessions take.
+
+    The cluster's lock too, the one a deploy takes. The run's own directory
+    lock only stops the same run twice; a deploy, or a second restore under
+    another run ID, would otherwise read and change the same pair while this
+    one rebuilds a node in it. Taken after the run's own lock and never
+    waited for, like a deploy's: a busy cluster is a refusal before anything
+    is written, not a queue.
     """
 
     with _Held(run_directory(root, run_id), wait=True):
-        return _run(
-            _unexpired(root, run_id, now()),
-            run_id,
-            confirm,
-            cluster,
-            backup_root,
-            answering=answering,
-            progress=progress,
-            pause=pause,
-            rollback_seconds=rollback_seconds,
-            clock=clock,
-            session_for=session_for,
-            publish_root=publish_root,
-            bundle_of=bundle_of,
-            checks=checks,
-            backup_failed_ok=backup_failed_ok,
-            break_traffic=break_traffic,
-        )
+        try:
+            with cluster_lock.hold(cluster.cluster_id, operation="node_restore", root=lock_root):
+                return _run(
+                    _unexpired(root, run_id, now()),
+                    run_id,
+                    confirm,
+                    cluster,
+                    backup_root,
+                    answering=answering,
+                    progress=progress,
+                    pause=pause,
+                    rollback_seconds=rollback_seconds,
+                    clock=clock,
+                    session_for=session_for,
+                    publish_root=publish_root,
+                    bundle_of=bundle_of,
+                    checks=checks,
+                    backup_failed_ok=backup_failed_ok,
+                    break_traffic=break_traffic,
+                )
+        except cluster_lock.LockBusy as exc:
+            raise RestoreError(str(exc)) from exc
 
 
 def _run(

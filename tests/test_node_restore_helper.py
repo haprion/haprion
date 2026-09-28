@@ -59,6 +59,7 @@ class HelperTest(unittest.TestCase):
         (self.backups / "node-a").mkdir(parents=True)
         shutil.move(build(work), self.backups / "node-a" / f"{VERSION}.tar.gz")
         self.root = work / "runs"
+        self.lock_root = work / "locks"
         FakeSession.calls = []
         FakeSession.answers = {"inspect": dict(INSPECTED)}
         self.silent = {"192.0.2.29", "192.0.2.21"}
@@ -103,6 +104,7 @@ class HelperTest(unittest.TestCase):
                 clock=Clock(now=lambda: float(next(ticks)), sleep=lambda _: None),
                 session_for=FakeSession,
                 bundle_of=lambda: self.bundle,
+                lock_root=self.lock_root,
             ),
         )
 

@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from haproxy_mgmt.config import Node
+from haproxy_mgmt import status_collect
+from haproxy_mgmt.config import DeployIdentity, Node
 from haproxy_mgmt.deploy_plan import ReleaseTarget, VipState
 from haproxy_mgmt.object_manifest import MANIFEST_FILE
 from haproxy_mgmt.object_manifest import build as build_manifest
@@ -271,6 +274,33 @@ class CollectTests(unittest.TestCase):
         self.assertFalse(envelope["ok"])
         self.assertIsNone(envelope["error"])
         self.assertEqual(envelope["warnings"][0]["node"], "node-b")
+
+
+class AStatusReadIsBounded(unittest.TestCase):
+    def test_a_node_that_connects_and_never_answers_is_abandoned(self) -> None:
+        #
+        # Stands in for ssh: connected, then silent. The read has to come back
+        # on its own, as an unreachable node, rather than holding the poll.
+        #
+        with tempfile.TemporaryDirectory() as raw:
+            silent = Path(raw) / "ssh"
+            silent.write_text("#!/bin/sh\nexec sleep 30\n", encoding="utf-8")
+            silent.chmod(0o755)
+            identity = DeployIdentity(user="svc-status", key=Path(raw) / "key")
+            with (
+                mock.patch.object(status_collect, "SSH", str(silent)),
+                mock.patch.object(status_collect, "STATUS_TIMEOUT_SECONDS", 1),
+            ):
+                started = time.monotonic()
+                response = status_collect.ask_node(NODES[0], identity)
+                elapsed = time.monotonic() - started
+                report = status_collect.collect(NODES[:1], lambda _node: response, target=None)
+
+        self.assertEqual(response.exit_code, status_collect.TIMED_OUT)
+        self.assertLess(elapsed, 10)
+        error = report.result["nodes"][0]["error"]
+        self.assertEqual(error["code"], "ssh_unreachable")
+        self.assertEqual(error["message"], "SSH gave no answer within 1 seconds")
 
 
 if __name__ == "__main__":

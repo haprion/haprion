@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt import node_bundle, node_restore, restore_plan, restore_source
+from haproxy_mgmt import cluster_lock, node_bundle, node_restore, restore_plan, restore_source
 from haproxy_mgmt.cli import node_restore as cli
 from haproxy_mgmt.config import Node
 from haproxy_mgmt.node_restore import Clock, Request, RestoreError
@@ -27,6 +27,7 @@ PUBLISH_ROOT = Path("/srv/haproxy-manager/published")
 FINGERPRINT = "SHA256:" + "A" * 43
 TARGET_KEY = "ssh-ed25519 AAAAtargetkey"
 CLUSTER = SimpleNamespace(
+    cluster_id="alpha",
     nodes=(Node("node-a", "192.0.2.21"), Node("node-b", "192.0.2.22")),
     certificate_ids=("cert-a",),
 )
@@ -145,6 +146,7 @@ class RestoreTest(unittest.TestCase):
             session_for=FakeSession,  # type: ignore[arg-type]
             publish_root=PUBLISH_ROOT,
             bundle_of=lambda: self.bundle,
+            lock_root=self.root / "locks",
             **kwargs,
         )
 
@@ -380,6 +382,36 @@ class Run(RestoreTest):
         self.assertEqual(members(FakeSession.calls[3][2]), ["/root/.ssh/authorized_keys"])
         self.assertEqual(FakeSession.calls[3][1]["certificates"], ["cert-a"])
         self.assertEqual(FakeSession.calls[3][1]["keepalived"], "mask")
+
+    def test_a_cluster_busy_with_another_operation_is_refused_before_anything_is_written(
+        self,
+    ) -> None:
+        run = self.previewed()
+        with (
+            cluster_lock.hold(CLUSTER.cluster_id, operation="deploy", root=self.root / "locks"),
+            self.assertRaisesRegex(RestoreError, "another operation is already running"),
+        ):
+            self.carry_out(run)
+        self.assertEqual(FakeSession.calls, [])
+        self.assertFalse((self.root / run / "started.json").exists())
+
+    def test_the_cluster_is_held_while_the_restore_runs(self) -> None:
+        run = self.previewed()
+        seen: list[bool] = []
+        real_call = FakeSession.call
+
+        def call(session: Any, *args: Any, **kwargs: Any) -> Any:
+            try:
+                with cluster_lock.hold(CLUSTER.cluster_id, root=self.root / "locks"):
+                    seen.append(False)
+            except cluster_lock.LockBusy:
+                seen.append(True)
+            return real_call(session, *args, **kwargs)
+
+        with mock.patch.object(FakeSession, "call", call):
+            result = self.carry_out(run)
+        self.assertEqual(result["outcome"], "done", result)
+        self.assertTrue(seen and all(seen), seen)
 
     def test_the_test_node_is_reached_with_the_key_the_operator_verified(self) -> None:
         run = self.previewed()
@@ -707,6 +739,7 @@ class Overwrite(RestoreTest):
             session_for=FakeSession,  # type: ignore[arg-type]
             publish_root=PUBLISH_ROOT,
             bundle_of=lambda: self.bundle,
+            lock_root=self.root / "locks",
             checks=self.checks,
         )
         self.assertEqual((result["outcome"], result["stage"]), ("failed", "network"), result)

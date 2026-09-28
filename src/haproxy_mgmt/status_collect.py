@@ -103,6 +103,19 @@ SSH_OPTIONS = (
     "LogLevel=ERROR",
 )
 SSH_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "HOME": "/root", "LANG": "C.UTF-8"}
+#
+# The whole status read, not just the connection. `ConnectTimeout` bounds the
+# handshake; a node that connects and then never answers would otherwise hold
+# a poll - or a deploy's reading, with the cluster lock taken - for as long as
+# the TCP session lives. A read is safe to abandon: nothing on the node changes
+# because the manager stopped listening. Generous, because a busy node is not a
+# broken one.
+#
+STATUS_TIMEOUT_SECONDS = 60
+#
+# What a read that ran out of time reports, in the family of `timeout(1)`.
+#
+TIMED_OUT = 124
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,20 +138,24 @@ def ask_node(node: Node, identity: DeployIdentity) -> NodeResponse:
     would arrive in the middle of a status report as noise nobody can act on.
     """
 
-    completed = subprocess.run(  # noqa: S603 - fixed path, host from validated configuration
-        [
-            SSH,
-            *SSH_OPTIONS,
-            "-i",
-            str(identity.key),
-            f"{identity.user}@{node.mgmt_host}",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        check=False,
-        env=SSH_ENVIRONMENT,
-    )
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed path, host from validated configuration
+            [
+                SSH,
+                *SSH_OPTIONS,
+                "-i",
+                str(identity.key),
+                f"{identity.user}@{node.mgmt_host}",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            env=SSH_ENVIRONMENT,
+            timeout=STATUS_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return NodeResponse(exit_code=TIMED_OUT, stdout="")
     return NodeResponse(exit_code=completed.returncode, stdout=completed.stdout)
 
 
@@ -300,7 +317,11 @@ def _node_result(
     if response.exit_code != 0:
         entry["error"] = {
             "code": "ssh_unreachable",
-            "message": f"SSH failed with exit {response.exit_code}",
+            "message": (
+                f"SSH gave no answer within {STATUS_TIMEOUT_SECONDS} seconds"
+                if response.exit_code == TIMED_OUT
+                else f"SSH failed with exit {response.exit_code}"
+            ),
             "node": node.name,
             "details": None,
         }

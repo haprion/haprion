@@ -70,11 +70,11 @@
       <td class="log-select"><input type="checkbox" data-log-select aria-label="Select request at {{ entry.at | shown_at }}"></td>
       <td><time datetime="{{ entry.at.isoformat() }}">{{ entry.at | shown_at }}</time></td>
       <td title="{{ entry.cluster }} / {{ entry.node }}"><strong>{{ entry.cluster }}</strong><span> / {{ entry.node }}</span></td>
-      <td><code>{{ entry.client }}</code></td>
+      <td><code title="{{ entry.client }}">{{ entry.client }}</code></td>
       <td class="log-request" title="{{ entry.method }} {{ entry.host }}{{ entry.path }}"><span class="log-request-content"><code>{{ entry.method }}</code> <strong>{{ entry.host }}</strong><code class="log-path">{{ entry.path }}</code></span></td>
       <td><span class="status-badge status-badge-{{ 'healthy' if entry.status < 400 else 'warning' if entry.status < 500 else 'critical' }}">{{ entry.status }}</span></td>
       <td><code title="{{ entry.server or 'Destination unavailable' }}">{{ entry.server or 'Destination unavailable' }}</code></td>
-      <td>{{ entry.bytes }}</td>
+      <td title="{{ entry.bytes }}">{{ entry.bytes }}</td>
     </tr>{% else %}<tr><td colspan="8"><div class="empty-state"><div><strong>No matching requests</strong><span>A filter searches the whole mirror; the view shows at most the {{ max_lines }} newest matches.</span></div></div></td></tr>{% endfor %}</tbody>
   </table>
 </div>

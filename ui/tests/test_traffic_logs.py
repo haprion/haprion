@@ -555,6 +555,15 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn('href="/logs?status=2xx&amp;sort=-bytes"', largest)
         self.assertIn('aria-sort="descending"', largest)
 
+    def test_a_value_cut_to_its_column_is_whole_on_hover(self) -> None:
+        client = "2001:db8:85a3::8a2e:370:7334"
+        (self.root / "alpha--node-a.jsonl").write_bytes(record(client=client, bytes=1234567890))
+
+        page = self.page()
+
+        self.assertIn(f'<code title="{client}">{client}</code>', page)
+        self.assertIn('<td title="1234567890">1234567890</td>', page)
+
     def test_a_hostile_path_reaches_the_browser_as_text(self) -> None:
         hostile = "/<script>alert(1)</script>"
         (self.root / "alpha--node-a.jsonl").write_bytes(record(path=hostile))

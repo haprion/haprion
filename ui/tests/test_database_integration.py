@@ -120,6 +120,81 @@ class ARealDatabase(unittest.TestCase):
             self.assertEqual(removable, {"yesterday"})
             connection.rollback()
 
+    def retention_clause(self, function: str, keep: str) -> str:
+        script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
+        return subprocess.run(  # noqa: S603 - fixed interpreter, the repository's script
+            [
+                "/bin/bash",
+                "-c",
+                f'eval "$(sed -n \'/^{keep}=/p;/^{function}() {{/,/^}}/p\' "$0")"; {function}',
+                str(script),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+    def test_retention_removes_sessions_a_month_after_they_ended(self) -> None:
+        """Review 2026-09-28 F07; the clause is the retention command's own."""
+
+        from haproxy_ui import auth
+
+        clause = self.retention_clause("where_session_ended", "SESSION_KEEP_DAYS")
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into app_user (username, password_hash, role) "
+                "values ('retention-probe', %s, 'reader') returning id",
+                (auth.hash_password("a long enough password"),),
+            )
+            user = cursor.fetchone()[0]
+            sessions = {
+                b"live": ("now() - interval '1 day'", "now() + interval '1 day'", "null"),
+                b"expired-recently": ("now() - interval '9 days'", "now() - interval '2 days'", "null"),
+                b"expired-long-ago": ("now() - interval '60 days'", "now() - interval '40 days'", "null"),
+                b"revoked-long-ago": (
+                    "now() - interval '60 days'",
+                    "now() + interval '1 day'",
+                    "now() - interval '40 days'",
+                ),
+            }
+            for name, (created, expires, revoked) in sessions.items():
+                cursor.execute(
+                    "insert into app_session (token_hash, user_id, created_at, last_seen_at, "  # noqa: S608 - fixed literals
+                    f"expires_at, revoked_at) values (%s, %s, {created}, {created}, {expires}, {revoked})",
+                    (name.ljust(32, b"-"), user),
+                )
+            cursor.execute(f"select token_hash from app_session where {clause}")  # noqa: S608 - the script's own
+            removable = {bytes(row[0]).rstrip(b"-") for row in cursor.fetchall()}
+            self.assertEqual(removable, {b"expired-long-ago", b"revoked-long-ago"})
+            connection.rollback()
+
+    def test_retention_keeps_each_name_s_last_sign_in(self) -> None:
+        """Old attempts go, except the newest success that "Last sign-in" reads."""
+
+        clause = self.retention_clause("where_login_attempt_old", "LOGIN_ATTEMPT_KEEP_DAYS")
+        attempts = (
+            ("recent-failure", "fresh", "1 day", False),
+            ("old-failure", "fresh", "100 days", False),
+            ("old-success", "fresh", "120 days", True),
+            ("newer-old-success", "rare", "100 days", True),
+            ("older-old-success", "rare", "200 days", True),
+            ("recent-success", "fresh", "2 days", True),
+        )
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("delete from login_attempt")
+            ids = {}
+            for label, name, age, succeeded in attempts:
+                cursor.execute(
+                    "insert into login_attempt (at, username_normalised, client_ip, succeeded) "
+                    "values (now() - %s::interval, %s, '192.0.2.10', %s) returning id",
+                    (age, name, succeeded),
+                )
+                ids[cursor.fetchone()[0]] = label
+            cursor.execute(f"select id from login_attempt where {clause}")  # noqa: S608 - the script's own
+            removable = {ids[row[0]] for row in cursor.fetchall()}
+            self.assertEqual(removable, {"old-failure", "old-success", "older-old-success"})
+            connection.rollback()
+
     def test_retention_keeps_what_a_profile_s_state_is_read_from(self) -> None:
         """A profile in effect for months must not read "Not applied" after a week.
 

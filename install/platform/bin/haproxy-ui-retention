@@ -97,6 +97,18 @@ TRAFFIC_AHEAD_DAYS=7
 OIDC_LOGIN_KEEP_HOURS=24
 
 #
+# Sessions and sign-in attempts grew for the life of the installation (review
+# 2026-09-28 F07). A session that ended - expired or signed out - more than a
+# month ago is a token hash nobody can present again. A sign-in attempt older
+# than ninety days is far outside any throttle window (at most a day), with
+# one exception: each name keeps its newest successful attempt, because the
+# Users page reads "Last sign-in" from it and a break-glass account may go
+# unused for longer than that. The audit trail is not touched, here or anywhere.
+#
+SESSION_KEEP_DAYS=30
+LOGIN_ATTEMPT_KEEP_DAYS=90
+
+#
 # HAProxy's own counter column names, in the order the rest of the project
 # lists them. A fourth copy of this list - the node reads it, the reader keeps
 # it, the migration stores it, and this rolls it up - and it cannot be shared:
@@ -204,6 +216,45 @@ oidc_logins() {
                               returning 1
                            ) select count(*) from removed")"
     log "  oidc_login: removed ${removed} row(s) older than ${OIDC_LOGIN_KEEP_HOURS} hour(s)"
+}
+
+where_session_ended() {
+    echo "coalesce(revoked_at, expires_at) < statement_timestamp() - make_interval(days => ${SESSION_KEEP_DAYS})"
+}
+
+where_login_attempt_old() {
+    cat <<SQL
+at < statement_timestamp() - make_interval(days => ${LOGIN_ATTEMPT_KEEP_DAYS})
+   and not (succeeded and at = (select max(newest.at) from login_attempt newest
+                                 where newest.username_normalised = login_attempt.username_normalised
+                                   and newest.succeeded))
+SQL
+}
+
+#
+# One table at a time, with the same predicate for the count and the delete.
+#
+account_history_table() {
+    local table="$1" predicate="$2" keep="$3" expired removed
+    expired="$(psql_as -c "select count(*) from ${table} where ${predicate}")"
+    if [[ "$command" == "report" ]]; then
+        log "  ${table}: $(psql_as -c "select count(*) from ${table}") row(s), ${expired} past ${keep}"
+        return 0
+    fi
+    if [[ "$dry_run" -eq 1 ]]; then
+        log "  ${table}: dry run, would remove ${expired} row(s)"
+        return 0
+    fi
+    removed="$(psql_as -c "with removed as (
+                              delete from ${table} where ${predicate}
+                              returning 1
+                           ) select count(*) from removed")"
+    log "  ${table}: removed ${removed} row(s) past ${keep}"
+}
+
+account_history() {
+    account_history_table app_session "$(where_session_ended)" "${SESSION_KEEP_DAYS} day(s) after they ended"
+    account_history_table login_attempt "$(where_login_attempt_old)" "${LOGIN_ATTEMPT_KEEP_DAYS} day(s)"
 }
 
 traffic_partitions_expired() {
@@ -585,6 +636,7 @@ main() {
                 log "  traffic_log: $(psql_as -c 'select count(*) from traffic_log') row(s), retention ${TRAFFIC_KEEP_DAYS} day(s)"
             fi
             oidc_logins
+            account_history
             ;;
         prune)
             #
@@ -607,6 +659,7 @@ main() {
                 metric_partitions_prune
             fi
             oidc_logins
+            account_history
             if [[ "$dry_run" -eq 1 ]]; then
                 log "  dry run: nothing was deleted"
             elif [[ "$removable" -eq 0 ]]; then

@@ -1808,7 +1808,7 @@ All root-owned under `/usr/local/sbin`, not group-writable:
 |---|---|
 | `haproxy-pull-deploy` | fetches the published release, validates it, installs it, reloads once |
 | `haproxy-cert-trigger` | unprivileged wrapper: validates the verb (`cert-pull` or `cert-remove`) and the certificate IDs, then escalates |
-| `haproxy-cert-pull` | fetches the requested certificates, validates them, installs, reloads |
+| `haproxy-cert-pull` | fetches the requested certificates, validates them, installs, reloads; a run stopped between installing and reloading leaves `/run/haproxy-cert-pull.pending`, the node's status leaves those certificates out until the next run reloads |
 | `haproxy-cert-remove` | removes the requested certificates from `/etc/haproxy/certs`, refusing any the installed configuration still names; no reload |
 | `haproxy-node-status` | reports version, health, carried certificates, keepalived state and the address list |
 | `haproxy-keepalived-state` | records the keepalived transition to a state file |

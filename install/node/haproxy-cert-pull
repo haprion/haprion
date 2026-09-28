@@ -55,6 +55,19 @@ REMOTE_USER="$CERT_PULL_USER"
 SSH_KEY="$CERT_PULL_KEY"
 CERTS_DIR="/etc/haproxy/certs"
 
+#
+# Present from the moment the first file is replaced until HAProxy has been
+# reloaded with it, or the old files are back. A run killed in between leaves
+# new files on disk that the running HAProxy has never read, and the next run
+# would find them identical to what the manager offers and say "no reload
+# needed" - forever, while the old certificate is what clients get. The marker
+# is what the next run checks before that conclusion (review 2026-09-26, F5).
+#
+# In /run on purpose: a reboot empties it, and a reboot is also a HAProxy that
+# read every file from disk, so there is nothing left to finish.
+#
+PENDING="/run/haproxy-cert-pull.pending"
+
 ID_PATTERN='^[a-z0-9][a-z0-9._-]{0,254}$'
 
 log() {
@@ -85,6 +98,13 @@ if ! flock -n 9; then
 fi
 
 umask 077
+
+#
+# A temporary file a killed run left behind. It sits beside the certificates
+# only between being written and being renamed, so anything by that name now
+# belongs to no run.
+#
+rm -f "${CERTS_DIR}"/.haproxy-cert-pull.*
 
 WORK="$(mktemp -d /tmp/haproxy-cert.XXXXXX)"
 BACKUP="${WORK}/backup"
@@ -147,29 +167,70 @@ for id in "$@"; do
     CHANGED+=("$id")
 done
 
+reload_checked() {
+    haproxy -c -f /etc/haproxy/haproxy.cfg -f /etc/haproxy/conf.d \
+        || fail "HAProxy validation failed; the certificates on disk were left as they are"
+    systemctl reload haproxy || fail "HAProxy reload failed"
+}
+
 if (( ${#CHANGED[@]} == 0 )); then
+    if [[ -e "$PENDING" ]]; then
+        #
+        # The files are the ones asked for, but an earlier run was stopped
+        # before HAProxy read them. The reload is the part it never did.
+        #
+        log "An earlier run installed these certificates but never reloaded. Reloading now..."
+        reload_checked
+        rm -f "$PENDING"
+        log "Certificate deployment complete."
+        exit 0
+    fi
     log "Nothing changed. No reload needed."
     exit 0
 fi
 
 log "New certificates: ${CHANGED[*]}"
 
+#
+# One file replaced in one step: written beside its destination and renamed
+# over it, so a reader - HAProxy, or this script's next run - sees the old file
+# or the new one and never half of either.
+#
+replace_file() {
+    local source="$1" dest="$2" staged
+    staged="${CERTS_DIR}/.haproxy-cert-pull.$(basename "$dest")"
+    install -o root -g root -m 600 "$source" "$staged"
+    mv -f "$staged" "$dest"
+}
+
 restore() {
     for id in "${CHANGED[@]}"; do
         if [[ -f "${BACKUP}/${id}.pem" ]]; then
-            install -o root -g root -m 600 "${BACKUP}/${id}.pem" "${CERTS_DIR}/${id}.pem"
+            replace_file "${BACKUP}/${id}.pem" "${CERTS_DIR}/${id}.pem"
         else
             rm -f "${CERTS_DIR}/${id}.pem"
         fi
     done
+    #
+    # The old files are back and are what HAProxy was already serving, so
+    # nothing is left unfinished.
+    #
+    rm -f "$PENDING"
 }
+
+#
+# The IDs, one per line: `haproxy-node-status` leaves exactly these out of what
+# it reports while the marker stands, because a file HAProxy has not read does
+# not say what this node serves.
+#
+printf '%s\n' "${CHANGED[@]}" > "$PENDING"
 
 for id in "${CHANGED[@]}"; do
     dest="${CERTS_DIR}/${id}.pem"
     if [[ -f "$dest" ]]; then
         cp -a "$dest" "${BACKUP}/${id}.pem"
     fi
-    install -o root -g root -m 600 "${WORK}/${id}.pem" "$dest"
+    replace_file "${WORK}/${id}.pem" "$dest"
 done
 
 log "Validating HAProxy with the new certificates..."
@@ -189,6 +250,7 @@ if ! systemctl reload haproxy; then
     exit 1
 fi
 
+rm -f "$PENDING"
 log "Certificate deployment complete."
 
 for id in "${CHANGED[@]}"; do

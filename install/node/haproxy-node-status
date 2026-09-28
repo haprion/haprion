@@ -19,6 +19,7 @@ RUNTIME_SOCKET = "/run/haproxy/ui-status.sock"
 CURRENT_RELEASE = Path("/etc/haproxy/current/RELEASE")
 VALIDATION_STATE = Path("/run/haproxy/last-validation.json")
 CERTS_DIR = Path("/etc/haproxy/certs")
+CERT_PENDING = Path("/run/haproxy-cert-pull.pending")
 NODE_INSTALLATION = Path("/etc/haproxy-manager/node-installation.json")
 SBIN = Path("/usr/local/sbin")
 MAX_INSTALLATION_BYTES = 64 * 1024
@@ -574,6 +575,21 @@ def read_certificates():
 
     entries = []
 
+    #
+    # A certificate `haproxy-cert-pull` installed but never got HAProxy to read
+    # is on disk and not in service. Its file says nothing about what clients
+    # are given, so it is left out like one that cannot be read - and the
+    # manager then sees the node as behind on it, and the deploy it offers is
+    # the run that finishes the reload. A marker that cannot be read leaves
+    # every certificate out: this cannot tell which are in service.
+    #
+    pending = set()
+    if CERT_PENDING.exists():
+        try:
+            pending = set(CERT_PENDING.read_text(encoding="ascii").split())
+        except Exception:
+            return entries
+
     try:
         paths = sorted(CERTS_DIR.glob("*.pem"))
     except Exception:
@@ -589,7 +605,7 @@ def read_certificates():
         except Exception:
             continue
 
-        if fingerprint is None:
+        if fingerprint is None or path.name[: -len(".pem")] in pending:
             continue
 
         entries.append(

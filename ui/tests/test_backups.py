@@ -138,6 +138,55 @@ class NodeStateTests(unittest.TestCase):
         self.assertEqual(abandoned.tone, "critical")
         self.assertEqual(abandoned.label, "Stale backups")
 
+    def state_under(self, calendar: str, hours: int, **timer: object) -> tuple[str, str]:
+        found = (
+            overview(
+                reading(
+                    nodes=[node(backups=archives(newest_hours_ago=hours))],
+                    timer=schedule(calendar=calendar, **timer),
+                )
+            )
+            .clusters[0]
+            .nodes[0]
+        )
+        return found.label, found.tone
+
+    def test_a_weekly_schedule_working_as_asked_is_current(self) -> None:
+        """Review 2026-09-28 F03: three days into a Monday-only week read as overdue."""
+
+        self.assertEqual(self.state_under("Mon *-*-* 05:00:00", 24 * 3), ("Current", "healthy"))
+        self.assertEqual(self.state_under("Mon *-*-* 05:00:00", 24 * 7), ("Current", "healthy"))
+        self.assertEqual(
+            self.state_under("Mon *-*-* 05:00:00", 24 * 8), ("Backup overdue", "warning")
+        )
+        self.assertEqual(
+            self.state_under("Mon *-*-* 05:00:00", 24 * 15), ("Stale backups", "critical")
+        )
+
+    def test_a_weekly_schedule_is_judged_by_its_longest_gap(self) -> None:
+        self.assertEqual(
+            self.state_under("Mon,Thu *-*-* 05:00:00", 24 * 4), ("Current", "healthy")
+        )
+        self.assertEqual(
+            self.state_under("Mon,Thu *-*-* 05:00:00", 24 * 5), ("Backup overdue", "warning")
+        )
+
+    def test_a_monthly_schedule_working_as_asked_is_current(self) -> None:
+        self.assertEqual(self.state_under("*-*-01 05:00:00", 24 * 8), ("Current", "healthy"))
+        self.assertEqual(self.state_under("*-*-01 05:00:00", 24 * 30), ("Current", "healthy"))
+        self.assertEqual(
+            self.state_under("*-*-01 05:00:00", 24 * 32), ("Backup overdue", "warning")
+        )
+        self.assertEqual(
+            self.state_under("*-*-01 05:00:00", 24 * 63), ("Stale backups", "critical")
+        )
+
+    def test_a_schedule_that_is_off_holds_the_archives_to_a_daily_run(self) -> None:
+        self.assertEqual(
+            self.state_under("Mon *-*-* 05:00:00", 40, enabled=False),
+            ("Backup overdue", "warning"),
+        )
+
     def test_age_is_measured_from_the_archive_not_from_the_name(self) -> None:
         #
         # `latest_version` names an archive and the timestamp lives on the

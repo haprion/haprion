@@ -24,7 +24,7 @@ import re
 import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from haproxy_mgmt.backup_retention import DEFAULT_RETENTION, RetentionError, bounded
@@ -109,6 +109,24 @@ class Schedule:
         if self.frequency == "monthly":
             return f"*-*-{self.day_of_month:02d} {self.time}:00"
         return f"*-*-* {self.time}:00"
+
+    def longest_gap(self) -> timedelta:
+        """The longest time between two runs this schedule asks for.
+
+        What an archive's age is judged against: a weekly run on Mondays leaves
+        the newest archive six days old on Sunday, and that is the schedule
+        working. Weekdays are cyclic, so Monday and Thursday is four days from
+        Thursday to Monday. A month is at most 31 days between the same day of
+        two months, and the day stops at 28, so no month skips it.
+        """
+
+        if self.frequency == "weekly":
+            days = sorted(WEEKDAYS.index(day) for day in self.weekdays)
+            gaps = ((later - earlier) % 7 or 7 for earlier, later in zip(days, days[1:] + days[:1]))
+            return timedelta(days=max(gaps))
+        if self.frequency == "monthly":
+            return timedelta(days=31)
+        return timedelta(days=1)
 
 
 def parse_schedule(parameters: Mapping[str, Any]) -> Schedule:

@@ -444,7 +444,8 @@ def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
     """One cluster backed up on both nodes, and one where a node has fallen behind.
 
     The second cluster is the state the page exists for: nothing has failed, no
-    error is reported, and one node has quietly not taken a backup in three days.
+    error is reported, and one node has quietly not taken a backup in five days -
+    past the longest gap its Monday, Wednesday and Friday schedule leaves.
     """
 
     moment = now or datetime.now(UTC)
@@ -521,13 +522,13 @@ def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
                     {
                         "name": "service-b",
                         "available": True,
-                        "latest_version": _archives(last_run - timedelta(days=3), 1)[0]["version"],
+                        "latest_version": _archives(last_run - timedelta(days=5), 1)[0]["version"],
                         "retained_count": 2,
                         "retained_size_bytes": sum(
                             item["size_bytes"]
-                            for item in _archives(last_run - timedelta(days=3), 2)
+                            for item in _archives(last_run - timedelta(days=5), 2)
                         ),
-                        "backups": _archives(last_run - timedelta(days=3), 2),
+                        "backups": _archives(last_run - timedelta(days=5), 2),
                         "error": None,
                     },
                 ],

@@ -34,19 +34,50 @@ from haproxy_ui.db import ClusterBackups
 type Tone = Literal["healthy", "warning", "critical", "unknown"]
 
 #
-# The backup runs daily. One missed run is a warning rather than an alarm - a
-# node that was down for maintenance overnight is the ordinary cause - and the
-# window is a day and a half so that a run finishing late does not light the
-# page up every morning.
+# How old the newest archive may be, judged against the cluster's own schedule
+# (review 2026-09-28 F03: the limits were a daily run's, and a weekly schedule
+# working as asked read as overdue by its third day).
 #
-BACKUP_WARNING = timedelta(hours=36)
+# One missed run is a warning rather than an alarm - a node that was down for
+# maintenance is the ordinary cause - so the warning comes half a day after the
+# longest gap the schedule leaves, and a run finishing late does not light the
+# page up. For a daily run that is a day and a half.
+#
+LATE_MARGIN = timedelta(hours=12)
 
 #
-# A week without a backup is not a late run. Whatever should have taken it has
-# been failing unnoticed since, and everything restored from here would be a
-# week behind the configuration the nodes are actually serving.
+# A week without a backup is not a late run, whatever the schedule. Whatever
+# should have taken it has been failing unnoticed since, and everything
+# restored from here would be a week behind the configuration the nodes are
+# actually serving. A schedule with longer gaps than that turns critical once a
+# second run is missed.
 #
-BACKUP_CRITICAL = timedelta(days=7)
+BACKUP_CRITICAL_FLOOR = timedelta(days=7)
+
+#
+# A schedule that is off, unreadable or unknown gives nothing to judge by. The
+# archives are then held to a daily run's limits, which is what the schedule
+# card beside them is already warning about.
+#
+DAILY = backup_schedule.Schedule("00:00")
+
+
+@dataclass(frozen=True, slots=True)
+class AgeLimits:
+    warning: timedelta
+    critical: timedelta
+
+
+def _age_limits(schedule: Any) -> AgeLimits:
+    reported = _mapping(schedule)
+    shape = None
+    if reported.get("known") is True and reported.get("enabled") is True:
+        shape = backup_schedule.describe(reported.get("calendar"))
+    gap = (shape or DAILY).longest_gap()
+    return AgeLimits(
+        warning=gap + LATE_MARGIN,
+        critical=max(BACKUP_CRITICAL_FLOOR, 2 * gap + LATE_MARGIN),
+    )
 
 #
 # The archive list opens on this many archives per node, newest first, and
@@ -257,6 +288,7 @@ def _node_state(
     retained_count: int,
     newest_at: datetime | None,
     now: datetime,
+    limits: AgeLimits,
 ) -> tuple[str, Tone, str]:
     if not available:
         return "Unreadable", "critical", error or "The backup directory could not be read"
@@ -269,9 +301,9 @@ def _node_state(
     if newest_at is None:
         return "Undated", "warning", "The archives carry no usable timestamp"
     age = now - newest_at
-    if age > BACKUP_CRITICAL:
+    if age > limits.critical:
         return "Stale backups", "critical", f"Newest archive is {relative_age(newest_at, now)}"
-    if age > BACKUP_WARNING:
+    if age > limits.warning:
         return "Backup overdue", "warning", f"Newest archive is {relative_age(newest_at, now)}"
     return (
         "Current",
@@ -280,7 +312,9 @@ def _node_state(
     )
 
 
-def _node_view(value: Any, *, now: datetime) -> tuple[NodeBackupsView, tuple[ArchiveView, ...]]:
+def _node_view(
+    value: Any, *, now: datetime, limits: AgeLimits
+) -> tuple[NodeBackupsView, tuple[ArchiveView, ...]]:
     node = _mapping(value)
     name = _text(node.get("name"), "Unnamed node")
     raw = node.get("backups")
@@ -300,6 +334,7 @@ def _node_view(value: Any, *, now: datetime) -> tuple[NodeBackupsView, tuple[Arc
         retained_count=retained_count,
         newest_at=newest_at,
         now=now,
+        limits=limits,
     )
     listed_size = sum((_integer(_mapping(entry).get("size_bytes")) or 0) for entry in listed)
     retained_size = _integer(node.get("retained_size_bytes"))
@@ -546,9 +581,10 @@ def _cluster_view(
     entries = result.get("nodes")
     nodes: list[NodeBackupsView] = []
     archives: list[ArchiveView] = []
+    limits = _age_limits(result.get("schedule"))
     if isinstance(entries, list):
         for entry in entries:
-            node, node_archives = _node_view(entry, now=now)
+            node, node_archives = _node_view(entry, now=now, limits=limits)
             nodes.append(node)
             archives.extend(node_archives)
     stale = now - reading.observed_at > stale_after

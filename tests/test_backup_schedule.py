@@ -9,6 +9,7 @@ appear when something is wrong.
 from __future__ import annotations
 
 import unittest
+from datetime import timedelta
 
 from haproxy_mgmt import backup_schedule
 from haproxy_mgmt.backup_schedule import (
@@ -235,6 +236,20 @@ class ScheduleShapeTests(unittest.TestCase):
         ):
             with self.subTest(calendar=calendar):
                 self.assertIsNone(backup_schedule.describe(calendar))
+
+    def test_the_longest_gap_is_the_longest_wait_between_two_runs(self) -> None:
+        for calendar, days in (
+            ("*-*-* 05:00:00", 1),
+            ("Mon *-*-* 05:00:00", 7),
+            ("Mon,Thu *-*-* 05:00:00", 4),
+            ("Mon,Tue,Wed,Thu,Fri *-*-* 05:00:00", 3),
+            ("Sun *-*-* 05:00:00", 7),
+            ("*-*-28 05:00:00", 31),
+        ):
+            with self.subTest(calendar=calendar):
+                shape = backup_schedule.describe(calendar)
+                assert shape is not None
+                self.assertEqual(shape.longest_gap(), timedelta(days=days))
 
 
 if __name__ == "__main__":

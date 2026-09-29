@@ -33,10 +33,26 @@ from haproxy_mgmt.helper_protocol import (
 from haproxy_mgmt.history import history_result
 from haproxy_mgmt.repo_health import describe_problem, is_repo_root
 from haproxy_mgmt.status_collect import read_target
-from haproxy_mgmt.version_history import recent_versions
+from haproxy_mgmt.version_history import LIST_LIMIT, MAX_LIST_LIMIT, recent_versions
 
 OPERATION = "list"
-PARAMETERS: frozenset[str] = frozenset()
+#
+# How many versions to list, newest first: `LIST_LIMIT` when not given, at
+# most `MAX_LIST_LIMIT`. The interface asks for more and pages in the browser.
+#
+PARAMETERS: frozenset[str] = frozenset({"limit"})
+
+
+def parse_limit(raw: object) -> int:
+    if raw is None:
+        return LIST_LIMIT
+    if isinstance(raw, bool) or not isinstance(raw, int) or not 1 <= raw <= MAX_LIST_LIMIT:
+        raise HelperProtocolError(
+            f"parameters.limit must be a whole number from 1 to {MAX_LIST_LIMIT}", exit_code=65
+        )
+    return raw
+
+
 EXIT_NOT_ROOT = 77
 
 
@@ -65,6 +81,7 @@ def main(
             expected_operation=OPERATION,
             allowed_parameter_keys=PARAMETERS,
         )
+        limit = parse_limit(request.parameters.get("limit"))
     except HelperProtocolError as exc:
         #
         # Deliberately stderr only. The cluster and the request ID an envelope
@@ -117,7 +134,7 @@ def main(
 
     target = read_target(Path(cluster.publish_path), cluster.node_path)
     try:
-        result = history_result(recent_versions(repo), target)
+        result = history_result(recent_versions(repo, limit), target, limit=limit)
     except GitError as exc:
         write_document(
             writer,

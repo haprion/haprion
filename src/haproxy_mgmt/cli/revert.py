@@ -96,7 +96,14 @@ def _target_version(cluster_id: str, requested: str | None, total: int) -> int:
     return version
 
 
-def build_request(cluster_id: str, request_id: str, *, version: int, expected_commit: str) -> str:
+def build_request(
+    cluster_id: str,
+    request_id: str,
+    *,
+    version: int,
+    expected_commit: str,
+    requested_by: str | None = None,
+) -> str:
     """The exact request a revert sends, built in one place.
 
     Public for the same reason as the other write operations: the interface's
@@ -107,6 +114,10 @@ def build_request(cluster_id: str, request_id: str, *, version: int, expected_co
     helper refuses if the cluster no longer stands where the caller thought it
     did, so a request that was built from a stale reading fails instead of
     reverting something else.
+
+    `requested_by` names the person the interface's worker acts for (B207). It
+    is left out rather than sent empty when nobody is named, and the helper
+    then records the account sudo ran it as.
     """
 
     return json.dumps(
@@ -115,7 +126,11 @@ def build_request(cluster_id: str, request_id: str, *, version: int, expected_co
             "operation": OPERATION,
             "cluster": cluster_id,
             "request_id": request_id,
-            "parameters": {"version": version, "expected_commit": expected_commit},
+            "parameters": {
+                "version": version,
+                "expected_commit": expected_commit,
+                **({} if requested_by is None else {"requested_by": requested_by}),
+            },
         }
     )
 

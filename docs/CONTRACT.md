@@ -10,7 +10,7 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 |---|---|---|---|
 | `haproxy-status` | `status` | `done`, `partial`, `failed` | Node/service/VIP/release status |
 | `haproxy-inventory` | `inventory` | `done`, `failed` | Managed and read-only unmanaged proxy inventory |
-| `haproxy-list` | `list` | `done`, `failed` | Published version history |
+| `haproxy-list` | `list` | `done`, `failed` | Published version history, newest first; each version carries `requested_by` (null before it existed). The helper takes `limit`, 1 to 250, and lists ten without it |
 | `haproxy-list-backups` | `list_backups` | `done`, `partial`, `failed` | Backup metadata only |
 | backup job helper | `backup_run` | `done`, `partial`, `failed` | One cluster, separate archive per node |
 | backup job helper | `backup_schedule` | `done`, `failed` | Daily, weekly or monthly schedule and per-node retention for one cluster, on the manager's clock |
@@ -35,6 +35,12 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haproxy-cert-receiver-helper` | `cert_receiver` | `done`, `partial`, `failed` | One receiver registered - account, directory, lock, registry entry - with the public key given as text, or removed once nothing names it; the result lists each layer's state and, after a registration, what the receiving host's operator needs; `partial` is a removal that left an account or a directory behind; `cluster` is always null. Reached by the worker over `/run/haproxy-mgmt/cert-receiver.sock` through `haproxy-cert-receiver-ask`, not through sudo |
 | `haproxy-ui-tls-helper` | `ui_tls_install` | `done`, `failed` | The registry entry marked `interface: true`, named by ID and nothing else, installed as the pair nginx serves the interface with through `haproxy-ui-tls install`; refused when the certificate does not name the interface's `SERVER_NAME`; `changed` is false when nginx already served that leaf (no reload); `cluster` is always null. Reached by the certificate helpers over `/run/haproxy-mgmt/ui-tls.sock`, not through sudo; the renewal timer and `haproxy-cert-publish` install directly |
 | `haproxy-oidc-helper` | `oidc` | `done`, `failed` | One question to the OpenID Connect provider named by `issuer`, as `parameters.action`: `discover` (its endpoints, checked against the issuer), `verify` (discovery, key set, client method, algorithm, and whether the provider accepts the client, without a sign-in) or `exchange` (a code for the verified subject, name and groups; `claims` only when asked). Takes no URL; follows no redirect; opens the client secret only for the issuer and client it was sealed for; `cluster` is always null. Reached by the web over `/run/haproxy-mgmt/oidc.sock`, as an account of its own |
+
+The four operations that record a version (`publish`, `revert`, `network_publish`,
+`objects_publish`) take an optional `requested_by`: the person a caller acts for, at most 64
+printable characters. The commit carries it as a `Requested-By` trailer, beside `Run-By` - the
+account sudo ran the helper as, which the helper can prove. Without the parameter both name that
+account. A name that is not printable is `bad_input`, never cleaned.
 
 `blocked` means that no mutation started. `failed` means the request failed or a started operation
 could not verify any successful target state. `partial` means at least one target was verified but

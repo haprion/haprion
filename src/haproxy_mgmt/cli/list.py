@@ -44,11 +44,13 @@ HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-list-helper"
 SUDO = "/usr/bin/sudo"
 
 #
-# The frozen table. `%-9s %-17s %s` in the shell command; the dashed rule under
-# the headings is a literal there too, not a computed one.
+# The shell command's table, `%-9s %-17s %s`, with one column since 2026-09-29
+# (B207): who asked for the version, as the interface's Versions page shows it.
+# "-" for a version recorded before anyone was named. The comment stays last,
+# where a long one has room.
 #
-ROW = "{version:<9} {date:<17} {comment}"
-RULE = ROW.format(version="-------", date="-" * 16, comment="-" * 40)
+ROW = "{version:<9} {date:<17} {by:<17} {comment}"
+RULE = ROW.format(version="-------", date="-" * 16, by="-" * 16, comment="-" * 40)
 
 type ConfigPath = Callable[[str], Path]
 type Field = Callable[[str, str], str]
@@ -156,11 +158,17 @@ def main(
         return 0
 
     writer.write(f"\nHAProxy configuration history - {cluster_id}\n\n")
-    writer.write(ROW.format(version="VERSION", date="DATE", comment="COMMENT") + "\n")
+    writer.write(ROW.format(version="VERSION", date="DATE", by="BY", comment="COMMENT") + "\n")
     writer.write(RULE + "\n")
     for entry in versions:
         writer.write(
-            ROW.format(version=entry.version, date=entry.date, comment=entry.comment) + "\n"
+            ROW.format(
+                version=entry.version,
+                date=entry.date,
+                by=entry.requested_by or "-",
+                comment=entry.comment,
+            )
+            + "\n"
         )
     writer.write("\n")
     return 0

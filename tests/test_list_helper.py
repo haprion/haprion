@@ -223,8 +223,26 @@ class ListHelperTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("ERROR", err)
 
+    def test_the_listing_is_ten_unless_the_caller_asks_for_more(self) -> None:
+        commits = [f"Change {step}" for step in range(1, 15)]
+        _, ten, _ = self.run_helper(commits=commits)
+        # The same repository again, with nothing added to it.
+        _, all_of_them, _ = self.run_helper(commits=[], payload=request(parameters={"limit": 250}))
+
+        self.assertEqual(len(json.loads(ten)["result"]["versions"]), 10)
+        self.assertTrue(json.loads(ten)["result"]["truncated"])
+        self.assertEqual(len(json.loads(all_of_them)["result"]["versions"]), 14)
+        self.assertFalse(json.loads(all_of_them)["result"]["truncated"])
+
+    def test_a_limit_outside_one_to_two_hundred_and_fifty_is_refused(self) -> None:
+        for limit in (0, 251, True, "10", 2.5):
+            with self.subTest(limit=limit):
+                code, out, err = self.run_helper(payload=request(parameters={"limit": limit}))
+                self.assertEqual((code, out), (65, ""))
+                self.assertIn("parameters.limit", err)
+
     def test_an_unknown_parameter_is_refused_before_any_repository_is_read(self) -> None:
-        code, out, err = self.run_helper(payload=request(parameters={"limit": 50}))
+        code, out, err = self.run_helper(payload=request(parameters={"offset": 50}))
 
         self.assertEqual(out, "")
         self.assertNotEqual(code, 0)

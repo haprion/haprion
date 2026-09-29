@@ -13,10 +13,15 @@ read it from here.
 
 from __future__ import annotations
 
+import os
+import pwd
+import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from haproxy_mgmt.git_command import git as _git
+from haproxy_mgmt.helper_protocol import HelperProtocolError
 
 #
 # The format the revert preview shows. Kept identical to the shell command's,
@@ -46,6 +51,64 @@ LIST_LIMIT = 10
 #
 REQUEST_TRAILER = "Request-Id"
 
+#
+# Who asked for a version, in two trailers because there are two different
+# facts (B207, 2026-09-29). `Run-By` is the account sudo says ran the
+# helper, which the helper can prove: the interface's worker for anything done
+# in the browser, the operator's own account at the terminal. `Requested-By`
+# is the person - the signed-in user the interface names in the job, or the
+# same account as `Run-By` when nobody names anyone else. The listing shows
+# the person; the proven account stays for whoever has to check the claim.
+#
+REQUESTED_BY_TRAILER = "Requested-By"
+RUN_BY_TRAILER = "Run-By"
+
+#
+# The longest listing a caller may ask for. The interface pages through what it
+# gets in the browser; `haproxy-list` keeps its ten.
+#
+MAX_LIST_LIMIT = 250
+
+#
+# As long as an account name may be in the interface's database. Anything that
+# is not printable is refused rather than cleaned: a newline in a trailer value
+# would start a trailer of its own, and a forged `Request-Id` is exactly what
+# the restart evidence must never read.
+#
+MAX_NAME_LENGTH = 64
+
+
+class UnfitName(ValueError):
+    """A name that cannot stand in a commit trailer."""
+
+
+def trailer_name(value: object) -> str:
+    """A person's or account's name, fit to stand in a trailer, or UnfitName."""
+
+    if not isinstance(value, str) or not value.strip():
+        raise UnfitName("must be a non-empty string")
+    if len(value) > MAX_NAME_LENGTH:
+        raise UnfitName(f"must be at most {MAX_NAME_LENGTH} characters")
+    if value != value.strip() or any(
+        unicodedata.category(character).startswith(("C", "Z")) and character != " "
+        for character in value
+    ):
+        raise UnfitName("may not contain control characters or line breaks")
+    return value
+
+
+def caller_account(environ: Mapping[str, str] | None = None) -> str:
+    """The account the helper runs for: the one sudo names, else its own.
+
+    Root running a helper directly - a DR shell, a test - is recorded as root.
+    """
+
+    named = (os.environ if environ is None else environ).get("SUDO_USER", "")
+    try:
+        return trailer_name(named)
+    except UnfitName:
+        return pwd.getpwuid(os.getuid()).pw_name
+
 
 @dataclass(frozen=True, slots=True)
 class VersionSummary:
@@ -60,6 +123,11 @@ class VersionSummary:
     # anything committed by hand.
     #
     request_id: str | None = None
+    #
+    # The person who asked for it, from the `Requested-By` trailer. None for
+    # every version recorded before the trailer existed.
+    #
+    requested_by: str | None = None
 
 
 def count_versions(repo: Path, commit: str = "HEAD") -> int:
@@ -167,15 +235,13 @@ def recent_versions(repo: Path, limit: int = LIST_LIMIT) -> tuple[VersionSummary
         # given, and a newline here would split one version across two lines.
         #
         f"--pretty=tformat:%H%x00%ad%x00{ISO_FORMAT}%x00%s%x00"
-        f"%(trailers:key={REQUEST_TRAILER},valueonly,separator=%x2C)",
+        f"%(trailers:key={REQUEST_TRAILER},valueonly,separator=%x2C)%x00"
+        f"%(trailers:key={REQUESTED_BY_TRAILER},valueonly,separator=%x2C)",
     ).decode()
 
     summaries: list[VersionSummary] = []
     for offset, line in enumerate(shown.splitlines()):
-        commit, _, rest = line.partition("\0")
-        date, _, rest = rest.partition("\0")
-        created_at, _, rest = rest.partition("\0")
-        comment, _, request_id = rest.partition("\0")
+        commit, date, created_at, comment, request_id, requested_by = line.split("\0")
         summaries.append(
             VersionSummary(
                 version=total - offset,
@@ -184,12 +250,19 @@ def recent_versions(repo: Path, limit: int = LIST_LIMIT) -> tuple[VersionSummary
                 created_at=created_at.strip(),
                 comment=comment,
                 request_id=request_id.strip() or None,
+                requested_by=requested_by.strip() or None,
             )
         )
     return tuple(summaries)
 
 
-def with_request_trailer(message: str, request_id: str) -> str:
+def with_request_trailer(
+    message: str,
+    request_id: str,
+    *,
+    requested_by: str | None = None,
+    run_by: str | None = None,
+) -> str:
     """The commit message a mutation records, bound to the request that asked.
 
     This is half of the completion evidence a restart needs. After a crash the
@@ -197,9 +270,32 @@ def with_request_trailer(message: str, request_id: str) -> str:
     cannot answer it: the same configuration can be published twice for two
     different reasons. The trailer says which request produced this commit, so a
     retry can recognise its own earlier work instead of doing it again.
+
+    The names, when given, have passed `trailer_name`; they are checked again
+    here because a line break in one would forge the trailer above.
     """
 
-    return f"{message}\n\n{REQUEST_TRAILER}: {request_id}\n"
+    trailers = [f"{REQUEST_TRAILER}: {request_id}"]
+    if requested_by is not None:
+        trailers.append(f"{REQUESTED_BY_TRAILER}: {trailer_name(requested_by)}")
+    if run_by is not None:
+        trailers.append(f"{RUN_BY_TRAILER}: {trailer_name(run_by)}")
+    return f"{message}\n\n" + "\n".join(trailers) + "\n"
+
+
+def requester(
+    parameters: Mapping[str, object], environ: Mapping[str, str] | None = None
+) -> tuple[str, str]:
+    """(requested_by, run_by) for a version this helper records.
+
+    `requested_by` is the parameter of that name when the caller gives one - the
+    interface's worker names its signed-in user - and the proven account when
+    it does not. Raises UnfitName for a name that cannot stand in a trailer.
+    """
+
+    run_by = caller_account(environ)
+    named = parameters.get("requested_by")
+    return (run_by if named is None else trailer_name(named)), run_by
 
 
 def request_id_of(repo: Path, commit: str) -> str | None:
@@ -223,3 +319,14 @@ def request_id_of(repo: Path, commit: str) -> str | None:
         .strip()
     )
     return value or None
+
+
+def request_names(
+    parameters: Mapping[str, object], environ: Mapping[str, str] | None = None
+) -> tuple[str, str]:
+    """`requester` for a helper: a name that cannot stand is the caller's bad input."""
+
+    try:
+        return requester(parameters, environ)
+    except UnfitName as exc:
+        raise HelperProtocolError(f"parameters.requested_by {exc}", exit_code=65) from exc

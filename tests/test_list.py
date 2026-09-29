@@ -94,7 +94,7 @@ class ListFixture(unittest.TestCase):
 
 
 class TableTests(ListFixture):
-    def test_the_table_keeps_the_shape_the_shell_command_printed(self) -> None:
+    def test_the_table_keeps_the_shell_commands_shape_plus_who_asked(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             repo = self.repository(Path(raw), ["Initial", "Add a backend"])
             code, shown = self.run_list(repo)
@@ -105,10 +105,10 @@ class TableTests(ListFixture):
             "\n"
             "HAProxy configuration history - alpha\n"
             "\n"
-            "VERSION   DATE              COMMENT\n"
-            "-------   ----------------  ----------------------------------------\n"
-            "2         2026-01-02 03:04  Add a backend\n"
-            "1         2026-01-02 03:04  Initial\n"
+            "VERSION   DATE              BY                COMMENT\n"
+            "-------   ----------------  ----------------  ----------------------------------------\n"
+            "2         2026-01-02 03:04  -                 Add a backend\n"
+            "1         2026-01-02 03:04  -                 Initial\n"
             "\n",
         )
 
@@ -134,7 +134,9 @@ class TableTests(ListFixture):
             repo = self.repository(Path(raw), ["Route a|b to the new pool"])
             _, shown = self.run_list(repo)
 
-        self.assertIn("1         2026-01-02 03:04  Route a|b to the new pool\n", shown)
+        self.assertIn(
+            "1         2026-01-02 03:04  -                 Route a|b to the new pool\n", shown
+        )
 
 
 class FailureTests(ListFixture):

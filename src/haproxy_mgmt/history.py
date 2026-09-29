@@ -41,6 +41,11 @@ def _version_document(entry: VersionSummary, newest: int | None) -> dict[str, ob
         # listing rather than by guessing from the configuration's content.
         #
         "request_id": entry.request_id,
+        #
+        # Who asked for the version (B207), from its `Requested-By` trailer;
+        # null for everything recorded before it. Additive within v1.
+        #
+        "requested_by": entry.requested_by,
     }
 
 
@@ -49,6 +54,7 @@ def history_result(
     target: ReleaseTarget | None,
     *,
     generated_at: datetime | None = None,
+    limit: int = LIST_LIMIT,
 ) -> dict[str, object]:
     """The recent versions of one cluster, and which of them is published.
 
@@ -62,7 +68,7 @@ def history_result(
 
     A published release that is not in the listing leaves `unpublished` null
     rather than zero. The honest answer is that this listing cannot say - the
-    release is older than the ten versions shown, or the history has been reset -
+    release is older than the versions shown, or the history has been reset -
     and zero would be the reassuring guess.
 
     The published version is matched by hash, never by number: after a history
@@ -94,7 +100,7 @@ def history_result(
         "published_version": target.version if target is not None else None,
         "published_hash": target.hash if target is not None else None,
         "unpublished": unpublished,
-        "truncated": len(documents) >= LIST_LIMIT,
+        "truncated": len(documents) >= limit,
         "generated_at": timestamp.isoformat().replace("+00:00", "Z"),
     }
 

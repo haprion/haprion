@@ -98,7 +98,7 @@ from haproxy_mgmt.reservations import (
     load_reservations,
     review_fragments,
 )
-from haproxy_mgmt.version_history import count_versions, with_request_trailer
+from haproxy_mgmt.version_history import count_versions, request_names, with_request_trailer
 
 #
 # Two names, deliberately. `OPERATION` is what the request must say to reach this
@@ -108,7 +108,7 @@ from haproxy_mgmt.version_history import count_versions, with_request_trailer
 #
 OPERATION = "publish_version"
 PUBLISH_OPERATION = "publish"
-PARAMETERS = frozenset({"files", "expected_head", "comment"})
+PARAMETERS = frozenset({"files", "expected_head", "comment", "requested_by"})
 COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
@@ -374,6 +374,7 @@ def main(
         files = parse_files(request.parameters.get("files"))
         expected_head = parse_expected_head(request.parameters.get("expected_head"))
         comment = parse_comment(request.parameters.get("comment"))
+        request_names(request.parameters)
 
         policy = load_policy(policy_path, require_secure=require_secure)
         cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
@@ -585,7 +586,7 @@ def _publish(
         branch=branch,
         tree=snapshot.tree,
         parent=head,
-        message=with_request_trailer(comment, request.request_id),
+        message=_message(comment, request),
     )
     refresh_worktree_index(repo, commit)
 
@@ -636,3 +637,12 @@ def _publish(
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def _message(message: str, request: HelperRequest) -> str:
+    """The version's commit message, with who asked for it (B207)."""
+
+    requested_by, run_by = request_names(request.parameters)
+    return with_request_trailer(
+        message, request.request_id, requested_by=requested_by, run_by=run_by
+    )

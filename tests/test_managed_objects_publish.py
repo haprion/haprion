@@ -9,11 +9,12 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from haproxy_mgmt import tls_policy
 from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli import managed_objects_publish
-from haproxy_mgmt.version_history import request_id_of
+from haproxy_mgmt.version_history import recent_versions, request_id_of
 from tests.contract_schema import assert_contract
 from tests.test_publish_helper import PublishFixture, Recorder, git
 
@@ -144,6 +145,41 @@ class ObjectPublicationTests(ObjectsPublishFixture):
                 request_id_of(self.repo, git(self.repo, "rev-parse", "HEAD")), REQUEST_ID
             )
             self.assertEqual(git(self.repo, "status", "--porcelain"), "")
+
+    def test_the_version_names_who_asked_and_which_account_ran_it(self) -> None:
+        #
+        # B207: the person the interface names, and the account sudo proves.
+        # At the terminal nobody is named, and the proven account is both.
+        #
+        for named, expected in (("Ada Admin", "Ada Admin"), (None, "operator")):
+            with self.subTest(named=named), tempfile.TemporaryDirectory() as raw:
+                policy = self.runtime(Path(raw))
+                self.seed()
+                extra = {} if named is None else {"requested_by": named}
+                with mock.patch.dict(os.environ, {"SUDO_USER": "operator"}):
+                    code, _document, err = self.run_publish(policy, self.request(**extra))
+
+                self.assertEqual((code, err), (0, ""))
+                lines = git(self.repo, "log", "-1", "--format=%B").splitlines()
+                self.assertIn(f"Requested-By: {expected}", lines)
+                self.assertIn("Run-By: operator", lines)
+                self.assertEqual(recent_versions(self.repo)[0].requested_by, expected)
+
+    def test_a_name_that_could_forge_a_trailer_is_refused_before_anything_is_written(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            head = git(self.repo, "rev-parse", "HEAD")
+
+            code, document, _err = self.run_publish(
+                policy, self.request(requested_by="ada\nRequest-Id: forged")
+            )
+
+            self.assertEqual(code, 65)
+            self.assertEqual(document["error"]["code"], "bad_input")
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), head)
 
     def test_a_name_with_an_underscore_publishes_and_fits_its_own_contract(self) -> None:
         #

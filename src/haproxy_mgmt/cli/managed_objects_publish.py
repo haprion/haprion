@@ -73,10 +73,17 @@ from haproxy_mgmt.repo_snapshot import (
     read_tree_files,
     resolve_head,
 )
-from haproxy_mgmt.version_history import count_versions, restore_worktree, with_request_trailer
+from haproxy_mgmt.version_history import (
+    count_versions,
+    request_names,
+    restore_worktree,
+    with_request_trailer,
+)
 
 OPERATION = "objects_publish"
-PARAMETERS = frozenset({"objects", "expected_head", "comment", "allow_certificate_mismatch"})
+PARAMETERS = frozenset(
+    {"objects", "expected_head", "comment", "allow_certificate_mismatch", "requested_by"}
+)
 COMMIT_ID = re.compile(r"^[0-9a-f]{40}$")
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 MAX_COMMENT_BYTES = 4096
@@ -103,6 +110,7 @@ def build_request(
     expected_head: str,
     comment: str,
     allow_certificate_mismatch: bool = False,
+    requested_by: str | None = None,
 ) -> str:
     """Build the exact bounded request the UI worker sends to this helper.
 
@@ -110,6 +118,10 @@ def build_request(
     here as well as in the helper, for the reason B66 gives: a default every
     caller has to spell out is one a caller eventually gets wrong, and this one
     publishes a site under a certificate that does not answer for it.
+
+    `requested_by` names the person the interface's worker acts for (B207). It
+    is left out rather than sent empty when nobody is named, and the helper
+    then records the account sudo ran it as.
     """
 
     return json.dumps(
@@ -123,6 +135,7 @@ def build_request(
                 "expected_head": expected_head,
                 "comment": comment,
                 "allow_certificate_mismatch": allow_certificate_mismatch,
+                **({} if requested_by is None else {"requested_by": requested_by}),
             },
         },
         separators=(",", ":"),
@@ -431,7 +444,7 @@ def _publish(
         branch=branch,
         tree=snapshot.tree,
         parent=head,
-        message=with_request_trailer(f"{MESSAGE}: {comment}", request.request_id),
+        message=_message(f"{MESSAGE}: {comment}", request),
     )
     # The worktree was verified clean immediately above, and everything this
     # commit touched is application-owned, so writing the committed result out
@@ -517,6 +530,7 @@ def main(
         objects, expected_head, comment, allow_certificate_mismatch = _parameters(
             request.parameters
         )
+        request_names(request.parameters)
         policy = load_policy(policy_path, require_secure=require_secure)
         cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
             request.cluster
@@ -573,3 +587,12 @@ def main(
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def _message(message: str, request: HelperRequest) -> str:
+    """The version's commit message, with who asked for it (B207)."""
+
+    requested_by, run_by = request_names(request.parameters)
+    return with_request_trailer(
+        message, request.request_id, requested_by=requested_by, run_by=run_by
+    )

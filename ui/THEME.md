@@ -26,9 +26,12 @@ supplies dark mode; there is intentionally no system theme.
 ## Telling clusters apart
 
 **Each cluster carries a low-chroma rule down its left edge**, on cluster cards
-and on activity rows, from `--accent-0` through `--accent-3`. The
-index comes from `cluster_identity.accent_index`; cluster five repeats cluster
-one. The tint is what lets a reader recognise a cluster without reading, which
+and on activity rows, from `--accent-0` through `--accent-5`. The
+index comes from `cluster_identity.accent_index`: the cluster's place in
+`ui.toml`'s `clusters`, the order the dashboard draws them in. With more than
+six clusters, or with *Cluster colours* off under Settings, no card has one; a
+template draws the class through the `accent_class` filter, which is empty
+then. The tint is what lets a reader recognise a cluster without reading, which
 the name can never do.
 
 Two constraints, both learned the hard way. **Chroma, not hue, is what keeps a

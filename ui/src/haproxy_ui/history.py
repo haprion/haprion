@@ -41,7 +41,7 @@ class VersionView:
 @dataclass(frozen=True, slots=True)
 class HistoryClusterView:
     cluster: str
-    accent: int
+    accent: int | None
     configured: bool
     label: str
     tone: Tone

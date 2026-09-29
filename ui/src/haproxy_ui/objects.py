@@ -90,7 +90,7 @@ class Publication:
 @dataclass(frozen=True, slots=True)
 class ObjectDetail:
     cluster: str
-    accent: int
+    accent: int | None
     name: str
     #
     # Absent where the cluster has no such object. That is not an error: an

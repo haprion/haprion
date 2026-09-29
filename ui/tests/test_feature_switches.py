@@ -1,4 +1,4 @@
-"""Feature switches (Fas 13 part 3, §16.5, B193).
+"""Feature switches (Fas 13 part 3, §16.5, B193; cluster colours B204).
 
 Held here: off hides the tab, the pages and the operations, and a kept URL
 answers 404; receivers off leaves the certificates page one view, the
@@ -43,6 +43,7 @@ class Switched(LoginTestCase):
         self.switches = {
             features.CERT_RECEIVERS: switch(features.CERT_RECEIVERS, enabled=True),
             features.NODE_BACKUPS: switch(features.NODE_BACKUPS, enabled=True),
+            features.CLUSTER_COLOURS: switch(features.CLUSTER_COLOURS, enabled=True),
         }
         self.flips: list[dict[str, Any]] = []
         self.queued: list[tuple[str, dict[str, Any]]] = []
@@ -239,6 +240,42 @@ class Switched(LoginTestCase):
         self.assertEqual(
             self.post(client, "/settings/features/traffic", enabled="off").status_code, 404
         )
+        self.assertEqual(self.flips, [])
+
+    # - cluster colours (B204) --------------------------------------------
+    def client_for(self, clusters: tuple[str, ...]) -> Any:
+        client = self.client(replace(configuration(), management_writes=True, clusters=clusters))
+        self.assertEqual(self.sign_in(client).status_code, 303)
+        return client
+
+    def test_the_cards_take_their_colours_in_the_listed_order(self) -> None:
+        page = self.client_for(("beta", "alpha")).get("/").text
+
+        self.assertLess(page.index("cluster-accent-0"), page.index("cluster-accent-1"))
+        self.assertNotIn("cluster-accent-2", page)
+
+    def test_off_takes_the_colours_away_and_on_brings_them_back(self) -> None:
+        client = self.client_for(("alpha", "beta"))
+        self.off(features.CLUSTER_COLOURS)
+        self.assertNotIn("cluster-accent-", client.get("/").text)
+
+        answer = self.post(client, "/settings/features/cluster_colours", enabled="on")
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(self.flips[0]["enabled"], True)
+        self.assertEqual(self.queued, [])
+
+    def test_past_six_clusters_the_switch_is_off_and_cannot_be_turned_on(self) -> None:
+        client = self.client_for(tuple(f"c{index}" for index in range(7)))
+
+        self.assertNotIn("cluster-accent-", client.get("/").text)
+        settings = client.get("/settings").text
+        self.assertRegex(settings, r'aria-checked="false" aria-label="Cluster colours" disabled')
+        self.off(features.CLUSTER_COLOURS)
+        answer = self.post(client, "/settings/features/cluster_colours", enabled="on")
+
+        self.assertEqual(answer.status_code, 409)
+        self.assertIn("this installation lists more", answer.text)
         self.assertEqual(self.flips, [])
 
 

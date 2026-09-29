@@ -119,7 +119,7 @@ class NodeBackupsView:
 @dataclass(frozen=True, slots=True)
 class BackupClusterView:
     cluster: str
-    accent: int
+    accent: int | None
     configured: bool
     label: str
     tone: Tone

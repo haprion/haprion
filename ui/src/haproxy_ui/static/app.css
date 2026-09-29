@@ -49,10 +49,12 @@
   --info-soft: #e9f3fd;
   --unknown: #778396;
   --unknown-soft: #eef1f5;
-  --accent-0: #5f9a97;
-  --accent-1: #6e63a8;
-  --accent-2: #8aa966;
-  --accent-3: #b8776d;
+  --accent-0: #577436;
+  --accent-1: #d49bce;
+  --accent-2: #62c5b9;
+  --accent-3: #bd9857;
+  --accent-4: #5294c0;
+  --accent-5: #985247;
   --shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 4px rgb(15 23 42 / 0.03);
   --shadow-menu: 0 14px 40px rgb(15 23 42 / 0.14);
   --radius: 8px;
@@ -87,10 +89,12 @@
   --info-soft: #183c5d;
   --unknown: #9aa8ba;
   --unknown-soft: #2a394b;
-  --accent-0: #6fb3af;
-  --accent-1: #8579cc;
-  --accent-2: #9dba76;
-  --accent-3: #d1897d;
+  --accent-0: #739253;
+  --accent-1: #f5bbef;
+  --accent-2: #83e6d9;
+  --accent-3: #deb775;
+  --accent-4: #71b3e1;
+  --accent-5: #b87064;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.25);
   --shadow-menu: 0 16px 48px rgb(0 0 0 / 0.4);
   --focus: 0 0 0 3px rgb(90 196 106 / 0.28);
@@ -321,7 +325,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .cluster-card { overflow: hidden; border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow-sm); }
 
 /* Cluster identity. A left rule on the card and on each activity row, in one of
-   four low-chroma tints. Colour is the point: it is read before the name is,
+   six low-chroma tints, in the order the clusters are listed (B204). Colour is the point: it is read before the name is,
    and the name - adjacent everywhere - always has to be read.
 
    What sank four earlier colour pairs was execution. They differed in hue at
@@ -347,6 +351,8 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .cluster-accent-1::before { background: var(--accent-1); }
 .cluster-accent-2::before { background: var(--accent-2); }
 .cluster-accent-3::before { background: var(--accent-3); }
+.cluster-accent-4::before { background: var(--accent-4); }
+.cluster-accent-5::before { background: var(--accent-5); }
 
 .cluster-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
 .cluster-identity { display: flex; align-items: center; gap: 13px; min-width: 0; }

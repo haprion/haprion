@@ -263,7 +263,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0041",))
+            self.assertEqual(cursor.fetchone(), ("0042",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -1798,7 +1798,7 @@ class AccountsFromTheWeb(unittest.TestCase):
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class FeatureSwitchesFromTheWeb(unittest.TestCase):
-    """Migration 0040: two switches the web flips and nothing more (B193)."""
+    """Migrations 0040 and 0042: switches the web flips and nothing more (B193, B204)."""
 
     def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
@@ -1806,16 +1806,37 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
     def tearDown(self) -> None:
         with self.connect() as connection:
             connection.execute(
-                "update feature_switch set enabled = false, remembered = '{}', updated_by = null"
+                "update feature_switch set enabled = (name = 'cluster_colours'), "
+                "remembered = '{}', updated_by = null"
             )
             connection.commit()
 
-    def test_both_switches_exist_and_start_off(self) -> None:
+    def test_every_switch_exists_and_starts_where_its_migration_put_it(self) -> None:
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
             switches = db.feature_switches(connection)
 
-        self.assertEqual(sorted(switches), ["cert_receivers", "node_backups"])
-        self.assertFalse(any(switch.enabled for switch in switches.values()))
+        self.assertEqual(
+            {name: switch.enabled for name, switch in switches.items()},
+            {"cert_receivers": False, "node_backups": False, "cluster_colours": True},
+        )
+
+    def test_the_colours_switch_downgrades_and_upgrades_cleanly(self) -> None:
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                migration = _migration("0042_cluster_colours_switch.py", cursor)
+                migration.downgrade()
+                cursor.execute("select name from feature_switch order by name")
+                self.assertEqual(cursor.fetchall(), [("cert_receivers",), ("node_backups",)])
+                with self.assertRaises(psycopg.errors.CheckViolation):
+                    cursor.execute("insert into feature_switch (name) values ('cluster_colours')")
+            connection.rollback()
+            with connection.cursor() as cursor:
+                migration = _migration("0042_cluster_colours_switch.py", cursor)
+                migration.downgrade()
+                migration.upgrade()
+                cursor.execute("select enabled from feature_switch where name = 'cluster_colours'")
+                self.assertEqual(cursor.fetchone(), (True,))
+            connection.rollback()
 
     def test_the_web_flips_a_switch_once_and_remembers_what_it_is_given(self) -> None:
         with self.connect() as connection:

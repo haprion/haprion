@@ -97,7 +97,7 @@ class GroupView:
 @dataclass(frozen=True, slots=True)
 class NetworkClusterView:
     cluster: str
-    accent: int
+    accent: int | None
     label: str
     tone: Tone
     detail: str

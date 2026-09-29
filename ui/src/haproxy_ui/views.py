@@ -61,6 +61,7 @@ from haproxy_ui import (
     certificate_renew,
     certificate_retarget,
     certificates,
+    cluster_identity,
     dashboard,
     db,
     demo,
@@ -148,6 +149,7 @@ TEMPLATES.env.globals["new_request_key"] = lambda: str(uuid4())
 #
 TEMPLATES.env.globals["check_phrase"] = health.check_phrase
 TEMPLATES.env.globals["feature_on"] = features.is_on
+TEMPLATES.env.filters["accent_class"] = cluster_identity.accent_class
 TEMPLATES.env.globals["through_provider"] = oidc_web.through_provider
 
 #
@@ -364,6 +366,22 @@ OBJECTS_SOURCE = Source(
 )
 
 
+def listed_clusters(request: Request, config: Config) -> tuple[str, ...]:
+    """The clusters this interface shows, in the order it shows them."""
+
+    if config.demo_fixture:
+        return demo.CLUSTERS
+    if config.production_snapshot:
+        try:
+            return snapshot.load_production_snapshot(
+                snapshot.path_for_config(request.app.state.config_path)
+            ).clusters
+        except snapshot.SnapshotError:
+            # The page that reads the snapshot says what is wrong with it.
+            return ()
+    return config.clusters
+
+
 def read_source(
     request: Request, config: Config, source: Source
 ) -> tuple[tuple[str, ...], Iterable[Any], datetime | None]:
@@ -479,6 +497,13 @@ def current_session(request: Request) -> AuthenticatedSession | None:
         # page passes through here before it draws anything.
         #
         features.read_in(db.feature_switches(connection))
+    #
+    # The clusters' colours follow the order they are listed in, and go when
+    # the switch is off or there are more than the colours (B204).
+    #
+    cluster_identity.read_in(
+        listed_clusters(request, config), on=features.is_on(features.CLUSTER_COLOURS)
+    )
     return session
 
 
@@ -505,6 +530,8 @@ SWITCHED = {
     "cert_receivers-on": "Certificate receivers turned on.",
     "node_backups-off": "Node backups turned off. The clusters' schedules are being stopped; see Jobs.",
     "node_backups-on": "Node backups turned on. The schedules that were stopped are being started again.",
+    "cluster_colours-off": "Cluster colours turned off.",
+    "cluster_colours-on": "Cluster colours turned on.",
 }
 
 
@@ -3051,6 +3078,13 @@ def build_router(config: Config) -> APIRouter:
         switched = request.query_params.get("switched", "")[:32]
         return _settings_page(request, gate, done=SWITCHED.get(switched, ""))
 
+    def _locked(request: Request, name: str) -> bool:
+        """Whether a switch cannot be on here: cluster colours past six clusters."""
+
+        return name == features.CLUSTER_COLOURS and not cluster_identity.fits(
+            listed_clusters(request, config)
+        )
+
     def _settings_page(
         request: Request,
         gate: AuthenticatedSession,
@@ -3095,7 +3129,12 @@ def build_router(config: Config) -> APIRouter:
                 "sso": oidc_web.summary(provider),
                 "sso_on": provider is not None and provider.enabled,
                 "features": [
-                    (feature, switches[feature.name].enabled)
+                    (
+                        feature,
+                        switches[feature.name].enabled
+                        and not (locked := _locked(request, feature.name)),
+                        locked,
+                    )
                     for feature in features.FEATURES
                     if feature.name in switches
                 ],
@@ -3189,6 +3228,11 @@ def build_router(config: Config) -> APIRouter:
             current = db.feature_switches(connection).get(name)
         if current is None:
             return PlainTextResponse("Not found", status_code=404)
+        if want and _locked(request, name):
+            return refused(
+                f"Cluster colours cover {cluster_identity.ACCENT_COUNT} clusters, "
+                "and this installation lists more."
+            )
         if current.enabled == want:
             return RedirectResponse(f"/settings?switched={name}-{enabled}", status_code=303)
 

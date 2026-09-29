@@ -1,4 +1,4 @@
-"""Feature switches: what an installation has turned off (Fas 13 part 3, B193).
+"""Feature switches: what an installation has turned off (Fas 13 part 3, B193; B204).
 
 Two capabilities are odd for an HAProxy interface in itself and may be turned
 off under Settings. Off means the interface no longer offers them - the tab,
@@ -22,6 +22,7 @@ from haproxy_mgmt import backup_schedule
 
 CERT_RECEIVERS = "cert_receivers"
 NODE_BACKUPS = "node_backups"
+CLUSTER_COLOURS = "cluster_colours"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,12 @@ FEATURES = (
         consequence="Scheduled backups stop on every cluster and no new ones are taken. "
         "Existing archives are kept, and restore is hidden until this is turned on again.",
     ),
+    #
+    # Not a capability but a way of drawing (B204): the rule down each cluster
+    # card's edge. It hides nothing, and with more than six clusters it is off
+    # whatever its row says - see `cluster_identity`.
+    #
+    Feature(CLUSTER_COLOURS, "Cluster colours"),
 )
 BY_NAME = {feature.name: feature for feature in FEATURES}
 

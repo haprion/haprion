@@ -33,7 +33,7 @@
     One region per cluster, replaced in place when a range is marked or
     cleared, so the page does not reload around the chart. See `traffic.js`.
   #}
-  <article class="cluster-card cluster-accent-{{ view.accent }}" data-traffic-region="{{ view.cluster }}">
+  <article class="cluster-card {{ view.accent | accent_class }}" data-traffic-region="{{ view.cluster }}">
     <header class="cluster-header">
       <div class="cluster-identity"><div><h3>{{ view.cluster }}</h3><p>Addresses that listen, and what is behind them</p></div></div>
     </header>

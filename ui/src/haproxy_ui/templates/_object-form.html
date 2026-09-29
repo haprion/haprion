@@ -21,7 +21,7 @@
 #}
 <script defer src="{{ url_for('static', path='/object-form.js') }}?v={{ asset_token }}"></script>
 
-  <section class="cluster-card cluster-accent-{{ accent }}">
+  <section class="cluster-card {{ accent | accent_class }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Frontend</h3></div></div></header>
     <div class="form-grid">
       <label>Name<input name="name" value="{{ form.name }}" maxlength="40" pattern="[a-z][a-z0-9_-]*" title="Lowercase letters, digits, hyphens and underscores, starting with a letter" required><small>This object's identity, unique per cluster. Lowercase letters, digits, hyphens and underscores — no dots, and it starts with a letter.</small></label>
@@ -144,7 +144,7 @@
     </div>
   </section>
 
-  <section class="cluster-card cluster-accent-{{ accent }}">
+  <section class="cluster-card {{ accent | accent_class }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Backend</h3></div></div></header>
     <div class="form-grid">
       <label>Backend name<input name="backend" value="{{ form.backend }}" placeholder="web"><small>What you call the backend.</small></label>
@@ -246,7 +246,7 @@
     </div>
   </section>
 
-  <section class="cluster-card cluster-accent-{{ accent }}">
+  <section class="cluster-card {{ accent | accent_class }}">
     <header class="cluster-header">
       <div class="cluster-identity"><div class="section-title"><h3>Health check <span class="optional">(optional)</span></h3></div></div>
       {#

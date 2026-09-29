@@ -35,7 +35,7 @@
   edited this, and what is stored has not caught up.
 #}
 {% if draft %}
-<article class="cluster-card cluster-accent-{{ object.accent }}">
+<article class="cluster-card {{ object.accent | accent_class }}">
   <header class="cluster-header">
     <div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div class="section-title"><h3>An unpublished draft</h3><p>Last changed by {{ draft.updated_by }}, revision {{ draft.revision }}</p></div></div>
     <div class="cluster-state">{% if management_writes %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Open in the editor</a>{% endif %}{% if draft.updated_at %}<time datetime="{{ draft.updated_at.isoformat() }}" title="{{ draft.updated_at | shown_at }}">{{ (draft.updated_at | shown).strftime('%H:%M:%S') }}</time>{% endif %}</div>
@@ -43,7 +43,7 @@
   <p class="preview-notice">{% if draft.deleted %}This draft says the object should be <strong>removed</strong> when it is published.{% else %}The stored object below is unchanged until this draft is published.{% endif %}</p>
 </article>
 {% endif %}
-<article class="cluster-card cluster-accent-{{ object.accent }}">
+<article class="cluster-card {{ object.accent | accent_class }}">
   <header class="cluster-header">
     <div class="cluster-identity"><div><h3>Stored object</h3><p>{% if object.stored %}<code>managed/proxies/{{ object.name }}.yaml</code> at {{ object.short_commit }}{% else %}Read from the cluster repository{% endif %}</p></div></div>
     {#
@@ -99,7 +99,7 @@
   Named as a region so a click on the chart can replace it with the server's
   own answer instead of reloading the page around it. See `traffic.js`.
 #}
-<article class="cluster-card cluster-accent-{{ object.accent }}" data-traffic-region="traffic">
+<article class="cluster-card {{ object.accent | accent_class }}" data-traffic-region="traffic">
   <header class="cluster-header">
     {#
       The link out is what makes this card honest about its own limits. It can
@@ -123,7 +123,7 @@
   {% endif %}
 </article>
 {% endif %}
-<article class="cluster-card cluster-accent-{{ object.accent }}">
+<article class="cluster-card {{ object.accent | accent_class }}">
   <header class="cluster-header">
     <div class="cluster-identity"><div><h3>Frontend</h3><p>{% if object.vip %}Served on the {% if object.vip_is_default %}default {% endif %}VIP <code>{{ object.vip }}</code>{% if object.vip_address %} · {{ object.vip_address }}{% endif %}, through a frontend shared by every object on that address{% else %}The published frontend that carries this address, shared by every object on it{% endif %}</p></div></div>
   </header>

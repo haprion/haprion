@@ -2,28 +2,58 @@
 
 from __future__ import annotations
 
-from hashlib import sha256
+from collections.abc import Iterable, Mapping
+from contextvars import ContextVar
+from types import MappingProxyType
 
 #
-# Four markers, drawn as a low-chroma rule down the left edge. Colour is
-# what makes the marker work: it is read before the name is, which is the whole
+# Six markers, drawn as a low-chroma rule down the left edge. Colour is what
+# makes the marker work: it is read before the name is, which is the whole
 # point of it - the name is adjacent everywhere, but a name has to be read.
 #
-# Four earlier colour pairs were rejected, and the lesson was not "no colour".
-# They differed in hue at nearly the same lightness, on a 4px rule, all of them
-# crowded into the narrow gap between blue and red. These are spread around the
-# circle and neighbours differ in lightness too. What keeps them from reading as
-# a status is chroma, not hue: every status colour here is vivid, so a muted
+# Six is a ceiling, not a budget (B204). Eight muted colours were tried twice
+# and failed by eye: on a 5px rule the eye separates mostly by lightness, so
+# pairs a full colour distance apart still read as one. Six hues at least 45
+# degrees apart, each at its own lightness, held. What keeps them from reading
+# as a status is chroma, not hue: every status colour here is vivid, so a muted
 # rule does not compete with one.
 #
-# Four is a ceiling, not a budget. Pure lightness separates three, maybe four;
-# hue and lightness together stretch to six before a reader starts looking
-# twice, and a marker that has to be studied is not doing its job. Cluster five
-# repeats cluster one.
+# They are handed out in the order `ui.toml` lists the clusters - the order the
+# dashboard draws them in - not by a hash of the name, which could give the
+# first two clusters one colour. A seventh cluster does not get the first one's
+# again: a marker that has to be doubted is worse than none, so with more than
+# six clusters there are no colours at all, and the switch under Settings says
+# it cannot be turned on. A cluster the list does not name has none either.
 #
-ACCENT_COUNT = 4
+ACCENT_COUNT = 6
+
+_ORDER: ContextVar[Mapping[str, int]] = ContextVar("cluster_accents", default=MappingProxyType({}))
 
 
-def accent_index(cluster: str) -> int:
-    """Return a stable visual marker index without assigning operational meaning."""
-    return sha256(cluster.encode("utf-8")).digest()[0] % ACCENT_COUNT
+def fits(clusters: Iterable[str]) -> bool:
+    """Whether every cluster can have a colour of its own."""
+
+    return len(tuple(clusters)) <= ACCENT_COUNT
+
+
+def read_in(clusters: Iterable[str], *, on: bool) -> None:
+    """Take this request's clusters, in the installation's order, and the switch."""
+
+    listed = tuple(clusters)
+    _ORDER.set(
+        MappingProxyType({cluster: index for index, cluster in enumerate(listed)})
+        if on and len(listed) <= ACCENT_COUNT
+        else MappingProxyType({})
+    )
+
+
+def accent_index(cluster: str) -> int | None:
+    """This cluster's marker, or None when it is not to have one."""
+
+    return _ORDER.get().get(cluster)
+
+
+def accent_class(index: int | None) -> str:
+    """The class that draws the marker, for a template; empty without one."""
+
+    return "" if index is None else f"cluster-accent-{index}"

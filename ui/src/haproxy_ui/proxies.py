@@ -40,7 +40,7 @@ class ProxyView:
 @dataclass(frozen=True, slots=True)
 class ProxyClusterView:
     cluster: str
-    accent: int
+    accent: int | None
     configured: bool
     label: str
     tone: Tone

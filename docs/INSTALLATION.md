@@ -2720,6 +2720,13 @@ installation opts in.
 
 `haproxy-state-backup` and the restore commands on the manager work either way.
 
+A third switch, **Cluster colours** (schema `0042`), is on from the start and
+hides nothing: it draws the rule down each cluster card's left edge, one of six
+colours handed out in the order `clusters` lists them in `ui.toml` — the order
+the dashboard draws the cards in, so reordering that list reorders both. With
+more than six clusters it is off and cannot be turned on; the name stands
+beside every card either way.
+
 `-e` names the environment, and each one is a root-owned file written by
 `02-platform-database`: `/etc/haproxy-manager/ui-admin-<environment>.conf`,
 holding the database name and the role to connect as. Prod and dev therefore
@@ -3625,7 +3632,9 @@ go this way, root runs them directly.
 
 `clusters` in `ui.toml`, because the application accounts cannot read the
 engine's configuration and must not. The privileged helper still decides whether
-each name is a real cluster; the list only says which ones to ask about. An
+each name is a real cluster; the list only says which ones to ask about. Its
+order is the order the pages draw the clusters in, and the one their colours
+follow. An
 empty list means the poller has nothing to do and says so instead of starting.
 
 ### 4.10 A development platform beside production

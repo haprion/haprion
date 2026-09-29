@@ -58,7 +58,7 @@ CRITICAL_WINDOW = timedelta(days=7)
 @dataclass(frozen=True, slots=True)
 class CertificateClusterView:
     cluster: str
-    accent: int
+    accent: int | None
     configured: bool
     label: str
     tone: Tone

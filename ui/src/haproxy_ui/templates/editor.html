@@ -29,7 +29,7 @@
 {% endif %}
 
 {% if draft %}
-<section class="cluster-card cluster-accent-{{ accent }}">
+<section class="cluster-card {{ accent | accent_class }}">
   <header class="cluster-header"><div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div class="section-title"><h3>An unpublished draft</h3><p>Last changed by {{ draft.updated_by }}, revision {{ draft.revision }}</p></div></div></header>
   <p class="preview-notice">This is what the form below was opened with. The stored object is unchanged until the draft is published.</p>
 </section>
@@ -120,7 +120,7 @@
   somebody asked. Before that it named a file whose object has no name yet.
 #}
 {% if submitted and result.document %}
-<section class="cluster-card result-card cluster-accent-{{ accent }}">
+<section class="cluster-card result-card {{ accent | accent_class }}">
   <header class="cluster-header"><div class="cluster-identity"><div><h3>The object</h3><p>{% if unchanged %}Identical to what is stored as{% else %}What would be stored as{% endif %} <code>managed/proxies/{{ form.name }}.yaml</code></p></div></div></header>
   <pre class="config-block"><code>{{ result.document }}</code></pre>
 </section>

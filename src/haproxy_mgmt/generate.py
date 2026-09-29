@@ -195,6 +195,18 @@ HTTP_TRAFFIC_LOG_FORMAT = (
     "%(server)s %(status)ST %(request_time)TR %(queue_time)Tw "
     '%(connect_time)Tc %(response_time)Tr %(total_time)Ta %(bytes)B"'
 )
+#
+# The same record for an external receiver, and which node wrote it. The
+# syslog header cannot say: `log-send-hostname` is global and would put the
+# host name into `core/`'s own `log /dev/log` lines too, the form rsyslog's
+# local reader misparses (measured 2026-09-29). A field in the record says it
+# without touching anything else; the node's own file needs none, the
+# collector knows whom it fetched from.
+#
+EXTERNAL_LOG_PROFILE = f"{PREFIX}-traffic-json-external"
+EXTERNAL_LOG_FORMAT = HTTP_TRAFFIC_LOG_FORMAT.replace(
+    "%(schema)[int(1)] ", "%(schema)[int(1)] %(node)H ", 1
+)
 
 HEADER = (
     "#",
@@ -825,11 +837,15 @@ def _frontend_file(
     # when traffic logging is on, and every external target either way.
     #
     structured = traffic_logging or bool(log_targets)
-    if structured and groups:
+    profiles = (
+        *(((TRAFFIC_LOG_PROFILE, HTTP_TRAFFIC_LOG_FORMAT),) if traffic_logging else ()),
+        *(((EXTERNAL_LOG_PROFILE, EXTERNAL_LOG_FORMAT),) if log_targets else ()),
+    )
+    for profile, record in profiles if groups else ():
         body.extend(
             (
                 "",
-                f"log-profile {TRAFFIC_LOG_PROFILE}",
+                f"log-profile {profile}",
                 '    log-tag "haproxy-traffic"',
                 #
                 # A connection that dies before a request - an SSL handshake
@@ -840,7 +856,7 @@ def _frontend_file(
                 # it through the global target; this stream is transactions.
                 #
                 "    on error drop",
-                f"    on close format {HTTP_TRAFFIC_LOG_FORMAT}",
+                f"    on close format {record}",
             )
         )
     fallbacks: list[str] = []
@@ -871,7 +887,7 @@ def _frontend_file(
             ),
             *(
                 f"    log ring@{_ring_name(target)} len 2048 format rfc5424 "
-                f"profile {TRAFFIC_LOG_PROFILE} local2"
+                f"profile {EXTERNAL_LOG_PROFILE} local2"
                 for target in log_targets
             ),
             *(

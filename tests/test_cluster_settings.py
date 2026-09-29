@@ -23,7 +23,15 @@ from haproxy_mgmt.cluster_settings import (
     load_document,
 )
 from haproxy_mgmt.config import ConfigError
-from haproxy_mgmt.generate import CLUSTER_FILE, GeneratorError, generate
+from haproxy_mgmt.generate import (
+    CLUSTER_FILE,
+    EXTERNAL_LOG_FORMAT,
+    EXTERNAL_LOG_PROFILE,
+    HTTP_TRAFFIC_LOG_FORMAT,
+    TRAFFIC_LOG_PROFILE,
+    GeneratorError,
+    generate,
+)
 from haproxy_mgmt.golden import GOLDEN, arguments, objects
 from haproxy_mgmt.managed_publish import managed_files
 from haproxy_mgmt.reservations import load_reservations
@@ -98,6 +106,28 @@ class TheGeneratedLayer(unittest.TestCase):
         return generate(
             objects(GOLDEN / case), reservations=load_reservations(reservations), **options
         )  # type: ignore[arg-type]
+
+    def test_an_external_record_names_its_node_and_the_local_one_is_unchanged(self) -> None:
+        settings = load_document(GRAYLOG)
+        options = arguments(GOLDEN / "minimal")
+        options["settings"] = settings
+        both = generate(objects(GOLDEN / "minimal"), traffic_logging=True, **options)  # type: ignore[arg-type]
+        alone = generate(
+            objects(GOLDEN / "minimal"), traffic_logging=True, **arguments(GOLDEN / "minimal")
+        )  # type: ignore[arg-type]
+        frontends = both.configuration["1000-frontends.cfg"]
+
+        self.assertIn(f"log-profile {TRAFFIC_LOG_PROFILE}\n", frontends)
+        self.assertIn(f"log-profile {EXTERNAL_LOG_PROFILE}\n", frontends)
+        self.assertIn(f"format local profile {TRAFFIC_LOG_PROFILE} local2", frontends)
+        self.assertIn(
+            f"log ring@mgd-log-graylog len 2048 format rfc5424 profile {EXTERNAL_LOG_PROFILE}",
+            frontends,
+        )
+        self.assertIn("%(node)H", EXTERNAL_LOG_FORMAT)
+        self.assertNotIn("%(node)H", HTTP_TRAFFIC_LOG_FORMAT)
+        # Without targets, the local stream is written exactly as before.
+        self.assertNotIn(EXTERNAL_LOG_PROFILE, alone.configuration["1000-frontends.cfg"])
 
     def test_nothing_set_writes_no_cluster_file(self) -> None:
         self.assertNotIn(CLUSTER_FILE, self.generate("minimal", NOTHING).configuration)

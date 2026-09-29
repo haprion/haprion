@@ -3351,8 +3351,10 @@ haproxy-deploy -c alpha
 ```
 
 **The log** is the same structured record the node's own file gets (4.8b),
-sent as syslog over TCP (RFC 5424, octet-counted), whether or not the local
-stream is on. One transport reaches the common platforms through their usual
+plus `node`, the host name of the node that wrote it, sent as syslog over TCP
+(RFC 5424, octet-counted) whether or not the local stream is on. The syslog
+header's host name field is `-`: HAProxy sets it only globally, and doing so
+would change the node's own classic log lines too. One transport reaches the common platforms through their usual
 receivers: Graylog takes it directly, Loki through a syslog receiver such as
 Grafana Alloy's `loki.source.syslog`, Elasticsearch or OpenSearch through
 Logstash or Vector with a syslog input. `tls: true` verifies the receiver

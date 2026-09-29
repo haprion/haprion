@@ -448,15 +448,29 @@ per-cluster value the node side needs.
 
 There is **no hard limit on the number of clusters** in the engine, interface configuration or
 database schema. Two is the recommended starting shape - commonly one internal and one external
-trust zone - not a maximum. The interface has four muted cluster accents, but those are only
-visual markers: their stable hash repeats after four colours and does not limit how many clusters
-can be configured.
+trust zone - not a maximum.
 
-No numerical capacity ceiling is claimed. The poller currently visits every configured cluster
-and every source sequentially, so adding clusters lengthens a poll pass even though it remains
-valid. An installation growing beyond a small fleet should measure a complete pass against its
-configured poll interval and manager resources; that measured operating limit, not the four-colour
-cycle, is the relevant constraint.
+**It has been run with two clusters of two nodes each, and is built for up to about ten clusters
+and twenty nodes.** Nothing enforces that figure; it is where the manager's reads, which run one
+after another, stop being comfortable:
+
+- The poller reads cluster by cluster and node by node. At two clusters a pass takes about two
+  seconds, the status read dominating, against a default `interval_seconds` of 20. A node that is
+  switched off adds five seconds to every pass (the SSH connect timeout); one that connects and
+  then never answers adds up to sixty (the status read's own limit). Either delays every
+  cluster's reading, not only its own.
+- The traffic-log collector runs once a minute and fetches node by node - about a second for four
+  nodes, so a healthy fleet of a couple of hundred still fits. A node that does not answer costs it
+  ten to thirty seconds, so five or six at once make a run outlast its minute.
+- The worker runs one job at a time for the whole installation: a deploy or backup on one cluster
+  queues every other cluster's jobs behind it.
+
+An installation growing past that should time a complete poller pass and a collector run against
+their intervals before it adds more.
+
+Each cluster card carries a colour rule, one of six ([4.6](#46-accounts-and-signing-in)). With more
+than six clusters the colours are off and the name alone marks the card; that limits the colours,
+not the clusters.
 
 A release directory holds that subdirectory and, beside it, `MANIFEST.json` - the manager's own
 record of what each object in that release amounts to. It is written outside `node_path`

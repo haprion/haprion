@@ -93,17 +93,20 @@
   Where each cluster's traffic log goes and whether its metrics exporter
   listens (Fas 15, B209). A change is a version; deploying takes it to the nodes.
 #}
+{# The same badge as an active account on Users: something is set here. #}
+{% macro check() %}<span class="status-badge status-badge-healthy settings-active">Active</span>{% endmacro %}
 {% if cluster_settings %}
 <section class="cluster-card settings-card" id="logs-metrics">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Logs &amp; metrics</h3></div></div></header>
   <div class="table-scroll"><table class="node-table settings-cluster-table">
-    <thead><tr><th>Cluster</th><th>Traffic log</th><th>Metrics</th></tr></thead>
+    <thead><tr><th>Cluster</th><th>Traffic log</th><th>Metrics</th><th><span class="visually-hidden">Action</span></th></tr></thead>
     <tbody>
       {% for row in cluster_settings %}
       <tr{% if row.readable %} data-href="{{ row.href }}"{% endif %}>
         <td data-label="Cluster">{% if row.readable %}<a class="proxy-link" href="{{ row.href }}"><strong>{{ row.cluster }}</strong></a>{% else %}<strong>{{ row.cluster }}</strong>{% endif %}</td>
-        <td data-label="Traffic log" title="{{ row.logs }}">{{ row.logs }}</td>
-        <td data-label="Metrics" title="{{ row.metrics }}">{{ row.metrics }}</td>
+        <td data-label="Traffic log"{% if row.logs_title %} title="{{ row.logs_title }}"{% endif %}{% if not row.logs_set %} class="table-empty"{% endif %}>{% if row.logs_set %}{{ check() }}{% endif %}{{ row.logs }}</td>
+        <td data-label="Metrics"{% if row.metrics_title %} title="{{ row.metrics_title }}"{% endif %}{% if not row.metrics_set %} class="table-empty"{% endif %}>{% if row.metrics_set %}{{ check() }}{% endif %}{{ row.metrics }}</td>
+        <td data-label="">{% if row.readable %}<a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

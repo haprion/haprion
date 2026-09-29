@@ -33,9 +33,15 @@ class TheCard(QueueRouteTestCase):
             [view.cluster for view in views], ["service-demo", "edge-demo", "never-read"]
         )
         service, edge, never = views
-        self.assertEqual((service.logs, service.metrics), ("Not sent", "Off"))
-        self.assertEqual(edge.logs, "graylog 192.0.2.60:6514, loki [2001:db8::60]:6514 (TLS)")
-        self.assertEqual(edge.metrics, "Port 8405 for 192.0.2.0/24, 198.51.100.7/32")
+        self.assertEqual(
+            (service.logs, service.metrics, service.logs_set, service.metrics_set),
+            ("Not sent", "Off", False, False),
+        )
+        # The cell names the receivers; the addresses are the hover's.
+        self.assertEqual((edge.logs, edge.logs_set), ("graylog, loki (TLS)", True))
+        self.assertEqual(edge.logs_title, "graylog 192.0.2.60:6514, loki [2001:db8::60]:6514 (TLS)")
+        self.assertEqual((edge.metrics, edge.metrics_set), ("Port 8405 · 2 sources", True))
+        self.assertEqual(edge.metrics_title, "192.0.2.0/24, 198.51.100.7/32")
         self.assertEqual((never.readable, never.logs), (False, "Not read yet"))
 
 

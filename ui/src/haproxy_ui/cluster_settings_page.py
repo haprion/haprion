@@ -37,6 +37,15 @@ class ClusterSettingsView:
     readable: bool
     logs: str
     metrics: str
+    #
+    # Whether something is set, for the check mark; and the whole of it for the
+    # hover. The cell names the receivers only - four of them with addresses
+    # did not fit at 1280 px (measured 2026-09-29) - and counts the sources.
+    #
+    logs_set: bool = False
+    metrics_set: bool = False
+    logs_title: str = ""
+    metrics_title: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,24 +75,40 @@ def _endpoint(target: Mapping[str, Any]) -> str:
     return f"{shown}:{target.get('port', '')}"
 
 
-def _logs(result: Mapping[str, Any]) -> str:
+def _targets(result: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     targets = result.get("log_targets")
-    if not isinstance(targets, list) or not targets:
+    return [target for target in targets or [] if isinstance(target, Mapping)]
+
+
+def _tls(target: Mapping[str, Any]) -> str:
+    return " (TLS)" if target.get("tls") else ""
+
+
+def _logs(result: Mapping[str, Any]) -> str:
+    targets = _targets(result)
+    if not targets:
         return "Not sent"
+    return ", ".join(f"{target.get('name')}{_tls(target)}" for target in targets)
+
+
+def _logs_title(result: Mapping[str, Any]) -> str:
     return ", ".join(
-        f"{target.get('name')} {_endpoint(target)}{' (TLS)' if target.get('tls') else ''}"
-        for target in targets
-        if isinstance(target, Mapping)
+        f"{target.get('name')} {_endpoint(target)}{_tls(target)}" for target in _targets(result)
     )
+
+
+def _sources(result: Mapping[str, Any]) -> list[str]:
+    metrics = result.get("metrics")
+    sources = metrics.get("sources") if isinstance(metrics, Mapping) else None
+    return [str(source) for source in sources] if isinstance(sources, list) else []
 
 
 def _metrics(result: Mapping[str, Any]) -> str:
     metrics = result.get("metrics")
     if not isinstance(metrics, Mapping):
         return "Off"
-    sources = metrics.get("sources")
-    listed = ", ".join(str(source) for source in sources) if isinstance(sources, list) else ""
-    return f"Port {metrics.get('port')} for {listed}"
+    count = len(_sources(result))
+    return f"Port {metrics.get('port')} · {count} source{'' if count == 1 else 's'}"
 
 
 def card_views(clusters: Sequence[str], rows: Iterable[Any]) -> list[ClusterSettingsView]:
@@ -103,6 +128,11 @@ def card_views(clusters: Sequence[str], rows: Iterable[Any]) -> list[ClusterSett
                 readable=readable,
                 logs=_logs(result) if isinstance(result, Mapping) else "Not read yet",
                 metrics=_metrics(result) if isinstance(result, Mapping) else "",
+                logs_set=isinstance(result, Mapping) and bool(_targets(result)),
+                metrics_set=isinstance(result, Mapping)
+                and isinstance(result.get("metrics"), Mapping),
+                logs_title=_logs_title(result) if isinstance(result, Mapping) else "",
+                metrics_title=", ".join(_sources(result)) if isinstance(result, Mapping) else "",
             )
         )
     return views

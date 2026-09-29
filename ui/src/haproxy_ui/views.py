@@ -5370,6 +5370,7 @@ def build_router(config: Config) -> APIRouter:
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
                 "history": overview,
+                "versions_per_page": history.VERSIONS_PER_PAGE,
                 #
                 # What this cluster is busy with, read the same way the
                 # dashboard reads it. One job per cluster, so the buttons
@@ -5665,7 +5666,11 @@ def build_router(config: Config) -> APIRouter:
         elif operation == "revert":
             if not version.isdigit():
                 return PlainTextResponse("A version is required", status_code=400)
-            payload = {"version": int(version), "expected_commit": expected_commit}
+            payload = {
+                "version": int(version),
+                "expected_commit": expected_commit,
+                "requested_by": session.username,
+            }
         elif operation == "network_publish":
             # A changed default silently moves every object that did not name a
             # VIP.  The cached page states that count next to this confirmation;
@@ -5709,6 +5714,7 @@ def build_router(config: Config) -> APIRouter:
                 "network": document,
                 "expected_head": expected_head,
                 "comment": comment,
+                "requested_by": session.username,
             }
 
         try:
@@ -6873,6 +6879,8 @@ def _editor_submit(
         # published earlier no longer looks like work that is already finished.
         #
         "draft": {"id": str(saved.id), "revision": saved.revision},
+        # Who asked, for the version's `Requested-By` (B207).
+        "requested_by": session.username,
     }
     key = _publish_key(cluster, "objects_publish", payload)
     try:
@@ -7010,6 +7018,7 @@ def _removal_submit(
         "expected_head": state.commit,
         "comment": f"Remove {name}",
         "draft": {"id": str(saved.id), "revision": saved.revision},
+        "requested_by": session.username,
     }
     key = _publish_key(cluster, "objects_publish", payload)
     try:

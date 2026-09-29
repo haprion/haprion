@@ -39,6 +39,7 @@ from haproxy_mgmt.cli.network import run_network_helper
 from haproxy_mgmt.cli.objects import run_objects_helper
 from haproxy_mgmt.cli.status import run_status_helper
 from haproxy_mgmt.envelope import new_request_id
+from haproxy_mgmt.version_history import MAX_LIST_LIMIT
 
 from haproxy_ui import db, service
 from haproxy_ui.config import DEFAULT_CONFIG_PATH, Config
@@ -101,6 +102,16 @@ class Source:
     sample: Callable[..., int] | None = None
 
 
+def _list_every_version(cluster: str, request_id: str) -> Any:
+    """Every version up to the helper's ceiling, not the terminal's ten.
+
+    The Versions page pages through them in the browser (Fas 14 point 8), so a
+    version older than the tenth is on the page rather than only in git.
+    """
+
+    return run_list_helper(cluster, request_id, limit=MAX_LIST_LIMIT)
+
+
 def _list_every_backup(cluster: str, request_id: str) -> Any:
     """Every archive the manager keeps for this cluster, not the command line's default.
 
@@ -122,7 +133,7 @@ SOURCES: tuple[Source, ...] = (
         sample=db.record_metric_samples,
     ),
     Source("inventory", run_inventory_helper, db.record_cluster_inventory),
-    Source("list", run_list_helper, db.record_cluster_history),
+    Source("list", _list_every_version, db.record_cluster_history),
     Source("list_backups", _list_every_backup, db.record_cluster_backups, partial_ok=True),
     Source("cert_list", run_cert_list_helper, db.record_cluster_certificates),
     Source("network", run_network_helper, db.record_cluster_network),

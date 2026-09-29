@@ -535,12 +535,12 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .version-table { table-layout: fixed; }
 .version-table th:nth-child(1), .version-table td:nth-child(1) { width: 168px; }
 .version-table th:nth-child(2), .version-table td:nth-child(2) { width: 168px; }
-/* Stated, not inherited: .node-table gives the third column 120px, and with
-   every column fixed the browser shares the slack out proportionally instead
-   of giving it to the comment. Measured 2026-09-10 - the comment column was
-   297px wide in a 1500px table. */
-.version-table th:nth-child(3), .version-table td:nth-child(3) { width: auto; }
-.version-table th:nth-child(4), .version-table td:nth-child(4) { width: 150px; }
+/* Who asked for the version (B207); a long name is cut with the cell. */
+.version-table th:nth-child(3), .version-table td:nth-child(3) { width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Stated, not inherited: with every column fixed the browser shares the slack
+   out proportionally instead of giving it to the comment. Measured 2026-09-10 -
+   the comment column was 297px wide in a 1500px table. */
+.version-table th:nth-child(4), .version-table td:nth-child(4) { width: auto; }
 .version-table th:nth-child(5), .version-table td:nth-child(5) { width: 170px; }
 .version-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .version-table th { padding-top: 7px; padding-bottom: 7px; }
@@ -552,7 +552,6 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    most of the row; it is cut only where the cell itself ends. A cap of 460px
    used to cut it at the first few words with a metre of empty row beside it. */
 .version-comment { display: block; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
-.version-table code { color: var(--muted); font-size: 11px; }
 /* The published version has no button. Publishing it again is the repair of an
    interrupted publish - a real path, exercised on 2026-08-31 - but it is a
    maintenance action, and as a button beside nine identical ones it reads as

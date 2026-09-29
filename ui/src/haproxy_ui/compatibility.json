@@ -19,7 +19,7 @@
       "0041",
       "0042"
     ],
-    "engine_api": 2,
+    "engine_api": 3,
     "node_api": 1,
     "poller_helpers": [
       "haproxy-status-helper",

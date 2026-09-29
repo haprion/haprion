@@ -153,6 +153,41 @@ class TheCommandComesFromTheEngine(unittest.TestCase):
         self.assertEqual(parameters["version"], 12)
         self.assertEqual(parameters["expected_commit"], "a" * 40)
 
+    def test_who_asked_goes_to_every_helper_that_records_a_version(self) -> None:
+        #
+        # B207: the signed-in person, carried by the job and checked here the
+        # way the helper checks it, so a refusal comes before the lock.
+        #
+        for operation, payload in (
+            ("revert", {"version": 12, "expected_commit": "a" * 40}),
+            ("network_publish", {"network": "x", "expected_head": "a" * 40, "comment": "c"}),
+            (
+                "objects_publish",
+                {"objects": {"shop": "x"}, "expected_head": "a" * 40, "comment": "c"},
+            ),
+        ):
+            with self.subTest(operation=operation):
+                named = operations.prepare(
+                    operation=operation,
+                    cluster="alpha",
+                    request_id=REQUEST,
+                    payload={**payload, "requested_by": "Ada Admin"},
+                )
+                unnamed = operations.prepare(
+                    operation=operation, cluster="alpha", request_id=REQUEST, payload=payload
+                )
+                self.assertEqual(
+                    json.loads(named.request)["parameters"]["requested_by"], "Ada Admin"
+                )
+                self.assertNotIn("requested_by", json.loads(unnamed.request)["parameters"])
+                with self.assertRaises(operations.BadPayload):
+                    operations.prepare(
+                        operation=operation,
+                        cluster="alpha",
+                        request_id=REQUEST,
+                        payload={**payload, "requested_by": "ada\nRun-By: root"},
+                    )
+
     def test_a_network_publish_sends_the_engines_own_envelope(self) -> None:
         prepared = operations.prepare(
             operation="network_publish",

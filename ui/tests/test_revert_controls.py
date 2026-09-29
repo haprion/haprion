@@ -4,6 +4,7 @@ import unittest
 from dataclasses import replace
 from unittest import mock
 
+from haproxy_ui import auth
 from tests.test_certificates import reading as certificate_reading
 from tests.test_history import reading
 from tests.test_login import LoginTestCase, configuration
@@ -49,6 +50,42 @@ class RevertControlsTests(LoginTestCase):
         # waits in the queue cannot roll out one published after it.
         #
         self.assertIn('name="expected_version" value="12"', page.text)
+
+    def test_the_table_names_who_published_and_keeps_the_commit_as_a_title(self) -> None:
+        client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
+        self.sign_in(client)
+
+        page = client.get("/history").text
+
+        self.assertIn("<th>Published by</th>", page)
+        self.assertNotIn("<th>Commit</th>", page)
+        self.assertIn(f'title="{"a" * 40}">v12</strong>', page)
+
+    def test_a_revert_names_the_signed_in_person(self) -> None:
+        client = self.client(replace(configuration(), management_writes=True, clusters=("alpha",)))
+        self.sign_in(client)
+        queued: list[dict[str, object]] = []
+
+        def queue(_c: object, *, payload: dict[str, object], **_: object) -> object:
+            queued.append(dict(payload))
+            return mock.Mock(id=1, cluster="alpha", operation="revert", request_id=None)
+
+        with mock.patch("haproxy_ui.db.queue_job", side_effect=queue):
+            answer = client.post(
+                "/operations",
+                data={
+                    "csrf_token": auth.csrf_token(client.cookies[auth.SESSION_COOKIE]),
+                    "operation": "revert",
+                    "cluster": "alpha",
+                    "version": "11",
+                    "expected_commit": "b" * 40,
+                    "idempotency_key": "11111111-1111-4111-8111-111111111111",
+                },
+                follow_redirects=False,
+            )
+
+        self.assertEqual(answer.status_code, 303)
+        self.assertEqual(queued[0]["requested_by"], self.account.username)
 
     def test_read_only_and_reader_views_do_not_render_a_revert_control(self) -> None:
         client = self.client(replace(configuration(), clusters=("alpha",)))

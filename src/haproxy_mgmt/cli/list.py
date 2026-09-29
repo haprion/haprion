@@ -56,13 +56,17 @@ type ConfigPath = Callable[[str], Path]
 type Field = Callable[[str, str], str]
 
 
-def run_list_helper(cluster_id: str, request_id: str) -> subprocess.CompletedProcess[str]:
+def run_list_helper(
+    cluster_id: str, request_id: str, *, limit: int | None = None
+) -> subprocess.CompletedProcess[str]:
     """Ask the privileged helper for one cluster's version history.
 
     Not used by this command, which reads the repository directly because the
     person running it may. It exists here because the interface's poller may
     not, and because the request must be built by the code that owns the
     operation rather than a second time in the web tree.
+
+    `limit` is left out when not given, and the helper lists its ten.
     """
 
     request = {
@@ -70,7 +74,7 @@ def run_list_helper(cluster_id: str, request_id: str) -> subprocess.CompletedPro
         "operation": OPERATION,
         "cluster": cluster_id,
         "request_id": request_id,
-        "parameters": {},
+        "parameters": {} if limit is None else {"limit": limit},
     }
     return subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
         [SUDO, "-n", HELPER],

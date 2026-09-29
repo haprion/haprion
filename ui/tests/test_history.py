@@ -68,6 +68,33 @@ def overview(row: ClusterHistory, clusters: tuple[str, ...] = ("alpha",)):
     return build_history_overview(clusters, (row,), now=NOW, stale_after=timedelta(minutes=2))
 
 
+class VersionPagesTests(unittest.TestCase):
+    """Fas 14 point 8: every listed version, ten to a page, and who asked (B207)."""
+
+    def test_the_versions_are_numbered_into_pages_of_ten(self) -> None:
+        rows = [
+            {
+                "version": number,
+                "hash": f"{number:040d}",
+                "created_at": "2026-08-28T14:02:11+00:00",
+                "comment": f"Change {number}",
+                "current": number == 25,
+                "requested_by": "Ada Admin" if number > 20 else None,
+            }
+            for number in range(25, 0, -1)
+        ]
+        cluster = overview(reading(versions=rows, published=25)).clusters[0]
+
+        self.assertEqual(cluster.page_count, 3)
+        self.assertEqual([version.page for version in cluster.versions[9:12]], [0, 1, 1])
+        self.assertEqual(cluster.versions[-1].page, 2)
+        self.assertEqual(cluster.versions[0].requested_by, "Ada Admin")
+        self.assertEqual(cluster.versions[-1].requested_by, "—")
+
+    def test_a_short_history_is_one_page(self) -> None:
+        self.assertEqual(overview(reading()).clusters[0].page_count, 1)
+
+
 class PublishedStateTests(unittest.TestCase):
     def test_a_published_newest_version_reads_as_nothing_waiting(self) -> None:
         cluster = overview(reading()).clusters[0]
@@ -150,11 +177,10 @@ def read_in[T](zone: str, draw: Callable[[], T]) -> T:
 
 
 class RenderingTests(unittest.TestCase):
-    def test_versions_are_labelled_and_commits_shortened_for_reading(self) -> None:
+    def test_versions_are_labelled_and_keep_their_whole_commit(self) -> None:
         version = read_in("UTC", lambda: overview(reading()).clusters[0].versions[0])
 
         self.assertEqual(version.version, "v12")
-        self.assertEqual(version.commit, "a" * 12)
         self.assertEqual(version.expected_commit, "a" * 40)
         self.assertEqual(version.comment, "Add a maintenance backend")
         self.assertEqual(version.date, "2026-08-28 14:02")

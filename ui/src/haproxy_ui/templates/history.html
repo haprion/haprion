@@ -2,6 +2,7 @@
 {% block title %}Versions — HAProxy Manager{% endblock %}
 {% block content %}
 <script defer src="{{ url_for('static', path='/waiting.js') }}?v={{ asset_token }}"></script>
+<script defer src="{{ url_for('static', path='/versions.js') }}?v={{ asset_token }}"></script>
 <section class="page-heading">
   <div><h1>Versions</h1></div>
   <div class="heading-badges">{% if not management_writes %}<span class="mode-badge"><span class="status-dot status-healthy"></span>Read-only mode</span>{% endif %}{% if demo_fixture %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Synthetic dev data</span>{% elif production_snapshot %}<span class="mode-badge demo-badge"><span class="status-dot status-info"></span>Production snapshot{% if snapshot_age %} · taken {{ snapshot_age }}{% endif %}</span>{% endif %}</div>
@@ -21,12 +22,18 @@
     </header>
     {% if cluster.versions %}
     {% set running = in_flight.get(cluster.cluster) if in_flight else none %}
-    <div class="table-scroll"><table class="node-table version-table"><thead><tr><th>Version</th><th>Saved</th><th>Comment</th><th>Commit</th>{% if management_writes and role == 'admin' and cluster.configured %}<th>Action</th>{% endif %}</tr></thead><tbody>
+    <div data-version-list data-version-per-page="{{ versions_per_page }}" data-version-count="{{ cluster.versions | length }}">
+    <div class="table-scroll"><table class="node-table version-table"><thead><tr><th>Version</th><th>Saved</th><th>Published by</th><th>Comment</th>{% if management_writes and role == 'admin' and cluster.configured %}<th>Action</th>{% endif %}</tr></thead><tbody>
       {% for version in cluster.versions %}
-      <tr{% if version.published %} class="version-published"{% endif %}><td data-label="Version"><strong>{{ version.version }}</strong>{% if version.published %}<span class="published-badge">Published</span>{% endif %}</td><td data-label="Saved">{{ version.date }}</td><td data-label="Comment"><span class="version-comment">{{ version.comment }}</span></td><td data-label="Commit"><code>{{ version.commit }}</code></td>{% if management_writes and role == 'admin' and cluster.configured %}<td data-label="Action">{% if version.published %}<span class="version-current">Current</span>{% else %}{% if running %}<span class="table-empty" title="{{ running }} — one job per cluster runs at a time">—</span>{% else %}<form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="revert"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="return_to" value="history"><input type="hidden" name="version" value="{{ version.number }}"><input type="hidden" name="expected_commit" value="{{ version.expected_commit }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Publish this version</button></form>{% endif %}{% endif %}</td>{% endif %}</tr>
+      <tr data-version-page="{{ version.page }}"{% if version.published %} class="version-published"{% endif %}{% if version.page %} hidden{% endif %}><td data-label="Version"><strong{% if version.expected_commit %} title="{{ version.expected_commit }}"{% endif %}>{{ version.version }}</strong>{% if version.published %}<span class="published-badge">Published</span>{% endif %}</td><td data-label="Saved">{{ version.date }}</td><td data-label="Published by">{{ version.requested_by }}</td><td data-label="Comment"><span class="version-comment">{{ version.comment }}</span></td>{% if management_writes and role == 'admin' and cluster.configured %}<td data-label="Action">{% if version.published %}<span class="version-current">Current</span>{% else %}{% if running %}<span class="table-empty" title="{{ running }} — one job per cluster runs at a time">—</span>{% else %}<form method="post" action="/operations"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="revert"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="return_to" value="history"><input type="hidden" name="version" value="{{ version.number }}"><input type="hidden" name="expected_commit" value="{{ version.expected_commit }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><button class="secondary-button" type="submit">Publish this version</button></form>{% endif %}{% endif %}</td>{% endif %}</tr>
       {% endfor %}
     </tbody></table></div>
-    {% if cluster.truncated %}<p class="table-note">Showing the ten most recent saved versions.</p>{% endif %}
+    {% if cluster.page_count > 1 %}<nav class="log-pagination" aria-label="Version pages for {{ cluster.cluster }}">
+      <span data-version-page-range aria-live="polite">Versions 1–{{ versions_per_page }} of {{ cluster.versions | length }} · page 1 of {{ cluster.page_count }}</span>
+      <div><button class="secondary-button" type="button" data-version-page-previous disabled>Newer</button><button class="secondary-button" type="button" data-version-page-next>Older</button></div>
+    </nav>{% endif %}
+    </div>
+    {% if cluster.truncated %}<p class="table-note">Showing the {{ cluster.versions | length }} most recent saved versions.</p>{% endif %}
     {% if management_writes and role == 'admin' and cluster.configured %}
     <footer class="cluster-actions" aria-label="{{ cluster.cluster }} operations">
       <div><strong>Deploy</strong><span>Publishing records a version; deploying is what reaches the nodes.</span></div>

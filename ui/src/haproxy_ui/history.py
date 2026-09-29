@@ -25,17 +25,29 @@ from haproxy_ui.db import ClusterHistory
 
 type Tone = Literal["healthy", "warning", "critical", "unknown"]
 
+#
+# Versions per page. The poller lists up to the helper's ceiling and the page
+# arrives whole; the browser shows one page at a time, the way the archive
+# list on Node backups does (Fas 14 point 8).
+#
+VERSIONS_PER_PAGE = 10
+
 
 @dataclass(frozen=True, slots=True)
 class VersionView:
     number: int
     version: str
-    commit: str
     expected_commit: str
     date: str
     comment: str
     published: bool
     current: bool
+    #
+    # Who asked for the version, from its `Requested-By` trailer (B207); "—"
+    # for everything recorded before it.
+    #
+    requested_by: str = "—"
+    page: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +72,7 @@ class HistoryClusterView:
     # helper refuses to roll out a version this page did not show.
     #
     target_version: int | None = None
+    page_count: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,14 +115,15 @@ def _saved_at(value: Any) -> str:
     return metrics.shown(parsed).strftime("%Y-%m-%d %H:%M")
 
 
-def _version_view(value: Any, published_hash: str | None) -> VersionView | None:
+def _version_view(value: Any, published_hash: str | None, rank: int) -> VersionView | None:
     entry = _mapping(value)
     number = _integer(entry.get("version"))
     if number is None:
         return None
     #
-    # The commit is shown short, and only as an identifier an operator can match
-    # against a RELEASE stamp. Nothing is looked up with it here.
+    # The commit is not a column any more; it is the version number's title,
+    # for matching against a RELEASE stamp or `git log`. Nothing is looked up
+    # with it here.
     #
     #
     # Matched by hash, like the engine does: after a history reset an old number
@@ -119,15 +133,15 @@ def _version_view(value: Any, published_hash: str | None) -> VersionView | None:
     return VersionView(
         number=number,
         version=f"v{number}",
-        commit=commit[:12],
-        # The short hash is only display text. A revert request binds to the
-        # complete poller-supplied hash, so a truncated prefix can never become
-        # an ambiguous target just because it looked pleasant in the table.
+        # The complete poller-supplied hash: what a revert binds to, and the
+        # version number's title.
         expected_commit=commit,
         date=_saved_at(entry.get("created_at")),
         comment=_text(entry.get("comment"), "(no comment)"),
         published=bool(commit) and commit == published_hash,
         current=entry.get("current") is True,
+        requested_by=_text(entry.get("requested_by")),
+        page=rank // VERSIONS_PER_PAGE,
     )
 
 
@@ -184,7 +198,7 @@ def _state(
         return "Nothing published", "unknown", f"{_saved_count(total)}, none published"
     if unpublished is None:
         #
-        # The published release is older than the ten versions shown. Saying
+        # The published release is older than the versions listed. Saying
         # "0 waiting" here would be a guess, and it would be the reassuring one.
         #
         return (
@@ -222,7 +236,7 @@ def _cluster_view(
     parsed: list[VersionView] = []
     if isinstance(entries, list):
         for entry in entries:
-            version = _version_view(entry, published_hash)
+            version = _version_view(entry, published_hash, len(parsed))
             if version is not None:
                 parsed.append(version)
     versions = tuple(parsed)
@@ -257,6 +271,7 @@ def _cluster_view(
         target_version=published_version
         if published_version is not None and published_version > 0
         else None,
+        page_count=max(-(-len(versions) // VERSIONS_PER_PAGE), 1),
     )
 
 

@@ -53,6 +53,7 @@ from haproxy_mgmt.cli import (
 )
 from haproxy_mgmt.config import CERTIFICATE_ID, RECEIVER_FORMATS, RECEIVER_ID, RECEIVER_TRANSPORTS
 from haproxy_mgmt.proxy_model import NAME
+from haproxy_mgmt.version_history import UnfitName, trailer_name
 
 # The installation key's identifier as `dns_profile_keys.key_id_of` makes it.
 KEY_ID = re.compile(r"^[0-9a-f]{16}$")
@@ -739,6 +740,23 @@ def _certificate_operation(
     raise UnknownOperation(operation)
 
 
+def _requested_by(payload: Mapping[str, Any]) -> str | None:
+    """The person a version is recorded for (B207), checked as the helper will.
+
+    Optional: a job queued before the field existed names nobody, and the
+    helper then records the worker's own account. Refused here rather than by
+    the helper, whose refusal would come after the cluster's lock was taken.
+    """
+
+    named = payload.get("requested_by")
+    if named is None:
+        return None
+    try:
+        return trailer_name(named)
+    except UnfitName as exc:
+        raise BadPayload(f"requested_by {exc}") from exc
+
+
 def prepare(
     *,
     operation: str,
@@ -893,7 +911,7 @@ def prepare(
         # node. It should get a lifeline the same day, because everything above
         # stops being true at that point. Reviewed and decided 2026-08-31 as F4.
         #
-        _only(payload, "version", "expected_commit")
+        _only(payload, "version", "expected_commit", "requested_by")
         version = payload.get("version")
         commit = payload.get("expected_commit")
         #
@@ -908,12 +926,23 @@ def prepare(
         return Prepared(
             argv=(revert.SUDO, *SUDO_FLAGS, revert.HELPER),
             request=revert.build_request(
-                cluster, str(request_id), version=version, expected_commit=commit
+                cluster,
+                str(request_id),
+                version=version,
+                expected_commit=commit,
+                requested_by=_requested_by(payload),
             ),
         )
 
     if operation == "network_publish":
-        _only(payload, "network", "expected_head", "comment", "allow_certificate_mismatch")
+        _only(
+            payload,
+            "network",
+            "expected_head",
+            "comment",
+            "allow_certificate_mismatch",
+            "requested_by",
+        )
         network = payload.get("network")
         expected_head = payload.get("expected_head")
         comment = payload.get("comment")
@@ -943,11 +972,20 @@ def prepare(
                 expected_head=expected_head,
                 comment=comment,
                 allow_certificate_mismatch=override,
+                requested_by=_requested_by(payload),
             ),
         )
 
     if operation == "objects_publish":
-        _only(payload, "objects", "expected_head", "comment", "allow_certificate_mismatch", "draft")
+        _only(
+            payload,
+            "objects",
+            "expected_head",
+            "comment",
+            "allow_certificate_mismatch",
+            "draft",
+            "requested_by",
+        )
         #
         # `draft` is the interface's own bookkeeping: which draft row this
         # publish came from, so the row can be recognised as published
@@ -1006,6 +1044,7 @@ def prepare(
                 expected_head=expected_head,
                 comment=comment,
                 allow_certificate_mismatch=override,
+                requested_by=_requested_by(payload),
             ),
         )
 

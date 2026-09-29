@@ -230,7 +230,6 @@ class WhetherTheChangeReachedTheNodes(unittest.TestCase):
         return VersionView(
             number=number,
             version=f"v{number}",
-            commit=f"{number:040d}",
             expected_commit=f"{number:040d}",
             date="2026-09-02",
             comment="",

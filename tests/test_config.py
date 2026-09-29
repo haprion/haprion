@@ -220,6 +220,29 @@ class DeployIdentityTests(unittest.TestCase):
         self.assertEqual(policy.backup_identity.user, "svc-backup")
         self.assertEqual(policy.backup_identity.key, Path("/root/.ssh/id_ed25519_node_backup"))
 
+    def test_the_interface_account_is_optional_and_an_account_name(self) -> None:
+        #
+        # B207: the one caller whose `requested_by` a version records. Absent,
+        # every version names the account that ran the helper.
+        #
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self.assertIsNone(
+                load_policy(self.policy(root, None), require_secure=False).interface_account
+            )
+            for value, valid in (("svc-app", True), ("Has Spaces", False), ("", False), (7, False)):
+                with self.subTest(value=value):
+                    body = yaml.safe_load(self.policy(root, None).read_text(encoding="utf-8"))
+                    body["interface_account"] = value
+                    path = root / "runtime-policy.yaml"
+                    path.write_text(yaml.safe_dump(body), encoding="utf-8")
+                    if valid:
+                        policy = load_policy(path, require_secure=False)
+                        self.assertEqual(policy.interface_account, value)
+                    else:
+                        with self.assertRaises(ConfigError):
+                            load_policy(path, require_secure=False)
+
     def test_an_unknown_field_in_the_identity_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as raw, self.assertRaises(ConfigError):
             load_policy(

@@ -90,7 +90,7 @@ from haproxy_mgmt.version_history import (
     request_names,
     restore_worktree,
     version_commit,
-    with_request_trailer,
+    version_message,
 )
 
 #
@@ -257,8 +257,8 @@ def main(
     try:
         version = parse_version(request.parameters.get("version"))
         expected_commit = parse_expected_commit(request.parameters.get("expected_commit"))
-        request_names(request.parameters)
         policy = load_policy(policy_path, require_secure=require_secure)
+        names = request_names(request.parameters, interface_account=policy.interface_account)
         cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
             request.cluster
         )
@@ -283,6 +283,7 @@ def main(
         with hold(request.cluster, operation="revert", root=lock_root):
             return _revert(
                 request=request,
+                names=names,
                 cluster=cluster,
                 version=version,
                 expected_commit=expected_commit,
@@ -310,6 +311,7 @@ def main(
 def _revert(
     *,
     request: HelperRequest,
+    names: tuple[str, str],
     cluster: Cluster,
     version: int,
     expected_commit: str,
@@ -466,7 +468,7 @@ def _revert(
         branch=branch,
         tree=target_tree,
         parent=head,
-        message=_message(MESSAGE.format(version=version), request),
+        message=version_message(MESSAGE.format(version=version), request.request_id, names),
     )
     #
     # A hard reset, unlike publishing's index refresh: a revert changes what the
@@ -517,12 +519,3 @@ def _revert(
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-def _message(message: str, request: HelperRequest) -> str:
-    """The version's commit message, with who asked for it (B207)."""
-
-    requested_by, run_by = request_names(request.parameters)
-    return with_request_trailer(
-        message, request.request_id, requested_by=requested_by, run_by=run_by
-    )

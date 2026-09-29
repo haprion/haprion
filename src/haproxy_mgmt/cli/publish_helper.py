@@ -98,7 +98,7 @@ from haproxy_mgmt.reservations import (
     load_reservations,
     review_fragments,
 )
-from haproxy_mgmt.version_history import count_versions, request_names, with_request_trailer
+from haproxy_mgmt.version_history import count_versions, request_names, version_message
 
 #
 # Two names, deliberately. `OPERATION` is what the request must say to reach this
@@ -374,9 +374,9 @@ def main(
         files = parse_files(request.parameters.get("files"))
         expected_head = parse_expected_head(request.parameters.get("expected_head"))
         comment = parse_comment(request.parameters.get("comment"))
-        request_names(request.parameters)
 
         policy = load_policy(policy_path, require_secure=require_secure)
+        names = request_names(request.parameters, interface_account=policy.interface_account)
         cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
             request.cluster
         )
@@ -400,6 +400,7 @@ def main(
         with hold(request.cluster, operation="publish", root=lock_root):
             return _publish(
                 request=request,
+                names=names,
                 cluster=cluster,
                 files=files,
                 expected_head=expected_head,
@@ -428,6 +429,7 @@ def main(
 def _publish(
     *,
     request: HelperRequest,
+    names: tuple[str, str],
     cluster: Cluster,
     files: dict[str, bytes],
     expected_head: str,
@@ -586,7 +588,7 @@ def _publish(
         branch=branch,
         tree=snapshot.tree,
         parent=head,
-        message=_message(comment, request),
+        message=version_message(comment, request.request_id, names),
     )
     refresh_worktree_index(repo, commit)
 
@@ -637,12 +639,3 @@ def _publish(
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-def _message(message: str, request: HelperRequest) -> str:
-    """The version's commit message, with who asked for it (B207)."""
-
-    requested_by, run_by = request_names(request.parameters)
-    return with_request_trailer(
-        message, request.request_id, requested_by=requested_by, run_by=run_by
-    )

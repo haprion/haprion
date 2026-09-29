@@ -70,7 +70,7 @@ from haproxy_mgmt.version_history import (
     count_versions,
     request_names,
     restore_worktree,
-    with_request_trailer,
+    version_message,
 )
 
 OPERATION = "network_publish"
@@ -216,6 +216,7 @@ def _result(
 def _publish(
     *,
     request: HelperRequest,
+    names: tuple[str, str],
     cluster: Any,
     network: bytes,
     expected_head: str,
@@ -354,7 +355,7 @@ def _publish(
         branch=branch,
         tree=snapshot.tree,
         parent=head,
-        message=_message(f"{MESSAGE}: {comment}", request),
+        message=version_message(f"{MESSAGE}: {comment}", request.request_id, names),
     )
     # The worktree was verified clean immediately above.  Its managed document
     # is application-owned, so making it show the committed result cannot erase
@@ -437,8 +438,8 @@ def main(
         network, expected_head, comment, allow_certificate_mismatch = _parameters(
             request.parameters
         )
-        request_names(request.parameters)
         policy = load_policy(policy_path, require_secure=require_secure)
+        names = request_names(request.parameters, interface_account=policy.interface_account)
         cluster = load_runtime_config(policy, require_secure=require_secure).cluster(
             request.cluster
         )
@@ -455,6 +456,7 @@ def main(
         with hold(request.cluster, operation=OPERATION, root=lock_root):
             return _publish(
                 request=request,
+                names=names,
                 cluster=cluster,
                 network=network,
                 expected_head=expected_head,
@@ -494,12 +496,3 @@ def main(
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-def _message(message: str, request: HelperRequest) -> str:
-    """The version's commit message, with who asked for it (B207)."""
-
-    requested_by, run_by = request_names(request.parameters)
-    return with_request_trailer(
-        message, request.request_id, requested_by=requested_by, run_by=run_by
-    )

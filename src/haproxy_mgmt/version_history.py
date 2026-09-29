@@ -60,6 +60,11 @@ REQUEST_TRAILER = "Request-Id"
 # same account as `Run-By` when nobody names anyone else. The listing shows
 # the person; the proven account stays for whoever has to check the claim.
 #
+# A name is taken from the request only when the account sudo proves is the
+# interface's own worker, named in the runtime policy (2026-09-29). Anyone
+# else who may run a helper - an operator at the terminal - is recorded as
+# themselves whatever the request says, so the column can be trusted.
+#
 REQUESTED_BY_TRAILER = "Requested-By"
 RUN_BY_TRAILER = "Run-By"
 
@@ -284,18 +289,28 @@ def with_request_trailer(
 
 
 def requester(
-    parameters: Mapping[str, object], environ: Mapping[str, str] | None = None
+    parameters: Mapping[str, object],
+    environ: Mapping[str, str] | None = None,
+    *,
+    interface_account: str | None = None,
 ) -> tuple[str, str]:
     """(requested_by, run_by) for a version this helper records.
 
-    `requested_by` is the parameter of that name when the caller gives one - the
-    interface's worker names its signed-in user - and the proven account when
-    it does not. Raises UnfitName for a name that cannot stand in a trailer.
+    `requested_by` is the parameter of that name when the interface's worker -
+    `interface_account`, from the runtime policy - gives one for its signed-in
+    user, and the proven account otherwise: when nobody is named, when the
+    policy names no worker, and when someone else names somebody. Raises
+    UnfitName for a name that cannot stand in a trailer, whoever sent it.
     """
 
     run_by = caller_account(environ)
     named = parameters.get("requested_by")
-    return (run_by if named is None else trailer_name(named)), run_by
+    if named is None:
+        return run_by, run_by
+    person = trailer_name(named)
+    return (
+        person if interface_account is not None and run_by == interface_account else run_by
+    ), run_by
 
 
 def request_id_of(repo: Path, commit: str) -> str | None:
@@ -322,11 +337,21 @@ def request_id_of(repo: Path, commit: str) -> str | None:
 
 
 def request_names(
-    parameters: Mapping[str, object], environ: Mapping[str, str] | None = None
+    parameters: Mapping[str, object],
+    environ: Mapping[str, str] | None = None,
+    *,
+    interface_account: str | None = None,
 ) -> tuple[str, str]:
     """`requester` for a helper: a name that cannot stand is the caller's bad input."""
 
     try:
-        return requester(parameters, environ)
+        return requester(parameters, environ, interface_account=interface_account)
     except UnfitName as exc:
         raise HelperProtocolError(f"parameters.requested_by {exc}", exit_code=65) from exc
+
+
+def version_message(message: str, request_id: str, names: tuple[str, str]) -> str:
+    """A version's commit message: the request and who asked, from `request_names`."""
+
+    requested_by, run_by = names
+    return with_request_trailer(message, request_id, requested_by=requested_by, run_by=run_by)

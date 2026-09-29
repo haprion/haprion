@@ -153,6 +153,14 @@ class PathPolicy:
     acme: AcmePolicy | None = None
     ndes: NdesPolicy | None = None
 
+    #
+    # The web interface's worker account (B207, 2026-09-29): the one caller
+    # whose `requested_by` a version records as who published it. Anyone else
+    # is recorded as the account sudo proves. Optional; without it every
+    # version names the account that ran the helper.
+    #
+    interface_account: str | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class AcmePolicy:
@@ -925,6 +933,18 @@ USERNAME = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 TIMER_UNIT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.timer$")
 
 
+def _optional_account(data: Mapping[str, Any], key: str) -> str | None:
+    """An account name the installation may or may not have declared."""
+
+    raw = data.get(key)
+    if raw is None:
+        return None
+    name = _required_string(data, key, "runtime policy")
+    if not USERNAME.fullmatch(name):
+        raise ConfigError(f"runtime policy {key} is not a valid account name")
+    return name
+
+
 def _optional_timer(data: Mapping[str, Any], key: str) -> str | None:
     """A systemd timer unit the installation may or may not have declared.
 
@@ -1000,6 +1020,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             "receiver_root",
             "acme",
             "ndes",
+            "interface_account",
         },
         "runtime policy",
     )
@@ -1032,6 +1053,7 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
         receiver_root=_optional_root(data, "receiver_root"),
         acme=_acme_policy(data),
         ndes=_ndes_policy(data),
+        interface_account=_optional_account(data, "interface_account"),
     )
 
 

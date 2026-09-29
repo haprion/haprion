@@ -148,21 +148,31 @@ class ObjectPublicationTests(ObjectsPublishFixture):
 
     def test_the_version_names_who_asked_and_which_account_ran_it(self) -> None:
         #
-        # B207: the person the interface names, and the account sudo proves.
-        # At the terminal nobody is named, and the proven account is both.
+        # B207: the person the interface's worker names, and the account sudo
+        # proves. Anyone else - an operator at the terminal, or any caller when
+        # the policy names no worker - is recorded as themselves, whatever the
+        # request says.
         #
-        for named, expected in (("Ada Admin", "Ada Admin"), (None, "operator")):
-            with self.subTest(named=named), tempfile.TemporaryDirectory() as raw:
-                policy = self.runtime(Path(raw))
+        for worker, sudo_user, named, expected in (
+            ("svc-app", "svc-app", "Ada Admin", "Ada Admin"),
+            ("svc-app", "operator", "Ada Admin", "operator"),
+            (None, "svc-app", "Ada Admin", "svc-app"),
+            ("svc-app", "operator", None, "operator"),
+        ):
+            with (
+                self.subTest(worker=worker, sudo_user=sudo_user, named=named),
+                tempfile.TemporaryDirectory() as raw,
+            ):
+                policy = self.runtime(Path(raw), interface_account=worker)
                 self.seed()
                 extra = {} if named is None else {"requested_by": named}
-                with mock.patch.dict(os.environ, {"SUDO_USER": "operator"}):
+                with mock.patch.dict(os.environ, {"SUDO_USER": sudo_user}):
                     code, _document, err = self.run_publish(policy, self.request(**extra))
 
                 self.assertEqual((code, err), (0, ""))
                 lines = git(self.repo, "log", "-1", "--format=%B").splitlines()
                 self.assertIn(f"Requested-By: {expected}", lines)
-                self.assertIn("Run-By: operator", lines)
+                self.assertIn(f"Run-By: {sudo_user}", lines)
                 self.assertEqual(recent_versions(self.repo)[0].requested_by, expected)
 
     def test_a_name_that_could_forge_a_trailer_is_refused_before_anything_is_written(

@@ -39,8 +39,11 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 The four operations that record a version (`publish`, `revert`, `network_publish`,
 `objects_publish`) take an optional `requested_by`: the person a caller acts for, at most 64
 printable characters. The commit carries it as a `Requested-By` trailer, beside `Run-By` - the
-account sudo ran the helper as, which the helper can prove. Without the parameter both name that
-account. A name that is not printable is `bad_input`, never cleaned.
+account sudo ran the helper as, which the helper can prove. The name is recorded only when that
+account is the runtime policy's `interface_account`, the web interface's worker; from any other
+caller, and when the policy names no worker, both trailers name the proven account. Without the
+parameter both name that account too. A name that is not printable is `bad_input` whoever sends it,
+never cleaned.
 
 `blocked` means that no mutation started. `failed` means the request failed or a started operation
 could not verify any successful target state. `partial` means at least one target was verified but

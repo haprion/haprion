@@ -36,3 +36,9 @@ backup_identity:
 # acme:
 #   dns_cloudflare_credentials: /etc/letsencrypt/cloudflare/example.ini
 #   webroot: /var/www/acme
+
+# The web interface's worker account. A version it publishes records the
+# signed-in person it names as who published it; any other caller of a helper
+# is recorded as the account sudo proves, whatever its request says. Leave it
+# out and every version names the account that ran the helper.
+# interface_account: svc-app

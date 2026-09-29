@@ -44,6 +44,7 @@ from haproxy_mgmt.cli import (
     cert_request_helper,
     cert_scep_helper,
     cert_target_helper,
+    cluster_settings_publish,
     deploy,
     managed_network_publish,
     managed_objects_publish,
@@ -972,6 +973,33 @@ def prepare(
                 expected_head=expected_head,
                 comment=comment,
                 allow_certificate_mismatch=override,
+                requested_by=_requested_by(payload),
+            ),
+        )
+
+    if operation == "cluster_settings_publish":
+        _only(payload, "settings", "expected_head", "comment", "requested_by")
+        settings = payload.get("settings")
+        expected_head = payload.get("expected_head")
+        comment = payload.get("comment")
+        if not isinstance(settings, str) or not settings:
+            raise BadPayload("settings must be a non-empty document")
+        if not isinstance(expected_head, str) or not expected_head:
+            raise BadPayload("expected_head must be a commit id")
+        if not isinstance(comment, str) or not comment:
+            raise BadPayload("comment must be a non-empty string")
+        return Prepared(
+            argv=(
+                cluster_settings_publish.SUDO,
+                *SUDO_FLAGS,
+                cluster_settings_publish.HELPER,
+            ),
+            request=cluster_settings_publish.build_request(
+                cluster,
+                str(request_id),
+                settings=settings,
+                expected_head=expected_head,
+                comment=comment,
                 requested_by=_requested_by(payload),
             ),
         )

@@ -20,6 +20,7 @@ from haproxy_ui.db import (
     ClusterInventory,
     ClusterNetwork,
     ClusterObjects,
+    ClusterSettingsRow,
     ClusterStatus,
 )
 
@@ -532,6 +533,59 @@ def backup_rows(now: datetime | None = None) -> tuple[ClusterBackups, ...]:
                         "error": None,
                     },
                 ],
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+    )
+
+
+def settings_rows(now: datetime | None = None) -> tuple[ClusterSettingsRow, ...]:
+    """One cluster that sends its log and exposes metrics, and one that does neither."""
+
+    observed = (now or datetime.now(UTC)) - timedelta(seconds=18)
+    return (
+        ClusterSettingsRow(
+            cluster="edge-demo",
+            observed_at=observed,
+            outcome="done",
+            result={
+                "cluster": "edge-demo",
+                "head": "a" * 40,
+                "stored": True,
+                "log_targets": [
+                    {
+                        "name": "graylog",
+                        "address": "192.0.2.60",
+                        "port": 6514,
+                        "buffer_kib": 4096,
+                        "tls": False,
+                    },
+                    {
+                        "name": "loki",
+                        "address": "2001:db8::60",
+                        "port": 6514,
+                        "buffer_kib": 4096,
+                        "tls": True,
+                    },
+                ],
+                "metrics": {"port": 8405, "sources": ["192.0.2.0/24", "198.51.100.7/32"]},
+            },
+            warnings=[],
+            error=None,
+            poll_error=None,
+        ),
+        ClusterSettingsRow(
+            cluster="service-demo",
+            observed_at=observed,
+            outcome="done",
+            result={
+                "cluster": "service-demo",
+                "head": "b" * 40,
+                "stored": False,
+                "log_targets": [],
+                "metrics": None,
             },
             warnings=[],
             error=None,

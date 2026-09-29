@@ -38,6 +38,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Resp
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from haproxy_mgmt import backup_retention, backup_schedule, proxy_model
+from haproxy_mgmt import cluster_settings as cluster_settings_module
 from haproxy_mgmt.config import CERTIFICATE_ID
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haproxy_mgmt.proxy_model import (
@@ -62,6 +63,7 @@ from haproxy_ui import (
     certificate_retarget,
     certificates,
     cluster_identity,
+    cluster_settings_page,
     dashboard,
     db,
     demo,
@@ -359,6 +361,15 @@ NETWORK_SOURCE = Source(
 # every backend address the cluster talks to, which no other source in the
 # snapshot exposes. Dev exercises this page against the fixture instead.
 #
+#
+# The cluster's own settings (Fas 15). A production snapshot carries none: it
+# is for reading production's shape in dev, and these are edited in place.
+#
+SETTINGS_SOURCE = Source(
+    demo.settings_rows,
+    lambda taken: (),
+    lambda connection: db.cluster_settings(connection),
+)
 OBJECTS_SOURCE = Source(
     demo.object_rows,
     lambda taken: (),
@@ -3128,6 +3139,9 @@ def build_router(config: Config) -> APIRouter:
                 # (B197): a change to it is a change to who can be admin.
                 "sso": oidc_web.summary(provider),
                 "sso_on": provider is not None and provider.enabled,
+                "cluster_settings": cluster_settings_page.card_views(
+                    *read_source(request, config, SETTINGS_SOURCE)[:2]
+                ),
                 "features": [
                     (
                         feature,
@@ -3394,6 +3408,174 @@ def build_router(config: Config) -> APIRouter:
             },
             status_code=status_code,
         )
+
+    # - Settings -> Logs & metrics (Fas 15, B209) ---------------------------
+
+    def _cluster_settings_page(
+        request: Request,
+        session: AuthenticatedSession,
+        cluster: str,
+        *,
+        head: str,
+        form: cluster_settings_page.SettingsForm,
+        problem: str = "",
+        status_code: int = 200,
+    ) -> Response:
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings-cluster.html",
+            {
+                **_users_context(request, session),
+                "cluster": cluster,
+                "accent": cluster_identity.accent_index(cluster),
+                "head": head,
+                "form": form,
+                "problem": problem,
+            },
+            status_code=status_code,
+        )
+
+    def _settings_reading(request: Request, cluster: str) -> Any:
+        """This cluster's cached reading, or None when it is not listed or not read."""
+
+        clusters, rows, _captured = read_source(request, config, SETTINGS_SOURCE)
+        if cluster not in clusters:
+            return None
+        return next((row for row in rows if row.cluster == cluster and row.outcome == "done"), None)
+
+    @router.get("/settings/clusters/{cluster}", response_class=HTMLResponse)
+    def cluster_settings_edit(request: Request, cluster: str) -> Response:
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        row = _settings_reading(request, cluster)
+        if row is None:
+            return PlainTextResponse("Not found", status_code=404)
+        return _cluster_settings_page(
+            request,
+            gate,
+            cluster,
+            head=str(row.result.get("head", "")),
+            form=cluster_settings_page.form_from_result(row.result),
+        )
+
+    @router.post("/settings/clusters/{cluster}", response_class=HTMLResponse)
+    def cluster_settings_save(
+        request: Request,
+        cluster: str,
+        target_name: Sequence[str] = Form(default=()),
+        target_address: Sequence[str] = Form(default=()),
+        target_port: Sequence[str] = Form(default=()),
+        target_buffer: Sequence[str] = Form(default=()),
+        target_tls: Sequence[str] = Form(default=()),
+        metrics_on: str = Form(default="", max_length=4),
+        metrics_port: str = Form(default="", max_length=8),
+        metrics_sources: str = Form(default="", max_length=2048),
+        expected_head: str = Form(default="", max_length=40),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        if _settings_reading(request, cluster) is None:
+            return PlainTextResponse("Not found", status_code=404)
+        rows = max(len(target_name), len(target_address), len(target_port))
+        if rows > cluster_settings_page.MAX_TARGETS:
+            return PlainTextResponse("Too many log targets", status_code=400)
+
+        def field(values: Sequence[str], index: int) -> str:
+            # Bounded here rather than by the form parser, which cannot bound
+            # the members of a repeated field.
+            return values[index][:64] if index < len(values) else ""
+
+        form = cluster_settings_page.SettingsForm(
+            targets=tuple(
+                cluster_settings_page.TargetRow(
+                    name=field(target_name, index),
+                    address=field(target_address, index),
+                    port=field(target_port, index),
+                    buffer_kib=field(target_buffer, index),
+                    tls=field(target_tls, index) == "yes",
+                )
+                for index in range(cluster_settings_page.MAX_TARGETS)
+            ),
+            metrics_on=metrics_on == "on",
+            metrics_port=metrics_port,
+            metrics_sources=metrics_sources,
+        )
+        try:
+            settings = cluster_settings_page.settings_from_form(form)
+        except cluster_settings_page.FormProblem as problem:
+            return _cluster_settings_page(
+                request,
+                gate,
+                cluster,
+                head=expected_head,
+                form=form,
+                problem=str(problem),
+                status_code=400,
+            )
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        #
+        # The document is built here, from named fields, and in the engine's
+        # canonical form; the helper parses it again and is the authority.
+        #
+        payload = {
+            "settings": cluster_settings_module.dump_document(settings).decode("utf-8"),
+            "expected_head": expected_head,
+            "comment": cluster_settings_page.comment_for(settings),
+            "requested_by": gate.username,
+        }
+        try:
+            operations.prepare(
+                operation="cluster_settings_publish",
+                cluster=cluster,
+                request_id=uuid4(),
+                payload=payload,
+            )
+        except operations.BadPayload:
+            return PlainTextResponse("Invalid operation parameters", status_code=400)
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="cluster_settings_publish",
+                    cluster=cluster,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.ClusterBusy:
+                connection.rollback()
+                return _cluster_settings_page(
+                    request,
+                    gate,
+                    cluster,
+                    head=expected_head,
+                    form=form,
+                    problem="A job is already running for this cluster. Try again when it "
+                    "has finished.",
+                    status_code=409,
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="queue_job",
+                cluster=cluster,
+                request_id=job.request_id,
+                detail={"operation": "cluster_settings_publish", "job": job.id},
+            )
+            connection.commit()
+        return RedirectResponse("/settings#logs-metrics", status_code=303)
 
     @router.get("/settings/new-user", response_class=HTMLResponse)
     def new_user_page(request: Request) -> Response:

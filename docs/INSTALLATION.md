@@ -3337,8 +3337,11 @@ metrics:
     - 192.0.2.0/24           # who may scrape; everyone else gets 403
 ```
 
-Read and set it at the terminal - `--set` publishes through the same privileged
-helper the interface uses, against the version it has just read, so a change
+An admin edits it under **Settings → Logs & metrics**, one row per cluster and a
+page for each (installations with `management_writes` on); saving publishes a
+version, and deploying it is what reaches the nodes. Or read and set it at the
+terminal - `--set` publishes through the same privileged helper the interface
+uses, against the version it has just read, so a change
 somebody else published in between is refused rather than overwritten:
 
 ```bash

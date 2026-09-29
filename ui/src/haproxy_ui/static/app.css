@@ -476,6 +476,24 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .users-table th:nth-child(3), .users-table td:nth-child(3) { width: 120px; }
 .users-table th:nth-child(4), .users-table td:nth-child(4) { width: 100px; }
 .users-table th:nth-child(5), .users-table td:nth-child(5) { width: 170px; }
+/* Logs & metrics (Fas 15): the cluster narrow, the two settings sharing the rest; a long value ends in an ellipsis with the whole of it on hover. */
+.settings-cluster-table { table-layout: fixed; }
+.settings-cluster-table th:nth-child(1), .settings-cluster-table td:nth-child(1) { width: 200px; }
+.settings-cluster-table th:nth-child(3), .settings-cluster-table td:nth-child(3) { width: 38%; }
+.settings-cluster-table td { overflow: hidden; text-overflow: ellipsis; }
+/* A cluster's log targets: the address takes what the four short fields leave. Table layout only - as cards each field has the row. */
+@media (min-width: 681px) {
+  .log-target-table { table-layout: fixed; }
+  .log-target-table th:nth-child(1), .log-target-table td:nth-child(1) { width: 180px; }
+  .log-target-table th:nth-child(2), .log-target-table td:nth-child(2) { width: auto; }
+  .log-target-table th:nth-child(3), .log-target-table td:nth-child(3) { width: 96px; }
+  .log-target-table th:nth-child(4), .log-target-table td:nth-child(4) { width: 116px; }
+  .log-target-table th:nth-child(5), .log-target-table td:nth-child(5) { width: 92px; }
+}
+@media (max-width: 680px) {
+  /* :nth-child(n) to outweigh the reading tables' `.node-table td:nth-child(k)` widths. */
+  .log-target-table td:nth-child(n) { width: 100%; grid-column: 1 / -1; }
+}
 .users-table td:first-child strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The provider sign-in goes through, beside the buttons that change it (B197). */
 .users-sso { margin-right: 4px; color: var(--text-secondary); font-size: 12px; }

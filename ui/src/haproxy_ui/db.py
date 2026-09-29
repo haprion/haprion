@@ -145,6 +145,19 @@ class ClusterCertificates:
 
 
 @dataclass(frozen=True, slots=True)
+class ClusterSettingsRow:
+    """The last settings reading - log targets and metrics - for one cluster (Fas 15)."""
+
+    cluster: str
+    observed_at: datetime
+    outcome: str
+    result: dict[str, Any]
+    warnings: list[Any]
+    error: dict[str, Any] | None
+    poll_error: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ClusterNetwork:
     """The last network description the poller could read for one cluster."""
 
@@ -1656,6 +1669,51 @@ def cluster_networks(connection: Connection[Any]) -> list[ClusterNetwork]:
         cursor.execute(
             "select cluster, observed_at, outcome, result, warnings, error, poll_error "
             "  from cluster_network "
+            " order by observed_at asc"
+        )
+        return cursor.fetchall()
+
+
+def record_cluster_settings(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    outcome: str,
+    result: Mapping[str, Any],
+    warnings: Any = None,
+    error: Mapping[str, Any] | None = None,
+    poll_error: str | None = None,
+) -> None:
+    """Replace one cluster's cached settings with the newest helper answer."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into cluster_settings (cluster, outcome, result, warnings, error, poll_error) "
+            "values (%(cluster)s, %(outcome)s, %(result)s, %(warnings)s, %(error)s, %(poll)s) "
+            "on conflict (cluster) do update set "
+            "    outcome = excluded.outcome, "
+            "    result = excluded.result, "
+            "    warnings = excluded.warnings, "
+            "    error = excluded.error, "
+            "    poll_error = excluded.poll_error",
+            {
+                "cluster": cluster,
+                "outcome": outcome,
+                "result": Jsonb(dict(result)),
+                "warnings": Jsonb(list(warnings or [])),
+                "error": None if error is None else Jsonb(dict(error)),
+                "poll": poll_error,
+            },
+        )
+
+
+def cluster_settings(connection: Connection[Any]) -> list[ClusterSettingsRow]:
+    """Every cluster's newest settings reading, with the stalest one first."""
+
+    with connection.cursor(row_factory=class_row(ClusterSettingsRow)) as cursor:
+        cursor.execute(
+            "select cluster, observed_at, outcome, result, warnings, error, poll_error "
+            "  from cluster_settings "
             " order by observed_at asc"
         )
         return cursor.fetchall()

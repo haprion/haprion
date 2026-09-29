@@ -1,0 +1,52 @@
+{% extends "layout.html" %}
+{% block title %}Logs & metrics — {{ cluster }} — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  One cluster's log targets and metrics exporter (Fas 15, B209). Saving
+  publishes a version; deploying it is what reaches the nodes. A receiver is an
+  IP address: a name that fails to resolve at a reload would fail the deploy.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Logs &amp; metrics — {{ cluster }}</h1><p class="page-lede"><a href="/settings#logs-metrics">Settings</a></p></div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+<form method="post" action="/settings/clusters/{{ cluster }}" class="preview-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="expected_head" value="{{ head }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <section class="cluster-card {{ accent | accent_class }}">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Traffic log</h3></div></div></header>
+    <div class="table-scroll"><table class="node-table editor-table log-target-table">
+      <thead><tr><th>Name</th><th>IP address</th><th>Port</th><th>Buffer (KiB)</th><th>TLS</th></tr></thead>
+      <tbody>
+        {% for target in form.targets %}
+        <tr>
+          <td data-label="Name"><input name="target_name" value="{{ target.name }}" maxlength="24" pattern="[a-z][a-z0-9-]*" spellcheck="false" aria-label="Name of log target {{ loop.index }}"></td>
+          <td data-label="IP address"><input name="target_address" value="{{ target.address }}" maxlength="45" spellcheck="false" aria-label="IP address of log target {{ loop.index }}"></td>
+          <td data-label="Port"><input name="target_port" value="{{ target.port }}" inputmode="numeric" maxlength="5" aria-label="Port of log target {{ loop.index }}"></td>
+          <td data-label="Buffer (KiB)"><input name="target_buffer" value="{{ target.buffer_kib }}" inputmode="numeric" maxlength="5" placeholder="4096" aria-label="Buffer of log target {{ loop.index }}"></td>
+          <td data-label="TLS"><select name="target_tls" aria-label="TLS for log target {{ loop.index }}"><option value="no"{% if not target.tls %} selected{% endif %}>No</option><option value="yes"{% if target.tls %} selected{% endif %}>Yes</option></select></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+  </section>
+  <section class="cluster-card {{ accent | accent_class }}">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Metrics</h3></div></div></header>
+    <div class="form-checks">
+      <label class="check"><input type="checkbox" name="metrics_on" value="on"{% if form.metrics_on %} checked{% endif %}> <span>Prometheus exporter</span></label>
+    </div>
+    <div class="form-grid">
+      <label><span class="field-title">Port</span><input name="metrics_port" value="{{ form.metrics_port }}" inputmode="numeric" maxlength="5" placeholder="8405"></label>
+      <label><span class="field-title">Allowed sources</span><textarea name="metrics_sources" rows="4" spellcheck="false" placeholder="One address or network per line">{{ form.metrics_sources }}</textarea></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings#logs-metrics">Cancel</a><button type="submit" class="secondary-button deploy-button">Publish</button></div>
+    </div>
+  </section>
+</form>
+{% endblock %}

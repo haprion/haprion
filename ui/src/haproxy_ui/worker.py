@@ -106,6 +106,7 @@ _OPERATION_OUTCOMES = {
     "cert_deploy": frozenset({"done", "partial", "failed", "blocked"}),
     "revert": frozenset({"done", "failed", "blocked"}),
     "network_publish": frozenset({"done", "failed", "blocked"}),
+    "cluster_settings_publish": frozenset({"done", "failed", "blocked"}),
     "objects_publish": frozenset({"done", "failed", "blocked"}),
     #
     # `cert_publish` and `cert_target` can end `partial`, and the reason is one

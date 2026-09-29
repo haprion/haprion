@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from haproxy_mgmt.cli.cert_list import run_cert_list_helper
+from haproxy_mgmt.cli.cluster_settings import run_settings_helper
 from haproxy_mgmt.cli.inventory import run_inventory_helper
 from haproxy_mgmt.cli.list import run_list_helper
 from haproxy_mgmt.cli.list_backups import run_list_backups_helper
@@ -137,6 +138,7 @@ SOURCES: tuple[Source, ...] = (
     Source("list_backups", _list_every_backup, db.record_cluster_backups, partial_ok=True),
     Source("cert_list", run_cert_list_helper, db.record_cluster_certificates),
     Source("network", run_network_helper, db.record_cluster_network),
+    Source("cluster_settings", run_settings_helper, db.record_cluster_settings),
     #
     # The objects as they are written, which the inventory cannot answer for:
     # it parses published configuration, and an edit is made against the source

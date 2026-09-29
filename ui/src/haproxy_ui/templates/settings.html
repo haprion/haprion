@@ -90,6 +90,27 @@
   </table></div>
 </section>
 {#
+  Where each cluster's traffic log goes and whether its metrics exporter
+  listens (Fas 15, B209). A change is a version; deploying takes it to the nodes.
+#}
+{% if cluster_settings %}
+<section class="cluster-card settings-card" id="logs-metrics">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Logs &amp; metrics</h3></div></div></header>
+  <div class="table-scroll"><table class="node-table settings-cluster-table">
+    <thead><tr><th>Cluster</th><th>Traffic log</th><th>Metrics</th></tr></thead>
+    <tbody>
+      {% for row in cluster_settings %}
+      <tr{% if row.readable %} data-href="{{ row.href }}"{% endif %}>
+        <td data-label="Cluster">{% if row.readable %}<a class="proxy-link" href="{{ row.href }}"><strong>{{ row.cluster }}</strong></a>{% else %}<strong>{{ row.cluster }}</strong>{% endif %}</td>
+        <td data-label="Traffic log" title="{{ row.logs }}">{{ row.logs }}</td>
+        <td data-label="Metrics" title="{{ row.metrics }}">{{ row.metrics }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
+{#
   What this installation offers (B193). Off hides a feature; node backups off
   also stops the clusters' timers, so that one asks first on its own page.
 #}

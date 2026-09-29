@@ -120,6 +120,7 @@ class LoginTestCase(unittest.TestCase):
             mock.patch("haproxy_ui.db.cluster_certificates", return_value=[]),
             mock.patch("haproxy_ui.db.cluster_backups", return_value=[]),
             mock.patch("haproxy_ui.db.cluster_networks", return_value=[]),
+            mock.patch("haproxy_ui.db.cluster_settings", return_value=[]),
             mock.patch("haproxy_ui.db.cluster_objects", return_value=[]),
             #
             # The listing reads drafts now, so every page that renders it

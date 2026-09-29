@@ -263,7 +263,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0042",))
+            self.assertEqual(cursor.fetchone(), ("0043",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -290,6 +290,30 @@ class ARealDatabase(unittest.TestCase):
                 cursor.execute(
                     "insert into cluster_status (cluster, outcome) values ('alpha', 'done')"
                 )
+
+    def test_the_poller_records_cluster_settings_and_web_only_reads_them(self) -> None:
+        # Fas 15: the cache the Settings card reads, written only by the poller.
+        result = {
+            "cluster": "alpha",
+            "head": "a" * 40,
+            "stored": False,
+            "log_targets": [],
+            "metrics": None,
+        }
+        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+            db.record_cluster_settings(connection, cluster="alpha", outcome="done", result=result)
+            db.record_cluster_settings(connection, cluster="alpha", outcome="done", result=result)
+            connection.commit()
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            (row,) = db.cluster_settings(connection)
+            self.assertEqual((row.cluster, row.result), ("alpha", result))
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                db.record_cluster_settings(
+                    connection, cluster="beta", outcome="done", result=result
+                )
+        with self.connect() as connection:
+            connection.execute("delete from cluster_settings")
+            connection.commit()
 
     def test_worker_can_read_jobs_but_not_accounts(self) -> None:
         with (

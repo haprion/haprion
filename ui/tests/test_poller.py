@@ -213,16 +213,25 @@ class Passes(unittest.TestCase):
         #
         self.assertEqual(
             [source.operation for source in poller.SOURCES],
-            ["status", "inventory", "list", "list_backups", "cert_list", "network", "objects"],
+            [
+                "status",
+                "inventory",
+                "list",
+                "list_backups",
+                "cert_list",
+                "network",
+                "cluster_settings",
+                "objects",
+            ],
         )
         #
         # Partial is allowed only where the read has more than one place to
         # fail: status reaches two nodes, and a backup listing reads one
-        # directory per node. The other five are each one read of one place.
+        # directory per node. The other six are each one read of one place.
         #
         self.assertEqual(
             [source.partial_ok for source in poller.SOURCES],
-            [True, False, False, True, False, False, False],
+            [True, False, False, True, False, False, False, False],
         )
 
     def test_the_backup_source_asks_for_every_retained_archive(self) -> None:

@@ -36,7 +36,7 @@ from typing import Any
 
 import psycopg
 
-from haproxy_ui import auth
+from haproxy_ui import auth, users
 
 ADMIN_CONFIG_DIRECTORY = Path("/etc/haproxy-manager")
 ROLES = ("admin", "reader")
@@ -192,6 +192,9 @@ def _insert_local(
 
 
 def command_add(environment: Environment, args: argparse.Namespace) -> int:
+    problem = users.name_problem(args.username)
+    if problem is not None:
+        raise AdminError(problem)
     password = read_new_password()
     break_glass = not args.no_break_glass
     with connect(environment) as connection:

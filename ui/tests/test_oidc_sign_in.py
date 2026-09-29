@@ -276,6 +276,16 @@ class SigningInThroughTheProvider(LoginTestCase):
         self.assertIn("An account named operator already exists here.", response.text)
         self.assertEqual((self.created, self.bound), ([], []))
 
+    def test_a_name_a_version_could_not_record_never_becomes_an_account(self) -> None:
+        # Review 2026-09-29 F1: the sign-in says so, instead of every publish
+        # failing later with a sentence that does not name the cause.
+        self.exchanged["username"] = "ada\u00a0admin"
+        client = self.client()
+        response = self.back(client, self.go(client))
+        self.assertEqual(response.status_code, 401)
+        self.assertIn("The name the provider sent cannot be an account name here.", response.text)
+        self.assertEqual((self.created, self.bound, self.sessions), ([], [], {}))
+
     def test_an_account_from_another_issuer_is_named_as_that(self) -> None:
         # The issuer changed - another provider, or the application renamed -
         # since this account first signed in (review 2026-09-28 F5).

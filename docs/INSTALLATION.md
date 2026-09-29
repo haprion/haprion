@@ -348,6 +348,8 @@ backup_identity:
   user: "svc-backup"
   key: "/root/.ssh/id_ed25519_node_backup"
 backup_timer: haproxy-state-backup.timer
+
+interface_account: "svc-app"
 ```
 
 `certificate_root` is also what a publish reads to check that each site's certificate answers for
@@ -393,6 +395,13 @@ request (`Mon,Wed,Fri *-*-* 05:00:00`, `*-*-07 05:00:00`), writes them as a drop
 timer instance, and reads the effective state back before reporting success. A calendar edited
 by hand on the manager is shown verbatim on the page and is not translated into the form's
 shapes. The terminal break-glass path remains `sudo haproxy-state-backup [-c <cluster>]`.
+
+`interface_account` names the web interface's worker account. It is the one caller a version
+believes about who published it: a publish or revert from the browser records the signed-in person
+as *Published by*, beside the worker account that actually ran it. Anyone else who may run those
+helpers - an operator at the terminal - is recorded as the account sudo proves, whatever the request
+says, so the column can be trusted. Leave it out and every version names the account that ran the
+helper, the worker's own name for everything done in the browser.
 
 `status_identity` is the account `haproxy-status` becomes to read a node, and `haproxy-deploy`
 uses it too: a rollout reads the pair before and after every step, and it reads with the identity
@@ -2668,6 +2677,11 @@ sudo haproxy-ui-user -e prod add operator --role admin
 The password is typed at the terminal, twice, and there is deliberately no flag
 to pass it as an argument — that would put it in the shell history and the
 process list.
+
+An account name is at most 64 characters, with no line breaks, invisible
+characters or spaces at either end. It is what a version records as who
+published it, so the tool, the Users form and a first sign-in through the
+provider all refuse a name that could not stand there.
 
 The same tool is the break-glass path when the only administrator is locked
 out, forgotten, or gone. An account it creates is a **break-glass** account

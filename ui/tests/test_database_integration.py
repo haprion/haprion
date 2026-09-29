@@ -2233,6 +2233,15 @@ class TheAccountToolAgainstARealDatabase(unittest.TestCase):
         self.assertTrue((self.account("alice") or ())[2])
         self.assertFalse((self.account("bob") or ())[2])
 
+    def test_add_refuses_a_name_a_version_could_not_record(self) -> None:
+        # Review 2026-09-29 F1: refused before a password is asked for.
+        with mock.patch.object(self.admin, "read_new_password") as asked:
+            code, output = self.run_tool("add", "ada\u00a0admin", "--role", "admin")
+        self.assertNotEqual(code, 0)
+        self.assertIn("invisible characters", output)
+        asked.assert_not_called()
+        self.assertIsNone(self.account("ada\u00a0admin"))
+
     def test_delete_says_what_without_yes_and_does_it_with(self) -> None:
         self.add("alice")
         self.add("bob", role="reader")

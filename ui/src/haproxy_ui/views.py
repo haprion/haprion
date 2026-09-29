@@ -3422,6 +3422,8 @@ def build_router(config: Config) -> APIRouter:
         prepared = provider_account == "on"
         if not username:
             problem = "Name the account."
+        elif users.name_problem(username) is not None:
+            problem = users.NAME_PROBLEM
         elif role not in users.ROLES:
             problem = "Choose a role."
         elif prepared:
@@ -7554,6 +7556,12 @@ def _oidc_account_refusal(
             account = named
         elif not provider.auto_create:
             return f"There is no account here for {username}.", "no_account"
+        elif users.name_problem(username) is not None:
+            #
+            # A version records the name as who published it (B207); one that
+            # cannot stand there never becomes an account (review 2026-09-29 F1).
+            #
+            return "The name the provider sent cannot be an account name here.", "unfit_name"
     if account is not None and account.disabled:
         return "That account is disabled here.", "disabled"
     return None

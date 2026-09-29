@@ -12,12 +12,36 @@ from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import quote
 
+from haproxy_mgmt.version_history import UnfitName, trailer_name
+
 from haproxy_ui import metrics, sorting
 from haproxy_ui.db import AccountRow
 
 type Tone = Literal["healthy", "warning", "critical"]
 
 ROLES = ("admin", "reader")
+
+NAME_PROBLEM = (
+    "An account name is at most 64 characters, with no line breaks, invisible characters "
+    "or spaces at either end."
+)
+
+
+def name_problem(username: str) -> str | None:
+    """Why a name cannot be an account here, or None (2026-09-29).
+
+    A version records the name as who published it (B207), so an account is
+    only made under a name that can stand there - checked where the account is
+    made, rather than on its first publish, where a refusal could only say that
+    the publish could not be built.
+    """
+
+    try:
+        trailer_name(username)
+    except UnfitName:
+        return NAME_PROBLEM
+    return None
+
 
 #
 # What a finished change says on the account's page. `save` writes the role,

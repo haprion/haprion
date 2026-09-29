@@ -316,6 +316,27 @@ class SettingsUsers(LoginTestCase):
             ("account_created", {"account": "carol", "role": "reader", "via": "web"}),
         )
 
+    def test_a_name_a_version_could_not_record_is_refused_before_anything_is_written(
+        self,
+    ) -> None:
+        # Review 2026-09-29 F1: the name is what a version records as who
+        # published it, so it must be able to stand there.
+        client = self.admin()
+        for username in ("ada\u00a0admin", "ada\u200badmin", " ada"):
+            with self.subTest(username=username):
+                response = self.post(
+                    client,
+                    "/settings/new-user",
+                    username=username,
+                    role="admin",
+                    new_password=NEW,
+                    repeat_password=NEW,
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("invisible characters", response.text)
+        self.assertNotIn("create", [name for name, _ in self.calls])
+        self.assertNotIn("account_created", self.audit)
+
     def test_a_taken_name_is_refused_and_the_form_keeps_what_was_typed(self) -> None:
         client = self.admin()
         with mock.patch("haproxy_ui.db.create_account", return_value=False):

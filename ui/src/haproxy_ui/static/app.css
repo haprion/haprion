@@ -659,6 +659,8 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .archive-details[open] > summary { color: var(--text-strong); }
 /* The archive pager borrows the traffic log's bar; inside a card it needs the card's gutter. */
 .archive-details > .log-pagination { margin-top: 0; padding: 10px 20px 0; }
+/* The version pages sit in the card like the archive pages, inset to the table's own edge. */
+[data-version-list] > .log-pagination { margin-top: 0; padding: 10px 20px 12px; }
 /* The narrow layout turns rows into grids, which would otherwise override `hidden` and show every page at once. */
 .archive-table tr[hidden] { display: none; }
 /* The stored document's fold sits inside a card that has already drawn a

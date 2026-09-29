@@ -35,6 +35,7 @@
    * already travels.
    */
   --hover-surface: #eef2f7;
+  --row-hover: #eef2f7;
   --brand: #2fb344;
   --brand-strong: #258d36;
   --brand-soft: #eaf7ec;
@@ -75,6 +76,8 @@
   --line: #2a394b;
   --line-strong: #3a4a5e;
   --hover-surface: #1b2838;
+  /* Rows that already sit on --panel-soft (Settings) need a hover that is not that colour. */
+  --row-hover: #263548;
   --brand: #49c462;
   --brand-strong: #67d47d;
   --brand-soft: #1b3d27;
@@ -469,7 +472,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    badge of 155. */
 .proxy-table { table-layout: fixed; }
 /* A row with an address opens it anywhere on the row (proxy-rows.js). */
-.proxy-table tr[data-href], .users-table tr[data-href] { cursor: pointer; }
+.proxy-table tr[data-href], .users-table tr[data-href], .settings-cluster-table tr[data-href] { cursor: pointer; }
 /* Settings -> Users: the name takes what is left and is cut, never pushed into Role. */
 .users-table { table-layout: fixed; }
 .users-table th:nth-child(2), .users-table td:nth-child(2) { width: 110px; }
@@ -483,7 +486,17 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .settings-cluster-table th:nth-child(4), .settings-cluster-table td:nth-child(4) { width: 96px; text-align: right; }
 .settings-cluster-table td { overflow: hidden; text-overflow: ellipsis; }
 /* The row's way in, as low as the row's text (the same button as on Versions). */
-.settings-edit { display: inline-flex; align-items: center; min-height: 21px; padding: 0 12px; text-decoration: none; }
+.settings-edit { display: inline-flex; align-items: center; min-height: 0; padding: 0 12px; text-decoration: none; }
+/*
+ * Settings reads as one list of rows (2026-09-29): Users' dense height on every card, and the Features rows' soft
+ * panel behind the Users and Logs & metrics rows too. Hover then needs a colour of its own.
+ */
+.settings-cluster-table td { padding-top: 5px; padding-bottom: 5px; }
+.settings-card .node-table tbody tr { background: var(--panel-soft); }
+.settings-card .node-table tbody tr[data-href]:hover { background: var(--row-hover); }
+.cluster-actions.feature-row { padding-top: 5px; padding-bottom: 5px; }
+.feature-row .toggle-switch { min-height: 20px; }
+.feature-row .inline-form { display: flex; margin: 0; }
 /* Something is set here: the Users table's compact Active badge, before what is set. */
 .settings-active { min-height: 0; margin-right: 8px; padding: 1px 8px; }
 /* A cluster's log targets: the address takes what the four short fields leave. Table layout only - as cards each field has the row. */

@@ -558,6 +558,8 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    something an operator might reasonably press. */
 .version-current { color: var(--muted); font-size: 11px; }
 .version-table form { margin: 0; }
+/* The row's button no taller than the Published badge, so every row keeps the published row's height. */
+.version-table .secondary-button { min-height: 21px; padding: 0 10px; }
 /* "Does not deploy" used to sit under every button, which stacked the action
    cell and made every row taller for a sentence that is the same on all of
    them. It is said once under the table instead, where it can also say what to
@@ -1794,7 +1796,9 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 .log-table th:nth-child(6), .log-table td:nth-child(6) { width: 84px; }
 .log-table th:nth-child(7), .log-table td:nth-child(7) { width: 240px; }
 .log-table th:nth-child(8), .log-table td:nth-child(8) { width: 88px; }
-.log-table td { vertical-align: middle; }
+/* Dense rows, as on Versions: one line of text and a status badge no taller than it. */
+.log-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
+.log-table .status-badge { min-height: 0; padding: 1px 8px; }
 .log-table th.log-select, .log-table td.log-select { padding-right: 4px; padding-left: 10px; text-align: center; }
 .log-table .log-select input { width: 15px; height: 15px; margin: 0; accent-color: var(--text-strong); }
 /*
@@ -1816,7 +1820,7 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
   .log-table, .log-table tbody { display: table; width: 100%; }
   .log-table thead { display: table-header-group; }
   .log-table tr { display: table-row; width: auto; padding: 0; border: 0; }
-  .log-table td, .log-table td:first-child, .log-table td:last-child { display: table-cell; position: static; width: auto; padding: 13px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .log-table td, .log-table td:first-child, .log-table td:last-child { display: table-cell; position: static; width: auto; padding: 6px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   .log-table td:first-child { padding-left: 20px; }
   .log-table td.log-select { padding-left: 10px; }
   .log-table td:last-child { padding-right: 20px; }

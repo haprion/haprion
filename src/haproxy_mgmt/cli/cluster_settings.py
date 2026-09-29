@@ -14,6 +14,7 @@ to the nodes, as after any other publish.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
@@ -37,6 +38,21 @@ USAGE = (
 )
 
 type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
+
+
+def _through(helper: str, *sudo: str) -> list[str]:
+    """The helper's argv: through sudo, or directly when this already runs as root.
+
+    An operator runs this command with `sudo`, since the installation grants
+    no rule for it. A second sudo inside the first would then name `root` as
+    the account that ran the helper, and the version would record `root`
+    rather than the person (review 2026-09-29 F2). Run directly, the helper
+    inherits the outer sudo's `SUDO_USER` and records who asked.
+    """
+
+    return [helper] if os.geteuid() == 0 else [SUDO, *sudo, helper]
+
+
 type RunPublish = Callable[[str], subprocess.CompletedProcess[str]]
 
 
@@ -51,7 +67,7 @@ def run_settings_helper(cluster_id: str, request_id: str) -> subprocess.Complete
         "parameters": {},
     }
     return subprocess.run(  # noqa: S603 - fixed helper path, no caller argv
-        [SUDO, "-n", HELPER],
+        _through(HELPER, "-n"),
         input=json.dumps(request, separators=(",", ":")),
         capture_output=True,
         text=True,
@@ -63,7 +79,7 @@ def run_publish_helper(request: str) -> subprocess.CompletedProcess[str]:
     """Publish through the root helper; sudo may ask for the operator's password."""
 
     return subprocess.run(  # noqa: S603 - fixed helper path, no caller argv
-        [SUDO, "--", cluster_settings_publish.HELPER],
+        _through(cluster_settings_publish.HELPER, "--"),
         input=request,
         capture_output=True,
         text=True,

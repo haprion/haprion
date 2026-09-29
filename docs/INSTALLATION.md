@@ -3342,11 +3342,12 @@ page for each (installations with `management_writes` on); saving publishes a
 version, and deploying it is what reaches the nodes. Or read and set it at the
 terminal - `--set` publishes through the same privileged helper the interface
 uses, against the version it has just read, so a change
-somebody else published in between is refused rather than overwritten:
+somebody else published in between is refused rather than overwritten. It runs
+under `sudo`, and the version records the person who typed it:
 
 ```bash
-haproxy-cluster-settings -c alpha
-haproxy-cluster-settings -c alpha --set cluster.yaml -m "Send the traffic log to graylog"
+sudo haproxy-cluster-settings -c alpha
+sudo haproxy-cluster-settings -c alpha --set cluster.yaml -m "Send the traffic log to graylog"
 haproxy-deploy -c alpha
 ```
 

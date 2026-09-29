@@ -255,3 +255,15 @@ class TheTerminalCommand(SettingsPublishFixture):
         )
         self.assertIn("Published version 12 of alpha.", out.getvalue())
         self.assertIn("haproxy-deploy -c alpha", out.getvalue())
+
+    def test_as_root_the_helper_runs_directly_so_the_person_is_recorded(self) -> None:
+        # Review 2026-09-29 F2: under `sudo haproxy-cluster-settings`, an inner
+        # sudo would name root; run directly, the outer SUDO_USER carries over.
+        from unittest import mock  # noqa: PLC0415
+
+        with mock.patch("os.geteuid", return_value=0):
+            self.assertEqual(command._through("/opt/helper", "--"), ["/opt/helper"])
+        with mock.patch("os.geteuid", return_value=1000):
+            self.assertEqual(
+                command._through("/opt/helper", "--"), ["/usr/bin/sudo", "--", "/opt/helper"]
+            )

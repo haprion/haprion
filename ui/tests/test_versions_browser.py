@@ -91,3 +91,36 @@ class VersionPagesInABrowser(LoginTestCase):
 
         versions, _, _, _ = self.shown(["next", "next", "previous"])
         self.assertEqual(versions[0], "v15")
+
+    def test_a_short_last_page_keeps_the_buttons_where_they_were(self) -> None:
+        #
+        # The last page has five rows. The table keeps the first page's height,
+        # so Newer and Older stay under the pointer (2026-09-29).
+        #
+        with mock.patch(
+            "haproxy_ui.db.cluster_histories",
+            return_value=[reading(versions=VERSIONS, published=25)],
+        ):
+            client = self.client(replace(configuration(), clusters=("alpha",)))
+            self.sign_in(client)
+            html = client.get("/history").text
+
+        page = self.browser.new_page(viewport={"width": 1280, "height": 900})
+        self.addCleanup(page.close)
+        page.set_content(html)
+        page.add_style_tag(path=str(STATIC_DIRECTORY / "app.css"))
+        page.add_script_tag(path=str(STATIC_DIRECTORY / "versions.js"))
+        page.evaluate("document.dispatchEvent(new Event('haproxy-ui:redrawn'))")
+
+        def top() -> float:
+            return float(
+                page.evaluate(
+                    "document.querySelector('[data-version-page-next]').getBoundingClientRect().top"
+                )
+            )
+
+        first = top()
+        for button in ("next", "next", "previous", "previous"):
+            page.click(f"[data-version-page-{button}]")
+            with self.subTest(after=button):
+                self.assertAlmostEqual(top(), first, delta=2)

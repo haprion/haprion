@@ -9,10 +9,11 @@
 # listen.management_writes and read as absent - which looks exactly like writes
 # being disabled.
 
-# Phase 4 installs the platform read-only. Turning this on is what enables the
-# job path, and turning it off is the documented rollback for it: no build, no
-# deploy, back to a read-only interface.
-management_writes = false
+# On: the interface builds, publishes and deploys, which is what it is for. Off
+# is the documented rollback for the job path: no build, no deploy, back to a
+# read-only interface, and nothing to rebuild. A file without this line reads
+# as off, so only a line that says so turns writes on.
+management_writes = true
 
 # Only for visual UI work before a safe non-production cluster fixture exists.
 # It supplies clearly labelled synthetic Dashboard/Proxies data in the web

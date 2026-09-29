@@ -190,6 +190,23 @@ class TheExampleAndTheDefaultsAgree(unittest.TestCase):
     default to disagree with.
     """
 
+    def test_the_example_turns_writes_on_and_a_missing_line_does_not(self) -> None:
+        #
+        # The one deliberate difference: an installation made from the example
+        # writes (2026-09-29), while a file that lost the line reads - the
+        # safer way to be wrong. The line comes before the first table, or it
+        # would belong to that table and read as absent.
+        #
+        lines = EXAMPLE.read_text(encoding="utf-8").splitlines()
+        first_table = next(index for index, line in enumerate(lines) if line.startswith("["))
+
+        self.assertIn("management_writes = true", lines[:first_table])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ui.toml"
+            path.write_text(VALID.replace("management_writes = false\n", ""), encoding="utf-8")
+            path.chmod(0o600)
+            self.assertFalse(load(path, require_secure=False).management_writes)
+
     def test_the_poller_interval_is_the_same_number_in_both(self) -> None:
         written = [
             line

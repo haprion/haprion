@@ -342,9 +342,10 @@ The health endpoint answers with the identity the database reports back, not the
 one the process believes it has. Running as the wrong role otherwise looks
 exactly like running correctly, until something is denied — or allowed.
 
-The service starts with management writes off. That flag lives in
-`config/ui.toml` rather than in a release, because turning it off is the
-documented rollback for the write path, and that should not require a build.
+The example `ui.toml` has management writes on; a file without the line reads
+as off. That flag lives in `config/ui.toml` rather than in a release, because
+turning it off is the documented rollback for the write path, and that should
+not require a build.
 
 ## Step 5 — HTTPS
 
@@ -432,8 +433,8 @@ that has done its job once. It finishes by asking, as the real accounts, that
 the web and worker identities cannot run either metadata helper, that the
 poller cannot write a job, and that the web role cannot write either cache.
 
-The worker runs with management writes off and claims nothing. That is the phase
-4 state and the state a rollback returns to, so it has to be a state that runs.
+With management writes off the worker claims nothing. That is the state a
+rollback returns to, so it has to be a state that runs.
 
 Set `clusters` in `ui.toml` before running this; with an empty list the poller
 has nothing to do and says so instead of starting.

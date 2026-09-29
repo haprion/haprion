@@ -34,6 +34,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from haproxy_mgmt.check_policy import check_speaks_tls
+from haproxy_mgmt.cluster_settings import NOTHING as NO_SETTINGS
+from haproxy_mgmt.cluster_settings import ClusterSettings, LogTarget, Metrics
 from haproxy_mgmt.config import AbuseProtection, ConfigError, UnknownHost, Vip
 from haproxy_mgmt.guid import (
     backend_guid,
@@ -96,6 +98,15 @@ REDIRECT_PREFIX = "redirect"
 ABUSE_TABLE_SIZE = "1m"
 
 FRONTEND_FILE = "1000-frontends.cfg"
+#
+# What applies to the whole cluster rather than to an object (Fas 15, B209):
+# the rings that carry the traffic log to external receivers, and the metrics
+# exporter. Sorts before the frontends; HAProxy resolves a ring by name after
+# reading everything, so the order is not load-bearing (measured 2026-09-29).
+#
+CLUSTER_FILE = "1000-cluster.cfg"
+METRICS_FRONTEND = f"{PREFIX}-metrics"
+METRICS_IDENTITY = "cluster-metrics"
 OBJECT_BAND = "1001"
 
 #
@@ -256,6 +267,7 @@ def generate(
     certificate_sans: Mapping[str, Sequence[str]] | None = None,
     allow_certificate_mismatch: bool = False,
     traffic_logging: bool = False,
+    settings: ClusterSettings = NO_SETTINGS,
 ) -> GeneratedLayer:
     """Every file the generated layer consists of.
 
@@ -304,6 +316,8 @@ def generate(
     #
     _refuse_reserved(placed, reservations, ports)
     _refuse_shared_listeners(placed, ports)
+    if settings.metrics is not None:
+        _refuse_metrics_port(settings.metrics, placed, reservations, ports)
 
     listings: dict[str, str] = {}
     shared: dict[str, dict[str, list[str]]] = {}
@@ -318,8 +332,11 @@ def generate(
             listings,
             shared,
             traffic_logging,
+            settings.log_targets,
         )
     }
+    if settings.log_targets or settings.metrics is not None:
+        files[CLUSTER_FILE] = _cluster_file(settings)
     for vip, proxy in placed:
         files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(
             proxy, _source_of(proxy, vip, known_sources), resolvers
@@ -334,6 +351,96 @@ def generate(
         for _, proxy in placed
     }
     return GeneratedLayer(configuration=files, certificate_lists=listings, object_parts=parts)
+
+
+def _ring_name(target: LogTarget) -> str:
+    return f"{PREFIX}-log-{target.name}"
+
+
+def _cluster_file(settings: ClusterSettings) -> str:
+    """The rings to external log receivers, and the metrics exporter.
+
+    One ring per receiver and never two servers in one: every server in a ring
+    receives the same copy and the ring moves at the slowest one's pace, so a
+    receiver that stops reading would hold back the others (3.4.4 manual).
+    What does not fit in a ring while its receiver is away is dropped; the
+    traffic is not held up (measured 2026-09-29).
+    """
+
+    body: list[str] = []
+    for target in settings.log_targets:
+        address = f"[{target.address}]" if ":" in target.address else target.address
+        body.extend(
+            (
+                "",
+                f"ring {_ring_name(target)}",
+                f'    description "Traffic log to {target.name}"',
+                "    format rfc5424",
+                "    maxlen 2048",
+                f"    size {target.buffer_kib * 1024}",
+                "    timeout connect 5s",
+                "    timeout server 10s",
+                f"    server {target.name} {address}:{target.port} log-proto octet-count"
+                + (" ssl verify required ca-file @system-ca" if target.tls else ""),
+            )
+        )
+    if settings.metrics is not None:
+        body.extend(_metrics_frontend(settings.metrics))
+    return _lines(HEADER, body)
+
+
+def _metrics_frontend(metrics: Metrics) -> list[str]:
+    """HAProxy's own Prometheus exporter, for the sources the cluster names.
+
+    Bound on every IPv4 address, not on a VIP: both nodes read the same file,
+    and a scrape of each node is what shows the passive one too. The source
+    list and the nodes' firewall are what keep it private. Only failures are
+    logged; a scrape every few seconds is not traffic anybody reads.
+    """
+
+    return [
+        "",
+        f"frontend {METRICS_FRONTEND}",
+        f"    guid {frontend_guid(METRICS_IDENTITY)}",
+        f"    bind :{metrics.port} guid-prefix {listener_guid_prefix(METRICS_IDENTITY)}",
+        "    mode http",
+        "    option dontlog-normal",
+        f"    timeout client {TIMEOUT_CLIENT}",
+        "    http-request deny deny_status 403 unless { src " + " ".join(metrics.sources) + " }",
+        "    http-request use-service prometheus-exporter if { path /metrics }",
+        "    http-request return status 404",
+    ]
+
+
+def _refuse_metrics_port(
+    metrics: Metrics,
+    placed: Sequence[tuple[Vip, Proxy]],
+    reservations: Reservations,
+    ports: Mapping[str, int],
+) -> None:
+    """The exporter's port, which it takes on every address.
+
+    Anything else on that port - generated or reserved for the handwritten
+    half - would bind it too, and under SO_REUSEPORT the kernel would split
+    connections between the two at random with nothing reporting it.
+    """
+
+    port = metrics.port
+    if port in reservations.tcp_ports or any(
+        reserved == port for _address, reserved in reservations.tcp_listeners
+    ):
+        raise GeneratorError(
+            f"the metrics port {port} is reserved in manual/reservations.yaml for handwritten "
+            "configuration"
+        )
+    for _vip, proxy in placed:
+        used = {proxy.listen.port} if proxy.listen.protocol == "tcp" else set()
+        if proxy.listen.protocol in ports:
+            used.add(ports[proxy.listen.protocol])
+        if proxy.listen.redirect_http:
+            used.add(ports["http"])
+        if port in used:
+            raise GeneratorError(f"the metrics port {port} is the port {proxy.name} listens on")
 
 
 def _source_of(proxy: Proxy, vip: Vip, sources: Mapping[str, str]) -> str | None:
@@ -681,6 +788,7 @@ def _frontend_file(
     listings: dict[str, str],
     shared: dict[str, dict[str, list[str]]],
     traffic_logging: bool,
+    log_targets: Sequence[LogTarget] = (),
 ) -> str:
     """Where every request is decided: one frontend per address and protocol.
 
@@ -712,7 +820,12 @@ def _frontend_file(
             groups.setdefault((vip.name, "http"), []).append((vip, proxy, "redirect"))
 
     body: list[str] = []
-    if traffic_logging and groups:
+    #
+    # The structured record is the same wherever it goes: the node's own file
+    # when traffic logging is on, and every external target either way.
+    #
+    structured = traffic_logging or bool(log_targets)
+    if structured and groups:
         body.extend(
             (
                 "",
@@ -752,12 +865,18 @@ def _frontend_file(
             "    mode http",
             "    option httplog",
             *(
-                (
-                    f"    log /dev/log len 2048 format local profile {TRAFFIC_LOG_PROFILE} local2",
-                    "    http-request set-var(txn.traffic_host) "
-                    "req.hdr(host),cut_crlf,bytes(0,253)",
-                )
+                (f"    log /dev/log len 2048 format local profile {TRAFFIC_LOG_PROFILE} local2",)
                 if traffic_logging
+                else ()
+            ),
+            *(
+                f"    log ring@{_ring_name(target)} len 2048 format rfc5424 "
+                f"profile {TRAFFIC_LOG_PROFILE} local2"
+                for target in log_targets
+            ),
+            *(
+                ("    http-request set-var(txn.traffic_host) req.hdr(host),cut_crlf,bytes(0,253)",)
+                if structured
                 else ()
             ),
             f"    timeout client {TIMEOUT_CLIENT}",

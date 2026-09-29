@@ -369,6 +369,24 @@ def check_network_publish_semantics(document: dict[str, object], path: Path) -> 
         raise AssertionError(f"{path}: changed network publish requires a timestamp")
 
 
+def check_cluster_settings_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        return
+    assert isinstance(result, dict)
+    targets = result["log_targets"]
+    names = [target["name"] for target in targets]
+    if names != sorted(set(names)):
+        raise AssertionError(f"{path}: log targets are named once each, in name order")
+    endpoints = [(target["address"], target["port"]) for target in targets]
+    if len(set(endpoints)) != len(endpoints):
+        raise AssertionError(f"{path}: two log targets name the same address and port")
+    if not result["stored"] and (targets or result["metrics"] is not None):
+        # Nothing stored is nothing set: a reading that reports targets from a
+        # file that does not exist describes a configuration nobody published.
+        raise AssertionError(f"{path}: settings reported without a stored document")
+
+
 def check_objects_publish_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -881,6 +899,9 @@ SEMANTIC_CHECKS = {
     "publish": check_publish_semantics,
     "revert": check_revert_semantics,
     "network_publish": check_network_publish_semantics,
+    "cluster_settings": check_cluster_settings_semantics,
+    # The same promise as a network publish: always deploy afterwards.
+    "cluster_settings_publish": check_network_publish_semantics,
     "objects_publish": check_objects_publish_semantics,
     "deploy": check_reconcile_semantics,
     "cert_deploy": check_reconcile_semantics,
@@ -929,7 +950,18 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["proxies"].append(deepcopy(result["proxies"][0]))
     elif operation == "objects":
         result["objects"][1]["readable"] = True
-    elif operation in ("publish", "revert", "network_publish", "objects_publish"):
+    elif operation == "cluster_settings":
+        if result["log_targets"]:
+            result["log_targets"].append(deepcopy(result["log_targets"][0]))
+        else:
+            result["metrics"] = {"port": 8405, "sources": ["192.0.2.0/24"]}
+    elif operation in (
+        "publish",
+        "revert",
+        "network_publish",
+        "objects_publish",
+        "cluster_settings_publish",
+    ):
         result["deployment_required"] = False
     elif operation == "deploy":
         result["converged"] = True

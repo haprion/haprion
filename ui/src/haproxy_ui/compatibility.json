@@ -19,7 +19,7 @@
       "0041",
       "0042"
     ],
-    "engine_api": 3,
+    "engine_api": 4,
     "node_api": 1,
     "poller_helpers": [
       "haproxy-status-helper",
@@ -28,6 +28,7 @@
       "haproxy-list-backups-helper",
       "haproxy-cert-list-helper",
       "haproxy-network-helper",
+      "haproxy-cluster-settings-helper",
       "haproxy-objects-helper"
     ],
     "worker_helpers": [
@@ -35,6 +36,7 @@
       "haproxy-cert-deploy-helper",
       "haproxy-revert-helper",
       "haproxy-network-publish-helper",
+      "haproxy-cluster-settings-publish-helper",
       "haproxy-objects-publish-helper",
       "haproxy-cert-issue-helper",
       "haproxy-cert-publish-helper",

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cluster_settings",
+  "cluster": "alpha",
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "result": {
+    "cluster": "alpha",
+    "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "stored": false,
+    "log_targets": [],
+    "metrics": null
+  },
+  "warnings": [],
+  "error": null
+}

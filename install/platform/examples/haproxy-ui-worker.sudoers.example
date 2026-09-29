@@ -64,6 +64,7 @@ WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-deploy-he
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-deploy-helper ""
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-revert-helper ""
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-publish-helper ""
+WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cluster-settings-publish-helper ""
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-publish-helper ""
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-issue-helper ""
 WORKER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-publish-helper ""

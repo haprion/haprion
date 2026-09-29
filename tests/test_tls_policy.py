@@ -198,7 +198,12 @@ class WhichPathsAskTheQuestion(unittest.TestCase):
     shows: a fourth publish path added later would be silently unchecked.
     """
 
-    CHECKED = ("publish_helper", "managed_objects_publish", "managed_network_publish")
+    CHECKED = (
+        "publish_helper",
+        "managed_objects_publish",
+        "managed_network_publish",
+        "cluster_settings_publish",
+    )
     DELIBERATELY_NOT = ("revert_helper",)
 
     def source(self, module: str) -> str:

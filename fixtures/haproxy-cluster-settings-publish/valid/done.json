@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cluster_settings_publish",
+  "cluster": "alpha",
+  "request_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "result": {
+    "changed": true,
+    "version": 9,
+    "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "published_at": "2026-09-01T12:00:00Z",
+    "comment": "Send the traffic log to graylog",
+    "deployment_required": true,
+    "next_command": "haproxy-deploy -c alpha",
+    "release": "/configs/haproxy-published/alpha/releases/9",
+    "already_current": false
+  },
+  "warnings": [],
+  "error": null
+}

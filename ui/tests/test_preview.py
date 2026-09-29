@@ -740,10 +740,11 @@ class WhereTheFormStops(unittest.TestCase):
         refused = []
         for path in sorted(root.rglob("*.yaml")):
             #
-            # Network documents describe a cluster's addresses. They are not
-            # objects and the editor never opens one.
+            # Network documents describe a cluster's addresses, and `_cluster.yaml`
+            # its log targets and exporter. Neither is an object and the editor
+            # never opens one.
             #
-            if path.name == "vips.yaml":
+            if path.name in ("vips.yaml", "_cluster.yaml"):
                 continue
             try:
                 form_from_document(path.read_text(encoding="utf-8"))

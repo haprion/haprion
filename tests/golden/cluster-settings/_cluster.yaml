@@ -1,0 +1,16 @@
+log_targets:
+  graylog:
+    address: 192.0.2.20
+    port: 6514
+    buffer_kib: 4096
+    tls: false
+  loki:
+    address: 2001:db8::30
+    port: 6514
+    buffer_kib: 1024
+    tls: true
+metrics:
+  port: 8405
+  sources:
+    - 192.0.2.0/24
+    - 198.51.100.7/32

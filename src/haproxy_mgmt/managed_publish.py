@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 
+from haproxy_mgmt import cluster_settings
 from haproxy_mgmt.config import Cluster, ConfigError
 from haproxy_mgmt.generate import generate
 from haproxy_mgmt.keepalived_fragment import NAME as KEEPALIVED_NAME
@@ -96,12 +97,17 @@ def managed_files(
     objects: Mapping[str, bytes | None] | None = None,
     certificate_sans: Mapping[str, Sequence[str]] | None = None,
     allow_certificate_mismatch: bool = False,
+    settings_document: bytes | None = None,
 ) -> dict[str, bytes]:
     """Return the complete managed snapshot created by one network document.
 
     Only paths below ``managed/`` are returned.  The caller passes exactly this
     mapping to the generic snapshot builder, which replaces that one layer and
     preserves every human-owned file from the committed base.
+
+    `settings_document` replaces `managed/cluster.yaml` when given; otherwise
+    the base's is carried over. Every publish generates from it, so a network
+    or object change keeps the cluster's log targets and exporter.
     """
 
     network = load_document(
@@ -113,6 +119,9 @@ def managed_files(
         path: content for path, content in base_files.items() if path.startswith(MANAGED_PREFIX)
     }
     result[network_location()] = network_document
+    if settings_document is not None:
+        result[cluster_settings.LOCATION] = settings_document
+    settings = cluster_settings.load_document(result.get(cluster_settings.LOCATION))
 
     # Generated output is derived data.  Carrying one file over would make an
     # object deleted in a later UI operation keep serving; carrying all of them
@@ -150,6 +159,7 @@ def managed_files(
         #
         certificate_sans=certificate_sans,
         allow_certificate_mismatch=allow_certificate_mismatch,
+        settings=settings,
     )
     result.update(
         {

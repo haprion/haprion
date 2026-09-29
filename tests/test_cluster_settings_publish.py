@@ -1,0 +1,257 @@
+"""The cluster's settings cross the same boundary as every other write (Fas 15).
+
+Held here: a settings publish is a version of its own, stored canonically,
+generated into `1000-cluster.cfg`; it needs the network description the
+generated layer is built around; a target given as a name is refused before
+anything is written; a later network publish keeps the settings; the read
+helper reports them with the head a change must name; and the terminal
+command sets them through the same helper.
+"""
+
+from __future__ import annotations
+
+import grp
+import io
+import json
+import os
+import subprocess
+import tempfile
+from pathlib import Path
+
+from haproxy_mgmt.candidate_validation import ValidationResult
+from haproxy_mgmt.cli import cluster_settings as command
+from haproxy_mgmt.cli import cluster_settings_helper, cluster_settings_publish
+from haproxy_mgmt.cluster_settings import LOCATION
+from haproxy_mgmt.version_history import request_id_of
+from tests.contract_schema import assert_contract
+from tests.test_managed_network_publish import NetworkPublishFixture
+from tests.test_publish_helper import Recorder, git
+
+REQUEST_ID = "66666666-6666-4666-8666-666666666666"
+SETTINGS = """log_targets:
+  graylog: {address: 192.0.2.20, port: 6514}
+metrics: {port: 8405, sources: [192.0.2.0/24]}
+"""
+CANONICAL = """log_targets:
+  graylog:
+    address: 192.0.2.20
+    port: 6514
+    buffer_kib: 4096
+    tls: false
+metrics:
+  port: 8405
+  sources:
+  - 192.0.2.0/24
+"""
+
+
+class SettingsPublishFixture(NetworkPublishFixture):
+    def settings_request(self, settings: str = SETTINGS) -> io.BytesIO:
+        return io.BytesIO(
+            cluster_settings_publish.build_request(
+                "alpha",
+                REQUEST_ID,
+                settings=settings,
+                expected_head=git(self.repo, "rev-parse", "HEAD"),
+                comment="Send the traffic log to graylog",
+            ).encode()
+        )
+
+    def publish_settings(self, policy_path: Path, request: io.BytesIO):  # type: ignore[no-untyped-def]
+        out, err = io.StringIO(), io.StringIO()
+        self.recorder = Recorder()
+        code = cluster_settings_publish.main(
+            [],
+            policy_path=policy_path,
+            run_root=self.run_root,
+            lock_root=self.lock_root,
+            input_stream=request,
+            output_stream=out,
+            error_stream=err,
+            require_secure=False,
+            require_root=False,
+            validator=lambda _candidate, _request_id: ValidationResult(valid=True, diagnostics=""),
+            group=grp.getgrgid(os.getgid()).gr_name,
+            change_owner=self.recorder,
+        )
+        return code, json.loads(out.getvalue()), err.getvalue()
+
+
+class SettingsPublicationTests(SettingsPublishFixture):
+    def test_a_publish_is_a_version_stored_canonically_and_generated(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.assertEqual(self.run_publish(policy, self.request())[0], 0)
+
+            code, document, err = self.publish_settings(policy, self.settings_request())
+
+            self.assertEqual((code, err), (0, ""))
+            assert_contract("haproxy-cluster-settings-publish", json.dumps(document))
+            self.assertTrue(document["result"]["changed"])
+            self.assertEqual((self.repo / LOCATION).read_text(), CANONICAL)
+            files = git(self.repo, "ls-files")
+            self.assertIn("managed/generated/1000-cluster.cfg", files)
+            self.assertIn(
+                "ring mgd-log-graylog",
+                (self.repo / "managed/generated/1000-cluster.cfg").read_text(),
+            )
+            head = git(self.repo, "rev-parse", "HEAD")
+            self.assertEqual(request_id_of(self.repo, head), REQUEST_ID)
+            self.assertIn(
+                "Update cluster settings: Send the traffic log to graylog",
+                git(self.repo, "log", "-1", "--format=%s"),
+            )
+
+            again, repeated, _err = self.publish_settings(policy, self.settings_request())
+            self.assertEqual(again, 0)
+            self.assertFalse(repeated["result"]["changed"])
+
+    def test_without_a_network_description_nothing_is_published(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            before = git(self.repo, "rev-parse", "HEAD")
+
+            code, document, _err = self.publish_settings(policy, self.settings_request())
+
+            self.assertEqual(code, 75)
+            self.assertEqual(document["error"]["code"], "network_missing")
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+
+    def test_a_target_named_rather_than_addressed_is_refused_before_a_version(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.run_publish(policy, self.request())
+            before = git(self.repo, "rev-parse", "HEAD")
+
+            code, document, _err = self.publish_settings(
+                policy,
+                self.settings_request("log_targets: {g: {address: logs.example.com, port: 6514}}"),
+            )
+
+            self.assertEqual(code, 65)
+            self.assertEqual(document["error"]["code"], "settings_invalid")
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+
+    def test_a_later_network_publish_keeps_the_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.run_publish(policy, self.request())
+            self.publish_settings(policy, self.settings_request())
+
+            code, _document, _err = self.run_publish(
+                policy, self.request(network=self.request_network_with_a_source())
+            )
+
+            self.assertEqual(code, 0)
+            self.assertEqual((self.repo / LOCATION).read_text(), CANONICAL)
+            self.assertIn("managed/generated/1000-cluster.cfg", git(self.repo, "ls-files"))
+
+    def request_network_with_a_source(self) -> str:
+        from tests.test_managed_network_publish import NETWORK  # noqa: PLC0415
+
+        return NETWORK.replace("outbound: 192.0.2.35", "outbound: 192.0.2.36")
+
+    def test_the_read_helper_reports_the_settings_and_the_head(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.run_publish(policy, self.request())
+            self.publish_settings(policy, self.settings_request())
+            out = io.StringIO()
+
+            code = cluster_settings_helper.main(
+                [],
+                policy_path=policy,
+                input_stream=io.BytesIO(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "operation": "cluster_settings",
+                            "cluster": "alpha",
+                            "request_id": REQUEST_ID,
+                            "parameters": {},
+                        }
+                    ).encode()
+                ),
+                output_stream=out,
+                error_stream=io.StringIO(),
+                require_secure=False,
+                require_root=False,
+            )
+
+            self.assertEqual(code, 0)
+            assert_contract("haproxy-cluster-settings", out.getvalue())
+            result = json.loads(out.getvalue())["result"]
+            self.assertEqual(result["head"], git(self.repo, "rev-parse", "HEAD"))
+            self.assertTrue(result["stored"])
+            self.assertEqual(result["metrics"], {"port": 8405, "sources": ["192.0.2.0/24"]})
+
+
+class TheTerminalCommand(SettingsPublishFixture):
+    def reading(self) -> subprocess.CompletedProcess[str]:
+        document = {
+            "schema_version": 1,
+            "ok": True,
+            "outcome": "done",
+            "operation": "cluster_settings",
+            "cluster": "alpha",
+            "request_id": REQUEST_ID,
+            "result": {
+                "cluster": "alpha",
+                "head": "b" * 40,
+                "stored": True,
+                "log_targets": [
+                    {
+                        "name": "loki",
+                        "address": "2001:db8::30",
+                        "port": 6514,
+                        "buffer_kib": 1024,
+                        "tls": True,
+                    }
+                ],
+                "metrics": None,
+            },
+            "warnings": [],
+            "error": None,
+        }
+        return subprocess.CompletedProcess([], 0, json.dumps(document), "")
+
+    def test_it_shows_what_is_set(self) -> None:
+        out = io.StringIO()
+        code = command.main(["-c", "alpha"], stream_out=out, run_helper=lambda *_: self.reading())
+        self.assertEqual(code, 0)
+        self.assertIn("[2001:db8::30]:6514", out.getvalue())
+        self.assertIn("1024 KiB", out.getvalue())
+        self.assertIn("METRICS\n-------\noff", out.getvalue())
+
+    def test_set_publishes_through_the_helper_against_the_head_it_read(self) -> None:
+        sent: list[dict[str, object]] = []
+
+        def publish(request: str) -> subprocess.CompletedProcess[str]:
+            sent.append(json.loads(request))
+            answer = {
+                "operation": "cluster_settings_publish",
+                "result": {"changed": True, "version": 12},
+                "error": None,
+            }
+            return subprocess.CompletedProcess([], 0, json.dumps(answer), "")
+
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "settings.yaml"
+            path.write_text(SETTINGS)
+            out = io.StringIO()
+            code = command.main(
+                ["-c", "alpha", "--set", str(path), "-m", "Send the log"],
+                stream_out=out,
+                run_helper=lambda *_: self.reading(),
+                run_publish=publish,
+            )
+
+        self.assertEqual(code, 0)
+        (request,) = sent
+        self.assertEqual(request["operation"], "cluster_settings_publish")
+        self.assertEqual(
+            request["parameters"],
+            {"settings": SETTINGS, "expected_head": "b" * 40, "comment": "Send the log"},
+        )
+        self.assertIn("Published version 12 of alpha.", out.getvalue())
+        self.assertIn("haproxy-deploy -c alpha", out.getvalue())

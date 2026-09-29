@@ -3277,8 +3277,8 @@ node, client, request, status, destination and size, and nothing more.
 That is deliberate. Aggregation over time, dashboards, alerting, long retention
 and correlation with other systems are what dedicated log platforms such as Loki
 or Elasticsearch do well, and rebuilding them here would be a second, weaker copy.
-An installation that needs them should send the logs to such a platform. **A feed
-from this product to an external platform is planned but not built yet.**
+An installation that needs them should send the logs to such a platform, and
+the nodes can do that themselves: see [4.8c](#48c-sending-the-traffic-log-elsewhere-and-metrics).
 
 #### Sizing the traffic table
 
@@ -3312,6 +3312,73 @@ uses tens of megabytes; an installation nearing a million a day should have that
 volume sized for it and the 85 % warning above heeded. The number that grows
 without the administrator's say-so is this one, which is why the database sits
 on the platform volume (4.3) rather than on the root filesystem.
+
+### 4.8c Sending the traffic log elsewhere, and metrics
+
+Each cluster can send its traffic log to up to four external receivers and
+expose HAProxy's own Prometheus exporter. Both are settings of the cluster's
+HAProxy configuration, kept in `managed/cluster.yaml` in its repository and
+published as a version like any other change - a lock, a validated candidate,
+*Published by*, and a revert that takes them back. Nothing is installed on the
+nodes and nothing is relayed through the management host: after `haproxy-deploy`
+the nodes send and listen themselves.
+
+```yaml
+# managed/cluster.yaml
+log_targets:
+  graylog:
+    address: 192.0.2.20      # an IP address, never a name
+    port: 6514
+    buffer_kib: 4096         # optional; 64 to 65536
+    tls: false               # optional
+metrics:
+  port: 8405
+  sources:
+    - 192.0.2.0/24           # who may scrape; everyone else gets 403
+```
+
+Read and set it at the terminal - `--set` publishes through the same privileged
+helper the interface uses, against the version it has just read, so a change
+somebody else published in between is refused rather than overwritten:
+
+```bash
+haproxy-cluster-settings -c alpha
+haproxy-cluster-settings -c alpha --set cluster.yaml -m "Send the traffic log to graylog"
+haproxy-deploy -c alpha
+```
+
+**The log** is the same structured record the node's own file gets (4.8b),
+sent as syslog over TCP (RFC 5424, octet-counted), whether or not the local
+stream is on. One transport reaches the common platforms through their usual
+receivers: Graylog takes it directly, Loki through a syslog receiver such as
+Grafana Alloy's `loki.source.syslog`, Elasticsearch or OpenSearch through
+Logstash or Vector with a syslog input. `tls: true` verifies the receiver
+against the node's system trust store.
+
+A receiver is named by **address, never by host name.** HAProxy resolves a log
+server when it reads the configuration, whatever the server's `init-addr`
+says, so a name that fails to resolve at a reload fails the whole
+configuration and the deploy with it. An address fails nothing.
+
+Each receiver has a buffer of its own, and the buffer is what an outage is
+survived with. While a receiver is away, HAProxy keeps what fits and drops the
+rest; the traffic itself is not held up. Measured on 3.4.4: with a receiver
+that accepted and then stopped reading, nine thousand requests were served
+without an error and without a change in response time, HAProxy disconnected
+the receiver once its server timeout ran out (10 s in the generated ring),
+reconnected once it answered again, and
+delivered the buffer and everything after it. A receiver that has been away
+longer than its buffer lasts has lost the difference, and nothing in the
+traffic shows it; watch the receiving side.
+
+**The exporter** answers `GET /metrics` on the port given, on every IPv4
+address of both nodes - the configuration is shared by the pair, and scraping
+each node is what shows the passive one as well. Only the listed sources get
+an answer; anything else gets 403, and any other path 404. The port is taken on
+every address, so a publish refuses one that an object already listens on or
+that `manual/reservations.yaml` reserves. Letting the scraper through the
+nodes' firewall, and letting the nodes reach the log receivers, is part of the
+installation, not of this setting.
 
 ### 4.9 The worker and the poller
 

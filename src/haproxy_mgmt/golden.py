@@ -17,6 +17,7 @@ from pathlib import Path
 
 import yaml
 
+from haproxy_mgmt import cluster_settings
 from haproxy_mgmt.config import AbuseProtection, UnknownHost, Vip
 from haproxy_mgmt.generate import generate
 from haproxy_mgmt.proxy_model import Proxy, load_proxy
@@ -29,6 +30,11 @@ GOLDEN = Path(__file__).resolve().parents[2] / "tests" / "golden"
 # does not care about addressing should not have to describe one.
 #
 NETWORK = "vips.yaml"
+#
+# Not a proxy object: a leading underscore is no object name, so the file can
+# never be read as one.
+#
+SETTINGS = "_cluster.yaml"
 
 DEFAULT_VIPS = {"main": Vip(name="main", address="192.0.2.20")}
 
@@ -43,7 +49,7 @@ def objects(case: Path) -> list[Proxy]:
     return [
         load_proxy(path.stem, path.read_bytes())
         for path in sorted(case.glob("*.yaml"))
-        if path.name != NETWORK
+        if path.name not in (NETWORK, SETTINGS)
     ]
 
 
@@ -124,6 +130,13 @@ def arguments(case: Path) -> dict[str, object]:
         "unknown_host": UNKNOWN_HOST,
         "trusted_proxies": TRUSTED_PROXIES,
         "abuse_protection": ABUSE_PROTECTION,
+        #
+        # A case's own `_cluster.yaml`, when it has one: the log targets and
+        # the metrics exporter (Fas 15). Parsed by the one parser there is.
+        #
+        "settings": cluster_settings.load_document(
+            (case / SETTINGS).read_bytes() if (case / SETTINGS).exists() else None
+        ),
     }
 
 

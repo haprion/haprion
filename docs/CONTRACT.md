@@ -22,6 +22,8 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haproxy-cert-list` | `cert_list` | `done`, `failed` | Deployable certificate metadata only |
 | `haproxy-network` | `network` | `done`, `failed` | Cluster addresses and address groups |
 | `haproxy-network-publish-helper` | `network_publish` | `done`, `failed`, `blocked` | Bounded publication of `managed/network.yaml` |
+| `haproxy-cluster-settings` | `cluster_settings` | `done`, `failed` | The cluster's external log targets and metrics exporter, from `managed/cluster.yaml` at the published head, with that head; `stored` is false and both are empty when the file does not exist |
+| `haproxy-cluster-settings-publish-helper` | `cluster_settings_publish` | `done`, `failed`, `blocked` | Bounded publication of `managed/cluster.yaml`, stored canonically; `settings_invalid` for a document the model refuses (a target is an IP address, never a name), `network_missing` before the cluster has a network description |
 | `haproxy-objects-publish-helper` | `objects_publish` | `done`, `failed`, `blocked` | Bounded publication of `managed/proxies/` |
 | `haproxy-publish` | `publish` | `done`, `failed`, `blocked` | Validation and new immutable release |
 | `haproxy-deploy` | `deploy` | `done`, `partial`, `failed`, `blocked` | Config reconcile per node. `blocked` means no node was touched (split brain, unknown VIP owner, no usable status, missing certificates); a block met after a node already carries the target is `partial`, naming it |
@@ -36,8 +38,8 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 | `haproxy-ui-tls-helper` | `ui_tls_install` | `done`, `failed` | The registry entry marked `interface: true`, named by ID and nothing else, installed as the pair nginx serves the interface with through `haproxy-ui-tls install`; refused when the certificate does not name the interface's `SERVER_NAME`; `changed` is false when nginx already served that leaf (no reload); `cluster` is always null. Reached by the certificate helpers over `/run/haproxy-mgmt/ui-tls.sock`, not through sudo; the renewal timer and `haproxy-cert-publish` install directly |
 | `haproxy-oidc-helper` | `oidc` | `done`, `failed` | One question to the OpenID Connect provider named by `issuer`, as `parameters.action`: `discover` (its endpoints, checked against the issuer), `verify` (discovery, key set, client method, algorithm, and whether the provider accepts the client, without a sign-in) or `exchange` (a code for the verified subject, name and groups; `claims` only when asked). Takes no URL; follows no redirect; opens the client secret only for the issuer and client it was sealed for; `cluster` is always null. Reached by the web over `/run/haproxy-mgmt/oidc.sock`, as an account of its own |
 
-The four operations that record a version (`publish`, `revert`, `network_publish`,
-`objects_publish`) take an optional `requested_by`: the person a caller acts for, at most 64
+The five operations that record a version (`publish`, `revert`, `network_publish`,
+`objects_publish`, `cluster_settings_publish`) take an optional `requested_by`: the person a caller acts for, at most 64
 printable characters. The commit carries it as a `Requested-By` trailer, beside `Run-By` - the
 account sudo ran the helper as, which the helper can prove. The name is recorded only when that
 account is the runtime policy's `interface_account`, the web interface's worker; from any other

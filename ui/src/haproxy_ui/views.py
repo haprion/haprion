@@ -3111,6 +3111,7 @@ def build_router(config: Config) -> APIRouter:
         with request.app.state.pool.connection() as connection:
             switches = db.feature_switches(connection)
             provider = db.oidc_provider(connection)
+            recent = db.recent_jobs(connection)
         response = TEMPLATES.TemplateResponse(
             request,
             "settings.html",
@@ -3140,7 +3141,9 @@ def build_router(config: Config) -> APIRouter:
                 "sso": oidc_web.summary(provider),
                 "sso_on": provider is not None and provider.enabled,
                 "cluster_settings": cluster_settings_page.card_views(
-                    *read_source(request, config, SETTINGS_SOURCE)[:2]
+                    *read_source(request, config, SETTINGS_SOURCE)[:2],
+                    running=jobs.in_flight(recent),
+                    waiting=network.awaiting_deploy(recent, operation="cluster_settings_publish"),
                 ),
                 "features": [
                     (

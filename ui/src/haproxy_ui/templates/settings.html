@@ -104,9 +104,11 @@
       {% for row in cluster_settings %}
       <tr{% if row.readable %} data-href="{{ row.href }}"{% endif %}>
         <td data-label="Cluster">{% if row.readable %}<a class="proxy-link" href="{{ row.href }}"><strong>{{ row.cluster }}</strong></a>{% else %}<strong>{{ row.cluster }}</strong>{% endif %}</td>
-        <td data-label="Traffic log"{% if row.logs_title %} title="{{ row.logs_title }}"{% endif %}{% if not row.logs_set %} class="table-empty"{% endif %}>{% if row.logs_set %}{{ check() }}{% endif %}{{ row.logs }}</td>
-        <td data-label="Metrics"{% if row.metrics_title %} title="{{ row.metrics_title }}"{% endif %}{% if not row.metrics_set %} class="table-empty"{% endif %}>{% if row.metrics_set %}{{ check() }}{% endif %}{{ row.metrics }}</td>
-        <td data-label="">{% if row.readable %}<a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a>{% endif %}</td>
+        {# Active only when what is shown is what the nodes run; a publish on its way or owed says so instead, once, for the row, in the proxy listing's words. #}
+        {% set live = not row.running and not row.waiting %}
+        <td data-label="Traffic log"{% if row.logs_title %} title="{{ row.logs_title }}"{% endif %}{% if not row.logs_set %} class="table-empty"{% endif %}>{% if row.logs_set and live %}{{ check() }}{% endif %}{{ row.logs }}</td>
+        <td data-label="Metrics"{% if row.metrics_title %} title="{{ row.metrics_title }}"{% endif %}{% if not row.metrics_set %} class="table-empty"{% endif %}>{% if row.metrics_set and live %}{{ check() }}{% endif %}{{ row.metrics }}</td>
+        <td data-label="">{% if row.running %}<span class="status-badge status-badge-info settings-active">{{ row.running }}</span>{% elif row.waiting %}<span class="status-badge status-badge-warning settings-active">Reconfigured · deploy to activate</span>{% endif %}{% if row.readable %}<a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>

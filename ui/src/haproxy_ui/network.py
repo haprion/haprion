@@ -121,8 +121,11 @@ class NetworkClusterView:
     groups: tuple[GroupView, ...]
 
 
-def awaiting_deploy(jobs: Iterable[Job]) -> frozenset[str]:
+def awaiting_deploy(jobs: Iterable[Job], operation: str = "network_publish") -> frozenset[str]:
     """Clusters whose network description was published since the last deploy.
+
+    `operation` asks the same of the cluster's other one-document-per-cluster
+    publish, its settings (Fas 15).
 
     The same question the proxy listing asks about an object, asked about the
     one description a cluster has. The listing no longer asks it of the jobs:
@@ -151,7 +154,7 @@ def awaiting_deploy(jobs: Iterable[Job]) -> frozenset[str]:
             continue
         if job.operation == "deploy":
             deployed.add(job.cluster)
-        elif job.operation == "network_publish":
+        elif job.operation == operation:
             waiting.add(job.cluster)
     return frozenset(waiting)
 
@@ -199,7 +202,8 @@ def deployment(
     if failure is not None:
         return Deployment(failure.label, "critical", False, failure.code)
     if awaiting:
-        return Deployment("Published · deploy to activate", "warning", False, None)
+        # The proxy listing's words for a changed thing the nodes do not run yet (2026-09-29).
+        return Deployment("Reconfigured · deploy to activate", "warning", False, None)
     #
     # "Unknown" is the dashboard's word for a cluster it could not read, and it
     # is not a claim that the nodes are behind. Reading it as one had a cluster

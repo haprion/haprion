@@ -215,7 +215,7 @@ class WhereTheConfigurationHasGotTo(unittest.TestCase):
     def test_a_publish_this_cluster_owes_a_deploy_says_so(self) -> None:
         state = deployment(awaiting=True, release_state="Converged", version="v53")
 
-        self.assertEqual(state.label, "Published · deploy to activate")
+        self.assertEqual(state.label, "Reconfigured · deploy to activate")
 
     def test_nodes_off_the_release_are_not_described_as_a_publish(self) -> None:
         """A node nobody can reach reads as behind, and no button mends that."""

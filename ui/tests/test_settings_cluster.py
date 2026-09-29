@@ -45,6 +45,63 @@ class TheCard(QueueRouteTestCase):
         self.assertEqual((never.readable, never.logs), (False, "Not read yet"))
 
 
+class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
+    """Active only when what is shown is what the nodes run (review 2026-09-29 F1)."""
+
+    def job(self, operation: str, cluster: str, state: str = "done") -> Any:
+        from tests.test_queue_route import queued  # noqa: PLC0415
+
+        return queued(operation=operation, cluster=cluster, state=state)
+
+    def test_a_settings_publish_since_the_last_deploy_is_waiting_for_one(self) -> None:
+        from haproxy_ui import network  # noqa: PLC0415
+
+        newest_first = [
+            self.job("cluster_settings_publish", "edge-demo"),
+            self.job("deploy", "service-demo"),
+            self.job("cluster_settings_publish", "service-demo"),
+            self.job("network_publish", "edge-demo"),
+        ]
+        self.assertEqual(
+            network.awaiting_deploy(newest_first, operation="cluster_settings_publish"),
+            frozenset({"edge-demo"}),
+        )
+        # The network page's own question is unchanged.
+        self.assertEqual(network.awaiting_deploy(newest_first), frozenset({"edge-demo"}))
+
+    def test_the_row_carries_what_is_running_and_what_is_owed(self) -> None:
+        views = cluster_settings_page.card_views(
+            ("edge-demo", "service-demo"),
+            demo.settings_rows(NOW),
+            running={"service-demo": "Publishing settings"},
+            waiting={"edge-demo"},
+        )
+        edge, service = views
+        self.assertEqual((edge.waiting, edge.running), (True, ""))
+        self.assertEqual((service.waiting, service.running), (False, "Publishing settings"))
+
+    def test_the_card_says_waiting_and_not_active(self) -> None:
+        patch = mock.patch(
+            "haproxy_ui.db.cluster_settings", return_value=list(demo.settings_rows(NOW))
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+        recent = mock.patch(
+            "haproxy_ui.db.recent_jobs",
+            return_value=[self.job("cluster_settings_publish", "edge-demo")],
+        )
+        recent.start()
+        self.addCleanup(recent.stop)
+        self.account = replace(self.account, role="admin")
+        client = self.client(
+            replace(configuration(), management_writes=True, clusters=("edge-demo", "service-demo"))
+        )
+        self.sign_in(client)
+        card = client.get("/settings").text.split('id="logs-metrics"')[1].split("</section>")[0]
+        self.assertIn("Reconfigured · deploy to activate", card)
+        self.assertNotIn(">Active<", card)
+
+
 class ThePage(QueueRouteTestCase):
     def setUp(self) -> None:
         super().setUp()

@@ -46,6 +46,14 @@ class ClusterSettingsView:
     metrics_set: bool = False
     logs_title: str = ""
     metrics_title: str = ""
+    #
+    # Where the settings have got to, as the network page answers it for its
+    # one document per cluster: a publish still running, or one done since
+    # the last deploy - "Reconfigured · deploy to activate", the proxy listing's words. *Active* only
+    # when neither, so a published change is never shown as live.
+    #
+    running: str = ""
+    waiting: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,8 +119,16 @@ def _metrics(result: Mapping[str, Any]) -> str:
     return f"Port {metrics.get('port')} · {count} source{'' if count == 1 else 's'}"
 
 
-def card_views(clusters: Sequence[str], rows: Iterable[Any]) -> list[ClusterSettingsView]:
+def card_views(
+    clusters: Sequence[str],
+    rows: Iterable[Any],
+    *,
+    running: Mapping[str, str] | None = None,
+    waiting: Iterable[str] = (),
+) -> list[ClusterSettingsView]:
     """One row per listed cluster, in the order the installation lists them."""
+
+    waiting = frozenset(waiting)
 
     readings = {row.cluster: row for row in rows}
     views: list[ClusterSettingsView] = []
@@ -128,6 +144,8 @@ def card_views(clusters: Sequence[str], rows: Iterable[Any]) -> list[ClusterSett
                 readable=readable,
                 logs=_logs(result) if isinstance(result, Mapping) else "Not read yet",
                 metrics=_metrics(result) if isinstance(result, Mapping) else "",
+                running=(running or {}).get(cluster, ""),
+                waiting=cluster in waiting,
                 logs_set=isinstance(result, Mapping) and bool(_targets(result)),
                 metrics_set=isinstance(result, Mapping)
                 and isinstance(result.get("metrics"), Mapping),

@@ -483,7 +483,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .settings-cluster-table { table-layout: fixed; }
 .settings-cluster-table th:nth-child(1), .settings-cluster-table td:nth-child(1) { width: 200px; }
 .settings-cluster-table th:nth-child(3), .settings-cluster-table td:nth-child(3) { width: 30%; }
-.settings-cluster-table th:nth-child(4), .settings-cluster-table td:nth-child(4) { width: 96px; text-align: right; }
+.settings-cluster-table th:nth-child(4), .settings-cluster-table td:nth-child(4) { width: 330px; text-align: right; }
 .settings-cluster-table td { overflow: hidden; text-overflow: ellipsis; }
 /* The row's way in, as low as the row's text (the same button as on Versions). */
 .settings-edit { display: inline-flex; align-items: center; min-height: 0; padding: 0 12px; text-decoration: none; }
@@ -1997,4 +1997,8 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 @media (max-width: 430px) {
   .node-table tr { grid-template-columns: 1fr; }
   .node-table td:nth-child(n) { grid-column: 1; }
+}
+/* As cards, the row's state and Edit take the card's width, not half of it. */
+@media (max-width: 1049px) {
+  .settings-cluster-table td:nth-child(4) { grid-column: 1 / -1; }
 }

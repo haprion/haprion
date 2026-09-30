@@ -65,6 +65,39 @@ valid_abs_path() {
 }
 
 #
+# The nginx lines that let a reverse proxy in front of the interface name the
+# client (TRUSTED_PROXIES in the answers file, INSTALLATION 4.5). Only a
+# connection from one of these addresses has its X-Forwarded-For believed; a
+# client that reaches nginx directly and sends the header is still known by
+# its own address. With `real_ip_recursive` the client is the last address in
+# the header that is not a trusted proxy, so a value a client put in the
+# header before it reached the proxy is skipped rather than believed.
+#
+# Addresses and networks only: a host name would be resolved once, when nginx
+# starts, and "every address" would let anyone name any client.
+#
+render_real_ip() {
+    local entry count=0
+    local -a entries
+    read -ra entries <<<"$1"
+    echo "# Written by 05-platform-nginx from TRUSTED_PROXIES. Edit the answers file, not this."
+    for entry in "${entries[@]}"; do
+        if ! python3 -c 'import ipaddress, sys
+network = ipaddress.ip_network(sys.argv[1], strict=False)
+sys.exit(1 if network.prefixlen == 0 else 0)' "$entry" 2>/dev/null; then
+            echo "TRUSTED_PROXIES: ${entry} is not an address or a network narrower than every address" >&2
+            return 1
+        fi
+        echo "set_real_ip_from ${entry};"
+        count=$((count + 1))
+    done
+    if ((count > 0)); then
+        echo "real_ip_header X-Forwarded-For;"
+        echo "real_ip_recursive on;"
+    fi
+}
+
+#
 # Create a directory with an exact owner and mode, or correct one that exists.
 # Reported either way, because "already correct" and "just fixed" are different
 # facts to an operator reading the output.

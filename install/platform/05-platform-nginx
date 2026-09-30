@@ -30,6 +30,12 @@ TLS_KEY="${TLS_KEY:-/etc/haproxy-manager/tls/ui.key}"
 
 valid_abs_path "$TLS_CERT" || die "TLS_CERT must be an absolute path"
 valid_abs_path "$TLS_KEY"  || die "TLS_KEY must be an absolute path"
+#
+# A reverse proxy in front, whose X-Forwarded-For nginx believes (INSTALLATION
+# 4.5). Empty - the default - believes nobody's, as before this existed.
+#
+TRUSTED_PROXIES="${TRUSTED_PROXIES:-}"
+real_ip="$(render_real_ip "$TRUSTED_PROXIES")" || die "TRUSTED_PROXIES is not a list of addresses"
 
 systemctl is-active --quiet "${WEB_USER}.service" \
     || die "${WEB_USER}.service is not running; run 04-platform-service first"
@@ -63,6 +69,19 @@ if [[ -f /etc/nginx/snippets/haproxy-manager-receivers.conf ]]; then
 else
     install_file /etc/nginx/snippets/haproxy-manager-receivers.conf root:root 644 \
         "# Written by haproxy-cert-receiver from the certificate registry. Empty until the first https receiver."
+fi
+
+#
+# Written on every run, from the answers file alone: unlike the receivers'
+# snippet nothing else writes it, and a proxy taken out of the answers file
+# must stop being believed at the next run.
+#
+step "Trusted proxies"
+install_file /etc/nginx/snippets/haproxy-manager-real-ip.conf root:root 644 "$real_ip"
+if [[ -n "${TRUSTED_PROXIES// /}" ]]; then
+    log "  believes X-Forwarded-For from: ${TRUSTED_PROXIES}"
+else
+    log "  none; every client is known by its own address"
 fi
 
 step "Site"

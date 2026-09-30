@@ -2679,13 +2679,14 @@ ACME with DNS-01 against a public domain, and a management host named on an
 internal domain cannot be validated that way. So the pair is either self-signed
 or issued by your own PKI.
 
-Three answers-file keys control it:
+Four answers-file keys control it:
 
 | Key | Meaning |
 |---|---|
 | `SERVER_NAME` | the name the UI is reached on directly. Required |
 | `TLS_CERT` | defaults to `/etc/haproxy-manager/tls/ui.crt` |
 | `TLS_KEY` | defaults to `/etc/haproxy-manager/tls/ui.key` |
+| `TRUSTED_PROXIES` | addresses or networks of a reverse proxy in front, space-separated; empty by default. See [Behind another reverse proxy](#behind-another-reverse-proxy) |
 
 If no pair exists at those paths, step 5 generates a self-signed one so the UI
 is encrypted from the first login. Point the keys at a pair your clients already
@@ -2747,6 +2748,76 @@ targets. The entry that serves the interface cannot be deleted (`serves_interfac
 
 `haproxy-ui-tls install` and `self-signed` stay the way back: running either replaces the served
 pair whatever the registry says, and the next publish of the marked entry puts it back.
+
+#### Behind another reverse proxy
+
+A proxy in front - another nginx, a Proxy Manager, a load balancer - is an additional path; the
+direct one stays. Without being told about it, the management host knows every user by the proxy's
+address, and three things go wrong:
+
+- the sign-in throttle (`[throttle]` in `ui.toml`, failed sign-ins per address) is shared by everyone, so one
+  person, or an attacker, locks every user out; the audit log names the proxy for every action;
+- a certificate receiver's `/certdist/<receiver>/` location allows only the receiver's address, so a
+  receiver fetching through the proxy is refused - and naming the proxy in its place would open
+  certificates, and sometimes keys, to everyone who can reach the proxy;
+- the sign-in provider (SSO) sends the browser back to the name the request arrived with.
+
+**Name the proxy** in the answers file and run step 5 again:
+
+```bash
+TRUSTED_PROXIES="192.0.2.10"        # one or more addresses or networks, space-separated
+sudo ./05-platform-nginx answers.env
+```
+
+Step 5 writes `/etc/nginx/snippets/haproxy-manager-real-ip.conf` on every run - `set_real_ip_from`
+per entry, `real_ip_header X-Forwarded-For` and `real_ip_recursive on` - and the site includes it.
+From then on nginx believes `X-Forwarded-For` only on connections from those addresses, and takes
+the client to be the last address in it that is not one of them: a value a client wrote into the
+header before it reached the proxy is skipped. A client that reaches the manager directly and sends
+the header is still known by its own address. Throttle, audit log, receivers' `allow` and the access
+log then all see the client. Host names and "every address" (`0.0.0.0/0`, `::/0`) are refused.
+Emptying the key and running step 5 again stops believing the proxy.
+
+**What the proxy must do:**
+
+- **Use the manager's `SERVER_NAME`** as the name users reach it by, and send that name upstream as
+  `Host`. The management host picks its site by that name, and the SSO provider sends the browser
+  back to it; a different public name is not supported.
+- **Forward to `https://<manager>:443`**, not to the application port, which listens on loopback only.
+- **Append to `X-Forwarded-For`** rather than replace it. Other forwarded headers are optional - the
+  manager's nginx sets its own.
+- Leave receivers fetching directly where they can; through the proxy they work too, once it is
+  named here, because the receiver's own address is then what `allow` sees.
+
+A complete nginx block for the proxy, with made-up names (`ui.example.com` is the manager's
+`SERVER_NAME`, `192.0.2.20` its address):
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name ui.example.com;
+    ssl_certificate     /etc/ssl/ui.example.com.crt;
+    ssl_certificate_key /etc/ssl/ui.example.com.key;
+    client_max_body_size 1m;
+
+    location / {
+        proxy_pass https://192.0.2.20:443;
+        proxy_ssl_server_name on;
+        proxy_ssl_name ui.example.com;
+        # The manager's certificate, from https://ui.example.com/certdist/manager-ui.pem:
+        # proxy_ssl_trusted_certificate /etc/ssl/manager-ui.pem;
+        # proxy_ssl_verify on;
+        proxy_set_header Host            $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_http_version 1.1;
+        proxy_read_timeout 60s;
+    }
+}
+```
+
+In a Proxy Manager, the same thing is a proxy host for the manager's name with scheme `https`,
+the manager's address and port 443, and `client_max_body_size 1m;` in its advanced field. Check in
+its generated configuration that `Host` is passed unchanged and `X-Forwarded-For` is appended.
 
 ### 4.6 Accounts and signing in
 

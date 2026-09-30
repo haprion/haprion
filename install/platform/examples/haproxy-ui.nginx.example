@@ -58,6 +58,14 @@ server {
     client_max_body_size 1m;
     client_body_buffer_size 1m;
 
+    #
+    # A reverse proxy in front (TRUSTED_PROXIES, INSTALLATION 4.5): from here on
+    # $remote_addr is the client the proxy names, for the sign-in throttle, the
+    # audit log, the receivers' `allow` and the access log alike. Empty unless
+    # the answers file names a proxy; 05-platform-nginx writes it on every run.
+    #
+    include /etc/nginx/snippets/haproxy-manager-real-ip.conf;
+
     access_log /var/log/nginx/haproxy-ui.access.log;
     error_log  /var/log/nginx/haproxy-ui.error.log;
 

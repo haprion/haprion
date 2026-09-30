@@ -27,6 +27,7 @@ import logging
 import os
 import sys
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -62,6 +63,12 @@ POLLER_LOCK_KEY = 0x48415052
 # output in a row that is read on every page view.
 #
 MAX_ERROR_BYTES = 2000
+#
+# How many clusters one pass reads at a time. Each runs its helpers in turn,
+# and each helper asks its nodes at once; this bounds the SSH sessions and
+# processes a pass can have open, not how many clusters there may be.
+#
+MAX_PARALLEL_CLUSTERS = 8
 
 type RunHelper = Callable[[str, str], Any]
 type Recorder = Callable[..., None]
@@ -297,35 +304,53 @@ def poll_once(
     as its own line rather than folded into that number.
     """
 
+    listed = tuple(clusters if clusters is not None else config.clusters)
+    if not listed:
+        return 0
+    #
+    # The clusters at once, each one's sources in order (Fas 16 punkt 1). A
+    # cluster's readings are separate helpers over SSH, and in series a pass
+    # grew with every cluster and every node that did not answer. The writes
+    # stay short transactions from the pool; a thread waits for a connection
+    # rather than holding one while its helper runs.
+    #
+    with ThreadPoolExecutor(max_workers=min(len(listed), MAX_PARALLEL_CLUSTERS)) as threads:
+        return sum(
+            threads.map(lambda cluster: _poll_cluster_sources(pool, cluster, sources), listed)
+        )
+
+
+def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) -> int:
+    """One cluster's sources in order; 1 when its status reading was done."""
+
     healthy = 0
-    for cluster in clusters if clusters is not None else config.clusters:
-        for source in sources:
-            reading = poll_cluster(
-                cluster, source.run, operation=source.operation, partial_ok=source.partial_ok
+    for source in sources:
+        reading = poll_cluster(
+            cluster, source.run, operation=source.operation, partial_ok=source.partial_ok
+        )
+        with pool.connection() as connection:
+            source.record(
+                connection,
+                cluster=cluster,
+                outcome=reading["outcome"],
+                result=reading["result"],
+                warnings=reading.get("warnings"),
+                error=reading.get("error"),
+                poll_error=reading.get("poll_error"),
             )
-            with pool.connection() as connection:
-                source.record(
-                    connection,
-                    cluster=cluster,
-                    outcome=reading["outcome"],
-                    result=reading["result"],
-                    warnings=reading.get("warnings"),
-                    error=reading.get("error"),
-                    poll_error=reading.get("poll_error"),
-                )
-                connection.commit()
-            _sample(pool, source, cluster=cluster, result=reading["result"])
-            if reading["outcome"] == "done":
-                if source.operation == "status":
-                    healthy += 1
-                continue
-            logger.warning(
-                "cluster %s %s: %s%s",
-                cluster,
-                source.operation,
-                reading["outcome"],
-                f" ({reading['poll_error']})" if reading.get("poll_error") else "",
-            )
+            connection.commit()
+        _sample(pool, source, cluster=cluster, result=reading["result"])
+        if reading["outcome"] == "done":
+            if source.operation == "status":
+                healthy += 1
+            continue
+        logger.warning(
+            "cluster %s %s: %s%s",
+            cluster,
+            source.operation,
+            reading["outcome"],
+            f" ({reading['poll_error']})" if reading.get("poll_error") else "",
+        )
     return healthy
 
 
@@ -344,7 +369,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("no clusters are configured; there is nothing to poll")
         return 78
 
-    pool = db.pool(config.database, min_size=1, max_size=2)
+    pool = db.pool(config.database, min_size=1, max_size=4)
     pool.open(wait=True, timeout=10)
     #
     # Its own connection, held for the process's life, for the same reason the

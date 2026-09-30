@@ -189,8 +189,10 @@ class Passes(unittest.TestCase):
         healthy = poller.poll_once(Pool(), config, sources)
 
         self.assertEqual(healthy, 2)
+        # The clusters are read at once, so only each cluster's own order is
+        # promised; a stable sort by cluster keeps it.
         self.assertEqual(
-            written,
+            sorted(written, key=lambda row: row[0]),
             [
                 ("alpha", "done"),
                 ("alpha", "done"),
@@ -376,4 +378,36 @@ class TheClusterList(unittest.TestCase):
 
         poller.poll_once(Pool(), configured, (source,), clusters=("gamma", "delta"))
 
-        self.assertEqual(asked, ["gamma", "delta"])
+        self.assertCountEqual(asked, ["gamma", "delta"])
+
+    def test_the_clusters_are_read_at_once(self) -> None:
+        """Fas 16 punkt 1: a pass takes as long as its slowest cluster, not their sum."""
+
+        import threading
+
+        clusters = ("alpha", "beta", "gamma")
+        # Each helper waits until all three clusters are being read; in series
+        # the first would wait alone and the barrier would break.
+        together = threading.Barrier(len(clusters), timeout=5)
+
+        class Pool:
+            def connection(self) -> Any:
+                return self
+
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def commit(self) -> None:
+                return None
+
+        def helper(_cluster: str, _request: str) -> Any:
+            together.wait()
+            return completed(envelope())
+
+        source = poller.Source("status", helper, lambda _c, **_k: None)
+        healthy = poller.poll_once(Pool(), None, (source,), clusters=clusters)  # type: ignore[arg-type]
+
+        self.assertEqual(healthy, 3)

@@ -3683,7 +3683,13 @@ def build_router(config: Config) -> APIRouter:
                 },
             )
             connection.commit()
-        return RedirectResponse(f"/settings/nodes/{cluster}", status_code=303)
+        #
+        # Back to the cluster's page, named from the configured list rather
+        # than from the request: the callers already refused a cluster not on
+        # it, and the address is then never built from what the browser sent.
+        #
+        listed = next(name for name in listed_clusters(request, config) if name == cluster)
+        return RedirectResponse(f"/settings/nodes/{listed}", status_code=303)
 
     @router.get("/settings/nodes/{cluster}", response_class=HTMLResponse)
     def cluster_nodes_page(request: Request, cluster: str) -> Response:

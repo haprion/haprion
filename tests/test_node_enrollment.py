@@ -326,12 +326,16 @@ class AddingANode(unittest.TestCase):
             site = Installation(Path(raw))
             keys = site.root / "svc-pull/.ssh/authorized_keys"
             os.chmod(keys, 0o600)
-            os.chmod(site.cluster_file, 0o640)
+            #
+            # Not the 0600 a new temporary file is created with, so keeping the
+            # mode is something the rename had to do rather than a coincidence.
+            #
+            os.chmod(site.cluster_file, 0o400)
 
             site.add()
 
             self.assertEqual(keys.stat().st_mode & 0o777, 0o600)
-            self.assertEqual(site.cluster_file.stat().st_mode & 0o777, 0o640)
+            self.assertEqual(site.cluster_file.stat().st_mode & 0o777, 0o400)
 
 
 class RemovingANode(unittest.TestCase):

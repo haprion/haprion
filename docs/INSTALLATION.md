@@ -115,7 +115,8 @@ HAProxy itself. Before starting, you need:
 
 **On every node**
 
-- HAProxy, installed and managed by `systemd`
+- HAProxy, installed and managed by `systemd`, from the source you choose ([Where the package comes
+  from](#where-the-package-comes-from))
 - `keepalived`, if the cluster uses a virtual address
 - `rsync` and `openssh-server`
 - `sudo`
@@ -163,6 +164,40 @@ is only meaningful while it is at least as strict as the nodes are. A validator 
 can accept a directive the nodes then reject — the deploy fails on the first node and rolls back,
 so nothing breaks, but the check stopped doing its job. When you upgrade, do the nodes first and
 the management host last, and the validator is never the newer of the two.
+
+### Where the package comes from
+
+To run a branch's current release rather than the distribution's frozen one, take HAProxy from the
+repositories [haproxy.org](https://www.haproxy.org/) links to, maintained per branch: the
+`vbernat/haproxy-<branch>` PPA on Ubuntu, and [haproxy.debian.net](https://haproxy.debian.net/) on
+Debian. They follow upstream closely but not instantly - a point release has reached them a day or
+two after haproxy.org announced it - so `apt` offers a new release only after its next list update
+following the repository's.
+
+Pin the package to that repository, on the management host and on every node alike, so that an
+upgrade never quietly falls back to the distribution's older branch:
+
+```text
+# /etc/apt/preferences.d/haproxy
+Package: haproxy haproxy-doc vim-haproxy
+Pin: release o=<origin of the HAProxy repository>
+Pin-Priority: 1001
+
+Package: haproxy haproxy-doc vim-haproxy
+Pin: release o=Ubuntu
+Pin-Priority: -1
+```
+
+`1001` takes the repository's package even where that would be a downgrade; `-1` never installs the
+distribution's, so a repository that stops answering becomes an error at the next upgrade rather
+than a silent change of branch. On Debian the second stanza names `o=Debian`. Read the origin from
+the repository's own `Release` file, or from `apt-cache policy` once the source is added
+(`release ...,o=LP-PPA-vbernat-haproxy-3.4,...` for the Ubuntu 3.4 PPA) - an origin that is
+mistyped matches nothing, and the pin then silently does nothing. `apt-cache policy haproxy` shows
+the pin working: the repository's version at priority 1001, the distribution's at -1.
+
+Neither the installation steps nor the interface set this up or report the HAProxy version a node
+runs; `haproxy -v` on each host is the check after an upgrade.
 
 ## Part 1 — the management host
 

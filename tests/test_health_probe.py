@@ -428,6 +428,7 @@ class TheHandshakeIsHAProxys(unittest.TestCase):
         certificate, key = self_signed(Path(cls.directory.name))
         cls.names: list[str | None] = []
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(certificate, key)
         context.sni_callback = lambda _socket, name, _context: cls.names.append(name)
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

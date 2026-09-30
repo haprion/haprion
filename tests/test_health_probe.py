@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import shutil
 import socket
+import ssl
 import subprocess as sp
 import tempfile
 import threading
@@ -411,6 +412,51 @@ def self_signed(directory: Path) -> tuple[Path, Path]:
 
 
 @unittest.skipUnless(shutil.which("openssl"), "openssl is not installed here")
+class TheHandshakeIsHAProxys(unittest.TestCase):
+    """The probe names nobody in its TLS handshake, as HAProxy's check does not.
+
+    HAProxy's manual for 3.4.4, under `verifyhost`: health checks "cannot
+    provide an SNI value". A probe that sent the Host header as SNI could reach
+    a backend that needs one and report it usable while the node's own check
+    marks it down. A real TLS server in this process records the name each
+    handshake carried.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.directory = tempfile.TemporaryDirectory()
+        certificate, key = self_signed(Path(cls.directory.name))
+        cls.names: list[str | None] = []
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certificate, key)
+        context.sni_callback = lambda _socket, name, _context: cls.names.append(name)
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        cls.server.socket = context.wrap_socket(cls.server.socket, server_side=True)
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.directory.cleanup()
+
+    def test_no_name_is_sent_even_with_a_host_header(self) -> None:
+        code, answer = ask(
+            {
+                "schema_version": 1,
+                "targets": [
+                    target(port=self.port, tls=True, verify=False, host_header="app.example.com")
+                ],
+            }
+        )
+
+        self.assertEqual(code, 0)
+        self.assertTrue(answer["results"][0]["ok"], answer)
+        self.assertEqual(self.names, [None])
+
+
 class HowOldATlsBackendMayBe(unittest.TestCase):
     """The floor is the probe's own, not whatever OpenSSL on the node was built with.
 

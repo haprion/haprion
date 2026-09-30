@@ -63,11 +63,13 @@ from haproxy_mgmt.repo_snapshot import (
     PublishError,
     build_candidate_tree,
     commit_and_swap,
+    committed_snapshot,
     read_tree_files,
     resolve_head,
 )
 from haproxy_mgmt.version_history import (
     count_versions,
+    recorded_on,
     request_names,
     restore_worktree,
     version_message,
@@ -243,7 +245,15 @@ def _publish(
         )
 
     branch, head = resolve_head(repo)
-    if head != expected_head:
+    #
+    # Moved by this request's own version is not moved: that is a run which
+    # committed and stopped before its release was installed, retried. It takes
+    # the unchanged path with nothing applied again.
+    #
+    retry = head != expected_head and recorded_on(
+        repo, head, base=expected_head, request_id=request.request_id
+    )
+    if head != expected_head and not retry:
         return refuse(
             "expected_target_changed",
             "the configuration changed since this network page was read. Refresh it before "
@@ -251,15 +261,17 @@ def _publish(
             BLOCKED_EXIT,
         )
 
-    base_files = read_tree_files(repo, head)
-    managed = managed_files(
-        base_files,
-        network_document=network,
-        cluster=cluster,
-        certificate_sans=certificate_sans,
-        allow_certificate_mismatch=allow_certificate_mismatch,
-    )
-    snapshot = build_candidate_tree(repo, head, managed, prefixes=(MANAGED_PREFIX,))
+    if retry:
+        snapshot = committed_snapshot(repo, head)
+    else:
+        managed = managed_files(
+            read_tree_files(repo, head),
+            network_document=network,
+            cluster=cluster,
+            certificate_sans=certificate_sans,
+            allow_certificate_mismatch=allow_certificate_mismatch,
+        )
+        snapshot = build_candidate_tree(repo, head, managed, prefixes=(MANAGED_PREFIX,))
     published_files = read_tree_files(repo, snapshot.tree)
     artifact = build_node_artifact(published_files)
     index = build_release_index(published_files)

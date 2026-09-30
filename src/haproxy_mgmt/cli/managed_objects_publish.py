@@ -70,11 +70,13 @@ from haproxy_mgmt.repo_snapshot import (
     PublishError,
     build_candidate_tree,
     commit_and_swap,
+    committed_snapshot,
     read_tree_files,
     resolve_head,
 )
 from haproxy_mgmt.version_history import (
     count_versions,
+    recorded_on,
     request_names,
     restore_worktree,
     version_message,
@@ -303,7 +305,16 @@ def _publish(
         )
 
     branch, head = resolve_head(repo)
-    if head != expected_head:
+    #
+    # Moved by this request's own version is not moved: that is a run which
+    # committed and stopped before its release was installed, retried. It takes
+    # the unchanged path with nothing applied again - a removal asked twice
+    # would otherwise be refused as a removal of something already gone.
+    #
+    retry = head != expected_head and recorded_on(
+        repo, head, base=expected_head, request_id=request.request_id
+    )
+    if head != expected_head and not retry:
         return refuse(
             "expected_target_changed",
             "the configuration changed since these objects were loaded. Refresh and try again.",
@@ -328,26 +339,29 @@ def _publish(
     changed = sorted(name for name, document in objects.items() if document is not None)
     removed = sorted(name for name, document in objects.items() if document is None)
 
-    #
-    # Everything the managed layer can refuse arrives here as one exception:
-    # a document the model rejects, a removal of an object this version does
-    # not have, a hostname another object already owns, a certificate that does
-    # not answer for a name.  They are answers about the objects somebody
-    # edited, so they are reported as that rather than as a bad payload - the
-    # editor has a field to attach the sentence to.
-    #
-    try:
-        managed = managed_files(
-            base_files,
-            network_document=network_document,
-            cluster=cluster,
-            objects=objects,
-            certificate_sans=certificate_sans,
-            allow_certificate_mismatch=allow_certificate_mismatch,
-        )
-    except ConfigError as exc:
-        return refuse("objects_invalid", str(exc), 65)
-    snapshot = build_candidate_tree(repo, head, managed, prefixes=(MANAGED_PREFIX,))
+    if retry:
+        snapshot = committed_snapshot(repo, head)
+    else:
+        #
+        # Everything the managed layer can refuse arrives here as one exception:
+        # a document the model rejects, a removal of an object this version does
+        # not have, a hostname another object already owns, a certificate that does
+        # not answer for a name.  They are answers about the objects somebody
+        # edited, so they are reported as that rather than as a bad payload - the
+        # editor has a field to attach the sentence to.
+        #
+        try:
+            managed = managed_files(
+                base_files,
+                network_document=network_document,
+                cluster=cluster,
+                objects=objects,
+                certificate_sans=certificate_sans,
+                allow_certificate_mismatch=allow_certificate_mismatch,
+            )
+        except ConfigError as exc:
+            return refuse("objects_invalid", str(exc), 65)
+        snapshot = build_candidate_tree(repo, head, managed, prefixes=(MANAGED_PREFIX,))
     published_files = read_tree_files(repo, snapshot.tree)
     artifact = build_node_artifact(published_files)
     index = build_release_index(published_files)

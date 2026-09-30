@@ -336,6 +336,21 @@ def request_id_of(repo: Path, commit: str) -> str | None:
     return value or None
 
 
+def recorded_on(repo: Path, head: str, *, base: str, request_id: str) -> bool:
+    """Whether `head` is the version this request recorded directly on `base`.
+
+    The shape a retry takes when the first attempt committed and then stopped
+    before its release was installed: the repository has moved, but only by the
+    request's own version. The trailer says the version is this request's; the
+    parent says nothing else was recorded between the base the request was built
+    on and it. A helper fenced on `expected_head` may treat that as its own
+    unchanged path, and nothing short of both as anything but a moved target.
+    """
+
+    parents = _git(repo, "rev-list", "--parents", "-n", "1", head).decode().split()
+    return parents[1:] == [base] and request_id_of(repo, head) == request_id
+
+
 def request_names(
     parameters: Mapping[str, object],
     environ: Mapping[str, str] | None = None,

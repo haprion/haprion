@@ -62,11 +62,13 @@ from haproxy_mgmt.repo_snapshot import (
     PublishError,
     build_candidate_tree,
     commit_and_swap,
+    committed_snapshot,
     read_tree_files,
     resolve_head,
 )
 from haproxy_mgmt.version_history import (
     count_versions,
+    recorded_on,
     request_names,
     restore_worktree,
     version_message,
@@ -218,7 +220,15 @@ def _publish(
         )
 
     branch, head = resolve_head(repo)
-    if head != expected_head:
+    #
+    # Moved by this request's own version is not moved: that is a run which
+    # committed and stopped before its release was installed, retried. It takes
+    # the unchanged path with nothing applied again.
+    #
+    retry = head != expected_head and recorded_on(
+        repo, head, base=expected_head, request_id=request.request_id
+    )
+    if head != expected_head and not retry:
         return refuse(
             "expected_target_changed",
             "the configuration changed since these settings were read. Refresh them before "
@@ -239,27 +249,31 @@ def _publish(
             "settings.",
             BLOCKED_EXIT,
         )
-    try:
-        #
-        # Stored in its canonical form, so two ways of writing the same
-        # settings are one version and a diff shows only what changed.
-        #
-        canonical = cluster_settings.dump_document(cluster_settings.load_document(settings))
-        managed = managed_files(
-            base_files,
-            network_document=network_document,
-            cluster=cluster,
+
+    if retry:
+        snapshot = committed_snapshot(repo, head)
+    else:
+        try:
             #
-            # Certificate coverage is not asked again. Nothing here changes an
-            # object or a certificate, and an object published with the
-            # mismatch override would otherwise block every settings change.
+            # Stored in its canonical form, so two ways of writing the same
+            # settings are one version and a diff shows only what changed.
             #
-            certificate_sans=None,
-            settings_document=canonical,
-        )
-    except ConfigError as exc:
-        return refuse("settings_invalid", str(exc), 65)
-    snapshot = build_candidate_tree(repo, head, managed, prefixes=(MANAGED_PREFIX,))
+            canonical = cluster_settings.dump_document(cluster_settings.load_document(settings))
+            managed = managed_files(
+                base_files,
+                network_document=network_document,
+                cluster=cluster,
+                #
+                # Certificate coverage is not asked again. Nothing here changes an
+                # object or a certificate, and an object published with the
+                # mismatch override would otherwise block every settings change.
+                #
+                certificate_sans=None,
+                settings_document=canonical,
+            )
+        except ConfigError as exc:
+            return refuse("settings_invalid", str(exc), 65)
+        snapshot = build_candidate_tree(repo, head, managed, prefixes=(MANAGED_PREFIX,))
     published_files = read_tree_files(repo, snapshot.tree)
     artifact = build_node_artifact(published_files)
     index = build_release_index(published_files)

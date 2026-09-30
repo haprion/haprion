@@ -6,6 +6,7 @@ import grp
 import io
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,7 +14,7 @@ from pathlib import Path
 from haproxy_mgmt import tls_policy
 from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli import managed_network_publish
-from haproxy_mgmt.version_history import request_id_of
+from haproxy_mgmt.version_history import count_versions, request_id_of
 from tests.contract_schema import assert_contract
 from tests.test_publish_helper import PublishFixture, Recorder, git
 
@@ -127,6 +128,26 @@ class NetworkPublicationTests(NetworkPublishFixture):
             self.assertEqual(code, 75)
             self.assertEqual(document["error"]["code"], "tls_defaults_stale")
             self.assertEqual(sorted(self.publish_path.rglob("*")), releases_before)
+
+    def test_a_retry_after_the_commit_repairs_the_release_from_that_version(self) -> None:
+        """What a requeued job sends: the same request, fenced on the old head."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            sent = self.request().getvalue()
+            self.run_publish(policy, io.BytesIO(sent))
+            head = git(self.repo, "rev-parse", "HEAD")
+            versions = count_versions(self.repo)
+            shutil.rmtree(self.publish_path / "releases" / head)
+            (self.publish_path / "current").unlink()
+
+            code, document, err = self.run_publish(policy, io.BytesIO(sent))
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertFalse(document["result"]["changed"])
+            self.assertEqual(document["result"]["hash"], head)
+            self.assertEqual(count_versions(self.repo), versions)
+            self.assertEqual(os.readlink(self.publish_path / "current"), f"releases/{head}")
 
     def test_a_dirty_human_worktree_is_blocked_without_touching_it(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

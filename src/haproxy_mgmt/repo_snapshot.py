@@ -150,6 +150,19 @@ def build_candidate_tree(
     return Snapshot(tree=tree, unchanged=tree == base_tree)
 
 
+def committed_snapshot(repo: Path, commit: str) -> Snapshot:
+    """`commit`'s own tree, as the candidate a retry of that commit's request is.
+
+    Nothing is applied on top: the commit already holds what the request asked
+    for, and applying it a second time is not always a no-op - a removal asked
+    twice is a removal of something that is no longer there.
+    """
+
+    return Snapshot(
+        tree=_git(repo, "rev-parse", f"{commit}^{{tree}}").decode().strip(), unchanged=True
+    )
+
+
 def read_tree_files(repo: Path, tree: str) -> dict[str, bytes]:
     """Every file in `tree`, keyed by repository relative path.
 

@@ -14,6 +14,7 @@ import grp
 import io
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -22,7 +23,7 @@ from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli import cluster_settings as command
 from haproxy_mgmt.cli import cluster_settings_helper, cluster_settings_publish
 from haproxy_mgmt.cluster_settings import LOCATION
-from haproxy_mgmt.version_history import request_id_of
+from haproxy_mgmt.version_history import count_versions, request_id_of
 from tests.contract_schema import assert_contract
 from tests.test_managed_network_publish import NetworkPublishFixture
 from tests.test_publish_helper import Recorder, git
@@ -105,6 +106,27 @@ class SettingsPublicationTests(SettingsPublishFixture):
             again, repeated, _err = self.publish_settings(policy, self.settings_request())
             self.assertEqual(again, 0)
             self.assertFalse(repeated["result"]["changed"])
+
+    def test_a_retry_after_the_commit_repairs_the_release_from_that_version(self) -> None:
+        """What a requeued job sends: the same request, fenced on the old head."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.assertEqual(self.run_publish(policy, self.request())[0], 0)
+            sent = self.settings_request().getvalue()
+            self.publish_settings(policy, io.BytesIO(sent))
+            head = git(self.repo, "rev-parse", "HEAD")
+            versions = count_versions(self.repo)
+            shutil.rmtree(self.publish_path / "releases" / head)
+            (self.publish_path / "current").unlink()
+
+            code, document, err = self.publish_settings(policy, io.BytesIO(sent))
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertFalse(document["result"]["changed"])
+            self.assertEqual(document["result"]["hash"], head)
+            self.assertEqual(count_versions(self.repo), versions)
+            self.assertEqual(os.readlink(self.publish_path / "current"), f"releases/{head}")
 
     def test_without_a_network_description_nothing_is_published(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

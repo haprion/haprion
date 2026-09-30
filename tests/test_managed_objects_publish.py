@@ -6,6 +6,7 @@ import grp
 import io
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,7 +15,7 @@ from unittest import mock
 from haproxy_mgmt import tls_policy
 from haproxy_mgmt.candidate_validation import ValidationResult
 from haproxy_mgmt.cli import managed_objects_publish
-from haproxy_mgmt.version_history import recent_versions, request_id_of
+from haproxy_mgmt.version_history import count_versions, recent_versions, request_id_of
 from tests.contract_schema import assert_contract
 from tests.test_publish_helper import PublishFixture, Recorder, git
 
@@ -324,6 +325,65 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.assertEqual(code, 75)
             self.assertEqual(document["error"]["code"], "tls_defaults_stale")
             self.assertEqual(sorted(self.publish_path.rglob("*")), releases_before)
+
+    def test_a_retry_after_the_commit_repairs_the_release_from_that_version(self) -> None:
+        """What a requeued job sends: the same request, fenced on the old head.
+
+        The first run recorded its version and stopped before the release was
+        installed. The retry must recognise its own version rather than refuse
+        it as a moved target, and write the release from that commit.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            sent = self.request().getvalue()
+            self.run_publish(policy, io.BytesIO(sent))
+            head = git(self.repo, "rev-parse", "HEAD")
+            versions = count_versions(self.repo)
+            shutil.rmtree(self.publish_path / "releases" / head)
+            (self.publish_path / "current").unlink()
+
+            code, document, err = self.run_publish(policy, io.BytesIO(sent))
+
+            self.assertEqual((code, err), (0, ""))
+            assert_contract("haproxy-objects-publish", json.dumps(document))
+            self.assertFalse(document["result"]["changed"])
+            self.assertEqual(document["result"]["hash"], head)
+            self.assertEqual(count_versions(self.repo), versions)
+            self.assertEqual(os.readlink(self.publish_path / "current"), f"releases/{head}")
+
+    def test_a_retried_removal_is_not_refused_as_a_removal_of_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed(shop=proxy("shop", "shop.example.com"))
+            sent = self.request(objects={"shop": None}).getvalue()
+            self.run_publish(policy, io.BytesIO(sent))
+            head = git(self.repo, "rev-parse", "HEAD")
+
+            code, document, err = self.run_publish(policy, io.BytesIO(sent))
+
+            self.assertEqual((code, err), (0, ""))
+            self.assertEqual(document["result"]["hash"], head)
+            self.assertEqual(document["result"]["removed"], ["shop"])
+
+    def test_a_version_stacked_on_the_request_s_own_is_still_a_moved_target(self) -> None:
+        """Only the request's own version, directly on its base, is a retry."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            sent = self.request().getvalue()
+            self.run_publish(policy, io.BytesIO(sent))
+            (self.repo / "manual/reservations.yaml").write_text("hostnames: [legacy.example.com]\n")
+            git(self.repo, "add", "manual/reservations.yaml")
+            git(self.repo, "commit", "-qm", "Human update")
+
+            code, document, _err = self.run_publish(policy, io.BytesIO(sent))
+
+            self.assertEqual(code, 75)
+            self.assertEqual(document["error"]["code"], "expected_target_changed")
+            self.assertEqual(git(self.repo, "log", "-1", "--format=%s"), "Human update")
 
     def test_removing_an_object_takes_its_generated_configuration_with_it(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

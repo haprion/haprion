@@ -29,6 +29,46 @@ def reading(name: str, *, age_seconds: int = 15, poll_error: str | None = None) 
     )
 
 
+class HaproxyVersions(unittest.TestCase):
+    """Fas 16 punkt 3b: a node on an older HAProxy is named on its Runtime cell."""
+
+    def view(self, versions: tuple[str, str], validator: str | None) -> Any:
+        status = reading("done-single-owner.json")
+        result = dict(status.result)
+        nodes = [dict(node) for node in result["nodes"]]
+        for node, version in zip(nodes, versions, strict=True):
+            node["status"] = dict(node["status"])
+            node["status"]["runtime"] = {"version": version, "uptime_sec": 60}
+        result["nodes"] = nodes
+        result["summary"] = {**result["summary"], "validator_version": validator}
+        changed = ClusterStatus(
+            cluster=status.cluster,
+            observed_at=status.observed_at,
+            outcome="done",
+            result=result,
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        cluster = build_dashboard(
+            ("alpha",), (changed,), now=NOW, stale_after=timedelta(seconds=120)
+        ).clusters[0]
+        return [node.runtime_note for node in cluster.nodes], cluster
+
+    def test_one_version_says_nothing_and_leaves_the_cluster_as_it_was(self) -> None:
+        notes, cluster = self.view(("3.4.6-1", "3.4.6-1"), "3.4.4-1")
+        self.assertEqual(notes, [None, None])
+        self.assertEqual(cluster.label, "Healthy")
+
+    def test_the_older_node_is_named(self) -> None:
+        notes, _ = self.view(("3.4.6-1", "3.4.4-1"), "3.4.4-1")
+        self.assertEqual(notes, [None, "Behind 3.4.6"])
+
+    def test_a_newer_validator_is_named_on_every_node(self) -> None:
+        notes, _ = self.view(("3.4.4-1", "3.4.4-1"), "3.4.6-1")
+        self.assertEqual(notes, ["Manager validates with 3.4.6"] * 2)
+
+
 class HealthDerivation(unittest.TestCase):
     def dashboard(self, status: ClusterStatus):
         return build_dashboard(("alpha",), (status,), now=NOW, stale_after=timedelta(seconds=120))

@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from haproxy_mgmt import haproxy_versions
 from haproxy_mgmt.cluster_status import keepalived_state
 
 from haproxy_ui.cluster_identity import accent_index
@@ -34,6 +35,12 @@ class NodeView:
     runtime: str
     stats: str
     current: bool | None
+    #
+    # Why this node's HAProxy is older than it should be - behind the cluster's
+    # newest, or behind the version this host validates with (Fas 16 punkt 3b).
+    # The same sentence `haproxy-status` prints; None when there is nothing to say.
+    #
+    runtime_note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,6 +321,18 @@ def _cluster_view(
     nodes = (
         tuple(_node_view(value) for value in node_values) if isinstance(node_values, list) else ()
     )
+    if isinstance(node_values, list):
+        behind = haproxy_versions.notes(
+            {
+                _text(value.get("name")): _mapping(
+                    _mapping(value.get("status")).get("runtime")
+                ).get("version")
+                for value in node_values
+                if isinstance(value, Mapping) and value.get("status_ok") is True
+            },
+            summary.get("validator_version"),
+        )
+        nodes = tuple(replace(node, runtime_note=behind.get(node.name)) for node in nodes)
     stale = now - reading.observed_at > stale_after
 
     configured_nodes = summary.get("configured_nodes")

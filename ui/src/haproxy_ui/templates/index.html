@@ -82,7 +82,7 @@
             <td data-label="Failover">{{ node.keepalived }}</td>
             <td data-label="VIP">{{ node.vip }}</td>
             <td data-label="Release"><span class="release-value">{{ node.version }}</span>{% if node.current is false %}<small class="warning-text">Behind target</small>{% endif %}</td>
-            <td data-label="Runtime">{{ node.runtime }}<small>Stats {{ node.stats | lower }}</small></td>
+            <td data-label="Runtime">{{ node.runtime }}{% if node.runtime_note %}<small class="warning-text">{{ node.runtime_note }}</small>{% endif %}<small>Stats {{ node.stats | lower }}</small></td>
           </tr>
           {% endfor %}
         </tbody>

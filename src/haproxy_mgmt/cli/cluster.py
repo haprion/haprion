@@ -95,7 +95,8 @@ def main(
             f"Created {args.cluster} with {names}.\n"
             f"Host keys: {', '.join(str(item) for item in result.get('host_key_fingerprints', []))}\n"
             f"Changed: {', '.join(str(item) for item in result.get('files', []))}\n"
-            f"Next: publish its network and objects, then haproxy-deploy -c {args.cluster}\n"
+            f"Next: publish its network and objects, then haproxy-cert-deploy -c {args.cluster} "
+            f"and haproxy-deploy -c {args.cluster}\n"
         )
     else:
         writer.write(

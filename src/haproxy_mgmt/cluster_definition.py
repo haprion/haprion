@@ -66,6 +66,7 @@ ARCHIVE = ".removed"
 SUDOERS_EDIT = Path("/etc/sudoers.d/haproxy-config-edit")
 ROOT_GITCONFIG = Path("/root/.gitconfig")
 RETENTION_ROOT = Path("/etc/haproxy-manager/backup-retention")
+GIT_CONFIG_NOTHING_TO_UNSET = 5
 VISUDO = "/usr/sbin/visudo"
 SYSTEMCTL = "/usr/bin/systemctl"
 MAX_DISPLAY_NAME = 64
@@ -376,7 +377,7 @@ def _gitconfig(
         path = Path(raw) / "gitconfig"
         path.write_bytes(text)
         for repo in drop:
-            tools.run(
+            unset = tools.run(
                 [
                     GIT,
                     "config",
@@ -387,8 +388,17 @@ def _gitconfig(
                     f"^{re.escape(repo)}$",
                 ]
             )
+            #
+            # 5 is git's "no such entry": a repository nobody listed is already
+            # gone from the list, which is what was asked for.
+            #
+            if unset.returncode not in (0, GIT_CONFIG_NOTHING_TO_UNSET):
+                _checked(unset, "git config --unset-all safe.directory")
         for repo in add:
-            tools.run([GIT, "config", "--file", str(path), "--add", "safe.directory", repo])
+            _checked(
+                tools.run([GIT, "config", "--file", str(path), "--add", "safe.directory", repo]),
+                "git config --add safe.directory",
+            )
         return path.read_bytes()
 
 

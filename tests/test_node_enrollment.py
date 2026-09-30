@@ -497,7 +497,7 @@ class TheCommand(unittest.TestCase):
         parameters = json.loads(sent[0])["parameters"]
         self.assertEqual(parameters["host"], "node-c.example.com")
         self.assertEqual(enrollment.parse(parameters["block"]), block())
-        self.assertIn("haproxy-deploy -c alpha", out.getvalue())
+        self.assertIn("haproxy-cert-deploy -c alpha, then haproxy-deploy -c alpha", out.getvalue())
 
     def test_a_refusal_is_printed_as_its_sentence(self) -> None:
         def run(_request: str) -> subprocess.CompletedProcess[str]:

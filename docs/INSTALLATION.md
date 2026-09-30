@@ -1662,8 +1662,10 @@ the node at; the block's suggestion is the node's own `hostname -f` and may not 
 After writing, the manager asks the node for its status as the status identity, with strict host
 key checking. The node reports its own host name and cluster, so an answer proves the host key, that
 the node already has the manager's key lines from step 3, and that the block described the node that
-answered. Anything short of that puts every file back and says why. The node has no release until
-the next `haproxy-deploy -c <cluster>`.
+answered. Anything short of that puts every file back and says why. The node has no certificates
+and no release until `haproxy-cert-deploy -c <cluster>` and then `haproxy-deploy -c <cluster>` run
+(*Deploy certificates* and *Deploy configuration* on the dashboard); a deploy before the
+certificates stops and says so, since the node has none.
 
 A removal takes the node's lines out of all six files, so it can no longer fetch configuration or
 certificates. It is refused for the node that reports holding the VIP and below two nodes; the node
@@ -1705,7 +1707,7 @@ must all be free; the certificate must already be in the registry.
 
 The new cluster is polled and drawn from the poller's next pass ([Which clusters get
 polled](#which-clusters-get-polled)). It has no release until its network description and objects
-are published and `haproxy-deploy -c <cluster>` runs, and no backup schedule until one is set on
+are published and `haproxy-cert-deploy -c <cluster>` and then `haproxy-deploy -c <cluster>` run, and no backup schedule until one is set on
 the Backups page; its retention is the default until then. Each node's `keepalived.conf` is not
 written by this project.
 

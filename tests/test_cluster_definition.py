@@ -371,6 +371,39 @@ class RemovingACluster(unittest.TestCase):
                 site.ran,
             )
 
+    def test_removal_takes_its_repositories_out_of_safe_directory(self) -> None:
+        """Review 2026-09-30 F4: the entries go, and a cluster that had none is no error."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            site = self.added(raw)
+            site.remove("gamma")
+            listed = subprocess.run(
+                [GIT, "config", "--file", str(site.gitconfig), "--get-all", "safe.directory"],
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.split()
+            self.assertEqual(listed, [])
+
+    def test_a_git_config_that_fails_changes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = Site(Path(raw))
+            before = site.snapshot()
+            real = site.run
+
+            def refusing(argv: Sequence[str], *, input_text: str | None = None):
+                if "--add" in argv and "safe.directory" in argv:
+                    return subprocess.CompletedProcess(
+                        list(argv), 1, "", "could not lock config file"
+                    )
+                return real(argv, input_text=input_text)
+
+            site.tools = Tools(run=refusing, owner=lambda *_: None, clock=lambda: 1_790_000_000.0)
+            with self.assertRaisesRegex(EnrollmentError, "could not lock config file"):
+                site.add()
+            self.assertEqual(site.snapshot(), before)
+            self.assertFalse((site.config_root / "gamma").exists())
+
     def test_an_archived_name_cannot_be_used_again(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             site = self.added(raw)
@@ -566,7 +599,7 @@ class TheCommand(unittest.TestCase):
         self.assertEqual(parameters["address_prefix"], 24)
         self.assertNotIn("address_interface", parameters)
         self.assertIn("Created gamma with node-c, node-d.", out.getvalue())
-        self.assertIn("haproxy-deploy -c gamma", out.getvalue())
+        self.assertIn("haproxy-cert-deploy -c gamma and haproxy-deploy -c gamma", out.getvalue())
 
     def test_remove_names_the_archive_and_says_the_nodes_keep_serving(self) -> None:
         def run(request: str) -> subprocess.CompletedProcess[str]:

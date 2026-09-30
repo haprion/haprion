@@ -15,7 +15,10 @@ So nothing here guesses. Each operation is judged by what can be READ:
   answers "did the release land?". A version that exists but was never published
   is not a failure to be retried blindly - the retry lands on the helper's
   unchanged path, which repairs the release from that same commit and records no
-  second version.
+  second version. The managed publishes (network, cluster settings, objects)
+  record the same way; their helpers are fenced on the head the request was
+  built on, and a head moved by the request's own version, directly on that
+  base, is how they recognise the retry rather than refusing it as stale.
 * `deploy` and `cert_deploy` record nothing. They are reconcile loops: they read
   the cluster, act only on what is behind, and leave a converged cluster
   untouched. Repeating one is not a risk to be weighed, it is how they work.
@@ -69,7 +72,9 @@ REPEATABLE = frozenset({"deploy", "cert_deploy"})
 #
 # Operations that record a version bound to the request that asked for it.
 #
-RECORDED = frozenset({"publish", "revert", "network_publish", "cluster_settings_publish"})
+RECORDED = frozenset(
+    {"publish", "revert", "network_publish", "cluster_settings_publish", "objects_publish"}
+)
 
 type Verdict = Literal["requeue", "abandon", "wait"]
 

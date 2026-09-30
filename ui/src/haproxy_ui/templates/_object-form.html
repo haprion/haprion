@@ -259,7 +259,7 @@
           <tr>
             <td>{{ row.node }}</td>
             <td>{{ row.server }}</td>
-            <td><span class="status-dot {{ 'status-healthy' if row.up else 'status-critical' }}"></span>{{ row.state }}</td>
+            <td><span class="status-dot status-{{ row.tone }}"></span>{{ row.state }}</td>
             {#
               HAProxy's own code kept as the cell's title. The sentence is for
               reading; the code is what somebody searches the internet for when

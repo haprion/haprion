@@ -635,6 +635,15 @@ class TheHealthCardOnThePage(EditorTestCase):
         self.assertIn("answered 200 · 2 ms · tested", body)
         self.assertNotIn("status-warning", body)
 
+    def test_the_table_is_where_the_in_place_test_looks_for_it(self) -> None:
+        """object-form.js replaces `form.preview-form .node-health` from the answer."""
+
+        body = self.probe([self.node("node-a", held=True)])
+        form = body.index('class="preview-form"')
+
+        self.assertLess(form, body.index('class="node-health"'), body.index("</form>", form))
+        self.assertLess(body.index('class="node-health"'), body.index("</form>", form))
+
     def test_there_is_one_table_and_not_a_second_one_for_the_test(self) -> None:
         """The test answers the question the nodes' table asks (2026-09-30)."""
 

@@ -157,6 +157,11 @@
     if (!form) return;
 
     form.addEventListener("submit", (event) => {
+      //
+      // A submit answered in the background never reloads, so a position
+      // stored for it would be read by the next, unrelated visit instead.
+      //
+      if (event.defaultPrevented) return;
       const pressed = event.submitter && event.submitter.value;
       try {
         if (STAYS_ON_THIS_PAGE.includes(pressed)) {
@@ -269,7 +274,73 @@
     }
   };
 
+  //
+  // Test health check without leaving the page (2026-09-30). The button posted
+  // the whole form and the answer was the whole page again, which reloaded it
+  // under the reader: scrolled back, groups closed, for one table's worth of
+  // news. So the same post is sent in the background and only the health block
+  // of the answer replaces this one. The server is asked exactly what it was
+  // asked before - same fields, same button, same token - so nothing here
+  // decides what a test is.
+  //
+  // Anything unexpected falls back to the ordinary submit rather than guessing:
+  // a refused post, a redirect (an expired session answers with the login
+  // page) or an answer without the block.
+  //
+  const wireRecheck = () => {
+    const form = document.querySelector("form.preview-form");
+    if (!form || !window.fetch || !window.DOMParser) return;
+
+    let fallback = false;
+    form.addEventListener("submit", (event) => {
+      const button = event.submitter;
+      if (fallback || !button || button.value !== "recheck") return;
+      const here = form.querySelector(".node-health");
+      if (!here) return;
+      event.preventDefault();
+
+      //
+      // Encoded the way the form itself posts: `FormData` alone would send
+      // multipart, and the server should be asked in the same shape as before.
+      //
+      const body = new URLSearchParams(new FormData(form, button));
+      const label = button.textContent;
+      button.disabled = true;
+      button.textContent = "Testing…";
+      const restore = () => {
+        button.disabled = false;
+        button.textContent = label;
+      };
+
+      //
+      // The attribute, not `form.action`: the buttons are named `action`, and a
+      // control's name shadows the form's own property of that name - the post
+      // went to "[object HTMLButtonElement]" until the browser test caught it.
+      //
+      const target = new URL(form.getAttribute("action") || "", document.baseURI);
+      fetch(target, { method: "POST", body, credentials: "same-origin" })
+        .then((response) => {
+          if (!response.ok || response.redirected) throw new Error(String(response.status));
+          return response.text();
+        })
+        .then((text) => {
+          const fresh = new DOMParser()
+            .parseFromString(text, "text/html")
+            .querySelector("form.preview-form .node-health");
+          if (!fresh) throw new Error("shape");
+          here.replaceWith(document.importNode(fresh, true));
+          restore();
+        })
+        .catch(() => {
+          restore();
+          fallback = true;
+          form.requestSubmit(button);
+        });
+    });
+  };
+
   window.addEventListener("DOMContentLoaded", () => {
+    wireRecheck();
     wireShownWhen();
     wireGroupSummaries();
     wire();

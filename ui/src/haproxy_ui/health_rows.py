@@ -34,6 +34,12 @@ class HealthRow:
     last: str
     code: str = ""
     tested: bool = False
+    #
+    # The lamp. Not `up`: a server with no check is usable - HAProxy sends it
+    # traffic - but nothing has said it answers, and a green lamp there would
+    # claim a check that was never made (2026-09-30).
+    #
+    tone: str = "unknown"
 
 
 def _duration(ms: int | None) -> str:
@@ -47,10 +53,12 @@ def health_rows(backend: BackendHealth | None, probe: ProbeReport | None) -> lis
             for member in node.members:
                 server = backend.address(member.server) or member.server
                 code = " ".join(part for part in (member.check_status, member.check_code) if part)
+                unchecked = (member.status or "").upper().startswith("NO CHECK")
                 rows[(node.node, server)] = HealthRow(
                     node=node.node,
                     server=server,
                     up=member.up,
+                    tone="unknown" if unchecked else ("healthy" if member.up else "critical"),
                     state=member.status or "unknown",
                     last=(check_phrase(member.check_status or "", member.check_code or "") or "—")
                     + _duration(member.check_duration_ms),
@@ -80,6 +88,7 @@ def health_rows(backend: BackendHealth | None, probe: ProbeReport | None) -> lis
                     node=report.node,
                     server=server,
                     up=entry.ok,
+                    tone="healthy" if entry.ok else "critical",
                     state="UP" if entry.ok else "DOWN",
                     last=f"{entry.phrase}{_duration(entry.ms)} · tested",
                     tested=True,

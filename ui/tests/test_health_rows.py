@@ -77,6 +77,18 @@ class TheNodesReadingAlone(unittest.TestCase):
         self.assertFalse(any(row.tested for row in rows))
 
 
+class TheLamp(unittest.TestCase):
+    def test_a_server_without_a_check_is_not_green(self) -> None:
+        """Usable, but nothing said it answers."""
+
+        rows = health_rows(reported(("s1", "no check"), ("s2", "UP")), None)
+
+        self.assertEqual([row.tone for row in rows], ["unknown", "healthy"])
+
+    def test_a_down_server_is_red(self) -> None:
+        self.assertEqual(health_rows(reported(("s1", "DOWN")), None)[0].tone, "critical")
+
+
 class ATestWritesIntoTheSameRows(unittest.TestCase):
     def test_a_tested_server_replaces_its_row_rather_than_adding_one(self) -> None:
         rows = health_rows(

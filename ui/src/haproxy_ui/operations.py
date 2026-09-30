@@ -91,6 +91,16 @@ SUDO_FLAGS = ("-n", "--")
 #
 RECEIVER_CLIENT = (sys.executable, "-m", cert_receiver_ask.__name__)
 NODE_CLIENT = (sys.executable, "-m", node_ask.__name__)
+DEFINITION_FIELDS = (
+    "display_name",
+    "vip",
+    "node_path",
+    "default_certificate",
+    "blocks",
+    "hosts",
+    "address_prefix",
+    "address_interface",
+)
 BACKUP_CLIENT = (sys.executable, "-m", backup_job_ask.__name__)
 RESTORE_CLIENT = (sys.executable, "-m", node_restore_ask.__name__)
 
@@ -972,6 +982,61 @@ def prepare(
             argv=NODE_CLIENT,
             request=node_helper.build_request(
                 cluster, str(request_id), action="add", block=block, host=host
+            ),
+        )
+
+    if operation == "cluster_define":
+        #
+        # A whole cluster created with its first two nodes, or removed (B211).
+        # The same socket and the same division as `cluster_node`: the shape is
+        # checked here, and what the fields mean - a free name and node path, a
+        # certificate the registry has, two blocks made for this cluster - is
+        # the helper's, as when the operator types `haproxy-cluster`.
+        #
+        _only(payload, "action", *DEFINITION_FIELDS)
+        action = payload.get("action")
+        if action == "remove":
+            if set(payload) != {"action"}:
+                raise BadPayload("a removal names its cluster and nothing else")
+            return Prepared(
+                argv=NODE_CLIENT,
+                request=node_helper.build_define_request(cluster, str(request_id), action="remove"),
+            )
+        if action != "add":
+            raise BadPayload("action must be add or remove")
+        texts = {}
+        for field in ("display_name", "vip", "node_path", "default_certificate"):
+            value = payload.get(field)
+            if not isinstance(value, str) or not value:
+                raise BadPayload(f"a cluster needs its {field.replace('_', ' ')}")
+            texts[field] = value
+        pairs: dict[str, list[str]] = {}
+        for name in ("blocks", "hosts"):
+            value = payload.get(name)
+            if (
+                not isinstance(value, list)
+                or len(value) != 2
+                or not all(isinstance(item, str) and item.strip() for item in value)
+            ):
+                raise BadPayload(f"a cluster is created with two nodes: two {name}")
+            pairs[name] = [str(item) for item in value]
+        prefix = payload.get("address_prefix")
+        if prefix is not None and (isinstance(prefix, bool) or not isinstance(prefix, int)):
+            raise BadPayload("the address prefix must be a number")
+        interface = payload.get("address_interface")
+        if interface is not None and (not isinstance(interface, str) or not interface):
+            raise BadPayload("the interface must be a name")
+        return Prepared(
+            argv=NODE_CLIENT,
+            request=node_helper.build_define_request(
+                cluster,
+                str(request_id),
+                action="add",
+                blocks=pairs["blocks"],
+                hosts=pairs["hosts"],
+                address_prefix=prefix,
+                address_interface=interface,
+                **texts,
             ),
         )
 

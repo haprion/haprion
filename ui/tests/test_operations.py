@@ -683,6 +683,58 @@ class TheReceiverHelperIsNotReachedThroughSudo(unittest.TestCase):
         self.assertNotIn(cert_receiver_helper.HELPER, granted)
 
 
+class DefiningClusters(unittest.TestCase):
+    """B211: a whole cluster created or removed through the node helper's socket."""
+
+    CREATION = {
+        "action": "add",
+        "display_name": "Gamma",
+        "vip": "198.51.100.30",
+        "node_path": "gamma",
+        "default_certificate": "example.net",
+        "blocks": ["block-one", "block-two"],
+        "hosts": ["node-c.example.com", "node-d.example.com"],
+        "address_prefix": 24,
+    }
+
+    def prepare(self, payload: dict[str, object]) -> operations.Prepared:
+        return operations.prepare(
+            operation="cluster_define", cluster="gamma", request_id=REQUEST, payload=payload
+        )
+
+    def test_a_creation_is_the_request_haproxy_cluster_sends(self) -> None:
+        prepared = self.prepare(self.CREATION)
+
+        self.assertEqual(prepared.argv, operations.NODE_CLIENT)
+        request = json.loads(prepared.request)
+        self.assertEqual((request["operation"], request["cluster"]), ("cluster_define", "gamma"))
+        self.assertEqual(request["parameters"], self.CREATION)
+
+    def test_a_removal_carries_nothing_but_its_action(self) -> None:
+        request = json.loads(self.prepare({"action": "remove"}).request)
+
+        self.assertEqual(request["parameters"], {"action": "remove"})
+        with self.assertRaisesRegex(operations.BadPayload, "nothing else"):
+            self.prepare({"action": "remove", "vip": "198.51.100.30"})
+
+    def test_a_creation_short_of_its_shape_is_refused(self) -> None:
+        for change, message in (
+            ({"hosts": ["node-c.example.com"]}, "two hosts"),
+            ({"blocks": ["one", "two", "three"]}, "two blocks"),
+            ({"blocks": ["one", " "]}, "two blocks"),
+            ({"vip": ""}, "its vip"),
+            ({"address_prefix": "24"}, "prefix must be a number"),
+            ({"address_prefix": True}, "prefix must be a number"),
+            ({"root": "/"}, "unexpected parameters: root"),
+            ({"action": "rename"}, "add or remove"),
+        ):
+            with (
+                self.subTest(change=change),
+                self.assertRaisesRegex(operations.BadPayload, message),
+            ):
+                self.prepare({**self.CREATION, **change})
+
+
 class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
     """Every operation `prepare` knows has to be one the job table permits.
 
@@ -754,6 +806,7 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
             ("cert_scep", "haproxy-cert-scep.schema.json"),
             ("cert_receiver", "haproxy-cert-receiver.schema.json"),
             ("cluster_node", "haproxy-cluster-node.schema.json"),
+            ("cluster_define", "haproxy-cluster-define.schema.json"),
             ("cert_import", "haproxy-cert-import.schema.json"),
             ("cert_request", "haproxy-cert-request.schema.json"),
             ("node_restore_prepare", "haproxy-node-restore-prepare.schema.json"),

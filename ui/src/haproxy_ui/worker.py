@@ -161,6 +161,12 @@ _OPERATION_OUTCOMES = {
     # holding the VIP, or the cluster busy; no half exists to be `partial`.
     #
     "cluster_node": frozenset({"done", "failed", "blocked"}),
+    #
+    # `cluster_define` creates or removes a whole cluster as one change: a node
+    # that does not answer as itself (`blocked`) takes back the repository and
+    # every file with it. A timer that would not stop is a warning on `done`.
+    #
+    "cluster_define": frozenset({"done", "failed", "blocked"}),
 }
 
 

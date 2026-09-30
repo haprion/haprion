@@ -310,11 +310,15 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   background: var(--panel);
   box-shadow: none;
 }
-.metric-card > div { display: flex; align-items: baseline; gap: 7px; min-width: 0; overflow: hidden; white-space: nowrap; }
+/* The detail moves under the figure when the row cannot hold it, rather than
+   being cut: it is the part that says what is wrong ("1 not reporting"), and it
+   is longest exactly when something is. Measured 2026-09-30 at 1280: four nodes
+   with one silent needed 225px of 214, and "1 without a single owner" 268. */
+.metric-card > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 7px; min-width: 0; white-space: nowrap; }
 .metric-card strong { color: var(--text-primary); font-size: 18px; font-weight: var(--font-weight-regular); letter-spacing: -0.02em; }
 .metric-card strong small { color: var(--text-status); font-size: 14px; font-weight: var(--font-weight-regular); letter-spacing: 0; }
 .metric-card div > span { overflow: hidden; color: var(--text-primary); font-size: 14px; font-weight: var(--font-weight-regular); text-overflow: ellipsis; white-space: nowrap; }
-.metric-card > div > small { min-width: 0; overflow: hidden; padding-left: 8px; border-left: 1px solid var(--line); color: var(--text-status); font-size: 13px; font-weight: var(--font-weight-regular); text-overflow: ellipsis; }
+.metric-card > div > small { padding-left: 8px; border-left: 1px solid var(--line); color: var(--text-status); font-size: 13px; font-weight: var(--font-weight-regular); }
 .metric-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: 0 0 auto; border-radius: 6px; color: #fff; background: var(--brand); }
 .metric-icon svg { width: 21px; height: 21px; }
 .metric-icon-node { color: #fff; background: var(--info); }

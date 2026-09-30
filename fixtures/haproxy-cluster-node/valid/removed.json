@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cluster_node",
+  "cluster": "alpha",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "error": null,
+  "result": {
+    "action": "removed",
+    "cluster": "alpha",
+    "node": "node-c",
+    "host": "node-c.example.com",
+    "files": [
+      "clusters.yaml",
+      "root's known_hosts",
+      "svc-pull's authorized_keys",
+      "svc-cert-pull's authorized_keys"
+    ],
+    "host_key_fingerprint": null
+  }
+}

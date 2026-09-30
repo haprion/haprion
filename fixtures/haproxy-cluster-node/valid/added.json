@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cluster_node",
+  "cluster": "alpha",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "error": null,
+  "result": {
+    "action": "added",
+    "cluster": "alpha",
+    "node": "node-c",
+    "host": "node-c.example.com",
+    "files": [
+      "clusters.yaml",
+      "root's known_hosts",
+      "svc-pull's authorized_keys",
+      "svc-cert-pull's authorized_keys",
+      "the traffic collector's node list",
+      "the traffic collector's known_hosts"
+    ],
+    "host_key_fingerprint": "SHA256:Qm9vdHN0cmFwLWZpbmdlcnByaW50LWV4YW1wbGUtMDA"
+  }
+}

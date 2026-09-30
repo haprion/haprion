@@ -685,6 +685,21 @@ def check_cert_scep_semantics(document: dict[str, object], path: Path) -> None:
     )
 
 
+def check_cluster_node_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done cluster_node carries no result")
+        return
+    assert isinstance(result, dict)
+    # An addition is proven by the host key the node answered with; a removal
+    # asks the node nothing it could prove.
+    if result["action"] == "added" and result["host_key_fingerprint"] is None:
+        raise AssertionError(f"{path}: an added node names no host key")
+    if result["action"] == "removed" and result["host_key_fingerprint"] is not None:
+        raise AssertionError(f"{path}: a removed node carries a host key")
+
+
 def check_cert_receiver_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -915,6 +930,7 @@ SEMANTIC_CHECKS = {
     "cert_delete": check_cert_delete_semantics,
     "cert_scep": check_cert_scep_semantics,
     "cert_receiver": check_cert_receiver_semantics,
+    "cluster_node": check_cluster_node_semantics,
     "ui_tls_install": check_ui_tls_install_semantics,
     "oidc": check_oidc_semantics,
     "node_restore_prepare": check_node_restore_prepare_semantics,
@@ -988,6 +1004,10 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["nodes"][0]["outcome"] = "failed"
     elif operation == "backup_schedule":
         result["schedule"]["calendar"] = "*-*-* 00:00:00"
+    elif operation == "cluster_node":
+        result["host_key_fingerprint"] = (
+            None if result["action"] == "added" else "SHA256:" + "A" * 43
+        )
     elif operation == "cert_receiver":
         result["layers"] = [{"layer": "account", "state": "failed", "detail": "userdel: busy"}]
     elif operation == "ui_tls_install":

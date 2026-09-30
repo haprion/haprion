@@ -498,9 +498,8 @@ cat <<INTRO
 
 Two things left, both on machines this node cannot write to.
 
-1. On THIS node: paste the authorized_keys lines printed by step 3 (the
-   interface's Nodes card shows them too). The file is root's, as is the whole
-   home; edit it with sudo.
+1. On THIS node: paste the authorized_keys lines printed by step 3. The file is
+   root's, as is the whole home; edit it with sudo.
 
 2. On the MANAGEMENT host: paste this block into the cluster's Nodes card under
    Settings, or give it to  sudo haproxy-node add -c ${CLUSTER} --host <name>

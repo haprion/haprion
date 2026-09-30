@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "ok": false,
+  "outcome": "blocked",
+  "operation": "cluster_node",
+  "cluster": "alpha",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "error": {
+    "code": "node_unverified",
+    "message": "node-c.example.com did not answer over SSH (exit 255). Nothing was changed.",
+    "exit_code": 75,
+    "details": null
+  },
+  "result": null
+}

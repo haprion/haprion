@@ -493,6 +493,11 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    node list that wraps rather than being cut - eight names do not fit a line. */
 .settings-nodes-table th:nth-child(3), .settings-nodes-table td:nth-child(3) { width: 330px; text-align: right; }
 .settings-nodes-table td:nth-child(2) { overflow: visible; white-space: normal; }
+/* A new cluster's two nodes (B211): the host key whole - it is what the reader compares with the node's own. */
+.new-cluster-table th:nth-child(3), .new-cluster-table td:nth-child(3) { width: 440px; }
+.new-cluster-table code { overflow-wrap: anywhere; white-space: normal; }
+/* The node pages' consequences inside the card's padding, not against its edge. */
+.nodes-form .removal-consequences { margin: 14px 20px 0; }
 /* The row's way in, as low as the row's text (the same button as on Versions). */
 .settings-edit { display: inline-flex; align-items: center; min-height: 0; padding: 0 12px; text-decoration: none; }
 /*

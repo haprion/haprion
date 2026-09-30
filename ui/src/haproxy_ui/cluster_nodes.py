@@ -5,6 +5,10 @@ from `clusters.yaml`, and whether each node answered and holds the VIP - so
 this page reaches no helper. Adding a node reads the block the node printed,
 here in the web process, only to show the administrator what it says before
 anything is queued; the root helper parses it again and is the authority.
+
+Creating a cluster is read the same way, by the engine's own
+`cluster_definition.definition` - the check `haproxy-cluster` and the helper
+make - so a form the page accepts is a request the helper reads alike.
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from haproxy_mgmt import node_enrollment
+from haproxy_mgmt import cluster_definition, node_enrollment
 from haproxy_mgmt.config import MAX_NODES, MIN_NODES
 
 
@@ -122,4 +126,130 @@ def removable(rows: list[NodeRow], name: str) -> str | None:
         return f"A cluster keeps at least {MIN_NODES} nodes."
     if any(row.name == name and row.owner for row in rows):
         return f"{name} holds the VIP. Move the address to another node first."
+    return None
+
+
+# ------------------------------------------------------------ whole clusters
+
+
+@dataclass(frozen=True, slots=True)
+class NewNode:
+    name: str
+    host: str
+    fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
+class Creation:
+    """A new cluster's form, read, with its first two nodes."""
+
+    cluster: str
+    display_name: str
+    vip: str
+    node_path: str
+    default_certificate: str
+    address_prefix: int | None
+    address_interface: str | None
+    blocks: tuple[str, ...]
+    nodes: tuple[NewNode, ...]
+
+    def payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "action": "add",
+            "display_name": self.display_name,
+            "vip": self.vip,
+            "node_path": self.node_path,
+            "default_certificate": self.default_certificate,
+            "blocks": list(self.blocks),
+            "hosts": [node.host for node in self.nodes],
+        }
+        if self.address_prefix is not None:
+            payload["address_prefix"] = self.address_prefix
+        if self.address_interface is not None:
+            payload["address_interface"] = self.address_interface
+        return payload
+
+
+CREATION_FIELDS = (
+    "cluster",
+    "display_name",
+    "vip",
+    "address_prefix",
+    "address_interface",
+    "node_path",
+    "default_certificate",
+    "block_1",
+    "host_1",
+    "block_2",
+    "host_2",
+)
+
+
+def read_creation(
+    form: Mapping[str, str], *, listed: Iterable[str], certificates: Iterable[str]
+) -> Creation:
+    cluster = form.get("cluster", "").strip()
+    if cluster in set(listed):
+        raise FormProblem(f"There is already a cluster {cluster}.")
+    certificate = form.get("default_certificate", "")
+    if certificate not in set(certificates):
+        raise FormProblem("Choose the default certificate from the registry.")
+    blocks = ["".join(form.get(f"block_{n}", "").split()) for n in (1, 2)]
+    try:
+        #
+        # An empty host is the block's own suggestion, as for a single node;
+        # an empty node path is the cluster's ID, as step 2 names it.
+        #
+        hosts = [
+            form.get(f"host_{n}", "").strip() or node_enrollment.parse(blocks[n - 1]).host
+            for n in (1, 2)
+        ]
+        spec = cluster_definition.definition(
+            cluster,
+            display_name=form.get("display_name", ""),
+            vip=form.get("vip", "").strip(),
+            node_path=form.get("node_path", "").strip() or cluster,
+            default_certificate=certificate,
+            blocks=blocks,
+            hosts=hosts,
+            address_prefix=cluster_definition.parse_prefix(
+                form.get("address_prefix", "").strip() or None
+            ),
+            address_interface=form.get("address_interface", "").strip() or None,
+        )
+    except node_enrollment.EnrollmentError as refused:
+        raise FormProblem(_sentence(str(refused))) from None
+    return Creation(
+        cluster=spec.cluster,
+        display_name=spec.display_name,
+        vip=spec.vip,
+        node_path=spec.node_path,
+        default_certificate=spec.default_certificate,
+        address_prefix=spec.address_prefix,
+        address_interface=spec.address_interface,
+        blocks=tuple(blocks),
+        nodes=tuple(
+            NewNode(
+                name=enrollment.name,
+                host=host,
+                fingerprint=node_enrollment.fingerprint(enrollment.host_key),
+            )
+            for enrollment, host in spec.nodes
+        ),
+    )
+
+
+def _sentence(text: str) -> str:
+    text = text[:1].upper() + text[1:]
+    return text if text.endswith(".") else f"{text}."
+
+
+def cluster_removable(listed: Iterable[str], cluster: str) -> str | None:
+    """Why this cluster cannot be removed, or None. The helper checks again."""
+
+    names = list(listed)
+    if cluster not in names:
+        return f"{cluster} is not a cluster."
+    if len(names) <= 1:
+        return "The manager keeps at least one cluster."
     return None

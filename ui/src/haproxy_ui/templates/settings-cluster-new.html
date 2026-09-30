@@ -1,0 +1,79 @@
+{% extends "layout.html" %}
+{% block title %}Create cluster — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  A new cluster with its first two nodes (Fas 16, B211) - `haproxy-cluster add`.
+  The form and both blocks are read by the engine's own check and shown with
+  each node's host key before anything is queued; the root helper makes the
+  repository, the release directory and every file, asks both nodes for their
+  status and takes all of it back if either does not answer as itself.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Create cluster</h1><p class="page-lede"><a href="/settings#nodes">Settings</a></p></div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+<div class="cluster-list">
+{% if creation %}
+<form method="post" action="/settings/new-cluster" class="preview-form nodes-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  {% for field, value in form.items() %}{% if field not in ("host_1", "host_2", "node_path") %}<input type="hidden" name="{{ field }}" value="{{ value }}">{% endif %}{% endfor %}
+  <input type="hidden" name="node_path" value="{{ creation.node_path }}">
+  {% for node in creation.nodes %}<input type="hidden" name="host_{{ loop.index }}" value="{{ node.host }}">{% endfor %}
+  <section class="cluster-card">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Create {{ creation.cluster }}</h3></div></div></header>
+    <div class="table-scroll"><table class="node-table new-cluster-table">
+      <thead><tr><th>Node</th><th>Host</th><th>Host key</th></tr></thead>
+      <tbody>
+        {% for node in creation.nodes %}
+        <tr>
+          <td data-label="Node"><strong>{{ node.name }}</strong></td>
+          <td data-label="Host">{{ node.host }}</td>
+          <td data-label="Host key"><code>{{ node.fingerprint }}</code></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    <ul class="removal-consequences">
+      <li>{{ creation.display_name }} · VIP {{ creation.vip }}{% if creation.address_prefix %}/{{ creation.address_prefix }}{% endif %}{% if creation.address_interface %} on {{ creation.address_interface }}{% endif %} · node path {{ creation.node_path }} · certificate {{ creation.default_certificate }}</li>
+      <li>Compare each host key with the one 04-node-prepare printed on the node. The change is taken back if either node does not answer as itself.</li>
+    </ul>
+    <div class="form-grid">
+      <label><span class="field-title">Type {{ creation.cluster }} to create it</span><input name="confirm" maxlength="64" spellcheck="false" autocomplete="off" required></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings#nodes">Cancel</a><button type="submit" class="secondary-button deploy-button">Create cluster</button></div>
+    </div>
+  </section>
+</form>
+{% else %}
+<form method="post" action="/settings/new-cluster" class="preview-form nodes-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="cluster-card">
+    <div class="form-grid">
+      <label><span class="field-title">ID</span><input name="cluster" value="{{ form.cluster }}" maxlength="63" spellcheck="false" required></label>
+      <label><span class="field-title">Display name</span><input name="display_name" value="{{ form.display_name }}" maxlength="64" required></label>
+      <label><span class="field-title">VIP</span><input name="vip" value="{{ form.vip }}" maxlength="64" spellcheck="false" required></label>
+      <label><span class="field-title">Prefix</span><input name="address_prefix" value="{{ form.address_prefix }}" maxlength="3" inputmode="numeric" spellcheck="false"></label>
+      <label><span class="field-title">Interface</span><input name="address_interface" value="{{ form.address_interface }}" maxlength="63" spellcheck="false"></label>
+      <label><span class="field-title">Node path</span><input name="node_path" value="{{ form.node_path }}" maxlength="63" spellcheck="false" placeholder="Same as the ID"></label>
+      <label><span class="field-title">Default certificate</span><select name="default_certificate" required><option value=""></option>{% for identifier in certificates %}<option value="{{ identifier }}"{% if identifier == form.default_certificate %} selected{% endif %}>{{ identifier }}</option>{% endfor %}</select></label>
+    </div>
+    <div class="form-grid">
+      <label><span class="field-title">First node's enrollment block</span><textarea name="block_1" rows="4" spellcheck="false" placeholder="haproxy-node-v1:…" required>{{ form.block_1 }}</textarea></label>
+      <label><span class="field-title">First node's host</span><input name="host_1" value="{{ form.host_1 }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
+      <label><span class="field-title">Second node's enrollment block</span><textarea name="block_2" rows="4" spellcheck="false" placeholder="haproxy-node-v1:…" required>{{ form.block_2 }}</textarea></label>
+      <label><span class="field-title">Second node's host</span><input name="host_2" value="{{ form.host_2 }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings#nodes">Cancel</a><button type="submit" class="secondary-button">Read blocks</button></div>
+    </div>
+  </section>
+</form>
+{% endif %}
+</div>
+{% endblock %}

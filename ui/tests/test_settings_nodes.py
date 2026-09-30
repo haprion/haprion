@@ -202,3 +202,137 @@ class TheListFollowsTheClusterFile(NodesPage):
         self.assertIn('href="/settings/nodes/service-demo"', card)
         self.assertNotIn('href="/settings/nodes/edge-demo"', card)
         self.assertEqual(client.get("/settings/nodes/edge-demo").status_code, 404)
+
+
+class ClusterPage(NodesPage):
+    def setUp(self) -> None:
+        super().setUp()
+        patch = mock.patch(
+            "haproxy_ui.db.cluster_certificates",
+            side_effect=lambda _connection: list(demo.certificate_rows(NOW)),
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def creation(self, **fields: Any) -> dict[str, Any]:
+        form = {
+            "cluster": "gamma",
+            "display_name": "Gamma",
+            "vip": "198.51.100.30",
+            "address_prefix": "24",
+            "default_certificate": "demo.example.pem",
+            "block_1": block("gamma", "gamma-a"),
+            "block_2": block("gamma", "gamma-b").replace("\n", ""),
+            "host_2": "lb-gamma-b.example.com",
+        }
+        form.update(fields)
+        return form
+
+
+class CreatingACluster(ClusterPage):
+    """Held here: both blocks are read and shown before anything is queued, and the ID
+    typed back queues exactly the request `haproxy-cluster add` sends."""
+
+    def test_the_card_offers_it_and_the_page_lists_the_registry(self) -> None:
+        client = self.client_for()
+        card = client.get("/settings").text.split('id="nodes"')[1].split("</section>")[0]
+        self.assertIn('href="/settings/new-cluster"', card)
+        page = client.get("/settings/new-cluster")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('<option value="internal.demo.example.pem">', page.text)
+        self.assertEqual(
+            self.client_for(role="reader").get("/settings/new-cluster").status_code, 403
+        )
+
+    def test_both_nodes_are_shown_before_anything_is_queued(self) -> None:
+        response = self.post(self.client_for(), "/settings/new-cluster", **self.creation())
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("gamma-a.example.com", response.text)
+        self.assertIn("lb-gamma-b.example.com", response.text)
+        self.assertIn(node_enrollment.fingerprint(key(1)), response.text)
+        self.assertIn("Type gamma to create it", response.text)
+        self.assertEqual(self.queued, [])
+
+    def test_the_id_typed_back_queues_the_request(self) -> None:
+        response = self.post(
+            self.client_for(), "/settings/new-cluster", **self.creation(confirm="gamma")
+        )
+
+        self.assertEqual(response.status_code, 303, response.text)
+        self.assertEqual(response.headers["location"], "/settings#nodes")
+        (queued,) = self.queued
+        self.assertEqual((queued["operation"], queued["cluster"]), ("cluster_define", "gamma"))
+        self.assertEqual(
+            queued["payload"],
+            {
+                "action": "add",
+                "display_name": "Gamma",
+                "vip": "198.51.100.30",
+                "node_path": "gamma",
+                "default_certificate": "demo.example.pem",
+                "blocks": [block("gamma", "gamma-a"), block("gamma", "gamma-b")],
+                "hosts": ["gamma-a.example.com", "lb-gamma-b.example.com"],
+                "address_prefix": 24,
+            },
+        )
+
+    def test_what_the_engine_refuses_is_said_on_the_page(self) -> None:
+        for fields, message in (
+            ({"cluster": "edge-demo"}, "already a cluster edge-demo"),
+            ({"default_certificate": "elsewhere.pem"}, "from the registry"),
+            ({"block_2": block("service-demo", "gamma-b")}, "was made for &#39;service-demo&#39;"),
+            ({"block_2": block("gamma", "gamma-a")}, "must be two nodes"),
+            ({"vip": "not-an-address"}, "must be an IP address"),
+            ({"address_prefix": "40"}, "does not fit the VIP"),
+            ({"block_1": "hello"}, "not an enrollment block"),
+        ):
+            with self.subTest(fields=fields):
+                response = self.post(
+                    self.client_for(), "/settings/new-cluster", **self.creation(**fields)
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(message, response.text)
+        self.assertEqual(self.queued, [])
+
+    def test_a_wrong_id_queues_nothing(self) -> None:
+        response = self.post(
+            self.client_for(), "/settings/new-cluster", **self.creation(confirm="gamm")
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.queued, [])
+
+
+class RemovingACluster(ClusterPage):
+    def test_it_is_asked_for_and_then_queued(self) -> None:
+        client = self.client_for()
+        self.assertIn(
+            "/settings/nodes/service-demo/remove-cluster",
+            client.get("/settings/nodes/service-demo").text,
+        )
+
+        asked = self.post(client, "/settings/nodes/service-demo/remove-cluster")
+        self.assertIn("Type service-demo to remove it", asked.text)
+        self.assertIn("keep serving the VIP", asked.text)
+        self.assertEqual(self.queued, [])
+
+        response = self.post(
+            client, "/settings/nodes/service-demo/remove-cluster", confirm="service-demo"
+        )
+        self.assertEqual(response.status_code, 303, response.text)
+        (queued,) = self.queued
+        self.assertEqual(
+            (queued["operation"], queued["cluster"], queued["payload"]),
+            ("cluster_define", "service-demo", {"action": "remove"}),
+        )
+
+    def test_the_last_cluster_is_not_offered_and_is_refused(self) -> None:
+        patch = mock.patch("haproxy_ui.db.cluster_list", return_value=("service-demo",))
+        patch.start()
+        self.addCleanup(patch.stop)
+        client = self.client_for()
+
+        self.assertNotIn("remove-cluster", client.get("/settings/nodes/service-demo").text)
+        response = self.post(client, "/settings/nodes/service-demo/remove-cluster")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("at least one cluster", response.text)

@@ -6,7 +6,8 @@
   printed on the node; the root helper writes six files, asks the node for its
   status and puts everything back if it does not answer as itself. Removing
   takes the node's keys away; the node itself keeps running until it is shut
-  down. Both are confirmed with the node's name.
+  down. Both are confirmed with the node's name. Removing the whole cluster
+  archives it and is confirmed with its ID.
 #}
 <section class="page-heading">
   <div class="heading-title"><h1>Nodes — {{ cluster }}</h1><p class="page-lede"><a href="/settings#nodes">Settings</a></p></div>
@@ -18,7 +19,7 @@
 
 <div class="cluster-list">
 <section class="cluster-card settings-card {{ accent | accent_class }}">
-  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Nodes</h3></div></div>{% if running %}<span class="status-badge status-badge-info">{{ running }}</span>{% endif %}</header>
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Nodes</h3></div></div>{% if running %}<span class="status-badge status-badge-info">{{ running }}</span>{% elif cluster_removable and not cluster_removal %}<div class="cluster-state"><form method="post" action="/settings/nodes/{{ cluster }}/remove-cluster" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button">Remove cluster</button></form></div>{% endif %}</header>
   <div class="table-scroll"><table class="node-table settings-node-table">
     <thead><tr><th>Node</th><th>Host</th><th>VIP</th><th><span class="visually-hidden">Action</span></th></tr></thead>
     <tbody>
@@ -34,7 +35,26 @@
   </table></div>
 </section>
 
-{% if removal %}
+{% if cluster_removal %}
+<form method="post" action="/settings/nodes/{{ cluster }}/remove-cluster" class="preview-form nodes-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <section class="cluster-card {{ accent | accent_class }}">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Remove {{ cluster }}</h3></div></div></header>
+    <ul class="removal-consequences">
+      <li>It is taken out of the cluster file, every certificate's targets and the editing policy; its nodes can no longer fetch configuration or certificates, and its backup timer is stopped.</li>
+      <li>Its repository, releases and backups are moved to .removed/ and kept.</li>
+      <li>The nodes are not touched and keep serving the VIP until they are shut down.</li>
+    </ul>
+    <div class="form-grid">
+      <label><span class="field-title">Type {{ cluster }} to remove it</span><input name="confirm" maxlength="64" spellcheck="false" autocomplete="off" required></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings/nodes/{{ cluster }}">Cancel</a><button type="submit" class="secondary-button danger-button">Remove cluster</button></div>
+    </div>
+  </section>
+</form>
+{% elif removal %}
 <form method="post" action="/settings/nodes/{{ cluster }}/remove" class="preview-form nodes-form" autocomplete="off">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">

@@ -260,7 +260,7 @@ class CreatingACluster(ClusterPage):
         )
 
         self.assertEqual(response.status_code, 303, response.text)
-        self.assertEqual(response.headers["location"], "/settings#nodes")
+        self.assertEqual(response.headers["location"], "/jobs")
         (queued,) = self.queued
         self.assertEqual((queued["operation"], queued["cluster"]), ("cluster_define", "gamma"))
         self.assertEqual(
@@ -336,3 +336,27 @@ class RemovingACluster(ClusterPage):
         response = self.post(client, "/settings/nodes/service-demo/remove-cluster")
         self.assertEqual(response.status_code, 400)
         self.assertIn("at least one cluster", response.text)
+
+
+class ARemovedClusterLeavesThePages(NodesPage):
+    """Review 2026-09-30 F1: with the list from the cluster file, a removed cluster's cache is not drawn."""
+
+    def test_the_cluster_file_s_list_decides_what_the_dashboard_draws(self) -> None:
+        patch = mock.patch("haproxy_ui.db.cluster_list", return_value=("service-demo",))
+        patch.start()
+        self.addCleanup(patch.stop)
+
+        page = self.client_for().get("/").text
+
+        self.assertIn("service-demo", page)
+        self.assertNotIn("edge-demo", page)
+        self.assertNotIn("Not configured", page)
+
+    def test_with_the_list_from_ui_toml_the_old_card_stays(self) -> None:
+        self.account = replace(self.account, role="admin")
+        client = self.client(replace(configuration(), clusters=("service-demo",)))
+        self.sign_in(client)
+
+        page = client.get("/").text
+
+        self.assertIn("Not configured", page)

@@ -396,9 +396,15 @@ def listed_clusters(request: Request, config: Config) -> tuple[str, ...]:
     # created or removed from Settings is on the pages at the next pass.
     # `ui.toml`'s list only until the poller has written one.
     #
+    return _cluster_list(request, config)[0]
+
+
+def _cluster_list(request: Request, config: Config) -> tuple[tuple[str, ...], bool]:
+    """The live list and whether it came from the cluster file rather than `ui.toml`."""
+
     with request.app.state.pool.connection() as connection:
         listed = db.cluster_list(connection)
-    return listed if listed else config.clusters
+    return (listed, True) if listed else (config.clusters, False)
 
 
 def read_source(
@@ -428,9 +434,19 @@ def read_source(
             snapshot.path_for_config(request.app.state.config_path)
         )
         return captured.clusters, source.snapshot_rows(captured), captured.captured_at
-    listed = listed_clusters(request, config)
+    listed, from_file = _cluster_list(request, config)
     with request.app.state.pool.connection() as connection:
-        return listed, source.cached_rows(connection), None
+        rows = source.cached_rows(connection)
+    #
+    # A cluster the cluster file no longer names has been removed (Settings or
+    # `haproxy-cluster remove`), and its last cached readings are never deleted:
+    # the poller has no delete privilege. Drawn, it stayed on every page as "Not
+    # configured" for good (review 2026-09-30 F1). With the list from `ui.toml`
+    # the old card stays, because there a removal is a hand edit worth seeing.
+    #
+    if from_file:
+        rows = [row for row in rows if getattr(row, "cluster", None) in listed]
+    return listed, rows, None
 
 
 def client_address(request: Request) -> str:
@@ -3997,7 +4013,13 @@ def build_router(config: Config) -> APIRouter:
                 request, gate, form=form, creation=creation, problem=problem, status_code=409
             ),
             operation="cluster_define",
-            back="/settings#nodes",
+            #
+            # To the job, not to Settings: the new cluster is on no card until the
+            # job has succeeded and the poller has read the cluster file, so a
+            # creation that was blocked would otherwise say nothing where the admin
+            # stands (review 2026-09-30 F3).
+            #
+            back="/jobs",
         )
 
     @router.get("/settings/new-user", response_class=HTMLResponse)

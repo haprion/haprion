@@ -1,6 +1,6 @@
 """Which clusters exist, as the poller last read them (Fas 16, B206/B211).
 
-One row: the cluster file's IDs and display names in its order, replaced by the
+One row: the cluster file's IDs in its order, replaced by the
 poller on every pass from `haproxy-cluster-list-helper`. The pages draw the
 clusters it names, so a cluster created or removed from Settings appears or
 goes at the next pass instead of after `ui.toml` is edited and the services are

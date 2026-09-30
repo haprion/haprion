@@ -82,7 +82,7 @@
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Add {{ addition.name }}</h3></div></div></header>
     <ul class="removal-consequences">
       <li>Host key <code>{{ addition.fingerprint }}</code> — compare it with the one 04-node-prepare printed on the node.</li>
-      <li>The manager then asks the node for its status and takes the change back if it does not answer as {{ addition.name }}. The node gets a release at the next deploy.</li>
+      <li>The manager then asks the node for its status and takes the change back if it does not answer as {{ addition.name }}. Then deploy certificates and configuration to {{ cluster }} from the dashboard.</li>
     </ul>
     <div class="form-grid">
       <label><span class="field-title">Host</span><input name="host" value="{{ addition.host }}" maxlength="253" spellcheck="false" required></label>

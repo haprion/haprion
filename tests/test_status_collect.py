@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -318,6 +319,35 @@ class MoreThanTwoNodes(unittest.TestCase):
         )
 
         self.assertEqual(report.result["summary"]["release_state"], "behind")
+
+
+class TheNodesAreAskedAtOnce(unittest.TestCase):
+    """Fas 16 punkt 1: a cluster's read takes as long as its slowest node, not their sum."""
+
+    def test_every_node_is_asked_before_any_answers(self) -> None:
+        nodes = MoreThanTwoNodes.THREE
+        # Each read waits until all three are being read; one after the other,
+        # the first would wait alone and the barrier would break.
+        together = threading.Barrier(len(nodes), timeout=5)
+        answer = answering(
+            **{
+                node.name: node_status(
+                    node.name, owner=node.name == "node-a", release_hash=TARGET.hash
+                )
+                for node in nodes
+            }
+        )
+
+        def read(node: Node) -> NodeResponse:
+            together.wait()
+            return answer(node)
+
+        report = collect(nodes, read, target=TARGET)
+
+        self.assertEqual(
+            [entry["name"] for entry in report.result["nodes"]], ["node-a", "node-b", "node-c"]
+        )
+        self.assertEqual(report.result["summary"]["release_state"], "converged")
 
 
 class AStatusReadIsBounded(unittest.TestCase):

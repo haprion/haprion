@@ -33,6 +33,7 @@ import json
 import re
 import subprocess
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -502,8 +503,19 @@ def collect(
     results: list[dict[str, Any]] = []
     warnings: list[Message] = []
 
-    for node in nodes:
-        entry, warning = _node_result(node, read_node(node), target)
+    #
+    # Every node at once rather than one after the other (Fas 16 punkt 1): a
+    # read is ~0.3 s per node and a node that does not answer costs its whole
+    # connect timeout, so in series a cluster's read grew with every node and
+    # every silent one added five seconds. `map` keeps the configured order, and each
+    # node is judged afterwards exactly as before.
+    #
+    answers: list[NodeResponse] = []
+    if nodes:
+        with ThreadPoolExecutor(max_workers=len(nodes)) as pool:
+            answers = list(pool.map(read_node, nodes))
+    for node, answer in zip(nodes, answers, strict=True):
+        entry, warning = _node_result(node, answer, target)
         results.append(entry)
         if warning is not None:
             warnings.append(warning)

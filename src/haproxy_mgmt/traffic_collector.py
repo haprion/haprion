@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -36,6 +37,11 @@ MAX_TIMESTAMP = 253402300799  # 9999-12-31T23:59:59Z, the last second datetime h
 # a second window kept in step by hand.
 #
 RETENTION_DAYS = 14
+#
+# How many nodes one run fetches from at a time: a bound on the SSH sessions
+# open at once, not on how many nodes there may be.
+#
+MAX_PARALLEL_NODES = 8
 MIRROR_MARGIN_DAYS = 1
 SSH_TIMEOUT_SECONDS = 30
 # A node names its day file from its own UTC clock.  During the first minutes
@@ -908,16 +914,34 @@ def collect(
             return 0
         attempted = now or datetime.now(UTC)
         window = _mirror_window(config, now=attempted)
-        failures = 0
-        mirrored: list[NodeTarget] = []
-        for target in config.nodes:
-            selected = fetch or (lambda node, day, offset: ssh_fetch(config, node, day, offset))
+        selected = fetch or (lambda node, day, offset: ssh_fetch(config, node, day, offset))
+
+        def one(target: NodeTarget) -> str | None:
             try:
                 collect_node(config, target, now=attempted, fetch=selected, window=window)
-                mirrored.append(target)
             except (CollectorError, OSError) as exc:
-                print(f"{target.cluster}/{target.node}: {exc}", file=sys.stderr)
-                failures += 1
+                return str(exc)
+            return None
+
+        #
+        # The nodes at once (Fas 16 punkt 1). Each node's staging parts, mirror
+        # and metadata carry its own name, so two nodes never touch one file;
+        # the import below reads them afterwards, one after the other, as before.
+        #
+        problems: list[str | None] = []
+        if config.nodes:
+            with ThreadPoolExecutor(
+                max_workers=min(len(config.nodes), MAX_PARALLEL_NODES)
+            ) as threads:
+                problems = list(threads.map(one, config.nodes))
+        failures = 0
+        mirrored: list[NodeTarget] = []
+        for target, problem in zip(config.nodes, problems, strict=True):
+            if problem is None:
+                mirrored.append(target)
+                continue
+            print(f"{target.cluster}/{target.node}: {problem}", file=sys.stderr)
+            failures += 1
         try:
             skipped, expired = _ingest_database(config)
             if skipped:

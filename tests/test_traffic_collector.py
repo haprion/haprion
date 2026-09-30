@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from contextlib import redirect_stdout
 from datetime import UTC, date, datetime
@@ -113,6 +114,41 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertFalse(_within_margin("2026-09-08", days))
         self.assertFalse(_within_margin("2026-09-18", days))
         self.assertFalse(_within_margin("not-a-day", days))
+
+    def test_the_nodes_are_fetched_at_once_and_one_failing_leaves_the_other(self) -> None:
+        """Fas 16 punkt 1: a run takes as long as its slowest node, not their sum."""
+
+        other = NodeTarget("alpha", "node-b", "node-b.example.com")
+        configured = CollectorConfig(
+            user="svc-logread",
+            key=self.config.key,
+            known_hosts=self.config.known_hosts,
+            mirror=self.mirror,
+            staging=self.staging,
+            nodes=(self.target, other),
+        )
+        # The first fetch of each node waits for the other's; in series the
+        # first node would wait alone and the barrier would break.
+        together = threading.Barrier(2, timeout=5)
+        first = {self.target.node: True, other.node: True}
+
+        def fetch(target: NodeTarget, wanted: date, offset: int) -> Response:
+            if first[target.node]:
+                first[target.node] = False
+                together.wait()
+            if target.node == "node-b":
+                raise SSHError("node-b did not answer")
+            return self.response(wanted, offset, b"")
+
+        errors = StringIO()
+        with patch("sys.stderr", errors):
+            self.assertEqual(collect(configured, now=NOW, fetch=fetch), 1)
+
+        self.assertTrue((self.mirror / "alpha--node-a.jsonl").exists())
+        self.assertIn("alpha/node-b: node-b did not answer", errors.getvalue())
+        meta = json.loads((self.mirror / "alpha--node-b.meta.json").read_text())
+        self.assertIsNone(meta["last_success"])
+        self.assertNotEqual(meta["outcome"], "ok")
 
     def test_new_data_is_fsynced_to_a_part_then_atomically_assembled(self) -> None:
         calls: list[tuple[date, int]] = []

@@ -37,3 +37,4 @@ POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cert-list
 POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-network-helper ""
 POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cluster-settings-helper ""
 POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-objects-helper ""
+POLLER_USER ALL=(root) NOPASSWD: /opt/haproxy-mgmt/current/bin/haproxy-cluster-list-helper ""

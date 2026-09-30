@@ -20,7 +20,7 @@ below stay a contract rather than whatever the table happens to hold.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -1705,6 +1705,28 @@ def record_cluster_settings(
                 "poll": poll_error,
             },
         )
+
+
+def record_cluster_list(connection: Connection[Any], clusters: Sequence[str]) -> None:
+    """Replace the list of clusters that exist with the poller's newest reading."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "insert into cluster_list (clusters) values (%(clusters)s) "
+            "on conflict (id) do update set clusters = excluded.clusters",
+            {"clusters": Jsonb(list(clusters))},
+        )
+
+
+def cluster_list(connection: Connection[Any]) -> tuple[str, ...] | None:
+    """The clusters the poller last read from the cluster file, in its order; None before it has."""
+
+    with connection.cursor() as cursor:
+        cursor.execute("select clusters from cluster_list where id = 1")
+        row = cursor.fetchone()
+    if row is None or not isinstance(row[0], list):
+        return None
+    return tuple(str(name) for name in row[0])
 
 
 def cluster_settings(connection: Connection[Any]) -> list[ClusterSettingsRow]:

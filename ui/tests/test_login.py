@@ -133,6 +133,11 @@ class LoginTestCase(unittest.TestCase):
             # Settings draws its Users card from this; none unless a test says.
             mock.patch("haproxy_ui.db.account_rows", return_value=[]),
             mock.patch("haproxy_ui.db.feature_switches", side_effect=lambda _c: self.switches),
+            #
+            # No list from the poller yet, so the pages fall back to the
+            # configured clusters - the state before the poller's first pass.
+            #
+            mock.patch("haproxy_ui.db.cluster_list", return_value=None),
             # No OIDC provider row unless a test gives one (0041).
             mock.patch("haproxy_ui.db.oidc_provider", side_effect=lambda _c: self.provider),
             mock.patch(

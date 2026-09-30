@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "requires": {
-    "database_head": "0044",
+    "database_head": "0045",
     "database_revisions": [
       "0028",
       "0029",
@@ -32,7 +32,8 @@
       "haproxy-cert-list-helper",
       "haproxy-network-helper",
       "haproxy-cluster-settings-helper",
-      "haproxy-objects-helper"
+      "haproxy-objects-helper",
+      "haproxy-cluster-list-helper"
     ],
     "worker_helpers": [
       "haproxy-deploy-helper",

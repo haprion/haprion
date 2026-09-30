@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from haproxy_mgmt.cli.cert_list import run_cert_list_helper
+from haproxy_mgmt.cli.cluster_list_helper import run_cluster_list_helper
 from haproxy_mgmt.cli.cluster_settings import run_settings_helper
 from haproxy_mgmt.cli.inventory import run_inventory_helper
 from haproxy_mgmt.cli.list import run_list_helper
@@ -243,7 +244,47 @@ def _sample(pool: Any, source: Source, *, cluster: str, result: Mapping[str, Any
     logger.debug("cluster %s: %d sample row(s)", cluster, written)
 
 
-def poll_once(pool: Any, config: Config, sources: tuple[Source, ...] = SOURCES) -> int:
+def read_cluster_list(
+    run: Callable[[str], Any] = run_cluster_list_helper,
+) -> tuple[str, ...] | None:
+    """Which clusters exist, from the cluster file; None when that cannot be said.
+
+    None is not "no clusters". It is a helper that could not be run or did not
+    answer, and the caller keeps polling the clusters it already knew rather
+    than emptying every page because one read failed.
+    """
+
+    try:
+        completed = run(new_request_id())
+        envelope = json.loads(completed.stdout)
+    except Exception as exc:  # noqa: BLE001 - any failure is "not known this pass"
+        logger.warning("the cluster list could not be read: %s", exc)
+        return None
+    result = envelope.get("result") if isinstance(envelope, dict) else None
+    if (
+        not isinstance(envelope, dict)
+        or envelope.get("operation") != "cluster_list"
+        or envelope.get("outcome") != "done"
+        or not isinstance(result, dict)
+        or not isinstance(result.get("clusters"), list)
+    ):
+        logger.warning("the cluster list helper did not answer with a list")
+        return None
+    names = tuple(
+        str(entry["id"])
+        for entry in result["clusters"]
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+    )
+    return names or None
+
+
+def poll_once(
+    pool: Any,
+    config: Config,
+    sources: tuple[Source, ...] = SOURCES,
+    *,
+    clusters: tuple[str, ...] | None = None,
+) -> int:
     """One pass over every configured cluster. Returns how many answered well.
 
     Each source of each cluster is written in its own transaction. A pass that
@@ -257,7 +298,7 @@ def poll_once(pool: Any, config: Config, sources: tuple[Source, ...] = SOURCES) 
     """
 
     healthy = 0
-    for cluster in config.clusters:
+    for cluster in clusters if clusters is not None else config.clusters:
         for source in sources:
             reading = poll_cluster(
                 cluster, source.run, operation=source.operation, partial_ok=source.partial_ok
@@ -293,7 +334,13 @@ def main(argv: list[str] | None = None) -> int:
     path = Path(os.environ.get("HAPROXY_UI_CONFIG", str(DEFAULT_CONFIG_PATH)))
     config = load_config(path)
 
-    if not config.clusters:
+    #
+    # The cluster file decides which clusters exist (B206); `ui.toml`'s list is
+    # the fallback while the list helper cannot be read, and the only list
+    # before it was installed.
+    #
+    known = read_cluster_list() or config.clusters
+    if not known:
         logger.error("no clusters are configured; there is nothing to poll")
         return 78
 
@@ -321,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 75
             logger.info(
                 "polling %d cluster(s) every %ds as %s on %s",
-                len(config.clusters),
+                len(known),
                 config.poller.interval_seconds,
                 identity,
                 database,
@@ -335,8 +382,16 @@ def main(argv: list[str] | None = None) -> int:
             #
             stopping = StopRequest(what="after this pass")
             while not stopping.requested():
-                healthy = poll_once(pool, config)
-                logger.info("%d/%d cluster(s) fully current", healthy, len(config.clusters))
+                listed = read_cluster_list()
+                if listed is not None:
+                    if listed != known:
+                        logger.info("the cluster list changed: %s", ", ".join(listed))
+                    known = listed
+                    with pool.connection() as connection:
+                        db.record_cluster_list(connection, known)
+                        connection.commit()
+                healthy = poll_once(pool, config, clusters=known)
+                logger.info("%d/%d cluster(s) fully current", healthy, len(known))
                 #
                 # Woken by a finished job as well as by the clock. A publish
                 # that changed a cluster used to sit invisible until the next

@@ -18,7 +18,7 @@ from types import MappingProxyType
 # as a status is chroma, not hue: every status colour here is vivid, so a muted
 # rule does not compete with one.
 #
-# They are handed out in the order `ui.toml` lists the clusters - the order the
+# They are handed out in the order the cluster file lists the clusters (B206) - the order the
 # dashboard draws them in - not by a hash of the name, which could give the
 # first two clusters one colour. A seventh cluster does not get the first one's
 # again: a marker that has to be doubted is worse than none, so with more than

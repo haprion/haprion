@@ -391,7 +391,14 @@ def listed_clusters(request: Request, config: Config) -> tuple[str, ...]:
         except snapshot.SnapshotError:
             # The page that reads the snapshot says what is wrong with it.
             return ()
-    return config.clusters
+    #
+    # The clusters the poller last read from the cluster file (B206), so one
+    # created or removed from Settings is on the pages at the next pass.
+    # `ui.toml`'s list only until the poller has written one.
+    #
+    with request.app.state.pool.connection() as connection:
+        listed = db.cluster_list(connection)
+    return listed if listed else config.clusters
 
 
 def read_source(
@@ -421,8 +428,9 @@ def read_source(
             snapshot.path_for_config(request.app.state.config_path)
         )
         return captured.clusters, source.snapshot_rows(captured), captured.captured_at
+    listed = listed_clusters(request, config)
     with request.app.state.pool.connection() as connection:
-        return config.clusters, source.cached_rows(connection), None
+        return listed, source.cached_rows(connection), None
 
 
 def client_address(request: Request) -> str:
@@ -1723,7 +1731,7 @@ def build_router(config: Config) -> APIRouter:
                 reading = traffic_logs.read_database(
                     connection,
                     config.traffic_logs.directory,
-                    config.clusters,
+                    listed_clusters(request, config),
                     limit=config.traffic_logs.max_lines,
                     cluster=selected_cluster,
                     status=selected_status,
@@ -1788,7 +1796,7 @@ def build_router(config: Config) -> APIRouter:
                 "enabled": config.traffic_logs.enabled,
                 "reading": reading,
                 "freshness_warnings": freshness_warnings,
-                "clusters": config.clusters,
+                "clusters": listed_clusters(request, config),
                 "selected_cluster": selected_cluster,
                 "selected_status": selected_status,
                 "selected_query": selected_query,

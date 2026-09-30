@@ -263,7 +263,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0044",))
+            self.assertEqual(cursor.fetchone(), ("0045",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -313,6 +313,22 @@ class ARealDatabase(unittest.TestCase):
                 )
         with self.connect() as connection:
             connection.execute("delete from cluster_settings")
+            connection.commit()
+
+    def test_the_poller_replaces_the_cluster_list_and_web_only_reads_it(self) -> None:
+        # Fas 16 (B206/B211): one row, replaced by update, so no delete grant.
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            self.assertIsNone(db.cluster_list(connection))
+        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+            db.record_cluster_list(connection, ["alpha", "beta"])
+            db.record_cluster_list(connection, ["beta", "gamma"])
+            connection.commit()
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            self.assertEqual(db.cluster_list(connection), ("beta", "gamma"))
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                db.record_cluster_list(connection, ["alpha"])
+        with self.connect() as connection:
+            connection.execute("delete from cluster_list")
             connection.commit()
 
     def test_worker_can_read_jobs_but_not_accounts(self) -> None:

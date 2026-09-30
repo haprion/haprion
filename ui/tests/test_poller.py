@@ -298,3 +298,82 @@ class TheSingletonLockSession(unittest.TestCase):
         source = inspect.getsource(poller.main)
         self.assertIn("db.lock_session(", source)
         self.assertNotIn("lock_pool", source)
+
+
+class TheClusterList(unittest.TestCase):
+    """Which clusters exist is read from the cluster file on every pass (B206/B211)."""
+
+    def answer(self, *ids: str, outcome: str = "done") -> Any:
+        return completed(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "operation": "cluster_list",
+                    "outcome": outcome,
+                    "cluster": None,
+                    "result": {
+                        "clusters": [
+                            {"id": name, "display_name": name.title(), "nodes": 2} for name in ids
+                        ]
+                    },
+                }
+            )
+        )
+
+    def test_the_file_s_order_is_kept(self) -> None:
+        listed = poller.read_cluster_list(lambda _request: self.answer("beta", "alpha"))
+        self.assertEqual(listed, ("beta", "alpha"))
+
+    def test_anything_short_of_a_list_is_not_known_rather_than_empty(self) -> None:
+        def broken(_request: str) -> Any:
+            raise OSError("sudo: a password is required")
+
+        for run in (
+            broken,
+            lambda _request: completed("not json"),
+            lambda _request: self.answer("alpha", outcome="failed"),
+            lambda _request: completed(envelope()),
+            lambda _request: self.answer(),
+        ):
+            with self.subTest(run=run):
+                self.assertIsNone(poller.read_cluster_list(run))
+
+    def test_a_pass_goes_over_the_listed_clusters_not_the_configured_ones(self) -> None:
+        asked: list[str] = []
+
+        class Pool:
+            def connection(self) -> Any:
+                return self
+
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def commit(self) -> None:
+                return None
+
+        def helper(cluster: str, _request: str) -> Any:
+            asked.append(cluster)
+            return completed(envelope())
+
+        from haproxy_ui.config import Config, Database, Listen, Poller, Throttle
+        from haproxy_ui.config import Session as SessionPolicy
+
+        configured = Config(
+            database=Database(name="x", socket_directory="/tmp"),  # noqa: S108
+            listen=Listen(host="127.0.0.1", port=8080),
+            management_writes=False,
+            demo_fixture=False,
+            production_snapshot=False,
+            session=SessionPolicy(inactivity_minutes=600, absolute_hours=168, cookie_secure=True),
+            throttle=Throttle(max_failures=10, window_minutes=15),
+            clusters=("alpha",),
+            poller=Poller(interval_seconds=60),
+        )
+        source = poller.Source("status", helper, lambda _c, **_k: None)
+
+        poller.poll_once(Pool(), configured, (source,), clusters=("gamma", "delta"))
+
+        self.assertEqual(asked, ["gamma", "delta"])

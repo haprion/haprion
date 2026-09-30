@@ -187,3 +187,18 @@ class RemovingANode(NodesPage):
         self.assertIsNone(cluster_nodes.removable(rows, "c"))
         self.assertIn("holds the VIP", cluster_nodes.removable(rows, "a") or "")
         self.assertIn("not a node", cluster_nodes.removable(rows, "z") or "")
+
+
+class TheListFollowsTheClusterFile(NodesPage):
+    """Once the poller has read the cluster file, the pages draw its clusters (B206)."""
+
+    def test_the_poller_s_list_replaces_the_configured_one(self) -> None:
+        patch = mock.patch("haproxy_ui.db.cluster_list", return_value=("service-demo",))
+        patch.start()
+        self.addCleanup(patch.stop)
+        client = self.client_for()
+
+        card = client.get("/settings").text.split('id="nodes"')[1].split("</section>")[0]
+        self.assertIn('href="/settings/nodes/service-demo"', card)
+        self.assertNotIn('href="/settings/nodes/edge-demo"', card)
+        self.assertEqual(client.get("/settings/nodes/edge-demo").status_code, 404)

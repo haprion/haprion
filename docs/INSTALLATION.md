@@ -1638,6 +1638,51 @@ Once written by step 2, `clusters.yaml` is the record: a second run of step 2 ke
 `REWRITE_CLUSTER_FILE=yes` asks for the answers file's version, and step 13 reads the collector's
 nodes from it rather than from the answers file.
 
+### 1.4.11 Creating and removing a cluster
+
+Steps 1 and 2 make the clusters of a new installation from the answers file. A cluster added later
+is made by `haproxy-cluster`, or the Nodes card under Settings, through the same root helper as a
+node:
+
+```bash
+# On each of the two nodes: step 4 prints its enrollment block for the new cluster.
+sudo ./04-node-prepare answers.env beta
+
+# On the management host, both blocks on stdin in the order of the --host options:
+sudo haproxy-cluster add -c beta --display-name Beta --vip 203.0.113.10 \
+    --node-path beta --certificate example.com \
+    --host node-c.example.com --host node-d.example.com [--prefix 24] [--interface eth0] < blocks
+
+sudo haproxy-cluster remove -c beta
+```
+
+A creation writes, as one change: the cluster's entry in `clusters.yaml`; the default certificate's
+entry in the certificate registry, which gains the cluster as a target; a configuration repository
+(the bare history and the worktree, seeded with the same `core/haproxy.cfg`, `manual/` and
+`managed/network.yaml` step 1 makes, and owned like the others); an empty release directory; a
+`sudoedit` rule per handwritten file in the operator editing policy, checked with `visudo -cqf`
+before it is installed; the two repositories in root's git `safe.directory`; and both nodes in the
+six places of [1.4.10](#1410-adding-and-removing-a-node). Then both nodes are asked for their
+status, as a single added node is. Anything short of that removes the repository and release
+directory again and puts every file back. The ID, the node path and the nodes' names and hosts
+must all be free; the certificate must already be in the registry.
+
+The new cluster is polled and drawn from the poller's next pass ([Which clusters get
+polled](#which-clusters-get-polled)). It has no release until its network description and objects
+are published and `haproxy-deploy -c <cluster>` runs, and no backup schedule until one is set on
+the Backups page; its retention is the default until then. Each node's `keepalived.conf` is not
+written by this project.
+
+A removal is refused for the last cluster. It takes the cluster out of `clusters.yaml`, out of every
+certificate's targets, out of the editing policy and `safe.directory`, and takes its nodes out of the
+six places; it stops `haproxy-state-backup@<cluster>.timer`. Nothing is deleted: the configuration
+repository and its history, the release directory, the nodes' backup archives and the retention
+file are moved to `.removed/<cluster>-<time>/` under their own roots - the same file system, so a
+rename, and whatever protects the root protects the archive. The ID cannot be used again while its
+archive is there; deleting an archive is a separate, deliberate step. The nodes are not touched and
+keep serving the VIP until they are shut down - the manager only stops managing them. Jobs and
+versions in the interface's database stay as history.
+
 ### 1.5 Validation certificate
 
 Candidate validation runs a real `haproxy -c` against the candidate. Any configuration that
@@ -3787,10 +3832,12 @@ go this way, root runs them directly.
 
 Adding or removing a node writes root's `known_hosts`, the pull accounts' `authorized_keys`, the
 cluster file and the collector's files - none of which a helper the worker starts through sudo may
-write. So `haproxy-node-helper` answers on `/run/haproxy-mgmt/cluster-node.sock` (root, group the
+write. Creating or removing a cluster writes those and the editing policy under `/etc/sudoers.d`,
+a new repository under the configuration root, and moves directories into `.removed/`. So
+`haproxy-node-helper` answers both on `/run/haproxy-mgmt/cluster-node.sock` (root, group the
 worker's account, `0660`) from `haproxy-node-helper@.service`, installed by step 07; the worker's
-`haproxy-node-ask` carries the request there, and `haproxy-node` from a terminal runs the helper
-directly as root.
+`haproxy-node-ask` carries the request there, and `haproxy-node` and `haproxy-cluster` from a
+terminal run the helper directly as root.
 
 #### Which clusters get polled
 

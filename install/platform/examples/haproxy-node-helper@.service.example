@@ -1,4 +1,5 @@
-# Adds or removes exactly one node of one cluster, then exits.
+# Adds or removes exactly one node of one cluster, or creates or removes one
+# cluster, then exits.
 #
 # Started by haproxy-node-helper.socket, one instance per connection. The
 # connection is this process's stdin and stdout, the same protocol the helper
@@ -13,10 +14,18 @@
 # node that does not answer as itself has every file put back. It never reads
 # a private key and never returns one.
 #
+# A cluster is the same six files for its first two nodes, and besides them
+# the certificate registry, the operator editing policy under
+# /etc/sudoers.d (checked with visudo before it is installed), root's git
+# safe.directory, a new configuration repository and release directory -
+# or, for a removal, those moved under .removed/ in their own roots with the
+# nodes' backups - and the cluster's backup timer stopped with systemctl.
+#
 # Why this sandbox is looser than the worker's: the files are the job.
-# ProtectSystem=yes keeps /usr, /boot and /efi read-only and leaves /etc and
-# /configs to the helper; ProtectHome stays off because root's known_hosts and
-# the pull accounts' keys live under /root and /home.
+# ProtectSystem=yes keeps /usr, /boot and /efi read-only and leaves /etc,
+# /configs and the backup root to the helper; ProtectHome stays off because
+# root's known_hosts and git configuration and the pull accounts' keys live
+# under /root and /home.
 #
 # Errors go to the journal and not to the socket: the caller reads one JSON
 # document.
@@ -24,7 +33,7 @@
 # Installed as /etc/systemd/system/haproxy-node-helper@.service.
 
 [Unit]
-Description=Add or remove one node of a HAProxy Manager cluster
+Description=Add or remove one node or one cluster of HAProxy Manager
 Documentation=file:///opt/haproxy-mgmt/current
 
 [Service]

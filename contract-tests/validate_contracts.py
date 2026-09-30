@@ -712,6 +712,27 @@ def check_cluster_node_semantics(document: dict[str, object], path: Path) -> Non
         raise AssertionError(f"{path}: a removed node carries a host key")
 
 
+def check_cluster_define_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        if document["outcome"] == "done":
+            raise AssertionError(f"{path}: a done cluster_define carries no result")
+        return
+    assert isinstance(result, dict)
+    # A creation is proven by every node answering with its own host key; a
+    # removal asks no node anything, and is kept in the archive it names.
+    if result["action"] == "added":
+        if len(result["host_key_fingerprints"]) != len(result["nodes"]):
+            raise AssertionError(f"{path}: a created cluster names a host key per node")
+        if result["archive"] is not None:
+            raise AssertionError(f"{path}: a created cluster names an archive")
+    else:
+        if result["host_key_fingerprints"]:
+            raise AssertionError(f"{path}: a removed cluster carries host keys")
+        if not result["archive"]:
+            raise AssertionError(f"{path}: a removed cluster names no archive")
+
+
 def check_cert_receiver_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -943,6 +964,7 @@ SEMANTIC_CHECKS = {
     "cert_scep": check_cert_scep_semantics,
     "cert_receiver": check_cert_receiver_semantics,
     "cluster_node": check_cluster_node_semantics,
+    "cluster_define": check_cluster_define_semantics,
     "cluster_list": check_cluster_list_semantics,
     "ui_tls_install": check_ui_tls_install_semantics,
     "oidc": check_oidc_semantics,
@@ -1023,6 +1045,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["host_key_fingerprint"] = (
             None if result["action"] == "added" else "SHA256:" + "A" * 43
         )
+    elif operation == "cluster_define":
+        result["archive"] = "beta-20260930-101500" if result["action"] == "added" else None
     elif operation == "cert_receiver":
         result["layers"] = [{"layer": "account", "state": "failed", "detail": "userdel: busy"}]
     elif operation == "ui_tls_install":
@@ -1095,6 +1119,16 @@ def drop_the_shared_distribution_copy(document: dict[str, object]) -> None:
     raise NotApplicable
 
 
+def drop_a_created_node_key(document: dict[str, object]) -> None:
+    """A created cluster whose second node was never asked who it is."""
+
+    result = document["result"]
+    assert isinstance(result, dict)
+    if result["action"] != "added":
+        raise NotApplicable
+    result["host_key_fingerprints"] = result["host_key_fingerprints"][:1]
+
+
 def flip_release_state(document: dict[str, object]) -> None:
     result = document["result"]
     assert isinstance(result, dict)
@@ -1119,6 +1153,7 @@ def flip_node_current(document: dict[str, object]) -> None:
 EXTRA_MUTATIONS: dict[str, tuple[Callable[[dict[str, object]], None], ...]] = {
     "status": (flip_release_state, flip_node_current),
     "cert_list": (claim_current_on_an_empty_receiver, drop_the_shared_distribution_copy),
+    "cluster_define": (drop_a_created_node_key,),
 }
 
 

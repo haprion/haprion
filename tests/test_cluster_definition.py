@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import shutil
 import subprocess
@@ -14,11 +15,14 @@ from typing import Any
 import yaml
 
 from haproxy_mgmt import cluster_definition, node_enrollment
+from haproxy_mgmt.cli import cluster as cluster_command
+from haproxy_mgmt.cli import node_helper
 from haproxy_mgmt.cluster_definition import Places, Tools
 from haproxy_mgmt.config import RuntimeConfig, load_policy, load_runtime_config
 from haproxy_mgmt.git_command import GIT
 from haproxy_mgmt.node_enrollment import AskNode, Enrollment, EnrollmentError, Locations
 from haproxy_mgmt.status_collect import NodeResponse
+from tests.contract_schema import assert_contract
 from tests.test_node_enrollment import key
 
 BASE = Path(__file__).resolve().parents[1]
@@ -404,6 +408,202 @@ class RemovingACluster(unittest.TestCase):
                 (site.config_root / ".removed").exists()
                 and any((site.config_root / ".removed").iterdir())
             )
+
+
+REQUEST_ID = "77777777-7777-4777-8777-777777777777"
+
+
+@unittest.skipUnless(Path(GIT).exists(), "git is not installed where the tests run")
+class TheHelper(unittest.TestCase):
+    """The request the worker and `haproxy-cluster` send, answered in the contract's envelope."""
+
+    def run_helper(
+        self, site: Site, request: str, *, ask: AskNode | None = None
+    ) -> tuple[int, dict[str, Any]]:
+        out, err = io.StringIO(), io.StringIO()
+        # The locks outside the installation, whose snapshot they would change.
+        locks = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        code = node_helper.main(
+            [],
+            policy_path=site.policy_file,
+            input_stream=io.BytesIO(request.encode()),
+            output_stream=out,
+            error_stream=err,
+            require_secure=False,
+            require_root=False,
+            lock_root=locks,
+            registry_lock=locks / "registry.lock",
+            locations=site.locations,
+            places=site.places,
+            tools=site.tools,
+            ask=ask or answering_as("gamma"),
+        )
+        return code, assert_contract("haproxy-cluster-define", out.getvalue())
+
+    def creation(self, **overrides: Any) -> str:
+        fields: dict[str, Any] = {
+            "action": "add",
+            "display_name": "Gamma",
+            "vip": "198.51.100.30",
+            "node_path": "gamma",
+            "default_certificate": "example.net",
+            "blocks": [block("node-c", 10), block("node-d", 20)],
+            "hosts": ["node-c.example.com", "node-d.example.com"],
+            "address_prefix": 24,
+        }
+        fields.update(overrides)
+        return node_helper.build_define_request("gamma", REQUEST_ID, **fields)
+
+    def test_a_creation_answers_with_its_nodes_and_their_host_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = Site(Path(raw))
+
+            code, document = self.run_helper(site, self.creation())
+
+            self.assertEqual((code, document["outcome"]), (0, "done"))
+            result = document["result"]
+            self.assertEqual(result["action"], "added")
+            self.assertEqual([node["name"] for node in result["nodes"]], ["node-c", "node-d"])
+            self.assertEqual(
+                result["host_key_fingerprints"],
+                [node_enrollment.fingerprint(key(10)), node_enrollment.fingerprint(key(20))],
+            )
+            self.assertIsNone(result["archive"])
+            self.assertIn("gamma", site.runtime().clusters)
+
+    def test_a_node_that_does_not_answer_is_blocked_and_changes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = Site(Path(raw))
+            before = site.snapshot()
+
+            code, document = self.run_helper(site, self.creation(), ask=silent)
+
+            self.assertEqual((code, document["outcome"]), (75, "blocked"))
+            self.assertEqual(document["error"]["code"], "node_unverified")
+            self.assertEqual(site.snapshot(), before)
+
+    def test_a_removal_answers_with_its_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = Site(Path(raw))
+            self.run_helper(site, self.creation())
+
+            code, document = self.run_helper(
+                site, node_helper.build_define_request("alpha", REQUEST_ID, action="remove")
+            )
+
+            self.assertEqual((code, document["outcome"]), (0, "done"))
+            result = document["result"]
+            self.assertEqual(result["action"], "removed")
+            self.assertTrue(result["archive"].startswith("alpha-"))
+            self.assertEqual(result["host_key_fingerprints"], [])
+            self.assertNotIn("alpha", site.runtime().clusters)
+
+    def test_a_removal_takes_no_definition(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            site = Site(Path(raw))
+            request = json.loads(
+                node_helper.build_define_request("alpha", REQUEST_ID, action="remove")
+            )
+            request["parameters"]["vip"] = "198.51.100.30"
+
+            code, document = self.run_helper(site, json.dumps(request))
+
+            self.assertEqual((code, document["outcome"]), (65, "failed"))
+            self.assertIn("takes no vip", document["error"]["message"])
+            self.assertIn("alpha", site.runtime().clusters)
+
+
+class TheCommand(unittest.TestCase):
+    def test_add_sends_both_blocks_in_the_order_of_the_hosts(self) -> None:
+        sent: list[str] = []
+
+        def run(request: str) -> subprocess.CompletedProcess[str]:
+            sent.append(request)
+            answer = {
+                "operation": "cluster_define",
+                "result": {
+                    "action": "added",
+                    "nodes": [{"name": "node-c"}, {"name": "node-d"}],
+                    "files": ["clusters.yaml"],
+                    "host_key_fingerprints": ["SHA256:x", "SHA256:y"],
+                },
+            }
+            return subprocess.CompletedProcess([], 0, json.dumps(answer), "")
+
+        # Folded by a terminal, as a pasted pair arrives.
+        pasted = block("node-c", 10)[:40] + "\n" + block("node-c", 10)[40:] + "\n\n"
+        pasted += block("node-d", 20) + "\n"
+        out = io.StringIO()
+        code = cluster_command.main(
+            [
+                "add",
+                "-c",
+                "gamma",
+                "--display-name",
+                "Gamma",
+                "--vip",
+                "198.51.100.30",
+                "--node-path",
+                "gamma",
+                "--certificate",
+                "example.net",
+                "--host",
+                "node-c.example.com",
+                "--host",
+                "node-d.example.com",
+                "--prefix",
+                "24",
+            ],
+            stdin=io.StringIO(pasted),
+            stdout=out,
+            run=run,
+        )
+
+        self.assertEqual(code, 0)
+        parameters = json.loads(sent[0])["parameters"]
+        self.assertEqual(parameters["blocks"], [block("node-c", 10), block("node-d", 20)])
+        self.assertEqual(parameters["hosts"], ["node-c.example.com", "node-d.example.com"])
+        self.assertEqual(parameters["address_prefix"], 24)
+        self.assertNotIn("address_interface", parameters)
+        self.assertIn("Created gamma with node-c, node-d.", out.getvalue())
+        self.assertIn("haproxy-deploy -c gamma", out.getvalue())
+
+    def test_remove_names_the_archive_and_says_the_nodes_keep_serving(self) -> None:
+        def run(request: str) -> subprocess.CompletedProcess[str]:
+            self.assertEqual(json.loads(request)["parameters"], {"action": "remove"})
+            answer = {
+                "operation": "cluster_define",
+                "result": {
+                    "action": "removed",
+                    "archive": "alpha-20260930-101500",
+                    "warnings": ["haproxy-state-backup@alpha.timer could not be stopped"],
+                },
+            }
+            return subprocess.CompletedProcess([], 0, json.dumps(answer), "")
+
+        out = io.StringIO()
+        code = cluster_command.main(["remove", "-c", "alpha"], stdout=out, run=run)
+
+        self.assertEqual(code, 0)
+        self.assertIn("archived as alpha-20260930-101500", out.getvalue())
+        self.assertIn("keep serving", out.getvalue())
+        self.assertIn("WARNING: haproxy-state-backup@alpha.timer", out.getvalue())
+
+    def test_a_refusal_is_printed_as_its_sentence(self) -> None:
+        def run(_request: str) -> subprocess.CompletedProcess[str]:
+            answer = {
+                "operation": "cluster_define",
+                "error": {"code": "cluster_last", "message": "this is the only cluster"},
+            }
+            return subprocess.CompletedProcess([], 65, json.dumps(answer), "")
+
+        err = io.StringIO()
+        code = cluster_command.main(
+            ["remove", "-c", "alpha"], stdout=io.StringIO(), stderr=err, run=run
+        )
+
+        self.assertEqual(code, 1)
+        self.assertIn("only cluster", err.getvalue())
 
 
 class TheEditingPolicy(unittest.TestCase):

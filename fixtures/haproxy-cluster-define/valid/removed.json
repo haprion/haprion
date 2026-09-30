@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cluster_define",
+  "cluster": "beta",
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "warnings": [],
+  "error": null,
+  "result": {
+    "action": "removed",
+    "cluster": "beta",
+    "nodes": [
+      { "name": "node-a", "host": "node-a.example.com" },
+      { "name": "node-b", "host": "node-b.example.com" }
+    ],
+    "files": [
+      "clusters.yaml",
+      "the certificate registry",
+      "root's known_hosts",
+      "svc-pull's authorized_keys",
+      "svc-cert-pull's authorized_keys",
+      "root's git safe.directory",
+      "the operator editing policy"
+    ],
+    "archive": "beta-20260930-101500",
+    "host_key_fingerprints": [],
+    "warnings": ["haproxy-state-backup@beta.timer could not be stopped: Unit not loaded."]
+  }
+}

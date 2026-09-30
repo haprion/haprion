@@ -61,12 +61,14 @@ def _parse(argv: list[str]) -> tuple[str, str, str]:
     usage(USAGE)
 
 
-def _answer(completed: subprocess.CompletedProcess[str]) -> Mapping[str, Any]:
+def _answer(
+    completed: subprocess.CompletedProcess[str], operation: str = node_helper.OPERATION
+) -> Mapping[str, Any]:
     try:
         document = json.loads(completed.stdout)
     except ValueError:
         raise ValueError(completed.stderr.strip() or "the helper gave no answer") from None
-    if not isinstance(document, dict) or document.get("operation") != node_helper.OPERATION:
+    if not isinstance(document, dict) or document.get("operation") != operation:
         raise ValueError("the helper returned an invalid result")
     error = document.get("error")
     if isinstance(error, Mapping):

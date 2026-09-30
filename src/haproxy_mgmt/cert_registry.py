@@ -116,6 +116,26 @@ def locked(path: Path = DEFAULT_LOCK_PATH, *, wait: int | None = None) -> Iterat
         yield
 
 
+def render(
+    document: Mapping[str, Any],
+    certificates: Mapping[str, Any],
+    receivers: Mapping[str, Any] | None = None,
+) -> str:
+    """The registry file as `write` puts it on disk, for a caller changing it with other files."""
+
+    return HEADER + yaml.safe_dump(
+        {
+            "schema_version": 1,
+            "receivers": (document.get("receivers") or {})
+            if receivers is None
+            else dict(receivers),
+            "certificates": dict(certificates),
+        },
+        sort_keys=False,
+        allow_unicode=True,
+    )
+
+
 def write(
     path: Path,
     *,
@@ -142,17 +162,7 @@ def write(
             "dependency_unavailable", f"cannot read the registry: {exc}", exit_code=78
         ) from exc
 
-    rendered = HEADER + yaml.safe_dump(
-        {
-            "schema_version": 1,
-            "receivers": (document.get("receivers") or {})
-            if receivers is None
-            else dict(receivers),
-            "certificates": dict(certificates),
-        },
-        sort_keys=False,
-        allow_unicode=True,
-    )
+    rendered = render(document, certificates, receivers)
 
     try:
         handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)

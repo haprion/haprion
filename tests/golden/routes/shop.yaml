@@ -3,6 +3,9 @@ name: shop
 hostnames: [shop.example.com, www.example.com]
 listen:
   protocol: http
+rate_limit:
+  window: 10s
+  max_requests: 100
 routes:
   - path: /
     backend: web

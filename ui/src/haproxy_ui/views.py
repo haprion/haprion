@@ -39,7 +39,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.templating import Jinja2Templates
 from haproxy_mgmt import backup_retention, backup_schedule, proxy_model
 from haproxy_mgmt import cluster_settings as cluster_settings_module
-from haproxy_mgmt.config import CERTIFICATE_ID
+from haproxy_mgmt.config import CERTIFICATE_ID, DEFAULT_ABUSE_WINDOW
 from haproxy_mgmt.dns_profile_keys import DnsProfilePublicKey, KeyFileError, read_public_key
 from haproxy_mgmt.proxy_model import (
     DEFAULT_DOWN_INTERVAL,
@@ -7074,6 +7074,7 @@ def _editor_page(
             # the value the engine will actually use.
             #
             "check_interval": DEFAULT_INTERVAL,
+            "rate_window": DEFAULT_ABUSE_WINDOW,
             "check_fast_interval": DEFAULT_FAST_INTERVAL,
             "check_down_interval": DEFAULT_DOWN_INTERVAL,
             "check_rise": DEFAULT_RISE,

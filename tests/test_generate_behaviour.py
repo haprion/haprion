@@ -118,6 +118,42 @@ backends:
         port: {web}
 """
 
+#
+# A limit of three over two pools. The window is long enough that nothing in a
+# test run ages out of it, so the fourth request is the first one refused
+# whatever the machine's speed.
+#
+LIMITED = """
+schema: 1
+name: limited
+hostnames: [limited.example.com]
+listen:
+  protocol: http
+rate_limit:
+  window: 1m
+  max_requests: 3
+routes:
+  - path: /
+    backend: web
+  - path: /api
+    backend: api
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+  api:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {api}
+"""
+
 MAINTENANCE = """
 schema: 1
 name: closed
@@ -351,8 +387,9 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
         # dispatched, not whether a check would eventually have removed it.
         #
         pair = load_proxy("pair", PAIR.format(dead=free_port(), web=ports["web"]).encode())
+        limited = load_proxy("limited", LIMITED.format(web=ports["web"], api=ports["api"]).encode())
         layer = generate(
-            [cls.proxy, restricted, closed, gone, pair],
+            [cls.proxy, restricted, closed, gone, pair, limited],
             vips={"main": Vip(name="main", address="127.0.0.1")},
             default_vip="main",
             networks={"office": ("198.51.100.0/24",)},
@@ -486,6 +523,22 @@ class TheGeneratedConfigurationRoutesTheWayTheSemanticsSay(unittest.TestCase):
         status, _ = self.request("/", host="locked.example.com")
 
         self.assertEqual(status, 403)
+
+    def test_a_rate_limit_counts_every_path_of_the_object_and_no_other_object(self) -> None:
+        """One table for the object, and only for the object.
+
+        The requests alternate between the two pools, so a table per pool would
+        let all four through. The site next to it on the same address is asked
+        last, from the same source that has just been refused, and has to
+        answer: a limit that spread to the shared frontend would refuse it.
+        """
+
+        statuses = [
+            self.request(path, host="limited.example.com")[0] for path in ("/", "/api", "/", "/api")
+        ]
+
+        self.assertEqual(statuses, [200, 200, 200, 429])
+        self.assertEqual(self.request("/")[0], 200)
 
     def test_an_object_in_maintenance_answers_instead_of_routing(self) -> None:
         """The pool behind it is up and answering, and is still not reached.

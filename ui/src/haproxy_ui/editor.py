@@ -302,6 +302,8 @@ class ObjectForm(BaseModel):
     slow_start: Annotated[str, StringConstraints(max_length=8)] = ""
     allow_from: list[Annotated[str, StringConstraints(max_length=64)]] = Field(default_factory=list)
     allow_ranges: Annotated[str, StringConstraints(max_length=2048)] = ""
+    rate_limit: Annotated[str, StringConstraints(max_length=8)] = ""
+    rate_window: Annotated[str, StringConstraints(max_length=8)] = ""
     maintenance: bool = False
     maintenance_message: Annotated[str, StringConstraints(max_length=200)] = ""
     unavailable_message: Annotated[str, StringConstraints(max_length=200)] = ""

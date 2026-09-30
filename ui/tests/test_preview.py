@@ -506,6 +506,52 @@ class ARawPortIsPreviewedToo(unittest.TestCase):
         self.assertEqual(result.problem_field, "app.backends.web.cookie")
 
 
+class TheRateLimitTheObjectAsksFor(unittest.TestCase):
+    """One number, which the object's shape turns into requests or connections."""
+
+    def test_an_empty_box_writes_no_limit(self) -> None:
+        self.assertNotIn("rate_limit:", build_document(form()))
+
+    def test_a_site_counts_requests_in_its_own_backend(self) -> None:
+        result = preview(form(rate_limit="100", rate_window="1m"), PREVIEW_CLUSTER)
+
+        self.assertIsNone(result.problem)
+        self.assertIn(
+            "http-request deny deny_status 429 if { sc_http_req_rate(1) gt 100 }",
+            result.files["1001-app.cfg"],
+        )
+
+    def test_a_raw_port_counts_new_connections(self) -> None:
+        written = form(protocol="tcp", tcp_port="5432", hostnames="", rate_limit="20")
+
+        self.assertIn("max_new_connections: 20", build_document(written))
+        self.assertIsNone(preview(written, PREVIEW_CLUSTER).problem)
+
+    def test_a_window_without_a_limit_is_named_before_the_engine_sees_it(self) -> None:
+        with self.assertRaises(ValueError) as raised:
+            build_document(form(rate_window="1m"))
+
+        self.assertIn("needs a limit", str(raised.exception))
+
+    def test_a_limit_that_is_not_a_number_is_named(self) -> None:
+        with self.assertRaises(ValueError) as raised:
+            build_document(form(rate_limit="many"))
+
+        self.assertIn("must be a number", str(raised.exception))
+
+    def test_the_limit_survives_a_round_trip_for_both_shapes(self) -> None:
+        for written in (
+            form(rate_limit="100"),
+            form(rate_limit="100", rate_window="1m"),
+            form(protocol="tcp", tcp_port="5432", hostnames="", rate_limit="20", rate_window="30s"),
+        ):
+            with self.subTest(written["protocol"], window=written["rate_window"]):
+                reopened = form_from_document(build_document(written), networks=())
+
+                self.assertEqual(reopened["rate_limit"], written["rate_limit"])
+                self.assertEqual(reopened["rate_window"], written["rate_window"])
+
+
 class TheCheckTimingTheObjectAsksFor(unittest.TestCase):
     """Interval, rise and fall, which the form had no field for until now.
 

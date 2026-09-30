@@ -31,6 +31,8 @@ from typing import Any
 import yaml
 
 from haproxy_mgmt.config import (
+    ABUSE_WINDOW,
+    DEFAULT_ABUSE_WINDOW,
     TLS_POLICY_NAMES,
     ConfigError,
     _mapping,
@@ -344,7 +346,7 @@ BACKEND_POLICY_NAMES = ("modern", "intermediate", "legacy")
 # either, so the object is refused outright, for every shape, in whatever test
 # its author writes first.
 #
-COMMON_KEYS = frozenset({"schema", "name", "listen", "backends", "allow_from"})
+COMMON_KEYS = frozenset({"schema", "name", "listen", "backends", "allow_from", "rate_limit"})
 
 HTTP_ONLY_KEYS: Mapping[str, str] = MappingProxyType(
     {
@@ -677,6 +679,29 @@ class Unavailable:
 
 
 @dataclass(frozen=True, slots=True)
+class RateLimit:
+    """How much one source address may ask of this object, over a window.
+
+    The cluster's abuse protection moved down to one object (B216): the same
+    counter, the same 429 and the same reading of a trusted proxy's forwarded
+    address, but with a table of the object's own, so a limit here says
+    nothing about any other site on the address.
+
+    One threshold, and which one depends on the shape. An http object counts
+    requests; a tcp object has no requests and counts new connections, which
+    is the only question a raw stream can be asked before it is forwarded.
+    Exactly one of the two is set.
+
+    Counted per node and forgotten on reload, like the cluster's: HAProxy
+    keeps the table in the process, and nothing here synchronises it.
+    """
+
+    window: str
+    max_requests: int | None = None
+    max_new_connections: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Listen:
     """Where this object is reached, and how.
 
@@ -755,6 +780,9 @@ class Proxy:
 
     headers: Headers = Headers()
     """What this object adds to, replaces in, or removes from the traffic."""
+
+    rate_limit: RateLimit | None = None
+    """How much one source may ask of this object. None means no limit."""
 
 
 def _string(value: Mapping[str, Any], key: str, location: str, allowed: tuple[str, ...]) -> str:
@@ -1287,6 +1315,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     maintenance = _maintenance(data.get("maintenance"), f"{name}.maintenance")
     unavailable = _unavailable(data.get("unavailable"), f"{name}.unavailable")
     headers = _headers(data.get("headers"), f"{name}.headers")
+    rate_limit = _rate_limit(data.get("rate_limit"), f"{name}.rate_limit", listen.protocol)
 
     return Proxy(
         name=name,
@@ -1299,6 +1328,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         unavailable=unavailable,
         headers=headers,
         backend=backend,
+        rate_limit=rate_limit,
     )
 
 
@@ -1481,6 +1511,44 @@ def _header_name(name: Any, location: str) -> None:
             f"{location} may not touch {name}: the cluster writes it from what the "
             f"connection actually was"
         )
+
+
+#
+# The most a limit may name. Not a HAProxy ceiling - the counter is an integer
+# - but a figure past which the number is a typing mistake rather than a limit
+# anybody means: a million requests per source per second is no limit at all.
+#
+MAX_RATE = 1_000_000
+
+
+def _rate_limit(value: Any, location: str, protocol: str) -> RateLimit | None:
+    if value is None:
+        return None
+    data = _mapping(value, location)
+    #
+    # The threshold that means nothing for this shape is refused, not ignored,
+    # for the reason `HTTP_ONLY_KEYS` gives: a tcp object that asked for a
+    # request limit would otherwise be published with no limit at all.
+    #
+    wanted = "max_new_connections" if protocol == "tcp" else "max_requests"
+    other = "max_requests" if protocol == "tcp" else "max_new_connections"
+    if other in data:
+        shape = (
+            "a tcp object has no requests"
+            if protocol == "tcp"
+            else ("an http or https object counts requests, not connections")
+        )
+        raise ModelError(f"{location}.{other} does not apply: {shape}; use {wanted}")
+    _only_keys(data, {"window", wanted}, location)
+    window = data.get("window", DEFAULT_ABUSE_WINDOW)
+    if not isinstance(window, str) or not ABUSE_WINDOW.fullmatch(window):
+        raise ModelError(f"{location}.window must be a duration such as 10s or 1m")
+    limit = data.get(wanted)
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_RATE:
+        raise ModelError(f"{location}.{wanted} must be a count from 1 to {MAX_RATE}")
+    if protocol == "tcp":
+        return RateLimit(window=window, max_new_connections=limit)
+    return RateLimit(window=window, max_requests=limit)
 
 
 def _unavailable(value: Any, location: str) -> Unavailable | None:

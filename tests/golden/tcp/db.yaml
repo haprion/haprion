@@ -4,6 +4,9 @@ listen:
   protocol: tcp
   port: 5432
 allow_from: [office]
+rate_limit:
+  window: 1m
+  max_new_connections: 20
 backend: pool
 backends:
   pool:

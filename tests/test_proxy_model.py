@@ -17,6 +17,7 @@ from haproxy_mgmt.proxy_model import (
     PROXY_KEYS,
     TCP_ONLY_KEYS,
     ModelError,
+    RateLimit,
     load_proxy,
     name_refusal,
 )
@@ -431,6 +432,62 @@ class WhoMayReachAnObject(unittest.TestCase):
             self.allow("'Office Network'")
 
         self.assertIn("neither a group name nor an address", str(raised.exception))
+
+
+class HowMuchOneSourceMayAsk(unittest.TestCase):
+    """`rate_limit`: requests for http, new connections for tcp, never both."""
+
+    def http(self, block: str) -> RateLimit | None:
+        document = with_lines(("routes:", f"rate_limit:\n{block}\nroutes:"))
+        return load_proxy("shop", document).rate_limit
+
+    def tcp(self, block: str) -> RateLimit | None:
+        document = TCP.replace(
+            b"backend: pool\n", f"rate_limit:\n{block}\nbackend: pool\n".encode()
+        )
+        return load_proxy("db", document).rate_limit
+
+    def test_there_is_no_limit_unless_one_is_written(self) -> None:
+        self.assertIsNone(load_proxy("shop", MINIMAL).rate_limit)
+
+    def test_the_window_is_the_cluster_s_default_when_left_out(self) -> None:
+        self.assertEqual(
+            self.http("  max_requests: 100"), RateLimit(window="10s", max_requests=100)
+        )
+
+    def test_a_tcp_object_counts_connections(self) -> None:
+        self.assertEqual(
+            self.tcp("  window: 1m\n  max_new_connections: 20"),
+            RateLimit(window="1m", max_new_connections=20),
+        )
+
+    def test_the_threshold_of_the_other_shape_is_refused_with_the_reason(self) -> None:
+        """Ignoring it would publish the object with no limit at all."""
+
+        with self.assertRaises(ModelError) as raised:
+            self.tcp("  max_requests: 20")
+        self.assertIn("a tcp object has no requests", str(raised.exception))
+
+        with self.assertRaises(ModelError) as raised:
+            self.http("  max_new_connections: 20")
+        self.assertIn("counts requests, not connections", str(raised.exception))
+
+    def test_a_limit_without_a_threshold_is_refused(self) -> None:
+        with self.assertRaises(ModelError) as raised:
+            self.http("  window: 10s")
+
+        self.assertIn("max_requests must be a count", str(raised.exception))
+
+    def test_a_threshold_that_is_not_a_positive_count_is_refused(self) -> None:
+        for value in ("0", "-1", "true", "'100'", "1000001"):
+            with self.subTest(value), self.assertRaises(ModelError):
+                self.http(f"  max_requests: {value}")
+
+    def test_a_window_that_is_not_seconds_or_minutes_is_refused(self) -> None:
+        for value in ("500ms", "1h", "10", "0s"):
+            with self.subTest(value), self.assertRaises(ModelError) as raised:
+                self.http(f"  window: {value}\n  max_requests: 5")
+            self.assertIn("window must be a duration", str(raised.exception))
 
 
 class TheHealthCheckMayUseItsOwnPort(unittest.TestCase):

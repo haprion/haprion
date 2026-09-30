@@ -146,6 +146,8 @@ DEFAULTS = {
     "slow_start": "",
     "allow_from": (),
     "allow_ranges": "",
+    "rate_limit": "",
+    "rate_window": "",
     "maintenance": False,
     "maintenance_message": "",
     "unavailable_message": "",
@@ -551,6 +553,24 @@ def build_document(form: dict[str, object]) -> str:
         document["allow_from"] = allowed
 
     #
+    # The one number means requests for a site and new connections for a raw
+    # port; the key is chosen here so the form needs no second field that would
+    # always be the wrong one for half the objects. The window is written only
+    # when somebody wrote it, so an empty box keeps meaning the engine's default.
+    #
+    if text("rate_limit"):
+        limit = text("rate_limit")
+        if not limit.isdigit():
+            raise ValueError("the rate limit must be a number")
+        rate: dict[str, object] = {}
+        if text("rate_window"):
+            rate["window"] = text("rate_window")
+        rate["max_new_connections" if protocol == "tcp" else "max_requests"] = int(limit)
+        document["rate_limit"] = rate
+    elif text("rate_window"):
+        raise ValueError("a rate limit window needs a limit")
+
+    #
     # Written last because it is the one field that is about the object's state
     # rather than its shape, and reading it at the end of the document says so.
     # The message is not defaulted here: the engine requires one, and a default
@@ -874,6 +894,7 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
     health = _sub(backend, "health")
     hsts = _sub(listen, "hsts")
     headers = _sub(data, "headers")
+    rate = _sub(data, "rate_limit")
     protocol = str(listen.get("protocol", "") or "")
 
     hostnames = data.get("hostnames")
@@ -947,6 +968,10 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         "slow_start": str(backend.get("slow_start", "") or ""),
         "allow_from": tuple(groups),
         "allow_ranges": "\n".join(ranges),
+        "rate_limit": str(
+            rate.get("max_new_connections" if protocol == "tcp" else "max_requests", "") or ""
+        ),
+        "rate_window": str(rate.get("window", "") or ""),
         "maintenance": "maintenance" in data,
         "maintenance_message": str(_sub(data, "maintenance").get("message", "") or ""),
         "unavailable_message": str(_sub(data, "unavailable").get("message", "") or ""),

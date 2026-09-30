@@ -97,6 +97,12 @@ REDIRECT_PREFIX = "redirect"
 #
 ABUSE_TABLE_SIZE = "1m"
 
+#
+# The stick counter an object's own rate limit tracks on. Not 0, which the
+# cluster's abuse brake holds in the frontend; see `_rate_lines`.
+#
+RATE_COUNTER = 1
+
 FRONTEND_FILE = "1000-frontends.cfg"
 #
 # What applies to the whole cluster rather than to an object (Fas 15, B209):
@@ -351,7 +357,7 @@ def generate(
         files[CLUSTER_FILE] = _cluster_file(settings)
     for vip, proxy in placed:
         files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(
-            proxy, _source_of(proxy, vip, known_sources), resolvers
+            proxy, _source_of(proxy, vip, known_sources), resolvers, tuple(trusted_proxies)
         )
     parts = {
         proxy.name: {
@@ -989,6 +995,21 @@ def _tcp_frontend(
         # then refuse on the node instead of here.
         #
         raise GeneratorError(f"{proxy.name} listens on tcp without naming a backend")
+    limit = proxy.rate_limit
+    if limit is not None and limit.max_new_connections is not None:
+        #
+        # The object's own counter, on the second slot: the first is the
+        # cluster's above, and a stream tracks each slot once - a second
+        # `track-sc0` would be ignored without a word. The table lives in the
+        # object's backend, since a section holds one table and this
+        # frontend's is the cluster's.
+        #
+        table = _backend_name(proxy.name, proxy.backend)
+        lines += [
+            f"    tcp-request connection track-sc{RATE_COUNTER} src table {table}",
+            f"    tcp-request connection reject "
+            f"if {{ sc_conn_rate({RATE_COUNTER}) gt {limit.max_new_connections} }}",
+        ]
     lines.append(f"    default_backend {_backend_name(proxy.name, proxy.backend)}")
     return lines
 
@@ -1488,13 +1509,90 @@ def _redirect_backends(proxy: Proxy) -> list[str]:
     return lines
 
 
-def _object_file(proxy: Proxy, source: str | None, resolvers: str | None) -> str:
+def _object_file(
+    proxy: Proxy,
+    source: str | None,
+    resolvers: str | None,
+    trusted_proxies: Sequence[str] = (),
+) -> str:
     rewrites = _rewrites_per_backend(proxy)
     body: list[str] = []
-    for name in sorted(proxy.backends):
-        body.extend(_backend(proxy, proxy.backends[name], rewrites[name], source, resolvers))
+    names = sorted(proxy.backends)
+    for name in names:
+        body.extend(
+            _backend(
+                proxy,
+                proxy.backends[name],
+                rewrites[name],
+                source,
+                resolvers,
+                _rate_lines(proxy, name, names[0], trusted_proxies),
+            )
+        )
     body.extend(_redirect_backends(proxy))
     return _lines(HEADER, ["#", f"# Object: {proxy.name}", "#"], body)
+
+
+def _rate_lines(
+    proxy: Proxy, backend: str, holder: str, trusted_proxies: Sequence[str]
+) -> list[str]:
+    """The object's own rate limit, as it lands in one of its backends.
+
+    One table for the whole object, kept in its first pool, and every pool
+    counting into it - so a limit of a hundred is a hundred across all of the
+    object's paths and not a hundred per path. A section of its own for the
+    table would have said the same thing, but HAProxy reports every section
+    in `show stat`, and a backend with no servers would turn up on the traffic
+    page as a pool of this site that never carries anything. Measured on
+    3.4.4 on this machine (2026-09-30): two pools, one table, the third
+    request refused whichever path it asked for.
+
+    The counter is the second slot, `sc1`. The first is the cluster's abuse
+    brake in the shared frontend, and a slot a stream is already tracking is
+    ignored when a later rule tracks it again - so reusing `sc0` here would
+    count nothing and refuse nobody.
+
+    Behind a trusted proxy the forwarded address is counted, the last one in
+    the header, for the reason `_abuse_rules` gives. The trust ACL is written
+    again here because an ACL belongs to the section that declares it; the
+    frontend's copy is invisible in a backend.
+
+    A tcp object's limit is not written here: it has no request to refuse, so
+    the rule sits in its own frontend and only the table lives in the backend.
+    """
+
+    limit = proxy.rate_limit
+    if limit is None:
+        return []
+    window = limit.window
+    table = _backend_name(proxy.name, holder)
+    if limit.max_requests is None:
+        if backend != holder:
+            return []
+        return [
+            f"    stick-table type ip size {ABUSE_TABLE_SIZE} expire {window} "
+            f"store conn_rate({window})"
+        ]
+    lines: list[str] = []
+    if backend == holder:
+        lines.append(
+            f"    stick-table type ip size {ABUSE_TABLE_SIZE} expire {window} "
+            f"store http_req_rate({window})"
+        )
+    track = f"    http-request track-sc{RATE_COUNTER}"
+    if trusted_proxies:
+        lines += [
+            f"    acl {TRUSTED_ACL} src {' '.join(sorted(trusted_proxies))}",
+            f"{track} req.hdr_ip(X-Forwarded-For,-1) table {table} if {TRUSTED_ACL}",
+            f"{track} src table {table} unless {TRUSTED_ACL}",
+        ]
+    else:
+        lines.append(f"{track} src table {table}")
+    lines.append(
+        f"    http-request deny deny_status 429 "
+        f"if {{ sc_http_req_rate({RATE_COUNTER}) gt {limit.max_requests} }}"
+    )
+    return lines
 
 
 def _rewrites_per_backend(proxy: Proxy) -> dict[str, list[str]]:
@@ -1636,6 +1734,7 @@ def _backend(
     rewrites: list[str],
     source: str | None,
     resolvers: str | None = None,
+    rate: Sequence[str] = (),
 ) -> list[str]:
     name = _backend_name(proxy.name, backend.name)
     raw = proxy.listen.protocol == "tcp"
@@ -1671,6 +1770,11 @@ def _backend(
         # rule further in is written against.
         #
         lines.append(f"    source {source}")
+    #
+    # Before every other request rule, so a source over its limit is refused
+    # before its path is rewritten or its headers are touched.
+    #
+    lines.extend(rate)
     lines.extend(rewrites)
     lines.extend(_hsts_line(proxy))
     lines.extend(_header_lines(proxy))

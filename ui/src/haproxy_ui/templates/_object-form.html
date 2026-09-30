@@ -120,13 +120,11 @@
         <small>Defined on the <a href="/network">Network</a> page.</small>
       </div>
       <label><span class="field-title">Reachable from — addresses <span class="optional">(optional)</span></span><textarea name="allow_ranges" rows="5" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address or range per line.</small></label>
-    </div>
-    {#
-      How much one source may ask, beside who may ask at all. One number: the
-      engine counts requests for a site and new connections for a raw port, and
-      the window's placeholder is the engine's default, not HAProxy's.
-    #}
-    <div class="form-grid form-grid-fixed">
+      {#
+        How much one source may ask, beside who may ask at all. One number: the
+        engine counts requests for a site and new connections for a raw port,
+        and the window's placeholder is the engine's default, not HAProxy's.
+      #}
       <label><span class="field-title">Rate limit <span class="optional">(optional)</span></span><input name="rate_limit" value="{{ form.rate_limit }}" size="10" placeholder="100"><small>Per source address. Requests, or new connections for TCP. Over it: refused.</small></label>
       <label><span class="field-title">Rate window <span class="optional">(optional)</span></span><input name="rate_window" value="{{ form.rate_window }}" size="10" placeholder="{{ rate_window }}"><small>Seconds or minutes, such as 10s or 1m.</small></label>
     </div>

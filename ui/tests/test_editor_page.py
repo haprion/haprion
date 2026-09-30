@@ -617,9 +617,9 @@ class TheHealthCardOnThePage(EditorTestCase):
         self.assertIn("node-a", body)
         self.assertNotIn("node-b", body)
 
-    def test_the_heading_says_which_node_holds_the_address(self) -> None:
+    def test_the_note_says_where_the_test_left_from(self) -> None:
         body = self.probe([self.node("node-a", held=True), self.node("node-b", held=False)])
-        self.assertIn("from 192.0.2.25, held by node-a", body)
+        self.assertIn("from 192.0.2.25, with the check as it stands on screen", body)
 
     def test_without_a_source_every_node_is_still_listed(self) -> None:
         body = self.probe(
@@ -628,39 +628,39 @@ class TheHealthCardOnThePage(EditorTestCase):
         self.assertIn("node-a", body)
         self.assertIn("node-b", body)
 
-    def test_a_run_that_was_the_whole_check_says_up(self) -> None:
+    def test_a_tested_server_says_up_and_is_marked_as_tested(self) -> None:
         body = self.probe([self.node("node-a", held=True)])
 
-        self.assertIn(">UP<", body.replace("</span>", "</span>"))
-        self.assertNotIn("Part tried", body)
+        self.assertIn("UP</td>", body)
+        self.assertIn("answered 200 · 2 ms · tested", body)
+        self.assertNotIn("status-warning", body)
 
-    def test_a_run_that_reproduced_only_part_of_it_does_not_say_up(self) -> None:
-        """The word the nodes use for having run all of it is not this run's.
+    def test_there_is_one_table_and_not_a_second_one_for_the_test(self) -> None:
+        """The test answers the question the nodes' table asks (2026-09-30)."""
 
-        A backend that answers here can still be marked down there - for a body,
-        a tcp exchange, or a name this run sent and the check never does - so
-        the cell that is read first must not say the same thing.
-        """
+        body = self.probe([self.node("node-a", held=True)])
+
+        self.assertEqual(body.count('class="node-health-table"'), 1)
+        self.assertNotIn("What the nodes just tried", body)
+
+    def test_what_the_test_could_not_run_is_said_under_the_table(self) -> None:
+        """In a sentence, not in the colour of a row that answered."""
 
         body = self.probe(
             [self.node("node-a", held=True)],
             caveats=("The expected body is not checked here.",),
         )
 
-        self.assertIn("Part tried", body)
-        self.assertIn("Part of the check was not tried here.", body)
-        self.assertIn("status-warning", body)
+        self.assertIn("The expected body is not checked here.", body)
+        self.assertNotIn("status-warning", body)
 
-    def test_a_server_that_failed_still_says_down_whatever_was_skipped(self) -> None:
-        """A refusal is a refusal; the parts not tried cannot soften it."""
-
+    def test_a_server_that_failed_says_down(self) -> None:
         body = self.probe(
             [self.node("node-a", held=True, ok=False)],
             caveats=("The expected body is not checked here.",),
         )
 
         self.assertIn("DOWN", body)
-        self.assertNotIn("Part tried", body)
 
 
 class WhereASaveLands(EditorTestCase):

@@ -81,7 +81,7 @@
     wherever the interface has one.
   #}
   <details class="archive-details config-details">
-    <summary>{{ object.stored.line_count }} lines of YAML · the source, not the generated configuration</summary>
+    <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span>{{ object.stored.line_count }} lines of YAML · the source, not the generated configuration</summary>
     <pre class="config-block"><code>{{ object.stored.document }}</code></pre>
   </details>
   {% else %}

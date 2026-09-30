@@ -699,14 +699,10 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .backup-node-table th:nth-child(4), .backup-node-table td:nth-child(4) { width: 8%; }
 .backup-node-table th:nth-child(5), .backup-node-table td:nth-child(5) { width: 12%; }
 /* The native disclosure triangle is drawn by the platform and matches nothing
-   else here, so it is replaced by a chevron built from the same borders as the
-   rest of the interface. */
+   else here, so it is hidden and the summary carries `.disclosure-toggle`. */
 .archive-details > summary { display: flex; align-items: center; gap: 9px; padding: 14px 20px 13px; border-top: 1px solid var(--line); color: var(--text-primary); font-size: 12px; list-style: none; cursor: pointer; }
 .archive-details > summary::-webkit-details-marker { display: none; }
-.archive-details > summary::before { width: 6px; height: 6px; margin-left: 1px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); content: ""; transform: rotate(-45deg); }
-.archive-details[open] > summary::before { margin-top: -3px; transform: rotate(45deg); }
 .archive-details > summary:hover { color: var(--text-strong); }
-.archive-details > summary:hover::before { border-color: var(--text-strong); }
 .archive-details[open] > summary { color: var(--text-strong); }
 /* The archive pager borrows the traffic log's bar; inside a card it needs the card's gutter. */
 .archive-details > .log-pagination { margin-top: 0; padding: 10px 20px 0; }
@@ -1139,12 +1135,15 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 .form-groups:not(:has(> .form-group:not([hidden]))) { display: none; }
 .preview-form .cluster-card:has(> .form-groups:last-child) { padding-bottom: 6px; }
 .form-group > summary { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 0; list-style: none; cursor: pointer; }
-.form-group-toggle { display: inline-grid; flex: none; place-items: center; width: 22px; height: 22px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel-raised); color: var(--muted-strong); }
-.form-group-toggle svg { width: 14px; height: 14px; stroke-width: 2; transform: rotate(-90deg); }
-.form-group[open] > summary .form-group-toggle svg { transform: none; }
-.form-group > summary:hover .form-group-toggle { border-color: var(--muted); background: var(--hover-surface); color: var(--text-strong); }
+/* The one way the interface says "this opens" (2026-09-30): the object form's
+   groups, the backup archives, the stored object. Any `details` whose summary
+   starts with it turns it with its own open state. */
+.disclosure-toggle { display: inline-grid; flex: none; place-items: center; width: 22px; height: 22px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel-raised); color: var(--muted-strong); }
+.disclosure-toggle svg { width: 14px; height: 14px; stroke-width: 2; transform: rotate(-90deg); }
+details[open] > summary .disclosure-toggle svg { transform: none; }
+summary:hover .disclosure-toggle { border-color: var(--muted); background: var(--hover-surface); color: var(--text-strong); }
 @media (prefers-reduced-motion: no-preference) {
-  .form-group-toggle, .form-group-toggle svg { transition: transform 120ms ease, background-color 120ms ease, border-color 120ms ease, color 120ms ease; }
+  .disclosure-toggle, .disclosure-toggle svg { transition: transform 120ms ease, background-color 120ms ease, border-color 120ms ease, color 120ms ease; }
 }
 .form-group > summary::-webkit-details-marker { display: none; }
 .form-group-title { flex: none; color: var(--text-secondary); font-weight: 620; text-decoration: underline transparent; text-underline-offset: 3px; }

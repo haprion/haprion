@@ -74,7 +74,7 @@
     </tbody></table></div>
     {% if cluster.archives %}
     <details class="archive-details" data-archive-list data-archive-cluster="{{ cluster.cluster }}" data-archive-per-page="{{ archives_per_page }}" data-archive-deepest="{{ cluster.deepest }}">
-      <summary>{% if cluster.truncated %}{{ cluster.shown_count }} of {% endif %}{{ cluster.retained_count }} retained archive{{ '' if cluster.retained_count == 1 else 's' }} on these nodes</summary>
+      <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span>{% if cluster.truncated %}{{ cluster.shown_count }} of {% endif %}{{ cluster.retained_count }} retained archive{{ '' if cluster.retained_count == 1 else 's' }} on these nodes</summary>
     <div class="table-scroll"><table class="node-table archive-table{% if editable %} archive-table-restore{% endif %}"><thead><tr><th>Archive</th><th>Node</th><th>Taken</th><th>Age</th><th>Size</th>{% if editable %}<th><span class="visually-hidden">Restore</span></th>{% endif %}</tr></thead><tbody>
       {% for archive in cluster.archives %}
       <tr data-archive-page="{{ archive.page }}"{% if archive.latest %} class="archive-latest"{% endif %}{% if archive.page %} hidden{% endif %}>

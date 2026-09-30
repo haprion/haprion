@@ -13,12 +13,13 @@ address the object leaves from - and every one of them changes what the node
 should try. Building the request anywhere else would mean reading those fields
 twice.
 
-Three things a check does that this cannot reproduce from here, and each is
-said on the page rather than passed over: a tcp check's send/expect exchange,
-an expected body (the node never reads a body, deliberately - a key on a proxy
-node that returned one would be a way to read pages through it), and SNI, which
-HAProxy's own check does not send and this does. Silence about any of them
-would be the probe answering a question it was not asked.
+Two things a check does that this cannot reproduce from here, and each is said
+on the page rather than passed over: a tcp check's send/expect exchange, and an
+expected body (the node never reads a body, deliberately - a key on a proxy
+node that returned one would be a way to read pages through it). Silence about
+either would be the probe answering a question it was not asked. The TLS
+handshake is HAProxy's own since 2026-09-30: no SNI, the chain verified and
+the host name not, as `haproxy-health-probe` on the node says.
 
 Nothing here reaches a node, and nothing here is privileged. It builds a
 request, writes it to the socket the probe service answers on, and reads what
@@ -31,6 +32,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -108,6 +110,11 @@ class ProbeReport:
     # this whole card exists to prevent.
     #
     caveats: tuple[str, ...] = ()
+    #
+    # When the nodes were asked, so the one table the card draws can say which
+    # of its rows were just tried and which the nodes have been reporting.
+    #
+    tested_at: datetime | None = None
 
     @property
     def complete(self) -> bool:
@@ -225,12 +232,6 @@ def caveats_for(checks: Sequence[EffectiveCheck]) -> tuple[str, ...]:
         notes.append(
             "The expected body is not checked here. The node reads the status line and "
             "no more of the answer, so a page with the wrong contents still reads as reached."
-        )
-    if any(check.encrypted for check in checks):
-        notes.append(
-            "This sends the server name in the TLS handshake as SNI, and HAProxy's own check "
-            "does not. The Host header is a different name and is sent by both. A backend that "
-            "needs SNI can pass here and still be marked down on the nodes."
         )
     return tuple(notes)
 
@@ -409,4 +410,10 @@ def run(
     source, nodes = _read(payload)
     if any(check.type == "http" for check in checks):
         nodes = _judged(nodes, accepted_status(checks))
-    return ProbeReport(ran=True, source=source, nodes=nodes, caveats=caveats_for(checks))
+    return ProbeReport(
+        ran=True,
+        source=source,
+        nodes=nodes,
+        caveats=caveats_for(checks),
+        tested_at=datetime.now(UTC),
+    )

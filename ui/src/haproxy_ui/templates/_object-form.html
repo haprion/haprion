@@ -27,7 +27,7 @@
 
 {% macro group(state, shown='') %}
 <details class="form-group"{{ shown }}>
-  <summary><span class="form-group-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title">{{ state.title }}</span><span class="form-group-summary" data-group-summary title="{{ state.summary }}">{{ state.summary }}</span></summary>
+  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title">{{ state.title }}</span><span class="form-group-summary" data-group-summary title="{{ state.summary }}">{{ state.summary }}</span></summary>
   {{ caller() }}
 </details>
 {% endmacro %}
@@ -236,108 +236,48 @@
     {% endcall %}
     </div>
     {#
-      HAProxy's own verdict, from the nodes, on the backend this object names. It
-      is an observation and not a test run from here: the checks have been
-      running on the nodes, against the servers those nodes were told about,
-      from the address they use. Anything probed from the manager would answer
-      a different question.
+      One table: HAProxy's own verdict from the nodes, with the rows a test just
+      tried written into it (2026-09-30; `health_rows.py`). The nodes' reading is
+      an observation - the checks have been running there, against the servers
+      those nodes were told about, from the address they use. Test health check
+      asks the node holding that address to try the check as it stands on
+      screen, once, now; its answers replace the rows they are about until the
+      poller reads the nodes again.
     #}
-    {#
-      What the nodes just tried, when somebody asked them to. This is the
-      object as it stands on screen - a check that has never been published can
-      be tried here, which is the whole reason the button exists.
-    #}
-    {% if probe %}
+    {% if backend_health is defined or probe %}
+    {% set rows = health_rows(backend_health if backend_health is defined else none, probe) %}
     <div class="node-health">
-      <h4><span class="subsection-title">What the nodes just tried{% if probe.source %} <span class="optional">from {{ probe.source }}{% if probe.held_by %}, held by {{ probe.held_by|join(' and ') }}{% endif %}</span>{% endif %}</span></h4>
-      {% if not probe.ran %}
-      <p class="node-health-note">{{ probe.problem }}</p>
-      {% else %}
-      {#
-        The same columns and the same words as the table below it. The two
-        describe one check - one just ran it, the other has been running it -
-        and saying `Reached · status 200` above `UP · L7OK 200` made them read
-        as two different measurements of two different things.
-
-        With one deliberate exception. Where this run could not reproduce every
-        condition of the check, its state must not be the word the nodes use
-        for having run all of it: `UP` beside `UP` is read as the same verdict,
-        and a backend that answers here can still be marked down on the nodes for
-        a body, a tcp exchange or a name this run never asked for. So a partial
-        run says so in the cell somebody actually looks at, and the sentences
-        under the table say which conditions were left out. They were there
-        before this and were not enough - three green rows are read before a
-        paragraph is.
-      #}
+      <h4><span class="subsection-title">What the nodes report{% if backend_health is defined %} <span class="optional">{{ backend_health.backend }}{% if backend_health.held_by %}, held by {{ backend_health.held_by|join(' and ') }}{% endif %}</span>{% endif %}</span></h4>
+      {% if rows %}
       <table class="node-health-table">
         <colgroup><col style="width: 22%"><col style="width: 34%"><col style="width: 14%"><col style="width: 30%"></colgroup>
         <thead><tr><th>Node</th><th>Server</th><th>State</th><th>Last check</th></tr></thead>
         <tbody>
-          {#
-            Only the nodes that could answer. A node that does not carry the
-            source address tried nothing, and a row saying so is a row about
-            this cluster's failover rather than about the backend being edited -
-            the heading names which node holds the address, which is the part
-            that is worth knowing.
-          #}
-          {% for node in probe.nodes if node.source_held is not false %}{% if not node.reachable or node.error %}
-          <tr><td>{{ node.node }}</td><td colspan="3"><span class="status-dot status-unknown"></span>{{ node.error or 'The node could not be reached' }}</td></tr>
-          {% else %}{% for entry in node.results %}
+          {% for row in rows %}{% if row.up is none %}
+          <tr><td>{{ row.node }}</td><td colspan="3"><span class="status-dot status-unknown"></span>{{ row.state }}</td></tr>
+          {% else %}
           <tr>
-            <td>{{ node.node }}</td>
-            <td>{{ entry.host }}:{{ entry.port }}</td>
-            <td>{% if not entry.ok %}<span class="status-dot status-critical"></span>DOWN{% elif probe.complete %}<span class="status-dot status-healthy"></span>UP{% else %}<span class="status-dot status-warning"></span>Part tried{% endif %}</td>
-            <td>{{ entry.phrase }}{% if entry.ms is not none %} · {{ entry.ms }} ms{% endif %}</td>
-          </tr>
-          {% endfor %}{% endif %}{% endfor %}
-        </tbody>
-      </table>
-      {#
-        Where this run is narrower than the check it stands in for. Under the
-        table rather than above it: it qualifies the rows that were just read.
-        The rows now carry the same fact in one word, so these say which
-        conditions it refers to rather than being the only place it is said.
-      #}
-      {% if not probe.complete %}<p class="node-health-note"><strong>Part of the check was not tried here.</strong> A server above can read as reached and still be marked down by the nodes.</p>{% endif %}
-      {% for caveat in probe.caveats %}<p class="node-health-note">{{ caveat }}</p>{% endfor %}
-      {% endif %}
-    </div>
-    {% endif %}
-    {% if backend_health is defined %}
-    <div class="node-health">
-      <h4><span class="subsection-title">What the nodes report <span class="optional">{{ backend_health.backend }}{% if backend_health.held_by %}, held by {{ backend_health.held_by|join(' and ') }}{% endif %}</span></span></h4>
-      {% if not backend_health.nodes %}
-      <p class="node-health-note">No node has been read yet.</p>
-      {% elif not backend_health.known %}
-      <p class="node-health-note">The nodes know nothing about this backend. It is checked once it has been deployed.</p>
-      {% else %}
-      <table class="node-health-table">
-        <colgroup><col style="width: 22%"><col style="width: 34%"><col style="width: 14%"><col style="width: 30%"></colgroup>
-        <thead><tr><th>Node</th><th>Server</th><th>State</th><th>Last check</th></tr></thead>
-        <tbody>
-          {% for node in backend_health.nodes %}{% for member in node.members %}
-          <tr>
-            <td>{{ node.node }}</td>
-            {#
-              The server as it was written. `s1` is the generator's name for a
-              position in the backend and means nothing to the person who typed
-              the address it stands for; it is shown only where this version
-              cannot say which address a name belongs to.
-            #}
-            <td>{{ backend_health.address(member.server) or member.server }}</td>
-            <td><span class="status-dot {{ 'status-healthy' if member.up else 'status-critical' }}"></span>{{ member.status or 'unknown' }}</td>
+            <td>{{ row.node }}</td>
+            <td>{{ row.server }}</td>
+            <td><span class="status-dot {{ 'status-healthy' if row.up else 'status-critical' }}"></span>{{ row.state }}</td>
             {#
               HAProxy's own code kept as the cell's title. The sentence is for
               reading; the code is what somebody searches the internet for when
               the sentence is not enough.
             #}
-            <td{% if member.check_status %} title="{{ member.check_status }}{% if member.check_code %} {{ member.check_code }}{% endif %}"{% endif %}>{{ check_phrase(member.check_status, member.check_code) or '—' }}{% if member.check_duration_ms is not none %} · {{ member.check_duration_ms }} ms{% endif %}</td>
+            <td{% if row.code %} title="{{ row.code }}"{% endif %}>{{ row.last }}</td>
           </tr>
-          {% endfor %}{% endfor %}
+          {% endif %}{% endfor %}
         </tbody>
       </table>
+      {% elif backend_health is defined and not backend_health.nodes %}
+      <p class="node-health-note">No node has been read yet.</p>
+      {% else %}
+      <p class="node-health-note">The nodes know nothing about this backend. It is checked once it has been deployed.</p>
       {% endif %}
-      <p class="node-health-note">{% if backend_health.observed_at %}Read {{ (backend_health.observed_at | shown).strftime('%H:%M:%S') }}.{% endif %}</p>
+      {% if probe and not probe.ran %}<p class="node-health-note">The test did not run: {{ probe.problem }}</p>{% endif %}
+      {% if probe and probe.ran %}<p class="node-health-note">Rows marked <em>tested</em> were tried{% if probe.tested_at %} at {{ (probe.tested_at | shown).strftime('%H:%M:%S') }}{% endif %}{% if probe.source %} from {{ probe.source }}{% endif %}, with the check as it stands on screen.</p>{% for caveat in probe.caveats %}<p class="node-health-note">{{ caveat }}</p>{% endfor %}{% endif %}
+      {% if backend_health is defined and backend_health.observed_at %}<p class="node-health-note">Read {{ (backend_health.observed_at | shown).strftime('%H:%M:%S') }}.</p>{% endif %}
     </div>
     {% endif %}
   </section>

@@ -254,10 +254,10 @@ class WhatThisRunCannotReproduce(unittest.TestCase):
         notes = caveats_for(checks(health_expect_body="ok"))
         self.assertTrue(any("expected body" in note for note in notes))
 
-    def test_the_probe_sends_a_server_name_where_the_check_sends_none(self) -> None:
-        self.assertTrue(
-            any("server name" in note for note in caveats_for(checks(health_type="https")))
-        )
+    def test_a_tls_check_is_reproduced_whole(self) -> None:
+        """The node's handshake is HAProxy's since 2026-09-30: no name in it."""
+
+        self.assertEqual(caveats_for(checks(health_type="https")), ())
         self.assertEqual(caveats_for(checks()), ())
 
 
@@ -285,10 +285,10 @@ class WhetherTheRunWasTheWholeCheck(unittest.TestCase):
             self.report(health_type="tcp", health_send="PING", health_expect="PONG").complete
         )
 
-    def test_a_name_the_check_never_sends_makes_the_run_partial(self) -> None:
-        """The one that passes here and fails there, rather than the reverse."""
+    def test_a_tls_check_is_complete(self) -> None:
+        """The handshake sends no name, so there is nothing left out of it."""
 
-        self.assertFalse(self.report(health_type="https").complete)
+        self.assertTrue(self.report(health_type="https").complete)
 
     def test_completeness_is_the_caveats_and_not_a_second_judgement(self) -> None:
         """Two answers to one question is how they end up disagreeing."""

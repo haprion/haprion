@@ -196,8 +196,9 @@ the repository's own `Release` file, or from `apt-cache policy` once the source 
 mistyped matches nothing, and the pin then silently does nothing. `apt-cache policy haproxy` shows
 the pin working: the repository's version at priority 1001, the distribution's at -1.
 
-Neither the installation steps nor the interface set this up or report the HAProxy version a node
-runs; `haproxy -v` on each host is the check after an upgrade.
+The installation steps do not set this up. The dashboard's *Runtime* column shows the version each
+node's HAProxy process is running, read from its runtime socket - after an upgrade, the new version
+appears there once the service has restarted.
 
 ## Part 1 — the management host
 

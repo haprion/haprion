@@ -24,6 +24,7 @@ import sys
 from collections.abc import Callable
 from typing import Any, TextIO
 
+from haproxy_mgmt import haproxy_versions
 from haproxy_mgmt.cli.caller import usage
 from haproxy_mgmt.cluster_status import StatusError, keepalived_state, parse_status
 from haproxy_mgmt.envelope import new_request_id
@@ -148,6 +149,14 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
 
     writer.write(f"Cluster: {cluster}\n\n")
 
+    behind = haproxy_versions.notes(
+        {
+            str(node.get("name")): ((node.get("status") or {}).get("runtime") or {}).get("version")
+            for node in result.get("nodes") or []
+            if node.get("status_ok")
+        },
+        summary.get("validator_version"),
+    )
     for node in result.get("nodes") or []:
         writer.write(f"{node['name']} ({node['mgmt_host']})\n")
         if not node["reachable"]:
@@ -166,6 +175,9 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
         writer.write(f"  KA state:     {keepalived_state(status['keepalived']) or 'UNKNOWN'}\n")
         writer.write(f"  VIP owner:    {status['vip']['owner']}\n")
         writer.write(f"  Runtime:      {'OK' if status['stats_ok'] else 'FAILED'}\n")
+        running = (status.get("runtime") or {}).get("version") or "unknown"
+        note = behind.get(str(node["name"]))
+        writer.write(f"  HAProxy ver:  {running}{f'  ({note})' if note else ''}\n")
         writer.write(f"  Version:      {_release_line(node)}\n")
         addresses = _addresses_line(status)
         if addresses is not None:
@@ -181,6 +193,8 @@ def _render(envelope: dict[str, Any], writer: TextIO) -> None:
     writer.write(f"Published:      {published}\n")
     state = str(summary.get("release_state", "unknown"))
     writer.write(f"Nodes:          {RELEASE_STATE_TEXT.get(state, state)}\n")
+    if "validator_version" in summary:
+        writer.write(f"Validator:      {summary['validator_version'] or 'unknown'} (this host)\n")
 
     for warning in envelope.get("warnings") or []:
         writer.write(f"WARNING: {warning['message']}\n")

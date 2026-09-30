@@ -367,6 +367,11 @@
         "vip_state": {
           "type": "string",
           "enum": ["incomplete", "unknown", "no_owner", "single_owner", "split_brain"]
+        },
+        "validator_version": {
+          "description": "The HAProxy version the management host validates candidates with, as `haproxy -v` names it; null when it could not be read. Absent from an engine older than the field.",
+          "type": ["string", "null"],
+          "maxLength": 128
         }
       },
       "additionalProperties": true

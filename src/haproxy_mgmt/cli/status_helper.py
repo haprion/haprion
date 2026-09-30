@@ -30,9 +30,11 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haproxy_mgmt.candidate_validation import validator_version
 from haproxy_mgmt.config import (
     DEFAULT_POLICY_PATH,
     ConfigError,
@@ -67,6 +69,7 @@ def main(
     require_secure: bool = True,
     require_root: bool = True,
     node_reader: ReadNode | None = None,
+    version_reader: Callable[[], str | None] | None = None,
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = output_stream or sys.stdout
@@ -150,6 +153,11 @@ def main(
         publish_path=Path(cluster.publish_path),
     )
 
+    #
+    # The version this host validates candidates with, beside the versions the
+    # nodes run, so a validator newer than a node is visible where the nodes are.
+    #
+    report.result["summary"]["validator_version"] = (version_reader or validator_version)()
     write_document(writer, report.as_envelope(request.cluster, request_id=request.request_id))
     return report.exit_code
 

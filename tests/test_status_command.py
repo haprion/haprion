@@ -54,7 +54,9 @@ ADDRESSES: dict[str, object] = {
 }
 
 
-def node_status(name: str, *, owner: bool, release_hash: str, addresses: object = None) -> str:
+def node_status(
+    name: str, *, owner: bool, release_hash: str, addresses: object = None, runtime: str = "3.2.9"
+) -> str:
     return json.dumps(
         {
             "schema_version": 1,
@@ -91,7 +93,7 @@ def node_status(name: str, *, owner: bool, release_hash: str, addresses: object 
             #
             "config_validation": {"valid": True, "validated_at": "2026-01-02T03:00:00+00:00"},
             "stats_ok": True,
-            "runtime": {"version": "3.2.9", "uptime_sec": 3600},
+            "runtime": {"version": runtime, "uptime_sec": 3600},
             "certificates": [],
         }
     )
@@ -156,6 +158,7 @@ class HelperFixture(unittest.TestCase):
         self, payload: bytes, *, policy_path: Path | None = None, node_reader=None, **overrides
     ) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
+        version_reader = overrides.pop("version_reader", lambda: "3.2.9-1")
         code = status_helper.main(
             [],
             policy_path=policy_path or self.runtime(**overrides),
@@ -164,6 +167,7 @@ class HelperFixture(unittest.TestCase):
             error_stream=err,
             require_secure=False,
             require_root=False,
+            version_reader=version_reader,
             node_reader=node_reader
             or self.reader(
                 **{
@@ -246,6 +250,14 @@ class HelperReadingTests(HelperFixture):
             envelope["result"]["summary"]["target"], {"version": 8, "hash": TARGET_HASH}
         )
         self.assertEqual(envelope["result"]["summary"]["release_state"], "converged")
+        self.assertEqual(envelope["result"]["summary"]["validator_version"], "3.2.9-1")
+
+    def test_a_validator_that_cannot_be_read_is_null_and_still_valid(self) -> None:
+        code, out, _ = self.run_helper(request(), version_reader=lambda: None)
+        self.assertEqual(code, 0)
+        self.assertIsNone(
+            assert_contract("haproxy-status", out)["result"]["summary"]["validator_version"]
+        )
 
     def test_an_unknown_cluster_is_refused_in_the_frozen_envelope(self) -> None:
         """A refusal is a result. The contract promises one document on stdout
@@ -399,6 +411,27 @@ class CallerTests(HelperFixture):
         _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
         self.assertIn("BEHIND - run haproxy-deploy", out)
         self.assertIn("at least one node is not running the published version", out)
+
+    def test_a_node_on_an_older_haproxy_is_named_and_so_is_the_validator(self) -> None:
+        """Fas 16 punkt 3b: the dashboard's rule, in the terminal's words."""
+
+        payload = self.envelope(
+            node_reader=self.reader(
+                **{
+                    "node-a": node_status(
+                        "node-a", owner=True, release_hash=TARGET_HASH, runtime="3.4.6-1"
+                    ),
+                    "node-b": node_status(
+                        "node-b", owner=False, release_hash=TARGET_HASH, runtime="3.4.4-1"
+                    ),
+                }
+            ),
+            version_reader=lambda: "3.4.4-1",
+        )
+        _, out, _ = self.run_caller(["-c", "alpha"], completed(payload))
+        self.assertIn("HAProxy ver:  3.4.6-1\n", out)
+        self.assertIn("HAProxy ver:  3.4.4-1  (Behind 3.4.6)", out)
+        self.assertIn("Validator:      3.4.4-1 (this host)", out)
 
     def test_json_mode_prints_the_envelope_and_nothing_else(self) -> None:
         payload = self.envelope()

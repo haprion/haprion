@@ -18,6 +18,34 @@ from haproxy_mgmt.release_layout import (
     KEEPALIVED_TARGET,
 )
 
+#
+# The binary that validates every candidate, and whose version the status
+# reading reports beside the nodes' (the manual: nodes first, this host last).
+#
+HAPROXY = "/usr/sbin/haproxy"
+
+
+def validator_version(
+    run: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
+) -> str | None:
+    """`haproxy -v`'s version on this host, as the nodes' runtime reports theirs; None if unreadable."""
+
+    def default(argv: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603 - fixed path, no input
+            argv, capture_output=True, text=True, check=False, timeout=10
+        )
+
+    try:
+        completed = (run or default)([HAPROXY, "-v"])
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    first = completed.stdout.splitlines()[0] if completed.stdout else ""
+    words = first.split()
+    if completed.returncode != 0 or len(words) < 3 or words[:2] != ["HAProxy", "version"]:
+        return None
+    return words[2][:128]
+
+
 MAX_CANDIDATE_BYTES = 4 * 1024 * 1024
 MAX_CANDIDATE_FILES = 512
 MAX_FILE_BYTES = 1024 * 1024
@@ -298,7 +326,7 @@ def sandbox_command(candidate_root: Path, request_id: str) -> list[str]:
         command.extend(("--property", value))
     command.extend(
         (
-            "/usr/sbin/haproxy",
+            HAPROXY,
             "-c",
             #
             # Ignore server address resolution failures. The sandbox has no

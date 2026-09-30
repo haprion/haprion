@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
+from haproxy_mgmt import candidate_validation
 from haproxy_mgmt.candidate_validation import (
     materialize_candidate,
     parse_candidate,
@@ -122,3 +124,26 @@ class CandidateValidationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheValidatorVersion(unittest.TestCase):
+    """What `haproxy -v` names on this host, for the status reading (Fas 16 punkt 3b)."""
+
+    def answer(self, stdout: str, code: int = 0):
+        return lambda argv: subprocess.CompletedProcess(argv, code, stdout, "")
+
+    def test_the_version_is_the_third_word_of_the_first_line(self) -> None:
+        text = "HAProxy version 3.4.6-1ppa1~resolute 2026/09/28 - https://haproxy.org/\nStatus: long-term\n"
+        self.assertEqual(
+            candidate_validation.validator_version(self.answer(text)), "3.4.6-1ppa1~resolute"
+        )
+
+    def test_anything_else_is_none(self) -> None:
+        for stdout, code in (("", 0), ("something else\n", 0), ("HAProxy version 3.4.6\n", 1)):
+            with self.subTest(stdout=stdout, code=code):
+                self.assertIsNone(candidate_validation.validator_version(self.answer(stdout, code)))
+
+        def missing(_argv):
+            raise FileNotFoundError("/usr/sbin/haproxy")
+
+        self.assertIsNone(candidate_validation.validator_version(missing))

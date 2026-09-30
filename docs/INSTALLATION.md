@@ -3794,12 +3794,16 @@ directly as root.
 
 #### Which clusters get polled
 
-`clusters` in `ui.toml`, because the application accounts cannot read the
-engine's configuration and must not. The privileged helper still decides whether
-each name is a real cluster; the list only says which ones to ask about. Its
-order is the order the pages draw the clusters in, and the one their colours
-follow. An
-empty list means the poller has nothing to do and says so instead of starting.
+The clusters `clusters.yaml` lists, in its order. The poller asks
+`haproxy-cluster-list-helper` on every pass - through one sudoers rule, because the application
+accounts cannot read the engine's configuration and must not - and keeps the answer in one row that
+the pages read. A cluster created or removed from Settings is therefore polled and drawn from the
+next pass on, and its colour follows its place in the file.
+
+`clusters` in `ui.toml` is the fallback: the list before the poller has read one, and the list
+while the helper cannot be read. A pass that cannot read the list polls the clusters it knew
+rather than none. An empty `ui.toml` list with no readable cluster file leaves the poller nothing
+to do, and it says so instead of starting.
 
 ### 4.10 A development platform beside production
 

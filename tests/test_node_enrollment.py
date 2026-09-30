@@ -561,3 +561,14 @@ class TheNodeSideBlock(unittest.TestCase):
             ).stdout
 
         self.assertIsNone(enrollment.parse(printed).cert_pull_key)
+
+
+class TheInstallersKeepTheRecord(unittest.TestCase):
+    """Once written, `clusters.yaml` is the record; a second install run keeps it (B211)."""
+
+    def test_step_two_keeps_an_existing_cluster_file(self) -> None:
+        step = (BASE / "install" / "02-manager-config").read_text()
+
+        self.assertIn(
+            'if [[ -f "$CLUSTER_FILE" && "${REWRITE_CLUSTER_FILE:-}" != yes ]]; then', step
+        )

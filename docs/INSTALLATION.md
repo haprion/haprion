@@ -350,6 +350,8 @@ backup_identity:
 backup_timer: haproxy-state-backup.timer
 
 interface_account: "svc-app"
+pull_account: "svc-pull"
+cert_pull_account: "svc-cert-pull"
 ```
 
 `certificate_root` is also what a publish reads to check that each site's certificate answers for
@@ -402,6 +404,12 @@ as *Published by*, beside the worker account that actually ran it. Anyone else w
 helpers - an operator at the terminal - is recorded as the account sudo proves, whatever the request
 says, so the column can be trusted. Leave it out and every version names the account that ran the
 helper, the worker's own name for everything done in the browser.
+
+`pull_account` and `cert_pull_account` name the accounts the nodes fetch as - the `rrsync -ro`
+accounts whose `authorized_keys` carry one line per node ([1.6](#16-ssh-identities)). They are what
+lets a node be added or removed with `haproxy-node` or the interface's Nodes card
+([1.4.10](#1410-adding-and-removing-a-node)): the names exist nowhere else a command reads. Leave
+them out and nodes are added by hand, as before.
 
 `status_identity` is the account `haproxy-status` becomes to read a node, and `haproxy-deploy`
 uses it too: a rollout reads the pair before and after every step, and it reads with the identity
@@ -1591,6 +1599,44 @@ migrated from the terminal and not removed from the page.
 The receivers page reads its rows from `registry.receiver_records` and the manager's name from
 `registry.manager` in the `cert_list` answer (the interface's `SERVER_NAME`); an installation
 whose CLI release predates those fields shows the page without rows until the CLI is updated.
+
+### 1.4.10 Adding and removing a node
+
+A node is known to the management host in six root-owned places: its entry in `clusters.yaml`, its
+host key in root's `known_hosts`, its two fetch keys in the pull accounts' `authorized_keys`, and -
+where the traffic-log collector is installed - its entry in the collector's node list and its host
+key in the collector's own `known_hosts`. `haproxy-node` and the Nodes card under Settings change
+all six as one, through the same root helper:
+
+```bash
+# On the node: step 4 prints an enrollment block - one line starting with haproxy-node-v1:
+sudo ./04-node-prepare answers.env alpha
+
+# On the management host, the block on stdin:
+sudo haproxy-node add -c alpha --host node-c.example.com < block
+sudo haproxy-node remove -c alpha node-c
+```
+
+The block carries the node's name, its cluster, a suggested host name, its ed25519 host key and the
+public halves of its two fetch keys. Copying it from the node's console is the trust - the manager
+takes the host key from the block, never from the network - and the fingerprint the command and the
+page print is the one to compare with what step 4 printed. `--host` is the name the manager reaches
+the node at; the block's suggestion is the node's own `hostname -f` and may not be.
+
+After writing, the manager asks the node for its status as the status identity, with strict host
+key checking. The node reports its own host name and cluster, so an answer proves the host key, that
+the node already has the manager's key lines from step 3, and that the block described the node that
+answered. Anything short of that puts every file back and says why. The node has no release until
+the next `haproxy-deploy -c <cluster>`.
+
+A removal takes the node's lines out of all six files, so it can no longer fetch configuration or
+certificates. It is refused for the node that reports holding the VIP and below two nodes; the node
+itself is not touched and keeps serving until it is shut down. A cluster has two to eight nodes
+([1.4](#14-cluster-definitions)). Each node's `keepalived.conf` is not written by this project.
+
+Once written by step 2, `clusters.yaml` is the record: a second run of step 2 keeps it unless
+`REWRITE_CLUSTER_FILE=yes` asks for the answers file's version, and step 13 reads the collector's
+nodes from it rather than from the answers file.
 
 ### 1.5 Validation certificate
 
@@ -3736,6 +3782,15 @@ run while a restore or backup job holds a live lease, because activation
 restarts the worker. Step 07 installs both sockets wherever it installs a
 worker; `haproxy-node-restore` and `haproxy-state-backup` at the terminal do not
 go this way, root runs them directly.
+
+#### The worker's way to the node helper
+
+Adding or removing a node writes root's `known_hosts`, the pull accounts' `authorized_keys`, the
+cluster file and the collector's files - none of which a helper the worker starts through sudo may
+write. So `haproxy-node-helper` answers on `/run/haproxy-mgmt/cluster-node.sock` (root, group the
+worker's account, `0660`) from `haproxy-node-helper@.service`, installed by step 07; the worker's
+`haproxy-node-ask` carries the request there, and `haproxy-node` from a terminal runs the helper
+directly as root.
 
 #### Which clusters get polled
 

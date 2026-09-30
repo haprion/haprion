@@ -84,7 +84,19 @@ for cluster in $(each_cluster); do
     fi
 done
 
-install_file "$CLUSTER_FILE" "root:${CONFIG_GROUP}" 640 "$clusters_yaml"
+#
+# Written once. After that the file is the record: nodes are added and removed
+# through haproxy-node and the interface's Nodes card (B211), and fields this
+# step does not render (address_prefix, vips, sources ...) are edited by hand.
+# Rendering it again from the answers file would drop all of that, so a
+# second run keeps it unless REWRITE_CLUSTER_FILE=yes asks for the answers'
+# version - the replaced file is kept beside it either way.
+#
+if [[ -f "$CLUSTER_FILE" && "${REWRITE_CLUSTER_FILE:-}" != yes ]]; then
+    log "  kept     ${CLUSTER_FILE}  (REWRITE_CLUSTER_FILE=yes renders it from the answers)"
+else
+    install_file "$CLUSTER_FILE" "root:${CONFIG_GROUP}" 640 "$clusters_yaml"
+fi
 
 step "Runtime policy"
 

@@ -1,0 +1,34 @@
+# The socket the HAProxy Manager job worker asks to add or remove a node on.
+#
+# Owned by root, connectable by the worker's account and nobody else. Each
+# connection starts one instance of haproxy-node-helper@.service, which reads
+# one request and writes one answer.
+#
+# Why a socket and not a sudoers rule (B163, B211): adding a node writes root's
+# known_hosts, the pull accounts' authorized_keys under /home, the cluster file
+# and the traffic collector's files under /etc - none of which the worker's
+# ProtectSystem=strict leaves writable for a helper it starts through sudo.
+#
+# Installed as /etc/systemd/system/haproxy-node-helper.socket, with
+# WORKER_USER rendered by 07-platform-services.
+
+[Unit]
+Description=Socket the HAProxy Manager job worker asks to change a cluster's nodes on
+Documentation=file:///opt/haproxy-mgmt/current
+
+[Socket]
+ListenStream=/run/haproxy-mgmt/cluster-node.sock
+SocketUser=root
+SocketGroup=WORKER_USER
+SocketMode=0660
+
+Accept=yes
+
+# One node change at a time is the cluster lock's to enforce; a second
+# connection is a second worker, and the lock answers it.
+MaxConnections=2
+
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

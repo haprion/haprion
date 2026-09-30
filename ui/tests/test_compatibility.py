@@ -11,6 +11,8 @@ from haproxy_mgmt.cli import (
     backup_job_helper,
     cert_receiver_ask,
     cert_receiver_helper,
+    node_ask,
+    node_helper,
     node_restore_ask,
     node_restore_helper,
 )
@@ -64,6 +66,18 @@ class CompatibilityMetadataTests(unittest.TestCase):
         self.assertNotIn(helper, requirements.worker_helpers)
         self.assertEqual(requirements.socket_helpers[helper], backup_job_ask.SOCKET_PATH)
         self.assertIn(f"ListenStream={backup_job_ask.SOCKET_PATH}\n", unit)
+        self.assertIn("SocketGroup=WORKER_USER", unit)
+
+    def test_node_changes_are_reached_only_through_their_socket(self) -> None:
+        """B211: the manifest, the client and the socket unit name one socket."""
+
+        requirements = compatibility.load_requirements(MANIFEST)
+        helper = Path(node_helper.HELPER).name
+        unit = (ROOT / "install/platform/examples/haproxy-node-helper.socket.example").read_text()
+
+        self.assertNotIn(helper, requirements.worker_helpers)
+        self.assertEqual(requirements.socket_helpers[helper], node_ask.SOCKET_PATH)
+        self.assertIn(f"ListenStream={node_ask.SOCKET_PATH}\n", unit)
         self.assertIn("SocketGroup=WORKER_USER", unit)
 
     def test_node_restores_are_reached_only_through_their_socket(self) -> None:

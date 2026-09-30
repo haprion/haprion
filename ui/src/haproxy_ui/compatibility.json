@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "requires": {
-    "database_head": "0043",
+    "database_head": "0044",
     "database_revisions": [
       "0028",
       "0029",
@@ -21,7 +21,7 @@
       "0043",
       "0044"
     ],
-    "engine_api": 4,
+    "engine_api": 5,
     "node_api": 1,
     "poller_helpers": [
       "haproxy-status-helper",
@@ -54,7 +54,8 @@
       "haproxy-cert-receiver-helper": "/run/haproxy-mgmt/cert-receiver.sock",
       "haproxy-backup-job-helper": "/run/haproxy-mgmt/backup-job.sock",
       "haproxy-node-restore-helper": "/run/haproxy-mgmt/node-restore.sock",
-      "haproxy-ui-tls-helper": "/run/haproxy-mgmt/ui-tls.sock"
+      "haproxy-ui-tls-helper": "/run/haproxy-mgmt/ui-tls.sock",
+      "haproxy-node-helper": "/run/haproxy-mgmt/cluster-node.sock"
     }
   }
 }

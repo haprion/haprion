@@ -115,6 +115,23 @@
   </table></div>
 </section>
 {% endif %}
+{% if cluster_nodes %}
+<section class="cluster-card settings-card" id="nodes">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Nodes</h3></div></div></header>
+  <div class="table-scroll"><table class="node-table settings-cluster-table settings-nodes-table">
+    <thead><tr><th>Cluster</th><th>Nodes</th><th><span class="visually-hidden">Action</span></th></tr></thead>
+    <tbody>
+      {% for row in cluster_nodes %}
+      <tr data-href="{{ row.href }}">
+        <td data-label="Cluster"><a class="proxy-link" href="{{ row.href }}"><strong>{{ row.cluster }}</strong></a></td>
+        <td data-label="Nodes">{{ row.nodes | join(', ') }}</td>
+        <td data-label="">{% if row.running %}<span class="status-badge status-badge-info settings-active">{{ row.running }}</span>{% endif %}<a class="secondary-button settings-edit" href="{{ row.href }}">Edit</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
 {#
   What this installation offers (B193). Off hides a feature; node backups off
   also stops the clusters' timers, so that one asks first on its own page.

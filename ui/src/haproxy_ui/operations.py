@@ -48,6 +48,8 @@ from haproxy_mgmt.cli import (
     deploy,
     managed_network_publish,
     managed_objects_publish,
+    node_ask,
+    node_helper,
     node_restore_ask,
     node_restore_helper,
     revert,
@@ -88,6 +90,7 @@ SUDO_FLAGS = ("-n", "--")
 # to is root, on the other side of a socket (B163).
 #
 RECEIVER_CLIENT = (sys.executable, "-m", cert_receiver_ask.__name__)
+NODE_CLIENT = (sys.executable, "-m", node_ask.__name__)
 BACKUP_CLIENT = (sys.executable, "-m", backup_job_ask.__name__)
 RESTORE_CLIENT = (sys.executable, "-m", node_restore_ask.__name__)
 
@@ -932,6 +935,43 @@ def prepare(
                 version=version,
                 expected_commit=commit,
                 requested_by=_requested_by(payload),
+            ),
+        )
+
+    if operation == "cluster_node":
+        #
+        # One node of one cluster, added from its enrollment block or removed
+        # by name (B211). Shape only here; the block's meaning - the keys, the
+        # six files, the proof that the node answers as itself - is the
+        # helper's, as when the operator types `haproxy-node`. Not through
+        # sudo, for the receiver's reason: the helper writes root's
+        # known_hosts and the pull accounts' keys, outside this unit's sandbox.
+        #
+        _only(payload, "action", "block", "host", "node")
+        action = payload.get("action")
+        if action == "remove":
+            node = payload.get("node")
+            if set(payload) != {"action", "node"} or not isinstance(node, str) or not node:
+                raise BadPayload("a removal names one node and nothing else")
+            return Prepared(
+                argv=NODE_CLIENT,
+                request=node_helper.build_request(
+                    cluster, str(request_id), action="remove", node=node
+                ),
+            )
+        if action != "add":
+            raise BadPayload("action must be add or remove")
+        block, host = payload.get("block"), payload.get("host")
+        if "node" in payload:
+            raise BadPayload("an addition names its node in the block")
+        if not isinstance(block, str) or not block.strip():
+            raise BadPayload("an addition needs the node's enrollment block")
+        if not isinstance(host, str) or not host:
+            raise BadPayload("an addition needs the host name to reach the node at")
+        return Prepared(
+            argv=NODE_CLIENT,
+            request=node_helper.build_request(
+                cluster, str(request_id), action="add", block=block, host=host
             ),
         )
 

@@ -1,0 +1,63 @@
+# Adds or removes exactly one node of one cluster, then exits.
+#
+# Started by haproxy-node-helper.socket, one instance per connection. The
+# connection is this process's stdin and stdout, the same protocol the helper
+# speaks when `haproxy-node` runs it as root from a terminal.
+#
+# What it may do with root
+# ------------------------
+# Rewrite six files, each by a rename with its own owner and mode: the cluster
+# file, root's known_hosts, the two pull accounts' authorized_keys, and the
+# traffic collector's node list and known_hosts. Then ask the node for its
+# status over SSH, as the status identity, with strict host key checking; a
+# node that does not answer as itself has every file put back. It never reads
+# a private key and never returns one.
+#
+# Why this sandbox is looser than the worker's: the files are the job.
+# ProtectSystem=yes keeps /usr, /boot and /efi read-only and leaves /etc and
+# /configs to the helper; ProtectHome stays off because root's known_hosts and
+# the pull accounts' keys live under /root and /home.
+#
+# Errors go to the journal and not to the socket: the caller reads one JSON
+# document.
+#
+# Installed as /etc/systemd/system/haproxy-node-helper@.service.
+
+[Unit]
+Description=Add or remove one node of a HAProxy Manager cluster
+Documentation=file:///opt/haproxy-mgmt/current
+
+[Service]
+Type=exec
+ExecStart=/opt/haproxy-mgmt/current/bin/haproxy-node-helper
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+
+# Bounds the start only. What bounds a run is the node's status read, sixty
+# seconds; no RuntimeMaxSec, because a run stopped between writing and putting
+# back would leave the files half-changed.
+TimeoutStartSec=180
+TimeoutStopSec=10
+
+NoNewPrivileges=yes
+ProtectSystem=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@obsolete
+
+# AF_UNIX is the connection it was handed; AF_INET and AF_INET6 are the SSH
+# connection to the node and the resolver that finds it.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

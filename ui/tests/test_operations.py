@@ -753,6 +753,7 @@ class TheQueueMustAcceptWhatTheCodeBuilds(unittest.TestCase):
             ("cert_delete", "haproxy-cert-delete.schema.json"),
             ("cert_scep", "haproxy-cert-scep.schema.json"),
             ("cert_receiver", "haproxy-cert-receiver.schema.json"),
+            ("cluster_node", "haproxy-cluster-node.schema.json"),
             ("cert_import", "haproxy-cert-import.schema.json"),
             ("cert_request", "haproxy-cert-request.schema.json"),
             ("node_restore_prepare", "haproxy-node-restore-prepare.schema.json"),

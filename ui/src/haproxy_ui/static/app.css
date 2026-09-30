@@ -489,6 +489,10 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .settings-cluster-table th:nth-child(3), .settings-cluster-table td:nth-child(3) { width: 30%; }
 .settings-cluster-table th:nth-child(4), .settings-cluster-table td:nth-child(4) { width: 330px; text-align: right; }
 .settings-cluster-table td { overflow: hidden; text-overflow: ellipsis; }
+/* The Nodes card: three columns, the action last as in Logs & metrics, and a
+   node list that wraps rather than being cut - eight names do not fit a line. */
+.settings-nodes-table th:nth-child(3), .settings-nodes-table td:nth-child(3) { width: 330px; text-align: right; }
+.settings-nodes-table td:nth-child(2) { overflow: visible; white-space: normal; }
 /* The row's way in, as low as the row's text (the same button as on Versions). */
 .settings-edit { display: inline-flex; align-items: center; min-height: 0; padding: 0 12px; text-decoration: none; }
 /*
@@ -1035,6 +1039,8 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 }
 .preview-form { display: grid; gap: 18px; margin-bottom: 18px; }
 .preview-form .cluster-card { padding-bottom: 18px; }
+/* In a card list the list's gap spaces the cards; the form adds none of its own. */
+.cluster-list > .nodes-form { margin-bottom: 0; }
 /* A card that ends in its submit row already has that row's bottom padding;
    the two stacked left 38px under the buttons (2026-09-28). */
 .preview-form .cluster-card:has(> .editor-submit:last-child) { padding-bottom: 0; }

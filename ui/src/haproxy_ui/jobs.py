@@ -163,6 +163,7 @@ def _operation(value: str) -> str:
         "revert": "Publish reverted version",
         "network_publish": "Publish network description",
         "cluster_settings_publish": "Publish cluster settings",
+        "cluster_node": "Change cluster nodes",
         "backup_run": "Back up cluster nodes",
         "backup_schedule": "Change backup schedule",
         "node_restore_prepare": "Prepare node restore",
@@ -769,6 +770,7 @@ RUNNING_LABELS = {
     "cert_publish": "Distributing certificates",
     "cert_target": "Changing certificate targets",
     "cert_receiver": "Changing receivers",
+    "cluster_node": "Changing nodes",
 }
 
 
@@ -801,6 +803,7 @@ FAILURE_LABELS = {
     "revert": "Revert failed",
     "network_publish": "Publish failed",
     "cluster_settings_publish": "Publish failed",
+    "cluster_node": "Node change failed",
     "objects_publish": "Publish failed",
     "cert_issue": "Certificate issue failed",
     "cert_import": "Certificate import failed",

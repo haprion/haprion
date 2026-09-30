@@ -1,0 +1,92 @@
+{% extends "layout.html" %}
+{% block title %}Nodes — {{ cluster }} — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  One cluster's nodes (Fas 16, B211). Adding reads the block 04-node-prepare
+  printed on the node; the root helper writes six files, asks the node for its
+  status and puts everything back if it does not answer as itself. Removing
+  takes the node's keys away; the node itself keeps running until it is shut
+  down. Both are confirmed with the node's name.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Nodes — {{ cluster }}</h1><p class="page-lede"><a href="/settings#nodes">Settings</a></p></div>
+</section>
+
+{% if problem %}
+<p class="preview-notice form-problem"><span class="status-orb status-critical" aria-hidden="true"></span><strong>{{ problem }}</strong></p>
+{% endif %}
+
+<div class="cluster-list">
+<section class="cluster-card settings-card {{ accent | accent_class }}">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Nodes</h3></div></div>{% if running %}<span class="status-badge status-badge-info">{{ running }}</span>{% endif %}</header>
+  <div class="table-scroll"><table class="node-table settings-node-table">
+    <thead><tr><th>Node</th><th>Host</th><th>VIP</th><th><span class="visually-hidden">Action</span></th></tr></thead>
+    <tbody>
+      {% for node in nodes %}
+      <tr>
+        <td data-label="Node"><strong>{{ node.name }}</strong></td>
+        <td data-label="Host">{{ node.host }}</td>
+        <td data-label="VIP">{% if node.owner %}Owner{% elif node.reachable %}Standby{% else %}Not reporting{% endif %}</td>
+        <td data-label="">{% if not running and not node.owner and nodes | length > 2 %}<form method="post" action="/settings/nodes/{{ cluster }}/remove" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="node" value="{{ node.name }}"><button type="submit" class="secondary-button">Remove</button></form>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+
+{% if removal %}
+<form method="post" action="/settings/nodes/{{ cluster }}/remove" class="preview-form nodes-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <input type="hidden" name="node" value="{{ removal }}">
+  <section class="cluster-card {{ accent | accent_class }}">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Remove {{ removal }}</h3></div></div></header>
+    <ul class="removal-consequences">
+      <li>Its line in the cluster file, its host key and both of its fetch keys are removed; it can no longer fetch configuration or certificates.</li>
+      <li>The node itself is not touched and keeps serving until it is shut down.</li>
+    </ul>
+    <div class="form-grid">
+      <label><span class="field-title">Type {{ removal }} to remove it</span><input name="confirm" maxlength="64" spellcheck="false" autocomplete="off" required></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings/nodes/{{ cluster }}">Cancel</a><button type="submit" class="secondary-button danger-button">Remove node</button></div>
+    </div>
+  </section>
+</form>
+{% elif addition %}
+<form method="post" action="/settings/nodes/{{ cluster }}/add" class="preview-form nodes-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="idempotency_key" value="{{ new_request_key() }}">
+  <input type="hidden" name="block" value="{{ addition.block }}">
+  <section class="cluster-card {{ accent | accent_class }}">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Add {{ addition.name }}</h3></div></div></header>
+    <ul class="removal-consequences">
+      <li>Host key <code>{{ addition.fingerprint }}</code> — compare it with the one 04-node-prepare printed on the node.</li>
+      <li>The manager then asks the node for its status and takes the change back if it does not answer as {{ addition.name }}. The node gets a release at the next deploy.</li>
+    </ul>
+    <div class="form-grid">
+      <label><span class="field-title">Host</span><input name="host" value="{{ addition.host }}" maxlength="253" spellcheck="false" required></label>
+      <label><span class="field-title">Type {{ addition.name }} to add it</span><input name="confirm" maxlength="64" spellcheck="false" autocomplete="off" required></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><a class="secondary-button" href="/settings/nodes/{{ cluster }}">Cancel</a><button type="submit" class="secondary-button deploy-button">Add node</button></div>
+    </div>
+  </section>
+</form>
+{% elif not running and nodes | length < 8 %}
+<form method="post" action="/settings/nodes/{{ cluster }}/add" class="preview-form nodes-form" autocomplete="off">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <section class="cluster-card {{ accent | accent_class }}">
+    <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Add a node</h3></div></div></header>
+    <div class="form-grid">
+      <label><span class="field-title">Enrollment block</span><textarea name="block" rows="4" spellcheck="false" placeholder="haproxy-node-v1:…" required>{{ block }}</textarea></label>
+      <label><span class="field-title">Host</span><input name="host" value="{{ host }}" maxlength="253" spellcheck="false" placeholder="From the block"></label>
+    </div>
+    <div class="editor-actions editor-submit">
+      <div class="form-buttons"><button type="submit" class="secondary-button">Read block</button></div>
+    </div>
+  </section>
+</form>
+{% endif %}
+</div>
+{% endblock %}

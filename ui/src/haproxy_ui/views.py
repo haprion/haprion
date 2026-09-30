@@ -63,6 +63,7 @@ from haproxy_ui import (
     certificate_retarget,
     certificates,
     cluster_identity,
+    cluster_nodes,
     cluster_settings_page,
     dashboard,
     db,
@@ -3145,6 +3146,9 @@ def build_router(config: Config) -> APIRouter:
                     running=jobs.in_flight(recent),
                     waiting=network.awaiting_deploy(recent, operation="cluster_settings_publish"),
                 ),
+                "cluster_nodes": cluster_nodes.card_rows(
+                    *read_source(request, config, STATUS_SOURCE)[:2], running=jobs.in_flight(recent)
+                ),
                 "features": [
                     (
                         feature,
@@ -3579,6 +3583,232 @@ def build_router(config: Config) -> APIRouter:
             )
             connection.commit()
         return RedirectResponse("/settings#logs-metrics", status_code=303)
+
+    # - Settings -> Nodes (Fas 16, B211) ------------------------------------
+    #
+    # Which nodes each cluster has, and adding or removing one. The list is the
+    # poller's status reading; a change is a `cluster_node` job for the root
+    # helper, confirmed with the node's name, because both directions change
+    # who can fetch the cluster's configuration and certificates.
+    #
+
+    def _status_row(request: Request, cluster: str) -> Any | None:
+        clusters, rows, _ = read_source(request, config, STATUS_SOURCE)
+        if cluster not in clusters:
+            return None
+        return next((row for row in rows if row.cluster == cluster), None)
+
+    def _nodes_page(
+        request: Request,
+        gate: AuthenticatedSession,
+        cluster: str,
+        *,
+        addition: cluster_nodes.Addition | None = None,
+        removal: str = "",
+        block: str = "",
+        host: str = "",
+        problem: str = "",
+        status_code: int = 200,
+    ) -> Response:
+        _token, _registry, context = _page_context(request, gate)
+        with request.app.state.pool.connection() as connection:
+            recent = db.recent_jobs(connection)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "settings-nodes.html",
+            {
+                **context,
+                "section": "settings",
+                "cluster": cluster,
+                "accent": cluster_identity.accent_index(cluster),
+                "nodes": cluster_nodes.node_rows(_status_row(request, cluster)),
+                "running": jobs.in_flight(recent).get(cluster),
+                "addition": addition,
+                "removal": removal,
+                "block": block,
+                "host": host,
+                "problem": problem,
+            },
+            status_code=status_code,
+        )
+
+    def _queue_node_job(
+        request: Request,
+        gate: AuthenticatedSession,
+        cluster: str,
+        payload: Mapping[str, Any],
+        key: UUID,
+        node: str,
+        again: Callable[[str], Response],
+    ) -> Response:
+        try:
+            operations.prepare(
+                operation="cluster_node", cluster=cluster, request_id=uuid4(), payload=payload
+            )
+        except operations.BadPayload as refused:
+            return again(str(refused))
+        with request.app.state.pool.connection() as connection:
+            try:
+                job = db.queue_job(
+                    connection,
+                    operation="cluster_node",
+                    cluster=cluster,
+                    payload=payload,
+                    idempotency_key=key,
+                )
+            except db.ClusterBusy:
+                connection.rollback()
+                return again(
+                    "A job is already running for this cluster. Try again when it has finished."
+                )
+            except db.RequestConflict:
+                connection.rollback()
+                return PlainTextResponse("That request key asked for something else", 409)
+            #
+            # The audit row names the node and the action, never the block: the
+            # block holds public keys, and the audit log is not where a reader
+            # looks for one.
+            #
+            db.record_audit_event(
+                connection,
+                actor=gate.username,
+                action="queue_job",
+                cluster=cluster,
+                request_id=job.request_id,
+                detail={
+                    "operation": "cluster_node",
+                    "job": job.id,
+                    "action": payload["action"],
+                    "node": node,
+                },
+            )
+            connection.commit()
+        return RedirectResponse(f"/settings/nodes/{cluster}", status_code=303)
+
+    @router.get("/settings/nodes/{cluster}", response_class=HTMLResponse)
+    def cluster_nodes_page(request: Request, cluster: str) -> Response:
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        if cluster not in listed_clusters(request, config):
+            return PlainTextResponse("Not found", status_code=404)
+        return _nodes_page(request, gate, cluster)
+
+    @router.post("/settings/nodes/{cluster}/add", response_class=HTMLResponse)
+    def cluster_node_add(
+        request: Request,
+        cluster: str,
+        block: str = Form(default="", max_length=8192),
+        host: str = Form(default="", max_length=253),
+        confirm: str = Form(default="", max_length=64),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Read the block and show what it says; with the node's name typed, queue it."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        if cluster not in listed_clusters(request, config):
+            return PlainTextResponse("Not found", status_code=404)
+        try:
+            addition = cluster_nodes.read_addition(
+                block,
+                cluster=cluster,
+                host=host,
+                count=len(cluster_nodes.node_rows(_status_row(request, cluster))),
+            )
+        except cluster_nodes.FormProblem as problem:
+            return _nodes_page(
+                request,
+                gate,
+                cluster,
+                block=block,
+                host=host,
+                problem=str(problem),
+                status_code=400,
+            )
+        if not confirm:
+            return _nodes_page(request, gate, cluster, addition=addition)
+        if confirm.strip() != addition.name:
+            return _nodes_page(
+                request,
+                gate,
+                cluster,
+                addition=addition,
+                problem=f"Type {addition.name} to add it.",
+                status_code=400,
+            )
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        payload = {"action": "add", "block": addition.block, "host": addition.host}
+        return _queue_node_job(
+            request,
+            gate,
+            cluster,
+            payload,
+            key,
+            addition.name,
+            lambda problem: _nodes_page(
+                request, gate, cluster, addition=addition, problem=problem, status_code=409
+            ),
+        )
+
+    @router.post("/settings/nodes/{cluster}/remove", response_class=HTMLResponse)
+    def cluster_node_remove(
+        request: Request,
+        cluster: str,
+        node: str = Form(default="", max_length=64),
+        confirm: str = Form(default="", max_length=64),
+        idempotency_key: str = Form(default="", max_length=64),
+        csrf_token: str = Form(default="", alias=auth.CSRF_FIELD),
+    ) -> Response:
+        """Ask first; with the node's name typed, queue the removal."""
+
+        gate = _admin_write_gate(request)
+        if not isinstance(gate, AuthenticatedSession):
+            return gate
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        if not auth.csrf_token_is_valid(token, csrf_token):
+            return PlainTextResponse("Refused", status_code=403)
+        if cluster not in listed_clusters(request, config):
+            return PlainTextResponse("Not found", status_code=404)
+        refused = cluster_nodes.removable(
+            cluster_nodes.node_rows(_status_row(request, cluster)), node
+        )
+        if refused is not None:
+            return _nodes_page(request, gate, cluster, problem=refused, status_code=400)
+        if not confirm:
+            return _nodes_page(request, gate, cluster, removal=node)
+        if confirm.strip() != node:
+            return _nodes_page(
+                request,
+                gate,
+                cluster,
+                removal=node,
+                problem=f"Type {node} to remove it.",
+                status_code=400,
+            )
+        try:
+            key = UUID(idempotency_key)
+        except ValueError:
+            return PlainTextResponse("A request key is required", status_code=400)
+        return _queue_node_job(
+            request,
+            gate,
+            cluster,
+            {"action": "remove", "node": node},
+            key,
+            node,
+            lambda problem: _nodes_page(
+                request, gate, cluster, removal=node, problem=problem, status_code=409
+            ),
+        )
 
     @router.get("/settings/new-user", response_class=HTMLResponse)
     def new_user_page(request: Request) -> Response:

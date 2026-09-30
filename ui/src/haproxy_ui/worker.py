@@ -155,6 +155,12 @@ _OPERATION_OUTCOMES = {
     # refusal is a `failed` envelope with the command's own code.
     #
     "cert_receiver": frozenset({"done", "partial", "failed"}),
+    #
+    # `cluster_node` adds or removes one node, all six files or none. `blocked`
+    # is a node that did not answer as itself (every file put back), the node
+    # holding the VIP, or the cluster busy; no half exists to be `partial`.
+    #
+    "cluster_node": frozenset({"done", "failed", "blocked"}),
 }
 
 

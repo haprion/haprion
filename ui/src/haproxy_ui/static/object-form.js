@@ -57,8 +57,10 @@
     const policy = document.querySelector("select[name='backend_tls_policy']");
     if (!tls || !policy) return;
 
+    const label = policy.closest("label");
     const apply = () => {
       policy.disabled = !tls.value;
+      if (label) label.hidden = !tls.value;
     };
     tls.addEventListener("change", apply);
     apply();
@@ -219,7 +221,57 @@
     apply();
   };
 
+  //
+  // Fields and groups that belong to one shape only - `data-show-when` names the
+  // choice and the values it holds for, such as `protocol:http https`. The page
+  // arrives already right, rendered by the same rule; this follows the choice as
+  // it is changed. One rule for all of them, so a new field that belongs to one
+  // shape needs an attribute and not a function here.
+  //
+  const wireShownWhen = () => {
+    const shaped = Array.from(document.querySelectorAll("[data-show-when]"));
+    const watched = new Set();
+    const apply = () => {
+      for (const element of shaped) {
+        const [field, values] = element.dataset.showWhen.split(":");
+        const choice = document.querySelector(`select[name='${field}']`);
+        if (!choice) continue;
+        element.hidden = !(values || "").split(" ").includes(choice.value);
+      }
+    };
+    for (const element of shaped) {
+      const field = element.dataset.showWhen.split(":")[0];
+      const choice = document.querySelector(`select[name='${field}']`);
+      if (choice && !watched.has(choice)) {
+        watched.add(choice);
+        choice.addEventListener("change", apply);
+      }
+    }
+    apply();
+  };
+
+  //
+  // A folded group's line describes the group as the page was rendered. Once a
+  // field inside it is changed that line is about something that is no longer
+  // on screen, and a closed group would then say the wrong thing about itself -
+  // so it says it has changed instead, until the next Validate writes it anew.
+  //
+  const wireGroupSummaries = () => {
+    for (const group of document.querySelectorAll("details.form-group")) {
+      const line = group.querySelector("[data-group-summary]");
+      if (!line) continue;
+      const mark = () => {
+        line.textContent = "Changed — validate to see the result";
+        line.classList.add("changed");
+      };
+      group.addEventListener("input", mark, { once: true });
+      group.addEventListener("change", mark, { once: true });
+    }
+  };
+
   window.addEventListener("DOMContentLoaded", () => {
+    wireShownWhen();
+    wireGroupSummaries();
     wire();
     wireBalanceKey();
     wireBackendTlsPolicy();

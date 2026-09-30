@@ -1113,6 +1113,53 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 }
 .node-health-table td { padding: 7px 12px 7px 0; border-bottom: 1px solid var(--line); color: var(--text-secondary); }
 .node-health-table .status-dot { margin-right: 8px; }
+/* The object form's folded groups (2026-09-30). A group is a rule, a title and
+   one line saying what it holds; opened, its fields sit at the card's gutter
+   like every other row, so the group adds a heading and no second indent.
+   The chevron is the archive's, for one way of saying "there is more here". */
+/* The object form: four fields to a row on every row, whatever the window,
+   so a column means the same place in every group (2026-09-30). Tracks that
+   fit as many as the width allowed gave four on one row and three on the next
+   at the same window. A fifth field starts the next row. Two below 900px and
+   one on a phone, where four would be too narrow to type in. */
+.object-card .form-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.object-card .form-grid .field-wide { grid-column: 1 / -1; }
+@media (max-width: 899px) { .object-card .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 559px) { .object-card .form-grid { grid-template-columns: minmax(0, 1fr); } }
+/* One group per row, one line each: the title and what the group holds, cut
+   with an ellipsis and whole in its tooltip. Side by side was tried on
+   2026-09-30 and opening one moved the others about; stacked, a group opens
+   where it is and nothing else moves. The toggle
+   is the account menu's chevron in a small framed square: pointing right while
+   closed, turned down while open, so the row says it opens before anybody
+   hovers over it. */
+.form-groups { margin: 10px 20px 0; }
+.form-group { border-top: 1px solid var(--line); }
+/* A row whose every group the shape has hidden - no check, say - draws no rule either. */
+.form-groups:not(:has(> .form-group:not([hidden]))) { display: none; }
+.preview-form .cluster-card:has(> .form-groups:last-child) { padding-bottom: 6px; }
+.form-group > summary { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 0; list-style: none; cursor: pointer; }
+.form-group-toggle { display: inline-grid; flex: none; place-items: center; width: 22px; height: 22px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel-raised); color: var(--muted-strong); }
+.form-group-toggle svg { width: 14px; height: 14px; stroke-width: 2; transform: rotate(-90deg); }
+.form-group[open] > summary .form-group-toggle svg { transform: none; }
+.form-group > summary:hover .form-group-toggle { border-color: var(--muted); background: var(--hover-surface); color: var(--text-strong); }
+@media (prefers-reduced-motion: no-preference) {
+  .form-group-toggle, .form-group-toggle svg { transition: transform 120ms ease, background-color 120ms ease, border-color 120ms ease, color 120ms ease; }
+}
+.form-group > summary::-webkit-details-marker { display: none; }
+.form-group-title { flex: none; color: var(--text-secondary); font-weight: 620; text-decoration: underline transparent; text-underline-offset: 3px; }
+.form-group-summary { min-width: 0; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.form-group > summary:hover .form-group-title { color: var(--text-strong); text-decoration-color: currentColor; }
+.form-group[open] > summary .form-group-title { color: var(--text-strong); }
+.form-group > .form-grid { padding: 2px 0 10px; }
+/* Two rows in one group read as one block: the second follows without a second top gap. */
+.form-group > .form-grid + .form-grid { padding-top: 0; }
+.form-group > .form-checks { padding: 2px 0 10px; }
+.form-group > .field-rows { padding: 0 0 12px; }
+.form-group-summary.changed { color: var(--text-secondary); font-style: italic; }
+/* A field or group the chosen shape has no use for. The form's grids set
+   `display` on their labels, which would otherwise outrank the attribute. */
+.preview-form [hidden] { display: none !important; }
 .form-subsection { border-top: 2px solid var(--line-strong); margin: 18px 20px 0; padding-top: 4px; }
 /*
  * Two columns, the same two the rows below use: the heading over the inputs,

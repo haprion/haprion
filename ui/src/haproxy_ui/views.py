@@ -92,6 +92,7 @@ from haproxy_ui import probe as probe_module
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.config import CLUSTER_ID, Config
 from haproxy_ui.db import AuthenticatedSession
+from haproxy_ui.form_groups import form_groups
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 logger = logging.getLogger("haproxy_ui")
@@ -151,6 +152,7 @@ TEMPLATES.env.globals["new_request_key"] = lambda: str(uuid4())
 # a web page words something is not the engine's business.
 #
 TEMPLATES.env.globals["check_phrase"] = health.check_phrase
+TEMPLATES.env.globals["form_groups"] = form_groups
 TEMPLATES.env.globals["feature_on"] = features.is_on
 TEMPLATES.env.filters["accent_class"] = cluster_identity.accent_class
 TEMPLATES.env.globals["through_provider"] = oidc_web.through_provider

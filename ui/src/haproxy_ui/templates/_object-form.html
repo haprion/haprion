@@ -6,84 +6,62 @@
   one of them and another way in the other would be the interface disagreeing
   with itself about what a site is.
 
-  There is no difference left between the two. The name is editable in both:
-  a published object is renamed by the publish carrying the new document and
-  the old name's removal together, so the form has nothing to warn about and
-  says nothing. A field's help text describes the field, not the workflow
-  behind it.
+  What an object cannot do without is always shown; the rest sits in folded
+  groups, all closed when the page opens (2026-09-30). Which fields a group
+  holds and the line it shows while closed are decided in `form_groups.py`.
 #}
 
-{#
-  Loaded with the form rather than from the shell: it is the only page-level
-  behaviour in the interface, and every other page would carry it for nothing.
-  Deferred, unlike the theme script - it has nothing to say before the first
-  paint, and the field it greys out is already correct when the page arrives.
-#}
 <script defer src="{{ url_for('static', path='/object-form.js') }}?v={{ asset_token }}"></script>
 
-  <section class="cluster-card {{ accent | accent_class }}">
+{% set groups = form_groups(form) %}
+
+{#
+  A field or group that means nothing for the shape chosen above - a TCP port on
+  a site, a request path on a tcp check - is hidden rather than greyed out. The
+  script follows the choice as it changes; the server renders the same answer,
+  so the page is right before the script runs. Hiding submits nothing new and
+  withholds nothing: the engine decides what a field means for each shape, and
+  refuses what it cannot use.
+#}
+{% macro when(field, values) %} data-show-when="{{ field }}:{{ values }}"{% if form[field] not in values.split() %} hidden{% endif %}{% endmacro %}
+
+{% macro group(state, shown='') %}
+<details class="form-group"{{ shown }}>
+  <summary><span class="form-group-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title">{{ state.title }}</span><span class="form-group-summary" data-group-summary title="{{ state.summary }}">{{ state.summary }}</span></summary>
+  {{ caller() }}
+</details>
+{% endmacro %}
+
+  <section class="cluster-card object-card {{ accent | accent_class }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Frontend</h3></div></div></header>
     <div class="form-grid">
-      <label>Name<input name="name" value="{{ form.name }}" maxlength="40" pattern="[a-z][a-z0-9_-]*" title="Lowercase letters, digits, hyphens and underscores, starting with a letter" required><small>This object's identity, unique per cluster. Lowercase letters, digits, hyphens and underscores — no dots, and it starts with a letter.</small></label>
-      <label>Hostnames<input name="hostnames" value="{{ form.hostnames }}" placeholder="app.example.com, www.example.com"><small>Separate several names with commas.</small></label>
+      <label>Name<input name="name" value="{{ form.name }}" maxlength="40" pattern="[a-z][a-z0-9_-]*" title="Lowercase letters, digits, hyphens and underscores, starting with a letter" required><small>Lowercase, such as <code>shop-web</code>. Unique per cluster.</small></label>
+      <label{{ when('protocol', 'http https') }}>Hostnames<input name="hostnames" value="{{ form.hostnames }}" placeholder="app.example.com, www.example.com"><small>Separate several with commas.</small></label>
       <label>Protocol
         <select name="protocol">
           <option value="https"{% if form.protocol == 'https' %} selected{% endif %}>HTTPS</option>
           <option value="http"{% if form.protocol == 'http' %} selected{% endif %}>HTTP</option>
           <option value="tcp"{% if form.protocol == 'tcp' %} selected{% endif %}>TCP</option>
         </select>
-        <small>TCP forwards a raw port.</small>
       </label>
-      {#
-        Disabled rather than hidden. A field that vanishes takes the reader's
-        place on the page with it; one that greys out says the shape above
-        decided this, which is the thing worth learning. `tcp-only` is what the
-        script re-evaluates when the protocol changes, and the server ignores
-        the field for http and https either way - the browser is a convenience
-        here, never the control.
-      #}
-      <label class="tcp-only" data-protocol="tcp">TCP port<input name="tcp_port" value="{{ form.tcp_port }}" size="8" placeholder="5432"{% if form.protocol != 'tcp' %} disabled{% endif %}><small>The port this object listens on, on the VIP.</small></label>
-      {#
-        Each option names its address beside its name. The name alone asks the
-        reader to remember a mapping that lives on another page, and the
-        mapping is what they came here to be sure about. An address the poller
-        has not read yet is left off rather than guessed.
-      #}
+      <label class="tcp-only" data-protocol="tcp"{{ when('protocol', 'tcp') }}>TCP port<input name="tcp_port" value="{{ form.tcp_port }}" size="8" placeholder="5432"{% if form.protocol != 'tcp' %} disabled{% endif %}></label>
       <label>VIP
-        {#
-          Each option carries its VIP's source address as well, because the
-          field below names it without naming it: "the VIP's own" is an answer
-          only if the page can say which address that is, and it changes with
-          the choice made here.
-        #}
         <select name="vip" data-default-source="{{ choices.vip_sources.get(choices.default_vip, '') }}">
           <option value="">Default ({{ choices.default_vip }}{% if choices.default_vip_address %} — {{ choices.default_vip_address }}{% endif %})</option>
           {% for vip in choices.vips %}<option value="{{ vip.name }}" data-source="{{ choices.vip_sources.get(vip.name, '') }}"{% if form.vip == vip.name %} selected{% endif %}>{{ vip.name }}{% if vip.address %} — {{ vip.address }}{% endif %}</option>{% endfor %}
         </select>
-        <small>Which address this site is served on.</small>
       </label>
-      <label>Source address
-        <select name="source">
-          {% set own = choices.vip_sources.get(form.vip or choices.default_vip, '') %}
-          <option value="" data-label="The VIP's own">The VIP's own{% if own %} — {{ own }}{% endif %}</option>
-          {% for source in choices.sources %}<option value="{{ source.name }}"{% if form.source == source.name %} selected{% endif %}>{{ source.name }}{% if source.address %} — {{ source.address }}{% endif %}</option>{% endfor %}
-        </select>
-        <small>Which address it connects out from.</small>
-      </label>
-      <label>Certificate
+      <label{{ when('protocol', 'https') }}>Certificate
         <select name="certificate">
           <option value="">None</option>
           {% for certificate in choices.certificates %}<option value="{{ certificate }}"{% if form.certificate == certificate %} selected{% endif %}>{{ certificate }}</option>{% endfor %}
         </select>
       </label>
-      {#
-        Directly after the certificate because both decisions happen during
-        the handshake. The generated certificate list binds this site's names
-        and terms explicitly, so sites may share a certificate without sharing
-        a TLS policy.
+    </div>
 
-        Off for anything but https, like the TCP port and the balancing key.
-      #}
+    <div class="form-groups">
+    {% call group(groups.tls, when('protocol', 'https')) %}
+    <div class="form-grid">
       <label class="https-only">Specific TLS for this site only
         <select name="listen_tls_policy"{% if form.protocol != 'https' %} disabled{% endif %}>
           <option value=""{% if not form.listen_tls_policy %} selected{% endif %}>Use VIP settings</option>
@@ -99,13 +77,10 @@
       <label class="check"><input type="checkbox" name="hsts_subdomains"{% if form.hsts_subdomains %} checked{% endif %}> …including subdomains</label>
       <label class="check-value"><input name="hsts_max_age" value="{{ form.hsts_max_age }}" size="10"><span>HSTS lifetime, seconds</span></label>
     </div>
-    {#
-      Who may reach the site sits below the switches, behind a rule of its own.
-      The two boxes are one decision made in two ways - named groups the cluster
-      defines, and addresses typed here - but they are a different kind of
-      answer from a checkbox, and the rule says so without a heading.
-    #}
-    <div class="form-grid form-grid-pair form-grid-ruled">
+    {% endcall %}
+
+    {% call group(groups.access) %}
+    <div class="form-grid form-grid-pair">
       {#
         The hint sits outside the label so its link is a link: inside one, a
         click on it is also a click on the field's own label.
@@ -120,107 +95,76 @@
         <small>Defined on the <a href="/network">Network</a> page.</small>
       </div>
       <label><span class="field-title">Reachable from — addresses <span class="optional">(optional)</span></span><textarea name="allow_ranges" rows="5" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address or range per line.</small></label>
-      {#
-        How much one source may ask, beside who may ask at all. One number: the
-        engine counts requests for a site and new connections for a raw port,
-        and the window's placeholder is the engine's default, not HAProxy's.
-      #}
-      <label><span class="field-title">Rate limit <span class="optional">(optional)</span></span><input name="rate_limit" value="{{ form.rate_limit }}" size="10" placeholder="100"><small>Per source address. Requests, or new connections for TCP. Over it: refused.</small></label>
-      <label><span class="field-title">Rate window <span class="optional">(optional)</span></span><input name="rate_window" value="{{ form.rate_window }}" size="10" placeholder="{{ rate_window }}"><small>Seconds or minutes, such as 10s or 1m.</small></label>
+      <label><span class="field-title">Rate limit <span class="optional">(optional)</span></span><input name="rate_limit" value="{{ form.rate_limit }}" size="10" placeholder="100"><small>Per source address; new connections for TCP.</small></label>
+      <label><span class="field-title">Rate window <span class="optional">(optional)</span></span><input name="rate_window" value="{{ form.rate_window }}" size="10" placeholder="{{ rate_window }}"><small>Such as <code>10s</code> or <code>1m</code>.</small></label>
     </div>
-    {#
-      Maintenance is a statement about the site's *state*, not about its shape,
-      and it is the one group here a person turns on deliberately and turns off
-      again. Kept behind its own rule so it cannot be reached by drifting down
-      the same row of checkboxes.
-    #}
-    <div class="form-subsection">
-      {#
-        The switch shares the heading's line - it is a state, not a message -
-        and stands in the column the two explanations below are read in.
-      #}
-      <h4>
-        <span class="subsection-title">Maintenance options <span class="optional">(optional)</span></span>
-        <label class="check maintenance-switch"><input type="checkbox" name="maintenance"{% if form.maintenance %} checked{% endif %}>{#
-          #}Out of service for maintenance</label>
-      </h4>
-      <div class="field-rows">
-        <label class="check-value"><input name="maintenance_message" value="{{ form.maintenance_message }}"><span>What visitors are told instead</span></label>
-        <label class="check-value"><input name="unavailable_message" value="{{ form.unavailable_message }}"><span>What visitors are told when no server answers. <code>%URL%</code> becomes the site's first hostname.</span></label>
-      </div>
+    {% endcall %}
+
+    {% call group(groups.maintenance, when('protocol', 'http https')) %}
+    <div class="form-checks">
+      <label class="check"><input type="checkbox" name="maintenance"{% if form.maintenance %} checked{% endif %}> Out of service for maintenance</label>
+    </div>
+    <div class="field-rows">
+      <label class="check-value"><input name="maintenance_message" value="{{ form.maintenance_message }}"><span>What visitors are told instead</span></label>
+      <label class="check-value"><input name="unavailable_message" value="{{ form.unavailable_message }}"><span>What visitors are told when no server answers. <code>%URL%</code> becomes the site's first hostname.</span></label>
+    </div>
+    {% endcall %}
     </div>
   </section>
 
-  <section class="cluster-card {{ accent | accent_class }}">
+  <section class="cluster-card object-card {{ accent | accent_class }}">
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Backend</h3></div></div></header>
     <div class="form-grid">
-      <label>Backend name<input name="backend" value="{{ form.backend }}" placeholder="web"><small>What you call the backend.</small></label>
+      <label>Backend name<input name="backend" value="{{ form.backend }}" placeholder="web"></label>
       <label>Servers<textarea name="servers" rows="3" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small>One <code>address</code> or <code>hostname:port</code> per line. Add <code>backup</code> after one to make it a standby.</small></label>
       <label>Balancing
         <select name="balance">
           {% for algorithm in choices.balances %}<option value="{{ algorithm }}"{% if form.balance == algorithm %} selected{% endif %}>{{ algorithm }}</option>{% endfor %}
         </select>
       </label>
-      <label class="keyed-only" data-balances="hdr url_param">Balancing key<input name="balance_key" value="{{ form.balance_key }}" placeholder="X-Tenant"{% if form.balance not in ["hdr", "url_param"] %} disabled{% endif %}><small>Only for <code>hdr</code> and <code>url_param</code>: the header or query parameter whose value decides the server. Same value, same server.</small></label>
-      {#
-        "the system CAs" was HAProxy's own word for it - `@system-ca` - and it
-        asked the reader to translate. There is no private-CA option to tell it
-        apart from, so naming the store said nothing anybody could act on. What
-        the choice is actually between is whether the backend's certificate has to
-        be trusted, and that is what the options now say.
+      <label class="keyed-only" data-balances="hdr url_param"{{ when('balance', 'hdr url_param') }}>Balancing key<input name="balance_key" value="{{ form.balance_key }}" placeholder="X-Tenant"{% if form.balance not in ["hdr", "url_param"] %} disabled{% endif %}><small>The header or query parameter that picks the server.</small></label>
+    </div>
 
-        The help text is about the one thing the choice demands of the rest of
-        the form: verification needs a name to send, so a backend named by address
-        cannot be verified. Said here rather than only in the refusal, because
-        by the time the refusal arrives the servers have already been typed.
-      #}
+    <div class="form-groups">
+    {% call group(groups.connections) %}
+    <div class="form-grid">
+      <label>Source address
+        <select name="source">
+          {% set own = choices.vip_sources.get(form.vip or choices.default_vip, '') %}
+          <option value="" data-label="The VIP's own">The VIP's own{% if own %} — {{ own }}{% endif %}</option>
+          {% for source in choices.sources %}<option value="{{ source.name }}"{% if form.source == source.name %} selected{% endif %}>{{ source.name }}{% if source.address %} — {{ source.address }}{% endif %}</option>{% endfor %}
+        </select>
+        <small>Which address it connects out from.</small>
+      </label>
       <label>Backend TLS
         <select name="backend_tls">
           <option value=""{% if not form.backend_tls %} selected{% endif %}>Plain HTTP</option>
           <option value="system"{% if form.backend_tls == 'system' %} selected{% endif %}>HTTPS, verify the certificate</option>
           <option value="none"{% if form.backend_tls == 'none' %} selected{% endif %}>HTTPS, do not verify</option>
         </select>
-        <small>Verified backends need DNS names, not addresses, in the Servers section.</small>
+        <small>Verified backends need DNS names in Servers.</small>
       </label>
-      {#
-        A different question from the one above it. That one is whether the
-        backend's certificate has to be trusted; this is how old the handshake may
-        be, and a device can need a lax answer to one and not the other.
-
-        Off when the backend is plain HTTP, because there is no handshake to hold
-        to anything - the same `disabled` the TCP port and the balancing key
-        use, so the form has one way of saying "not for this shape".
-      #}
-      <label class="tls-only" data-backend-tls="1">Specific TLS for this backend only
+      <label class="tls-only" data-backend-tls="1"{% if not form.backend_tls %} hidden{% endif %}>Specific TLS for this backend only
         <select name="backend_tls_policy"{% if not form.backend_tls %} disabled{% endif %}>
           <option value=""{% if not form.backend_tls_policy %} selected{% endif %}>Use default settings (TLS 1.2 and 1.3)</option>
           <option value="modern"{% if form.backend_tls_policy == 'modern' %} selected{% endif %}>TLS 1.3 only</option>
           <option value="legacy"{% if form.backend_tls_policy == 'legacy' %} selected{% endif %}>TLS 1.1 and up — for old equipment</option>
         </select>
-        <small>How the servers in this backend are reached.</small>
       </label>
-      <label><span class="field-title">Session cookie <span class="optional">(optional)</span></span><input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Case-sensitive, empty means no persistence.</small></label>
-      <label><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>Connections one server takes at once; the rest queue for 5 s.</small></label>
-      <label><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; must be longer than the <span class="slow-start-interval" data-default="{{ check_interval }}">{{ form.health_interval or check_interval }}</span> check interval.</small></label>
+      <label{{ when('protocol', 'http https') }}><span class="field-title">Session cookie <span class="optional">(optional)</span></span><input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Empty means no persistence.</small></label>
+      <label><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>The rest queue for 5 s.</small></label>
+      <label><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; longer than the <span class="slow-start-interval" data-default="{{ check_interval }}">{{ form.health_interval or check_interval }}</span> check interval.</small></label>
     </div>
-    {#
-      A setting with three boxes needs the room to be one thing. Left among the
-      single fields it read as three of them, whatever the heading said - so it
-      gets a rule and a row of its own, the way the reachable pair and the
-      maintenance group do.
-    #}
-    <div class="form-grid form-grid-ruled form-grid-fixed">
-      {#
-        One setting in three boxes, not three settings. A path on its own has
-        nowhere to send anything and a target on its own says nothing about
-        which requests it applies to - and the engine refuses both halves - so
-        reading them as separate optional fields was the form's own fault.
+    {% endcall %}
 
-        The status is greyed out until the pair carries something, because
-        until then there is no redirect for it to be the status of.
+    {% call group(groups.redirect, when('protocol', 'http https')) %}
+    <div class="form-grid">
+      {#
+        One setting in three boxes, not three settings. The status is greyed
+        out until the pair carries something, because until then there is no
+        redirect for it to be the status of.
       #}
       <div class="field field-wide">
-        <span class="field-title">Redirect <span class="optional">(optional)</span></span>
         <div class="field-row">
           <label class="sub-field"><span>Path</span><input name="redirect_path" value="{{ form.redirect_path }}" placeholder="/old"></label>
           <label class="sub-field redirect-only"><span>Match</span>
@@ -235,98 +179,61 @@
             </select>
           </label>
         </div>
-        <small>Answered with a redirect instead of reaching the backend; the URL replaces the whole address. Exact matches one path, prefix also everything under it.</small><small>301 and 302 may turn a POST into a GET; 307 and 308 do not.</small>
+        <small>Answered instead of reaching the backend; the URL replaces the whole address. 301 and 302 may turn a POST into a GET; 307 and 308 do not.</small>
       </div>
     </div>
-    {#
-      What is done to the traffic on the way through. Not about choosing a
-      server, which is what everything above this rule decides.
+    {% endcall %}
 
-      How the backend is *reached* used to be down here beside the headers. It is
-      a property of the backend rather than of the traffic passing through it, so
-      it sits with the servers it describes - and beside the health check it is
-      read against, which is the question it is most often confused with.
-    #}
-    <div class="form-grid form-grid-ruled form-grid-fixed">
+    {% call group(groups.headers, when('protocol', 'http https')) %}
+    <div class="form-grid">
       <label><span class="field-title">Request headers <span class="optional">(optional)</span></span><textarea name="request_headers" rows="3" placeholder="X-Tenant: acme&#10;+X-Trace: 1&#10;-X-Debug">{{ form.request_headers }}</textarea><small>One per line. <code>Name: value</code> sets, <code>+Name: value</code> adds, <code>-Name</code> removes.</small></label>
       <label><span class="field-title">Response headers <span class="optional">(optional)</span></span><textarea name="response_headers" rows="3" placeholder="X-Frame-Options: DENY&#10;-Server">{{ form.response_headers }}</textarea><small>Same three shapes, on the way back out.</small></label>
     </div>
+    {% endcall %}
+    </div>
   </section>
 
-  <section class="cluster-card {{ accent | accent_class }}">
+  <section class="cluster-card object-card {{ accent | accent_class }}">
     <header class="cluster-header">
       <div class="cluster-identity"><div class="section-title"><h3>Health check <span class="optional">(optional)</span></h3></div></div>
-      {#
-        The button asks the nodes, and nothing here reaches one: it wakes the
-        poller, which already holds the identity and already asks both nodes.
-        Only on the editor - the preview page writes to no cluster and has no
-        nodes to ask.
-      #}
       {% if backend_health is defined %}<button type="submit" name="action" value="recheck" class="secondary-button">Test health check</button>{% endif %}
     </header>
     <div class="form-grid">
-      {#
-        One box for what the check is. `https` is an http check that speaks
-        TLS, which is how the backend above says the same thing - and a second box
-        beside it asked one question twice.
-
-        No help text. The words are the backend's own and mean what they say
-        there; a sentence under them would be the form explaining its own
-        vocabulary to itself.
-      #}
       <label>Type
         <select name="health_type">
           {% for value, label in choices.health_types %}<option value="{{ value }}"{% if form.health_type == value %} selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
       </label>
-      <label><span class="field-title">Port <span class="optional">(optional)</span></span><input name="health_port" value="{{ form.health_port }}" placeholder="the server's own"><small>Empty means the server's traffic port.</small></label>
-      <label><span class="field-title">Path <span class="optional">(optional)</span></span><input name="health_path" value="{{ form.health_path }}" placeholder="/healthz"></label>
-      <label><span class="field-title">Host header <span class="optional">(optional)</span></span><input name="health_host" value="{{ form.health_host }}" placeholder="app.example.com"><small>Needed when the backend serves several names, or the check gets a 404.</small></label>
+      <label{{ when('health_type', 'http https') }}><span class="field-title">Path <span class="optional">(optional)</span></span><input name="health_path" value="{{ form.health_path }}" placeholder="/healthz"></label>
+      <label{{ when('health_type', 'http https') }}><span class="field-title">Expected status <span class="optional">(optional)</span></span><input name="health_expect_status" value="{{ form.health_expect_status }}" size="10" placeholder="any 2xx or 3xx"><small>Such as <code>204</code>.</small></label>
+      <label{{ when('health_type', 'tcp tcp-tls') }}><span class="field-title">Send <span class="optional">(optional)</span></span><input name="health_send" value="{{ form.health_send }}" placeholder="PING\r\n"><small>Written once the connection is up.</small></label>
+      <label{{ when('health_type', 'tcp tcp-tls') }}><span class="field-title">Expect <span class="optional">(optional)</span></span><input name="health_expect" value="{{ form.health_expect }}" placeholder="PONG"><small>Text the answer must contain.</small></label>
     </div>
-    {#
-      What counts as a good answer, and whether the check does its own TLS.
 
-      The TLS box is not the backend's - they are different layers, and the
-      question "does the check follow the backend" has a footnote. HAProxy sends
-      checks in SSL automatically for a backend reached over SSL, but only while
-      the check goes to the traffic port; a check port breaks the inheritance,
-      which is what the generator writes `check-ssl` for. This box is the other
-      case: a plain backend whose health endpoint speaks TLS, or a tcp backend to be
-      checked by handshake.
+    <div class="form-groups">
+    {% call group(groups.check, when('health_type', 'http https tcp tcp-tls')) %}
+    <div class="form-grid">
+      <label><span class="field-title">Port <span class="optional">(optional)</span></span><input name="health_port" value="{{ form.health_port }}" placeholder="the server's own"></label>
+      <label{{ when('health_type', 'http https') }}><span class="field-title">Host header <span class="optional">(optional)</span></span><input name="health_host" value="{{ form.health_host }}" placeholder="app.example.com"><small>When the backend serves several names.</small></label>
+      <label{{ when('health_type', 'http https') }}><span class="field-title">Expected body <span class="optional">(optional)</span></span><input name="health_expect_body" value="{{ form.health_expect_body }}" placeholder="ok"><small>Checked as well as the status.</small></label>
+    </div>
+    {% endcall %}
 
-      Left empty, a check passes on any 2xx or 3xx - which is HAProxy's rule
-      and not this form's, so nothing is written into the object to say it.
-    #}
-    <div class="form-grid form-grid-ruled">
-      <label><span class="field-title">Expected status <span class="optional">(optional)</span></span><input name="health_expect_status" value="{{ form.health_expect_status }}" size="10" placeholder="any 2xx or 3xx"><small>One status the server must answer with, such as <code>204</code>.</small></label>
-      <label><span class="field-title">Expected body <span class="optional">(optional)</span></span><input name="health_expect_body" value="{{ form.health_expect_body }}" placeholder="ok"><small>Text the answer must contain. Checked as well as the status, not instead of it.</small></label>
+    {% call group(groups.timing, when('health_type', 'http https tcp tcp-tls')) %}
+    <div class="form-grid">
+      <label><span class="field-title">Check interval <span class="optional">(optional)</span></span><input name="health_interval" value="{{ form.health_interval }}" size="10" placeholder="{{ check_interval }}"></label>
+      <label><span class="field-title">Checks to rise <span class="optional">(optional)</span></span><input name="health_rise" value="{{ form.health_rise }}" size="10" placeholder="{{ check_rise }}"><small>Good answers before a server is used again.</small></label>
+      <label><span class="field-title">Checks to fall <span class="optional">(optional)</span></span><input name="health_fall" value="{{ form.health_fall }}" size="10" placeholder="{{ check_fall }}"><small>Failures before a server is taken out.</small></label>
     </div>
     {#
-      A tcp check that sends nothing is a connect check, which is what the type
-      already means. These two turn it into a conversation.
+      How often the check runs while a server changes state: HAProxy's
+      `fastinter` and `downinter`, a pair of their own under the three above.
     #}
-    <div class="form-grid form-grid-ruled">
-      <label><span class="field-title">Send <span class="optional">(optional, tcp)</span></span><input name="health_send" value="{{ form.health_send }}" placeholder="PING\r\n"><small>Written to the server once the connection is up.</small></label>
-      <label><span class="field-title">Expect <span class="optional">(optional, tcp)</span></span><input name="health_expect" value="{{ form.health_expect }}" placeholder="PONG"><small>Text the server must answer with for the check to pass.</small></label>
+    <div class="form-grid">
+      <label><span class="field-title">Fast interval <span class="optional">(optional)</span></span><input name="health_fast_interval" value="{{ form.health_fast_interval }}" size="10" placeholder="{{ check_fast_interval }}"><small>While a server goes up or down.</small></label>
+      <label><span class="field-title">Down interval <span class="optional">(optional)</span></span><input name="health_down_interval" value="{{ form.health_down_interval }}" size="10" placeholder="{{ check_down_interval }}"><small>While a server is down.</small></label>
     </div>
-    {#
-      How often, and how many answers in a row it takes to change a server's
-      mind. Left empty they are HAProxy's own values, written out in the
-      placeholders - so the boxes say what will happen without the form having
-      to write it into every object it saves.
-    #}
-    <div class="form-grid form-grid-ruled form-grid-fixed">
-      <label><span class="field-title">Check interval <span class="optional">(optional)</span></span><input name="health_interval" value="{{ form.health_interval }}" size="10" placeholder="{{ check_interval }}"><small>How often each server is checked, such as <code>5s</code>.</small></label>
-      <label><span class="field-title">Checks to rise <span class="optional">(optional)</span></span><input name="health_rise" value="{{ form.health_rise }}" size="10" placeholder="{{ check_rise }}"><small>Good answers in a row before a server is used again.</small></label>
-      <label><span class="field-title">Checks to fall <span class="optional">(optional)</span></span><input name="health_fall" value="{{ form.health_fall }}" size="10" placeholder="{{ check_fall }}"><small>Failures in a row before a server is taken out. Too low, and one slow answer does it.</small></label>
-    </div>
-    {#
-      HAProxy's `fastinter` and `downinter`, with what the generator writes when
-      they are empty as the placeholder - ours, not HAProxy's.
-    #}
-    <div class="form-grid form-grid-fixed">
-      <label><span class="field-title">Fast interval <span class="optional">(optional)</span></span><input name="health_fast_interval" value="{{ form.health_fast_interval }}" size="10" placeholder="{{ check_fast_interval }}"><small>Between checks while a server goes up or down.</small></label>
-      <label><span class="field-title">Down interval <span class="optional">(optional)</span></span><input name="health_down_interval" value="{{ form.health_down_interval }}" size="10" placeholder="{{ check_down_interval }}"><small>Between checks while a server is down.</small></label>
+    {% endcall %}
     </div>
     {#
       HAProxy's own verdict, from the nodes, on the backend this object names. It

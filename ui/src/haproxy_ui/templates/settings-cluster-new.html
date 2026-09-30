@@ -9,7 +9,7 @@
   status and takes all of it back if either does not answer as itself.
 #}
 <section class="page-heading">
-  <div class="heading-title"><h1>Create cluster</h1><p class="page-lede"><a href="/settings#nodes">Settings</a></p></div>
+  <div class="heading-title"><h1>Create cluster</h1><p class="page-lede">{% if creation %}<a href="/settings#nodes">Settings</a>{% else %}Run 04-node-prepare on both new nodes first, then paste the two blocks it prints.{% endif %}</p></div>
 </section>
 
 {% if problem %}
@@ -55,12 +55,12 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   <section class="cluster-card">
     <div class="form-grid">
-      <label><span class="field-title">ID</span><input name="cluster" value="{{ form.cluster }}" maxlength="63" spellcheck="false" required></label>
-      <label><span class="field-title">Display name</span><input name="display_name" value="{{ form.display_name }}" maxlength="64" required></label>
-      <label><span class="field-title">VIP</span><input name="vip" value="{{ form.vip }}" maxlength="64" spellcheck="false" required></label>
-      <label><span class="field-title">Prefix</span><input name="address_prefix" value="{{ form.address_prefix }}" maxlength="3" inputmode="numeric" spellcheck="false"></label>
-      <label><span class="field-title">Interface</span><input name="address_interface" value="{{ form.address_interface }}" maxlength="63" spellcheck="false"></label>
-      <label><span class="field-title">Node path</span><input name="node_path" value="{{ form.node_path }}" maxlength="63" spellcheck="false" placeholder="Same as the ID"></label>
+      <label><span class="field-title">Cluster ID</span><input name="cluster" value="{{ form.cluster }}" maxlength="63" spellcheck="false" placeholder="edge" required></label>
+      <label><span class="field-title">Display name</span><input name="display_name" value="{{ form.display_name }}" maxlength="64" placeholder="Edge" required></label>
+      <label><span class="field-title">VIP</span><input name="vip" value="{{ form.vip }}" maxlength="64" spellcheck="false" placeholder="203.0.113.10" required></label>
+      <label><span class="field-title">VIP prefix</span><input name="address_prefix" value="{{ form.address_prefix }}" maxlength="3" inputmode="numeric" spellcheck="false" placeholder="24"></label>
+      <label><span class="field-title">VIP interface</span><input name="address_interface" value="{{ form.address_interface }}" maxlength="63" spellcheck="false" placeholder="eth0"></label>
+      <label><span class="field-title">Node path on the manager</span><input name="node_path" value="{{ form.node_path }}" maxlength="63" spellcheck="false" placeholder="Same as the ID"></label>
       <label><span class="field-title">Default certificate</span><select name="default_certificate" required><option value=""></option>{% for identifier in certificates %}<option value="{{ identifier }}"{% if identifier == form.default_certificate %} selected{% endif %}>{{ identifier }}</option>{% endfor %}</select></label>
     </div>
     <div class="form-grid">

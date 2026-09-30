@@ -171,6 +171,16 @@ class PathPolicy:
     #
     interface_account: str | None = None
 
+    #
+    # The accounts the nodes fetch as (B211): `rrsync -ro` of the published
+    # tree and of the certificate tree, one `authorized_keys` line per node.
+    # Named here because adding or removing a node writes those lines, and the
+    # names exist nowhere else a command reads - the installer chose them. A
+    # policy without them has nodes added by hand, as before.
+    #
+    pull_account: str | None = None
+    cert_pull_account: str | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class AcmePolicy:
@@ -1031,6 +1041,8 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
             "acme",
             "ndes",
             "interface_account",
+            "pull_account",
+            "cert_pull_account",
         },
         "runtime policy",
     )
@@ -1064,6 +1076,8 @@ def load_policy(path: Path = DEFAULT_POLICY_PATH, *, require_secure: bool = True
         acme=_acme_policy(data),
         ndes=_ndes_policy(data),
         interface_account=_optional_account(data, "interface_account"),
+        pull_account=_optional_account(data, "pull_account"),
+        cert_pull_account=_optional_account(data, "cert_pull_account"),
     )
 
 

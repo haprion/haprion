@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from haproxy_mgmt import helper_socket
-from haproxy_mgmt.cli import backup_job_ask, node_restore_ask
+from haproxy_mgmt.cli import backup_job_ask, node_ask, node_restore_ask
 
 REQUEST_ID = "11111111-1111-1111-1111-111111111111"
 CLIENTS: tuple[tuple[Any, dict[str, Any]], ...] = (
@@ -28,6 +28,7 @@ CLIENTS: tuple[tuple[Any, dict[str, Any]], ...] = (
         {"operation": "node_restore", "parameters": {"run": "r260925-abcdef12", "confirm": "n1"}},
     ),
     (backup_job_ask, {"operation": "backup_run", "parameters": {}}),
+    (node_ask, {"operation": "cluster_node", "parameters": {"action": "remove", "node": "n1"}}),
 )
 
 

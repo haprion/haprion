@@ -450,19 +450,70 @@ generate_pull_key "$NODE_CONFIG_PULL_KEY" "haproxy-manager config pull"
 [[ -n "${NODE_CERT_PULL_KEY:-}" ]] \
     && generate_pull_key "$NODE_CERT_PULL_KEY" "haproxy-manager cert pull"
 
+step "Enrollment block"
+
+#
+# Everything the management host needs to know about this node, on one line:
+# its name and cluster, the name it suggests being reached at, its host key
+# and the public halves of the two fetch keys (B211). The same JSON and the
+# same encoding as `node_enrollment.render` on the manager, which a test holds
+# together - the manager reads this block, and refuses one it cannot.
+#
+# Copying it from this console is the trust: the manager takes the host key
+# from here rather than asking the network who this node is.
+#
+HOST_KEY_FILE="${HOST_KEY_FILE:-/etc/ssh/ssh_host_ed25519_key.pub}"
+[[ -r "$HOST_KEY_FILE" ]] || die "${HOST_KEY_FILE} is missing; sshd has no ed25519 host key"
+ENROLLMENT_BLOCK="$(/usr/bin/python3 - "$CLUSTER" "$(hostname)" "$(hostname -f)" \
+    "$HOST_KEY_FILE" "${NODE_CONFIG_PULL_KEY}.pub" "${NODE_CERT_PULL_KEY:+${NODE_CERT_PULL_KEY}.pub}" <<'PY'
+import base64
+import json
+import sys
+
+cluster, name, host, host_key, config_key, cert_key = sys.argv[1:7]
+
+
+def public(path):
+    return " ".join(open(path, encoding="utf-8").read().split()[:2])
+
+
+document = {
+    "cluster": cluster,
+    "name": name,
+    "host": host,
+    "host_key": public(host_key),
+    "config_pull_key": public(config_key),
+}
+if cert_key:
+    document["cert_pull_key"] = public(cert_key)
+encoded = base64.urlsafe_b64encode(json.dumps(document, separators=(",", ":")).encode())
+print("haproxy-node-v1:" + encoded.decode())
+PY
+)"
+
 echo
 log "step 4 done on this node"
 
 cat <<INTRO
 
-Two things left, both by hand, both on machines this node cannot write to.
+Two things left, both on machines this node cannot write to.
 
-1. On THIS node: paste the authorized_keys lines printed by step 3. The file is
-   root's, as is the whole home; edit it with sudo.
+1. On THIS node: paste the authorized_keys lines printed by step 3 (the
+   interface's Nodes card shows them too). The file is root's, as is the whole
+   home; edit it with sudo.
 
-2. On the MANAGEMENT host: add the lines below. rrsync is what limits each key
-   to reading one tree - without it the forced command is a full rsync, which is
-   a shell in all but name.
+2. On the MANAGEMENT host: paste this block into the cluster's Nodes card under
+   Settings, or give it to  sudo haproxy-node add -c ${CLUSTER} --host <name>
+   on stdin. The manager then asks this node for its status, and takes the
+   change back if the node does not answer as itself.
+
+${ENROLLMENT_BLOCK}
+
+   Host key: $(ssh-keygen -lf "$HOST_KEY_FILE" | cut -d' ' -f2)
+
+Where the runtime policy names no pull_account, add these lines by hand instead.
+rrsync is what limits each key to reading one tree - without it the forced
+command is a full rsync, which is a shell in all but name.
 
 INTRO
 

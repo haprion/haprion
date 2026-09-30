@@ -685,6 +685,18 @@ def check_cert_scep_semantics(document: dict[str, object], path: Path) -> None:
     )
 
 
+def check_cluster_list_semantics(document: dict[str, object], path: Path) -> None:
+    result = document["result"]
+    if result is None:
+        return
+    assert isinstance(result, dict)
+    ids = [entry["id"] for entry in result["clusters"]]
+    # An ID is what every other row is keyed by; two of one would merge two
+    # clusters on every page.
+    if len(set(ids)) != len(ids):
+        raise AssertionError(f"{path}: a cluster list names one cluster twice")
+
+
 def check_cluster_node_semantics(document: dict[str, object], path: Path) -> None:
     result = document["result"]
     if result is None:
@@ -931,6 +943,7 @@ SEMANTIC_CHECKS = {
     "cert_scep": check_cert_scep_semantics,
     "cert_receiver": check_cert_receiver_semantics,
     "cluster_node": check_cluster_node_semantics,
+    "cluster_list": check_cluster_list_semantics,
     "ui_tls_install": check_ui_tls_install_semantics,
     "oidc": check_oidc_semantics,
     "node_restore_prepare": check_node_restore_prepare_semantics,
@@ -1004,6 +1017,8 @@ def make_semantically_invalid(document: dict[str, object]) -> dict[str, object]:
         result["nodes"][0]["outcome"] = "failed"
     elif operation == "backup_schedule":
         result["schedule"]["calendar"] = "*-*-* 00:00:00"
+    elif operation == "cluster_list":
+        result["clusters"] = result["clusters"] + [result["clusters"][0]]
     elif operation == "cluster_node":
         result["host_key_fingerprint"] = (
             None if result["action"] == "added" else "SHA256:" + "A" * 43

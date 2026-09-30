@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "ok": true,
+  "outcome": "done",
+  "operation": "cluster_list",
+  "cluster": null,
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "result": {
+    "clusters": [
+      { "id": "alpha", "display_name": "Alpha", "nodes": 2 },
+      { "id": "beta", "display_name": "Beta", "nodes": 3 }
+    ]
+  },
+  "warnings": [],
+  "error": null
+}

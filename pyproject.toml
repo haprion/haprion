@@ -25,6 +25,7 @@ dev = [
 
 [project.scripts]
 haproxy-cluster-config = "haproxy_mgmt.cli.cluster_config:main"
+haproxy-cluster-list-helper = "haproxy_mgmt.cli.cluster_list_helper:main"
 haproxy-render-sysusers = "haproxy_mgmt.cli.render_sysusers:main"
 haproxy-validate-candidate-helper = "haproxy_mgmt.cli.validate_candidate_helper:main"
 haproxy-history-reset = "haproxy_mgmt.cli.history_reset:main"

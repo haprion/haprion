@@ -46,6 +46,16 @@ ABUSE_WINDOW = re.compile(r"^[1-9][0-9]{0,3}(s|m)$")
 DEFAULT_ABUSE_WINDOW = "10s"
 NODE_PATH = re.compile(r"^[a-z][a-z0-9_-]{0,62}$")
 NAME = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
+#
+# How many nodes one cluster may have. keepalived sets no limit - one VRRP
+# instance shares its addresses between any number of nodes by priority - so
+# this is a figure nobody is meant to reach, set where it was measured to hold
+# (2026-09-30, B211): the pages draw eight without scrolling sideways, and the
+# poller reads a node in about 0.3 s, one after another. Two is the floor
+# because a cluster of one has nothing to fail over to.
+#
+MIN_NODES = 2
+MAX_NODES = 8
 CERTIFICATE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
 
 
@@ -1482,8 +1492,10 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
             cidrs.append(str(network))
 
         raw_nodes = raw.get("nodes")
-        if not isinstance(raw_nodes, list) or len(raw_nodes) != 2:
-            raise ConfigError(f"{location}.nodes must contain exactly two nodes")
+        if not isinstance(raw_nodes, list) or not MIN_NODES <= len(raw_nodes) <= MAX_NODES:
+            raise ConfigError(
+                f"{location}.nodes must contain between {MIN_NODES} and {MAX_NODES} nodes"
+            )
         nodes: list[Node] = []
         for index, raw_node_value in enumerate(raw_nodes):
             node_location = f"{location}.nodes[{index}]"
@@ -1501,7 +1513,9 @@ def load_runtime_config(policy: PathPolicy, *, require_secure: bool = True) -> R
                     ),
                 )
             )
-        if len({node.name for node in nodes}) != 2 or len({node.mgmt_host for node in nodes}) != 2:
+        if len({node.name for node in nodes}) != len(nodes) or len(
+            {node.mgmt_host for node in nodes}
+        ) != len(nodes):
             raise ConfigError(f"{location}.nodes must have unique names and management hosts")
 
         traffic_logging = raw.get("traffic_logging", False)

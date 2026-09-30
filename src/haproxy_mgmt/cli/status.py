@@ -47,7 +47,7 @@ USAGE = (
 # operator reading this is deciding whether to run a deploy.
 #
 RELEASE_STATE_TEXT = {
-    "converged": "both nodes run the published version",
+    "converged": "every node runs the published version",
     "behind": "at least one node is not running the published version",
     "incomplete": "a node could not be read, so this cannot be confirmed",
     "unknown": "nothing published, or no node said which release it runs",

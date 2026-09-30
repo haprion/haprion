@@ -455,6 +455,13 @@ clusters:
 `node_path` is the subdirectory a node fetches from on the management host. It is the only
 per-cluster value the node side needs.
 
+A cluster has **between two and eight nodes**. keepalived sets no limit - one VRRP instance shares
+its addresses between any number of nodes by priority, so a third node adds a standby, not capacity -
+and eight is a ceiling nobody is meant to reach rather than a size to aim for: the pages were measured
+to draw eight nodes per cluster without scrolling sideways, and every node costs the poller a read
+(below). Two is the floor, because a cluster of one has nothing to fail over to. Each node's own
+`keepalived.conf` (its priority and its `unicast_peer` list) is not written by this project.
+
 There is **no hard limit on the number of clusters** in the engine, interface configuration or
 database schema. Two is the recommended starting shape - commonly one internal and one external
 trust zone - not a maximum.
@@ -463,8 +470,9 @@ trust zone - not a maximum.
 and twenty nodes.** Nothing enforces that figure; it is where the manager's reads, which run one
 after another, stop being comfortable:
 
-- The poller reads cluster by cluster and node by node. At two clusters a pass takes about two
-  seconds, the status read dominating, against a default `interval_seconds` of 20. A node that is
+- The poller reads cluster by cluster and node by node. At two clusters of two nodes a pass takes
+  about two and a half seconds against a default `interval_seconds` of 20: the status read costs
+  about 0.3 s per node, and the cluster's other readings about 0.7 s whatever its size. A node that is
   switched off adds five seconds to every pass (the SSH connect timeout); one that connects and
   then never answers adds up to sixty (the status read's own limit). Either delays every
   cluster's reading, not only its own.

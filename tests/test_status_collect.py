@@ -276,6 +276,50 @@ class CollectTests(unittest.TestCase):
         self.assertEqual(envelope["warnings"][0]["node"], "node-b")
 
 
+class MoreThanTwoNodes(unittest.TestCase):
+    """A cluster of three reads and sums up like a pair (B211)."""
+
+    THREE = (*NODES, Node(name="node-c", mgmt_host="node-c.example.com"))
+
+    def read(self, **answers: object):
+        return collect(self.THREE, answering(**answers), target=TARGET)
+
+    def test_one_owner_among_three_is_a_single_owner_and_converged(self) -> None:
+        report = self.read(
+            **{
+                name: node_status(name, owner=name == "node-b", release_hash=TARGET.hash)
+                for name in ("node-a", "node-b", "node-c")
+            }
+        )
+
+        summary = report.result["summary"]
+        self.assertEqual(summary["configured_nodes"], 3)
+        self.assertEqual(summary["vip_state"], str(VipState.SINGLE_OWNER))
+        self.assertEqual(summary["vip_owners"], ["node-b"])
+        self.assertEqual(summary["release_state"], "converged")
+
+    def test_two_owners_among_three_is_split_brain(self) -> None:
+        report = self.read(
+            **{
+                name: node_status(name, owner=name != "node-b", release_hash=TARGET.hash)
+                for name in ("node-a", "node-b", "node-c")
+            }
+        )
+
+        self.assertEqual(report.result["summary"]["vip_state"], str(VipState.SPLIT_BRAIN))
+
+    def test_the_third_node_behind_makes_the_cluster_behind(self) -> None:
+        report = self.read(
+            **{
+                "node-a": node_status("node-a", owner=True, release_hash=TARGET.hash),
+                "node-b": node_status("node-b", owner=False, release_hash=TARGET.hash),
+                "node-c": node_status("node-c", owner=False, release_hash="b" * 40),
+            }
+        )
+
+        self.assertEqual(report.result["summary"]["release_state"], "behind")
+
+
 class AStatusReadIsBounded(unittest.TestCase):
     def test_a_node_that_connects_and_never_answers_is_abandoned(self) -> None:
         #

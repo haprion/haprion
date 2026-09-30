@@ -99,6 +99,37 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "unique names"), self.temporary_runtime(mutate):
             pass
 
+    def test_a_cluster_has_between_two_and_eight_nodes(self):
+        def nodes(count):
+            def mutate(data):
+                data["clusters"]["alpha"]["nodes"] = [
+                    {"name": f"node-{index}", "mgmt_host": f"node-{index}.example.com"}
+                    for index in range(count)
+                ]
+
+            return mutate
+
+        for count in (2, 3, 8):
+            with self.subTest(count=count), self.temporary_runtime(nodes(count)) as runtime:
+                self.assertEqual(len(runtime.cluster("alpha").nodes), count)
+        for count in (0, 1, 9):
+            with (
+                self.subTest(count=count),
+                self.assertRaisesRegex(ConfigError, "between 2 and 8 nodes"),
+                self.temporary_runtime(nodes(count)),
+            ):
+                pass
+
+    def test_a_third_node_may_not_share_a_host_with_the_first(self):
+        def mutate(data):
+            first = data["clusters"]["alpha"]["nodes"][0]
+            data["clusters"]["alpha"]["nodes"].append(
+                {"name": "node-c", "mgmt_host": first["mgmt_host"]}
+            )
+
+        with self.assertRaisesRegex(ConfigError, "unique names"), self.temporary_runtime(mutate):
+            pass
+
     def test_trust_all_network_is_rejected(self):
         def mutate(data):
             data["clusters"]["alpha"]["trusted_proxy_cidrs"] = ["192.0.2.0/0"]

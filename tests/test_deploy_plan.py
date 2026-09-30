@@ -26,6 +26,38 @@ from haproxy_mgmt.deploy_plan import (
 from tests.plan_harness import BEHIND, TARGET, drive, node, pair
 
 
+class MoreThanTwoNodesTests(unittest.TestCase):
+    """Every standby first in configured order, the owner last (B211)."""
+
+    def test_the_owner_in_the_middle_is_still_deployed_last(self) -> None:
+        state = pair(
+            VipState.SINGLE_OWNER,
+            node("node-a", owner=False),
+            node("node-b", owner=True),
+            node("node-c", owner=False),
+        )
+
+        trace, outcome, code = drive([state] * 4)
+
+        self.assertEqual(trace, ["deploy:node-a", "deploy:node-c", "deploy:node-b"])
+        self.assertIs(outcome, Outcome.DONE)
+        self.assertEqual(code, 0)
+
+    def test_one_unreadable_node_of_three_leaves_the_others_reconciled(self) -> None:
+        state = pair(
+            VipState.INCOMPLETE,
+            node("node-a", owner=True),
+            node("node-b", ok=False, owner=None, hash_=None),
+            node("node-c"),
+        )
+
+        trace, outcome, code = drive([state] * 3)
+
+        self.assertEqual(trace, ["deploy:node-a", "skip:node-b", "deploy:node-c"])
+        self.assertIs(outcome, Outcome.PARTIAL)
+        self.assertEqual(code, 69)
+
+
 class BothNodesReadableTests(unittest.TestCase):
     """Table one: both nodes return usable status."""
 

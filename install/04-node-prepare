@@ -396,8 +396,8 @@ else
 
     if grep -qE '^\s*state\s+MASTER' "$KA_CONF"; then
         warn "this node is configured as state MASTER."
-        warn "  Both nodes should be BACKUP with nopreempt, so a node that comes"
-        warn "  back after a failure does not take live traffic from its peer."
+        warn "  Every node should be BACKUP with nopreempt, so a node that comes"
+        warn "  back after a failure does not take live traffic from the others."
     else
         log "  ok       not configured as MASTER"
     fi

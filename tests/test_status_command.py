@@ -365,7 +365,7 @@ class CallerTests(HelperFixture):
         _, out, _ = self.run_caller(["-c", "alpha"], completed(self.envelope()))
         self.assertIn("Version:      8   (published)", out)
         self.assertIn("Published:      8", out)
-        self.assertIn("both nodes run the published version", out)
+        self.assertIn("every node runs the published version", out)
 
     def test_the_address_list_is_named_when_it_is_the_half_that_is_behind(self) -> None:
         """Otherwise BEHIND on a matching version reads as a contradiction."""

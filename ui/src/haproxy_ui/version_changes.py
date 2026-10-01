@@ -12,7 +12,17 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from haproxy_mgmt.object_manifest import REPOSITORY_PATH as MANIFEST_PATH
+
 type LineKind = Literal["hunk", "add", "del", "ctx"]
+
+#
+# The engine's own bookkeeping, not configuration: fingerprints per object that
+# let two releases be compared. Every object publish changes it, so it was the
+# same block of hashes under every version (2026-10-01). Left out of the
+# page and its counts; Git and `haproxy-list --diff` still show it.
+#
+NOT_SHOWN = frozenset({MANIFEST_PATH})
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +68,8 @@ def build(diff: Mapping[str, Any] | None) -> ChangesView | None:
     raw_files = diff.get("files")
     for raw in raw_files if isinstance(raw_files, list) else []:
         if not isinstance(raw, Mapping) or not isinstance(raw.get("path"), str):
+            continue
+        if raw["path"] in NOT_SHOWN:
             continue
         raw_lines = raw.get("lines")
         lines = tuple(

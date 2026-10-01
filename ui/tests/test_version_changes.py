@@ -45,6 +45,19 @@ DIFF = {
             "lines": ["@@ -1,2 +1,2 @@", " name: app", "-port: 80", "+port: 8080"],
         },
         {
+            "path": "managed/manifest.json",
+            "status": "modified",
+            "old_path": None,
+            "added": 2,
+            "removed": 2,
+            "binary": False,
+            "lines": [
+                "@@ -1 +1 @@",
+                '-  "fingerprint": "sha256:aa"',
+                '+  "fingerprint": "sha256:bb"',
+            ],
+        },
+        {
             "path": "big.cfg",
             "status": "modified",
             "old_path": None,
@@ -67,6 +80,11 @@ class TheLines(unittest.TestCase):
         )
         self.assertEqual((shown.added, shown.removed), (9001, 1))
         self.assertTrue(shown.files[1].left_out, "counted, its lines not kept")
+        self.assertNotIn(
+            "managed/manifest.json",
+            [item.path for item in shown.files],
+            "bookkeeping, not configuration",
+        )
         self.assertIsNone(version_changes.build(None), "not fetched yet")
 
 
@@ -116,7 +134,7 @@ class ThePage(LoginTestCase):
         response, _ = self.page("/history")
         self.assertIn(
             f'<a class="secondary-button" href="/history/alpha/versions/{1:040d}" '
-            'data-version-changes>Changes</a><form method="post" action="/operations">',
+            'data-version-changes>Diff</a><form method="post" action="/operations">',
             response.text,
         )
 

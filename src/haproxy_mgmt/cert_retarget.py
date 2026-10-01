@@ -46,13 +46,14 @@ batch.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import cert_registry
+from haproxy_mgmt import cert_pending, cert_registry
 from haproxy_mgmt.cert_delete import (
     DeleteError,
     Guards,
@@ -71,6 +72,7 @@ from haproxy_mgmt.cert_publish import (
     prune_receiver_directory,
     publish,
     publish_lock,
+    roll_out,
 )
 from haproxy_mgmt.certificates import certificate_path
 from haproxy_mgmt.config import (
@@ -361,11 +363,29 @@ def retarget(
         # a certificate another cluster already carries writes nothing new,
         # and the new cluster's nodes would never be told.
         #
-        deployments = tuple(
-            Deployment(cluster_id, deployer(cluster_id))
-            for cluster_id in touched_clusters
-            if deploy and deployer is not None
-        )
+        #
+        # And every cluster still marked from an earlier run, after these:
+        # a retarget whose rollout failed is finished by running it again,
+        # when the registry already says the cluster is added.
+        #
+        deployments: tuple[Deployment, ...] = ()
+        if deploy and deployer is not None:
+            registry_path = policy.certificate_registry
+            assert registry_path is not None  # noqa: S101 - refused above
+            pending_path = cert_pending.pending_path(registry_path)
+            try:
+                with publish_lock(lock_path):
+                    due = cert_pending.Ledger(
+                        pending_path,
+                        like=registry_path,
+                        known=_load(policy, require_secure).clusters,
+                    ).order(touched_clusters)
+            except (OSError, PublishError):
+                due = [(cluster_id, 0) for cluster_id in touched_clusters]
+            results, _unsettled = roll_out(
+                due, deployer, pending_path=pending_path, like=registry_path, lock_path=lock_path
+            )
+            deployments = tuple(Deployment(r.cluster, r.exit_code) for r in results)
         return Report("add", tuple(outcomes), deployments)
 
     #
@@ -419,6 +439,34 @@ def _add(
     assert registry_path is not None  # noqa: S101
     outcomes: list[CertificateOutcome] = []
     touched: list[str] = []
+    #
+    # Marked before the registry names them (`cert_pending`). The publisher
+    # cannot do it for us: the cluster PEM is one shared file, so a cluster
+    # added to a certificate another cluster already carries is written
+    # nothing new, and a rollout that then failed would leave no trace a
+    # second run could find - the registry would already say "added".
+    #
+    pending_path = cert_pending.pending_path(registry_path)
+    try:
+        with publish_lock(lock_path):
+            ledger = cert_pending.Ledger(
+                pending_path, like=registry_path, known=_load(policy, require_secure).clusters
+            )
+            ledger.mark(change.clusters)
+    except (OSError, PublishError) as exc:
+        raise RetargetError(
+            "dependency_unavailable",
+            f"cannot record the clusters about to be added: {exc}",
+            exit_code=75
+            if isinstance(exc, PublishError) and exc.code == "operation_locked"
+            else 78,
+        ) from exc
+    marked = {
+        cluster_id: serial
+        for cluster_id, serial in ledger.current.items()
+        if cluster_id in change.clusters and cluster_id not in ledger.before
+    }
+    registered: set[str] = set()
     for certificate_id in certificate_ids:
         runtime = _load(policy, require_secure)
         found = _entry_or_refusal(certificate_id, runtime)
@@ -444,6 +492,7 @@ def _add(
         if not written.changed:
             outcomes.append(CertificateOutcome(certificate_id, "unchanged"))
             continue
+        registered.update(written.added)
         #
         # Re-read rather than patched in memory: the publisher must see
         # exactly what the next renewal's hook will see.
@@ -488,6 +537,22 @@ def _add(
             if cluster_id in change.clusters and cluster_id not in touched:
                 touched.append(cluster_id)
         outcomes.append(CertificateOutcome(certificate_id, "changed", added=written.added))
+    #
+    # A cluster no certificate was added to is no further behind than before.
+    # One that was added stays marked even when publishing failed: its nodes
+    # may be missing the certificate the registry now gives it.
+    #
+    for cluster_id, serial in marked.items():
+        if cluster_id not in registered:
+            # Left marked if this fails: a later rollout finds the nodes current.
+            with contextlib.suppress(OSError, PublishError):
+                cert_pending.settle(
+                    pending_path,
+                    cluster_id,
+                    serial,
+                    like=registry_path,
+                    locked=lambda: publish_lock(lock_path),
+                )
     return outcomes, tuple(touched)
 
 

@@ -73,6 +73,11 @@ class PublishingToMoreTargets(RetargetFixture):
         )
         for name in ("example.com", "shop.example", "keeper-alpha.example", "keeper-beta.example"):
             issue(self.live / name, name)
+        #
+        # The clusters as a renewal leaves them: published and rolled out, so
+        # nothing is still due (`cert_pending`) before the retarget starts.
+        #
+        self.run_publish(self.policy_path, deployer=lambda _cluster_id: 0)
 
     def test_two_certificates_gain_a_cluster_and_it_is_rolled_out_once(self) -> None:
         report = self.retarget(
@@ -86,6 +91,25 @@ class PublishingToMoreTargets(RetargetFixture):
         self.assertEqual(
             [d.as_dict() for d in report.deployments], [{"cluster": "beta", "exit_code": 0}]
         )
+
+    def test_a_failed_rollout_is_finished_by_running_the_same_retarget_again(self) -> None:
+        #
+        # The cluster PEM already exists for alpha, so adding beta writes
+        # nothing new; only the mark made before the registry changed lets
+        # the second run know beta's nodes never took it.
+        #
+        answers = iter((3, 0))
+        self.deployer = lambda cluster_id: (self.deployed.append(cluster_id), next(answers))[1]  # type: ignore[method-assign]
+
+        first = self.retarget(self.policy_path, "add", "example.com", clusters=("beta",))
+        second = self.retarget(self.policy_path, "add", "example.com", clusters=("beta",))
+
+        self.assertEqual([d.exit_code for d in first.deployments], [3])
+        self.assertEqual(second.unchanged, ("example.com",))
+        self.assertEqual(
+            [d.as_dict() for d in second.deployments], [{"cluster": "beta", "exit_code": 0}]
+        )
+        self.assertEqual(self.deployed, ["beta", "beta"])
 
     def test_a_certificate_already_there_is_unchanged_and_costs_no_rollout(self) -> None:
         report = self.retarget(self.policy_path, "add", "example.com", clusters=("alpha",))

@@ -31,7 +31,7 @@ from unittest import mock
 
 import yaml
 
-from haproxy_mgmt import cert_publish
+from haproxy_mgmt import cert_pending, cert_publish
 from haproxy_mgmt.cert_inventory import registry_result
 from haproxy_mgmt.cert_publish import PublishError, publish
 from haproxy_mgmt.cli import cert_publish as command
@@ -640,6 +640,154 @@ class TheCommand(Fixture):
         self.assertEqual(document["outcome"], "failed")
         self.assertIn("not deployed: alpha", document["error"]["message"])
         self.assertTrue((self.dist / "example.com.pem").exists(), "publishing still happened")
+
+    def test_a_retake_finishes_the_rollout_a_failed_run_left(self) -> None:
+        #
+        # The review's acceptance case (2026-09-30, R1): published, the rollout
+        # failed, and the identical command run again. It used to find the
+        # file in place, deploy nothing and answer 0.
+        #
+        issue(self.live / "example.com", "example.com")
+        policy = self.write_config(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        code, _, _ = self.run_command(policy, "--deploy", deployer=lambda _: 69)
+        self.assertEqual(code, 1)
+        published = (self.dist / "example.com.pem").stat().st_mtime_ns
+
+        seen: list[str] = []
+
+        def deployer(cluster_id: str) -> int:
+            seen.append(cluster_id)
+            return 0
+
+        code, out, _ = self.run_command(policy, "--deploy", deployer=deployer)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, ["alpha"])
+        self.assertIn("example.com: unchanged", out, "nothing was issued or rewritten")
+        self.assertEqual((self.dist / "example.com.pem").stat().st_mtime_ns, published)
+
+        seen.clear()
+        self.run_command(policy, "--deploy", deployer=deployer)
+        self.assertEqual(seen, [], "settled once a rollout answered 0")
+
+    def test_a_run_without_deploy_leaves_the_cluster_due(self) -> None:
+        # The interruption between writing and rolling out, at its widest.
+        issue(self.live / "example.com", "example.com")
+        issue(self.live / "example.net", "example.net")
+        policy = self.write_config(
+            {
+                "example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]},
+                "example.net": {"source": {"kind": "acme"}, "clusters": ["beta"]},
+            }
+        )
+        self.run_command(policy, "--certificate", "example.com")
+        seen: list[str] = []
+
+        def deployer(cluster_id: str) -> int:
+            seen.append(cluster_id)
+            return 0
+
+        #
+        # Another certificate's run carries the earlier one's cluster along:
+        # the note is per cluster, and haproxy-cert-deploy rolls out a
+        # cluster's whole set.
+        #
+        self.run_command(policy, "--certificate", "example.net", "--deploy", deployer=deployer)
+        self.assertEqual(seen, ["beta", "alpha"])
+
+    def test_a_cluster_is_marked_before_its_material_is_written(self) -> None:
+        issue(self.live / "example.com", "example.com")
+        policy = self.write_config(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        pending = cert_pending.pending_path(self.root / "certificates.yaml")
+        real = cert_publish.publish_to
+        marked_at_write: list[dict[str, int] | None] = []
+
+        def watching(targets: Any, material: Any) -> Any:
+            marked_at_write.append(cert_pending.read(pending))
+            return real(targets, material)
+
+        with mock.patch.object(cert_publish, "publish_to", watching):
+            self.run_publish(policy)
+
+        self.assertEqual(marked_at_write, [{"alpha": 1}])
+
+    def test_an_unchanged_run_leaves_no_mark_behind(self) -> None:
+        issue(self.live / "example.com", "example.com")
+        policy = self.write_config(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        self.run_command(policy, "--deploy", deployer=lambda _: 0)
+        pending = cert_pending.pending_path(self.root / "certificates.yaml")
+
+        self.run_publish(policy)
+
+        self.assertEqual(cert_pending.read(pending), {})
+        registry = (self.root / "certificates.yaml").stat()
+        self.assertEqual(pending.stat().st_mode & 0o777, registry.st_mode & 0o640)
+        self.assertEqual(pending.stat().st_gid, registry.st_gid)
+
+    def test_a_mark_made_during_the_rollout_survives_it(self) -> None:
+        issue(self.live / "example.com", "example.com")
+        policy = self.write_config(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        pending = cert_pending.pending_path(self.root / "certificates.yaml")
+
+        def deployer(_cluster_id: str) -> int:
+            #
+            # A renewal publishing to the same cluster while this rollout runs:
+            # what it wrote may not be what the nodes just took.
+            #
+            issue(self.live / "example.com", "example.com")
+            self.run_publish(policy)
+            return 0
+
+        self.run_command(policy, "--deploy", deployer=deployer)
+
+        self.assertIn("alpha", cert_pending.read(pending) or {})
+
+    def test_an_unreadable_note_makes_every_cluster_due(self) -> None:
+        issue(self.live / "example.com", "example.com")
+        policy = self.write_config(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha", "beta"]}}
+        )
+        self.run_command(policy, "--deploy", deployer=lambda _: 0)
+        pending = cert_pending.pending_path(self.root / "certificates.yaml")
+        pending.write_text("{not json", encoding="utf-8")
+        seen: list[str] = []
+
+        def deployer(cluster_id: str) -> int:
+            seen.append(cluster_id)
+            return 0
+
+        code, _, _ = self.run_command(policy, "--deploy", deployer=deployer)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, ["alpha", "beta"])
+        self.assertEqual(cert_pending.read(pending), {})
+
+    def test_a_mark_for_a_removed_cluster_is_dropped(self) -> None:
+        issue(self.live / "example.com", "example.com")
+        policy = self.write_config(
+            {"example.com": {"source": {"kind": "acme"}, "clusters": ["alpha"]}}
+        )
+        self.run_command(policy, "--deploy", deployer=lambda _: 0)
+        pending = cert_pending.pending_path(self.root / "certificates.yaml")
+        cert_pending.write(pending, {"gamma": 4}, like=self.root / "certificates.yaml")
+        seen: list[str] = []
+
+        def deployer(cluster_id: str) -> int:
+            seen.append(cluster_id)
+            return 0
+
+        self.run_command(policy, "--deploy", deployer=deployer)
+
+        self.assertEqual(seen, [])
+        self.assertEqual(cert_pending.read(pending), {})
 
     def test_refusals(self) -> None:
         policy = self.write_config(

@@ -13,6 +13,9 @@
 # the place a hook that filtered by lineage used to go stale was exactly
 # this file.
 #
+# It also rolls out any cluster an earlier run published to without a
+# rollout that succeeded, so a renewal finishes what a failed one left.
+#
 # The release's own bin directory, not PATH: certbot's environment is not the
 # operator's, and the release this command comes from is the one whose
 # haproxy-cert-deploy it should use.

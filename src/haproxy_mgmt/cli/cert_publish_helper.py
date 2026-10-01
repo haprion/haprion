@@ -77,7 +77,7 @@ def result_envelope(report: Report, *, request_id: str) -> tuple[dict[str, objec
         Message(code=entry.error[0], message=entry.error[1], node=entry.certificate_id)
         for entry in report.skipped
         if entry.error
-    )
+    ) + tuple(Message(code=code, message=message) for code, message in report.warnings)
     failed = [entry.certificate_id for entry in report.failed]
     not_deployed = [item.cluster for item in report.deployments if item.exit_code != 0]
     if not failed and not not_deployed:

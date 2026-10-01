@@ -61,6 +61,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
+from haproxy_mgmt import cert_pending
 from haproxy_mgmt.cert_inventory import (
     FULLCHAIN,
     IMPORT_STORE,
@@ -223,6 +224,9 @@ class Report:
     certificates: tuple[CertificateResult, ...]
     changed_clusters: tuple[str, ...]
     deployments: tuple[DeployResult, ...] = ()
+    # (code, message): what went wrong around the run rather than with a
+    # certificate - so far only the note of clusters still to roll out.
+    warnings: tuple[tuple[str, str], ...] = ()
 
     @property
     def failed(self) -> tuple[CertificateResult, ...]:
@@ -858,6 +862,45 @@ type Deployer = Callable[[str], int]
 type Installer = Callable[[Material], bool]
 
 
+def roll_out(
+    due: Sequence[tuple[str, int]],
+    deployer: Deployer,
+    *,
+    pending_path: Path,
+    like: Path,
+    lock_path: Path,
+) -> tuple[list[DeployResult], list[tuple[str, str]]]:
+    """Deploy each due cluster in turn and settle its mark when the rollout answered 0.
+
+    Outside the publisher's lock - a rollout takes minutes and a renewal must
+    not wait for it - and settled under it, one cluster at a time. Shared with
+    retargeting, which publishes to a cluster without the publisher seeing a
+    change (the cluster PEM is one shared file) and so marks it itself.
+    """
+
+    deployments: list[DeployResult] = []
+    warnings: list[tuple[str, str]] = []
+    for cluster_id, serial in due:
+        code = deployer(cluster_id)
+        deployments.append(DeployResult(cluster_id, code))
+        if code != 0:
+            continue
+        try:
+            cert_pending.settle(
+                pending_path,
+                cluster_id,
+                serial,
+                like=like,
+                locked=lambda: publish_lock(lock_path),
+            )
+        except (OSError, PublishError) as exc:
+            # Left marked: the next run rolls it out again and finds it current.
+            warnings.append(
+                ("pending_unrecorded", f"could not clear {cluster_id} in {pending_path}: {exc}")
+            )
+    return deployments, warnings
+
+
 def publish(
     runtime: RuntimeConfig,
     policy: PathPolicy,
@@ -879,14 +922,34 @@ def publish(
 
     With a deployer, every cluster that received a new version is rolled out
     afterwards, once, after all publishing is done - so a certificate that
-    reaches two clusters costs two rollouts, not four.
+    reaches two clusters costs two rollouts, not four. So is every cluster an
+    earlier run published to without a confirmed rollout (`cert_pending`):
+    running the same command again finishes what the first run left, rather
+    than finding the files in place and answering `done`.
     """
 
     entries = _select(runtime, only)
     results: list[CertificateResult] = []
     changed_clusters: list[str] = []
+    warnings: list[tuple[str, str]] = []
+    registry_path = policy.certificate_registry
+    assert registry_path is not None  # noqa: S101 - _select refused a missing registry
+    pending_path = cert_pending.pending_path(registry_path)
 
     with publish_lock(lock_path):
+        try:
+            ledger = cert_pending.Ledger(pending_path, like=registry_path, known=runtime.clusters)
+            ledger.mark(cluster for entry in entries for cluster in entry.clusters)
+        except OSError as exc:
+            #
+            # Before any material is written: a run that cannot note what it is
+            # about to publish would be the run whose failed rollout nobody
+            # finds again.
+            #
+            raise PublishError(
+                "dependency_unavailable",
+                f"cannot record the clusters about to be published to: {exc}",
+            ) from exc
         for entry in entries:
             source = source_directory(entry, live=live, store=store)
             if entry.source.kind == "import" and not source.is_dir():
@@ -963,14 +1026,27 @@ def publish(
                     not_after=material.facts.not_after,
                 )
             )
+        try:
+            ledger.keep(changed_clusters)
+        except OSError as exc:
+            #
+            # The material is written; only the note of it is not. The marks
+            # from before publishing are still on disk, so every cluster this
+            # run could have changed stays due - the safe side to fail on.
+            #
+            warnings.append(("pending_unrecorded", f"could not update {pending_path}: {exc}"))
+        due = ledger.order(changed_clusters)
 
     deployments: list[DeployResult] = []
     if deployer is not None:
-        for cluster_id in changed_clusters:
-            deployments.append(DeployResult(cluster_id, deployer(cluster_id)))
+        deployments, unsettled = roll_out(
+            due, deployer, pending_path=pending_path, like=registry_path, lock_path=lock_path
+        )
+        warnings.extend(unsettled)
 
     return Report(
         certificates=tuple(results),
         changed_clusters=tuple(changed_clusters),
         deployments=tuple(deployments),
+        warnings=tuple(warnings),
     )

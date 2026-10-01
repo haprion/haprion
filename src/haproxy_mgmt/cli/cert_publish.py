@@ -9,7 +9,9 @@ of its callers.
 
 With `--deploy`, every cluster that received a new version is rolled out
 afterwards with `haproxy-cert-deploy`, the same command an operator runs by
-hand, found beside this one in the installed release. That is what the certbot
+hand, found beside this one in the installed release - and so is every cluster
+an earlier run published to without a rollout that answered 0, so running the
+command again finishes what a failed rollout left (`cert_pending`). That is what the certbot
 hook asks for; an operator checking what a run *would* change leaves it off.
 """
 
@@ -52,8 +54,9 @@ USAGE = (
     "  --certificate <id>\n"
     "        Publish this registered certificate only. May be repeated.\n"
     "  --deploy\n"
-    "        Roll out every cluster that received a new version, with\n"
-    "        haproxy-cert-deploy. This is what the certbot deploy hook passes.\n"
+    "        Roll out every cluster that received a new version, and every\n"
+    "        cluster an earlier run published to without a successful rollout,\n"
+    "        with haproxy-cert-deploy. This is what the certbot deploy hook passes.\n"
     "  --json\n"
     "        Print the result envelope on stdout instead of a summary.\n"
 )
@@ -131,6 +134,8 @@ def _summary(report: Report, writer: TextIO) -> None:
     for deployment in report.deployments:
         state = "ok" if deployment.exit_code == 0 else f"exit {deployment.exit_code}"
         writer.write(f"deploy {deployment.cluster}: {state}\n")
+    for code, message in report.warnings:
+        writer.write(f"WARNING: [{code}] {message}\n")
 
 
 def _exit_code(report: Report) -> int:
@@ -221,7 +226,7 @@ def main(
             Message(code=entry.error[0], message=entry.error[1], node=entry.certificate_id)
             for entry in report.skipped
             if entry.error
-        )
+        ) + tuple(Message(code=code, message=message) for code, message in report.warnings)
         if exit_code == 0:
             document = envelope(
                 operation=OPERATION,

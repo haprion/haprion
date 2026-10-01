@@ -307,6 +307,8 @@ class WhatRetargetingAnswers(HelperFixture):
     def test_adding_a_target_publishes_and_rolls_the_new_cluster_out(self) -> None:
         for name in ("example.com", *KEEPERS):
             issue(self.live / name, name)
+        # Rolled out as a renewal leaves it, so only the new cluster is due.
+        self.run_publish(self.policy_path, deployer=lambda _cluster_id: 0)
 
         code, document, _ = self.run_helper(
             cert_target_helper,

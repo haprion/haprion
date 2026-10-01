@@ -855,10 +855,21 @@ With `--deploy`, every cluster that received a new version is rolled out afterwa
 `haproxy-cert-deploy`, once each, after every file is written. Two clusters that carry the same
 certificate read the same file; it is written once and both are rolled out.
 
+So is every cluster an earlier run published to without a rollout that succeeded. The files alone
+cannot say that - a cluster's PEM is the same whether its nodes took it or not - so the publisher
+keeps a note beside the registry, `certificates.pending-deploy.json` (owned and moded like the
+registry): a cluster is marked before its material is written and cleared only when
+`haproxy-cert-deploy` answered 0 for it. Running the same command again after a failed rollout
+therefore finishes it, with nothing issued or rewritten, instead of finding the files in place and
+answering `done`. Adding a cluster to a certificate (*Publish to…*, `haproxy-cert-target-helper`) marks it
+the same way. A note that cannot be read counts every cluster as due: each is rolled out once, its
+current nodes are skipped, and the file is written whole again. A cluster removed from the
+configuration is dropped from it.
+
 ```bash
 haproxy-cert-publish                 # publish what changed, report per certificate
 haproxy-cert-publish --json          # the same, as a result envelope
-haproxy-cert-publish --deploy        # ... and roll out the clusters that changed
+haproxy-cert-publish --deploy        # ... and roll out the clusters that changed or are still due
 haproxy-cert-publish --certificate example.com   # one registered certificate only
 ```
 

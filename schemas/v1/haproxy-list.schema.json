@@ -51,9 +51,49 @@
         "versions": {
           "type": "array",
           "items": { "$ref": "#/$defs/version_entry" }
+        },
+        "diffs": {
+          "description": "What each requested version changed against the one before it, by commit hash (haproxy-list-helper parameters.diffs).",
+          "type": "object",
+          "propertyNames": { "$ref": "common.schema.json#/$defs/hash" },
+          "additionalProperties": { "$ref": "#/$defs/version_diff" }
         }
       },
       "additionalProperties": true
+    },
+    "version_diff": {
+      "type": "object",
+      "required": ["commit", "parent", "files", "truncated"],
+      "properties": {
+        "commit": { "$ref": "common.schema.json#/$defs/hash" },
+        "parent": {
+          "oneOf": [
+            { "$ref": "common.schema.json#/$defs/hash" },
+            { "type": "null" }
+          ]
+        },
+        "truncated": { "type": "boolean" },
+        "files": {
+          "type": "array",
+          "maxItems": 200,
+          "items": { "$ref": "#/$defs/file_change" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "file_change": {
+      "type": "object",
+      "required": ["path", "status", "old_path", "added", "removed", "binary", "lines"],
+      "properties": {
+        "path": { "type": "string" },
+        "status": { "enum": ["added", "modified", "deleted", "renamed"] },
+        "old_path": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "added": { "type": "integer", "minimum": 0 },
+        "removed": { "type": "integer", "minimum": 0 },
+        "binary": { "type": "boolean" },
+        "lines": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
     }
   }
 }

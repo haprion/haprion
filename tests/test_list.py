@@ -180,6 +180,40 @@ class FailureTests(ListFixture):
             self.assertEqual(shown.getvalue(), list_command.USAGE)
 
 
+class DiffTests(ListFixture):
+    """`--diff <version>`: what one version changed, as the Versions page shows it."""
+
+    def test_a_version_is_shown_against_the_one_before_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self.repository(Path(directory), ["Initial", "Add a backend"])
+            code, out = self.run_list(repo, "-c", "alpha", "--diff", "2")
+            first_code, first = self.run_list(repo, "-c", "alpha", "--diff", "1")
+            missing_code, missing = self.run_list(repo, "-c", "alpha", "--diff", "9")
+
+        self.assertEqual(code, 0)
+        self.assertIn("=== core/haproxy.cfg (modified, +1 -1)", out)
+        self.assertIn("-  # version 1", out)
+        self.assertIn("+  # version 2", out)
+        self.assertEqual(first_code, 0)
+        self.assertIn("=== core/haproxy.cfg (added, +2 -0)", first)
+        self.assertEqual(missing_code, 65)
+        self.assertIn("has no version 9", missing)
+
+    def test_the_version_is_a_number(self) -> None:
+        for argv in (
+            ["-c", "alpha", "--diff", "v2"],
+            ["-c", "alpha", "--diff", "-1"],
+            ["-c", "alpha", "--json", "2"],
+        ):
+            with (
+                self.subTest(argv=argv),
+                self.assertRaises(SystemExit) as raised,
+                redirect_stdout(io.StringIO()),
+            ):
+                list_command.main(argv, stream_out=io.StringIO())
+            self.assertEqual(raised.exception.code, 64)
+
+
 class JsonTests(ListFixture):
     """`--json` is the same reading as the table, in the frozen envelope."""
 

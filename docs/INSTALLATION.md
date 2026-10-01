@@ -3710,6 +3710,13 @@ read the cluster repository, so the command reads it directly and requiring
 build their result with the same function, so the two cannot come to describe
 the same history differently.
 
+The same holds for what a version changed. `haproxy-list -c <cluster> --diff <version>`
+prints one version against the version before it, file by file; the poller asks the
+helper for the same thing (`diffs`, at most ten commit hashes per request) for each
+version it has no diff for yet and keeps the answer, since a version's diff never
+changes. Both read it through one function, bounded at 200 files and 256 KiB of
+patch text, and a diff past that bound says it was cut.
+
 The request itself is built by the engine's own code, not by a copy of it in the
 interface. Two constructions of the same request are two things to keep in step,
 and each looks correct on its own — which is the hardest kind of divergence to

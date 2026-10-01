@@ -36,9 +36,14 @@ from haproxy_mgmt.helper_protocol import write_document
 from haproxy_mgmt.history import history_result
 from haproxy_mgmt.repo_health import describe_problem, is_repo_root
 from haproxy_mgmt.status_collect import read_target
-from haproxy_mgmt.version_history import recent_versions
+from haproxy_mgmt.version_diff import render, version_diff
+from haproxy_mgmt.version_history import recent_versions, version_commit
 
-USAGE = "Usage:\n  haproxy-list -c <cluster> [--json]\n"
+USAGE = (
+    "Usage:\n"
+    "  haproxy-list -c <cluster> [--json]\n"
+    "  haproxy-list -c <cluster> --diff <version>   what one version changed\n"
+)
 OPERATION = "list"
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-list-helper"
 SUDO = "/usr/bin/sudo"
@@ -85,12 +90,35 @@ def run_list_helper(
     )
 
 
-def _parse(argv: list[str]) -> tuple[str, bool]:
-    if len(argv) not in (2, 3) or argv[0] not in ("-c", "--cluster"):
+def _parse(argv: list[str]) -> tuple[str, bool, int | None]:
+    if len(argv) not in (2, 3, 4) or argv[0] not in ("-c", "--cluster"):
         usage(USAGE)
+    if len(argv) == 4:
+        if argv[2] != "--diff" or not argv[3].isdigit():
+            usage(USAGE)
+        return argv[1], False, int(argv[3])
     if len(argv) == 3 and argv[2] != "--json":
         usage(USAGE)
-    return argv[1], len(argv) == 3
+    return argv[1], len(argv) == 3, None
+
+
+def _diff(writer: TextIO, cluster_id: str, version: int, config_path: ConfigPath) -> int:
+    """One version's changes, read from the repository as the person running this."""
+
+    try:
+        repo = config_path(cluster_id)
+        if not is_repo_root(repo):
+            raise CallerError(describe_problem(cluster_id, repo), exit_code=68)
+        commit = version_commit(repo, version)
+        if commit is None:
+            raise CallerError(f"cluster '{cluster_id}' has no version {version}.", exit_code=65)
+        found = version_diff(repo, commit)
+    except (CallerError, GitError) as exc:
+        writer.write(f"ERROR: {exc}\n")
+        return exc.exit_code
+    writer.write(f"\n{cluster_id} v{version} ({commit[:12]})\n\n")
+    writer.write(render(found))
+    return 0
 
 
 def main(
@@ -102,7 +130,9 @@ def main(
 ) -> int:
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = stream_out or sys.stdout
-    cluster_id, json_mode = _parse(argv)
+    cluster_id, json_mode, diff_version = _parse(argv)
+    if diff_version is not None:
+        return _diff(writer, cluster_id, diff_version, config_path)
 
     try:
         repo = config_path(cluster_id)

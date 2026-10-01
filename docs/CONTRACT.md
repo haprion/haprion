@@ -10,7 +10,7 @@ normative for process behavior, exit codes, redaction, and stable error meanings
 |---|---|---|---|
 | `haproxy-status` | `status` | `done`, `partial`, `failed` | Node/service/VIP/release status |
 | `haproxy-inventory` | `inventory` | `done`, `failed` | Managed and read-only unmanaged proxy inventory |
-| `haproxy-list` | `list` | `done`, `failed` | Published version history, newest first; each version carries `requested_by` (null before it existed). The helper takes `limit`, 1 to 250, and lists ten without it |
+| `haproxy-list` | `list` | `done`, `failed` | Published version history, newest first; each version carries `requested_by` (null before it existed). The helper takes `limit`, 1 to 250, and lists ten without it, and `diffs`, up to ten commit hashes whose changes it adds as `result.diffs` (a hash not on the history is left out) |
 | `haproxy-list-backups` | `list_backups` | `done`, `partial`, `failed` | Backup metadata only |
 | backup job helper | `backup_run` | `done`, `partial`, `failed` | One cluster, separate archive per node |
 | backup job helper | `backup_schedule` | `done`, `failed` | Daily, weekly or monthly schedule and per-node retention for one cluster, on the manager's clock |

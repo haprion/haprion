@@ -161,6 +161,45 @@ class ListHelperTests(unittest.TestCase):
         self.assertEqual(document["result"]["unpublished"], 1)
         self.assertEqual([row["version"] for row in document["result"]["versions"]], [2, 1])
 
+    def asked_for_diffs(self, diffs: object) -> tuple[int, str, str, list[str]]:
+        policy = self.runtime(commits=["Initial", "Add a backend"], published=None)
+        repo = self.root / "config" / "alpha"
+        hashes = git(repo, "rev-list", "--first-parent", "HEAD").split()
+        out, err = io.StringIO(), io.StringIO()
+        code = list_helper.main(
+            [],
+            policy_path=policy,
+            input_stream=io.BytesIO(
+                request(parameters={"diffs": diffs(hashes) if callable(diffs) else diffs})
+            ),
+            output_stream=out,
+            error_stream=err,
+            require_secure=False,
+            require_root=False,
+        )
+        return code, out.getvalue(), err.getvalue(), hashes
+
+    def test_asked_for_diffs_it_answers_what_each_version_changed(self) -> None:
+        code, out, _, hashes = self.asked_for_diffs(lambda found: [found[0], "f" * 40])
+
+        document = json.loads(out)
+        self.assertEqual(code, 0)
+        diffs = document["result"]["diffs"]
+        self.assertEqual(list(diffs), [hashes[0]], "a hash not on this history is left out")
+        [change] = diffs[hashes[0]]["files"]
+        self.assertEqual((change["path"], change["status"]), ("core/haproxy.cfg", "modified"))
+        self.assertIn("+  # version 2", change["lines"])
+        self.assertEqual(diffs[hashes[0]]["parent"], hashes[1])
+        assert_contract("haproxy-list", out)
+
+    def test_diffs_are_full_hashes_and_ten_at_most(self) -> None:
+        for diffs in ("HEAD", ["HEAD"], ["abc"], ["a" * 40] * 11, [None]):
+            with self.subTest(diffs=diffs):
+                code, out, err, _ = self.asked_for_diffs(diffs)
+                self.assertEqual(code, 65)
+                self.assertEqual(out, "")
+                self.assertIn("parameters.diffs", err)
+
     def test_an_unpublished_cluster_answers_without_a_release(self) -> None:
         code, out, _ = self.run_helper()
 

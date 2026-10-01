@@ -22,6 +22,7 @@ from typing import BinaryIO, TextIO
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haproxy_mgmt.envelope import Message, envelope
 from haproxy_mgmt.git_command import GitError
+from haproxy_mgmt.git_command import git as _git
 from haproxy_mgmt.helper_protocol import (
     HelperProtocolError,
     config_error_code,
@@ -33,6 +34,7 @@ from haproxy_mgmt.helper_protocol import (
 from haproxy_mgmt.history import history_result
 from haproxy_mgmt.repo_health import describe_problem, is_repo_root
 from haproxy_mgmt.status_collect import read_target
+from haproxy_mgmt.version_diff import COMMIT, version_diff
 from haproxy_mgmt.version_history import LIST_LIMIT, MAX_LIST_LIMIT, recent_versions
 
 OPERATION = "list"
@@ -40,7 +42,14 @@ OPERATION = "list"
 # How many versions to list, newest first: `LIST_LIMIT` when not given, at
 # most `MAX_LIST_LIMIT`. The interface asks for more and pages in the browser.
 #
-PARAMETERS: frozenset[str] = frozenset({"limit"})
+#
+# And, since 2026-10-01, what some of them changed (`diffs`, full commit hashes):
+# the poller asks for the versions it has no diff for yet and keeps the answer,
+# because a version's diff never changes. Ten at a time, so a first run over a
+# long history spreads its git work over several polls instead of one long one.
+#
+PARAMETERS: frozenset[str] = frozenset({"limit", "diffs"})
+MAX_DIFFS = 10
 
 
 def parse_limit(raw: object) -> int:
@@ -51,6 +60,21 @@ def parse_limit(raw: object) -> int:
             f"parameters.limit must be a whole number from 1 to {MAX_LIST_LIMIT}", exit_code=65
         )
     return raw
+
+
+def parse_diffs(raw: object) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if (
+        not isinstance(raw, list)
+        or len(raw) > MAX_DIFFS
+        or not all(isinstance(item, str) and COMMIT.fullmatch(item) for item in raw)
+    ):
+        raise HelperProtocolError(
+            f"parameters.diffs must be a list of at most {MAX_DIFFS} full commit hashes",
+            exit_code=65,
+        )
+    return tuple(dict.fromkeys(raw))
 
 
 EXIT_NOT_ROOT = 77
@@ -82,6 +106,7 @@ def main(
             allowed_parameter_keys=PARAMETERS,
         )
         limit = parse_limit(request.parameters.get("limit"))
+        wanted = parse_diffs(request.parameters.get("diffs"))
     except HelperProtocolError as exc:
         #
         # Deliberately stderr only. The cluster and the request ID an envelope
@@ -135,6 +160,18 @@ def main(
     target = read_target(Path(cluster.publish_path), cluster.node_path)
     try:
         result = history_result(recent_versions(repo, limit), target, limit=limit)
+        if wanted:
+            #
+            # Only a version of this cluster: a hash on its first-parent
+            # history. One that is not - asked for before a history reset, say
+            # - is left out of the answer rather than failing the listing.
+            #
+            versions = set(_git(repo, "rev-list", "--first-parent", "HEAD").decode().split())
+            result["diffs"] = {
+                commit: version_diff(repo, commit).as_dict()
+                for commit in wanted
+                if commit in versions
+            }
     except GitError as exc:
         write_document(
             writer,

@@ -450,6 +450,13 @@ def _assemble(config: CollectorConfig, target: NodeTarget, days: tuple[date, ...
             temporary.unlink()
 
 
+def _drop_mirror(config: CollectorConfig, target: NodeTarget) -> None:
+    destination = config.mirror / f"{target.cluster}--{target.node}.jsonl"
+    if destination.exists() or destination.is_symlink():
+        _regular(destination)
+        destination.unlink()
+
+
 def _meta_path(config: CollectorConfig, target: NodeTarget) -> Path:
     return config.mirror / f"{target.cluster}--{target.node}.meta.json"
 
@@ -548,7 +555,19 @@ def collect_node(
                 if complete and not yesterday_still_open:
                     _replace(marker, b"", 0o600)
                 break
-        _assemble(config, target, days)
+        #
+        # The joined file is for a reader of files. With the database as the
+        # reader (schema 2) nothing reads it: the interface asks PostgreSQL and
+        # looks at the metadata beside it for freshness, and the import reads
+        # the day parts in staging. Joining every retained day into it on every
+        # run rewrote the whole history once a minute for no one (review
+        # 2026-09-30, R2), so it is not written, and one left from before is
+        # removed.
+        #
+        if config.database is None:
+            _assemble(config, target, days)
+        else:
+            _drop_mirror(config, target)
         _write_meta(config, target, attempted=now, outcome="ok", success=True)
     except (CollectorError, OSError) as exc:
         _write_meta(

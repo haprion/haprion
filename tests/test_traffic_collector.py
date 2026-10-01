@@ -257,6 +257,55 @@ class TrafficCollectorTests(unittest.TestCase):
         self.assertEqual(meta["last_attempt"], NOW.isoformat())
         self.assertEqual(meta["last_success"], NOW.isoformat())
 
+    def database_configured(self) -> CollectorConfig:
+        return CollectorConfig(
+            self.config.user,
+            self.config.key,
+            self.config.known_hosts,
+            self.config.mirror,
+            self.config.staging,
+            self.config.nodes,
+            "haproxy_ui",
+            "/run/postgresql",
+        )
+
+    def test_with_the_database_as_reader_no_joined_mirror_is_written(self) -> None:
+        #
+        # Review 2026-09-30, R2: every run used to join the whole retained
+        # history into one file nobody reads once PostgreSQL is the reader.
+        #
+        line = b'{"schema":1,"path":"/"}\n'
+        (self.mirror / "alpha--node-a.jsonl").write_bytes(b"left from schema 1\n")
+        imported: list[bytes] = []
+
+        def fetch(_target: NodeTarget, wanted: date, offset: int) -> Response:
+            return self.response(
+                wanted, offset, line if wanted == NOW.date() and offset == 0 else b""
+            )
+
+        def ingest(config: CollectorConfig) -> tuple[int, int]:
+            for part in sorted(config.staging.glob("alpha--node-a--*.jsonl")):
+                imported.append(part.read_bytes())
+            return 0, 0
+
+        with (
+            patch("haproxy_mgmt.traffic_collector._ingest_database", side_effect=ingest),
+            patch("haproxy_mgmt.traffic_collector._assemble") as assemble,
+        ):
+            self.assertEqual(collect(self.database_configured(), now=NOW, fetch=fetch), 0)
+            self.assertEqual(collect(self.database_configured(), now=NOW, fetch=fetch), 0)
+
+        assemble.assert_not_called()
+        self.assertFalse((self.mirror / "alpha--node-a.jsonl").exists(), "the old one is gone")
+        self.assertIn(line, imported, "the import still reads the day part in staging")
+        meta = json.loads((self.mirror / "alpha--node-a.meta.json").read_bytes())
+        self.assertEqual((meta["outcome"], meta["last_success"]), ("ok", NOW.isoformat()))
+
+    def test_without_the_database_the_mirror_is_still_joined(self) -> None:
+        with patch("haproxy_mgmt.traffic_collector._assemble") as assemble:
+            collect(self.config, now=NOW, fetch=lambda _t, d, o: self.response(d, o, b""))
+        assemble.assert_called_once()
+
     def test_remote_reset_discards_the_local_day_without_advancing_a_cursor(self) -> None:
         part = self.staging / "alpha--node-a--2026-09-08.jsonl"
         part.write_bytes(b"old\n")

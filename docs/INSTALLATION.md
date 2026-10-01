@@ -3393,7 +3393,7 @@ small identity and a timer that asks each node for its own traffic log. Optional
 production only, and last: nothing else on the platform depends on it.
 
 ```text
-${PLATFORM_ROOT}/logs/mirror     collector writes, the interface reads
+${PLATFORM_ROOT}/logs/mirror     collector writes freshness metadata, the interface reads
 ${PLATFORM_ROOT}/logs/staging    the collector's alone
 /etc/haproxy-manager/traffic-collector/{id_ed25519,known_hosts}
 /etc/haproxy-manager/traffic-collector.json
@@ -3463,6 +3463,10 @@ The collector imports complete records with PostgreSQL `COPY` and advances an at
 checkpoint only after the database transaction commits. Repeating a batch is safe because each
 record has a deterministic identity. The interface reads indexed database rows once
 `[traffic_logs]` is enabled in `ui.toml`; the mirror metadata still reports collection freshness.
+With the database configured the collector keeps the day files in staging and one metadata file
+per node in the mirror directory, and does not join the days into one log file per node: nothing
+reads that file, and writing it meant rewriting the whole retained history once a minute. A joined
+file left from a configuration without the database is removed on the next run.
 `retention_days` defaults to seven (range 1–90). The privileged retention timer creates daily
 partitions ahead and removes expired data by dropping whole partitions; application identities
 have no `CREATE` or `DELETE`. PostgreSQL's `pg_trgm` extension is installed once by platform step
@@ -3524,8 +3528,8 @@ path sustained about 30 000 records per second throughout the load, flat with
 table size, and a run imports a minute's worth of traffic.
 
 So the disk a retention window needs is `records per day × retention_days ×
-410 bytes`, plus the mirror's copy of the same days (one more, the replay
-margin), plus WAL. At the default seven days that is close to **3 GB per
+410 bytes`, plus the collector's day files in staging for the same days (one
+more, the replay margin), plus WAL. At the default seven days that is close to **3 GB per
 million records a day**. A pair of nodes serving ten thousand requests a day
 uses tens of megabytes; an installation nearing a million a day should have that
 volume sized for it and the 85 % warning above heeded. The number that grows

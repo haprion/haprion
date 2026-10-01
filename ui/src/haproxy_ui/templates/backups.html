@@ -28,7 +28,7 @@
       {% if cluster.schedule %}{% set schedule = cluster.schedule %}
       {% if editable and not running %}
       <details class="schedule-details">
-        <summary class="schedule-strip" aria-label="Backup schedule for {{ cluster.cluster }}">{{ schedule_line(schedule) }}<span class="schedule-edit">Edit</span></summary>
+        <summary class="schedule-strip" aria-label="Backup schedule for {{ cluster.cluster }}">{{ schedule_line(schedule) }}<span class="schedule-edit"><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span>Edit</span></summary>
         <form method="post" action="/operations" class="backup-schedule-form" data-schedule-form>
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="operation" value="backup_schedule"><input type="hidden" name="cluster" value="{{ cluster.cluster }}"><input type="hidden" name="idempotency_key" value="{{ new_request_key() }}"><input type="hidden" name="return_to" value="backups">
           <div class="schedule-row">

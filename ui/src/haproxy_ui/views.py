@@ -25,6 +25,7 @@ import ipaddress
 import json
 import logging
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -236,6 +237,36 @@ def _log_time_filter(
     if end_of_minute:
         result = min(result + timedelta(minutes=1, microseconds=-1), latest)
     return result
+
+
+#
+# How many of a traffic page's readings run at once, each on its own pooled
+# connection. Every card asks two questions - its line and its figures - and
+# the answers are independent, so asking them one after another only added
+# their times up: measured 2026-10-01 against a copy at production density
+# (two clusters, a week of raw samples every 20 s, the hourly rollup behind
+# it), the 7- and 30-day windows took 1.24 s in sequence and 0.45 s four at a
+# time. Four, not more, so one page leaves half the web's pool to everybody
+# else; eight bought only 0.09 s more.
+#
+TRAFFIC_READERS = 4
+
+
+def _read_concurrently[T](pool: Any, reads: Sequence[Callable[[Any], T]]) -> list[T]:
+    """Each read on a connection of its own, at most `TRAFFIC_READERS` at once.
+
+    The answers come back in the order asked. A read that fails fails the page,
+    as it did when they ran one by one.
+    """
+
+    def run(read: Callable[[Any], T]) -> T:
+        with pool.connection() as connection:
+            return read(connection)
+
+    if len(reads) <= 1:
+        return [run(read) for read in reads]
+    with ThreadPoolExecutor(max_workers=TRAFFIC_READERS) as readers:
+        return list(readers.map(run, reads))
 
 
 def _traffic_marks(request: Request, marked: metrics.Selection) -> dict[str, object]:
@@ -1406,35 +1437,45 @@ def build_router(config: Config) -> APIRouter:
                     if health.backend_name(name, backend) not in served
                 )
         if served:
-            with request.app.state.pool.connection() as connection:
-                traffic = [
-                    metrics.backend_traffic(
-                        backend,
-                        db.read_backend_samples(
-                            connection,
-                            cluster=cluster,
-                            backend=backend,
-                            since=since,
-                            until=now,
-                            width=chosen.bucket,
-                            now=now,
-                        ),
-                        tick_format=chosen.tick,
-                        start=since,
-                        end=now,
-                        bucket=chosen.bucket,
-                        chosen=marked,
-                        measurement=db.read_backend_totals(
-                            connection,
-                            cluster=cluster,
-                            backend=backend,
-                            since=counted_since,
-                            until=counted_until,
-                            now=now,
-                        ),
-                    )
-                    for backend in served
-                ]
+
+            def samples(backend: str) -> Callable[[Any], list[metrics.Sample]]:
+                return lambda connection: db.read_backend_samples(
+                    connection,
+                    cluster=cluster,
+                    backend=backend,
+                    since=since,
+                    until=now,
+                    width=chosen.bucket,
+                    now=now,
+                )
+
+            def totals(backend: str) -> Callable[[Any], metrics.BackendMeasurement]:
+                return lambda connection: db.read_backend_totals(
+                    connection,
+                    cluster=cluster,
+                    backend=backend,
+                    since=counted_since,
+                    until=counted_until,
+                    now=now,
+                )
+
+            reads: list[Callable[[Any], Any]] = [
+                read for backend in served for read in (samples(backend), totals(backend))
+            ]
+            answers = _read_concurrently(request.app.state.pool, reads)
+            traffic = [
+                metrics.backend_traffic(
+                    backend,
+                    answers[index * 2],
+                    tick_format=chosen.tick,
+                    start=since,
+                    end=now,
+                    bucket=chosen.bucket,
+                    chosen=marked,
+                    measurement=answers[index * 2 + 1],
+                )
+                for index, backend in enumerate(served)
+            ]
         return TEMPLATES.TemplateResponse(
             request,
             "object.html",
@@ -1554,20 +1595,111 @@ def build_router(config: Config) -> APIRouter:
         #
         counted_since, counted_until = marked.counted(since, now)
 
+        pool = request.app.state.pool
+        #
+        # The names first, on one connection: they are cheap, and every card's
+        # readings depend on them.
+        #
+        listed: list[tuple[str, list[str], list[tuple[str, bool]]]] = []
+        with pool.connection() as connection:
+            for cluster in wanted:
+                listed.append(
+                    (
+                        cluster,
+                        db.read_cluster_backends(
+                            connection, cluster=cluster, since=since, until=now
+                        ),
+                        #
+                        # Name and ownership apart: an address nobody reported
+                        # holding is still an address this cluster saw, and it
+                        # says so on its own card rather than being left off
+                        # the page.
+                        #
+                        db.read_cluster_frontends(
+                            connection, cluster=cluster, since=since, until=now
+                        ),
+                    )
+                )
+
+        def frontend_reads(
+            cluster: str, name: str
+        ) -> tuple[Callable[[Any], list[metrics.Sample]], Callable[[Any], Any]]:
+            def samples(connection: Any) -> list[metrics.Sample]:
+                return db.read_frontend_samples(
+                    connection,
+                    cluster=cluster,
+                    frontend=name,
+                    since=since,
+                    until=now,
+                    width=chosen.bucket,
+                )
+
+            def totals(connection: Any) -> metrics.BackendMeasurement:
+                return db.read_frontend_totals(
+                    connection,
+                    cluster=cluster,
+                    frontend=name,
+                    since=counted_since,
+                    until=counted_until,
+                )
+
+            return samples, totals
+
+        def backend_reads(
+            cluster: str, name: str
+        ) -> tuple[Callable[[Any], list[metrics.Sample]], Callable[[Any], Any]]:
+            def samples(connection: Any) -> list[metrics.Sample]:
+                return db.read_backend_samples(
+                    connection,
+                    cluster=cluster,
+                    backend=name,
+                    since=since,
+                    until=now,
+                    width=chosen.bucket,
+                    now=now,
+                )
+
+            def totals(connection: Any) -> metrics.BackendMeasurement:
+                return db.read_backend_totals(
+                    connection,
+                    cluster=cluster,
+                    backend=name,
+                    since=counted_since,
+                    until=counted_until,
+                    now=now,
+                )
+
+            return samples, totals
+
+        #
+        # Every card's two readings, asked together, then handed back to the
+        # section each card belongs to.
+        #
+        keys: list[tuple[str, str, str]] = []
+        reads: list[Callable[[Any], Any]] = []
+        for cluster, backends, seen in listed:
+            for frontend, _owned in seen:
+                keys.append((cluster, "frontend", frontend))
+                reads.extend(frontend_reads(cluster, frontend))
+            for backend in backends:
+                keys.append((cluster, "backend", backend))
+                reads.extend(backend_reads(cluster, backend))
+        answers = _read_concurrently(pool, reads)
+        read_back = {
+            key: (answers[index * 2], answers[index * 2 + 1]) for index, key in enumerate(keys)
+        }
+
         def section(
-            named: Sequence[str],
-            read: Callable[[str], list[metrics.Sample]],
-            total: Callable[[str], metrics.BackendMeasurement],
-            label: Callable[[str], str],
+            cluster: str, kind: str, named: Sequence[str], label: Callable[[str], str]
         ) -> list[metrics.BackendTraffic]:
-            """One section: read every series, then draw them against one scale.
+            """One section: every series read, drawn against one scale.
 
             The ceiling has to be known before any card is drawn, so this is
             two passes over the same list rather than one - which is the price
             of the comparison the section exists to make.
             """
 
-            found = [(name, read(name), total(name)) for name in named]
+            found = [(name, *read_back[(cluster, kind, name)]) for name in named]
             ceiling = metrics.shared_ceiling(
                 [metrics.intervals(samples) for _name, samples, _totals in found],
                 start=since,
@@ -1590,123 +1722,61 @@ def build_router(config: Config) -> APIRouter:
             ]
 
         drawn = []
-        with request.app.state.pool.connection() as connection:
-            for cluster in wanted:
-                #
-                # Bound once per cluster and named, rather than written as
-                # lambdas at each call. Four readers differing only in which
-                # table they ask is exactly the shape that reads as noise
-                # inline - and neither the type checker nor a person could
-                # follow which cluster each one had closed over.
-                #
-                def frontend_samples(name: str, cluster: str = cluster) -> list[metrics.Sample]:
-                    return db.read_frontend_samples(
-                        connection,
-                        cluster=cluster,
-                        frontend=name,
-                        since=since,
-                        until=now,
-                        width=chosen.bucket,
-                    )
+        for cluster, backends, seen in listed:
+            targets = metrics.redirect_targets(_documents(object_rows, cluster))
 
-                def frontend_totals(
-                    name: str, cluster: str = cluster
-                ) -> metrics.BackendMeasurement:
-                    return db.read_frontend_totals(
-                        connection,
-                        cluster=cluster,
-                        frontend=name,
-                        since=counted_since,
-                        until=counted_until,
-                    )
+            def redirect_label(name: str, targets: Mapping[str, str] = targets) -> str:
+                """What it redirects, or the stored name where nothing says.
 
-                def backend_samples(name: str, cluster: str = cluster) -> list[metrics.Sample]:
-                    return db.read_backend_samples(
-                        connection,
-                        cluster=cluster,
-                        backend=name,
-                        since=since,
-                        until=now,
-                        width=chosen.bucket,
-                        now=now,
-                    )
+                A page that invented a name would be worse than one showing
+                an opaque name it could not resolve.
+                """
 
-                def backend_totals(name: str, cluster: str = cluster) -> metrics.BackendMeasurement:
-                    return db.read_backend_totals(
-                        connection,
-                        cluster=cluster,
-                        backend=name,
-                        since=counted_since,
-                        until=counted_until,
-                        now=now,
-                    )
+                return targets.get(name, metrics.without_prefix(name))
 
-                targets = metrics.redirect_targets(_documents(object_rows, cluster))
-
-                def redirect_label(name: str, targets: Mapping[str, str] = targets) -> str:
-                    """What it redirects, or the stored name where nothing says.
-
-                    A page that invented a name would be worse than one showing
-                    an opaque name it could not resolve.
-                    """
-
-                    return targets.get(name, metrics.without_prefix(name))
-
-                backends = db.read_cluster_backends(
-                    connection, cluster=cluster, since=since, until=now
-                )
-                #
-                # Name and ownership apart: an address nobody reported holding
-                # is still an address this cluster saw, and it says so on its
-                # own card rather than being left off the page.
-                #
-                seen = db.read_cluster_frontends(
-                    connection, cluster=cluster, since=since, until=now
-                )
-                frontends = [frontend for frontend, _owned in seen]
-                drawn.append(
-                    {
-                        "cluster": cluster,
-                        "accent": accent_index(cluster),
-                        "frontends": [
-                            (
-                                metrics.listening(name),
-                                owned,
-                                card,
-                                metrics.listening(name).protocol == "http",
-                            )
-                            for (name, owned), card in zip(
-                                seen,
-                                section(
-                                    frontends,
-                                    frontend_samples,
-                                    frontend_totals,
-                                    lambda name: metrics.listening(name).vip,
-                                ),
-                                strict=True,
-                            )
-                        ],
-                        #
-                        # Backends and redirect answers are drawn apart and scaled
-                        # apart. A redirect has no servers and answers 3xx
-                        # itself, so letting it into the comparison would size
-                        # every real backend against traffic that never reached
-                        # one.
-                        #
-                        "backends": section(
-                            [name for name in backends if not metrics.is_redirect(name)],
-                            backend_samples,
-                            backend_totals,
-                            metrics.without_prefix,
-                        ),
-                        "redirects": section(
-                            [name for name in backends if metrics.is_redirect(name)],
-                            backend_samples,
-                            backend_totals,
-                            redirect_label,
-                        ),
-                    }
-                )
+            frontends = [frontend for frontend, _owned in seen]
+            drawn.append(
+                {
+                    "cluster": cluster,
+                    "accent": accent_index(cluster),
+                    "frontends": [
+                        (
+                            metrics.listening(name),
+                            owned,
+                            card,
+                            metrics.listening(name).protocol == "http",
+                        )
+                        for (name, owned), card in zip(
+                            seen,
+                            section(
+                                cluster,
+                                "frontend",
+                                frontends,
+                                lambda name: metrics.listening(name).vip,
+                            ),
+                            strict=True,
+                        )
+                    ],
+                    #
+                    # Backends and redirect answers are drawn apart and scaled
+                    # apart. A redirect has no servers and answers 3xx itself,
+                    # so letting it into the comparison would size every real
+                    # backend against traffic that never reached one.
+                    #
+                    "backends": section(
+                        cluster,
+                        "backend",
+                        [name for name in backends if not metrics.is_redirect(name)],
+                        metrics.without_prefix,
+                    ),
+                    "redirects": section(
+                        cluster,
+                        "backend",
+                        [name for name in backends if metrics.is_redirect(name)],
+                        redirect_label,
+                    ),
+                }
+            )
 
         return TEMPLATES.TemplateResponse(
             request,

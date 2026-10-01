@@ -25,7 +25,7 @@ from typing import Any
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from haproxy_mgmt.generate import PREFIX, REDIRECT_PREFIX
+from haproxy_mgmt.generate import METRICS_FRONTEND, PREFIX, REDIRECT_PREFIX
 from haproxy_mgmt.guid import redirect_name
 
 #
@@ -1559,6 +1559,8 @@ class Listening:
 
     vip: str
     protocol: str
+    port: int | None = None
+    """A tcp frontend's port: one frontend per raw port, `mgd-<vip>-tcp-<port>`."""
 
     @property
     def known(self) -> bool:
@@ -1566,13 +1568,27 @@ class Listening:
 
 
 def listening(frontend: str) -> Listening:
-    """`mgd-vip-int-http` as the VIP `vip-int` serving `http`."""
+    """`mgd-vip-int-http` as the VIP `vip-int` serving `http`; `-tcp-5432` as tcp on 5432."""
 
     name = frontend.removeprefix(GENERATED_PREFIX)
+    vip, _, port = name.rpartition("-tcp-")
+    if vip and port.isdigit():
+        return Listening(vip=vip, protocol="tcp", port=int(port))
     for protocol in LISTENER_PROTOCOLS:
         if name.endswith(f"-{protocol}"):
             return Listening(vip=name[: -len(protocol) - 1], protocol=protocol)
     return Listening(vip=frontend, protocol="")
+
+
+def is_exporter(frontend: str) -> bool:
+    """The metrics exporter's own frontend (Fas 15), which no site is served on.
+
+    It listens for the monitoring system's scrapes. On a page of what arrived at
+    each address it would be a card of somebody's poll interval, and in the
+    dashboard's traffic it would count those polls as visitors.
+    """
+
+    return frontend == METRICS_FRONTEND
 
 
 def is_redirect(backend: str) -> bool:

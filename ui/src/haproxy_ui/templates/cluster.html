@@ -54,7 +54,7 @@
       address.
     #}
     <div class="traffic-head">
-      <code class="traffic-backend">{{ named.vip }}</code>{% if named.known %} <span class="protocol-badge protocol-{{ named.protocol }}">{{ named.protocol | upper }}</span>{% endif %}
+      <code class="traffic-backend">{{ named.vip }}</code>{% if named.known %} <span class="protocol-badge protocol-{{ named.protocol }}">{{ named.protocol | upper }}{% if named.port %} {{ named.port }}{% endif %}</span>{% endif %}
       <span class="traffic-rate">Requests / {{ traffic_rate_unit }}</span>
     </div>
     {#

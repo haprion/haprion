@@ -28,6 +28,7 @@ from typing import Any
 from uuid import UUID
 
 import psycopg
+from haproxy_mgmt.generate import METRICS_FRONTEND
 from psycopg import Connection, sql
 from psycopg.rows import class_row
 from psycopg.types.json import Jsonb
@@ -2825,10 +2826,16 @@ def _frontend_totals(
     ).format(
         stored=_stored_intervals(names),
         aggregates=_interval_aggregates(names),
-        scope=sql.SQL(
-            "cluster = any(%(clusters)s)"
+        #
+        # Every frontend but the metrics exporter's, whose requests are the
+        # monitoring system's scrapes and not traffic to anything served.
+        #
+        scope=(
+            sql.SQL("cluster = any(%(clusters)s) and frontend <> {exporter}").format(
+                exporter=sql.Literal(METRICS_FRONTEND)
+            )
             if every_frontend
-            else "cluster = %(cluster)s and frontend = %(frontend)s"
+            else sql.SQL("cluster = %(cluster)s and frontend = %(frontend)s")
         ),
     )
 

@@ -631,3 +631,28 @@ class TheStoredDifferencesCoverEverySummedCounter(unittest.TestCase):
         specification.loader.exec_module(migration)
 
         self.assertEqual(tuple(migration.COUNTERS), db.STORED_DELTAS)
+
+
+class TheDashboardCountsVisitorsNotScrapes(unittest.TestCase):
+    def test_every_frontend_but_the_exporter_s_is_summed(self) -> None:
+        from haproxy_mgmt.generate import METRICS_FRONTEND
+        from psycopg import sql
+
+        statement = db._frontend_totals(SUMMARY_COUNTERS, every_frontend=True)
+
+        self.assertIn(sql.Literal(METRICS_FRONTEND), list(_parts(statement)))
+        self.assertNotIn(
+            sql.Literal(METRICS_FRONTEND), list(_parts(db._frontend_totals(CARD_COUNTERS)))
+        )
+
+
+def _parts(composed: object):  # type: ignore[no-untyped-def]
+    """Every leaf of a composed statement, so a literal can be found without a connection."""
+
+    from psycopg import sql
+
+    if isinstance(composed, sql.Composed):
+        for part in composed:
+            yield from _parts(part)
+    else:
+        yield composed

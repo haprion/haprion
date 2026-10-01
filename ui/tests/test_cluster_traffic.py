@@ -182,6 +182,24 @@ class WhatThePageSays(ReadingACluster):
 
         self.assertIn("something-handwritten", self.page().text)  # type: ignore[attr-defined]
 
+    def test_a_raw_port_is_its_vip_with_tcp_and_the_port_beside_it(self) -> None:
+        self.frontends = [("mgd-vip-int-tcp-5432", True)]
+
+        text = self.page().text  # type: ignore[attr-defined]
+
+        self.assertIn(">vip-int<", text)
+        self.assertIn('protocol-tcp">TCP 5432<', text)
+
+    def test_the_metrics_exporter_is_not_an_address_anything_arrives_at(self) -> None:
+        """Seen in the 7- and 30-day windows after the exporter was on (2026-10-01)."""
+
+        self.frontends = [("mgd-metrics", True), ("mgd-vip-int-https", True)]
+
+        text = self.page().text  # type: ignore[attr-defined]
+
+        self.assertNotIn("mgd-metrics", text)
+        self.assertIn(">vip-int<", text)
+
     def test_every_backend_the_cluster_has_is_there(self) -> None:
         """Not only the one somebody already guessed right about."""
 

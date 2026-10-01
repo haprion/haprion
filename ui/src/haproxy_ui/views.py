@@ -1616,9 +1616,13 @@ def build_router(config: Config) -> APIRouter:
                         # says so on its own card rather than being left off
                         # the page.
                         #
-                        db.read_cluster_frontends(
-                            connection, cluster=cluster, since=since, until=now
-                        ),
+                        [
+                            seen
+                            for seen in db.read_cluster_frontends(
+                                connection, cluster=cluster, since=since, until=now
+                            )
+                            if not metrics.is_exporter(seen[0])
+                        ],
                     )
                 )
 

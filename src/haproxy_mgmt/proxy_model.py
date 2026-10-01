@@ -527,6 +527,27 @@ class Backend:
     worse than finding it out from the editor.
     """
 
+    @property
+    def written_by_hand(self) -> bool:
+        """Whether the object's advanced config writes this pool (B224).
+
+        A pool the model has read has servers unless it was `servers: []`, which
+        is what `pool_written_by_hand` asks of the stored document.
+        """
+
+        return not self.servers
+
+
+def pool_written_by_hand(pool: Any) -> bool:
+    """Whether a pool in a stored document is the advanced config's to write (B224).
+
+    The one rule, for every reader that has the document rather than the model:
+    the dialog, the form and `advanced_placement`. `Backend.written_by_hand` is
+    the same answer once the model has read it.
+    """
+
+    return isinstance(pool, Mapping) and pool.get("servers") == []
+
 
 @dataclass(frozen=True, slots=True)
 class Redirect:
@@ -995,7 +1016,7 @@ def _balance_key(data: Mapping[str, Any], balance: str, location: str) -> str | 
 
 def _backend(name: str, value: Any, location: str) -> Backend:
     data = _mapping(value, location)
-    if data.get("servers") == []:
+    if pool_written_by_hand(data):
         #
         # A pool written by hand in the object's advanced config (B224): empty
         # here, and nothing else either - balance, checks, cookie and the rest
@@ -1372,7 +1393,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     unavailable = _unavailable(data.get("unavailable"), f"{name}.unavailable")
     headers = _headers(data.get("headers"), f"{name}.headers")
     rate_limit = _rate_limit(data.get("rate_limit"), f"{name}.rate_limit", listen.protocol)
-    handwritten = sorted(key for key, backend in backends.items() if not backend.servers)
+    handwritten = sorted(key for key, backend in backends.items() if backend.written_by_hand)
     advanced = _advanced(
         data.get("advanced"),
         name,
@@ -1456,7 +1477,7 @@ def advanced_placement(name: str, document: bytes) -> advanced_config.Placement 
     protocol = listen.get("protocol") if isinstance(listen, Mapping) else None
     backends = data.get("backends")
     handwritten = isinstance(backends, Mapping) and any(
-        isinstance(pool, Mapping) and pool.get("servers") == [] for pool in backends.values()
+        pool_written_by_hand(pool) for pool in backends.values()
     )
     return advanced_config.place(
         advanced_config.normalise(value),

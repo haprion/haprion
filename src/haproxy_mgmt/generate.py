@@ -1804,7 +1804,7 @@ def _backend(
     # be two answers in one section, and HAProxy takes the later one without a
     # word - measured on 3.4.6, 2026-10-01.
     #
-    by_hand = not backend.servers
+    by_hand = backend.written_by_hand
     lines = [
         "",
         f"backend {name}",

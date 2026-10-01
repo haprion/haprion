@@ -2979,6 +2979,52 @@ the dashboard draws the cards in, so reordering that list reorders both. With
 more than six clusters it is off and cannot be turned on; the name stands
 beside every card either way.
 
+A fourth, **Advanced config** (schema `0049`), is off from the start. On, an
+object's page has an *Advanced config* button between *Edit* and *Remove* that
+opens a dialog for HAProxy configuration pasted as a layer on top of the
+object; the object stores it as `advanced` in its YAML. Off hides the button
+and the dialog only: an object that has text keeps it, its page says so, and
+the generator writes it on every publish, because what a cluster runs must not
+depend on an interface setting.
+
+What the layer does, line by line (`haproxy-objects -c alpha --advanced <name>`
+prints the same answer as the dialog's *Check*):
+
+- Lines outside a section, and under the text's own `frontend` or `listen`, are
+  the object's: an http object's go to every pool it has, a tcp object's to its
+  frontend where HAProxy takes the keyword there and to its pool otherwise.
+  They are written **after** the generated lines of the same section, so the
+  cluster's abuse brake and the object's rate limit run first.
+- `backend`, `cache`, `http-errors`, `userlist` and `ring` sections are written
+  as they stand, under a name that must begin with `<object>-`. A section named
+  otherwise is refused, not renamed: other files may refer to it.
+- Refused outright: `global`, `defaults`, `program`, `peers`, `resolvers` and
+  `mailers` sections; `use_backend`/`default_backend`, `bind`, `guid`, and
+  `source`/`usesrc` (also as a server parameter) — routing, listening and the
+  outgoing address are the form's; a keyword HAProxy would ignore in that place;
+  `track-sc0` (the cluster's counter), `track-sc1` while the object's rate limit
+  is on (the limit's counter); a `stick-table` on the object's own lines (its
+  pool already carries the rate limit's). The text counts on `sc2`, with tables
+  in a backend of its own: `track-sc2 src table <object>-logins`. Reading `sc0`
+  and `sc1` is allowed.
+- `mode` is skipped (the form sets the protocol), and so are lines that set what
+  the form owns for the pool — servers, balancing, health checks, cookie, and
+  the connect, server, queue, tunnel and check timeouts — while the form writes
+  the pool. Ticking
+  *The text writes the pool* hands the object's one pool to the text instead:
+  the YAML keeps `servers: []` and nothing else, the form shows no pool fields,
+  and the text must carry at least one `server` line. Unticking gives the pool
+  back with the text's `server name host:port` lines as its servers.
+
+Stick tables in the text have no `peers`: their counts start again when HAProxy
+reloads and when the address moves to the other node. A `haproxy -c` error in a
+generated file is reported as the object and the line of its text, and a
+publish is refused when HAProxy warns about a pasted line: a warning there means
+the line would be ignored, which `-c` alone lets pass. Beyond what
+is refused here and what `haproxy -c` checks, what the text does is the author's
+responsibility: a valid line can still mean something else than intended, and
+the dialog's list of where each line went is the review before a publish.
+
 `-e` names the environment, and each one is a root-owned file written by
 `02-platform-database`: `/etc/haproxy-manager/ui-admin-<environment>.conf`,
 holding the database name and the role to connect as. Prod and dev therefore
@@ -4087,7 +4133,8 @@ Work outward, and stop at the first step that fails:
    the release each node runs, and whether that is the published one. This proves the status key,
    its forced command, and the node reporter.
 3. **The stored objects** — `haproxy-objects -c alpha` lists the proxy objects as they are written,
-   at the commit the repository is on, and `--show <name>` prints one document exactly as stored.
+   at the commit the repository is on, and `--show <name>` prints one document exactly as stored;
+   `--advanced <name>` prints where each line of its advanced config goes.
    Where `haproxy-inventory` parses what a node is serving, this reads the source that produced it -
    so an object the generator refuses is listed with the refusal rather than left out. The listing
    also names the VIP each object is served on, worked out by the generator's own rule against the

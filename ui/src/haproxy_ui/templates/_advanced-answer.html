@@ -1,0 +1,31 @@
+{#
+  What the advanced config dialog draws after Check or Save (Fas 17): every
+  line of the text and what became of it, as `haproxy-objects --advanced`
+  prints it, and the engine's refusal of the object when it has one. A save
+  that went through answers with where to go; `advanced.js` follows it.
+#}
+<div data-advanced-answer-body{% if saved %} data-advanced-saved="{{ saved }}"{% endif %}>
+{#
+  The engine's refusal of the object names every refused line again; with the
+  lines on screen it is said by the rows, and the sentence only when no row
+  carries it.
+#}
+{% set refused = answer.lines | selectattr('fate', 'equalto', 'refused') | list %}
+{% if answer.problem and not refused %}<p class="advanced-problem">{{ answer.problem }}</p>{% endif %}
+{% if answer.lines %}
+<table class="advanced-lines">
+  <colgroup><col style="width: 3.5em"><col style="width: 7em"><col style="width: 15em"><col></colgroup>
+  <thead><tr><th>Line</th><th>Fate</th><th>Where</th><th>Text</th></tr></thead>
+  <tbody>
+    {% for line in answer.lines %}
+    <tr class="advanced-line-{{ line.fate }}">
+      <td>{{ line.number }}</td>
+      <td><span class="status-badge status-badge-{{ {'placed': 'healthy', 'skipped': 'warning', 'refused': 'critical'}.get(line.fate, 'unknown') }}">{{ line.fate }}</span></td>
+      <td>{{ line.where or '—' }}</td>
+      <td><code>{{ line.text }}</code>{% if line.reason and line.fate not in ('placed', 'ignored') %}<small>{{ line.reason }}</small>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% elif not answer.problem %}<p class="advanced-problem">No advanced config: the object is saved without it.</p>{% endif %}
+</div>

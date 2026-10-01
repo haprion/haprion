@@ -2,6 +2,7 @@
 {% block title %}{{ object.name }} — HAProxy Manager{% endblock %}
 {% block content %}
 <script defer src="{{ url_for('static', path='/traffic.js') }}?v={{ asset_token }}"></script>
+{% if advanced_offered %}<script defer src="{{ url_for('static', path='/advanced.js') }}?v={{ asset_token }}"></script>{% endif %}
 {#
   A snapshot deliberately carries no objects, so "not read yet" would send a
   reader looking for a poller fault that is not there. Said once, and used
@@ -38,14 +39,14 @@
 <article class="cluster-card {{ object.accent | accent_class }}">
   <header class="cluster-header">
     <div class="cluster-identity"><span class="status-orb status-warning" aria-hidden="true"></span><div class="section-title"><h3>An unpublished draft</h3><p>Last changed by {{ draft.updated_by }}, revision {{ draft.revision }}</p></div></div>
-    <div class="cluster-state">{% if management_writes %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Open in the editor</a>{% endif %}{% if draft.updated_at %}<time datetime="{{ draft.updated_at.isoformat() }}" title="{{ draft.updated_at | shown_at }}">{{ (draft.updated_at | shown).strftime('%H:%M:%S') }}</time>{% endif %}</div>
+    <div class="cluster-state">{% if management_writes %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Open in the editor</a>{% endif %}{% if advanced_offered and not object.stored %}<button type="button" class="secondary-button" data-advanced-open>Advanced config</button>{% endif %}{% if draft.updated_at %}<time datetime="{{ draft.updated_at.isoformat() }}" title="{{ draft.updated_at | shown_at }}">{{ (draft.updated_at | shown).strftime('%H:%M:%S') }}</time>{% endif %}</div>
   </header>
   <p class="preview-notice">{% if draft.deleted %}This draft says the object should be <strong>removed</strong> when it is published.{% else %}The stored object below is unchanged until this draft is published.{% endif %}</p>
 </article>
 {% endif %}
 <article class="cluster-card {{ object.accent | accent_class }}">
   <header class="cluster-header">
-    <div class="cluster-identity"><div><h3>Stored object</h3><p>{% if object.stored %}<code>managed/proxies/{{ object.name }}.yaml</code> at {{ object.short_commit }}{% else %}Read from the cluster repository{% endif %}</p></div></div>
+    <div class="cluster-identity"><div><h3>Stored object</h3><p>{% if object.stored %}<code>managed/proxies/{{ object.name }}.yaml</code> at {{ object.short_commit }}{% if stored_advanced %} · with advanced config{% endif %}{% else %}Read from the cluster repository{% endif %}</p></div></div>
     {#
       The link is drawn only where the editor exists. In read-only mode the
       route answers 404 rather than 403, so a button that led there would
@@ -59,7 +60,7 @@
       "Stored object", "Edit" reads as a way to edit the stored text, which is
       not what opens.
     #}
-    <div class="cluster-state">{% if management_writes and object.stored %}{% if not draft %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Edit</a>{% endif %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/remove">Remove</a>{% endif %}{% if object.observed_iso %}<time datetime="{{ object.observed_iso }}" title="{{ object.observed_at | shown_at }}">{{ object.age_label }}</time>{% else %}<span class="observation-age">Never read</span>{% endif %}</div>
+    <div class="cluster-state">{% if management_writes and object.stored %}{% if not draft %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/edit">Edit</a>{% endif %}{% if advanced_offered %}<button type="button" class="secondary-button" data-advanced-open>Advanced config</button>{% endif %}<a class="secondary-button" href="/proxies/{{ object.cluster }}/{{ object.name }}/remove">Remove</a>{% endif %}{% if object.observed_iso %}<time datetime="{{ object.observed_iso }}" title="{{ object.observed_at | shown_at }}">{{ object.age_label }}</time>{% else %}<span class="observation-age">Never read</span>{% endif %}</div>
   </header>
 
   {% if object.stored %}
@@ -148,4 +149,28 @@
   {% endif %}
 </article>
 </div>
+
+{#
+  The advanced config dialog (Fas 17, B223, B225). Only a modal: the button
+  above opens it and there is no page of its own. It edits the text and the
+  pool choice of the draft - or of the stored object when there is no draft -
+  and Save writes the same draft the editor does.
+#}
+{% if advanced_offered %}
+<dialog class="advanced-dialog" data-advanced-dialog aria-label="Advanced config">
+  <form method="post" action="/proxies/{{ object.cluster }}/{{ object.name }}/advanced" data-advanced-form>
+    <div class="advanced-dialog-header"><h3>Advanced config</h3><button type="button" class="secondary-button" data-advanced-close>Close</button></div>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="expected_revision" value="{{ draft.revision if draft else '' }}">
+    <textarea name="advanced" class="advanced-text" rows="18" spellcheck="false" aria-label="HAProxy configuration">
+{{ advanced.text }}</textarea>
+    {% if advanced.one_pool %}<label class="check"><input type="checkbox" name="handwritten_pool"{% if advanced.handwritten %} checked{% endif %}> The text writes the pool</label>{% endif %}
+    <div class="form-actions">
+      <button type="submit" name="action" value="check" class="secondary-button">Check</button>
+      <button type="submit" name="action" value="save" class="primary-button">Save as draft</button>
+    </div>
+    <div data-advanced-answer></div>
+  </form>
+</dialog>
+{% endif %}
 {% endblock %}

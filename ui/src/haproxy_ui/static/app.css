@@ -2139,3 +2139,19 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 @media (max-width: 1049px) {
   .settings-cluster-table td:nth-child(4) { grid-column: 1 / -1; }
 }
+
+/* The advanced config dialog (Fas 17): the Diff dialog's frame, a text field and the lines' fates. */
+.advanced-dialog { width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 64px); padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel-raised); color: var(--text-primary); box-shadow: var(--shadow-menu); }
+.advanced-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.advanced-dialog form { display: grid; gap: 12px; padding: 16px 20px 20px; }
+.advanced-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.advanced-dialog-header h3 { margin: 0; }
+.advanced-text { width: 100%; min-height: 16em; resize: vertical; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.55; tab-size: 4; white-space: pre; }
+.advanced-problem { margin: 0; color: var(--text); }
+.advanced-waiting { margin: 0; color: var(--muted); }
+.advanced-lines { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
+.advanced-lines th, .advanced-lines td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.advanced-lines td:nth-child(3) { overflow-wrap: break-word; }
+.advanced-lines code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.advanced-lines small { display: block; color: var(--muted); }
+.advanced-lines .status-badge { min-height: 0; padding: 1px 8px; }

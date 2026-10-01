@@ -23,6 +23,7 @@ from haproxy_mgmt import backup_schedule
 CERT_RECEIVERS = "cert_receivers"
 NODE_BACKUPS = "node_backups"
 CLUSTER_COLOURS = "cluster_colours"
+ADVANCED_CONFIG = "advanced_config"
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +51,12 @@ FEATURES = (
     # whatever its row says - see `cluster_identity`.
     #
     Feature(CLUSTER_COLOURS, "Cluster colours"),
+    #
+    # Off hides the button and the dialog on an object's page (Fas 17, B224).
+    # Text already written stays in the object and is still published: the
+    # engine generates what is stored whatever this says.
+    #
+    Feature(ADVANCED_CONFIG, "Advanced config"),
 )
 BY_NAME = {feature.name: feature for feature in FEATURES}
 

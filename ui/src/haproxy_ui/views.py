@@ -53,6 +53,7 @@ from haproxy_mgmt.proxy_model import (
 )
 
 from haproxy_ui import (
+    advanced_dialog,
     auth,
     backups,
     certificate_activity,
@@ -625,6 +626,8 @@ SWITCHED = {
     "node_backups-on": "Node backups turned on. The schedules that were stopped are being started again.",
     "cluster_colours-off": "Cluster colours turned off.",
     "cluster_colours-on": "Cluster colours turned on.",
+    "advanced_config-off": "Advanced config turned off. Objects keep their text and it is still published.",
+    "advanced_config-on": "Advanced config turned on.",
 }
 
 
@@ -1216,6 +1219,35 @@ def build_router(config: Config) -> APIRouter:
     ) -> Response:
         return _removal_submit(request, config, cluster, name, csrf_token)
 
+    #
+    # The advanced config dialog's *Check* and *Save* (Fas 17, B223). Answered
+    # with the part of the dialog that changes, never with a page: the dialog
+    # is the only way in (decided 2026-10-01), and a page of its own would be a
+    # second editor for the same draft.
+    #
+    @router.post("/proxies/{cluster}/{name}/advanced", response_class=HTMLResponse)
+    def advanced_config_submit(
+        request: Request,
+        cluster: str,
+        name: str,
+        action: Annotated[str, Form(max_length=16)] = "check",
+        advanced: Annotated[str, Form(max_length=65536)] = "",
+        handwritten_pool: Annotated[bool, Form()] = False,
+        expected_revision: Annotated[str, Form(max_length=16)] = "",
+        csrf_token: Annotated[str, Form(max_length=128, alias=auth.CSRF_FIELD)] = "",
+    ) -> Response:
+        return _advanced_submit(
+            request,
+            config,
+            cluster,
+            name,
+            action=action,
+            text=advanced,
+            handwritten=handwritten_pool,
+            expected_revision=expected_revision,
+            csrf_token=csrf_token,
+        )
+
     @router.get("/proxies/{cluster}/{name}", response_class=HTMLResponse)
     def proxy_object(request: Request, cluster: str, name: str) -> Response:
         """One proxy as it is written, beside the row the nodes are serving.
@@ -1380,6 +1412,18 @@ def build_router(config: Config) -> APIRouter:
         if detail.stored is None and detail.published is None and detail.available and not draft:
             raise HTTPException(status_code=404)
         #
+        # What the advanced config dialog opens with: the draft's text when there
+        # is a draft, as the editor opens the draft (Fas 17). Read whatever the
+        # switch says, because the page says an object carries text either way
+        # (B224) - the switch only hides the button.
+        #
+        base = (
+            draft.yaml
+            if draft is not None and not draft.deleted
+            else (detail.stored.document if detail.stored is not None else "")
+        )
+        advanced = advanced_dialog.opened(base) if base else None
+        #
         # What has actually gone through this object's backends lately. Read from
         # the samples the poller stores rather than from the nodes, so opening
         # the page reaches nothing: it is history, and history is the one thing
@@ -1487,6 +1531,17 @@ def build_router(config: Config) -> APIRouter:
                 "section": "proxies",
                 "object": detail,
                 "draft": draft,
+                "advanced": advanced,
+                "stored_advanced": bool(
+                    detail.stored is not None
+                    and advanced_dialog.opened(detail.stored.document).text
+                ),
+                "advanced_offered": (
+                    config.management_writes
+                    and advanced is not None
+                    and features.is_on(features.ADVANCED_CONFIG)
+                    and not (draft is not None and draft.deleted)
+                ),
                 #
                 # What just happened, carried in the redirect. A 303 leaves
                 # nothing behind, so without it a save that worked and a page
@@ -8463,3 +8518,94 @@ def _login_again(request: Request, config: Config, *, error: str | None = None) 
         path="/login",
     )
     return response
+
+
+def _advanced_submit(
+    request: Request,
+    config: Config,
+    cluster: str,
+    name: str,
+    *,
+    action: str,
+    text: str,
+    handwritten: bool,
+    expected_revision: str,
+    csrf_token: str,
+) -> Response:
+    """Check the dialog's text, or save it into the object's draft (Fas 17, B223, B225).
+
+    The draft is the editor's draft: the same row, the same revision check and
+    the same refusal of a document that is not an object. What is saved is the
+    draft's document - or the stored one when there is no draft - with only the
+    text and the pool choice changed.
+    """
+
+    session = current_session(request)
+    if session is None:
+        return RedirectResponse("/login", status_code=303)
+    if not config.management_writes or not features.is_on(features.ADVANCED_CONFIG):
+        return PlainTextResponse("Not found", status_code=404)
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    if not auth.csrf_token_is_valid(token, csrf_token):
+        return PlainTextResponse("Refused", status_code=403)
+    if session.role != "admin":
+        return PlainTextResponse("Refused", status_code=403)
+    if action not in ("check", "save") or not proxy_model.NAME.fullmatch(name):
+        return PlainTextResponse("Unknown action", status_code=400)
+
+    def answer(result: advanced_dialog.Answer, *, saved: str = "") -> Response:
+        return TEMPLATES.TemplateResponse(
+            request, "_advanced-answer.html", {"answer": result, "saved": saved}
+        )
+
+    state = _editor_state(request, config, cluster)
+    stored = next((view for view in state.stored if view.name == name), None)
+    with request.app.state.pool.connection() as connection:
+        draft = _settled_draft(connection, cluster, name, {view.name for view in state.stored})
+    if draft is not None and draft.deleted:
+        return answer(advanced_dialog.Answer(problem="The draft removes this object."))
+    base = draft.yaml if draft is not None else (stored.document if stored is not None else "")
+    if not base or state.commit is None:
+        return answer(advanced_dialog.Answer(problem="The stored objects have not been read yet."))
+    try:
+        document = advanced_dialog.apply(name, base, text, handwritten=handwritten)
+    except (ValueError, ModelError) as exc:
+        return answer(advanced_dialog.Answer(problem=str(exc)))
+    result = advanced_dialog.check(name, document)
+    if action == "check":
+        return answer(result)
+    if result.problem:
+        return answer(result)
+    if editor_module.unchanged(document, base):
+        return answer(replace(result, problem="Nothing changed."))
+
+    revision = int(expected_revision) if expected_revision.isdigit() else None
+    with request.app.state.pool.connection() as connection:
+        try:
+            saved = db.save_draft(
+                connection,
+                cluster=cluster,
+                object_id=name,
+                yaml=document,
+                base_version=state.base_version,
+                base_hash=state.commit,
+                updated_by=session.username,
+                expected_revision=revision,
+            )
+        except db.DraftConflict as conflict:
+            connection.rollback()
+            return answer(
+                replace(
+                    result, problem=f"{conflict}. Reload the page to see the draft as it is now."
+                )
+            )
+        db.record_audit_event(
+            connection,
+            actor=session.username,
+            action="save_draft",
+            cluster=cluster,
+            request_id=uuid4(),
+            detail={"object": name, "revision": saved.revision, "advanced": True},
+        )
+        connection.commit()
+    return answer(result, saved=_proxy_path(cluster, name) + "?saved=1")

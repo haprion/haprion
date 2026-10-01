@@ -13,6 +13,9 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Any
 
+from haproxy_mgmt.config import Network, Vip
+from haproxy_mgmt.objects import objects_result
+
 from haproxy_ui.db import (
     ClusterBackups,
     ClusterCertificates,
@@ -748,6 +751,34 @@ listen:
 """
 
 
+def _engine_fields(cluster: str, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each entry with what the objects helper works out from it (B222).
+
+    By the engine's own function against the fixture's network, so the demo
+    shows the VIP and source a real helper would report rather than a second
+    guess written here.
+    """
+
+    reading = next(row for row in network_rows() if row.cluster == cluster)
+    result = reading.result
+    network = Network(
+        vips={
+            vip["name"]: Vip(name=vip["name"], address=vip["address"], source=vip.get("source"))
+            for vip in result["vips"]
+        },
+        default_vip=result["default_vip"],
+        sources={source["name"]: source["address"] for source in result.get("sources", [])},
+        networks={},
+    )
+    files = {
+        f"managed/proxies/{entry['name']}.yaml": entry["document"].encode() for entry in entries
+    }
+    listed: Any = objects_result(files, "0" * 40, network=network)["objects"]
+    computed = {entry["name"]: entry for entry in listed}
+    fields = ("vip", "source", "servers", "health_checked")
+    return [{**entry, **{key: computed[entry["name"]][key] for key in fields}} for entry in entries]
+
+
 def object_rows(now: datetime | None = None) -> tuple[ClusterObjects, ...]:
     """The objects as written, beside the inventory that shows them published.
 
@@ -772,37 +803,40 @@ def object_rows(now: datetime | None = None) -> tuple[ClusterObjects, ...]:
                 #
                 "commit": f"{24:040d}",
                 "generated_at": observed.isoformat().replace("+00:00", "Z"),
-                "objects": [
-                    {
-                        "name": "public-web",
-                        "document": PUBLIC_WEB,
-                        "readable": True,
-                        "problem": None,
-                        "protocol": "https",
-                        "hostnames": ["app.demo.example", "www.demo.example"],
-                    },
-                    {
-                        #
-                        # Written and committed, serving nothing: no published
-                        # frontend carries its hostname yet. The common state
-                        # of an edit, and the one the overview must not hide.
-                        #
-                        "name": "shop",
-                        "document": SHOP,
-                        "readable": True,
-                        "problem": None,
-                        "protocol": "https",
-                        "hostnames": ["shop.demo.example"],
-                    },
-                    {
-                        "name": "staging",
-                        "document": HALF_WRITTEN,
-                        "readable": False,
-                        "problem": "staging.routes is required for an http object",
-                        "protocol": None,
-                        "hostnames": [],
-                    },
-                ],
+                "objects": _engine_fields(
+                    "edge-demo",
+                    [
+                        {
+                            "name": "public-web",
+                            "document": PUBLIC_WEB,
+                            "readable": True,
+                            "problem": None,
+                            "protocol": "https",
+                            "hostnames": ["app.demo.example", "www.demo.example"],
+                        },
+                        {
+                            #
+                            # Written and committed, serving nothing: no published
+                            # frontend carries its hostname yet. The common state
+                            # of an edit, and the one the overview must not hide.
+                            #
+                            "name": "shop",
+                            "document": SHOP,
+                            "readable": True,
+                            "problem": None,
+                            "protocol": "https",
+                            "hostnames": ["shop.demo.example"],
+                        },
+                        {
+                            "name": "staging",
+                            "document": HALF_WRITTEN,
+                            "readable": False,
+                            "problem": "staging.routes is required for an http object",
+                            "protocol": None,
+                            "hostnames": [],
+                        },
+                    ],
+                ),
             },
             warnings=[],
             error=None,
@@ -821,16 +855,19 @@ def object_rows(now: datetime | None = None) -> tuple[ClusterObjects, ...]:
                 "generated_at": (observed - timedelta(seconds=6))
                 .isoformat()
                 .replace("+00:00", "Z"),
-                "objects": [
-                    {
-                        "name": "api",
-                        "document": API,
-                        "readable": True,
-                        "problem": None,
-                        "protocol": "https",
-                        "hostnames": ["api.demo.example"],
-                    }
-                ],
+                "objects": _engine_fields(
+                    "service-demo",
+                    [
+                        {
+                            "name": "api",
+                            "document": API,
+                            "readable": True,
+                            "problem": None,
+                            "protocol": "https",
+                            "hostnames": ["api.demo.example"],
+                        }
+                    ],
+                ),
             },
             warnings=[],
             error=None,

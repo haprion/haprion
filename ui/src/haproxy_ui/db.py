@@ -33,7 +33,7 @@ from psycopg.rows import class_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from haproxy_ui import metrics
+from haproxy_ui import metrics, search_index
 from haproxy_ui.config import Database
 
 
@@ -1796,6 +1796,124 @@ def record_cluster_list(connection: Connection[Any], clusters: Sequence[str]) ->
             "on conflict (id) do update set clusters = excluded.clusters",
             {"clusters": Jsonb(list(clusters))},
         )
+
+
+def replace_search_entries(
+    connection: Connection[Any],
+    *,
+    cluster: str,
+    source: str,
+    entries: Sequence[search_index.Entry],
+) -> int:
+    """Replace what one reading of one cluster contributes to the search (B222).
+
+    In the caller's transaction, so the search never sees the cluster with its
+    old rows gone and its new ones not yet written.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "delete from search_entry where cluster = %(cluster)s and source = %(source)s",
+            {"cluster": cluster, "source": source},
+        )
+        cursor.executemany(
+            "insert into search_entry "
+            "(cluster, source, kind, title, label, value, href, admin_only) "
+            "values (%(cluster)s, %(source)s, %(kind)s, %(title)s, %(label)s, %(value)s, "
+            "%(href)s, %(admin_only)s)",
+            [
+                {
+                    "cluster": entry.cluster,
+                    "source": entry.source,
+                    "kind": entry.kind,
+                    "title": entry.title,
+                    "label": entry.label,
+                    "value": entry.value,
+                    "href": entry.href,
+                    "admin_only": entry.admin_only,
+                }
+                for entry in entries
+            ],
+        )
+    return len(entries)
+
+
+def prune_search_entries(connection: Connection[Any], clusters: Sequence[str]) -> int:
+    """Remove what clusters that no longer exist left in the search."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "delete from search_entry where not (cluster = any(%(clusters)s))",
+            {"clusters": list(clusters)},
+        )
+        return cursor.rowcount
+
+
+def _like_pattern(query: str) -> str:
+    """A substring pattern that matches the text and nothing it could mean to LIKE."""
+
+    escaped = query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def search(
+    connection: Connection[Any],
+    query: str,
+    *,
+    role: str,
+    clusters: Sequence[str],
+    page: int = 1,
+) -> search_index.Results:
+    """One page of the header's search, answered by the trigram index.
+
+    Grouped per thing found, with every value of it that matched; a
+    certificate is one thing however many clusters list it. The order and the
+    page are the database's, so a page past the first costs what the first
+    does.
+    """
+
+    query = search_index.normalise(query)
+    if not query:
+        return search_index.Results(query, (), 0, 1)
+    page = max(1, page)
+    kinds = list(search_index.KINDS)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select kind, shown_cluster, title, href, "
+            "       string_agg(distinct case when label = '' then value "
+            "                            else label || ' ' || value end, ', '), "
+            "       count(*) over () "
+            "  from (select kind, title, href, label, value, "
+            "               case when kind = 'certificate' then '' else cluster end as shown_cluster "
+            "          from search_entry "
+            "         where lower(value) like %(pattern)s "
+            "           and cluster = any(%(clusters)s) "
+            "           and (%(admin)s or not admin_only)) hits "
+            " group by kind, shown_cluster, title, href "
+            " order by array_position(%(kinds)s::text[], kind), shown_cluster, lower(title) "
+            " limit %(limit)s offset %(offset)s",
+            {
+                "pattern": _like_pattern(query),
+                "clusters": list(clusters),
+                "admin": role == "admin",
+                "kinds": kinds,
+                "limit": search_index.PAGE_SIZE,
+                "offset": (page - 1) * search_index.PAGE_SIZE,
+            },
+        )
+        rows = cursor.fetchall()
+    total = int(rows[0][5]) if rows else 0
+    hits = [
+        search_index.Hit(
+            kind=kind,
+            cluster=cluster or None,
+            title=title,
+            matched=matched or "",
+            href=search_index.reader_href(kind, href, role),
+        )
+        for kind, cluster, title, href, matched, _total in rows
+    ]
+    return search_index.Results(query, search_index.grouped(hits), total, page)
 
 
 def cluster_list(connection: Connection[Any]) -> tuple[str, ...] | None:

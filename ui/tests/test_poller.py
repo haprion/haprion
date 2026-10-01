@@ -451,3 +451,60 @@ class TheClusterList(unittest.TestCase):
         healthy = poller.poll_once(Pool(), None, (source,), clusters=clusters)  # type: ignore[arg-type]
 
         self.assertEqual(healthy, 3)
+
+
+class TheSearchIndexIsKeptBesideTheReadings(unittest.TestCase):
+    """B222: each reading replaces its own rows, and only a reading that answered."""
+
+    class Pool:
+        def connection(self) -> Any:
+            return self
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def commit(self) -> None:
+            return None
+
+    def index(self, operation: str, reading: dict[str, Any]) -> list[dict[str, Any]]:
+        written: list[dict[str, Any]] = []
+        source = poller.Source(operation, lambda *_: None, lambda *_a, **_k: None)
+        with unittest.mock.patch(
+            "haproxy_ui.db.replace_search_entries",
+            side_effect=lambda _c, **kwargs: written.append(kwargs),
+        ):
+            poller._index(self.Pool(), source, cluster="alpha", reading=reading)
+        return written
+
+    def test_an_answered_reading_replaces_its_rows(self) -> None:
+        result = {"objects": [{"name": "shop", "hostnames": ["shop.example.com"]}]}
+
+        written = self.index("objects", {"outcome": "done", "result": result})
+
+        self.assertEqual([(w["cluster"], w["source"]) for w in written], [("alpha", "objects")])
+        self.assertEqual({e.value for e in written[0]["entries"]}, {"shop", "shop.example.com"})
+
+    def test_a_failed_reading_leaves_the_last_rows_alone(self) -> None:
+        self.assertEqual(self.index("objects", {"outcome": "failed", "result": {}}), [])
+        self.assertEqual(self.index("objects", {"outcome": "unavailable", "result": {}}), [])
+
+    def test_a_reading_the_search_does_not_cover_writes_nothing(self) -> None:
+        self.assertEqual(self.index("list", {"outcome": "done", "result": {"versions": []}}), [])
+
+    def test_a_failure_to_write_is_a_log_line_not_a_failed_pass(self) -> None:
+        source = poller.Source("objects", lambda *_: None, lambda *_a, **_k: None)
+        with (
+            unittest.mock.patch(
+                "haproxy_ui.db.replace_search_entries", side_effect=RuntimeError("down")
+            ),
+            self.assertLogs("haproxy_ui.poller", level="WARNING"),
+        ):
+            poller._index(
+                self.Pool(),
+                source,
+                cluster="alpha",
+                reading={"outcome": "done", "result": {"objects": []}},
+            )

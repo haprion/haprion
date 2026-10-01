@@ -29,7 +29,7 @@ from haproxy_mgmt.traffic_collector import (
 )
 from psycopg.types.json import Jsonb
 
-from haproxy_ui import auth, db, traffic_logs
+from haproxy_ui import auth, db, search_index, traffic_logs
 
 DSN = os.environ.get("HAPROXY_UI_TEST_DATABASE_DSN", "")
 
@@ -328,7 +328,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0046",))
+            self.assertEqual(cursor.fetchone(), ("0047",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -2801,3 +2801,120 @@ class SigningInThroughTheProviderInTheDatabase(unittest.TestCase):
         if session is None:
             self.fail("no session")
         self.assertEqual(session.source, "oidc")
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheSearchIndex(unittest.TestCase):
+    """B222: the poller writes the rows, the web searches them, through the trigram index."""
+
+    def connect(self, role_variable: str) -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    def write(self, cluster: str, source: str, entries: list[Any]) -> None:
+        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+            db.replace_search_entries(connection, cluster=cluster, source=source, entries=entries)
+            connection.commit()
+
+    def search(self, query: str, *, role: str = "admin", page: int = 1) -> Any:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            return db.search(connection, query, role=role, clusters=["si-a", "si-b"], page=page)
+
+    def objects(self, cluster: str, *names: str) -> list[Any]:
+        return search_index.object_entries(
+            cluster,
+            {
+                "objects": [
+                    {
+                        "name": name,
+                        "hostnames": [f"{name}.example.com"],
+                        "vip": {"name": "main", "address": "192.0.2.20", "default": True},
+                        "source": {"name": None, "address": "192.0.2.25"},
+                        "servers": [f"198.51.100.{index}:8080"],
+                    }
+                    for index, name in enumerate(names, start=10)
+                ]
+            },
+        )
+
+    def setUp(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+            db.prune_search_entries(connection, [])
+            connection.commit()
+
+    def test_a_backend_is_found_with_what_matched_and_only_by_an_admin(self) -> None:
+        self.write("si-a", "objects", self.objects("si-a", "shop", "api"))
+
+        found = self.search("198.51.100.11")
+        self.assertEqual(found.total, 1)
+        hit = found.groups[0].hits[0]
+        self.assertEqual(
+            (hit.title, hit.matched, hit.href),
+            ("api", "Backend 198.51.100.11:8080", "/proxies/si-a/api"),
+        )
+        self.assertEqual(self.search("198.51.100.11", role="reader").total, 0)
+        self.assertEqual(self.search("api", role="reader").groups[0].hits[0].href, "/proxies")
+
+    def test_like_characters_in_a_query_are_text(self) -> None:
+        self.write("si-a", "objects", self.objects("si-a", "a_b", "axb"))
+
+        self.assertEqual([h.title for h in self.search("a_b").groups[0].hits], ["a_b"])
+        self.assertEqual(self.search("%").total, 0)
+
+    def test_a_reading_replaces_its_own_rows_and_no_others(self) -> None:
+        self.write("si-a", "objects", self.objects("si-a", "shop"))
+        self.write(
+            "si-a",
+            "network",
+            search_index.network_entries(
+                "si-a", {"default_vip": "main", "vips": [{"name": "main", "address": "192.0.2.20"}]}
+            ),
+        )
+        self.write("si-a", "objects", self.objects("si-a", "api"))
+
+        self.assertEqual(self.search("shop").total, 0)
+        self.assertEqual(self.search("api").total, 1)
+        groups = {g.label: [h.title for h in g.hits] for g in self.search("192.0.2.20").groups}
+        self.assertEqual(groups, {"Proxies": ["api"], "Addresses": ["VIP main (default)"]})
+
+    def test_pages_of_a_hundred_in_the_order_shown(self) -> None:
+        names = [f"site{n:03d}" for n in range(250)]
+        self.write("si-b", "objects", self.objects("si-b", *names))
+
+        first, third = self.search("site"), self.search("site", page=3)
+        self.assertEqual((first.total, first.pages), (250, 3))
+        self.assertEqual(first.groups[0].hits[0].title, "site000")
+        self.assertEqual([h.title for h in third.groups[0].hits][-1], "site249")
+        self.assertEqual(len(third.groups[0].hits), 50)
+
+    def test_a_removed_cluster_leaves_nothing_behind(self) -> None:
+        self.write("si-a", "objects", self.objects("si-a", "shop"))
+        self.write("si-b", "objects", self.objects("si-b", "shop"))
+        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+            db.prune_search_entries(connection, ["si-b"])
+            connection.commit()
+
+        self.assertEqual([h.cluster for h in self.search("shop").groups[0].hits], ["si-b"])
+
+    def test_the_web_cannot_write_the_index(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+            for statement in (
+                "delete from search_entry",
+                "insert into search_entry (cluster, source, kind, title, value, href) "
+                "values ('si-a', 'objects', 'proxy', 'x', 'x', '/')",
+            ):
+                with (
+                    self.subTest(statement=statement),
+                    self.assertRaises(psycopg.errors.InsufficientPrivilege),
+                ):
+                    cursor.execute(statement)
+                connection.rollback()
+
+    def test_the_query_uses_the_trigram_index(self) -> None:
+        with (
+            self.connect("HAPROXY_UI_TEST_MIGRATION_ROLE") as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute("set enable_seqscan = off")
+            cursor.execute("explain select 1 from search_entry where lower(value) like '%192.0.2%'")
+            plan = "\n".join(row[0] for row in cursor.fetchall())
+        self.assertIn("search_entry_value", plan)

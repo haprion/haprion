@@ -2604,6 +2604,11 @@ the job table and no `update` at all, so a queued job is immutable to the role
 that queued it and there is no path from "I asked for this" to "this is what
 happened". State, request ID and timestamps come from column defaults.
 
+The poller writes cached readings and never removes one, with a single exception: the search
+index, `search_entry`. Each reading the poller makes is turned into the values the header's search
+looks for, and the poller replaces that reading's rows in one transaction, so it holds `delete` on
+that table and on no other. The rows are derived and rebuilt every pass; the web only reads them.
+
 #### Where the data lives
 
 Put the cluster's storage on the volume that holds the platform, and keep the

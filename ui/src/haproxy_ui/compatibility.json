@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "requires": {
-    "database_head": "0046",
+    "database_head": "0047",
     "database_revisions": [
       "0028",
       "0029",
@@ -24,7 +24,7 @@
       "0046",
       "0047"
     ],
-    "engine_api": 7,
+    "engine_api": 8,
     "node_api": 1,
     "poller_helpers": [
       "haproxy-status-helper",

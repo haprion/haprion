@@ -24,7 +24,7 @@ from haproxy_mgmt.object_manifest import ABSENT as ABSENT
 from haproxy_mgmt.object_manifest import CHANGED as CHANGED
 from haproxy_mgmt.object_manifest import CURRENT
 
-from haproxy_ui.addresses import ObjectAddresses, resolve
+from haproxy_ui.addresses import ObjectAddresses, from_entry
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterObjects, Job
@@ -65,6 +65,13 @@ class ObjectView:
     #
     backend_count: int | None = None
     redirect_http: bool | None = None
+    #
+    # From the envelope too (B222), worked out by the engine with the
+    # generator's rule. `None` is a helper that did not say.
+    #
+    addresses: ObjectAddresses | None = None
+    health_checked: bool | None = None
+    sourced: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +175,16 @@ def object_view(value: Any) -> ObjectView | None:
         redirect_http=(
             entry.get("redirect_http") if isinstance(entry.get("redirect_http"), bool) else None
         ),
+        addresses=from_entry(entry.get("vip"), entry.get("source")),
+        health_checked=(
+            entry.get("health_checked") if isinstance(entry.get("health_checked"), bool) else None
+        ),
+        #
+        # Whether its traffic leaves from a fixed address: a named source or
+        # the VIP's own. Only the node holding the VIP can bind it, which
+        # decides which node may answer for the backend.
+        #
+        sourced=isinstance(entry.get("source"), Mapping),
     )
 
 
@@ -524,8 +541,8 @@ class ListedObject:
     problem: str | None
     serving: bool
     #
-    # The VIP and source address the object is on (B221), looked up in the
-    # cluster's network description. None where either cannot be read.
+    # The VIP and source address the object is on (B221), as the helper
+    # reported them (B222). None where it could not say.
     #
     addresses: ObjectAddresses | None = None
 
@@ -534,7 +551,6 @@ def listed_objects(
     reading: ClusterObjects | None,
     published: Iterable[ProxyView] = (),
     served: Collection[str] | None = None,
-    network: Mapping[str, Any] | None = None,
 ) -> tuple[ListedObject, ...]:
     """This cluster's objects, each saying whether the nodes are serving it yet.
 
@@ -576,7 +592,7 @@ def listed_objects(
                         if served is not None
                         else bool(view.hostnames) and set(view.hostnames) <= serving
                     ),
-                    addresses=resolve(view.name, view.document, network) if network else None,
+                    addresses=view.addresses,
                 )
                 for view in cluster_object_views(reading)
             ),

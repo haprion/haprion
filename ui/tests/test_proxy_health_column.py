@@ -47,6 +47,11 @@ def objects(document: str) -> ClusterObjects:
                     "readable": True,
                     "protocol": "http",
                     "hostnames": ["shop.example.com"],
+                    #
+                    # What the objects helper reports (B222); the listing no
+                    # longer reads the document to find out.
+                    #
+                    "health_checked": document == CHECKED,
                 }
             ],
         },

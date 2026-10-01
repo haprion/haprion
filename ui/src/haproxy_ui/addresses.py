@@ -1,33 +1,25 @@
 """Where an object is reached and where its traffic leaves from, as addresses.
 
-An object names its VIP and its source address rather than writing either
-down: an address is an environment value and lives in the cluster's network
-description (`proxy_model.Listen`). Every page that shows an address therefore
-has to look the name up, and this is the one place that does it - the listing's
-column, the object page and the search must not come to disagree about which
-address a site is on.
-
-The rule is the generator's own (`generate.source_of`): no VIP named means the
-cluster's default VIP, and no source named means the VIP's own source, if it
-has one. Restating it here is a second copy, so the tests hold it to the
-generator's answer.
+Read from the objects helper's entry (B222), which works both out with the
+generator's own rule against the network description the generator reads. The
+interface used to work them out itself from the document, which made it a
+second reader of the same file and a second copy of the rule; this only shapes
+the answer for a page.
 """
 
 from __future__ import annotations
 
 import ipaddress
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
-
-from haproxy_mgmt.proxy_model import ModelError, Proxy, load_proxy
 
 
 @dataclass(frozen=True, slots=True)
 class Address:
     #
-    # The address, or empty where the network description does not know the
-    # name - an object written against a VIP that has since been removed.
+    # The address, or empty where the network description has no such name -
+    # an object written against a VIP that has since been removed.
     #
     address: str
     #
@@ -49,77 +41,28 @@ class ObjectAddresses:
     source: Address | None
 
 
-def network_result(reading: Any) -> Mapping[str, Any]:
-    """One cluster's cached network description, or nothing."""
-
-    result = getattr(reading, "result", None)
-    return result if isinstance(result, Mapping) else {}
+def _text(value: Any) -> str:
+    return value if isinstance(value, str) else ""
 
 
-def _entries(result: Mapping[str, Any], key: str) -> list[Mapping[str, Any]]:
-    values = result.get(key)
-    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
-        return []
-    return [entry for entry in values if isinstance(entry, Mapping) and entry.get("name")]
+def from_entry(vip: Any, source: Any) -> ObjectAddresses | None:
+    """The helper's `vip` and `source` fields, or None where it reported none."""
 
-
-def _proxy(name: str, document: str) -> Proxy | None:
-    #
-    # The engine's own reader, so a page cannot read a document differently
-    # from the generator that turns it into configuration.
-    #
-    try:
-        return load_proxy(name, document.encode())
-    except (ModelError, UnicodeError):
+    if not isinstance(vip, Mapping) or not _text(vip.get("name")):
         return None
-
-
-def resolve(name: str, document: str, network: Mapping[str, Any]) -> ObjectAddresses | None:
-    """The addresses one stored object is served on and leaves from.
-
-    None where the document cannot be read, or where the cluster has no network
-    description to look the names up in: an answer made without one would be a
-    guess at the default VIP.
-    """
-
-    proxy = _proxy(name, document)
-    default = str(network.get("default_vip") or "")
-    if proxy is None or not default:
-        return None
-    vip_name = proxy.listen.vip or default
-    vips = {str(entry["name"]): entry for entry in _entries(network, "vips")}
-    vip = vips.get(vip_name, {})
-    is_default = vip_name == default
-    source: Address | None = None
-    if proxy.listen.source:
-        sources = {str(entry["name"]): entry for entry in _entries(network, "sources")}
-        source = Address(
-            str(sources.get(proxy.listen.source, {}).get("address") or ""),
-            f"Source {proxy.listen.source}",
+    name = _text(vip.get("name"))
+    default = vip.get("default") is True
+    found: Address | None = None
+    if isinstance(source, Mapping):
+        named = _text(source.get("name"))
+        found = Address(
+            _text(source.get("address")), f"Source {named}" if named else f"Source of VIP {name}"
         )
-    elif vip.get("source"):
-        source = Address(str(vip["source"]), f"Source of VIP {vip_name}")
     return ObjectAddresses(
-        vip=Address(
-            str(vip.get("address") or ""),
-            f"VIP {vip_name}" + (" (default)" if is_default else ""),
-        ),
-        vip_name=vip_name,
-        vip_is_default=is_default,
-        source=source,
-    )
-
-
-def servers(name: str, document: str) -> tuple[str, ...]:
-    """Every backend server as `host:port`, in the order the document lists them."""
-
-    proxy = _proxy(name, document)
-    if proxy is None:
-        return ()
-    return tuple(
-        f"{server.host}:{server.port}"
-        for backend in proxy.backends.values()
-        for server in backend.servers
+        vip=Address(_text(vip.get("address")), f"VIP {name}" + (" (default)" if default else "")),
+        vip_name=name,
+        vip_is_default=default,
+        source=found,
     )
 
 

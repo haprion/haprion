@@ -19,7 +19,6 @@ from typing import Any
 
 from haproxy_mgmt.cluster_status import ServerHealth
 from haproxy_mgmt.generate import PREFIX
-from haproxy_mgmt.proxy_model import ModelError, read_document
 
 #
 # HAProxy's own check codes, as sentences. The codes are the machine's language
@@ -308,63 +307,6 @@ def _attributed(backend: str, obj: str, others: Iterable[str]) -> bool:
         other != obj and len(other) > len(obj) and backend.startswith(f"{PREFIX}-{other}-")
         for other in others
     )
-
-
-def has_health_check(document: str) -> bool | None:
-    """Whether any of this object's backends is checked at all.
-
-    `None` is a document that could not be read, which is not the same answer:
-    an object nobody can parse has an unknown check, not a missing one.
-
-    Read through the engine's own reader rather than a second YAML parser here,
-    for the reason that reader gives - a page that disagreed with the engine
-    about what a document says would disagree exactly where it matters.
-    """
-
-    try:
-        data = read_document("object", document.encode())
-    except (ModelError, ValueError, UnicodeError):
-        return None
-    backends = data.get("backends")
-    if not isinstance(backends, dict):
-        return False
-    #
-    # `type: disabled` is a written-down decision not to check, and the model
-    # spells it out rather than leaving it as the absence of the section. It
-    # counts as no check here for the same reason: what the lamp reports on is
-    # whether something is checking, not whether the key is present.
-    #
-    return any(
-        isinstance(backend, dict)
-        and isinstance(backend.get("health"), dict)
-        and backend["health"].get("type") not in (None, "disabled")
-        for backend in backends.values()
-    )
-
-
-def leaves_from_source(document: str, *, default_vip: str, vip_sources: Mapping[str, str]) -> bool:
-    """Whether this object's traffic leaves from a source address.
-
-    It does when it names one, and it does when the VIP it is served on carries
-    one - which is the usual case here, since the address lives in keepalived
-    and follows the VIP. What an ADC calls the SNIP.
-
-    It decides which nodes may answer for the backend. Only the node holding the
-    VIP can bind the address; the other binds an address it does not have,
-    fails, and reports the backend down - HAProxy telling the truth about the
-    binding and a lie about the backend.
-    """
-
-    try:
-        data = read_document("object", document.encode())
-    except (ModelError, ValueError, UnicodeError):
-        return False
-    listen = data.get("listen")
-    listen = listen if isinstance(listen, dict) else {}
-    if listen.get("source"):
-        return True
-    vip = str(listen.get("vip") or "") or default_vip
-    return bool(vip_sources.get(vip))
 
 
 def clusters_behind(rows: Iterable[Any]) -> frozenset[str]:

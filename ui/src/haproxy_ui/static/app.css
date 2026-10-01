@@ -608,6 +608,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 /* What matched is the answer, so it wraps rather than being cut. */
 .search-table td:nth-child(3) { white-space: normal; }
 .search-matched { color: var(--text-secondary); overflow-wrap: anywhere; }
+.search-pages { display: flex; align-items: center; justify-content: center; gap: 14px; color: var(--text-secondary); font-size: 13px; }
 .proxy-hosts { display: block; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .protocol-badge, .ownership-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; letter-spacing: 0.025em; }
 .protocol-http { color: var(--info); background: var(--info-soft); }

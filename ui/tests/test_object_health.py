@@ -134,22 +134,6 @@ class TheLampInTheListing(unittest.TestCase):
         self.assertEqual(lamp.tone, "unknown")
         self.assertEqual(lamp.label, "")
 
-    def test_a_document_that_cannot_be_read_is_not_an_object_without_a_check(self) -> None:
-        self.assertIsNone(health.has_health_check("not: [a document"))
-        self.assertFalse(health.has_health_check("backends:\n  web:\n    servers: []\n"))
-        self.assertTrue(
-            health.has_health_check("backends:\n  web:\n    health:\n      type: http\n")
-        )
-
-    def test_a_check_written_down_as_disabled_is_no_check(self) -> None:
-        #
-        # The model spells the decision out rather than leaving it as an absent
-        # section, and the lamp reports on whether something is checking.
-        #
-        self.assertFalse(
-            health.has_health_check("backends:\n  web:\n    health:\n      type: disabled\n")
-        )
-
     def test_a_longer_object_name_keeps_its_own_servers(self) -> None:
         #
         # `mgd-shop-web` is object `shop` backend `web`, and equally what object
@@ -215,45 +199,6 @@ class OnlyTheNodeThatCarriesTheAddressAnswers(unittest.TestCase):
 
         self.assertEqual(
             health.object_health(rows, cluster="alpha", obj="shop", sourced=True).tone, "warning"
-        )
-
-
-class WhetherAnObjectLeavesFromASource(unittest.TestCase):
-    def test_a_named_source_is_one(self) -> None:
-        document = "listen:\n  vip: main\n  source: office\n"
-
-        self.assertTrue(
-            health.leaves_from_source(document, default_vip="main", vip_sources={"main": ""})
-        )
-
-    def test_the_vip_carries_one_when_the_object_names_none(self) -> None:
-        document = "listen:\n  vip: main\n"
-
-        self.assertTrue(
-            health.leaves_from_source(
-                document, default_vip="other", vip_sources={"main": "192.0.2.25"}
-            )
-        )
-        self.assertFalse(
-            health.leaves_from_source(document, default_vip="other", vip_sources={"main": ""})
-        )
-
-    def test_an_object_naming_no_vip_takes_the_default(self) -> None:
-        document = "listen:\n  protocol: http\n"
-
-        self.assertTrue(
-            health.leaves_from_source(
-                document, default_vip="main", vip_sources={"main": "192.0.2.25"}
-            )
-        )
-
-    def test_a_document_that_cannot_be_read_claims_no_source(self) -> None:
-        #
-        # The safe direction: keeping every node is one row too many, while
-        # dropping one on a guess hides the half of the cluster that is fine.
-        #
-        self.assertFalse(
-            health.leaves_from_source("not: [a document", default_vip="main", vip_sources={})
         )
 
 

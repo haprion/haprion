@@ -1,4 +1,9 @@
-"""The header's search and the listing's VIP / source column (B221)."""
+"""The header's search and the listing's VIP / source column (B221, B222).
+
+The rows are built from what the objects helper reports, so nothing here reads
+a document; the engine's tests hold the helper to the generator's rule. The
+query itself runs against PostgreSQL in `test_database_integration`.
+"""
 
 from __future__ import annotations
 
@@ -8,12 +13,8 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest import mock
 
-from haproxy_mgmt.config import Vip
-from haproxy_mgmt.generate import source_of
-from haproxy_mgmt.proxy_model import load_proxy
-
-from haproxy_ui import addresses, search
-from haproxy_ui.db import ClusterNetwork, ClusterObjects, ClusterStatus
+from haproxy_ui import addresses, demo, search_index
+from haproxy_ui.db import ClusterObjects, ClusterStatus
 from tests.test_cluster_traffic import measurement
 from tests.test_login import LoginTestCase, configuration
 
@@ -34,121 +35,162 @@ backends:
     servers:
     - host: 192.0.2.10
       port: 8080
-    - host: 192.0.2.11
-      port: 8080
 """
 
-#
-# Every combination the rule has: the default VIP or a named one, and no source,
-# the VIP's own or a named one.
-#
-LISTENS = {
-    "default": "  protocol: http\n",
-    "named-vip": "  protocol: http\n  vip: partner\n",
-    "named-source": "  protocol: http\n  source: outbound\n",
-    "both": "  protocol: http\n  vip: partner\n  source: outbound\n",
-    "bare-vip": "  protocol: http\n  vip: bare\n",
-}
 
-NETWORK = {
-    "cluster": "alpha",
-    "default_vip": "main",
-    "vips": [
-        {"name": "main", "address": "198.51.100.20", "source": "198.51.100.25"},
-        {"name": "partner", "address": "198.51.100.30", "source": "198.51.100.35"},
-        {"name": "bare", "address": "198.51.100.40", "source": None},
-    ],
-    "sources": [{"name": "outbound", "address": "203.0.113.5"}],
-    "groups": [],
-}
+def entry(
+    name: str, *, vip: str = "main", address: str = "198.51.100.20", **fields: Any
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "document": SHOP.replace("name: shop", f"name: {name}"),
+        "readable": True,
+        "problem": None,
+        "protocol": "http",
+        "hostnames": [f"{name}.example.com"],
+        "vip": {"name": vip, "address": address, "default": vip == "main"},
+        "source": {"name": None, "address": "198.51.100.25"},
+        "servers": ["192.0.2.10:8080", "192.0.2.11:8080"],
+        "health_checked": True,
+        **fields,
+    }
 
 
-def document(listen: str, name: str = "shop") -> str:
-    return SHOP.replace("name: shop", f"name: {name}").replace("  protocol: http\n", listen)
+SHOP_ENTRY = entry("shop")
+API_ENTRY = entry(
+    "api",
+    vip="partner",
+    address="198.51.100.30",
+    source={"name": "outbound", "address": "203.0.113.5"},
+    servers=["203.0.113.10:8443"],
+)
 
 
-def objects_reading(*documents: tuple[str, str]) -> ClusterObjects:
+def objects_reading(*entries: dict[str, Any]) -> ClusterObjects:
     return ClusterObjects(
         cluster="alpha",
         observed_at=OBSERVED,
         outcome="done",
-        result={
-            "commit": "a" * 40,
-            "objects": [
-                {
-                    "name": name,
-                    "document": text,
-                    "readable": True,
-                    "problem": None,
-                    "protocol": "http",
-                    "hostnames": [f"{name}.example.com"],
-                }
-                for name, text in documents
-            ],
-        },
+        result={"commit": "a" * 40, "objects": list(entries)},
         warnings=[],
         error=None,
         poll_error=None,
     )
 
 
-def network_reading() -> ClusterNetwork:
-    return ClusterNetwork(
-        cluster="alpha",
-        observed_at=OBSERVED,
-        outcome="done",
-        result=NETWORK,
-        warnings=[],
-        error=None,
-        poll_error=None,
-    )
+class TheRowsFromAReading(unittest.TestCase):
+    def test_an_objects_values_and_what_each_is(self) -> None:
+        rows = search_index.object_entries("alpha", {"objects": [SHOP_ENTRY, API_ENTRY]})
+        shop = {(row.label, row.value, row.admin_only) for row in rows if row.title == "shop"}
+        api = {(row.label, row.value) for row in rows if row.title == "api"}
+
+        self.assertEqual(
+            shop,
+            {
+                ("", "shop", False),
+                ("Host", "shop.example.com", False),
+                ("VIP main", "198.51.100.20", False),
+                ("Source of VIP main", "198.51.100.25", False),
+                ("Backend", "192.0.2.10:8080", True),
+                ("Backend", "192.0.2.11:8080", True),
+            },
+        )
+        self.assertIn(("Source outbound", "203.0.113.5"), api)
+        self.assertEqual({row.href for row in rows if row.title == "api"}, {"/proxies/alpha/api"})
+
+    def test_an_older_helper_contributes_names_and_hosts_only(self) -> None:
+        older = {
+            key: value
+            for key, value in SHOP_ENTRY.items()
+            if key not in ("vip", "source", "servers")
+        }
+
+        rows = search_index.object_entries("alpha", {"objects": [older]})
+
+        self.assertEqual({row.label for row in rows}, {"", "Host"})
+
+    def test_the_network_nodes_and_clusters(self) -> None:
+        network = search_index.network_entries(
+            "alpha",
+            {
+                "default_vip": "main",
+                "vips": [{"name": "main", "address": "198.51.100.20", "source": "198.51.100.25"}],
+                "sources": [{"name": "outbound", "address": "203.0.113.5"}],
+            },
+        )
+        nodes = search_index.node_entries(
+            "alpha", {"nodes": [{"name": "lb-01", "mgmt_host": "lb-01.example.net"}]}
+        )
+
+        self.assertEqual({row.title for row in network}, {"VIP main (default)", "Source outbound"})
+        self.assertEqual(
+            {(row.label, row.value) for row in nodes},
+            {("", "lb-01"), ("Host", "lb-01.example.net")},
+        )
+        self.assertEqual([row.title for row in search_index.cluster_entries(["alpha"])], ["alpha"])
+
+    def test_certificates_are_the_ones_the_certificates_page_lists(self) -> None:
+        reading = demo.certificate_rows()[0]
+
+        rows = search_index.certificate_entries(reading.cluster, reading.result)
+
+        self.assertTrue(rows)
+        self.assertTrue(all(row.href.startswith("/certificates") for row in rows))
+
+    def test_a_source_the_search_does_not_read_gives_nothing(self) -> None:
+        self.assertIsNone(search_index.entries_for("list", "alpha", {}))
 
 
-def status_reading() -> ClusterStatus:
-    return ClusterStatus(
-        cluster="alpha",
-        observed_at=OBSERVED,
-        outcome="done",
-        result={"nodes": [{"name": "lb-01", "mgmt_host": "lb-01.example.net"}]},
-        warnings=[],
-        error=None,
-        poll_error=None,
-    )
+class SearchingInMemory(unittest.TestCase):
+    """The demo and snapshot modes, which have no rows in the database."""
+
+    def find(
+        self, query: str, *, role: str = "admin", page: int = 1, names: int = 0
+    ) -> search_index.Results:
+        many = [entry(f"site{n:03d}") for n in range(names)]
+        rows = search_index.object_entries("alpha", {"objects": [SHOP_ENTRY, API_ENTRY, *many]})
+        return search_index.matching(rows, query, role=role, clusters=["alpha"], page=page)
+
+    def test_an_empty_query_searches_nothing(self) -> None:
+        self.assertEqual(self.find("  ").total, 0)
+
+    def test_a_backend_says_what_matched_and_only_an_admin_finds_it(self) -> None:
+        hit = self.find("192.0.2.11").groups[0].hits[0]
+
+        self.assertEqual((hit.title, hit.matched), ("shop", "Backend 192.0.2.11:8080"))
+        self.assertEqual(self.find("192.0.2.11", role="reader").total, 0)
+
+    def test_a_reader_is_taken_to_the_listing(self) -> None:
+        self.assertEqual(self.find("api", role="reader").groups[0].hits[0].href, "/proxies")
+
+    def test_pages_of_a_hundred(self) -> None:
+        third = self.find("site", page=3, names=250)
+
+        self.assertEqual((third.total, third.pages, third.first, third.last), (250, 3, 201, 250))
+        self.assertEqual(third.groups[0].hits[-1].title, "site249")
+
+    def test_case_does_not_matter(self) -> None:
+        self.assertEqual(self.find("SHOP").total, 1)
 
 
-class TheAddressRuleIsTheGenerators(unittest.TestCase):
-    """The column and the search restate `generate.source_of`; hold them to it."""
-
-    def test_every_combination_gives_the_generators_source(self) -> None:
-        sources = {entry["name"]: entry["address"] for entry in NETWORK["sources"]}
-        for case, listen in LISTENS.items():
-            with self.subTest(case):
-                text = document(listen)
-                proxy = load_proxy("shop", text.encode())
-                name = proxy.listen.vip or "main"
-                entry = next(vip for vip in NETWORK["vips"] if vip["name"] == name)
-                vip = Vip(name=name, address=entry["address"], source=entry["source"])
-                expected = source_of(proxy, vip, sources)
-
-                found = addresses.resolve("shop", text, NETWORK)
-
-                if found is None:
-                    self.fail("a readable object on a known network resolves")
-                self.assertEqual(found.vip.address, entry["address"])
-                self.assertEqual(found.source.address if found.source else None, expected)
-                self.assertEqual(found.vip_is_default, name == "main")
-
-    def test_an_unreadable_document_or_no_network_answers_nothing(self) -> None:
-        self.assertIsNone(addresses.resolve("shop", "schema: [", NETWORK))
-        self.assertIsNone(addresses.resolve("shop", document(LISTENS["default"]), {}))
-
-    def test_a_vip_the_network_no_longer_has_shows_its_name(self) -> None:
-        found = addresses.resolve("shop", document("  protocol: http\n  vip: gone\n"), NETWORK)
+class TheAddressesFromTheHelper(unittest.TestCase):
+    def test_names_labels_and_the_vips_own_source(self) -> None:
+        found = addresses.from_entry(SHOP_ENTRY["vip"], SHOP_ENTRY["source"])
 
         if found is None:
-            self.fail("a readable object on a known network resolves")
-        self.assertEqual(found.vip.address, "")
-        self.assertEqual(found.vip.shown, "VIP gone")
+            self.fail("the helper's fields make an address")
+        self.assertEqual(
+            (found.vip.label, found.vip.shown), ("VIP main (default)", "198.51.100.20")
+        )
+        self.assertEqual(found.source.label if found.source else None, "Source of VIP main")
+
+    def test_a_vip_the_network_lacks_shows_its_name(self) -> None:
+        found = addresses.from_entry({"name": "gone", "address": None, "default": False}, None)
+
+        self.assertEqual(found.vip.shown if found else None, "VIP gone")
+
+    def test_an_older_helper_says_nothing(self) -> None:
+        self.assertIsNone(addresses.from_entry(None, None))
 
     def test_addresses_order_by_number_not_by_text(self) -> None:
         listed = ["192.0.2.10", "name.example", "192.0.2.9", "2001:db8::1"]
@@ -159,88 +201,26 @@ class TheAddressRuleIsTheGenerators(unittest.TestCase):
         )
 
 
-class TheSearch(unittest.TestCase):
-    def find(self, query: str, role: str = "admin") -> search.Results:
-        return search.search(
-            query,
-            role=role,
-            clusters=("alpha",),
-            object_rows=[
-                objects_reading(
-                    ("shop", document(LISTENS["default"])),
-                    ("api", document(LISTENS["both"], "api").replace("192.0.2.", "203.0.113.")),
-                )
-            ],
-            network_rows=[network_reading()],
-            status_rows=[status_reading()],
-            certificates=None,
-        )
-
-    def hits(self, results: search.Results, label: str) -> list[search.Hit]:
-        return next((list(group.hits) for group in results.groups if group.label == label), [])
-
-    def test_an_empty_query_searches_nothing(self) -> None:
-        self.assertEqual(self.find("   ").groups, ())
-
-    def test_a_backend_address_finds_its_object_and_says_what_matched(self) -> None:
-        found = self.hits(self.find("192.0.2.11"), "Proxies")
-
-        self.assertEqual([hit.title for hit in found], ["shop"])
-        self.assertEqual(found[0].matched, "Backend 192.0.2.11:8080")
-        self.assertEqual(found[0].href, "/proxies/alpha/shop")
-
-    def test_a_vip_address_finds_the_objects_on_it_and_the_vip_itself(self) -> None:
-        results = self.find("198.51.100.30")
-
-        self.assertEqual([hit.title for hit in self.hits(results, "Proxies")], ["api"])
-        self.assertEqual([hit.title for hit in self.hits(results, "Addresses")], ["VIP partner"])
-
-    def test_a_named_source_is_found_by_name_and_by_address(self) -> None:
-        for query in ("outbound", "203.0.113.5"):
-            with self.subTest(query):
-                titles = [hit.title for hit in self.hits(self.find(query), "Addresses")]
-                self.assertEqual(titles, ["Source outbound"])
-
-    def test_case_does_not_matter(self) -> None:
-        self.assertEqual([hit.title for hit in self.hits(self.find("SHOP"), "Proxies")], ["shop"])
-
-    def test_nodes_are_found_by_name_and_host(self) -> None:
-        for query in ("lb-01", "example.net"):
-            with self.subTest(query):
-                titles = [hit.title for hit in self.hits(self.find(query), "Clusters and nodes")]
-                self.assertEqual(titles, ["lb-01"])
-
-    def test_a_reader_cannot_find_a_backend_address(self) -> None:
-        """B68: the backend addresses are what keeps the object page admin-only."""
-
-        self.assertEqual(self.hits(self.find("192.0.2.11", role="reader"), "Proxies"), [])
-
-    def test_a_reader_finds_objects_otherwise_and_is_taken_to_the_listing(self) -> None:
-        found = self.hits(self.find("shop", role="reader"), "Proxies")
-
-        self.assertEqual([hit.href for hit in found], ["/proxies"])
-
-    def test_a_long_query_is_cut_rather_than_matched_whole(self) -> None:
-        self.assertEqual(len(self.find("x" * 500).query), search.MAX_QUERY)
-
-
 class ThePages(LoginTestCase):
-    def get(self, path: str, *, role: str = "admin") -> Any:
+    def get(self, path: str, *, role: str = "admin", demo_fixture: bool = False) -> Any:
         self.account = replace(self.account, role=role)
-        client = self.client(replace(configuration(), clusters=("alpha",)))
+        client = self.client(
+            replace(configuration(), clusters=("alpha",), demo_fixture=demo_fixture)
+        )
         self.sign_in(client)
+        self.searched: list[dict[str, Any]] = []
+
+        def search(_connection: Any, query: str, **kwargs: Any) -> search_index.Results:
+            self.searched.append({"query": query, **kwargs})
+            return search_index.Results(query, (), 0, kwargs.get("page", 1))
+
         with (
             mock.patch(
                 "haproxy_ui.db.cluster_objects",
-                return_value=[
-                    objects_reading(
-                        ("shop", document(LISTENS["default"])),
-                        ("api", document(LISTENS["both"], "api").replace("192.0.2.", "203.0.113.")),
-                    )
-                ],
+                return_value=[objects_reading(SHOP_ENTRY, API_ENTRY)],
             ),
-            mock.patch("haproxy_ui.db.cluster_networks", return_value=[network_reading()]),
-            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[status_reading()]),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[]),
+            mock.patch("haproxy_ui.db.search", side_effect=search),
             mock.patch("haproxy_ui.db.read_draft", return_value=None),
             mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
             mock.patch("haproxy_ui.db.read_backend_samples", return_value=[]),
@@ -255,13 +235,24 @@ class ThePages(LoginTestCase):
 
         self.assertIn('<form class="header-search" method="get" action="/search"', page.text)
 
-    def test_the_search_page_lists_what_matched(self) -> None:
-        page = self.get("/search?q=192.0.2.10")
+    def test_the_search_asks_the_database_with_the_role_and_the_page(self) -> None:
+        page = self.get("/search?q=192.0.2.10&page=2", role="reader")
 
         self.assertEqual(page.status_code, 200)
-        self.assertIn('data-href="/proxies/alpha/shop"', page.text)
-        self.assertIn("Backend 192.0.2.10:8080", page.text)
+        self.assertEqual(self.searched[0]["query"], "192.0.2.10")
+        self.assertEqual((self.searched[0]["role"], self.searched[0]["page"]), ("reader", 2))
         self.assertIn('name="q" value="192.0.2.10"', page.text)
+
+    def test_a_page_that_is_not_a_number_is_the_first(self) -> None:
+        self.get("/search?q=x&page=-3")
+
+        self.assertEqual(self.searched[0]["page"], 1)
+
+    def test_the_demo_fixture_is_searched_in_memory(self) -> None:
+        page = self.get("/search?q=192.0.2.10", demo_fixture=True)
+
+        self.assertEqual(self.searched, [])
+        self.assertIn("Backend 192.0.2.10:8080", page.text)
 
     def test_a_query_with_markup_is_shown_as_text(self) -> None:
         page = self.get("/search?q=%3Cscript%3E")
@@ -276,8 +267,6 @@ class ThePages(LoginTestCase):
         self.assertIn(
             'title="VIP main (default) 198.51.100.20 · Source of VIP main 198.51.100.25"', page.text
         )
-        self.assertIn(">198.51.100.20 · 198.51.100.25</span>", page.text)
-        self.assertIn('title="VIP partner 198.51.100.30 · Source outbound 203.0.113.5"', page.text)
         self.assertIn(">198.51.100.30 · 203.0.113.5</span>", page.text)
 
     def test_the_listing_sorts_on_the_address_by_number(self) -> None:
@@ -289,6 +278,32 @@ class ThePages(LoginTestCase):
         page = self.get("/proxies/alpha/api")
 
         self.assertIn("Served on the VIP <code>partner</code> · 198.51.100.30", page.text)
+
+
+class TheLampUsesTheHelpersAnswer(LoginTestCase):
+    """Whether an object is checked comes from the helper, not from reading the document."""
+
+    def test_an_object_the_helper_says_is_unchecked_is_grey(self) -> None:
+        client = self.client(replace(configuration(), clusters=("alpha",)))
+        self.sign_in(client)
+        server = {"backend": "mgd-shop-web", "server": "s1", "status": "UP"}
+        status = ClusterStatus(
+            cluster="alpha",
+            observed_at=OBSERVED,
+            outcome="done",
+            result={"nodes": [{"node": "n1", "status": {"servers": [server]}}]},
+            warnings=[],
+            error=None,
+            poll_error=None,
+        )
+        unchecked = {**SHOP_ENTRY, "health_checked": False}
+        with (
+            mock.patch("haproxy_ui.db.cluster_objects", return_value=[objects_reading(unchecked)]),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[status]),
+        ):
+            page = client.get("/proxies")
+
+        self.assertIn("This object defines no health check", page.text)
 
 
 if __name__ == "__main__":

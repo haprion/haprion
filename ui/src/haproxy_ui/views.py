@@ -52,7 +52,6 @@ from haproxy_mgmt.proxy_model import (
 )
 
 from haproxy_ui import (
-    addresses,
     auth,
     backups,
     certificate_activity,
@@ -82,7 +81,7 @@ from haproxy_ui import (
     oidc_web,
     operations,
     proxies,
-    search,
+    search_index,
     snapshot,
     traffic_log_table,
     traffic_logs,
@@ -384,6 +383,22 @@ OBJECTS_SOURCE = Source(
     lambda taken: (),
     lambda connection: db.cluster_objects(connection),
 )
+
+
+#
+# The readings the header's search covers, by the operation that wrote them
+# (B222). The cluster list is the fifth, and is not a reading.
+#
+SEARCHED_SOURCES = (
+    ("objects", OBJECTS_SOURCE),
+    ("network", NETWORK_SOURCE),
+    ("cert_list", CERTIFICATE_SOURCE),
+    ("status", STATUS_SOURCE),
+)
+#
+# A page number past this is not one anybody reached by clicking Next.
+#
+MAX_SEARCH_PAGE = 10000
 
 
 def listed_clusters(request: Request, config: Config) -> tuple[str, ...]:
@@ -700,33 +715,6 @@ def build_router(config: Config) -> APIRouter:
             for entry in (nodes if isinstance(nodes, Sequence) else ())
         )
 
-    def _network_result(reading: Any) -> Mapping[str, Any]:
-        result = getattr(reading, "result", None)
-        return result if isinstance(result, Mapping) else {}
-
-    def _default_vip(reading: Any) -> str:
-        return str(_network_result(reading).get("default_vip", "") or "")
-
-    def _vip_sources(reading: Any) -> dict[str, str]:
-        """Each VIP's own source address, by name, as the poller cached it.
-
-        Read here rather than through the editor's state: the listing needs one
-        fact about the cluster and not a form's worth of choices, and building
-        the latter to get the former is how a page grows a second reason to
-        fail.
-        """
-
-        entries = _network_result(reading).get("vips")
-        return (
-            {
-                str(entry.get("name", "")): str(entry.get("source", "") or "")
-                for entry in entries
-                if isinstance(entry, Mapping) and entry.get("name")
-            }
-            if isinstance(entries, Sequence) and not isinstance(entries, (str, bytes))
-            else {}
-        )
-
     def _proxy_listing(request: Request, role: str) -> dict[str, Any]:
         """Everything the proxy table draws, for the page and for its refresh.
 
@@ -779,13 +767,6 @@ def build_router(config: Config) -> APIRouter:
         # was changed rather than added or removed.
         #
         behind = health.clusters_behind(health_rows)
-        #
-        # And the cluster's addresses, read here because the listing names
-        # each object's VIP and source (B221) as well as deciding, below,
-        # which node may answer for its backend.
-        #
-        _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
-        networks = {reading.cluster: reading for reading in network_rows}
         listed = {}
         served: dict[str, frozenset[str]] = {}
         with request.app.state.pool.connection() as connection:
@@ -814,7 +795,6 @@ def build_router(config: Config) -> APIRouter:
                 # answers instead. Silence is not "nothing is served".
                 #
                 served=served[view.cluster] if _nodes_reported(health_rows, view.cluster) else None,
-                network=addresses.network_result(networks.get(view.cluster)),
             )
         #
         # What is left of the published inventory once the managed frontends are
@@ -833,10 +813,11 @@ def build_router(config: Config) -> APIRouter:
         # dashboard draws.
         #
         #
-        # The cluster's addresses decide which node may answer. An object
-        # leaving from a source address is answerable only from the node that
-        # carries it; the other binds an address it does not have and reports
-        # the backend down.
+        # Whether the object is checked and whether it leaves from a source
+        # address come from the objects helper (B222), not from reading the
+        # document here. The second decides which node may answer: only the
+        # node holding the address can bind it, and the other reports the
+        # backend down.
         #
         backend_lamps = {
             view.cluster: {
@@ -845,12 +826,8 @@ def build_router(config: Config) -> APIRouter:
                     cluster=view.cluster,
                     obj=obj.name,
                     others=[other.name for other in listed[view.cluster]],
-                    checked=health.has_health_check(obj.document),
-                    sourced=health.leaves_from_source(
-                        obj.document,
-                        default_vip=_default_vip(networks.get(view.cluster)),
-                        vip_sources=_vip_sources(networks.get(view.cluster)),
-                    ),
+                    checked=obj.health_checked,
+                    sourced=obj.sourced,
                 )
                 for obj in objects.cluster_object_views(rows.get(view.cluster))
             }
@@ -1264,7 +1241,8 @@ def build_router(config: Config) -> APIRouter:
         #
         # The object's own VIP where it names one (B221, 2026-10-01): until
         # then this said "default" for every object, including one served on
-        # another address.
+        # another address. The default below is for an object with no stored
+        # document, served from configuration not written here.
         #
         _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
         network_rows = tuple(network_rows)
@@ -1279,17 +1257,8 @@ def build_router(config: Config) -> APIRouter:
             ),
             None,
         )
-        resolved = (
-            addresses.resolve(
-                name,
-                written.document,
-                addresses.network_result(
-                    next((row for row in network_rows if row.cluster == cluster), None)
-                ),
-            )
-            if written is not None
-            else None
-        )
+        # As the objects helper reported it (B222).
+        resolved = written.addresses if written is not None else None
         described = next(
             (
                 view
@@ -1761,32 +1730,34 @@ def build_router(config: Config) -> APIRouter:
         if session is None:
             return RedirectResponse("/login", status_code=303)
         token = request.cookies.get(auth.SESSION_COOKIE, "")
-        query = search.normalise(request.query_params.get("q", ""))
-        results = search.Results(query, ())
-        if query:
-            clusters, certificate_rows, captured_at = read_source(
-                request, config, CERTIFICATE_SOURCE
+        query = search_index.normalise(request.query_params.get("q", ""))
+        asked = request.query_params.get("page", "1")
+        page = min(int(asked), MAX_SEARCH_PAGE) if asked.isdecimal() and int(asked) > 0 else 1
+        results = search_index.Results(query, (), 0, 1)
+        if query and (config.demo_fixture or config.production_snapshot):
+            #
+            # Neither mode has rows in the database: the readings are a
+            # fixture or a file. The same functions the poller uses build the
+            # rows, and they are searched in memory.
+            #
+            clusters = listed_clusters(request, config)
+            entries = search_index.cluster_entries(clusters)
+            for operation, source in SEARCHED_SOURCES:
+                _, rows, _ = read_source(request, config, source)
+                for row in rows:
+                    if row.outcome in ("done", "partial") and isinstance(row.result, Mapping):
+                        entries += (
+                            search_index.entries_for(operation, row.cluster, row.result) or []
+                        )
+            results = search_index.matching(
+                entries, query, role=session.role, clusters=clusters, page=page
             )
-            _, status_rows, _ = read_source(request, config, STATUS_SOURCE)
-            status_rows = tuple(status_rows)
-            _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
-            _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
-            results = search.search(
-                query,
-                role=session.role,
-                clusters=clusters,
-                object_rows=object_rows,
-                network_rows=network_rows,
-                status_rows=status_rows,
-                certificates=certificates.build_certificate_overview(
-                    clusters,
-                    certificate_rows,
-                    status_readings=status_rows,
-                    now=captured_at,
-                    stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-                    captured=captured_at is not None,
-                ),
-            )
+        elif query:
+            clusters = listed_clusters(request, config)
+            with request.app.state.pool.connection() as connection:
+                results = db.search(
+                    connection, query, role=session.role, clusters=clusters, page=page
+                )
         return TEMPLATES.TemplateResponse(
             request,
             "search.html",

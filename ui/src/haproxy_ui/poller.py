@@ -46,7 +46,7 @@ from haproxy_mgmt.cli.status import run_status_helper
 from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.version_history import MAX_LIST_LIMIT
 
-from haproxy_ui import db, service
+from haproxy_ui import db, search_index, service
 from haproxy_ui.config import DEFAULT_CONFIG_PATH, Config
 from haproxy_ui.config import load as load_config
 from haproxy_ui.service import StopRequest
@@ -268,6 +268,51 @@ def _sample(pool: Any, source: Source, *, cluster: str, result: Mapping[str, Any
     logger.debug("cluster %s: %d sample row(s)", cluster, written)
 
 
+def _index(pool: Any, source: Source, *, cluster: str, reading: Mapping[str, Any]) -> None:
+    """Replace what this reading contributes to the search (B222).
+
+    Only from a reading that answered. A listing that failed says nothing about
+    what exists, so the rows from the last one that answered stay: a search that
+    lost a cluster's objects because one read timed out would say they were gone.
+
+    Its own transaction and its own failure, like a sample: the search being a
+    pass behind is not a reason for the cached reading to be one.
+    """
+
+    result = reading.get("result")
+    if reading.get("outcome") not in ("done", "partial") or not isinstance(result, Mapping):
+        return
+    try:
+        entries = search_index.entries_for(source.operation, cluster, result)
+        if entries is None:
+            return
+        with pool.connection() as connection:
+            db.replace_search_entries(
+                connection, cluster=cluster, source=source.operation, entries=entries
+            )
+            connection.commit()
+    except Exception as exc:  # noqa: BLE001 - the search is never worth a failed pass
+        logger.warning("cluster %s %s: search not updated: %s", cluster, source.operation, exc)
+
+
+def index_cluster_list(pool: Any, clusters: tuple[str, ...]) -> None:
+    """The clusters themselves in the search, and nothing left of removed ones."""
+
+    try:
+        with pool.connection() as connection:
+            db.prune_search_entries(connection, clusters)
+            for cluster in clusters:
+                db.replace_search_entries(
+                    connection,
+                    cluster=cluster,
+                    source="cluster_list",
+                    entries=search_index.cluster_entries([cluster]),
+                )
+            connection.commit()
+    except Exception as exc:  # noqa: BLE001 - as above
+        logger.warning("the search's cluster list was not updated: %s", exc)
+
+
 def read_cluster_list(
     run: Callable[[str], Any] = run_cluster_list_helper,
 ) -> tuple[str, ...] | None:
@@ -368,6 +413,7 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
             )
             connection.commit()
         _sample(pool, source, cluster=cluster, result=reading["result"])
+        _index(pool, source, cluster=cluster, reading=reading)
         if reading["outcome"] == "done":
             if source.operation == "status":
                 healthy += 1
@@ -443,6 +489,7 @@ def main(argv: list[str] | None = None) -> int:
                     with pool.connection() as connection:
                         db.record_cluster_list(connection, known)
                         connection.commit()
+                index_cluster_list(pool, known)
                 healthy = poll_once(pool, config, clusters=known)
                 logger.info("%d/%d cluster(s) fully current", healthy, len(known))
                 #

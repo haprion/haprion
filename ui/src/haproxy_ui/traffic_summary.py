@@ -1,0 +1,138 @@
+"""The dashboard's traffic row: requests and bytes through every VIP, now and over a day.
+
+Read from the same stored readings and the same differencing as the metrics
+page's cards (`db.read_traffic_summary`), so the dashboard and a card cannot
+disagree about what a counter did. Two windows: the last day for the totals,
+and the last few minutes for the rates, because a rate averaged over a day says
+nothing about whether traffic is flowing now.
+
+A window nothing could be counted in is shown as a dash, never as nought: no
+readings is not no traffic.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import timedelta
+
+from haproxy_ui.metrics import BackendMeasurement, Total
+
+DAY = timedelta(hours=24)
+#
+# Long enough to hold a dozen or so readings at the default 20-second poll,
+# short enough to still mean "now". A slower poll is given three readings.
+#
+RECENT = timedelta(minutes=5)
+DASH = "—"
+#
+# Response times come from the traffic log, one record per request, so they
+# need more than a few minutes to say anything at a quiet installation.
+#
+RESPONSE_WINDOW = timedelta(hours=1)
+
+
+def recent_window(poll_seconds: int) -> timedelta:
+    return max(RECENT, timedelta(seconds=poll_seconds * 3))
+
+
+def _figure(value: float) -> str:
+    """Three significant figures at most: 3.2, 38, 247."""
+
+    return f"{value:.1f}" if value < 10 else f"{value:.0f}"
+
+
+def _scaled(value: float, units: tuple[str, ...], step: float) -> str:
+    for unit in units[:-1]:
+        if value < step:
+            return f"{_figure(value)} {unit}"
+        value /= step
+    return f"{_figure(value)} {units[-1]}"
+
+
+def count(value: int) -> str:
+    """A request count short enough for a tile: 950, 12.3k, 4.6M, 1.2B."""
+
+    if value < 1000:
+        return str(value)
+    for limit, suffix in ((1_000_000, "k"), (1_000_000_000, "M"), (1_000_000_000_000, "B")):
+        if value < limit:
+            return f"{value / (limit / 1000):.1f}{suffix}"
+    return f"{value / 1_000_000_000_000:.1f}T"
+
+
+def size(octets: int) -> str:
+    """Bytes in decimal units, as an interface's counters are read: 3.4 GB."""
+
+    return _scaled(float(octets), ("B", "kB", "MB", "GB", "TB"), 1000.0)
+
+
+def bitrate(octets: int, seconds: float) -> str:
+    """Bytes over a span as bits per second, the unit a link is sized in."""
+
+    return _scaled(octets * 8 / seconds, ("bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"), 1000.0)
+
+
+@dataclass(frozen=True, slots=True)
+class TrafficRow:
+    requests: str
+    request_rate: str
+    inbound: str
+    outbound: str
+    inbound_day: str
+    outbound_day: str
+    #
+    # Whether the day's figures miss part of the day - a reload, a failover,
+    # a poller that stopped. The tile says so rather than presenting a part
+    # as the whole, as every card on the metrics page does.
+    #
+    day_partial: bool
+    response_median: str = DASH
+    response_p95: str = ""
+
+
+def milliseconds(value: int) -> str:
+    return f"{value} ms" if value < 10_000 else f"{value / 1000:.1f} s"
+
+
+def _total(measurement: BackendMeasurement, label: str) -> Total | None:
+    found = next((total for total in measurement.totals if total.label == label), None)
+    if found is None or not found.known or measurement.intervals == 0:
+        return None
+    return found
+
+
+def _seconds(measurement: BackendMeasurement) -> float:
+    if measurement.started_at is None or measurement.ended_at is None:
+        return 0.0
+    return (measurement.ended_at - measurement.started_at).total_seconds()
+
+
+def row(
+    day: BackendMeasurement,
+    recent: BackendMeasurement,
+    responses: tuple[int, int | None, int | None] | None = None,
+) -> TrafficRow:
+    """`responses` is `db.read_response_times`, or None where the traffic log is off."""
+
+    requests = _total(day, "Requests")
+    inbound_day = _total(day, "Bytes in")
+    outbound_day = _total(day, "Bytes out")
+    seconds = _seconds(recent)
+    rate_requests = _total(recent, "Requests") if seconds > 0 else None
+    rate_in = _total(recent, "Bytes in") if seconds > 0 else None
+    rate_out = _total(recent, "Bytes out") if seconds > 0 else None
+    return TrafficRow(
+        requests=DASH if requests is None else count(requests.value),
+        request_rate="" if rate_requests is None else f"{_figure(rate_requests.value / seconds)}/s",
+        inbound=DASH if rate_in is None else bitrate(rate_in.value, seconds),
+        outbound=DASH if rate_out is None else bitrate(rate_out.value, seconds),
+        inbound_day="" if inbound_day is None else size(inbound_day.value),
+        outbound_day="" if outbound_day is None else size(outbound_day.value),
+        day_partial=any(total is not None and not total.whole for total in (requests, inbound_day)),
+        response_median=(
+            DASH if responses is None or responses[1] is None else milliseconds(responses[1])
+        ),
+        response_p95=(
+            "" if responses is None or responses[2] is None else milliseconds(responses[2])
+        ),
+    )

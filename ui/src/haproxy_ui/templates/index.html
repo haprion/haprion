@@ -36,6 +36,30 @@
     </span>
     <div><strong>{{ dashboard.converged_clusters }}</strong><span>Converged</span><small>Target release</small></div>
   </article>
+  <article class="metric-card">
+    <span class="metric-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M4 18h16M7 15V9M12 15V5M17 15v-4"></path></svg>
+    </span>
+    <div title="Requests through every VIP in the last 24 hours; per second over the last minutes"><strong>{{ traffic.requests }}</strong><span>Requests 24 h</span>{% if traffic.request_rate or traffic.day_partial %}<small>{% if traffic.request_rate %}{{ traffic.request_rate }}{% endif %}{% if traffic.day_partial %}{% if traffic.request_rate %} · {% endif %}partial{% endif %}</small>{% endif %}</div>
+  </article>
+  <article class="metric-card">
+    <span class="metric-icon metric-icon-node" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 4v13M6 11l6 6 6-6M5 20h14"></path></svg>
+    </span>
+    <div title="Into every VIP over the last minutes; bytes in the last 24 hours"><strong>{{ traffic.inbound }}</strong><span>In</span>{% if traffic.inbound_day %}<small>{{ traffic.inbound_day }}</small>{% endif %}</div>
+  </article>
+  <article class="metric-card">
+    <span class="metric-icon metric-icon-vip" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 20V7M6 13l6-6 6 6M5 4h14"></path></svg>
+    </span>
+    <div title="Out of every VIP over the last minutes; bytes in the last 24 hours"><strong>{{ traffic.outbound }}</strong><span>Out</span>{% if traffic.outbound_day %}<small>{{ traffic.outbound_day }}</small>{% endif %}</div>
+  </article>
+  <article class="metric-card">
+    <span class="metric-icon metric-icon-release" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="7"></circle><path d="M12 9v4l3 2M10 3h4"></path></svg>
+    </span>
+    <div title="Server response time (HAProxy %Tr) from the traffic log, last hour: median, and 95th percentile"><strong>{{ traffic.response_median }}</strong><span>Response</span>{% if traffic.response_p95 %}<small>p95 {{ traffic.response_p95 }}</small>{% endif %}</div>
+  </article>
 </section>
 
 <section class="section-heading">

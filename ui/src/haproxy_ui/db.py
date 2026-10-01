@@ -2497,7 +2497,9 @@ def _backend_totals() -> sql.Composed:
     ).format(columns=columns, previous=previous, deltas=deltas, aggregates=aggregates)
 
 
-def _frontend_totals() -> sql.Composed:
+def _frontend_totals(
+    counters: tuple[tuple[str, str], ...] = metrics.CARD_COUNTERS, *, every_frontend: bool = False
+) -> sql.Composed:
     """One frontend's figures, differenced at stored resolution.
 
     The same arithmetic `_backend_totals` performs, over one raw table instead of
@@ -2506,9 +2508,15 @@ def _frontend_totals() -> sql.Composed:
     by node here as well, so `handed_over` cannot arise; the expression is kept
     identical rather than simplified away, so the two readers cannot drift into
     two ideas of what a measurable interval is.
+
+    `every_frontend` sums every VIP frontend of the clusters in `%(clusters)s`
+    instead of one - the dashboard's traffic, counted the way each card on the
+    metrics page is. Each frontend is paired with its own readings only (the
+    partition carries cluster and frontend), so for one frontend the answer is
+    the same either way.
     """
 
-    names = tuple(name for name, _label in metrics.CARD_COUNTERS)
+    names = tuple(name for name, _label in counters)
     columns = sql.SQL(", ").join(sql.Identifier(name) for name in names)
     previous = sql.SQL(", ").join(
         sql.SQL("lag({name}) over ordered as {before}").format(
@@ -2540,9 +2548,10 @@ def _frontend_totals() -> sql.Composed:
     )
     return sql.SQL(
         "with readings as ("
-        "    select observed_at, uptime_sec, uptime_sec as floor_uptime_sec, node, {columns} "
+        "    select cluster, frontend, observed_at, uptime_sec, "
+        "           uptime_sec as floor_uptime_sec, node, {columns} "
         "      from metric_frontend "
-        "     where cluster = %(cluster)s and frontend = %(frontend)s "
+        "     where {scope} "
         "       and owns_vip and observed_at >= %(since)s "
         "       and observed_at <= %(until)s"
         "), paired as ("
@@ -2552,7 +2561,7 @@ def _frontend_totals() -> sql.Composed:
         "           lag(uptime_sec) over ordered as previous_uptime_sec, "
         "           lag(node) over ordered as previous_node, {previous} "
         "      from readings "
-        "    window ordered as (partition by node order by observed_at)"
+        "    window ordered as (partition by cluster, frontend, node order by observed_at)"
         "), marked as ("
         "    select *, "
         "           coalesce(floor_uptime_sec < previous_uptime_sec, false) as restarted, "
@@ -2569,10 +2578,22 @@ def _frontend_totals() -> sql.Composed:
         "       coalesce(sum(span_sec) filter (where not restarted and not handed_over), 0), "
         "       coalesce(sum(span_sec), 0), {aggregates} "
         "  from differences"
-    ).format(columns=columns, previous=previous, deltas=deltas, aggregates=aggregates)
+    ).format(
+        columns=columns,
+        previous=previous,
+        deltas=deltas,
+        aggregates=aggregates,
+        scope=sql.SQL(
+            "cluster = any(%(clusters)s)"
+            if every_frontend
+            else "cluster = %(cluster)s and frontend = %(frontend)s"
+        ),
+    )
 
 
-def _measurement(row: Any) -> metrics.BackendMeasurement:
+def _measurement(
+    row: Any, counters: tuple[tuple[str, str], ...] = metrics.CARD_COUNTERS
+) -> metrics.BackendMeasurement:
     """One aggregate row, in the shape both totals readers return.
 
     Written once because the two queries deliberately produce the same columns
@@ -2589,7 +2610,7 @@ def _measurement(row: Any) -> metrics.BackendMeasurement:
             counted_sec=float(row[8 + index * 2]),
             span_sec=span,
         )
-        for index, (_name, label) in enumerate(metrics.CARD_COUNTERS)
+        for index, (_name, label) in enumerate(counters)
     )
     return metrics.BackendMeasurement(
         intervals=int(row[0]),
@@ -2627,6 +2648,58 @@ def read_frontend_totals(
     if row is None:
         raise RuntimeError("the frontend totals aggregate returned no row")
     return _measurement(row)
+
+
+def read_traffic_summary(
+    connection: Connection[Any],
+    *,
+    clusters: Sequence[str],
+    since: datetime,
+    until: datetime,
+) -> metrics.BackendMeasurement:
+    """Every VIP frontend of these clusters summed: requests, bytes in, bytes out."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            _frontend_totals(metrics.SUMMARY_COUNTERS, every_frontend=True),
+            {"clusters": list(clusters), "since": since, "until": until},
+        )
+        row = cursor.fetchone()
+
+    if row is None:
+        raise RuntimeError("the traffic summary aggregate returned no row")
+    return _measurement(row, metrics.SUMMARY_COUNTERS)
+
+
+def read_response_times(
+    connection: Connection[Any],
+    *,
+    clusters: Sequence[str],
+    since: datetime,
+    until: datetime,
+) -> tuple[int, int | None, int | None]:
+    """How many answered requests the traffic log holds, and their median and 95th percentile.
+
+    `response_time` is HAProxy's `%Tr`: from the request being sent to the
+    server until its response headers came back, in milliseconds. -1 means no
+    server answered - an abort, or a redirect HAProxy gave itself - and those
+    are left out rather than counted as instant.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select count(*), "
+            "       percentile_disc(0.5) within group (order by response_time), "
+            "       percentile_disc(0.95) within group (order by response_time) "
+            "  from traffic_log "
+            " where cluster = any(%(clusters)s) and response_time >= 0 "
+            "   and occurred_at >= %(since)s and occurred_at <= %(until)s",
+            {"clusters": list(clusters), "since": since, "until": until},
+        )
+        row = cursor.fetchone()
+    if row is None or not row[0]:
+        return 0, None, None
+    return int(row[0]), int(row[1]), int(row[2])
 
 
 def read_backend_totals(

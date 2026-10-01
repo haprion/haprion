@@ -22,7 +22,7 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from haproxy_ui import auth, db
+from haproxy_ui import auth, db, metrics
 from haproxy_ui.app import create_app
 from haproxy_ui.config import Config, Database, Listen, Poller, Throttle
 from haproxy_ui.config import Session as SessionPolicy
@@ -40,6 +40,17 @@ CSRF_VALUE = re.compile(r'value="[0-9a-f]{64}"')
 
 def without_csrf(text: str) -> str:
     return CSRF_VALUE.sub('value="..."', text)
+
+
+NO_TRAFFIC = metrics.BackendMeasurement(
+    intervals=0,
+    started_at=None,
+    ended_at=None,
+    totals=tuple(metrics.Total(label, 0, 0.0, 0.0) for _name, label in metrics.SUMMARY_COUNTERS),
+    restarted=False,
+    handed_over=False,
+    coverage=100,
+)
 
 
 def configuration(*, cookie_secure: bool = True, max_failures: int = 3) -> Config:
@@ -130,6 +141,13 @@ class LoginTestCase(unittest.TestCase):
             #
             mock.patch("haproxy_ui.db.cluster_drafts", return_value=[]),
             mock.patch("haproxy_ui.db.recent_jobs", return_value=[]),
+            #
+            # The dashboard's traffic row (B220): no readings, as an
+            # installation the poller has not measured yet. A test about the
+            # row patches these itself.
+            #
+            mock.patch("haproxy_ui.db.read_traffic_summary", return_value=NO_TRAFFIC),
+            mock.patch("haproxy_ui.db.read_response_times", return_value=(0, None, None)),
             # Settings draws its Users card from this; none unless a test says.
             mock.patch("haproxy_ui.db.account_rows", return_value=[]),
             mock.patch("haproxy_ui.db.feature_switches", side_effect=lambda _c: self.switches),

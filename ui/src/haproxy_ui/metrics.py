@@ -1317,6 +1317,17 @@ CARD_COUNTERS: tuple[tuple[str, str], ...] = (
     ("wretr", "Retries"),
 )
 
+#
+# The dashboard's traffic row: what every VIP carried, summed. Bytes in and out
+# rather than errors, because the row answers "how much is flowing", and the
+# per-backend questions stay on the cards that can name a backend.
+#
+SUMMARY_COUNTERS: tuple[tuple[str, str], ...] = (
+    ("req_tot", "Requests"),
+    ("bin", "Bytes in"),
+    ("bout", "Bytes out"),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class BackendMeasurement:

@@ -84,6 +84,7 @@ from haproxy_ui import (
     snapshot,
     traffic_log_table,
     traffic_logs,
+    traffic_summary,
     users,
 )
 from haproxy_ui import editor as editor_module
@@ -618,13 +619,38 @@ def build_router(config: Config) -> APIRouter:
             captured=captured_at is not None,
             network_readings=network_rows,
         )
+        moment = datetime.now(UTC)
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
+            shown = listed_clusters(request, config)
+            traffic = traffic_summary.row(
+                db.read_traffic_summary(
+                    connection,
+                    clusters=shown,
+                    since=moment - traffic_summary.DAY,
+                    until=moment,
+                ),
+                db.read_traffic_summary(
+                    connection,
+                    clusters=shown,
+                    since=moment - traffic_summary.recent_window(config.poller.interval_seconds),
+                    until=moment,
+                ),
+                db.read_response_times(
+                    connection,
+                    clusters=shown,
+                    since=moment - traffic_summary.RESPONSE_WINDOW,
+                    until=moment,
+                )
+                if config.traffic_logs.enabled
+                else None,
+            )
         running = jobs.in_flight(recent)
         return TEMPLATES.TemplateResponse(
             request,
             "index.html",
             {
+                "traffic": traffic,
                 "username": session.username,
                 "role": session.role,
                 "management_writes": config.management_writes,

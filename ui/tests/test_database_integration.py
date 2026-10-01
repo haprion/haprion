@@ -830,6 +830,95 @@ class ARealDatabase(unittest.TestCase):
         self.assertEqual(by_node["node-a"].floor_uptime_sec, 5000)
         self.assertEqual(by_node["node-b"].floor_uptime_sec, 10)
 
+    def test_the_dashboard_sums_every_frontend_the_way_each_card_counts_one(self) -> None:
+        """B220, 2026-10-01: one query for the dashboard, the card's own arithmetic.
+
+        Two frontends in `alpha` - one restarting part way - a frontend in
+        `beta` that is not asked for, and a node that does not hold the VIP.
+        The sum must be the two cards' figures added, so the dashboard and the
+        metrics page cannot disagree about what a counter did.
+        """
+
+        start = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(minutes=30)
+        rows = [
+            # (cluster, node, frontend, minute, owns_vip, uptime, req_tot, bin, bout)
+            ("alpha", "node-a", "mgd-one-http", 0, True, 1000, 100, 10_000, 90_000),
+            ("alpha", "node-a", "mgd-one-http", 1, True, 1060, 160, 16_000, 150_000),
+            ("alpha", "node-a", "mgd-one-http", 2, True, 1120, 200, 20_000, 190_000),
+            ("alpha", "node-a", "mgd-two-http", 0, True, 1000, 5_000, 1_000, 2_000),
+            ("alpha", "node-a", "mgd-two-http", 1, True, 30, 40, 100, 300),
+            ("alpha", "node-a", "mgd-two-http", 2, True, 90, 70, 400, 900),
+            ("alpha", "node-b", "mgd-one-http", 1, False, 500, 9_999, 9_999, 9_999),
+            ("alpha", "node-b", "mgd-one-http", 2, False, 560, 19_999, 19_999, 19_999),
+            ("beta", "node-c", "mgd-one-http", 0, True, 1000, 0, 0, 0),
+            ("beta", "node-c", "mgd-one-http", 2, True, 1120, 777, 777, 777),
+        ]
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select metric_partition('metric_frontend', %s::date)", (start.date(),))
+            cursor.execute(
+                "select metric_partition('metric_frontend', %s::date)",
+                ((start + timedelta(minutes=2)).date(),),
+            )
+            cursor.executemany(
+                "insert into metric_frontend "
+                "(cluster, node, frontend, observed_at, owns_vip, uptime_sec, req_tot, bin, bout) "
+                "values (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                [
+                    (c, n, f, start + timedelta(minutes=m), o, u, r, i, out)
+                    for c, n, f, m, o, u, r, i, out in rows
+                ],
+            )
+        until = start + timedelta(minutes=3)
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            summed = db.read_traffic_summary(
+                connection, clusters=["alpha"], since=start, until=until
+            )
+            cards = [
+                db.read_frontend_totals(
+                    connection, cluster="alpha", frontend=name, since=start, until=until
+                )
+                for name in ("mgd-one-http", "mgd-two-http")
+            ]
+        by_label = {total.label: total for total in summed.totals}
+        #
+        # mgd-one: 60 + 40 requests. mgd-two restarted at minute 1, so that
+        # interval carries what the new process counted (40), then 30 more.
+        #
+        self.assertEqual(by_label["Requests"].value, 100 + 40 + 30)
+        self.assertEqual(
+            by_label["Requests"].value,
+            sum(next(t.value for t in card.totals if t.label == "Requests") for card in cards),
+        )
+        self.assertEqual(by_label["Bytes in"].value, 10_000 + 100 + 300)
+        self.assertEqual(by_label["Bytes out"].value, 100_000 + 300 + 600)
+        self.assertTrue(summed.restarted)
+        self.assertFalse(by_label["Requests"].whole, "the restart's minute was not seen whole")
+
+    def test_response_times_leave_out_requests_no_server_answered(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select traffic_log_partition(%s::date)", (now.date(),))
+            cursor.executemany(
+                "insert into traffic_log (event_id, cluster, node, occurred_at, request_number, "
+                "client, method, host, path, frontend, backend, server, status, request_time, "
+                "queue_time, connect_time, response_time, total_time, bytes) values "
+                "(%s, %s, 'node-a', %s, %s, '192.0.2.30', 'GET', 'rt.example.com', '/', "
+                "'mgd-main-http', 'mgd-app', 's1', 200, 0, 0, 1, %s, 5, 10)",
+                [
+                    (os.urandom(32), "rt-only", now, number, response)
+                    for number, response in enumerate((*range(1, 101), -1, -1, -1))
+                ]
+                + [(os.urandom(32), "rt-other", now, 500, 99_999)],
+            )
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            answered, median, p95 = db.read_response_times(
+                connection,
+                clusters=["rt-only"],
+                since=now - timedelta(minutes=1),
+                until=now + timedelta(minutes=1),
+            )
+        self.assertEqual((answered, median, p95), (100, 50, 95))
+
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class TheInstallCheckMatchesTheMigrations(unittest.TestCase):

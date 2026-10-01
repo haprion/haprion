@@ -52,26 +52,25 @@ def _scaled(value: float, units: tuple[str, ...], step: float) -> str:
 
 
 def count(value: int) -> str:
-    """A request count short enough for a tile: 950, 12.3k, 4.6M, 1.2B."""
+    """A request count short enough for a line: 950, 12k, 4.6M, 80M, 1.2B."""
 
     if value < 1000:
         return str(value)
-    for limit, suffix in ((1_000_000, "k"), (1_000_000_000, "M"), (1_000_000_000_000, "B")):
-        if value < limit:
-            return f"{value / (limit / 1000):.1f}{suffix}"
-    return f"{value / 1_000_000_000_000:.1f}T"
+    return _scaled(float(value), ("", "k", "M", "B", "T", "Q"), 1000.0).replace(" ", "")
 
 
 def size(octets: int) -> str:
     """Bytes in decimal units, as an interface's counters are read: 3.4 GB."""
 
-    return _scaled(float(octets), ("B", "kB", "MB", "GB", "TB"), 1000.0)
+    return _scaled(float(octets), ("B", "kB", "MB", "GB", "TB", "PB", "EB"), 1000.0)
 
 
 def bitrate(octets: int, seconds: float) -> str:
     """Bytes over a span as bits per second, the unit a link is sized in."""
 
-    return _scaled(octets * 8 / seconds, ("bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"), 1000.0)
+    return _scaled(
+        octets * 8 / seconds, ("bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s", "Pbit/s"), 1000.0
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +92,15 @@ class TrafficRow:
 
 
 def milliseconds(value: int) -> str:
-    return f"{value} ms" if value < 10_000 else f"{value / 1000:.1f} s"
+    """A response time in the unit it is read in: 38 ms, 1.5 s, 3.0 min, 2.0 h."""
+
+    if value < 1000:
+        return f"{value} ms"
+    for unit, size_ in (("s", 1000), ("min", 60_000), ("h", 3_600_000)):
+        scaled = value / size_
+        if unit == "h" or scaled < {"s": 60, "min": 60}[unit]:
+            return f"{_figure(scaled)} {unit}"
+    raise AssertionError("unreachable")
 
 
 def _total(measurement: BackendMeasurement, label: str) -> Total | None:

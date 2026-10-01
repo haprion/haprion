@@ -47,7 +47,7 @@ class TheFigures(unittest.TestCase):
     def test_counts_bytes_and_rates_at_three_figures(self) -> None:
         self.assertEqual(
             [traffic_summary.count(v) for v in (950, 12_345, 4_560_000, 1_200_000_000)],
-            ["950", "12.3k", "4.6M", "1.2B"],
+            ["950", "12k", "4.6M", "1.2B"],
         )
         self.assertEqual(traffic_summary.size(3_400_000_000), "3.4 GB")
         self.assertEqual(traffic_summary.size(41_200_000_000), "41 GB")
@@ -57,7 +57,12 @@ class TheFigures(unittest.TestCase):
         self.assertEqual(traffic_summary.bitrate(9_250_000, 300), "247 kbit/s")
         self.assertEqual(traffic_summary.bitrate(121_000_000, 300), "3.2 Mbit/s")
         self.assertEqual(traffic_summary.milliseconds(38), "38 ms")
-        self.assertEqual(traffic_summary.milliseconds(12_500), "12.5 s")
+        self.assertEqual(traffic_summary.milliseconds(1_500), "1.5 s")
+        # Never longer than three figures and a unit, whatever the traffic.
+        self.assertEqual(traffic_summary.count(80_000_000), "80M")
+        self.assertEqual(traffic_summary.bitrate(200_000_000_000 // 8 * 300, 300), "200 Gbit/s")
+        self.assertEqual(traffic_summary.milliseconds(180_000), "3.0 min")
+        self.assertEqual(traffic_summary.milliseconds(7_200_000), "2.0 h")
 
     def test_the_row_reads_the_day_and_the_last_minutes_apart(self) -> None:
         row = traffic_summary.row(

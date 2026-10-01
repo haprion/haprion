@@ -682,7 +682,7 @@ backends:
   web:
     balance: roundrobin
     health:
-      type: system
+      type: tcp
     servers:
       - host: 192.0.2.10
         port: 8080
@@ -706,7 +706,7 @@ backends:
   service:
     balance: leastconn
     health:
-      type: system
+      type: tcp
     servers:
       - host: 198.51.100.10
         port: 8443
@@ -728,7 +728,7 @@ backends:
   storefront:
     balance: roundrobin
     health:
-      type: system
+      type: tcp
     servers:
       - host: 192.0.2.20
         port: 8080

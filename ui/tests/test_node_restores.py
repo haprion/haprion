@@ -662,9 +662,11 @@ class FollowingARun(RestoreRouteTestCase):
         self.runs = [PREPARED]
         page = self.writing_client(role="reader").get(f"/backups/restore/{RUN}").text
         self.assertIn("<h1>Restore node-a</h1>", page)
-        self.assertNotIn(
-            "<form", re.sub(r'<form method="post" action="/logout".*?</form>', "", page, flags=re.S)
-        )
+        #
+        # The header's two forms are on every page: signing out, and the search.
+        #
+        chrome = r'<form (?:method="post" action="/logout"|class="header-search").*?</form>'
+        self.assertNotIn("<form", re.sub(chrome, "", page, flags=re.S))
 
     def test_the_fingerprint_queues_the_preview(self) -> None:
         self.runs = [PREPARED]

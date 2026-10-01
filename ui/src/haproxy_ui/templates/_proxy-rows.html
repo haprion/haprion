@@ -29,7 +29,7 @@
         what it looked like was that publishing had quietly turned the object
         back into a draft. The reason is named here; the full text is one click
         away, where it has room.
-      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}</td><td data-label="Hosts / ports"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
+      #}<a class="status-badge status-badge-critical" href="/jobs" title="{{ failed[draft.object_id] }}">Publish refused · {{ failed[draft.object_id] }}</a>{% else %}<span class="status-badge status-badge-info waiting-badge">{% if draft.deleted %}Draft: removal{% else %}Draft{% endif %}</span>{% endif %}</td><td data-label="Hosts / ports"><span class="table-empty">—</span></td><td data-label="VIP / source"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="table-empty">—</span></td></tr>
 {#
   What a finished removal took out of the repository and the nodes have
   not stopped serving. The object is gone, so there is nothing to link to and
@@ -41,7 +41,7 @@
   finishes it.
 #}
 {% elif kind == 'removed' %}{% set name = item %}
-      <tr class="proxy-waiting"><td data-label="Proxy"><strong>{{ name }}</strong></td><td data-label="Protocol"><span class="status-badge status-badge-warning waiting-badge">Active · deploy to remove</span></td><td data-label="Hosts / ports"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td></tr>
+      <tr class="proxy-waiting"><td data-label="Proxy"><strong>{{ name }}</strong></td><td data-label="Protocol"><span class="status-badge status-badge-warning waiting-badge">Active · deploy to remove</span></td><td data-label="Hosts / ports"><span class="table-empty">—</span></td><td data-label="VIP / source"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-managed">Managed</span></td></tr>
 {#
   Three badges now, and the third took a wrong turn first: it sat beside the
   hostnames, which is exactly what the note above the cell says not to do. It
@@ -115,6 +115,12 @@
         <td data-label="Protocol">{% if not object.readable %}<span class="status-badge status-badge-critical waiting-badge">Cannot be read</span>{% elif not object.serving %}<span class="status-badge status-badge-warning waiting-badge">Inactive · deploy to add</span>{% elif object.name in reconfigured %}<span class="status-badge status-badge-warning waiting-badge">Reconfigured · deploy to activate</span>{% elif object.protocol %}<span class="protocol-badge protocol-{{ object.protocol }}">{{ object.protocol | upper }}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
         <td data-label="Hosts / ports"><span class="proxy-hosts">{{ object.hostnames | join(', ') if object.hostnames else 'No hostname rule' }} · {{ object.ports | join(', ') if object.ports else '—' }}</span></td>
         {#
+          The addresses rather than their names (B221): an address is what
+          somebody has in hand when they come looking. The title repeats them
+          with their names, because a long IPv6 pair is cut in the cell.
+        #}
+        <td data-label="VIP / source">{% set at = object.addresses %}{% if at %}<span class="proxy-address" title="{{ at.vip.label }} {{ at.vip.address }}{% if at.source %} · {{ at.source.label }} {{ at.source.address }}{% endif %}">{{ at.vip.shown }}{% if at.source %} · {{ at.source.shown }}{% endif %}</span>{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        {#
           The nodes' own verdict on this object's servers, not a probe. Grey
           is no answer, and it covers both ways of having none: an object with
           no health check, and a check nobody has reported on yet. Neither is
@@ -130,7 +136,7 @@
   is to show, so it is shown as itself.
 #}
 {% else %}{% set proxy = item %}
-      <tr{% if role == 'admin' %} data-href="/proxies/{{ cluster }}/{{ proxy.name }}"{% endif %}><td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ proxy.name }}"><strong>{{ proxy.name }}</strong></a>{% else %}<strong>{{ proxy.name }}</strong>{% endif %}{% if not proxy.enabled %}<small class="warning-text">Disabled</small>{% endif %}</td><td data-label="Protocol"><span class="protocol-badge protocol-{{ proxy.protocol }}">{{ proxy.protocol | upper }}</span></td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ proxy.hostnames | join(', ') if proxy.hostnames else 'No hostname rule' }} · {{ proxy.ports | join(', ') if proxy.ports else '—' }}</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-unmanaged">Unmanaged</span></td></tr>
+      <tr{% if role == 'admin' %} data-href="/proxies/{{ cluster }}/{{ proxy.name }}"{% endif %}><td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ proxy.name }}"><strong>{{ proxy.name }}</strong></a>{% else %}<strong>{{ proxy.name }}</strong>{% endif %}{% if not proxy.enabled %}<small class="warning-text">Disabled</small>{% endif %}</td><td data-label="Protocol"><span class="protocol-badge protocol-{{ proxy.protocol }}">{{ proxy.protocol | upper }}</span></td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ proxy.hostnames | join(', ') if proxy.hostnames else 'No hostname rule' }} · {{ proxy.ports | join(', ') if proxy.ports else '—' }}</span></td><td data-label="VIP / source"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-unmanaged">Unmanaged</span></td></tr>
 {% endif %}
 {% endfor %}
 {% endmacro %}

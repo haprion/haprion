@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 from haproxy_ui import demo
 from haproxy_ui.db import ClusterInventory, Job, ProxyDraft
 from haproxy_ui.snapshot import ProductionSnapshot
+from tests.test_cluster_traffic import measurement
 from tests.test_login import LoginTestCase, configuration
 
 CAPTURED = datetime(2026, 9, 2, 9, 0, tzinfo=UTC)
@@ -76,6 +77,17 @@ class DraftReading(LoginTestCase):
         patch = mock.patch("haproxy_ui.db.read_draft", side_effect=lambda *_a, **_k: self.draft)
         patch.start()
         self.addCleanup(patch.stop)
+        #
+        # And the backend traffic the page draws for a readable fixture object,
+        # which the recording pool here cannot answer.
+        #
+        for name, answer in (
+            ("read_backend_samples", lambda *_a, **_k: []),
+            ("read_backend_totals", lambda *_a, **_k: measurement()),
+        ):
+            patch = mock.patch(f"haproxy_ui.db.{name}", side_effect=answer)
+            patch.start()
+            self.addCleanup(patch.stop)
 
 
 class OpeningAnObject(DraftReading):

@@ -52,6 +52,7 @@ from haproxy_mgmt.proxy_model import (
 )
 
 from haproxy_ui import (
+    addresses,
     auth,
     backups,
     certificate_activity,
@@ -81,6 +82,7 @@ from haproxy_ui import (
     oidc_web,
     operations,
     proxies,
+    search,
     snapshot,
     traffic_log_table,
     traffic_logs,
@@ -777,6 +779,13 @@ def build_router(config: Config) -> APIRouter:
         # was changed rather than added or removed.
         #
         behind = health.clusters_behind(health_rows)
+        #
+        # And the cluster's addresses, read here because the listing names
+        # each object's VIP and source (B221) as well as deciding, below,
+        # which node may answer for its backend.
+        #
+        _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
+        networks = {reading.cluster: reading for reading in network_rows}
         listed = {}
         served: dict[str, frozenset[str]] = {}
         with request.app.state.pool.connection() as connection:
@@ -805,6 +814,7 @@ def build_router(config: Config) -> APIRouter:
                 # answers instead. Silence is not "nothing is served".
                 #
                 served=served[view.cluster] if _nodes_reported(health_rows, view.cluster) else None,
+                network=addresses.network_result(networks.get(view.cluster)),
             )
         #
         # What is left of the published inventory once the managed frontends are
@@ -823,13 +833,11 @@ def build_router(config: Config) -> APIRouter:
         # dashboard draws.
         #
         #
-        # And the cluster's addresses, because they decide which node may
-        # answer. An object leaving from a source address is answerable only
-        # from the node that carries it; the other binds an address it does not
-        # have and reports the backend down.
+        # The cluster's addresses decide which node may answer. An object
+        # leaving from a source address is answerable only from the node that
+        # carries it; the other binds an address it does not have and reports
+        # the backend down.
         #
-        _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
-        networks = {reading.cluster: reading for reading in network_rows}
         backend_lamps = {
             view.cluster: {
                 obj.name: health.object_health(
@@ -1254,15 +1262,48 @@ def build_router(config: Config) -> APIRouter:
         # is why the address is read from the network description rather than
         # from the object.
         #
+        # The object's own VIP where it names one (B221, 2026-10-01): until
+        # then this said "default" for every object, including one served on
+        # another address.
+        #
         _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
-        addresses = network.build_network_overview(
-            clusters,
-            network_rows,
-            now=captured_at,
-            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
-            captured=captured_at is not None,
+        network_rows = tuple(network_rows)
+        object_rows = tuple(object_rows)
+        written = next(
+            (
+                view
+                for row in object_rows
+                if row.cluster == cluster
+                for view in objects.cluster_object_views(row)
+                if view.name == name
+            ),
+            None,
         )
-        described = next((view for view in addresses if view.cluster == cluster), None)
+        resolved = (
+            addresses.resolve(
+                name,
+                written.document,
+                addresses.network_result(
+                    next((row for row in network_rows if row.cluster == cluster), None)
+                ),
+            )
+            if written is not None
+            else None
+        )
+        described = next(
+            (
+                view
+                for view in network.build_network_overview(
+                    clusters,
+                    network_rows,
+                    now=captured_at,
+                    stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+                    captured=captured_at is not None,
+                )
+                if view.cluster == cluster
+            ),
+            None,
+        )
         vip = (
             next((item for item in described.vips if item.is_default), None) if described else None
         )
@@ -1293,9 +1334,11 @@ def build_router(config: Config) -> APIRouter:
             release_state=serving.release_state if serving else "",
             node_version=node_version,
             object_state=object_state,
-            vip=vip.name if vip else None,
-            vip_address=vip.address if vip else None,
-            vip_is_default=vip is not None,
+            vip=resolved.vip_name if resolved else (vip.name if vip else None),
+            vip_address=(resolved.vip.address or None)
+            if resolved
+            else (vip.address if vip else None),
+            vip_is_default=resolved.vip_is_default if resolved else vip is not None,
             now=captured_at,
             stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
             captured=captured_at is not None,
@@ -1708,6 +1751,59 @@ def build_router(config: Config) -> APIRouter:
             },
         )
 
+    #
+    # The header's search (B221). Every source it reads is a cached reading the
+    # pages already draw, so a search asks no node anything; see `search`.
+    #
+    @router.get("/search", response_class=HTMLResponse)
+    def search_page(request: Request) -> Response:
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        token = request.cookies.get(auth.SESSION_COOKIE, "")
+        query = search.normalise(request.query_params.get("q", ""))
+        results = search.Results(query, ())
+        if query:
+            clusters, certificate_rows, captured_at = read_source(
+                request, config, CERTIFICATE_SOURCE
+            )
+            _, status_rows, _ = read_source(request, config, STATUS_SOURCE)
+            status_rows = tuple(status_rows)
+            _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
+            _, network_rows, _ = read_source(request, config, NETWORK_SOURCE)
+            results = search.search(
+                query,
+                role=session.role,
+                clusters=clusters,
+                object_rows=object_rows,
+                network_rows=network_rows,
+                status_rows=status_rows,
+                certificates=certificates.build_certificate_overview(
+                    clusters,
+                    certificate_rows,
+                    status_readings=status_rows,
+                    now=captured_at,
+                    stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+                    captured=captured_at is not None,
+                ),
+            )
+        return TEMPLATES.TemplateResponse(
+            request,
+            "search.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(token),
+                "section": "search",
+                "search_query": query,
+                "results": results,
+                "management_writes": config.management_writes,
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": "",
+            },
+        )
+
     @router.get("/metrics", response_class=HTMLResponse)
     def all_traffic(request: Request) -> Response:
         return _cluster_traffic(request, config, None)
@@ -1756,7 +1852,7 @@ def build_router(config: Config) -> APIRouter:
         # edited, old records follow the new ordering rather than pretending
         # the mirror preserved historical configuration that it never stored.
         #
-        addresses: dict[tuple[str, str, str], str] = {}
+        server_addresses: dict[tuple[str, str, str], str] = {}
         if config.traffic_logs.enabled:
             _, object_rows, _ = read_source(request, config, OBJECTS_SOURCE)
             for object_row in object_rows:
@@ -1768,7 +1864,7 @@ def build_router(config: Config) -> APIRouter:
                         parsed.append(load_proxy(obj.name, obj.document.encode()))
                     except (ModelError, UnicodeError):
                         continue
-                addresses.update(
+                server_addresses.update(
                     traffic_logs.configured_server_addresses(object_row.cluster, parsed)
                 )
         #
@@ -1789,7 +1885,7 @@ def build_router(config: Config) -> APIRouter:
                     substring=selected_query,
                     from_at=from_at,
                     to_at=to_at,
-                    server_addresses=addresses,
+                    server_addresses=server_addresses,
                 )
         else:
             reading = traffic_logs.Reading((), (), 0, False)

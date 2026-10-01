@@ -24,6 +24,7 @@ from haproxy_mgmt.object_manifest import ABSENT as ABSENT
 from haproxy_mgmt.object_manifest import CHANGED as CHANGED
 from haproxy_mgmt.object_manifest import CURRENT
 
+from haproxy_ui.addresses import ObjectAddresses, resolve
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterObjects, Job
@@ -522,12 +523,18 @@ class ListedObject:
     readable: bool
     problem: str | None
     serving: bool
+    #
+    # The VIP and source address the object is on (B221), looked up in the
+    # cluster's network description. None where either cannot be read.
+    #
+    addresses: ObjectAddresses | None = None
 
 
 def listed_objects(
     reading: ClusterObjects | None,
     published: Iterable[ProxyView] = (),
     served: Collection[str] | None = None,
+    network: Mapping[str, Any] | None = None,
 ) -> tuple[ListedObject, ...]:
     """This cluster's objects, each saying whether the nodes are serving it yet.
 
@@ -569,6 +576,7 @@ def listed_objects(
                         if served is not None
                         else bool(view.hostnames) and set(view.hostnames) <= serving
                     ),
+                    addresses=resolve(view.name, view.document, network) if network else None,
                 )
                 for view in cluster_object_views(reading)
             ),

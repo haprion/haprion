@@ -199,6 +199,25 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .activity-note { margin: -10px 0 18px; color: var(--text-secondary); font-size: 14px; }
 
 .header-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+/* The search (B221): centred between the name and the actions, never wider than a hostname needs. */
+.header-search {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 420px;
+  height: 34px;
+  margin: 0 auto;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-soft);
+  color: var(--muted);
+}
+.header-search svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; }
+.header-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--text); font-size: 14px; }
+.header-search:focus-within { border-color: var(--brand); box-shadow: var(--focus); }
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -552,10 +571,16 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 .sort-link { color: inherit; text-decoration: none; }
 .feature-consequence { margin: 0; padding: 18px 20px 8px; color: var(--text-strong); font-size: 13px; }
 .sort-link:hover { color: var(--text-strong); }
-.proxy-table th:nth-child(1), .proxy-table td:nth-child(1) { width: 20%; }
-.proxy-table th:nth-child(2), .proxy-table td:nth-child(2) { width: 22%; }
-.proxy-table th:nth-child(3), .proxy-table td:nth-child(3) { width: 36%; }
-.proxy-table th:nth-child(4), .proxy-table td:nth-child(4) { width: 10%; }
+/* Every column whose longest value is known has a fixed width, measured in the
+   rig with the shipped font (2026-10-01); the hostnames take what is left, so a
+   wider window shows more of them and nothing else. Protocol holds the longest
+   row badge (225 px), VIP / source an address pair (185 px), cut beyond that. */
+.proxy-table th:nth-child(1), .proxy-table td:nth-child(1) { width: 16%; }
+.proxy-table th:nth-child(2), .proxy-table td:nth-child(2) { width: 256px; }
+.proxy-table th:nth-child(3), .proxy-table td:nth-child(3) { width: auto; }
+/* VIP / source (B221): two addresses on one line, cut rather than wrapped. */
+.proxy-table th:nth-child(4), .proxy-table td:nth-child(4) { width: 224px; }
+.proxy-address { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .proxy-table td:nth-child(1) strong, .proxy-table td:nth-child(1) a {
   display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -567,11 +592,20 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 /* Five columns since the backend count left. It counted backends rather than
    servers - the form writes one backend per object, so it was a column of ones -
    and the health cell beside it already says how many servers there are and
-   how many are up. The width it held goes to hosts / ports. */
-.proxy-table th:nth-child(5), .proxy-table td:nth-child(5) { width: 12%; }
+   how many are up. The width it held goes to hosts / ports. Six since VIP /
+   source joined (B221). */
+.proxy-table th:nth-child(5), .proxy-table td:nth-child(5) { width: 100px; }
+.proxy-table th:nth-child(6), .proxy-table td:nth-child(6) { width: 124px; }
 .proxy-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .proxy-table th { padding-top: 7px; padding-bottom: 7px; }
 .proxy-table td strong { font-weight: var(--font-weight-regular); }
+/* The search page (B221). After `.node-table`'s column widths, which it replaces. */
+.search-table tr[data-href] { cursor: pointer; }
+.search-table th:nth-child(1), .search-table td:nth-child(1) { width: 24%; }
+.search-table th:nth-child(2), .search-table td:nth-child(2) { width: 14%; }
+/* What matched is the answer, so it wraps rather than being cut. */
+.search-table td:nth-child(3) { white-space: normal; }
+.search-matched { color: var(--text-secondary); overflow-wrap: anywhere; }
 .proxy-hosts { display: block; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .protocol-badge, .ownership-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; letter-spacing: 0.025em; }
 .protocol-http { color: var(--info); background: var(--info-soft); }
@@ -998,6 +1032,7 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
   .nav-inner { width: max-content; min-width: 100%; padding: 0 10px; }
   .brand { padding-right: 12px; }
   .brand span { display: none; }
+  .header-search { margin: 0 8px 0 0; }
   .primary-nav a, .nav-item { padding: 0 10px; }
   .activity-entry { padding: 13px 14px 13px 11px; }
   .activity-copy { grid-template-columns: 1fr; gap: 2px; }

@@ -1,0 +1,35 @@
+{% extends "layout.html" %}
+{% block title %}{% if results.query %}{{ results.query }} — {% endif %}Search — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  The header's search, as a page of its own (B221): a link somebody can send,
+  and nothing here that needs a script except the whole-row click the other
+  listings have. Grouped by what was found, in the order somebody looks for it.
+#}
+<section class="page-heading">
+  <div class="heading-title"><h1>Search</h1>{% if results.query %}<p class="page-lede">{{ results.count }} {{ 'match' if results.count == 1 else 'matches' }} for <code>{{ results.query }}</code></p>{% endif %}</div>
+</section>
+
+<div class="cluster-list">
+{% for group in results.groups %}
+<section class="cluster-card search-card">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>{{ group.label }}</h3></div></div></header>
+  <div class="table-scroll"><table class="node-table search-table">
+    <thead><tr><th>Name</th><th>Cluster</th><th>Matched</th></tr></thead>
+    <tbody>
+      {% for hit in group.hits %}
+      <tr data-href="{{ hit.href }}">
+        <td data-label="Name"><a class="proxy-link" href="{{ hit.href }}"><strong>{{ hit.title }}</strong></a></td>
+        <td data-label="Cluster">{% if hit.cluster %}{{ hit.cluster }}{% else %}<span class="table-empty">—</span>{% endif %}</td>
+        <td data-label="Matched"><span class="search-matched">{{ hit.matched if hit.matched != hit.title else 'Name' }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% else %}
+{% if results.query %}<section class="cluster-card"><div class="empty-state"><div><strong>Nothing matches {{ results.query }}</strong></div></div></section>{% endif %}
+{% endfor %}
+</div>
+<script defer src="{{ url_for('static', path='/proxy-rows.js') }}?v={{ asset_token }}"></script>
+{% endblock %}

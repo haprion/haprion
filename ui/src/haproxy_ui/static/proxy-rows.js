@@ -9,8 +9,11 @@
   // except over a link or control, which already means something, or while
   // somebody is selecting text with the pointer.
   document.addEventListener("click", (event) => {
-    // Settings -> Users uses the same rows (2026-09-27).
-    const row = event.target.closest(".proxy-table tr[data-href], .users-table tr[data-href]");
+    // Settings -> Users uses the same rows (2026-09-27), and so does the
+    // search page (B221).
+    const row = event.target.closest(
+      ".proxy-table tr[data-href], .users-table tr[data-href], .search-table tr[data-href]",
+    );
     if (!row || event.button !== 0) return;
     if (event.target.closest("a, button, input, select, textarea, summary, label")) return;
     if (String(window.getSelection() || "")) return;

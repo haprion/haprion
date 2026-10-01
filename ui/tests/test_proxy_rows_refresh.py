@@ -507,12 +507,13 @@ class TheRowStateBadgesFitTheColumnTheySitIn(unittest.TestCase):
 
     The budget is characters, and it is honest about being an approximation.
     It was set from the longest badge in use plus headroom, and the column it
-    guards is `.proxy-table` column two, at a share of the card. Widen one and
+    guards is `.proxy-table` column two, at a width measured from the longest
+    badge (225 px in the rig, 2026-10-01). Widen one and
     the other has to follow; that is the whole reason this test names both.
     """
 
     BUDGET = 36
-    COLUMN_SHARE = "22%"
+    COLUMN_SHARE = "256px"
 
     def badges(self) -> list[str]:
         markup = (

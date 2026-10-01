@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from haproxy_ui import sorting
+from haproxy_ui.addresses import order_key
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
 from haproxy_ui.db import ClusterInventory
@@ -263,6 +264,15 @@ def _hosts(row: tuple[str, str, Any], _context: Any) -> str | None:
     return sorting.text(", ".join(item.hostnames)) if item is not None else None
 
 
+def _address(row: tuple[str, str, Any], _context: Any) -> Any:
+    _name, kind, item = row
+    found = getattr(item, "addresses", None) if kind == "written" else None
+    if found is None:
+        return None
+    source = found.source.address if found.source else ""
+    return (order_key(found.vip.shown), order_key(source))
+
+
 def _health(row: tuple[str, str, Any], lamps: Any) -> tuple[int, str] | None:
     name, kind, _item = row
     lamp = (lamps or {}).get(name) if kind == "written" else None
@@ -279,6 +289,7 @@ TABLE = sorting.Table(
         sorting.Column("name", lambda row, _: sorting.text(row[0])),
         sorting.Column("protocol", _protocol),
         sorting.Column("hosts", _hosts),
+        sorting.Column("address", _address),
         sorting.Column("health", _health),
         sorting.Column("ownership", _ownership),
     ),

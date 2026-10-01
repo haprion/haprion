@@ -19,6 +19,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from haproxy_mgmt import advanced
 from haproxy_mgmt.config import TLS_POLICY_NAMES, AbuseProtection, Vip
 from haproxy_mgmt.generate import (
     HTTP_TRAFFIC_LOG_FORMAT,
@@ -227,6 +228,13 @@ class HaproxyAcceptsWhatWeGenerate(unittest.TestCase):
                 )
 
                 self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+                #
+                # A warning on a line of an object's advanced config is HAProxy
+                # saying it will ignore the line, which `-c` lets through. The
+                # publish refuses on it, so a frozen case may not carry one.
+                #
+                _, warnings = advanced.annotate(result.stdout + result.stderr, produced(case))
+                self.assertEqual(warnings, [])
 
     def test_opt_in_traffic_profile_validates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,20 @@
+schema: 1
+name: db
+listen:
+  protocol: tcp
+  port: 5432
+backend: pool
+backends:
+  pool:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 198.51.100.10
+        port: 5432
+advanced: |
+  frontend db
+      tcp-request inspect-delay 2s
+      tcp-request content reject if { src 203.0.113.66 }
+      retries 5
+      server ignored 198.51.100.99:5432

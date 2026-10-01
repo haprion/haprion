@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, BinaryIO, TextIO
 
-from haproxy_mgmt import tls_policy
+from haproxy_mgmt import advanced, tls_policy
 from haproxy_mgmt.candidate_validation import (
     VALIDATION_CERTIFICATE,
     SandboxValidator,
@@ -47,7 +47,7 @@ from haproxy_mgmt.helper_protocol import (
     write_document,
 )
 from haproxy_mgmt.managed_network import location as network_location
-from haproxy_mgmt.managed_publish import MANAGED_PREFIX
+from haproxy_mgmt.managed_publish import GENERATED_PREFIX, MANAGED_PREFIX
 from haproxy_mgmt.release_install import ChangeOwner, InstallError, install_release
 from haproxy_mgmt.release_layout import (
     LayoutError,
@@ -336,9 +336,34 @@ def _publish(
             request_id=request.request_id,
             validator=validator,
         )
+        #
+        # `haproxy -c` names a generated file and a line; a line that came from
+        # an object's advanced config is said again as that object's line, so
+        # the person who pasted it can find it. The generated files carry the
+        # mapping themselves (`advanced.block`).
+        #
+        generated = {
+            path.removeprefix(GENERATED_PREFIX): content.decode("utf-8", "replace")
+            for path, content in published_files.items()
+            if path.startswith(GENERATED_PREFIX)
+        }
+        diagnostics, ignored = advanced.annotate(validation.diagnostics, generated)
         if not validation.valid:
+            return refuse("candidate_invalid", words.invalid, 65, {"diagnostics": diagnostics})
+        if ignored:
+            #
+            # Valid, and still refused: a warning on a pasted line is HAProxy
+            # saying it will ignore that line, and `-c` passes it. Publishing
+            # would promise something the configuration does not do (B218).
+            # Only here, where the text is published - a revert or a publish of
+            # the core files is not the place to refuse an earlier text.
+            #
             return refuse(
-                "candidate_invalid", words.invalid, 65, {"diagnostics": validation.diagnostics}
+                "advanced_ignored",
+                "HAProxy would ignore a line of an object's advanced config: "
+                + ignored[0].split("parsing ", 1)[-1][:1500],
+                65,
+                {"diagnostics": diagnostics},
             )
         problem = stale()
         if problem is not None:

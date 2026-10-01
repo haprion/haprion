@@ -33,6 +33,7 @@ import ipaddress
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
+from haproxy_mgmt import advanced as advanced_config
 from haproxy_mgmt.check_policy import check_speaks_tls
 from haproxy_mgmt.cluster_settings import NOTHING as NO_SETTINGS
 from haproxy_mgmt.cluster_settings import ClusterSettings, LogTarget, Metrics
@@ -304,6 +305,7 @@ def generate(
     ordered = sorted(proxies, key=lambda proxy: proxy.name)
     _refuse_duplicate_names(ordered)
     _refuse_shared_hostnames(ordered)
+    _refuse_shared_section_names(ordered)
 
     unsupported = [
         proxy
@@ -742,6 +744,34 @@ def _refuse_shared_listeners(placed: Sequence[tuple[Vip, Proxy]], ports: Mapping
         taken[(vip.name, port)] = proxy.name
 
 
+def _refuse_shared_section_names(proxies: Sequence[Proxy]) -> None:
+    """Sections the objects' texts add must not meet each other or the generator's.
+
+    Each text's names begin with its object's (the model sees to that), but
+    `a-b-cache` is a name both `a` and `a-b` may choose, and an object called
+    after the generator's prefix could choose one of its names. HAProxy would
+    refuse the duplicate on `-c`, pointing at a generated file; said here, it
+    names the two objects instead.
+    """
+
+    owners: dict[str, str] = {}
+    for proxy in proxies:
+        if proxy.advanced is None:
+            continue
+        for section in proxy.advanced.placement.sections:
+            if section.name.startswith(f"{PREFIX}-"):
+                raise GeneratorError(
+                    f"{proxy.name}: the advanced config's section {section.name} begins with "
+                    f"{PREFIX}-, which is the generator's"
+                )
+            other = owners.setdefault(section.name, proxy.name)
+            if other != proxy.name:
+                raise GeneratorError(
+                    f"{other} and {proxy.name} both add a section called {section.name} "
+                    f"in their advanced config"
+                )
+
+
 def _refuse_shared_hostnames(proxies: Sequence[Proxy]) -> None:
     """A hostname belongs to one object, and the cluster is where that is true.
 
@@ -1014,6 +1044,8 @@ def _tcp_frontend(
             f"if {{ sc_conn_rate({RATE_COUNTER}) gt {limit.max_new_connections} }}",
         ]
     lines.append(f"    default_backend {_backend_name(proxy.name, proxy.backend)}")
+    if proxy.advanced is not None:
+        lines.extend(advanced_config.block(proxy.name, proxy.advanced.placement.frontend))
     return lines
 
 
@@ -1533,7 +1565,31 @@ def _object_file(
             )
         )
     body.extend(_redirect_backends(proxy))
+    body.extend(_added_sections(proxy, source))
     return _lines(HEADER, ["#", f"# Object: {proxy.name}", "#"], body)
+
+
+def _added_sections(proxy: Proxy, source: str | None) -> list[str]:
+    """The sections the object's advanced config adds, under their own names (B223).
+
+    Written as they stand, with two lines the generator adds to a backend: its
+    identity, like every section here has, and the object's source - a backend
+    the text adds is still this object reaching something, and the address it
+    reaches it from is the interface's (B215). The identity is the object's and
+    the name's, kept apart from the pools' by a separator no pool name can hold.
+    """
+
+    if proxy.advanced is None:
+        return []
+    lines: list[str] = []
+    for section in proxy.advanced.placement.sections:
+        generated: list[str] = []
+        if section.kind == "backend":
+            generated.append(f"    guid {backend_guid(proxy.name, f'advanced/{section.name}')}")
+            if source is not None:
+                generated.append(f"    source {source}")
+        lines.extend(advanced_config.section_block(proxy.name, section, generated))
+    return lines
 
 
 def _rate_lines(
@@ -1741,16 +1797,27 @@ def _backend(
 ) -> list[str]:
     name = _backend_name(proxy.name, backend.name)
     raw = proxy.listen.protocol == "tcp"
+    #
+    # A pool written by hand (B224) is the text's: the balance, the pool's
+    # timeouts, the checks, the cookie and the servers come from it, and the
+    # cluster's defaults where it says nothing. Written here as well they would
+    # be two answers in one section, and HAProxy takes the later one without a
+    # word - measured on 3.4.6, 2026-10-01.
+    #
+    by_hand = not backend.servers
     lines = [
         "",
         f"backend {name}",
         f"    guid {backend_guid(proxy.name, backend.name)}",
         f"    mode {'tcp' if raw else 'http'}",
-        f"    balance {_balance(backend)}",
-        f"    timeout connect {TIMEOUT_CONNECT}",
-        f"    timeout server {TIMEOUT_SERVER}",
     ]
-    if not raw:
+    if not by_hand:
+        lines += [
+            f"    balance {_balance(backend)}",
+            f"    timeout connect {TIMEOUT_CONNECT}",
+            f"    timeout server {TIMEOUT_SERVER}",
+        ]
+    if not raw and not by_hand:
         #
         # Both are HTTP-only and HAProxy says so in a warning rather than an
         # error: the tunnel timeout is what an upgraded connection lives on,
@@ -1783,7 +1850,7 @@ def _backend(
     lines.extend(_header_lines(proxy))
     lines.extend(_unavailable_lines(proxy))
 
-    if backend.max_connections is not None:
+    if backend.max_connections is not None and not by_hand:
         #
         # What does not fit on a server waits here rather than being refused.
         # HAProxy takes this wait from `timeout connect` when nobody says
@@ -1802,7 +1869,8 @@ def _backend(
         #
         lines.append(f"    cookie {backend.cookie} insert indirect nocache")
 
-    lines.extend(_health_lines(backend.health))
+    if not by_hand:
+        lines.extend(_health_lines(backend.health))
 
     for index, server in enumerate(backend.servers):
         name = _server_name(index)
@@ -1821,6 +1889,12 @@ def _backend(
             f"{_server_tls(backend, server)}{_server_address(server, resolvers)}"
             f"{_server_check(backend, server)}{cookie}{backup}{limit}{ramp}"
         )
+    #
+    # Last, so the cluster's brake and the object's limit have run and the
+    # text can read their counters (B223 point 2).
+    #
+    if proxy.advanced is not None:
+        lines.extend(advanced_config.block(proxy.name, proxy.advanced.placement.backend))
     return lines
 
 

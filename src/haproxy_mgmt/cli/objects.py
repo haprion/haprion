@@ -3,7 +3,8 @@
 Where `haproxy-inventory` says what a node is serving, this says what the
 cluster's objects look like as written. The listing names them; `--show <name>`
 prints one document exactly as it is stored, so it can be piped, diffed or
-copied without going through a browser.
+copied without going through a browser; `--advanced <name>` prints where each
+line of its advanced config goes, as the interface's *Check* does (Fas 17).
 """
 
 from __future__ import annotations
@@ -17,13 +18,15 @@ from typing import Any, TextIO
 from haproxy_mgmt.cli.caller import usage
 from haproxy_mgmt.envelope import new_request_id
 from haproxy_mgmt.helper_protocol import write_document
+from haproxy_mgmt.proxy_model import ModelError, advanced_placement
 
 OPERATION = "objects"
 HELPER = "/opt/haproxy-mgmt/current/bin/haproxy-objects-helper"
 SUDO = "/usr/bin/sudo"
 EXIT_UNAVAILABLE = 68
 EXIT_NOT_FOUND = 66
-USAGE = "Usage:\n  haproxy-objects -c <cluster> [--show <name> | --json]\n"
+EXIT_REFUSED = 65
+USAGE = "Usage:\n  haproxy-objects -c <cluster> [--show <name> | --advanced <name> | --json]\n"
 
 type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
 
@@ -54,17 +57,19 @@ def run_objects_helper(
     )
 
 
-def _parse(argv: list[str]) -> tuple[str, bool, str | None]:
+def _parse(argv: list[str]) -> tuple[str, bool, str | None, bool]:
+    """Cluster, `--json`, the object named, and whether its advanced config is asked for."""
+
     if len(argv) < 2 or argv[0] not in ("-c", "--cluster"):
         usage(USAGE)
     cluster = argv[1]
     rest = argv[2:]
     if not rest:
-        return cluster, False, None
+        return cluster, False, None, False
     if rest == ["--json"]:
-        return cluster, True, None
-    if len(rest) == 2 and rest[0] == "--show":
-        return cluster, False, rest[1]
+        return cluster, True, None, False
+    if len(rest) == 2 and rest[0] in ("--show", "--advanced"):
+        return cluster, False, rest[1], rest[0] == "--advanced"
     usage(USAGE)
 
 
@@ -130,6 +135,36 @@ def _show(document: Mapping[str, Any], name: str, writer: TextIO, errors: TextIO
     return EXIT_NOT_FOUND
 
 
+def _advanced(document: Mapping[str, Any], name: str, writer: TextIO, errors: TextIO) -> int:
+    """Each line of the object's text, what became of it, and where it went.
+
+    Exit 65 when a line is refused, since the object then cannot be published;
+    the same refusals `load_proxy` makes, from the same placement.
+    """
+
+    for entry in _entries(document):
+        if entry.get("name") != name:
+            continue
+        try:
+            placement = advanced_placement(name, str(entry.get("document", "")).encode())
+        except ModelError as exc:
+            errors.write(f"ERROR: {exc}\n")
+            return EXIT_REFUSED
+        if placement is None:
+            writer.write(f"{name} has no advanced config.\n")
+            return 0
+        writer.write("LINE  FATE     WHERE                 TEXT\n")
+        for line in placement.lines:
+            if not line.text:
+                continue
+            writer.write(f"{line.number:>4}  {line.fate:<8} {line.where or '-':<21} {line.text}\n")
+            if line.reason and line.fate != "placed":
+                writer.write(f"{'':>15}{line.reason}\n")
+        return EXIT_REFUSED if placement.refused else 0
+    errors.write(f"ERROR: this cluster stores no object named {name}\n")
+    return EXIT_NOT_FOUND
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -140,7 +175,7 @@ def main(
     argv = sys.argv[1:] if argv is None else argv
     writer: TextIO = stream_out or sys.stdout
     errors: TextIO = stream_err or sys.stderr
-    cluster_id, json_mode, show = _parse(argv)
+    cluster_id, json_mode, show, advanced = _parse(argv)
     completed = run_helper(cluster_id, new_request_id())
 
     try:
@@ -154,6 +189,8 @@ def main(
         write_document(writer, document)
         return completed.returncode
     try:
+        if show is not None and advanced:
+            return completed.returncode or _advanced(document, show, writer, errors)
         if show is not None:
             return completed.returncode or _show(document, show, writer, errors)
         _render(document, writer)

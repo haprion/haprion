@@ -276,6 +276,22 @@ class WhereAnEntryIsServedFrom(unittest.TestCase):
         self.assertIs(self.entry()["health_checked"], False)
         self.assertIs(self.entry(health="tcp")["health_checked"], True)
 
+    def test_a_pool_written_by_hand_lists_the_servers_the_text_names(self) -> None:
+        document = (
+            SHOP.replace(
+                b"    balance: roundrobin\n    health:\n      type: disabled\n    servers:\n"
+                b"      - host: 192.0.2.10\n        port: 8080\n",
+                b"    servers: []\n",
+            )
+            + b"advanced: |\n  server a 192.0.2.30:8080 check\n"
+        )
+        result = objects_result(
+            {"managed/proxies/shop.yaml": document}, COMMIT, network=NETWORK, generated_at=TIME
+        )
+
+        self.assertEqual(result["objects"][0]["servers"], ["192.0.2.30:8080"])
+        self.assertIs(result["objects"][0]["health_checked"], False)
+
     def test_an_unreadable_object_says_nothing(self) -> None:
         result = objects_result(
             {"managed/proxies/shop.yaml": b"schema: 1\nname: shop\n"},

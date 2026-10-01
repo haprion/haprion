@@ -176,11 +176,19 @@ def _entry(name: str, document: str, network: Network | None = None) -> dict[str
     #
     entry["redirect_http"] = bool(proxy.listen.redirect_http)
     entry["vip"], entry["source"] = _addresses(proxy, network)
-    entry["servers"] = [
+    servers = [
         f"{server.host}:{server.port}"
         for backend in proxy.backends.values()
         for server in backend.servers
     ]
+    #
+    # A pool written in the advanced config (B224) has its servers in the
+    # text, and the search and the server list would otherwise not know the
+    # object reaches them at all - a wrong answer rather than no answer.
+    #
+    if proxy.advanced is not None:
+        servers += [address for _, address in proxy.advanced.placement.servers]
+    entry["servers"] = servers
     #
     # `disabled` is a written-down decision not to check, so it counts as no
     # check: the question is whether something is checking.

@@ -2119,3 +2119,149 @@ class OneListenerTwoSetsOfTerms(unittest.TestCase):
         self.assertEqual(self.request_status("ordinary.example.com", "strict.example.com"), 421)
         self.assertEqual(self.request_status(None, "strict.example.com"), 421)
         self.assertEqual(self.request_status("strict.example.com", "strict.example.com"), 200)
+
+
+ADVANCED_SHOP = """
+schema: 1
+name: shop
+hostnames: [shop.example.com]
+listen:
+  protocol: http
+rate_limit:
+  window: 10s
+  max_requests: 1000
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+advanced: |
+  http-request track-sc2 src table shop-logins if {{ path_beg /login }}
+  http-request deny deny_status 429 if {{ path_beg /login }} {{ sc_http_req_rate(2) gt 3 }}
+  http-request return status 200 content-type text/plain lf-string "sc1=%[sc_http_req_rate(1)]" if {{ path /count }}
+
+  backend shop-logins
+      stick-table type ip size 1k expire 1m store http_req_rate(1m)
+"""
+
+ADVANCED_APP = """
+schema: 1
+name: app
+hostnames: [app.example.com]
+listen:
+  protocol: http
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    servers: []
+advanced: |
+  balance first
+  server mine 127.0.0.1:{web}
+"""
+
+ADVANCED_RAW = """
+schema: 1
+name: raw
+listen:
+  protocol: tcp
+  port: {port}
+backend: pool
+backends:
+  pool:
+    balance: roundrobin
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+advanced: |
+  tcp-request content reject if {{ src 127.0.0.1 }}
+"""
+
+
+@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
+class AdvancedConfigDoesWhatItsPlacementSays(unittest.TestCase):
+    """Fas 17 (B223, B224), proved through a running HAProxy.
+
+    `haproxy -c` accepts a second `track-sc0` and a rule in the wrong place
+    without a word, so the placement is only shown right by traffic: the text's
+    own counter refuses on its own threshold, the text reads the object's
+    counter (which it can only do if it runs after the generated rules), a pool
+    written by hand serves, and a tcp object's frontend line takes effect.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        web = free_port()
+        cls.server = echo_server("web", web)
+        wait_for(web)
+
+        cls.port = free_port()
+        cls.raw = free_port()
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        layer = generate(
+            [
+                load_proxy("shop", ADVANCED_SHOP.format(web=web).encode()),
+                load_proxy("app", ADVANCED_APP.format(web=web).encode()),
+                load_proxy("raw", ADVANCED_RAW.format(web=web, port=cls.raw).encode()),
+            ],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            abuse_protection=AbuseProtection(window="10s", max_requests=1000),
+            ports={"http": cls.port},
+        )
+        arguments = write_release(root, layer)
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        cls.haproxy = start_haproxy(binary, arguments, cls.port)
+        wait_for(cls.raw)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.haproxy.terminate()
+        cls.haproxy.wait(timeout=5)
+        cls.server.shutdown()
+        cls.directory.cleanup()
+
+    def get(self, host: str, path: str) -> tuple[int, str]:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.putrequest("GET", path, skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", host)
+            connection.endheaders()
+            response = connection.getresponse()
+            return int(response.status), response.read().decode()
+        finally:
+            connection.close()
+
+    def test_the_text_s_counter_refuses_on_its_own_threshold_and_nowhere_else(self) -> None:
+        logins = [self.get("shop.example.com", "/login")[0] for _ in range(6)]
+
+        self.assertEqual(logins[:3], [200, 200, 200])
+        self.assertEqual(logins[-1], 429)
+        self.assertEqual(self.get("shop.example.com", "/")[0], 200)
+
+    def test_the_text_runs_after_the_object_s_rate_limit_and_reads_its_counter(self) -> None:
+        self.get("shop.example.com", "/")
+        status, body = self.get("shop.example.com", "/count")
+
+        self.assertEqual(status, 200)
+        self.assertRegex(body, r"^sc1=[1-9][0-9]*$")
+
+    def test_a_pool_written_by_hand_serves(self) -> None:
+        self.assertEqual(self.get("app.example.com", "/x"), (200, "web /x"))
+
+    def test_a_tcp_object_s_frontend_line_takes_effect(self) -> None:
+        with socket.create_connection(("127.0.0.1", self.raw), timeout=5) as connection:
+            connection.sendall(b"GET / HTTP/1.0\r\n\r\n")
+            try:
+                answer = connection.recv(100)
+            except ConnectionResetError:
+                answer = b""
+
+        self.assertEqual(answer, b"")

@@ -90,12 +90,33 @@ class ObjectsPublishFixture(PublishFixture):
             ).encode()
         )
 
-    def run_publish(self, policy_path: Path, request: io.BytesIO, *, valid: bool = True):
+    def run_publish(
+        self,
+        policy_path: Path,
+        request: io.BytesIO,
+        *,
+        valid: bool = True,
+        warn_on: str | None = None,
+    ):
         out, err = io.StringIO(), io.StringIO()
         self.recorder = Recorder()
 
-        def validator(_candidate: Path, _request_id: str) -> ValidationResult:
-            return ValidationResult(valid=valid, diagnostics="candidate output")
+        def validator(candidate: Path, _request_id: str) -> ValidationResult:
+            #
+            # `warn_on` is a line of the candidate HAProxy warns about, as
+            # 3.4.6 words a keyword a section does not take.
+            #
+            diagnostics = "candidate output"
+            if warn_on is not None:
+                for path in sorted(candidate.rglob("*.cfg")):
+                    lines = path.read_text().split("\n")
+                    if warn_on in lines:
+                        number = lines.index(warn_on) + 1
+                        diagnostics = (
+                            f"[WARNING]  (1) : config : parsing [/candidate/conf.d/{path.name}:"
+                            f"{number}] : 'x' ignored because backend 'y' has no frontend capability."
+                        )
+            return ValidationResult(valid=valid, diagnostics=diagnostics)
 
         code = managed_objects_publish.main(
             [],
@@ -283,6 +304,42 @@ class ObjectPublicationTests(ObjectsPublishFixture):
             self.assertEqual(document["error"]["code"], "candidate_invalid")
             self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
             self.assertFalse((self.repo / "managed/proxies/shop.yaml").exists())
+
+    def test_a_warning_on_a_pasted_line_refuses_the_publish_and_names_the_line(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            before = git(self.repo, "rev-parse", "HEAD")
+            document = proxy("shop", "shop.example.com") + (
+                "advanced: |\n  # note\n  http-request deny if { path /x }\n"
+            )
+
+            code, answer, _err = self.run_publish(
+                policy,
+                self.request(objects={"shop": document}),
+                warn_on="    http-request deny if { path /x }",
+            )
+
+            self.assertEqual(code, 65)
+            self.assertEqual(answer["error"]["code"], "advanced_ignored")
+            self.assertIn(
+                "(advanced config of shop, line 2)", answer["error"]["details"]["diagnostics"]
+            )
+            self.assertEqual(git(self.repo, "rev-parse", "HEAD"), before)
+
+    def test_a_warning_elsewhere_does_not_refuse_the_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            policy = self.runtime(Path(raw))
+            self.seed()
+            document = proxy("shop", "shop.example.com") + (
+                "advanced: |\n  http-request deny if { path /x }\n"
+            )
+
+            code, _answer, _err = self.run_publish(
+                policy, self.request(objects={"shop": document}), warn_on="    option forwardfor"
+            )
+
+            self.assertEqual(code, 0)
 
     def stale_core(self) -> None:
         """A human commit that drops the line the TLS policy requires."""

@@ -338,6 +338,29 @@ class ObjectsCommandTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(out, SHOP.decode())
 
+    def test_advanced_says_where_each_line_goes_and_why_one_is_refused(self) -> None:
+        entry = self.readable()
+        entry["document"] = SHOP.decode() + (
+            "advanced: |\n  http-request deny if { path /x }\n  bind :8080\n"
+        )
+        entry["readable"] = False
+
+        code, out, _ = self.run_command(
+            ["-c", "alpha", "--advanced", "shop"], answer(objects=[entry])
+        )
+
+        self.assertEqual(code, 65)
+        self.assertIn("   1  placed   every pool", out)
+        self.assertIn("   2  refused  -", out)
+        self.assertIn("the address an object listens on is set in the form", out)
+
+    def test_advanced_on_an_object_without_text_says_so(self) -> None:
+        code, out, _ = self.run_command(
+            ["-c", "alpha", "--advanced", "shop"], answer(objects=[self.readable()])
+        )
+
+        self.assertEqual((code, out), (0, "shop has no advanced config.\n"))
+
     def test_show_for_a_name_that_is_not_there_says_so(self) -> None:
         code, out, err = self.run_command(
             ["-c", "alpha", "--show", "missing"], answer(objects=[self.readable()])

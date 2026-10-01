@@ -30,6 +30,7 @@ from typing import Any
 
 import yaml
 
+from haproxy_mgmt import advanced as advanced_config
 from haproxy_mgmt.config import (
     ABUSE_WINDOW,
     DEFAULT_ABUSE_WINDOW,
@@ -346,7 +347,9 @@ BACKEND_POLICY_NAMES = ("modern", "intermediate", "legacy")
 # either, so the object is refused outright, for every shape, in whatever test
 # its author writes first.
 #
-COMMON_KEYS = frozenset({"schema", "name", "listen", "backends", "allow_from", "rate_limit"})
+COMMON_KEYS = frozenset(
+    {"schema", "name", "listen", "backends", "allow_from", "rate_limit", "advanced"}
+)
 
 HTTP_ONLY_KEYS: Mapping[str, str] = MappingProxyType(
     {
@@ -702,6 +705,20 @@ class RateLimit:
 
 
 @dataclass(frozen=True, slots=True)
+class Advanced:
+    """The object's advanced config: the text as stored, and where each line goes.
+
+    Placed when the object is read, so the generator, the CLI and the
+    interface all write and show the same thing - and an object whose text
+    has a refused line is refused like any other object that cannot be
+    understood, by the one reader every path goes through.
+    """
+
+    text: str
+    placement: advanced_config.Placement
+
+
+@dataclass(frozen=True, slots=True)
 class Listen:
     """Where this object is reached, and how.
 
@@ -783,6 +800,9 @@ class Proxy:
 
     rate_limit: RateLimit | None = None
     """How much one source may ask of this object. None means no limit."""
+
+    advanced: Advanced | None = None
+    """HAProxy text pasted onto the object (Fas 17, B223). None means none."""
 
 
 def _string(value: Mapping[str, Any], key: str, location: str, allowed: tuple[str, ...]) -> str:
@@ -975,6 +995,20 @@ def _balance_key(data: Mapping[str, Any], balance: str, location: str) -> str | 
 
 def _backend(name: str, value: Any, location: str) -> Backend:
     data = _mapping(value, location)
+    if data.get("servers") == []:
+        #
+        # A pool written by hand in the object's advanced config (B224): empty
+        # here, and nothing else either - balance, checks, cookie and the rest
+        # of what makes a pool are then the text's, and a value here beside
+        # them would be one nobody reads. Whether the object may do this at
+        # all is decided where the whole object is known.
+        #
+        if set(data) != {"servers"}:
+            raise ModelError(
+                f"{location} is written in advanced config, so it may say nothing but "
+                f"servers: []; found {', '.join(sorted(set(data) - {'servers'}))}"
+            )
+        return Backend(name=name, balance="", servers=(), health=Health(type="disabled"))
     _only_keys(
         data,
         {
@@ -1199,7 +1233,29 @@ def dump_document(fields: Mapping[str, Any]) -> str:
     order - what the site is, then where it listens, then where traffic goes.
     """
 
-    return yaml.safe_dump(dict(fields), sort_keys=False, default_flow_style=False)
+    document = dict(fields)
+    if isinstance(document.get("advanced"), str):
+        document["advanced"] = advanced_config.normalise(document["advanced"])
+    return yaml.dump(document, Dumper=_Dumper, sort_keys=False, default_flow_style=False)
+
+
+class _Dumper(yaml.SafeDumper):
+    """The safe dumper, writing text of several lines as a block.
+
+    For the advanced config, which is the only such text an object has: as a
+    quoted string it is one line of `\\n`s that no diff can be read in. PyYAML
+    still falls back to quoting when a line ends in blanks, which is why the
+    text is normalised first.
+    """
+
+
+def _text(dumper: yaml.SafeDumper, value: str) -> yaml.ScalarNode:
+    if "\n" in value:
+        return dumper.represent_scalar("tag:yaml.org,2002:str", value, style="|")
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value)
+
+
+_Dumper.add_representer(str, _text)
 
 
 def load_proxy(name: str, document: bytes) -> Proxy:
@@ -1316,6 +1372,16 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     unavailable = _unavailable(data.get("unavailable"), f"{name}.unavailable")
     headers = _headers(data.get("headers"), f"{name}.headers")
     rate_limit = _rate_limit(data.get("rate_limit"), f"{name}.rate_limit", listen.protocol)
+    handwritten = sorted(key for key, backend in backends.items() if not backend.servers)
+    advanced = _advanced(
+        data.get("advanced"),
+        name,
+        listen.protocol,
+        rate_limit=rate_limit is not None,
+        handwritten=bool(handwritten),
+    )
+    if handwritten:
+        _refuse_unwritten_pool(name, handwritten[0], len(backends), advanced)
 
     return Proxy(
         name=name,
@@ -1329,7 +1395,104 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         headers=headers,
         backend=backend,
         rate_limit=rate_limit,
+        advanced=advanced,
     )
+
+
+#
+# Below this, a code point in the text is a control character: a terminal
+# escape or a NUL that would land in a file HAProxy reads and in pages the
+# interface draws. A tab is a separator in HAProxy's grammar and is kept.
+#
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _advanced(
+    value: Any, name: str, protocol: str, *, rate_limit: bool, handwritten: bool
+) -> Advanced | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ModelError(f"{name}.advanced must be text")
+    if _CONTROL.search(value):
+        raise ModelError(f"{name}.advanced contains a control character")
+    text = advanced_config.normalise(value)
+    if not text:
+        raise ModelError(f"{name}.advanced is empty; leave it out instead")
+    placement = advanced_config.place(
+        text, name=name, protocol=protocol, rate_limit=rate_limit, handwritten=handwritten
+    )
+    refused = placement.refused
+    if refused:
+        #
+        # Three lines named, and the count. Enough to find them in the text,
+        # and a refusal that quoted a whole pasted block back would be longer
+        # than the block.
+        #
+        named = "; ".join(f"line {line.number}: {line.reason}" for line in refused[:3])
+        more = f" (and {len(refused) - 3} more)" if len(refused) > 3 else ""
+        raise ModelError(f"{name}.advanced has lines that cannot be written - {named}{more}")
+    return Advanced(text=text, placement=placement)
+
+
+def advanced_placement(name: str, document: bytes) -> advanced_config.Placement | None:
+    """Where each line of an object's advanced config goes, refused lines included.
+
+    What `haproxy-objects --advanced` prints and the interface's *Check* shows,
+    from one function so the two cannot disagree. It reads only what the
+    placement depends on - the shape, whether the form has a rate limit, and
+    whether the pool is written by hand - so a text with refused lines can
+    still be shown line by line, which `load_proxy` would refuse whole.
+    None when the object has no text.
+    """
+
+    data = read_document(name, document)
+    value = data.get("advanced")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ModelError(f"{name}.advanced must be text")
+    listen = data.get("listen")
+    protocol = listen.get("protocol") if isinstance(listen, Mapping) else None
+    backends = data.get("backends")
+    handwritten = isinstance(backends, Mapping) and any(
+        isinstance(pool, Mapping) and pool.get("servers") == [] for pool in backends.values()
+    )
+    return advanced_config.place(
+        advanced_config.normalise(value),
+        name=name,
+        protocol=str(protocol or ""),
+        rate_limit=data.get("rate_limit") is not None,
+        handwritten=handwritten,
+    )
+
+
+def _refuse_unwritten_pool(name: str, pool: str, pools: int, advanced: Advanced | None) -> None:
+    """A pool left empty for the text must be one pool, and the text must fill it (B224).
+
+    One pool, because an http object's rows land in every pool it has: two pools
+    written by hand would be the same servers twice, a choice nobody made. And
+    filled, because an empty pool answers every request with a 503 - which is
+    what `servers: []` would otherwise publish without a word.
+    """
+
+    if pools != 1:
+        raise ModelError(
+            f"{name}.backends.{pool} is written in advanced config, which only an object "
+            f"with one pool can do"
+        )
+    if advanced is None:
+        raise ModelError(
+            f"{name}.backends.{pool}.servers is empty and the object has no advanced config "
+            f"to write the pool"
+        )
+    if not any(
+        advanced_config.words(line.text)[0] in ("server", "server-template")
+        for line in advanced.placement.backend
+    ):
+        raise ModelError(
+            f"{name}.backends.{pool} is written in advanced config, but the text has no server line"
+        )
 
 
 def _maintenance(value: Any, location: str) -> Maintenance | None:

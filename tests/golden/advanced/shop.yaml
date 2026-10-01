@@ -1,0 +1,29 @@
+schema: 1
+name: shop
+hostnames: [shop.example.com]
+listen:
+  protocol: http
+rate_limit:
+  window: 10s
+  max_requests: 100
+backends:
+  web:
+    servers: []
+routes:
+  - path: /
+    backend: web
+advanced: |
+  # The pool, written by hand.
+  balance leastconn
+  timeout server 2m
+  option httpchk GET /health
+  server app1 198.51.100.20:8080 check
+  server app2 198.51.100.21:8080 check
+
+  # Logins counted on a table of the text's own, on the text's slot.
+  http-request track-sc2 src table shop-logins if { path_beg /login }
+  http-request deny deny_status 429 if { sc_http_req_rate(2) gt 5 }
+  http-request set-header X-Requests-Seen %[sc_http_req_rate(1)]
+
+  backend shop-logins
+      stick-table type ip size 10k expire 1m store http_req_rate(1m)

@@ -801,9 +801,17 @@ class WhereTheFormStops(unittest.TestCase):
     def test_only_a_second_route_is_still_out_of_reach(self) -> None:
         refused = self.golden()
 
+        #
+        # The advanced config (Fas 17) is the engine's before it is the form's:
+        # until the form carries the text through untouched, an object with one
+        # is refused here rather than opened and saved without it.
+        #
         self.assertEqual(
-            [name for name, _ in refused], ["monitors/probes.yaml", "routes/shop.yaml"]
+            refused,
+            [
+                ("advanced/db.yaml", "advanced"),
+                ("advanced/shop.yaml", "a backend needs at least one server"),
+                ("monitors/probes.yaml", "routes"),
+                ("routes/shop.yaml", "routes"),
+            ],
         )
-        for name, reason in refused:
-            with self.subTest(object=name):
-                self.assertEqual(reason, "routes")

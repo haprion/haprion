@@ -9,7 +9,7 @@ from typing import Any
 from unittest import mock
 
 from haproxy_mgmt.config import Vip
-from haproxy_mgmt.generate import _source_of
+from haproxy_mgmt.generate import source_of
 from haproxy_mgmt.proxy_model import load_proxy
 
 from haproxy_ui import addresses, search
@@ -117,7 +117,7 @@ def status_reading() -> ClusterStatus:
 
 
 class TheAddressRuleIsTheGenerators(unittest.TestCase):
-    """The column and the search restate `generate._source_of`; hold them to it."""
+    """The column and the search restate `generate.source_of`; hold them to it."""
 
     def test_every_combination_gives_the_generators_source(self) -> None:
         sources = {entry["name"]: entry["address"] for entry in NETWORK["sources"]}
@@ -128,7 +128,7 @@ class TheAddressRuleIsTheGenerators(unittest.TestCase):
                 name = proxy.listen.vip or "main"
                 entry = next(vip for vip in NETWORK["vips"] if vip["name"] == name)
                 vip = Vip(name=name, address=entry["address"], source=entry["source"])
-                expected = _source_of(proxy, vip, sources)
+                expected = source_of(proxy, vip, sources)
 
                 found = addresses.resolve("shop", text, NETWORK)
 

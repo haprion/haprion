@@ -7,7 +7,7 @@ has to look the name up, and this is the one place that does it - the listing's
 column, the object page and the search must not come to disagree about which
 address a site is on.
 
-The rule is the generator's own (`generate._source_of`): no VIP named means the
+The rule is the generator's own (`generate.source_of`): no VIP named means the
 cluster's default VIP, and no source named means the VIP's own source, if it
 has one. Restating it here is a second copy, so the tests hold it to the
 generator's answer.

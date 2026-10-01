@@ -196,6 +196,32 @@ def answer(**result: object) -> subprocess.CompletedProcess[str]:
     }
     return subprocess.CompletedProcess([], 0, json.dumps(document), "")
 
+    # B222: the helper reads the network description the generator reads.
+
+    def test_each_object_carries_its_vip_from_the_cluster_file(self) -> None:
+        code, out, _ = self.run_helper()
+
+        self.assertEqual(code, 0)
+        entry = assert_contract("haproxy-objects", out)["result"]["objects"][0]
+        self.assertEqual(
+            entry["vip"], {"name": "internal", "address": "192.0.2.20", "default": True}
+        )
+        self.assertEqual(entry["servers"], ["192.0.2.10:8080"])
+
+    def test_a_network_that_cannot_be_read_withholds_only_the_addresses(self) -> None:
+        self.runtime()
+        network = self.root / "config/alpha/managed/network.yaml"
+        network.parent.mkdir(parents=True)
+        network.write_text("vips: [this is not a table\n", encoding="utf-8")
+
+        code, out, _ = self.run_helper()
+
+        self.assertEqual(code, 0)
+        document = assert_contract("haproxy-objects", out)
+        self.assertEqual(document["outcome"], "done")
+        self.assertEqual([w["code"] for w in document["warnings"]], ["network_unreadable"])
+        self.assertIsNone(document["result"]["objects"][0]["vip"])
+
 
 class ObjectsCommandTests(unittest.TestCase):
     def run_command(self, argv: list[str], completed: subprocess.CompletedProcess[str]):
@@ -225,6 +251,17 @@ class ObjectsCommandTests(unittest.TestCase):
         self.assertIn("shop", out)
         self.assertIn("http", out)
         self.assertIn("shop.example.com", out)
+
+    def test_the_listing_says_which_vip_and_an_older_helper_says_dash(self) -> None:
+        on_vip = {
+            **self.readable(),
+            "vip": {"name": "dmz", "address": "198.51.100.20", "default": False},
+        }
+        _, out, _ = self.run_command(["-c", "alpha"], answer(objects=[on_vip]))
+        _, older, _ = self.run_command(["-c", "alpha"], answer(objects=[self.readable()]))
+
+        self.assertIn("http   198.51.100.20    shop.example.com", out)
+        self.assertIn("http   -                shop.example.com", older)
 
     def test_an_unreadable_object_is_listed_with_what_is_wrong(self) -> None:
         """Hiding it would hide the one file somebody has to open."""

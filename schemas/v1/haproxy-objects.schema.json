@@ -113,6 +113,101 @@
             "boolean",
             "null"
           ]
+        },
+        "vip": {
+          "description": "The VIP the object is served on, worked out by the generator's rule against the cluster's network description (B222). Null where that description could not be read; address null where it has no VIP of that name. Absent from an older release.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "name",
+                "address",
+                "default"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 63
+                },
+                "address": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "default": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "source": {
+          "description": "The address the object connects to backends from. Null where it leaves from no fixed address or the network could not be read; name null when the address is the VIP's own.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "name",
+                "address"
+              ],
+              "properties": {
+                "name": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 63
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "address": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "servers": {
+          "description": "Every backend server as host:port, in document order.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        },
+        "health_checked": {
+          "description": "Whether any backend is health checked; null where the document could not be read.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "additionalProperties": true

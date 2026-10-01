@@ -109,10 +109,22 @@ def main(
         )
         return exit_code
 
+    #
+    # The network description the generator reads, for each object's VIP and
+    # source (B222). One that cannot be read leaves those fields empty and says
+    # why; it is no reason to withhold the objects themselves.
+    #
+    warnings: tuple[Message, ...] = ()
+    try:
+        network = cluster.network()
+    except ConfigError as exc:
+        network = None
+        warnings = (Message(code="network_unreadable", message=str(exc)[:1024]),)
+
     repo = Path(cluster.config_path)
     try:
         _, head = head_resolver(repo)
-        result = objects_result(tree_reader(repo, head), head)
+        result = objects_result(tree_reader(repo, head), head, network=network)
     except PublishError as exc:
         return fail("objects_unavailable", str(exc), exc.exit_code)
     except GitError as exc:
@@ -128,6 +140,7 @@ def main(
             cluster=request.cluster,
             request_id=request.request_id,
             result=result,
+            warnings=warnings,
         ),
     )
     return 0

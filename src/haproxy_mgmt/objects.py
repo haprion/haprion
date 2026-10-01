@@ -23,8 +23,9 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 
-from haproxy_mgmt.config import ConfigError
-from haproxy_mgmt.proxy_model import MAX_MODEL_BYTES, ModelError, load_proxy
+from haproxy_mgmt.config import ConfigError, Network
+from haproxy_mgmt.generate import GeneratorError, source_of, vip_of
+from haproxy_mgmt.proxy_model import MAX_MODEL_BYTES, ModelError, Proxy, load_proxy
 
 PROXY_PREFIX = "managed/proxies/"
 PLACEHOLDER = ".gitkeep"
@@ -48,7 +49,39 @@ def _document(raw: bytes, path: str) -> str:
         raise ObjectsError(f"{path} is not UTF-8: {exc}") from exc
 
 
-def _entry(name: str, document: str) -> dict[str, object]:
+def _addresses(
+    proxy: Proxy, network: Network | None
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+    """The VIP this object is served on and the source it leaves from (B222).
+
+    Worked out by the generator's own `vip_of` and `source_of`, against the same
+    network description the generator reads, so a listing cannot say one
+    address while the configuration binds another. A name the network does not
+    have is reported with no address rather than refused: the listing is where
+    somebody finds out, and a publish refuses it anyway.
+    """
+
+    if network is None:
+        return None, None
+    name = proxy.listen.vip or network.default_vip
+    default = name == network.default_vip
+    try:
+        vip = vip_of(proxy, network.vips, network.default_vip)
+    except GeneratorError:
+        return {"name": name, "address": None, "default": default}, None
+    try:
+        address = source_of(proxy, vip, network.sources)
+    except GeneratorError:
+        address = None
+    source: dict[str, object] | None = (
+        {"name": proxy.listen.source, "address": address}
+        if proxy.listen.source is not None or address is not None
+        else None
+    )
+    return {"name": name, "address": vip.address, "default": default}, source
+
+
+def _entry(name: str, document: str, network: Network | None = None) -> dict[str, object]:
     entry: dict[str, object] = {
         "name": name,
         "document": document,
@@ -69,6 +102,15 @@ def _entry(name: str, document: str) -> dict[str, object]:
         #
         "backend_count": None,
         "redirect_http": None,
+        #
+        # Added 2026-10-01 (B222), on the same terms: absent from an older
+        # release, null where they could not be worked out. `source.name` is
+        # null when the address is the VIP's own.
+        #
+        "vip": None,
+        "source": None,
+        "servers": [],
+        "health_checked": None,
     }
     try:
         proxy = load_proxy(name, document.encode("utf-8"))
@@ -92,6 +134,19 @@ def _entry(name: str, document: str) -> dict[str, object]:
     # person wrote one thing and the interface has to say one thing.
     #
     entry["redirect_http"] = bool(proxy.listen.redirect_http)
+    entry["vip"], entry["source"] = _addresses(proxy, network)
+    entry["servers"] = [
+        f"{server.host}:{server.port}"
+        for backend in proxy.backends.values()
+        for server in backend.servers
+    ]
+    #
+    # `disabled` is a written-down decision not to check, so it counts as no
+    # check: the question is whether something is checking.
+    #
+    entry["health_checked"] = any(
+        backend.health.type != "disabled" for backend in proxy.backends.values()
+    )
     return entry
 
 
@@ -99,6 +154,7 @@ def objects_result(
     files: Mapping[str, bytes],
     commit: str | None,
     *,
+    network: Network | None = None,
     generated_at: datetime | None = None,
 ) -> dict[str, object]:
     """Every stored proxy object at one commit, keyed by the name it is filed under.
@@ -134,7 +190,7 @@ def objects_result(
         #
         if len(pure.parts) != 1 or pure.suffix != ".yaml" or not pure.stem:
             raise ObjectsError(f"{path} is not a proxy object file")
-        entries.append(_entry(pure.stem, _document(files[path], path)))
+        entries.append(_entry(pure.stem, _document(files[path], path), network))
 
     result["objects"] = entries
     return result

@@ -4084,7 +4084,9 @@ Work outward, and stop at the first step that fails:
 3. **The stored objects** — `haproxy-objects -c alpha` lists the proxy objects as they are written,
    at the commit the repository is on, and `--show <name>` prints one document exactly as stored.
    Where `haproxy-inventory` parses what a node is serving, this reads the source that produced it -
-   so an object the generator refuses is listed with the refusal rather than left out.
+   so an object the generator refuses is listed with the refusal rather than left out. The listing
+   also names the VIP each object is served on, worked out by the generator's own rule against the
+   network description, which is what the interface lists and searches by.
 4. **A converged deploy** — `haproxy-deploy -c alpha` with nodes already current should skip both
    nodes and change nothing. A run that correctly does nothing is a real test. Step 2 should
    already have said the cluster was converged; if the two disagree, believe neither and find out

@@ -327,7 +327,7 @@ def generate(
     _refuse_unknown_networks(ordered, known_networks)
 
     known_sources = dict(sources or {})
-    placed = [(_vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
+    placed = [(vip_of(proxy, vips, default_vip), proxy) for proxy in ordered]
     #
     # After placement, not before: a reservation names an address, so the gate
     # cannot ask its question until every object knows which VIP it sits on.
@@ -357,7 +357,7 @@ def generate(
         files[CLUSTER_FILE] = _cluster_file(settings)
     for vip, proxy in placed:
         files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(
-            proxy, _source_of(proxy, vip, known_sources), resolvers, tuple(trusted_proxies)
+            proxy, source_of(proxy, vip, known_sources), resolvers, tuple(trusted_proxies)
         )
     parts = {
         proxy.name: {
@@ -461,8 +461,11 @@ def _refuse_metrics_port(
             raise GeneratorError(f"the metrics port {port} is the port {proxy.name} listens on")
 
 
-def _source_of(proxy: Proxy, vip: Vip, sources: Mapping[str, str]) -> str | None:
+def source_of(proxy: Proxy, vip: Vip, sources: Mapping[str, str]) -> str | None:
     """The address this object connects to backends from.
+
+    Public because the objects listing reports it (B222): a reader that worked
+    the address out for itself would be a second copy of this rule.
 
     The VIP's own source unless the object names another. An object that names
     one the cluster does not define is refused rather than quietly falling back
@@ -482,7 +485,7 @@ def _source_of(proxy: Proxy, vip: Vip, sources: Mapping[str, str]) -> str | None
         ) from None
 
 
-def _vip_of(proxy: Proxy, vips: Mapping[str, Vip], default_vip: str) -> Vip:
+def vip_of(proxy: Proxy, vips: Mapping[str, Vip], default_vip: str) -> Vip:
     """Which of the cluster's addresses this object sits on.
 
     An object that names an address the cluster does not have is refused here

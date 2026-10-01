@@ -87,7 +87,7 @@ def _render(document: Mapping[str, Any], writer: TextIO) -> None:
         writer.write("No stored objects.\n")
         return
 
-    writer.write("NAME                     TYPE   SERVES\n")
+    writer.write("NAME                     TYPE   VIP              SERVES\n")
     for entry in entries:
         hostnames = entry.get("hostnames")
         serves = ", ".join(hostnames) if isinstance(hostnames, list) and hostnames else "-"
@@ -101,8 +101,15 @@ def _render(document: Mapping[str, Any], writer: TextIO) -> None:
                 f"{str(entry.get('name', '')):<24} -      CANNOT READ: {entry.get('problem')}\n"
             )
             continue
+        #
+        # The address the object is served on (B222), or the name the network
+        # description lacks. A release older than the field says "-".
+        #
+        vip = entry.get("vip")
+        on = (vip.get("address") or vip.get("name")) if isinstance(vip, Mapping) else None
         writer.write(
-            f"{str(entry.get('name', '')):<24} {str(entry.get('protocol', '')):<6} {serves}\n"
+            f"{str(entry.get('name', '')):<24} {str(entry.get('protocol', '')):<6} "
+            f"{str(on or '-'):<16} {serves}\n"
         )
 
 

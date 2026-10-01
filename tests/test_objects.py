@@ -5,7 +5,10 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime
 
+from haproxy_mgmt.config import Network, Vip
+from haproxy_mgmt.generate import source_of, vip_of
 from haproxy_mgmt.objects import ObjectsError, objects_result
+from haproxy_mgmt.proxy_model import load_proxy
 
 TIME = datetime(2026, 9, 2, 12, 30, tzinfo=UTC)
 COMMIT = "a" * 40
@@ -185,3 +188,103 @@ class WhatAnEntryCarriesForTheListing(unittest.TestCase):
         self.assertFalse(entry["readable"])
         self.assertIsNone(entry["backend_count"])
         self.assertIsNone(entry["redirect_http"])
+
+
+NETWORK = Network(
+    vips={
+        "internal": Vip(name="internal", address="192.0.2.20", source="192.0.2.25"),
+        "dmz": Vip(name="dmz", address="198.51.100.20", source=None),
+    },
+    default_vip="internal",
+    sources={"outbound": "192.0.2.35"},
+    networks={},
+)
+
+
+class WhereAnEntryIsServedFrom(unittest.TestCase):
+    """B222: the VIP, source and servers, worked out here by the generator's rule.
+
+    The interface searches and lists by these, and before this it worked them
+    out from the document itself - a second reader of the same file, and a
+    second copy of the rule that decides which address a site is on.
+    """
+
+    def entry(self, listen: str = "", health: str = "disabled") -> dict[str, object]:
+        document = SHOP.replace(b"  protocol: http\n", b"  protocol: http\n" + listen.encode())
+        document = document.replace(b"type: disabled", f"type: {health}".encode())
+        result = objects_result(
+            {"managed/proxies/shop.yaml": document}, COMMIT, network=NETWORK, generated_at=TIME
+        )
+        return result["objects"][0]
+
+    def test_the_default_vip_and_its_own_source(self) -> None:
+        entry = self.entry()
+
+        self.assertEqual(
+            entry["vip"], {"name": "internal", "address": "192.0.2.20", "default": True}
+        )
+        self.assertEqual(entry["source"], {"name": None, "address": "192.0.2.25"})
+
+    def test_a_named_vip_and_a_named_source(self) -> None:
+        entry = self.entry("  vip: dmz\n  source: outbound\n")
+
+        self.assertEqual(
+            entry["vip"], {"name": "dmz", "address": "198.51.100.20", "default": False}
+        )
+        self.assertEqual(entry["source"], {"name": "outbound", "address": "192.0.2.35"})
+
+    def test_a_vip_without_a_source_leaves_from_no_fixed_address(self) -> None:
+        self.assertIsNone(self.entry("  vip: dmz\n")["source"])
+
+    def test_names_the_network_lacks_are_reported_without_an_address(self) -> None:
+        self.assertEqual(
+            self.entry("  vip: gone\n")["vip"], {"name": "gone", "address": None, "default": False}
+        )
+        self.assertEqual(
+            self.entry("  source: gone\n")["source"], {"name": "gone", "address": None}
+        )
+
+    def test_the_rule_is_the_generators(self) -> None:
+        for listen in (
+            "",
+            "  vip: dmz\n",
+            "  source: outbound\n",
+            "  vip: dmz\n  source: outbound\n",
+        ):
+            with self.subTest(listen=listen):
+                entry = self.entry(listen)
+                proxy = load_proxy(
+                    "shop",
+                    SHOP.replace(b"  protocol: http\n", b"  protocol: http\n" + listen.encode()),
+                )
+                vip = vip_of(proxy, NETWORK.vips, NETWORK.default_vip)
+                source = entry["source"]
+                self.assertEqual(entry["vip"]["address"], vip.address)  # type: ignore[index]
+                self.assertEqual(
+                    source["address"] if isinstance(source, dict) else None,
+                    source_of(proxy, vip, NETWORK.sources),
+                )
+
+    def test_without_a_network_nothing_is_guessed(self) -> None:
+        result = objects_result({"managed/proxies/shop.yaml": SHOP}, COMMIT, generated_at=TIME)
+
+        self.assertIsNone(result["objects"][0]["vip"])
+        self.assertIsNone(result["objects"][0]["source"])
+
+    def test_the_servers_and_whether_anything_checks_them(self) -> None:
+        self.assertEqual(self.entry()["servers"], ["192.0.2.10:8080"])
+        self.assertIs(self.entry()["health_checked"], False)
+        self.assertIs(self.entry(health="tcp")["health_checked"], True)
+
+    def test_an_unreadable_object_says_nothing(self) -> None:
+        result = objects_result(
+            {"managed/proxies/shop.yaml": b"schema: 1\nname: shop\n"},
+            COMMIT,
+            network=NETWORK,
+            generated_at=TIME,
+        )
+        entry = result["objects"][0]
+
+        self.assertEqual(
+            (entry["vip"], entry["servers"], entry["health_checked"]), (None, [], None)
+        )

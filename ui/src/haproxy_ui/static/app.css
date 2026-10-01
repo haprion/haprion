@@ -367,6 +367,11 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .cluster-identity h3 { margin: 0; color: var(--text-strong); font-size: 16px; font-weight: 690; letter-spacing: -0.01em; }
 .cluster-identity p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 .cluster-state { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+/* What the cluster's VIPs carry (B220): one line between the name and the state. */
+.cluster-traffic { display: flex; flex: 1 1 auto; justify-content: center; gap: 22px; min-width: 0; margin: 0; white-space: nowrap; }
+.cluster-traffic > div { display: flex; align-items: baseline; gap: 7px; }
+.cluster-traffic dt { color: var(--muted); font-size: 12px; }
+.cluster-traffic dd { margin: 0; color: var(--text-strong); font-size: 13px; font-weight: 620; }
 /*
  * RULE: a label that rewrites itself while the page is open gets a fixed box.
  *
@@ -976,6 +981,7 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
   .proxy-summary { grid-template-columns: 1fr; }
   .cluster-header { align-items: flex-start; flex-direction: column; gap: 12px; }
   .cluster-state { width: 100%; flex-wrap: wrap; justify-content: space-between; }
+  .cluster-traffic { flex-wrap: wrap; justify-content: flex-start; row-gap: 4px; }
   .users-card .cluster-state { justify-content: flex-start; }
   .users-card .users-sso { flex-basis: 100%; overflow-wrap: anywhere; }
   .cluster-actions { align-items: flex-start; flex-direction: column; }

@@ -622,29 +622,33 @@ def build_router(config: Config) -> APIRouter:
         moment = datetime.now(UTC)
         with request.app.state.pool.connection() as connection:
             recent = db.recent_jobs(connection)
-            shown = listed_clusters(request, config)
-            traffic = traffic_summary.row(
-                db.read_traffic_summary(
-                    connection,
-                    clusters=shown,
-                    since=moment - traffic_summary.DAY,
-                    until=moment,
-                ),
-                db.read_traffic_summary(
-                    connection,
-                    clusters=shown,
-                    since=moment - traffic_summary.recent_window(config.poller.interval_seconds),
-                    until=moment,
-                ),
-                db.read_response_times(
-                    connection,
-                    clusters=shown,
-                    since=moment - traffic_summary.RESPONSE_WINDOW,
-                    until=moment,
+            #
+            # Per cluster, for its own header (B220, moved off a row of tiles
+            # on 2026-10-01: traffic is a fact about a cluster's VIPs).
+            #
+            recent_since = moment - traffic_summary.recent_window(config.poller.interval_seconds)
+            traffic = {
+                name: traffic_summary.row(
+                    db.read_traffic_summary(
+                        connection,
+                        clusters=[name],
+                        since=moment - traffic_summary.DAY,
+                        until=moment,
+                    ),
+                    db.read_traffic_summary(
+                        connection, clusters=[name], since=recent_since, until=moment
+                    ),
+                    db.read_response_times(
+                        connection,
+                        clusters=[name],
+                        since=moment - traffic_summary.RESPONSE_WINDOW,
+                        until=moment,
+                    )
+                    if config.traffic_logs.enabled
+                    else None,
                 )
-                if config.traffic_logs.enabled
-                else None,
-            )
+                for name in listed_clusters(request, config)
+            }
         running = jobs.in_flight(recent)
         return TEMPLATES.TemplateResponse(
             request,

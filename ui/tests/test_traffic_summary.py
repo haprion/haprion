@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 from haproxy_ui import traffic_summary
 from haproxy_ui.metrics import SUMMARY_COUNTERS, BackendMeasurement, Total
-from tests.test_login import LoginTestCase
+from tests.test_login import LoginTestCase, configuration
 
 END = datetime(2026, 10, 1, 12, tzinfo=UTC)
 
@@ -51,6 +52,7 @@ class TheFigures(unittest.TestCase):
         self.assertEqual(traffic_summary.size(3_400_000_000), "3.4 GB")
         self.assertEqual(traffic_summary.size(41_200_000_000), "41 GB")
         self.assertEqual(traffic_summary.size(512), "512 B")
+        self.assertEqual(traffic_summary.bitrate(0, 300), "0 bit/s")
         # Bits, because a link is sized in them: 9.25 MB over five minutes.
         self.assertEqual(traffic_summary.bitrate(9_250_000, 300), "247 kbit/s")
         self.assertEqual(traffic_summary.bitrate(121_000_000, 300), "3.2 Mbit/s")
@@ -91,11 +93,16 @@ class TheFigures(unittest.TestCase):
         self.assertEqual(traffic_summary.recent_window(300), timedelta(minutes=15))
 
 
-class TheDashboardRow(LoginTestCase):
-    def test_the_row_is_drawn_and_the_log_is_not_asked_while_it_is_off(self) -> None:
+class TheClusterHeader(LoginTestCase):
+    def test_each_cluster_header_carries_its_own_traffic_and_the_log_is_not_asked_while_off(
+        self,
+    ) -> None:
+        asked: list[object] = []
+
         def summary(
             _connection: object, *, clusters: object, since: datetime, until: datetime
         ) -> BackendMeasurement:
+            asked.append(clusters)
             if until - since > timedelta(hours=1):
                 return measured(timedelta(hours=24), (1_234_567, 3_400_000_000, 41_200_000_000))
             return measured(timedelta(minutes=5), (3_612, 9_250_000, 121_000_000))
@@ -104,14 +111,17 @@ class TheDashboardRow(LoginTestCase):
             mock.patch("haproxy_ui.db.read_traffic_summary", side_effect=summary),
             mock.patch("haproxy_ui.db.read_response_times") as responses,
         ):
-            client = self.client()
+            client = self.client(replace(configuration(), clusters=("alpha",)))
             self.assertEqual(self.sign_in(client).status_code, 303)
             page = client.get("/").text
 
-        self.assertIn("<strong>1.2M</strong><span>Requests 24 h</span><small>12/s</small>", page)
-        self.assertIn("<strong>247 kbit/s</strong><span>In</span><small>3.4 GB</small>", page)
-        self.assertIn("<strong>3.2 Mbit/s</strong><span>Out</span><small>41 GB</small>", page)
-        self.assertIn(f"<strong>{traffic_summary.DASH}</strong><span>Response</span>", page)
+        self.assertIn('<dl class="cluster-traffic" aria-label="Traffic through alpha">', page)
+        self.assertIn("<dt>Requests 24 h</dt><dd>1.2M</dd>", page)
+        self.assertIn("<dt>In</dt><dd>247 kbit/s</dd>", page)
+        self.assertIn("<dt>Out</dt><dd>3.2 Mbit/s</dd>", page)
+        self.assertIn(f"<dt>Response</dt><dd>{traffic_summary.DASH}</dd>", page)
+        self.assertNotIn("<span>Requests 24 h</span>", page, "no row of tiles any more")
+        self.assertTrue(all(clusters == ["alpha"] for clusters in asked), "one cluster at a time")
         responses.assert_not_called()
 
 

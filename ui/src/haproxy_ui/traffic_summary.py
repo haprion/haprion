@@ -1,4 +1,4 @@
-"""The dashboard's traffic row: requests and bytes through every VIP, now and over a day.
+"""What a cluster's VIPs carry, for its header on the dashboard: requests and bytes, now and over a day.
 
 Read from the same stored readings and the same differencing as the metrics
 page's cards (`db.read_traffic_summary`), so the dashboard and a card cannot
@@ -38,6 +38,8 @@ def recent_window(poll_seconds: int) -> timedelta:
 def _figure(value: float) -> str:
     """Three significant figures at most: 3.2, 38, 247."""
 
+    if value == 0:
+        return "0"
     return f"{value:.1f}" if value < 10 else f"{value:.0f}"
 
 

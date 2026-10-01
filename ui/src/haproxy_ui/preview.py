@@ -30,6 +30,7 @@ from haproxy_mgmt.proxy_model import (
     ModelError,
     dump_document,
     load_proxy,
+    pool_written_by_hand,
     read_document,
 )
 from haproxy_mgmt.tls_policy import DEFAULT_BACKEND_POLICY
@@ -1014,7 +1015,7 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         # difference and the object is refused rather than saved without it.
         #
         "advanced": data["advanced"] if isinstance(data.get("advanced"), str) else "",
-        "handwritten_pool": backend.get("servers") == [],
+        "handwritten_pool": pool_written_by_hand(backend),
     }
 
 

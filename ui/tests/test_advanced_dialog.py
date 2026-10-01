@@ -198,6 +198,13 @@ class TheDialogsRoute(EditorTestCase):
 
         self.assertEqual(answer.status_code, 404)  # type: ignore[attr-defined]
 
+    def test_a_text_too_long_is_said_in_the_dialog(self) -> None:
+        answer = self.post(self.editor(), action="save", advanced="retries 5\n" * 7000)
+
+        self.assertEqual(answer.status_code, 200)  # type: ignore[attr-defined]
+        self.assertIn("it may be at most 65,536", answer.text)  # type: ignore[attr-defined]
+        self.assertEqual(self.saved, [])
+
     def test_a_post_without_a_csrf_token_is_refused(self) -> None:
         answer = self.post(self.editor(), csrf_token="", advanced="retries 5\n")
 
@@ -245,3 +252,22 @@ class TheButtonAndTheDialogOnThePage(DraftReading):
         self.assertRegex(body, r'name="handwritten_pool" checked')
         self.assertRegex(body, r'name="expected_revision" value="4"')
         self.assertTrue(re.search(r"<textarea[^>]*>\n", body))
+
+
+class OneRuleForAPoolWrittenByHand(unittest.TestCase):
+    """The dialog, the form and the model answer the same (review F2)."""
+
+    def test_every_reader_agrees_on_the_golden_objects(self) -> None:
+        from haproxy_mgmt.proxy_model import load_proxy
+
+        from haproxy_ui.preview import form_from_document
+
+        for name, expected in (("db", False), ("shop", True)):
+            document = (GOLDEN / f"{name}.yaml").read_text(encoding="utf-8")
+            with self.subTest(name):
+                model = load_proxy(name, document.encode())
+                self.assertEqual(
+                    [backend.written_by_hand for backend in model.backends.values()], [expected]
+                )
+                self.assertEqual(advanced_dialog.opened(document).handwritten, expected)
+                self.assertEqual(form_from_document(document)["handwritten_pool"], expected)

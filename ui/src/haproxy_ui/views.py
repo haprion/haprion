@@ -1231,7 +1231,7 @@ def build_router(config: Config) -> APIRouter:
         cluster: str,
         name: str,
         action: Annotated[str, Form(max_length=16)] = "check",
-        advanced: Annotated[str, Form(max_length=65536)] = "",
+        advanced: Annotated[str, Form()] = "",
         handwritten_pool: Annotated[bool, Form()] = False,
         expected_revision: Annotated[str, Form(max_length=16)] = "",
         csrf_token: Annotated[str, Form(max_length=128, alias=auth.CSRF_FIELD)] = "",
@@ -8556,6 +8556,14 @@ def _advanced_submit(
     def answer(result: advanced_dialog.Answer, *, saved: str = "") -> Response:
         return TEMPLATES.TemplateResponse(
             request, "_advanced-answer.html", {"answer": result, "saved": saved}
+        )
+
+    if len(text) > advanced_dialog.MAX_TEXT:
+        return answer(
+            advanced_dialog.Answer(
+                problem=f"The text is {len(text):,} characters; it may be at most "
+                f"{advanced_dialog.MAX_TEXT:,}. Nothing was saved."
+            )
         )
 
     state = _editor_state(request, config, cluster)

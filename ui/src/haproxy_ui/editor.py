@@ -30,6 +30,7 @@ from haproxy_mgmt.generate import GeneratorError, generate
 from haproxy_mgmt.proxy_model import BALANCE, ModelError, load_proxy
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from haproxy_ui.advanced_dialog import MAX_TEXT
 from haproxy_ui.certificates import CertificateClusterView
 from haproxy_ui.network import NetworkClusterView
 from haproxy_ui.preview import (
@@ -317,7 +318,7 @@ class ObjectForm(BaseModel):
     # Carried through unchanged (Fas 17): edited in the object's own dialog, not
     # here. Bounded well inside the draft's own limit.
     #
-    advanced: Annotated[str, StringConstraints(max_length=65536)] = ""
+    advanced: Annotated[str, StringConstraints(max_length=MAX_TEXT)] = ""
     handwritten_pool: bool = False
 
     #

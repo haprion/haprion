@@ -19,6 +19,7 @@ from haproxy_mgmt.proxy_model import (
     advanced_placement,
     dump_document,
     load_proxy,
+    pool_written_by_hand,
     read_document,
 )
 
@@ -27,6 +28,13 @@ from haproxy_mgmt.proxy_model import (
 # so the editor opens on what it would have offered for a new object.
 #
 RETURNED_BALANCE = "roundrobin"
+
+#
+# How long a text may be, well inside the draft's own limit. Checked by the
+# dialog's route rather than by the form parser, so the answer is a sentence in
+# the dialog and not a 422 the dialog can only call "no answer" (review F1).
+#
+MAX_TEXT = 65536
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +70,7 @@ def opened(document: str) -> Opened:
     text = data.get("advanced")
     return Opened(
         text=text if isinstance(text, str) else "",
-        handwritten=any(isinstance(pool, Mapping) and pool.get("servers") == [] for pool in pools),
+        handwritten=any(pool_written_by_hand(pool) for pool in pools),
         one_pool=len(pools) == 1,
     )
 
@@ -86,7 +94,7 @@ def apply(name: str, document: str, text: str, *, handwritten: bool) -> str:
     if not isinstance(backends, Mapping):
         raise ValueError("this object has no pool the dialog can read")
     pools = dict(backends)
-    now = any(isinstance(pool, Mapping) and pool.get("servers") == [] for pool in pools.values())
+    now = any(pool_written_by_hand(pool) for pool in pools.values())
     if handwritten and not now:
         if len(pools) != 1:
             raise ValueError("only an object with one pool can have it written here")

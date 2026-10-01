@@ -218,6 +218,8 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
 .header-search svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; }
 .header-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--text); font-size: 14px; }
 .header-search:focus-within { border-color: var(--brand); box-shadow: var(--focus); }
+/* Its two auto margins centre it; a third on the actions would take a share and pull it left. */
+.header-search + .header-actions { margin-left: 0; }
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -1033,6 +1035,7 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
   .brand { padding-right: 12px; }
   .brand span { display: none; }
   .header-search { margin: 0 8px 0 0; }
+  .header-search + .header-actions { margin-left: auto; }
   .primary-nav a, .nav-item { padding: 0 10px; }
   .activity-entry { padding: 13px 14px 13px 11px; }
   .activity-copy { grid-template-columns: 1fr; gap: 2px; }

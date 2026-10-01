@@ -1949,7 +1949,22 @@ def record_cluster_objects(
     error: Mapping[str, Any] | None = None,
     poll_error: str | None = None,
 ) -> None:
-    """Replace one cluster's cached objects with the newest helper answer."""
+    """Replace one cluster's cached objects with the newest helper answer.
+
+    Or confirm them, when the helper said the listing the poller holds still
+    stands (B222): an update that changes nothing, which the table's trigger
+    turns into a fresh `observed_at`. Rewriting the same eight megabytes every
+    pass to say the same thing was the cost this avoids.
+    """
+
+    if outcome == "done" and result.get("unchanged") is True:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "update cluster_objects set outcome = outcome "
+                " where cluster = %(cluster)s and outcome = 'done'",
+                {"cluster": cluster},
+            )
+        return
 
     with connection.cursor() as cursor:
         cursor.execute(
@@ -1970,6 +1985,19 @@ def record_cluster_objects(
                 "poll": poll_error,
             },
         )
+
+
+def objects_fingerprint(connection: Connection[Any], cluster: str) -> str | None:
+    """The fingerprint of the objects listing the poller holds, if it holds one."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select result ->> 'fingerprint' from cluster_objects "
+            " where cluster = %(cluster)s and outcome = 'done'",
+            {"cluster": cluster},
+        )
+        row = cursor.fetchone()
+    return row[0] if row is not None and isinstance(row[0], str) else None
 
 
 def cluster_objects(connection: Connection[Any]) -> list[ClusterObjects]:

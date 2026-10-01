@@ -2918,3 +2918,35 @@ class TheSearchIndex(unittest.TestCase):
             cursor.execute("explain select 1 from search_entry where lower(value) like '%192.0.2%'")
             plan = "\n".join(row[0] for row in cursor.fetchall())
         self.assertIn("search_entry_value", plan)
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class AnUnchangedObjectsListing(unittest.TestCase):
+    """B222: confirmed rather than rewritten, and the confirmation is a fresh reading."""
+
+    def test_the_poller_reads_back_its_fingerprint_and_confirms_without_rewriting(self) -> None:
+        poller = f"{DSN} user={os.environ['HAPROXY_UI_TEST_POLLER_ROLE']}"
+        listing = {"commit": "a" * 40, "fingerprint": "f" * 64, "objects": [{"name": "shop"}]}
+        with psycopg.connect(poller) as connection:
+            db.record_cluster_objects(connection, cluster="fp-a", outcome="done", result=listing)
+            connection.commit()
+            self.assertEqual(db.objects_fingerprint(connection, "fp-a"), "f" * 64)
+            self.assertIsNone(db.objects_fingerprint(connection, "fp-none"))
+            before = next(r for r in db.cluster_objects(connection) if r.cluster == "fp-a")
+
+            db.record_cluster_objects(
+                connection,
+                cluster="fp-a",
+                outcome="done",
+                result={
+                    "commit": "a" * 40,
+                    "fingerprint": "f" * 64,
+                    "unchanged": True,
+                    "objects": [],
+                },
+            )
+            connection.commit()
+            after = next(r for r in db.cluster_objects(connection) if r.cluster == "fp-a")
+
+        self.assertEqual(after.result, listing)
+        self.assertGreater(after.observed_at, before.observed_at)

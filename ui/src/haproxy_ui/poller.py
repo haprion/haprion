@@ -169,7 +169,20 @@ SOURCES: tuple[Source, ...] = (
     # it parses published configuration, and an edit is made against the source
     # that produced it.
     #
-    Source("objects", run_objects_helper, db.record_cluster_objects),
+    #
+    # With the fingerprint of the listing already held (B222), so an unchanged
+    # repository is answered without the helper reading every document again.
+    #
+    Source(
+        "objects",
+        run_objects_helper,
+        db.record_cluster_objects,
+        asks=lambda connection, cluster: (
+            {"unchanged_since": known}
+            if (known := db.objects_fingerprint(connection, cluster))
+            else {}
+        ),
+    ),
 )
 
 
@@ -281,6 +294,11 @@ def _index(pool: Any, source: Source, *, cluster: str, reading: Mapping[str, Any
 
     result = reading.get("result")
     if reading.get("outcome") not in ("done", "partial") or not isinstance(result, Mapping):
+        return
+    #
+    # An unchanged objects listing changes nothing in the search either.
+    #
+    if result.get("unchanged") is True:
         return
     try:
         entries = search_index.entries_for(source.operation, cluster, result)

@@ -38,6 +38,20 @@
   // few seconds.
   //
   const rows = () => document.querySelectorAll("tbody[data-cluster]").length > 0;
+  // The page of each table the address shows (B222), so a refresh replaces
+  // the rows on screen rather than the first hundred. Only those, each checked
+  // as a cluster name and a whole number, rather than the address passed on;
+  // the order travels in the cookie the heading set.
+  const PAGE = /^page-[a-z0-9][a-z0-9_-]{0,31}$/;
+  const pages = () => {
+    const kept = new URLSearchParams();
+    for (const [key, value] of new URLSearchParams(window.location.search)) {
+      const number = Number.parseInt(value, 10);
+      if (PAGE.test(key) && Number.isInteger(number) && number > 0) kept.set(key, String(number));
+    }
+    const query = kept.toString();
+    return query ? `?${query}` : "";
+  };
 
   //
   // What the page was drawn with: the clusters it is showing as busy.
@@ -140,7 +154,7 @@
       window.setTimeout(tick, INTERVAL);
       return;
     }
-    fetch(rows() ? ROWS : BUSY, {
+    fetch(rows() ? ROWS + pages() : BUSY, {
       credentials: "same-origin",
       headers: { Accept: "application/json" },
     })

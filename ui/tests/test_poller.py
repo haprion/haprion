@@ -508,3 +508,26 @@ class TheSearchIndexIsKeptBesideTheReadings(unittest.TestCase):
                 cluster="alpha",
                 reading={"outcome": "done", "result": {"objects": []}},
             )
+
+
+class TheObjectsReadingSendsWhatItHolds(unittest.TestCase):
+    """B222: the fingerprint of the cached listing goes to the helper, and an unchanged answer stops there."""
+
+    def source(self) -> poller.Source:
+        return next(source for source in poller.SOURCES if source.operation == "objects")
+
+    def test_the_held_fingerprint_is_asked_with(self) -> None:
+        with unittest.mock.patch("haproxy_ui.db.objects_fingerprint", return_value="f" * 64):
+            self.assertEqual(self.source().asks(object(), "alpha"), {"unchanged_since": "f" * 64})
+        with unittest.mock.patch("haproxy_ui.db.objects_fingerprint", return_value=None):
+            self.assertEqual(self.source().asks(object(), "alpha"), {})
+
+    def test_an_unchanged_answer_leaves_the_search_alone(self) -> None:
+        with unittest.mock.patch("haproxy_ui.db.replace_search_entries") as replace:
+            poller._index(
+                TheSearchIndexIsKeptBesideTheReadings.Pool(),
+                self.source(),
+                cluster="alpha",
+                reading={"outcome": "done", "result": {"unchanged": True, "objects": []}},
+            )
+        replace.assert_not_called()

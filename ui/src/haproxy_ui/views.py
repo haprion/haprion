@@ -211,6 +211,8 @@ TEMPLATES.env.filters["certificate_order"] = lambda rows, sort: certificates.TAB
 TEMPLATES.env.filters["proxy_order"] = lambda rows, sort, lamps: proxies.TABLE.ordered(
     rows, sort, lamps
 )
+TEMPLATES.env.filters["proxy_page_link"] = proxies.page_link
+TEMPLATES.env.globals["proxy_page_size"] = proxies.PAGE_SIZE
 
 
 def _log_time_filter(
@@ -782,8 +784,17 @@ def build_router(config: Config) -> APIRouter:
                 )
                 for view in overview.clusters
             }
+        #
+        # Each cluster's objects read out of the cache once per request, not
+        # once per use: at ten thousand objects every pass over them cost a
+        # sixth of a second (2026-10-01).
+        #
+        stored = {
+            view.cluster: objects.cluster_object_views(rows.get(view.cluster))
+            for view in overview.clusters
+        }
         for view in overview.clusters:
-            names = [obj.name for obj in objects.cluster_object_views(rows.get(view.cluster))]
+            names = [obj.name for obj in stored[view.cluster]]
             served[view.cluster] = health.served_objects(
                 health_rows, cluster=view.cluster, names=[*names, *gone[view.cluster]]
             )
@@ -795,6 +806,7 @@ def build_router(config: Config) -> APIRouter:
                 # answers instead. Silence is not "nothing is served".
                 #
                 served=served[view.cluster] if _nodes_reported(health_rows, view.cluster) else None,
+                views=stored[view.cluster],
             )
         #
         # What is left of the published inventory once the managed frontends are
@@ -820,17 +832,18 @@ def build_router(config: Config) -> APIRouter:
         # backend down.
         #
         backend_lamps = {
-            view.cluster: {
-                obj.name: health.object_health(
-                    health_rows,
-                    cluster=view.cluster,
-                    obj=obj.name,
-                    others=[other.name for other in listed[view.cluster]],
-                    checked=obj.health_checked,
-                    sourced=obj.sourced,
-                )
-                for obj in objects.cluster_object_views(rows.get(view.cluster))
-            }
+            view.cluster: health.object_healths(
+                health_rows,
+                cluster=view.cluster,
+                objects={
+                    #
+                    # Every listed name is a candidate owner, so a server is
+                    # never lent to an object whose name is a prefix of another.
+                    #
+                    **{other.name: (True, False) for other in listed[view.cluster]},
+                    **{obj.name: (obj.health_checked, obj.sourced) for obj in stored[view.cluster]},
+                },
+            )
             for view in overview.clusters
         }
         #
@@ -997,6 +1010,7 @@ def build_router(config: Config) -> APIRouter:
                 "snapshot_age": snapshot_age(captured_at),
                 "proxy_sort": sort,
                 "proxy_sorts": proxies.TABLE.links(sort),
+                "proxy_paging": proxies.pages_asked(request.query_params),
             },
         )
         if asked:
@@ -1048,6 +1062,7 @@ def build_router(config: Config) -> APIRouter:
                     if view.cluster in listing["behind"]
                     else frozenset(),
                     order,
+                    proxies.pages_asked(request.query_params),
                 )
             )
             for view in listing["proxies"].clusters

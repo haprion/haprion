@@ -608,6 +608,11 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
 /* What matched is the answer, so it wraps rather than being cut. */
 .search-table td:nth-child(3) { white-space: normal; }
 .search-matched { color: var(--text-secondary); overflow-wrap: anywhere; }
+/* The pager row (B222): one cell across the table, its buttons inline rather
+   than the first column's block links. */
+.proxy-table tr.proxy-pager td { text-align: center; white-space: nowrap; }
+.proxy-table tr.proxy-pager td a { display: inline-flex; overflow: visible; }
+.proxy-pager span { margin: 0 14px; color: var(--text-secondary); font-size: 13px; }
 .search-pages { display: flex; align-items: center; justify-content: center; gap: 14px; color: var(--text-secondary); font-size: 13px; }
 .proxy-hosts { display: block; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
 .protocol-badge, .ownership-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; letter-spacing: 0.025em; }
@@ -2110,6 +2115,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
   .proxy-table td:nth-child(n), .network-table td:nth-child(n) { padding-left: 112px; }
   /* A proxy's host names are its longest value; they take the card's width. */
   .proxy-table td:nth-child(3) { grid-column: 1 / -1; }
+  .proxy-table tr.proxy-pager td { grid-column: 1 / -1; padding-left: 8px; }
   /* A sign-in time does not fit a third of a card beside its label. */
   .users-table tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

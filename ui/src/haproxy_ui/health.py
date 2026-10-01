@@ -12,7 +12,7 @@ it, and the page says so rather than implying the numbers are from now.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -287,8 +287,8 @@ class ObjectHealth:
     total: int
 
 
-def _attributed(backend: str, obj: str, others: Iterable[str]) -> bool:
-    """Whether a generated backend name belongs to this object.
+def _owner(backend: str, names: Collection[str]) -> str | None:
+    """Which object a generated backend name belongs to, or None.
 
     The generator names a backend `mgd-<object>-<backend>`, and both halves may
     contain a hyphen - so `mgd-shop-web` is what object `shop` with backend `web`
@@ -297,16 +297,21 @@ def _attributed(backend: str, obj: str, others: Iterable[str]) -> bool:
     whose name happens to be shorter.
 
     The longest name that fits wins, which is the same answer a person reading
-    the two documents would give.
+    the two documents would give. Found by trying the name up to each hyphen,
+    longest first, against a set: one lookup per hyphen rather than one
+    comparison per object (2026-10-01).
     """
 
-    prefix = f"{PREFIX}-{obj}-"
+    prefix = f"{PREFIX}-"
     if not backend.startswith(prefix):
-        return False
-    return not any(
-        other != obj and len(other) > len(obj) and backend.startswith(f"{PREFIX}-{other}-")
-        for other in others
-    )
+        return None
+    rest = backend[len(prefix) :]
+    cut = rest.rfind("-")
+    while cut > 0:
+        if rest[:cut] in names:
+            return rest[:cut]
+        cut = rest.rfind("-", 0, cut)
+    return None
 
 
 def clusters_behind(rows: Iterable[Any]) -> frozenset[str]:
@@ -391,7 +396,7 @@ def served_objects(rows: Iterable[Any], *, cluster: str, names: Iterable[str]) -
     what the release says rather than treating silence as an answer.
     """
 
-    names = tuple(names)
+    names = frozenset(names)
     reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
     result = reading.result if reading is not None and isinstance(reading.result, dict) else {}
     entries = result.get("nodes")
@@ -407,9 +412,9 @@ def served_objects(rows: Iterable[Any], *, cluster: str, names: Iterable[str]) -
             backend = member.get("backend")
             if not isinstance(backend, str) or not _is_member(member):
                 continue
-            for name in names:
-                if _attributed(backend, name, names):
-                    served.add(name)
+            owner = _owner(backend, names)
+            if owner is not None:
+                served.add(owner)
     return frozenset(served)
 
 
@@ -422,7 +427,26 @@ def object_health(
     checked: bool | None = True,
     sourced: bool = False,
 ) -> ObjectHealth:
-    """Every node's verdict on every backend behind one object, as one lamp.
+    """One object's lamp; see `object_healths`, which this asks for one name."""
+
+    known: dict[str, tuple[bool | None, bool]] = {name: (True, False) for name in others}
+    known[obj] = (checked, sourced)
+    return object_healths(rows, cluster=cluster, objects=known)[obj]
+
+
+def object_healths(
+    rows: Iterable[Any],
+    *,
+    cluster: str,
+    objects: Mapping[str, tuple[bool | None, bool]],
+) -> dict[str, ObjectHealth]:
+    """Every node's verdict on every backend behind each object, as one lamp each.
+
+    `objects` maps each name to whether it is health checked and whether it
+    leaves from a source address. Read in one pass over the nodes' servers,
+    each attributed to its object once (2026-10-01): asking per object read
+    every server of the cluster once for every object, which at ten thousand
+    objects took a hundred seconds.
 
     Counted in servers, because that is what somebody wrote down. Both nodes
     run the same configuration and report the same backend, so counting readings
@@ -435,17 +459,7 @@ def object_health(
     that disagrees is named, since which one it is decides what to look at.
     """
 
-    #
-    # An object with no health check gets an unlit lamp rather than a colour.
-    # HAProxy reports an unchecked server as UP - it has nothing to say
-    # otherwise - so green here would claim a reachability nothing measured.
-    # The distinction the column exists to draw is between checked-and-up and
-    # not checked at all.
-    #
-    if checked is False:
-        return ObjectHealth("unknown", "", "This object defines no health check", 0, 0)
-
-    others = tuple(others)
+    names = frozenset(objects)
     reading = next((row for row in rows if getattr(row, "cluster", None) == cluster), None)
     result = reading.result if reading is not None and isinstance(reading.result, dict) else {}
     entries = result.get("nodes")
@@ -454,28 +468,27 @@ def object_health(
     # Keyed by backend and server, because two backends behind one object may name a
     # server the same and they are not the same server.
     #
-    healthy: dict[tuple[str, str], bool] = {}
+    healthy: dict[str, dict[tuple[str, str], bool]] = {name: {} for name in names}
     #
     # And whether any node at all could reach it. A server down on one node and
     # up on the other is a partial fault, not a dead backend, and the two must not
     # come out as the same colour.
     #
-    reachable: dict[tuple[str, str], bool] = {}
-    complaining: set[str] = set()
-    nodes = 0
+    reachable: dict[str, dict[tuple[str, str], bool]] = {name: {} for name in names}
+    complaining: dict[str, set[str]] = {name: set() for name in names}
+    nodes: dict[str, int] = dict.fromkeys(names, 0)
     for entry in entries if isinstance(entries, Sequence) else ():
         if not isinstance(entry, dict):
             continue
-        said, members = _members(entry.get("status"))
-        mine = [
-            member
-            for member in members
-            if isinstance(member.get("backend"), str)
-            and _attributed(member["backend"], obj, others)
-            and _is_member(member)
-        ]
-        if not mine:
-            continue
+        _said, members = _members(entry.get("status"))
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for member in members:
+            backend = member.get("backend")
+            if not isinstance(backend, str) or not _is_member(member):
+                continue
+            owner = _owner(backend, names)
+            if owner is not None:
+                grouped.setdefault(owner, []).append(member)
         #
         # The same rule the editor's card applies, and for the same reason: an
         # object that leaves from a source address can only be answered for by
@@ -485,25 +498,56 @@ def object_health(
         #
         status = entry.get("status")
         vip = status.get("vip") if isinstance(status, dict) else None
-        owner = vip.get("owner") if isinstance(vip, dict) else None
-        if sourced and owner is False:
-            continue
-        nodes += 1
+        holds = vip.get("owner") if isinstance(vip, dict) else None
         node = str(entry.get("name") or entry.get("node") or "")
-        for member in mine:
-            key = (str(member["backend"]), str(member["server"]))
-            reported = str(member.get("status", "") or "")
-            if reported.strip().lower() == UNCHECKED:
-                #
-                # Nothing is checking this server, so the node has no opinion
-                # about it. Skipped rather than counted either way.
-                #
+        for obj, mine in grouped.items():
+            if objects[obj][1] and holds is False:
                 continue
-            reports_up = reported.upper().startswith("UP")
-            healthy[key] = healthy.get(key, True) and reports_up
-            reachable[key] = reachable.get(key, False) or reports_up
-            if not reports_up and node:
-                complaining.add(node)
+            nodes[obj] += 1
+            for member in mine:
+                key = (str(member["backend"]), str(member["server"]))
+                reported = str(member.get("status", "") or "")
+                if reported.strip().lower() == UNCHECKED:
+                    #
+                    # Nothing is checking this server, so the node has no opinion
+                    # about it. Skipped rather than counted either way.
+                    #
+                    continue
+                reports_up = reported.upper().startswith("UP")
+                healthy[obj][key] = healthy[obj].get(key, True) and reports_up
+                reachable[obj][key] = reachable[obj].get(key, False) or reports_up
+                if not reports_up and node:
+                    complaining[obj].add(node)
+
+    return {
+        name: _lamp(
+            checked=objects[name][0],
+            healthy=healthy[name],
+            reachable=reachable[name],
+            complaining=complaining[name],
+            nodes=nodes[name],
+        )
+        for name in names
+    }
+
+
+def _lamp(
+    *,
+    checked: bool | None,
+    healthy: Mapping[tuple[str, str], bool],
+    reachable: Mapping[tuple[str, str], bool],
+    complaining: Collection[str],
+    nodes: int,
+) -> ObjectHealth:
+    #
+    # An object with no health check gets an unlit lamp rather than a colour.
+    # HAProxy reports an unchecked server as UP - it has nothing to say
+    # otherwise - so green here would claim a reachability nothing measured.
+    # The distinction the column exists to draw is between checked-and-up and
+    # not checked at all.
+    #
+    if checked is False:
+        return ObjectHealth("unknown", "", "This object defines no health check", 0, 0)
 
     total = len(healthy)
     if total == 0:

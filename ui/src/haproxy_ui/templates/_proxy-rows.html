@@ -4,7 +4,7 @@
   its way. A second copy of this markup would drift from the first, and the
   drift would show as a row that changes shape when it updates.
 #}
-{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=(), order='name') %}
+{% macro proxy_rows(cluster, role, unpublished, queued, written, foreign, lamps, removed=(), failed={}, reconfigured=(), order='name', paging={}) %}
 {% set drafted = unpublished | map(attribute='object_id') | list %}
 {#
   One list in the order the reader chose (alphabetical unless a heading was
@@ -20,7 +20,15 @@
 {% for name in removed %}{% set _ = rows.append((name, 'removed', name)) %}{% endfor %}
 {% for object in written if object.name not in drafted %}{% set _ = rows.append((object.name, 'written', object)) %}{% endfor %}
 {% for proxy in foreign %}{% set _ = rows.append((proxy.name, 'foreign', proxy)) %}{% endfor %}
-{% for _name, kind, item in rows | proxy_order(order, lamps) %}
+{#
+  A hundred rows at a time once a cluster has more (B222); the page is in the
+  address, per cluster, and the refresh asks for the same one.
+#}
+{% set ordered = rows | proxy_order(order, lamps) %}
+{% set total = ordered | length %}
+{% set pages = ((total + proxy_page_size - 1) // proxy_page_size) if total else 1 %}
+{% set page = [[paging.get(cluster, 1), 1] | max, pages] | min %}
+{% for _name, kind, item in (ordered[(page - 1) * proxy_page_size : page * proxy_page_size] if total > proxy_page_size else ordered) %}
 {% if kind == 'draft' %}{% set draft = item %}
       <tr class="proxy-draft" data-href="/proxies/{{ cluster }}/{{ draft.object_id }}"><td data-label="Proxy"><a class="proxy-link" href="/proxies/{{ cluster }}/{{ draft.object_id }}"><strong>{{ draft.object_id }}</strong></a></td><td data-label="Protocol">{% if draft.object_id in queued %}<span class="status-badge status-badge-info waiting-badge"><span class="badge-spinner" aria-hidden="true"></span>Waiting for publish</span>{% elif draft.object_id in failed %}{#
         A publish that was refused used to leave this row saying "Draft" and
@@ -139,4 +147,7 @@
       <tr{% if role == 'admin' %} data-href="/proxies/{{ cluster }}/{{ proxy.name }}"{% endif %}><td data-label="Proxy">{% if role == 'admin' %}<a class="proxy-link" href="/proxies/{{ cluster }}/{{ proxy.name }}"><strong>{{ proxy.name }}</strong></a>{% else %}<strong>{{ proxy.name }}</strong>{% endif %}{% if not proxy.enabled %}<small class="warning-text">Disabled</small>{% endif %}</td><td data-label="Protocol"><span class="protocol-badge protocol-{{ proxy.protocol }}">{{ proxy.protocol | upper }}</span></td><td data-label="Hosts / ports"><span class="proxy-hosts">{{ proxy.hostnames | join(', ') if proxy.hostnames else 'No hostname rule' }} · {{ proxy.ports | join(', ') if proxy.ports else '—' }}</span></td><td data-label="VIP / source"><span class="table-empty">—</span></td><td data-label="Health"><span class="table-empty">—</span></td><td data-label="Ownership"><span class="ownership-badge ownership-unmanaged">Unmanaged</span></td></tr>
 {% endif %}
 {% endfor %}
+{% if total > proxy_page_size %}
+      <tr class="proxy-pager"><td colspan="6">{% if page > 1 %}<a class="secondary-button" href="{{ paging | proxy_page_link(cluster, page - 1) }}">Previous</a>{% endif %}<span>{{ (page - 1) * proxy_page_size + 1 }}–{{ [page * proxy_page_size, total] | min }} of {{ total }}</span>{% if page < pages %}<a class="secondary-button" href="{{ paging | proxy_page_link(cluster, page + 1) }}">Next</a>{% endif %}</td></tr>
+{% endif %}
 {% endmacro %}

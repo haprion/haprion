@@ -11,6 +11,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
+from urllib.parse import urlencode
 
 from haproxy_ui import sorting
 from haproxy_ui.addresses import order_key
@@ -282,6 +283,35 @@ def _health(row: tuple[str, str, Any], lamps: Any) -> tuple[int, str] | None:
 def _ownership(row: tuple[str, str, Any], _context: Any) -> str | None:
     kind = row[1]
     return {"written": "managed", "removed": "managed", "foreign": "unmanaged"}.get(kind)
+
+
+#
+# A cluster's table shows this many rows at a time, and only a cluster with
+# more than this has pages at all (B222, 2026-10-01). Ten thousand rows
+# on one page measured 1.2 s and 9.6 MB on every view and every refresh.
+#
+PAGE_SIZE = 100
+PAGE_PREFIX = "page-"
+
+
+def pages_asked(query: Mapping[str, str]) -> dict[str, int]:
+    """Which page of each cluster's table the address asks for."""
+
+    asked = {}
+    for key, value in query.items():
+        if key.startswith(PAGE_PREFIX) and value.isdecimal() and 0 < int(value) <= 100000:
+            asked[key.removeprefix(PAGE_PREFIX)] = int(value)
+    return asked
+
+
+def page_link(paging: Mapping[str, int], cluster: str, page: int) -> str:
+    """The listing with one cluster's table on another page and the others where they were."""
+
+    chosen = {**paging, cluster: page}
+    query = urlencode(
+        {f"{PAGE_PREFIX}{name}": number for name, number in sorted(chosen.items()) if number > 1}
+    )
+    return f"/proxies?{query}" if query else "/proxies"
 
 
 TABLE = sorting.Table(

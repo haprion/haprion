@@ -551,6 +551,7 @@ def listed_objects(
     reading: ClusterObjects | None,
     published: Iterable[ProxyView] = (),
     served: Collection[str] | None = None,
+    views: Sequence[ObjectView] | None = None,
 ) -> tuple[ListedObject, ...]:
     """This cluster's objects, each saying whether the nodes are serving it yet.
 
@@ -594,7 +595,7 @@ def listed_objects(
                     ),
                     addresses=view.addresses,
                 )
-                for view in cluster_object_views(reading)
+                for view in (cluster_object_views(reading) if views is None else views)
             ),
             key=lambda listed: listed.name,
         )

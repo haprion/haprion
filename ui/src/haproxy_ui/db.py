@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -2399,7 +2399,7 @@ def _rolled_up() -> sql.Composed:
 
 
 def _backend_history_boundary(
-    connection: Connection[Any], *, since: datetime, until: datetime
+    connection: Connection[Any], *, since: datetime, now: datetime | None
 ) -> datetime:
     """Where a backend history changes from completed rollup to retained raw rows.
 
@@ -2408,9 +2408,17 @@ def _backend_history_boundary(
     marker moves the boundary further into the past instead. No marker is the
     conservative answer: use whatever raw data remains and claim no rollup
     coverage for this window.
+
+    **Counted from now, not from the end of what is asked.** The raw rows are
+    pruned a week back from today, whatever range a reader marks. Counting from
+    the range's end put a range marked two weeks ago on the raw side of the
+    line, where its rows no longer are, and kept it off the rollup that holds
+    them: the figures beside the drawing read 0 under a visible peak (seen
+    2026-10-01, 15-18 Sep on the 30-day window). The drawing always ends now,
+    which is why it was right.
     """
 
-    retained_from = until - metrics.RAW_RETENTION
+    retained_from = (now or datetime.now(UTC)) - metrics.RAW_RETENTION
     if since >= retained_from:
         return retained_from
     with connection.cursor() as cursor:
@@ -2432,6 +2440,7 @@ def read_backend_samples(
     until: datetime,
     width: timedelta,
     member: str = "BACKEND",
+    now: datetime | None = None,
 ) -> list[metrics.Sample]:
     """One backend's readings since a moment, one per bucket, oldest first.
 
@@ -2449,7 +2458,7 @@ def read_backend_samples(
     case costs one query and the long one costs two.
     """
 
-    raw_from = _backend_history_boundary(connection, since=since, until=until)
+    raw_from = _backend_history_boundary(connection, since=since, now=now)
     arguments = {
         "cluster": cluster,
         "backend": backend,
@@ -2936,6 +2945,7 @@ def read_backend_totals(
     since: datetime,
     until: datetime,
     member: str = "BACKEND",
+    now: datetime | None = None,
 ) -> metrics.BackendMeasurement:
     """One backend's figures at stored resolution, independent of its graph."""
 
@@ -2944,7 +2954,7 @@ def read_backend_totals(
         "backend": backend,
         "member": member,
         "since": since,
-        "raw_from": _backend_history_boundary(connection, since=since, until=until),
+        "raw_from": _backend_history_boundary(connection, since=since, now=now),
         "until": until,
     }
     with connection.cursor() as cursor:

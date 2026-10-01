@@ -13,7 +13,12 @@
 #}
 {% if traffic_named %}<div class="traffic-head"><code class="traffic-backend">{{ backend.series }}</code><span class="traffic-rate">Requests / {{ traffic_rate_unit }}</span></div>{% endif %}
 <div class="traffic-card">
-  {% if backend.measured %}
+  {#
+    Drawn whole whether or not the window holds samples: an empty line and a
+    row of dashes. A card that shrank to one line of "No samples yet." and grew
+    back when the readings arrived moved everything below it, and on a page of
+    cards that was the page jumping under the reader (2026-10-01).
+  #}
   <div class="traffic-body">
     {#
       The shape first and the figures after it, in reading order: the line
@@ -114,7 +119,4 @@
       </dl>
     </div>
   </div>
-  {% else %}
-  <p class="traffic-note">No samples yet.</p>
-  {% endif %}
 </div>

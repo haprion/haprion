@@ -103,6 +103,7 @@ class ThePoolFiguresQuery(unittest.TestCase):
             backend="mgd-site-web",
             since=at - timedelta(days=30),
             until=at,
+            now=at,
         )
 
         self.assertIn("metric_backend_member", connection.statement)
@@ -113,6 +114,32 @@ class ThePoolFiguresQuery(unittest.TestCase):
         self.assertEqual(
             [total.value for total in measured.totals], [100, 200, 300, 400, 500, 600, 700]
         )
+
+    def test_a_range_marked_weeks_ago_is_read_from_the_rollup_that_holds_it(self) -> None:
+        """The boundary is a week before now, not a week before the marks.
+
+        Seen 2026-10-01: 15-18 Sep marked on the 30-day window read 0 under a
+        visible peak, because the boundary counted from the marks' end put the
+        whole range on the raw side, where its rows had been pruned.
+        """
+
+        now = datetime(2026, 10, 1, 12, tzinfo=UTC)
+        pairs = [value for _counter in CARD_COUNTERS for value in (0, 0.0)]
+        connection = BackendTotalConnection(
+            (0, None, None, False, False, 0.0, 0.0, *pairs),
+            complete_before=now - timedelta(hours=1),
+        )
+
+        db.read_backend_totals(
+            connection,  # type: ignore[arg-type]
+            cluster="alpha",
+            backend="mgd-site-web",
+            since=datetime(2026, 9, 15, 20, tzinfo=UTC),
+            until=datetime(2026, 9, 18, 20, tzinfo=UTC),
+            now=now,
+        )
+
+        self.assertEqual(connection.arguments["raw_from"], now - timedelta(days=7))
 
     def test_an_incomplete_rollup_moves_the_reader_back_to_retained_raw_data(self) -> None:
         at = datetime(2026, 9, 6, 12, tzinfo=UTC)
@@ -129,6 +156,7 @@ class ThePoolFiguresQuery(unittest.TestCase):
             backend="mgd-site-web",
             since=at - timedelta(days=30),
             until=at,
+            now=at,
         )
 
         self.assertIn("metric_rollup_state", connection.statements[0])
@@ -146,6 +174,7 @@ class ThePoolFiguresQuery(unittest.TestCase):
             backend="mgd-site-web",
             since=since,
             until=at,
+            now=at,
         )
 
         self.assertEqual(connection.arguments["raw_from"], since)
@@ -165,6 +194,7 @@ class ThePoolFiguresQuery(unittest.TestCase):
             backend="mgd-site-web",
             since=at - timedelta(hours=1),
             until=at,
+            now=at,
         )
 
         self.assertEqual(measured.coverage, 83)

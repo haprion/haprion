@@ -1417,6 +1417,7 @@ def build_router(config: Config) -> APIRouter:
                             since=since,
                             until=now,
                             width=chosen.bucket,
+                            now=now,
                         ),
                         tick_format=chosen.tick,
                         start=since,
@@ -1429,6 +1430,7 @@ def build_router(config: Config) -> APIRouter:
                             backend=backend,
                             since=counted_since,
                             until=counted_until,
+                            now=now,
                         ),
                     )
                     for backend in served
@@ -1626,6 +1628,7 @@ def build_router(config: Config) -> APIRouter:
                         since=since,
                         until=now,
                         width=chosen.bucket,
+                        now=now,
                     )
 
                 def backend_totals(name: str, cluster: str = cluster) -> metrics.BackendMeasurement:
@@ -1635,6 +1638,7 @@ def build_router(config: Config) -> APIRouter:
                         backend=name,
                         since=counted_since,
                         until=counted_until,
+                        now=now,
                     )
 
                 targets = metrics.redirect_targets(_documents(object_rows, cluster))

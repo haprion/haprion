@@ -1890,7 +1890,9 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
  * eye, but it has to be there, because a partial sum that looks like a
  * whole one is the thing the coverage note exists to prevent.
  */
-.traffic-partial { color: var(--muted); cursor: help; font-size: 11px; vertical-align: super; margin-left: 1px; }
+/* Raised by position, not `vertical-align: super`: a superscript grows the line box, and the row of
+   figures was a third of a pixel taller with a star than without - the card moved as the pointer did. */
+.traffic-partial { color: var(--muted); cursor: help; font-size: 11px; position: relative; top: -0.5em; line-height: 0; margin-left: 1px; }
 .traffic-note { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
 /* The range switch, as one segmented control rather than four loose links:
    they are alternatives to each other, and a shared border is what says so.

@@ -54,11 +54,11 @@ def create_app(config: Config | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         #
-        # Eight rather than the default four: a traffic page reads its cards on
-        # up to `TRAFFIC_READERS` connections at once, and the rest of the
-        # interface must still find one while it does.
+        # Six rather than the default four: a traffic page reads its cards on
+        # `TRAFFIC_READERS` connections at once, and the rest of the interface
+        # must still find one while it does.
         #
-        connections = db.pool(settings.database, max_size=8)
+        connections = db.pool(settings.database, max_size=6)
         connections.open(wait=True, timeout=10)
         app.state.pool = connections
         try:

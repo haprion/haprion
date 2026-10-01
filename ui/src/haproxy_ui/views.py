@@ -243,13 +243,14 @@ def _log_time_filter(
 # How many of a traffic page's readings run at once, each on its own pooled
 # connection. Every card asks two questions - its line and its figures - and
 # the answers are independent, so asking them one after another only added
-# their times up: measured 2026-10-01 against a copy at production density
+# their times up. Measured 2026-10-01 against a copy at production density
 # (two clusters, a week of raw samples every 20 s, the hourly rollup behind
-# it), the 7- and 30-day windows took 1.24 s in sequence and 0.45 s four at a
-# time. Four, not more, so one page leaves half the web's pool to everybody
-# else; eight bought only 0.09 s more.
+# it) with PostgreSQL held to two CPUs, the size this installation is built
+# for: the 7- and 30-day windows took 1.28 s in sequence, 0.85 s two at a
+# time, and four bought nothing more on two cores - it only took them from the
+# poller and the worker.
 #
-TRAFFIC_READERS = 4
+TRAFFIC_READERS = 2
 
 
 def _read_concurrently[T](pool: Any, reads: Sequence[Callable[[Any], T]]) -> list[T]:

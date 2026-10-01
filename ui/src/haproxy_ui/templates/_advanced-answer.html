@@ -2,7 +2,8 @@
   What the advanced config dialog draws after Check or Save (Fas 17): every
   line of the text and what became of it, as `haproxy-objects --advanced`
   prints it, and the engine's refusal of the object when it has one. A save
-  that went through answers with where to go; `advanced.js` follows it.
+  that went through says so above the lines and names where to go; `advanced.js`
+  goes there when the dialog is closed.
 #}
 <div data-advanced-answer-body{% if saved %} data-advanced-saved="{{ saved }}"{% endif %}>
 {#
@@ -11,6 +12,7 @@
   carries it.
 #}
 {% set refused = answer.lines | selectattr('fate', 'equalto', 'refused') | list %}
+{% if saved %}<p class="advanced-saved"><strong>Saved as a draft.</strong> Close to see it on the page.</p>{% endif %}
 {% if answer.problem and not refused %}<p class="advanced-problem">{{ answer.problem }}</p>{% endif %}
 {% if answer.lines %}
 <table class="advanced-lines">

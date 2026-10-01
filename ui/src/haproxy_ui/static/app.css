@@ -2149,6 +2149,7 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .advanced-text { width: 100%; min-height: 16em; resize: vertical; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.55; tab-size: 4; white-space: pre; }
 .advanced-problem { margin: 0; color: var(--text); }
 .advanced-waiting { margin: 0; color: var(--muted); }
+.advanced-saved { margin: 0 0 8px; }
 .advanced-lines { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
 .advanced-lines th, .advanced-lines td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 .advanced-lines td:nth-child(3) { overflow-wrap: break-word; }

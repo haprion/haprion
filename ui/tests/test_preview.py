@@ -801,17 +801,83 @@ class WhereTheFormStops(unittest.TestCase):
     def test_only_a_second_route_is_still_out_of_reach(self) -> None:
         refused = self.golden()
 
-        #
-        # The advanced config (Fas 17) is the engine's before it is the form's:
-        # until the form carries the text through untouched, an object with one
-        # is refused here rather than opened and saved without it.
-        #
         self.assertEqual(
             refused,
             [
-                ("advanced/db.yaml", "advanced"),
-                ("advanced/shop.yaml", "a backend needs at least one server"),
                 ("monitors/probes.yaml", "routes"),
                 ("routes/shop.yaml", "routes"),
             ],
         )
+
+
+class TheAdvancedConfigIsCarriedThrough(unittest.TestCase):
+    """The form opens an object with advanced config and writes the text back unchanged.
+
+    The text is edited in its own dialog (Fas 17, B223); the form has no field
+    for it and must not be where it is lost. Nor a pool the text writes (B224):
+    the form shows no pool fields for one, and saves it as it found it.
+    """
+
+    GOLDEN = Path(__file__).resolve().parents[2] / "tests" / "golden" / "advanced"
+
+    def round_trip(self, name: str) -> tuple[dict[str, object], dict[str, object]]:
+        stored = (self.GOLDEN / f"{name}.yaml").read_text(encoding="utf-8")
+        return yaml.safe_load(stored), yaml.safe_load(build_document(form_from_document(stored)))
+
+    def test_the_text_comes_back_byte_for_byte(self) -> None:
+        for name in ("db", "shop"):
+            with self.subTest(name):
+                stored, written = self.round_trip(name)
+                self.assertEqual(written["advanced"], stored["advanced"])
+
+    def test_a_pool_the_text_writes_stays_empty_and_alone(self) -> None:
+        stored, written = self.round_trip("shop")
+
+        self.assertEqual(written["backends"], {"web": {"servers": []}})
+        self.assertEqual(written["backends"], stored["backends"])
+
+    def test_pool_fields_left_on_the_form_do_not_reach_a_written_pool(self) -> None:
+        document = yaml.safe_load(
+            build_document(
+                form(
+                    protocol="http",
+                    servers="",
+                    balance="leastconn",
+                    cookie="SRV",
+                    max_connections="50",
+                    handwritten_pool=True,
+                    advanced="server app1 198.51.100.20:8080\n",
+                )
+            )
+        )
+
+        self.assertEqual(document["backends"], {"web": {"servers": []}})
+
+    def test_the_line_ends_a_browser_sends_change_nothing(self) -> None:
+        document = build_document(form(advanced="timeout server 2m   \r\nretries 5\r\n\r\n"))
+
+        self.assertEqual(yaml.safe_load(document)["advanced"], "timeout server 2m\nretries 5\n")
+        self.assertIn("advanced: |", document)
+
+    def test_an_empty_text_is_no_advanced_config(self) -> None:
+        document = yaml.safe_load(build_document(form(advanced=" \r\n\n")))
+
+        self.assertNotIn("advanced", document)
+
+    def test_a_text_the_engine_would_store_differently_still_opens(self) -> None:
+        stored = (self.GOLDEN / "db.yaml").read_text(encoding="utf-8")
+        loose = stored.replace("retries 5\n", "retries 5   \n")
+        self.assertNotEqual(yaml.safe_load(loose)["advanced"], yaml.safe_load(stored)["advanced"])
+
+        written = yaml.safe_load(build_document(form_from_document(loose)))
+
+        self.assertEqual(written["advanced"], yaml.safe_load(stored)["advanced"])
+
+    def test_advanced_config_that_is_not_text_is_refused_rather_than_dropped(self) -> None:
+        stored = yaml.safe_load((self.GOLDEN / "db.yaml").read_text(encoding="utf-8"))
+        stored["advanced"] = ["retries 5"]
+
+        with self.assertRaises(Unexpressible) as refusal:
+            form_from_document(yaml.safe_dump(stored))
+
+        self.assertIn("advanced", str(refusal.exception))

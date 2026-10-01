@@ -239,6 +239,13 @@ ALWAYS_SHOWN = (
     "health_expect",
 )
 
+#
+# Never drawn as fields: handed back unchanged in hidden inputs (Fas 17). The
+# advanced config is edited in the object's own dialog, and a pool it writes
+# has no fields on this form.
+#
+CARRIED = ("advanced", "handwritten_pool")
+
 
 def form_groups(form: Mapping[str, Any]) -> dict[str, GroupState]:
     """Each group's title and the line it shows while closed."""

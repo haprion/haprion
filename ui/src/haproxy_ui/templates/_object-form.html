@@ -25,6 +25,14 @@
 #}
 {% macro when(field, values) %} data-show-when="{{ field }}:{{ values }}"{% if form[field] not in values.split() %} hidden{% endif %}{% endmacro %}
 
+{#
+  Carried, not shown (Fas 17): the advanced config is edited in the object's own
+  dialog, and a pool it writes has no fields here. Handing both back unchanged is
+  what keeps a save from this form from dropping them.
+#}
+<input type="hidden" name="advanced" value="{{ form.advanced }}">
+{% if form.handwritten_pool %}<input type="hidden" name="handwritten_pool" value="on">{% endif %}
+
 {% macro group(state, shown='') %}
 <details class="form-group"{{ shown }}>
   <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title">{{ state.title }}</span><span class="form-group-summary" data-group-summary title="{{ state.summary }}">{{ state.summary }}</span></summary>
@@ -116,6 +124,9 @@
     <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Backend</h3></div></div></header>
     <div class="form-grid">
       <label>Backend name<input name="backend" value="{{ form.backend }}" placeholder="web"></label>
+      {% if form.handwritten_pool %}
+      <div class="field"><span class="field-title">Servers</span><small>Written in the advanced config, with balancing and checks.</small></div>
+      {% else %}
       <label>Servers<textarea name="servers" rows="3" placeholder="198.51.100.10:8080">{{ form.servers }}</textarea><small>One <code>address</code> or <code>hostname:port</code> per line. Add <code>backup</code> after one to make it a standby.</small></label>
       <label>Balancing
         <select name="balance">
@@ -123,6 +134,7 @@
         </select>
       </label>
       <label class="keyed-only" data-balances="hdr url_param"{{ when('balance', 'hdr url_param') }}>Balancing key<input name="balance_key" value="{{ form.balance_key }}" placeholder="X-Tenant"{% if form.balance not in ["hdr", "url_param"] %} disabled{% endif %}><small>The header or query parameter that picks the server.</small></label>
+      {% endif %}
     </div>
 
     <div class="form-groups">
@@ -136,6 +148,7 @@
         </select>
         <small>Which address it connects out from.</small>
       </label>
+      {% if not form.handwritten_pool %}
       <label>Backend TLS
         <select name="backend_tls">
           <option value=""{% if not form.backend_tls %} selected{% endif %}>Plain HTTP</option>
@@ -154,6 +167,7 @@
       <label{{ when('protocol', 'http https') }}><span class="field-title">Session cookie <span class="optional">(optional)</span></span><input name="cookie" value="{{ form.cookie }}" placeholder="{{ suggested_cookie }}"><small>Empty means no persistence.</small></label>
       <label><span class="field-title">Connections per server <span class="optional">(optional)</span></span><input name="max_connections" value="{{ form.max_connections }}" size="10" placeholder="50"><small>The rest queue for 5 s.</small></label>
       <label><span class="field-title">Slow start <span class="optional">(optional)</span></span><input name="slow_start" value="{{ form.slow_start }}" size="10" placeholder="30s"><small>Needs a health check; longer than the <span class="slow-start-interval" data-default="{{ check_interval }}">{{ form.health_interval or check_interval }}</span> check interval.</small></label>
+      {% endif %}
     </div>
     {% endcall %}
 
@@ -193,6 +207,7 @@
     </div>
   </section>
 
+  {% if not form.handwritten_pool %}
   <section class="cluster-card object-card {{ accent | accent_class }}">
     <header class="cluster-header">
       <div class="cluster-identity"><div class="section-title"><h3>Health check <span class="optional">(optional)</span></h3></div></div>
@@ -281,3 +296,4 @@
     </div>
     {% endif %}
   </section>
+  {% endif %}

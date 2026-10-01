@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from haproxy_mgmt.advanced import normalise as normalise_advanced
 from haproxy_mgmt.config import AbuseProtection, Cluster, Node, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, generate
 from haproxy_mgmt.proxy_model import (
@@ -157,6 +158,13 @@ DEFAULTS = {
     "redirect_match": "prefix",
     "redirect_location": "",
     "redirect_status": "301",
+    #
+    # Carried, not shown (Fas 17, B223, B224): the object's advanced config is
+    # edited in its own dialog, and the form only has to hand it back unchanged.
+    # So does a pool the text writes - the form has no fields for it then.
+    #
+    "advanced": "",
+    "handwritten_pool": False,
 }
 
 
@@ -468,7 +476,7 @@ def build_document(form: dict[str, object]) -> str:
     backend: dict[str, object] = {
         "balance": text("balance"),
         "health": health,
-        "servers": _servers(text("servers")),
+        "servers": [] if flag("handwritten_pool") else _servers(text("servers")),
     }
     if text("balance_key"):
         backend["balance_key"] = text("balance_key")
@@ -493,6 +501,13 @@ def build_document(form: dict[str, object]) -> str:
         backend["max_connections"] = int(limit)
     if text("slow_start"):
         backend["slow_start"] = text("slow_start")
+    #
+    # A pool the advanced config writes is `servers: []` and nothing else (B224).
+    # The form shows no pool fields for it, so whatever they still hold is not
+    # something anybody chose for this object.
+    #
+    if flag("handwritten_pool"):
+        backend = {"servers": []}
 
     hostnames = [name.strip() for name in text("hostnames").replace(",", "\n").splitlines()]
     #
@@ -587,6 +602,15 @@ def build_document(form: dict[str, object]) -> str:
     }
     if any(headers.values()):
         document["headers"] = {phase: edits for phase, edits in headers.items() if edits}
+
+    #
+    # Not stripped like the fields above: the first line's indentation is part of
+    # the text. Normalised as the engine stores it, so carrying it through the
+    # browser - which sends its line ends as CRLF - changes nothing.
+    #
+    advanced = normalise_advanced(str(form.get("advanced", "") or ""))
+    if advanced:
+        document["advanced"] = advanced
 
     return dump_document(document)
 
@@ -875,7 +899,9 @@ def form_from_document(document: str, *, networks: Collection[str] = ()) -> dict
         rebuilt = read_document("object", build_document(form).encode())
     except (ModelError, ValueError) as exc:
         raise Unexpressible(str(exc)) from exc
-    difference = _first_difference(_without_a_redundant_check_protocol(data), rebuilt)
+    difference = _first_difference(
+        _with_normalised_advanced(_without_a_redundant_check_protocol(data)), rebuilt
+    )
     if difference:
         raise Unexpressible(difference)
     return form
@@ -983,7 +1009,27 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
         ),
         "redirect_location": str(redirect.get("location", "") or ""),
         "redirect_status": str(redirect.get("status", "") or ""),
+        #
+        # Text only. Anything else is left out here, so the round trip finds the
+        # difference and the object is refused rather than saved without it.
+        #
+        "advanced": data["advanced"] if isinstance(data.get("advanced"), str) else "",
+        "handwritten_pool": backend.get("servers") == [],
     }
+
+
+def _with_normalised_advanced(data: Any) -> Any:
+    """The stored object with its advanced config as the engine would store it.
+
+    A file written by hand may end a line in blanks or carry no final newline,
+    and the form writes the text back normalised. That is one change to the
+    text, made the same way `haproxy-objects` makes it, and not a reason to
+    refuse the object.
+    """
+
+    if not isinstance(data, Mapping) or not isinstance(data.get("advanced"), str):
+        return data
+    return {**data, "advanced": normalise_advanced(data["advanced"])}
 
 
 def _without_a_redundant_check_protocol(data: Any) -> Any:

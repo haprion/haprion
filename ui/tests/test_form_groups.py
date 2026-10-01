@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from haproxy_ui.form_groups import ALWAYS_SHOWN, GROUPS, form_groups
+from haproxy_ui.form_groups import ALWAYS_SHOWN, CARRIED, GROUPS, form_groups
 from haproxy_ui.preview import DEFAULTS
 
 
@@ -16,7 +16,11 @@ class EveryFieldHasExactlyOnePlace(unittest.TestCase):
     """A field added to the form and to neither list would be drawn nowhere."""
 
     def test_the_groups_and_the_short_list_cover_the_form_once(self) -> None:
-        placed = list(ALWAYS_SHOWN) + [field for group in GROUPS.values() for field in group.fields]
+        placed = [
+            *ALWAYS_SHOWN,
+            *CARRIED,
+            *(field for group in GROUPS.values() for field in group.fields),
+        ]
 
         self.assertEqual(sorted(placed), sorted(set(placed)), "a field sits in two places")
         self.assertEqual(set(placed), set(DEFAULTS))

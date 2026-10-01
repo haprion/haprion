@@ -313,6 +313,12 @@ class ObjectForm(BaseModel):
     redirect_match: Annotated[str, StringConstraints(max_length=8)] = "prefix"
     redirect_location: Annotated[str, StringConstraints(max_length=1024)] = ""
     redirect_status: Annotated[str, StringConstraints(max_length=3)] = "301"
+    #
+    # Carried through unchanged (Fas 17): edited in the object's own dialog, not
+    # here. Bounded well inside the draft's own limit.
+    #
+    advanced: Annotated[str, StringConstraints(max_length=65536)] = ""
+    handwritten_pool: bool = False
 
     #
     # The three fields that are about the submission rather than about the

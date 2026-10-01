@@ -8,12 +8,16 @@ that must not become a saved draft.
 
 from __future__ import annotations
 
+import html
+import re
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 from uuid import uuid4
+
+import yaml
 
 from haproxy_ui import auth, db, health
 from haproxy_ui import probe as probe_module
@@ -1185,3 +1189,87 @@ class RemovingAnObject(EditorTestCase):
         self.sign_in(client)
 
         self.assertEqual(client.get("/proxies/alpha/shop/remove").status_code, 404)
+
+
+HANDWRITTEN = """schema: 1
+name: shop
+hostnames:
+- shop.example.com
+listen:
+  protocol: http
+routes:
+- path: /
+  backend: web
+backends:
+  web:
+    servers: []
+advanced: |
+  balance leastconn
+  server app1 192.0.2.30:8080 check
+  http-request set-header X-Seen "%[src]"
+"""
+
+
+class TheAdvancedConfigSurvivesTheForm(EditorTestCase):
+    """Edit and Save keep an object's advanced config, which the form does not show (Fas 17)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.draft = ProxyDraft(
+            cluster="alpha",
+            object_id="shop",
+            yaml=HANDWRITTEN,
+            base_version=12,
+            base_hash=COMMIT,
+            revision=3,
+            updated_by="operator",
+            updated_at=OBSERVED,
+            deleted=False,
+        )
+
+    def carried(self, page: str, name: str) -> str | None:
+        found = re.search(rf'<input type="hidden" name="{name}" value="([^"]*)">', page)
+        return html.unescape(found.group(1)) if found else None
+
+    def test_the_page_carries_the_text_and_shows_no_pool_fields(self) -> None:
+        page = self.editor().get("/proxies/alpha/shop/edit").text
+
+        self.assertEqual(self.carried(page, "advanced"), yaml.safe_load(HANDWRITTEN)["advanced"])
+        self.assertEqual(self.carried(page, "handwritten_pool"), "on")
+        self.assertNotIn('name="servers"', page)
+        self.assertNotIn('name="balance"', page)
+        self.assertNotIn('name="health_type"', page)
+        self.assertIn("Written in the advanced config", page)
+
+    def test_a_save_writes_the_text_back_as_it_was(self) -> None:
+        client = self.editor()
+        page = client.get("/proxies/alpha/shop/edit").text
+        #
+        # As a browser posts it: every line ending in CRLF.
+        #
+        text = self.carried(page, "advanced") or ""
+        self.assertTrue(text)
+
+        answer = self.submit(
+            client,
+            "/proxies/alpha/shop/edit",
+            action="save",
+            expected_revision="3",
+            servers="",
+            advanced=text.replace("\n", "\r\n"),
+            handwritten_pool="on",
+        )
+
+        self.assertEqual(answer.status_code, 303)
+        saved = yaml.safe_load(self.saved[0]["yaml"])
+        self.assertEqual(saved["advanced"], yaml.safe_load(HANDWRITTEN)["advanced"])
+        self.assertEqual(saved["backends"], {"web": {"servers": []}})
+
+    def test_an_object_without_text_carries_an_empty_one(self) -> None:
+        self.draft = None
+
+        page = self.editor().get("/proxies/alpha/shop/edit").text
+
+        self.assertEqual(self.carried(page, "advanced"), "")
+        self.assertIsNone(self.carried(page, "handwritten_pool"))
+        self.assertIn('name="servers"', page)

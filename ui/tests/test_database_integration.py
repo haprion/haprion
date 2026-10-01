@@ -329,7 +329,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0048",))
+            self.assertEqual(cursor.fetchone(), ("0049",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -2067,7 +2067,7 @@ class AccountsFromTheWeb(unittest.TestCase):
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class FeatureSwitchesFromTheWeb(unittest.TestCase):
-    """Migrations 0040 and 0042: switches the web flips and nothing more (B193, B204)."""
+    """Migrations 0040, 0042 and 0049: switches the web flips and nothing more (B193, B204, B224)."""
 
     def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
@@ -2086,12 +2086,39 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
 
         self.assertEqual(
             {name: switch.enabled for name, switch in switches.items()},
-            {"cert_receivers": False, "node_backups": False, "cluster_colours": True},
+            {
+                "cert_receivers": False,
+                "node_backups": False,
+                "cluster_colours": True,
+                "advanced_config": False,
+            },
         )
+
+    def test_the_advanced_config_switch_downgrades_and_upgrades_cleanly(self) -> None:
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                migration = _migration("0049_advanced_config_switch.py", cursor)
+                migration.downgrade()
+                cursor.execute("select name from feature_switch order by name")
+                self.assertEqual(
+                    cursor.fetchall(),
+                    [("cert_receivers",), ("cluster_colours",), ("node_backups",)],
+                )
+                with self.assertRaises(psycopg.errors.CheckViolation):
+                    cursor.execute("insert into feature_switch (name) values ('advanced_config')")
+            connection.rollback()
+            with connection.cursor() as cursor:
+                migration = _migration("0049_advanced_config_switch.py", cursor)
+                migration.downgrade()
+                migration.upgrade()
+                cursor.execute("select enabled from feature_switch where name = 'advanced_config'")
+                self.assertEqual(cursor.fetchone(), (False,))
+            connection.rollback()
 
     def test_the_colours_switch_downgrades_and_upgrades_cleanly(self) -> None:
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                _migration("0049_advanced_config_switch.py", cursor).downgrade()
                 migration = _migration("0042_cluster_colours_switch.py", cursor)
                 migration.downgrade()
                 cursor.execute("select name from feature_switch order by name")
@@ -2100,6 +2127,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
                     cursor.execute("insert into feature_switch (name) values ('cluster_colours')")
             connection.rollback()
             with connection.cursor() as cursor:
+                _migration("0049_advanced_config_switch.py", cursor).downgrade()
                 migration = _migration("0042_cluster_colours_switch.py", cursor)
                 migration.downgrade()
                 migration.upgrade()

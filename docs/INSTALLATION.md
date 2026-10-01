@@ -3371,6 +3371,10 @@ being ungranted would matter.
   (at most a day) — **except each name's newest successful attempt**, which is
   what *Last sign-in* on the Users page reads. A break-glass account may go
   unused for longer than ninety days and must not then read as never used.
+- **Diffs of versions no longer listed** (schema `0046`). The poller keeps what
+  each version changed and may only add; after a history reset, or once a
+  version is older than the listing reaches, its diff is removed here. A cluster
+  whose last listing failed is left alone.
 - **Never the audit trail.** It is the record of what every identity did and
   is kept for the life of the installation.
 

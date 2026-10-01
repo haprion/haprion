@@ -218,6 +218,47 @@ oidc_logins() {
     log "  oidc_login: removed ${removed} row(s) older than ${OIDC_LOGIN_KEEP_HOURS} hour(s)"
 }
 
+version_diffs_present() {
+    [[ "$(psql_as -c "select to_regclass('public.version_diff') is not null")" == "t" ]]
+}
+
+#
+# A kept diff whose version is no longer listed (a history reset, a removed
+# cluster) or older than the listing reaches. The poller may only add diffs, so
+# this is the one place they go. A cluster whose last listing failed is left
+# alone: an unreadable history says nothing about which versions exist.
+#
+where_version_diff_unlisted() {
+    echo "not exists (select 1 from cluster_history history,
+                          jsonb_array_elements(case jsonb_typeof(history.result -> 'versions')
+                              when 'array' then history.result -> 'versions' else '[]'::jsonb end)
+                          as listed(version)
+                    where history.cluster = version_diff.cluster
+                      and listed.version ->> 'hash' = version_diff.commit)
+          and not exists (select 1 from cluster_history unread
+                           where unread.cluster = version_diff.cluster
+                             and unread.outcome <> 'done')"
+}
+
+version_diffs() {
+    local unlisted removed
+    version_diffs_present || return 0
+    unlisted="$(psql_as -c "select count(*) from version_diff where $(where_version_diff_unlisted)")"
+    if [[ "$command" == "report" ]]; then
+        log "  version_diff: $(psql_as -c 'select count(*) from version_diff') row(s), ${unlisted} for versions no longer listed"
+        return 0
+    fi
+    if [[ "$dry_run" -eq 1 ]]; then
+        log "  version_diff: dry run, would remove ${unlisted} row(s)"
+        return 0
+    fi
+    removed="$(psql_as -c "with removed as (
+                              delete from version_diff where $(where_version_diff_unlisted)
+                              returning 1
+                           ) select count(*) from removed")"
+    log "  version_diff: removed ${removed} row(s) for versions no longer listed"
+}
+
 where_session_ended() {
     echo "coalesce(revoked_at, expires_at) < statement_timestamp() - make_interval(days => ${SESSION_KEEP_DAYS})"
 }
@@ -636,6 +677,7 @@ main() {
                 log "  traffic_log: $(psql_as -c 'select count(*) from traffic_log') row(s), retention ${TRAFFIC_KEEP_DAYS} day(s)"
             fi
             oidc_logins
+            version_diffs
             account_history
             ;;
         prune)
@@ -659,6 +701,7 @@ main() {
                 metric_partitions_prune
             fi
             oidc_logins
+            version_diffs
             account_history
             if [[ "$dry_run" -eq 1 ]]; then
                 log "  dry run: nothing was deleted"

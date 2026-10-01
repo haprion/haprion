@@ -62,7 +62,11 @@ type Field = Callable[[str, str], str]
 
 
 def run_list_helper(
-    cluster_id: str, request_id: str, *, limit: int | None = None
+    cluster_id: str,
+    request_id: str,
+    *,
+    limit: int | None = None,
+    diffs: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     """Ask the privileged helper for one cluster's version history.
 
@@ -71,15 +75,20 @@ def run_list_helper(
     not, and because the request must be built by the code that owns the
     operation rather than a second time in the web tree.
 
-    `limit` is left out when not given, and the helper lists its ten.
+    `limit` is left out when not given, and the helper lists its ten. `diffs`
+    names versions, by commit hash, whose changes the answer should carry too.
     """
+
+    parameters: dict[str, object] = {} if limit is None else {"limit": limit}
+    if diffs:
+        parameters["diffs"] = list(diffs)
 
     request = {
         "schema_version": 1,
         "operation": OPERATION,
         "cluster": cluster_id,
         "request_id": request_id,
-        "parameters": {} if limit is None else {"limit": limit},
+        "parameters": parameters,
     }
     return subprocess.run(  # noqa: S603 - fixed path, no caller-supplied arguments
         [SUDO, "-n", HELPER],

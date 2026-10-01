@@ -595,7 +595,7 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    out proportionally instead of giving it to the comment. Measured 2026-09-10 -
    the comment column was 297px wide in a 1500px table. */
 .version-table th:nth-child(4), .version-table td:nth-child(4) { width: auto; }
-.version-table th:nth-child(5), .version-table td:nth-child(5) { width: 170px; }
+.version-table th:nth-child(5), .version-table td:nth-child(5) { width: 250px; }
 .version-table td { padding-top: 6px; padding-bottom: 6px; vertical-align: middle; }
 .version-table th { padding-top: 7px; padding-bottom: 7px; }
 .published-badge { display: inline-flex; align-items: center; min-height: 21px; padding: 2px 8px; border-radius: 999px; color: var(--text-primary); background: var(--unknown-soft); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
@@ -612,6 +612,33 @@ a.secondary-button, a.danger-button { display: inline-flex; align-items: center;
    something an operator might reasonably press. */
 .version-current { color: var(--muted); font-size: 11px; }
 .version-table form { margin: 0; }
+.version-actions { display: flex; align-items: center; gap: 8px; }
+/*
+ * What one version changed (B220): a dialog on the Versions page, the same
+ * section as a page of its own without script. Long lines wrap rather than
+ * scroll sideways; the dialog scrolls down, the page behind it does not move.
+ */
+.version-changes-dialog { width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 64px); padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel-raised); color: var(--text-primary); box-shadow: var(--shadow-menu); }
+.version-changes-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.version-changes-dialog .version-changes { padding: 16px 20px 20px; }
+.version-changes-close { position: sticky; top: 0; float: right; margin: 10px 12px 0 0; z-index: 1; }
+.version-changes { display: grid; gap: 14px; min-width: 0; }
+.version-changes-head h2 { margin: 0; color: var(--text-strong); font-size: 16px; }
+.version-changes-head p { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.version-changes-head .version-comment { color: var(--text-primary); }
+.diff-file { min-width: 0; }
+.diff-file h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0 0 6px; font-size: 12px; font-weight: 600; }
+.diff-path { overflow-wrap: anywhere; color: var(--text-strong); font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+.diff-status { color: var(--muted); font-weight: 400; }
+.diff-added { color: var(--healthy); }
+.diff-removed { color: var(--critical); }
+.diff-lines { margin: 0; padding: 6px 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--panel-soft); font: 12px/1.5 ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-lines > span { display: block; padding: 0 12px; }
+.diff-lines > .diff-add { background: var(--healthy-soft); }
+.diff-lines > .diff-del { background: var(--critical-soft); }
+.diff-lines > .diff-hunk { color: var(--muted); }
+.page-back { margin: 0 0 12px; font-size: 12px; }
+.page-back a { color: var(--muted); }
 /* The row's button no taller than the Published badge, so every row keeps the published row's height. */
 .version-table .secondary-button { min-height: 21px; padding: 0 10px; }
 /* "Does not deploy" used to sit under every button, which stacked the action

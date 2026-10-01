@@ -43,6 +43,60 @@
   };
 
   //
+  // What one version changed (B220), in a dialog. The button is a link to the
+  // version's own page; with script that page is fetched and its section lifted
+  // into one dialog shared by every row. Escape and the close button shut it
+  // (the browser's own <dialog> behaviour), and so does a click outside it.
+  //
+  let dialog = null;
+  const ensureDialog = () => {
+    if (dialog) return dialog;
+    dialog = document.createElement("dialog");
+    dialog.className = "version-changes-dialog";
+    dialog.setAttribute("aria-label", "Changes in this version");
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "secondary-button version-changes-close";
+    close.textContent = "Close";
+    close.addEventListener("click", () => dialog.close());
+    const holder = document.createElement("div");
+    holder.dataset.versionChangesHolder = "";
+    dialog.append(close, holder);
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    document.body.append(dialog);
+    return dialog;
+  };
+  const openChanges = async (link) => {
+    const shown = ensureDialog();
+    const holder = shown.querySelector("[data-version-changes-holder]");
+    holder.replaceChildren();
+    const waiting = document.createElement("p");
+    waiting.className = "table-note";
+    waiting.textContent = "Reading…";
+    holder.append(waiting);
+    shown.showModal();
+    try {
+      const response = await fetch(link.href, { credentials: "same-origin" });
+      if (!response.ok) throw new Error(String(response.status));
+      const page = new DOMParser().parseFromString(await response.text(), "text/html");
+      const body = page.querySelector("[data-version-changes-body]");
+      if (!body) throw new Error("no changes section");
+      holder.replaceChildren(document.importNode(body, true));
+    } catch {
+      waiting.textContent = "Could not be read. Open the version's own page instead.";
+    }
+  };
+  document.addEventListener("click", (event) => {
+    const link = event.target instanceof Element ? event.target.closest("[data-version-changes]") : null;
+    if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+    if (typeof HTMLDialogElement === "undefined") return;
+    event.preventDefault();
+    openChanges(link);
+  });
+
+  //
   // On load, and again when waiting.js has swapped in the page's content.
   //
   const wireAll = () => document.querySelectorAll("[data-version-list]").forEach(page);

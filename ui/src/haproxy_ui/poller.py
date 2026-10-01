@@ -22,6 +22,7 @@ is killed without cleanup - which is exactly the case a lock file gets wrong.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -38,6 +39,7 @@ from haproxy_mgmt.cli.cluster_settings import run_settings_helper
 from haproxy_mgmt.cli.inventory import run_inventory_helper
 from haproxy_mgmt.cli.list import run_list_helper
 from haproxy_mgmt.cli.list_backups import run_list_backups_helper
+from haproxy_mgmt.cli.list_helper import MAX_DIFFS
 from haproxy_mgmt.cli.network import run_network_helper
 from haproxy_mgmt.cli.objects import run_objects_helper
 from haproxy_mgmt.cli.status import run_status_helper
@@ -109,16 +111,23 @@ class Source:
     # reachability.
     #
     sample: Callable[..., int] | None = None
+    #
+    # What to ask for beyond the reading itself, decided from what is already
+    # kept. The version listing uses it to name the versions whose diff it has
+    # not fetched yet (B220, 2026-10-01): a diff never changes, so each one is
+    # asked for once, a few per pass, rather than on every pass.
+    #
+    asks: Callable[[Any, str], Mapping[str, Any]] | None = None
 
 
-def _list_every_version(cluster: str, request_id: str) -> Any:
+def _list_every_version(cluster: str, request_id: str, *, diffs: tuple[str, ...] = ()) -> Any:
     """Every version up to the helper's ceiling, not the terminal's ten.
 
     The Versions page pages through them in the browser (Fas 14 point 8), so a
     version older than the tenth is on the page rather than only in git.
     """
 
-    return run_list_helper(cluster, request_id, limit=MAX_LIST_LIMIT)
+    return run_list_helper(cluster, request_id, limit=MAX_LIST_LIMIT, diffs=diffs)
 
 
 def _list_every_backup(cluster: str, request_id: str) -> Any:
@@ -142,7 +151,15 @@ SOURCES: tuple[Source, ...] = (
         sample=db.record_metric_samples,
     ),
     Source("inventory", run_inventory_helper, db.record_cluster_inventory),
-    Source("list", _list_every_version, db.record_cluster_history),
+    Source(
+        "list",
+        _list_every_version,
+        db.record_cluster_history,
+        sample=db.record_version_diffs,
+        asks=lambda connection, cluster: {
+            "diffs": db.versions_without_diff(connection, cluster=cluster, limit=MAX_DIFFS)
+        },
+    ),
     Source("list_backups", _list_every_backup, db.record_cluster_backups, partial_ok=True),
     Source("cert_list", run_cert_list_helper, db.record_cluster_certificates),
     Source("network", run_network_helper, db.record_cluster_network),
@@ -325,8 +342,19 @@ def _poll_cluster_sources(pool: Any, cluster: str, sources: tuple[Source, ...]) 
 
     healthy = 0
     for source in sources:
+        run = source.run
+        if source.asks is not None:
+            try:
+                with pool.connection() as connection:
+                    extra = source.asks(connection, cluster)
+            except Exception as exc:  # noqa: BLE001 - the reading itself must still be made
+                logger.warning(
+                    "cluster %s %s: extra request not built: %s", cluster, source.operation, exc
+                )
+                extra = {}
+            run = functools.partial(source.run, **extra)
         reading = poll_cluster(
-            cluster, source.run, operation=source.operation, partial_ok=source.partial_ok
+            cluster, run, operation=source.operation, partial_ok=source.partial_ok
         )
         with pool.connection() as connection:
             source.record(

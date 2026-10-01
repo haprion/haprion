@@ -8,6 +8,7 @@ unable to tell a broken sudoers rule from a broken cluster.
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import json
 import subprocess
@@ -379,6 +380,45 @@ class TheClusterList(unittest.TestCase):
         poller.poll_once(Pool(), configured, (source,), clusters=("gamma", "delta"))
 
         self.assertCountEqual(asked, ["gamma", "delta"])
+
+    def test_a_source_s_extra_request_is_built_from_what_is_kept(self) -> None:
+        """The listing asks for the diffs it has not kept yet (B220); a failure there costs only that."""
+
+        class Pool:
+            def connection(self) -> Any:
+                return self
+
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *_: object) -> None:
+                return None
+
+            def commit(self) -> None:
+                return None
+
+        calls: list[dict[str, Any]] = []
+
+        def helper(_cluster: str, _request: str, **extra: Any) -> Any:
+            calls.append(extra)
+            return completed(envelope())
+
+        def broken(_connection: Any, _cluster: str) -> dict[str, Any]:
+            raise RuntimeError("no database")
+
+        for asks, expected in (
+            (lambda _connection, cluster: {"diffs": (cluster * 40,)}, {"diffs": ("a" * 40,)}),
+            (broken, {}),
+        ):
+            calls.clear()
+            source = poller.Source("status", helper, lambda _c, **_k: None, asks=asks)
+            with (
+                self.assertLogs("haproxy_ui.poller", level="WARNING")
+                if asks is broken
+                else contextlib.nullcontext()
+            ):
+                poller._poll_cluster_sources(Pool(), "a", (source,))
+            self.assertEqual(calls, [expected])
 
     def test_the_clusters_are_read_at_once(self) -> None:
         """Fas 16 punkt 1: a pass takes as long as its slowest cluster, not their sum."""

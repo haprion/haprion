@@ -27,6 +27,7 @@ from haproxy_mgmt.traffic_collector import (
     _mirror_window,
     forget_database_positions,
 )
+from psycopg.types.json import Jsonb
 
 from haproxy_ui import auth, db, traffic_logs
 
@@ -120,6 +121,69 @@ class ARealDatabase(unittest.TestCase):
             removable = {row[0].rstrip("-") for row in cursor.fetchall()}
             self.assertEqual(removable, {"yesterday"})
             connection.rollback()
+
+    def test_retention_removes_diffs_for_versions_no_longer_listed(self) -> None:
+        """The poller only adds diffs; the retention command is what removes them."""
+
+        clause = self.retention_clause("where_version_diff_unlisted", "VERSION_DIFF_NONE")
+        listed, gone, other = "a" * 40, "b" * 40, "c" * 40
+        with self.connect() as connection, connection.cursor() as cursor:
+            for cluster, outcome, versions in (
+                ("vd-done", "done", [{"hash": listed}]),
+                ("vd-unread", "failed", []),
+            ):
+                cursor.execute(
+                    "insert into cluster_history (cluster, outcome, result) values (%s, %s, %s)",
+                    (cluster, outcome, Jsonb({"versions": versions})),
+                )
+            for cluster, commit in (
+                ("vd-done", listed),
+                ("vd-done", gone),
+                ("vd-unread", other),
+                ("vd-removed", other),
+            ):
+                cursor.execute(
+                    "insert into version_diff (cluster, commit, diff) values (%s, %s, '{}')",
+                    (cluster, commit),
+                )
+            cursor.execute(f"select cluster, commit from version_diff where {clause}")  # noqa: S608 - the script's own
+            removable = set(cursor.fetchall())
+            connection.rollback()
+        self.assertEqual(removable, {("vd-done", gone), ("vd-removed", other)})
+
+    def test_the_poller_asks_for_the_newest_versions_it_has_no_diff_for(self) -> None:
+        hashes = [f"{n:x}" * 40 for n in range(1, 5)]
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "insert into cluster_history (cluster, outcome, result) values (%s, 'done', %s)",
+                ("vd-ask", Jsonb({"versions": [{"hash": h} for h in hashes], "diffs": {}})),
+            )
+        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+            self.assertEqual(
+                db.record_version_diffs(
+                    connection,
+                    cluster="vd-ask",
+                    result={"diffs": {hashes[0]: {"files": []}, "not-a-hash": {}}},
+                ),
+                1,
+            )
+            connection.commit()
+            self.assertEqual(
+                db.versions_without_diff(connection, cluster="vd-ask", limit=2), tuple(hashes[1:3])
+            )
+            self.assertEqual(
+                db.record_version_diffs(
+                    connection, cluster="vd-ask", result={"diffs": {hashes[0]: {"files": [1]}}}
+                ),
+                0,
+                "kept once; never replaced",
+            )
+            connection.commit()
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            self.assertEqual(
+                db.read_version_diff(connection, cluster="vd-ask", commit=hashes[0]), {"files": []}
+            )
+            self.assertIsNone(db.read_version_diff(connection, cluster="vd-ask", commit=hashes[1]))
 
     def retention_clause(self, function: str, keep: str) -> str:
         script = Path(__file__).resolve().parents[2] / "install/platform/bin/haproxy-ui-retention"
@@ -264,7 +328,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0045",))
+            self.assertEqual(cursor.fetchone(), ("0046",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -833,8 +897,8 @@ class ARealDatabase(unittest.TestCase):
     def test_the_dashboard_sums_every_frontend_the_way_each_card_counts_one(self) -> None:
         """B220, 2026-10-01: one query for the dashboard, the card's own arithmetic.
 
-        Two frontends in `alpha` - one restarting part way - a frontend in
-        `beta` that is not asked for, and a node that does not hold the VIP.
+        Two frontends in `dash-a` - one restarting part way - a frontend in
+        `dash-b` that is not asked for, and a node that does not hold the VIP.
         The sum must be the two cards' figures added, so the dashboard and the
         metrics page cannot disagree about what a counter did.
         """
@@ -842,16 +906,16 @@ class ARealDatabase(unittest.TestCase):
         start = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(minutes=30)
         rows = [
             # (cluster, node, frontend, minute, owns_vip, uptime, req_tot, bin, bout)
-            ("alpha", "node-a", "mgd-one-http", 0, True, 1000, 100, 10_000, 90_000),
-            ("alpha", "node-a", "mgd-one-http", 1, True, 1060, 160, 16_000, 150_000),
-            ("alpha", "node-a", "mgd-one-http", 2, True, 1120, 200, 20_000, 190_000),
-            ("alpha", "node-a", "mgd-two-http", 0, True, 1000, 5_000, 1_000, 2_000),
-            ("alpha", "node-a", "mgd-two-http", 1, True, 30, 40, 100, 300),
-            ("alpha", "node-a", "mgd-two-http", 2, True, 90, 70, 400, 900),
-            ("alpha", "node-b", "mgd-one-http", 1, False, 500, 9_999, 9_999, 9_999),
-            ("alpha", "node-b", "mgd-one-http", 2, False, 560, 19_999, 19_999, 19_999),
-            ("beta", "node-c", "mgd-one-http", 0, True, 1000, 0, 0, 0),
-            ("beta", "node-c", "mgd-one-http", 2, True, 1120, 777, 777, 777),
+            ("dash-a", "node-a", "mgd-one-http", 0, True, 1000, 100, 10_000, 90_000),
+            ("dash-a", "node-a", "mgd-one-http", 1, True, 1060, 160, 16_000, 150_000),
+            ("dash-a", "node-a", "mgd-one-http", 2, True, 1120, 200, 20_000, 190_000),
+            ("dash-a", "node-a", "mgd-two-http", 0, True, 1000, 5_000, 1_000, 2_000),
+            ("dash-a", "node-a", "mgd-two-http", 1, True, 30, 40, 100, 300),
+            ("dash-a", "node-a", "mgd-two-http", 2, True, 90, 70, 400, 900),
+            ("dash-a", "node-b", "mgd-one-http", 1, False, 500, 9_999, 9_999, 9_999),
+            ("dash-a", "node-b", "mgd-one-http", 2, False, 560, 19_999, 19_999, 19_999),
+            ("dash-b", "node-c", "mgd-one-http", 0, True, 1000, 0, 0, 0),
+            ("dash-b", "node-c", "mgd-one-http", 2, True, 1120, 777, 777, 777),
         ]
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select metric_partition('metric_frontend', %s::date)", (start.date(),))
@@ -871,11 +935,11 @@ class ARealDatabase(unittest.TestCase):
         until = start + timedelta(minutes=3)
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
             summed = db.read_traffic_summary(
-                connection, clusters=["alpha"], since=start, until=until
+                connection, clusters=["dash-a"], since=start, until=until
             )
             cards = [
                 db.read_frontend_totals(
-                    connection, cluster="alpha", frontend=name, since=start, until=until
+                    connection, cluster="dash-a", frontend=name, since=start, until=until
                 )
                 for name in ("mgd-one-http", "mgd-two-http")
             ]

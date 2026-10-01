@@ -1,0 +1,32 @@
+{% extends "layout.html" %}
+{% block title %}{{ cluster.cluster }} {{ version.version }} — HAProxy Manager{% endblock %}
+{% block content %}
+{#
+  What one version changed, against the version before it. Its own page so the
+  Changes button is a plain link; the Versions page lifts the section below into
+  a dialog and leaves the rest of this page behind.
+#}
+<p class="page-back"><a href="/history">← Versions</a></p>
+
+<section class="version-changes" data-version-changes-body aria-label="Changes in {{ cluster.cluster }} {{ version.version }}">
+  <header class="version-changes-head">
+    <h2>{{ cluster.cluster }} · {{ version.version }}</h2>
+    <p><span class="version-comment">{{ version.comment }}</span><span>{{ version.date }}</span>{% if version.requested_by and version.requested_by != '—' %}<span>{{ version.requested_by }}</span>{% endif %}{% if changes %}<span>{{ changes.files | length }} file{{ '' if changes.files | length == 1 else 's' }} · <span class="diff-added">+{{ changes.added }}</span> <span class="diff-removed">−{{ changes.removed }}</span></span>{% endif %}</p>
+  </header>
+  {% if changes is none %}
+  <p class="table-note">Not fetched yet. The poller reads it within a minute or two; open it again then.</p>
+  {% elif not changes.files %}
+  <p class="table-note">This version changed no file.</p>
+  {% else %}
+  {% for file in changes.files %}
+  <article class="diff-file">
+    <h3><span class="diff-path">{% if file.old_path %}{{ file.old_path }} → {% endif %}{{ file.path }}</span><span class="diff-status">{{ file.status }}</span><span class="diff-added">+{{ file.added }}</span><span class="diff-removed">−{{ file.removed }}</span></h3>
+    {% if file.binary %}<p class="table-note">Binary file.</p>
+    {% elif file.left_out %}<p class="table-note">Too large to keep with the version; read it in the cluster repository.</p>
+    {% else %}<pre class="diff-lines">{% for kind, line in file.lines %}<span class="diff-{{ kind }}">{{ line }}</span>{% endfor %}</pre>{% endif %}
+  </article>
+  {% endfor %}
+  {% if changes.truncated %}<p class="table-note">Cut: at most 200 files and 256 KiB are kept for a version.</p>{% endif %}
+  {% endif %}
+</section>
+{% endblock %}

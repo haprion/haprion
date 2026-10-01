@@ -20,6 +20,7 @@ below stay a contract rather than whatever the table happens to hold.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -1475,6 +1476,78 @@ def cluster_inventories(connection: Connection[Any]) -> list[ClusterInventory]:
         return cursor.fetchall()
 
 
+COMMIT_SHAPE = re.compile(r"^[0-9a-f]{40,64}$")
+
+
+def versions_without_diff(
+    connection: Connection[Any], *, cluster: str, limit: int
+) -> tuple[str, ...]:
+    """The newest listed versions of a cluster whose diff is not kept yet.
+
+    Read from the listing the previous pass stored: the first pass after a
+    publish lists the new version, and the next one asks for its diff.
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select version ->> 'hash' from cluster_history history, "
+            "     jsonb_array_elements(case jsonb_typeof(history.result -> 'versions') "
+            "         when 'array' then history.result -> 'versions' else '[]'::jsonb end) "
+            "     with ordinality as listed(version, position) "
+            " where history.cluster = %(cluster)s "
+            "   and not exists (select 1 from version_diff kept "
+            "                    where kept.cluster = history.cluster "
+            "                      and kept.commit = version ->> 'hash') "
+            " order by position limit %(limit)s",
+            {"cluster": cluster, "limit": limit},
+        )
+        return tuple(
+            row[0]
+            for row in cursor.fetchall()
+            if isinstance(row[0], str) and COMMIT_SHAPE.fullmatch(row[0])
+        )
+
+
+def record_version_diffs(
+    connection: Connection[Any], *, cluster: str, result: Mapping[str, Any]
+) -> int:
+    """Keep the diffs a listing carried, once each; answer how many were new."""
+
+    diffs = result.get("diffs")
+    if not isinstance(diffs, Mapping):
+        return 0
+    written = 0
+    with connection.cursor() as cursor:
+        for commit, diff in diffs.items():
+            if not isinstance(commit, str) or not COMMIT_SHAPE.fullmatch(commit):
+                continue
+            if not isinstance(diff, Mapping):
+                continue
+            cursor.execute(
+                "insert into version_diff (cluster, commit, diff) "
+                "values (%(cluster)s, %(commit)s, %(diff)s) on conflict do nothing",
+                {"cluster": cluster, "commit": commit, "diff": Jsonb(dict(diff))},
+            )
+            written += cursor.rowcount
+    return written
+
+
+def read_version_diff(
+    connection: Connection[Any], *, cluster: str, commit: str
+) -> Mapping[str, Any] | None:
+    """One version's diff as kept, or None when it has not been fetched yet."""
+
+    if not COMMIT_SHAPE.fullmatch(commit):
+        return None
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "select diff from version_diff where cluster = %(cluster)s and commit = %(commit)s",
+            {"cluster": cluster, "commit": commit},
+        )
+        row = cursor.fetchone()
+    return None if row is None else row[0]
+
+
 def record_cluster_history(
     connection: Connection[Any],
     *,
@@ -1485,7 +1558,14 @@ def record_cluster_history(
     error: Mapping[str, Any] | None = None,
     poll_error: str | None = None,
 ) -> None:
-    """Replace one cluster's cached version listing with the newest answer."""
+    """Replace one cluster's cached version listing with the newest answer.
+
+    Without `diffs`: those are kept per version in `version_diff`
+    (`record_version_diffs`, the source's second write), and a listing carrying
+    up to ten of them on every pass would only make this row large.
+    """
+
+    result = {key: value for key, value in result.items() if key != "diffs"}
 
     with connection.cursor() as cursor:
         cursor.execute(

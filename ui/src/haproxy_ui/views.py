@@ -90,6 +90,7 @@ from haproxy_ui import (
 from haproxy_ui import editor as editor_module
 from haproxy_ui import preview as preview_module
 from haproxy_ui import probe as probe_module
+from haproxy_ui import version_changes as version_changes_view
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.config import CLUSTER_ID, Config
 from haproxy_ui.db import AuthenticatedSession
@@ -6002,6 +6003,58 @@ def build_router(config: Config) -> APIRouter:
             payload=payload,
             key=key,
             again=again,
+        )
+
+    @router.get("/history/{cluster}/versions/{commit}", response_class=HTMLResponse)
+    def version_changes(request: Request, cluster: str, commit: str) -> Response:
+        """What one version changed, as the poller fetched it (B220, 2026-10-01).
+
+        A page of its own, so the button is a plain link that works without
+        script; the Versions page opens the same section in a dialog.
+        """
+
+        session = current_session(request)
+        if session is None:
+            return RedirectResponse("/login", status_code=303)
+        clusters, history_rows, captured_at = read_source(request, config, HISTORY_SOURCE)
+        if cluster not in clusters:
+            return HTMLResponse("Not found", status_code=404)
+        overview = history.build_history_overview(
+            clusters,
+            history_rows,
+            now=captured_at,
+            stale_after=timedelta(seconds=config.poller.interval_seconds * 2),
+            captured=captured_at is not None,
+        )
+        shown = next(
+            (
+                (view, version)
+                for view in overview.clusters
+                if view.cluster == cluster
+                for version in view.versions
+                if version.expected_commit == commit
+            ),
+            None,
+        )
+        if shown is None:
+            return HTMLResponse("Not found", status_code=404)
+        with request.app.state.pool.connection() as connection:
+            found = db.read_version_diff(connection, cluster=cluster, commit=commit)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "version-changes.html",
+            {
+                "username": session.username,
+                "role": session.role,
+                "csrf_token": auth.csrf_token(request.cookies.get(auth.SESSION_COOKIE, "")),
+                "section": "history",
+                "cluster": shown[0],
+                "version": shown[1],
+                "changes": version_changes_view.build(found),
+                "demo_fixture": config.demo_fixture,
+                "production_snapshot": config.production_snapshot,
+                "snapshot_age": snapshot_age(captured_at),
+            },
         )
 
     @router.get("/history", response_class=HTMLResponse)

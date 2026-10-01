@@ -167,7 +167,8 @@
     {% if advanced.one_pool %}<label class="check"><input type="checkbox" name="handwritten_pool"{% if advanced.handwritten %} checked{% endif %}> The text writes the pool</label>{% endif %}
     <div class="form-actions">
       <button type="submit" name="action" value="check" class="secondary-button">Check</button>
-      <button type="submit" name="action" value="save" class="primary-button">Save as draft</button>
+      <button type="submit" name="action" value="save" class="secondary-button">Save as draft</button>
+      <button type="submit" name="action" value="publish" class="primary-button">Save and publish</button>
     </div>
     <div data-advanced-answer></div>
   </form>

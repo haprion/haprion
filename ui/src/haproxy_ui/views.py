@@ -7783,7 +7783,48 @@ def _editor_submit(
     # a double-click is the same request and not a second one. The revision is
     # in it because the next edit of the same object is a different publish.
     #
-    objects: dict[str, str | None] = {object_id: None if saved.deleted else result.document}
+    queued = _queue_object_publish(
+        request,
+        cluster=cluster,
+        object_id=object_id,
+        document=result.document,
+        saved=saved,
+        expected_head=state.commit,
+        username=session.username,
+        replaces_published=replaces_published,
+    )
+    if isinstance(queued, str):
+        return _refusal_page(
+            request, config, queued, back=_proxy_path(cluster, object_id, "edit"), saved=True
+        )
+
+    return RedirectResponse("/proxies?published=" + quote(object_id), status_code=303)
+
+
+def _queue_object_publish(
+    request: Request,
+    *,
+    cluster: str,
+    object_id: str,
+    document: str,
+    saved: db.ProxyDraft,
+    expected_head: str,
+    username: str,
+    replaces_published: str = "",
+) -> db.Job | str:
+    """Queue the publish of a draft that has just been saved: the job, or why not.
+
+    One place for the editor's *Save and publish* and the advanced config
+    dialog's, so the two publish the same way - the same payload, the same
+    idempotency key and the same refusals, each said as a sentence the caller
+    draws where its person is looking.
+
+    A publish carries the whole object as the draft now holds it. Saved first,
+    so that a publish refused here or by the helper leaves the work saved
+    rather than lost.
+    """
+
+    objects: dict[str, str | None] = {object_id: None if saved.deleted else document}
     if replaces_published and not saved.deleted:
         #
         # Both halves of the rename, in one publish. The order in the mapping
@@ -7794,7 +7835,7 @@ def _editor_submit(
         objects[replaces_published] = None
     payload = {
         "objects": objects,
-        "expected_head": state.commit,
+        "expected_head": expected_head,
         "comment": (
             f"Rename {replaces_published} to {object_id}"
             if replaces_published and not saved.deleted
@@ -7813,7 +7854,7 @@ def _editor_submit(
         #
         "draft": {"id": str(saved.id), "revision": saved.revision},
         # Who asked, for the version's `Requested-By` (B207).
-        "requested_by": session.username,
+        "requested_by": username,
     }
     key = _publish_key(cluster, "objects_publish", payload)
     try:
@@ -7826,13 +7867,7 @@ def _editor_submit(
         # mistake and not the person's. Said plainly rather than echoed: the
         # detail can carry what was typed.
         #
-        return _refusal_page(
-            request,
-            config,
-            "The draft was saved, but this interface could not build a publish for it.",
-            back=_proxy_path(cluster, object_id, "edit"),
-            saved=True,
-        )
+        return "The draft was saved, but this interface could not build a publish for it."
 
     with request.app.state.pool.connection() as connection:
         try:
@@ -7845,34 +7880,23 @@ def _editor_submit(
             )
         except db.ClusterBusy:
             connection.rollback()
-            return _refusal_page(
-                request,
-                config,
+            return (
                 "This cluster is already running a job. The draft is saved; publish it when "
-                "that job has finished.",
-                back=_proxy_path(cluster, object_id, "edit"),
-                saved=True,
+                "that job has finished."
             )
         except db.RequestConflict:
             connection.rollback()
-            return _refusal_page(
-                request,
-                config,
-                "That publish was already asked for with different content.",
-                back=_proxy_path(cluster, object_id, "edit"),
-                saved=True,
-            )
+            return "That publish was already asked for with different content."
         db.record_audit_event(
             connection,
-            actor=session.username,
+            actor=username,
             action="queue_job",
             cluster=cluster,
             request_id=job.request_id,
             detail={"operation": "objects_publish", "job": job.id, "object": object_id},
         )
         connection.commit()
-
-    return RedirectResponse("/proxies?published=" + quote(object_id), status_code=303)
+    return job
 
 
 def _removal_submit(
@@ -8550,12 +8574,16 @@ def _advanced_submit(
         return PlainTextResponse("Refused", status_code=403)
     if session.role != "admin":
         return PlainTextResponse("Refused", status_code=403)
-    if action not in ("check", "save") or not proxy_model.NAME.fullmatch(name):
+    if action not in ("check", "save", "publish") or not proxy_model.NAME.fullmatch(name):
         return PlainTextResponse("Unknown action", status_code=400)
 
-    def answer(result: advanced_dialog.Answer, *, saved: str = "") -> Response:
+    def answer(
+        result: advanced_dialog.Answer, *, saved: str = "", published: bool = False
+    ) -> Response:
         return TEMPLATES.TemplateResponse(
-            request, "_advanced-answer.html", {"answer": result, "saved": saved}
+            request,
+            "_advanced-answer.html",
+            {"answer": result, "saved": saved, "published": published},
         )
 
     if len(text) > advanced_dialog.MAX_TEXT:
@@ -8584,8 +8612,22 @@ def _advanced_submit(
         return answer(result)
     if result.problem:
         return answer(result)
-    if editor_module.unchanged(document, base):
+    #
+    # The editor's rules for the two buttons (2026-10-01: a draft and then
+    # the editor to publish it was a detour). Saving what the draft already says
+    # is nothing; publishing it is a publish, unless the object is already
+    # stored that way - a version that says nothing is refused there too.
+    #
+    if action == "save" and editor_module.unchanged(document, base):
         return answer(replace(result, problem="Nothing changed."))
+    if (
+        action == "publish"
+        and stored is not None
+        and editor_module.unchanged(document, stored.document)
+    ):
+        return answer(
+            replace(result, problem=f"Nothing to publish: {name} is already stored this way.")
+        )
 
     revision = int(expected_revision) if expected_revision.isdigit() else None
     with request.app.state.pool.connection() as connection:
@@ -8616,4 +8658,19 @@ def _advanced_submit(
             detail={"object": name, "revision": saved.revision, "advanced": True},
         )
         connection.commit()
-    return answer(result, saved=_proxy_path(cluster, name) + "?saved=1")
+    if action == "save":
+        return answer(result, saved=_proxy_path(cluster, name) + "?saved=1")
+    queued = _queue_object_publish(
+        request,
+        cluster=cluster,
+        object_id=name,
+        document=document,
+        saved=saved,
+        expected_head=state.commit,
+        username=session.username,
+    )
+    if isinstance(queued, str):
+        return answer(
+            replace(result, problem=queued), saved=_proxy_path(cluster, name) + "?saved=1"
+        )
+    return answer(result, saved="/proxies?published=" + quote(name), published=True)

@@ -13,10 +13,13 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
+from unittest import mock
+from uuid import uuid4
 
 import yaml
 
-from haproxy_ui import advanced_dialog
+from haproxy_ui import advanced_dialog, db
 from haproxy_ui.db import ProxyDraft
 from tests.test_editor_page import COMMIT, OBSERVED, SHOP, EditorTestCase
 from tests.test_login import configuration
@@ -271,3 +274,56 @@ class OneRuleForAPoolWrittenByHand(unittest.TestCase):
                 )
                 self.assertEqual(advanced_dialog.opened(document).handwritten, expected)
                 self.assertEqual(form_from_document(document)["handwritten_pool"], expected)
+
+
+class PublishingFromTheDialog(EditorTestCase):
+    """Save and publish, as the editor's button does it (2026-10-01)."""
+
+    post = TheDialogsRoute.post
+    PATH = TheDialogsRoute.PATH
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.queued: list[dict[str, Any]] = []
+        patch = mock.patch("haproxy_ui.db.queue_job", side_effect=self._queue)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def _queue(self, _c: object, **values: Any) -> Any:
+        self.queued.append(values)
+        return SimpleNamespace(id=7, request_id=uuid4())
+
+    def test_the_draft_is_saved_and_the_same_publish_is_queued(self) -> None:
+        answer = self.post(self.editor(), action="publish", advanced="retries 5\n")
+
+        self.assertIn("Saved and sent to publish", answer.text)  # type: ignore[attr-defined]
+        self.assertIn('data-advanced-saved="/proxies?published=shop"', answer.text)  # type: ignore[attr-defined]
+        self.assertEqual(len(self.saved), 1)
+        job = self.queued[0]
+        self.assertEqual(job["operation"], "objects_publish")
+        self.assertEqual(job["cluster"], "alpha")
+        self.assertEqual(job["payload"]["objects"], {"shop": self.saved[0]["yaml"]})
+        self.assertEqual(job["payload"]["expected_head"], COMMIT)
+        self.assertEqual(job["payload"]["comment"], "Publish shop")
+
+    def test_a_refused_text_is_neither_saved_nor_published(self) -> None:
+        self.post(self.editor(), action="publish", advanced="use_backend other\n")
+
+        self.assertEqual((self.saved, self.queued), ([], []))
+
+    def test_what_is_already_stored_is_not_published(self) -> None:
+        answer = self.post(self.editor(), action="publish", advanced="")
+
+        self.assertIn("Nothing to publish", answer.text)  # type: ignore[attr-defined]
+        self.assertEqual((self.saved, self.queued), ([], []))
+
+    def test_a_busy_cluster_leaves_the_draft_saved_and_says_so(self) -> None:
+        def busy(_c: object, **_values: Any) -> Any:
+            raise db.ClusterBusy("busy")
+
+        with mock.patch("haproxy_ui.db.queue_job", side_effect=busy):
+            answer = self.post(self.editor(), action="publish", advanced="retries 5\n")
+
+        self.assertEqual(len(self.saved), 1)
+        self.assertIn("already running a job", answer.text)  # type: ignore[attr-defined]
+        self.assertIn("Saved as a draft", answer.text)  # type: ignore[attr-defined]

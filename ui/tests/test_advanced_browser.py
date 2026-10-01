@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import threading
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
+from uuid import uuid4
 
 import uvicorn
 
@@ -66,9 +68,11 @@ class TheDialogInABrowser(DraftReading):
             deleted=False,
         )
         self.saved: list[dict[str, Any]] = []
-        patch = mock.patch("haproxy_ui.db.save_draft", side_effect=self._save)
-        patch.start()
-        self.addCleanup(patch.stop)
+        self.queued: list[dict[str, Any]] = []
+        for name, effect in (("save_draft", self._save), ("queue_job", self._queue)):
+            patch = mock.patch(f"haproxy_ui.db.{name}", side_effect=effect)
+            patch.start()
+            self.addCleanup(patch.stop)
         config = replace(
             configuration(cookie_secure=False), demo_fixture=True, management_writes=True
         )
@@ -98,6 +102,10 @@ class TheDialogInABrowser(DraftReading):
         )
         self.draft = drafted
         return drafted
+
+    def _queue(self, _c: object, **values: Any) -> Any:
+        self.queued.append(values)
+        return SimpleNamespace(id=7, request_id=uuid4())
 
     def open_page(self) -> Any:
         page = self._browser.new_page(viewport={"width": 1280, "height": 900})
@@ -145,3 +153,18 @@ class TheDialogInABrowser(DraftReading):
         page.click("[data-advanced-close]")
         page.wait_for_url("**/proxies/edge-demo/public-web?saved=1")
         self.assertIn("Saved as a draft", page.inner_text("main"))
+
+    def test_save_and_publish_queues_the_publish_and_lands_on_the_listing(self) -> None:
+        page = self.open_page()
+        page.fill(
+            "textarea[name=advanced]",
+            "balance leastconn\nserver app1 192.0.2.30:8080 check\nretries 5\n",
+        )
+
+        page.click("[data-advanced-form] button[value=publish]")
+        page.wait_for_selector(".advanced-saved")
+
+        self.assertIn("Saved and sent to publish", page.inner_text(".advanced-saved"))
+        self.assertEqual([job["operation"] for job in self.queued], ["objects_publish"])
+        page.click("[data-advanced-close]")
+        page.wait_for_url("**/proxies?published=public-web")

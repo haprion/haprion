@@ -18,6 +18,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
+from haproxy_mgmt.cli.cluster_settings_publish import MESSAGE as SETTINGS_MESSAGE
+from haproxy_mgmt.cli.managed_network_publish import MESSAGE as NETWORK_MESSAGE
+from haproxy_mgmt.cli.managed_objects_publish import MESSAGE as OBJECTS_MESSAGE
+
 from haproxy_ui import metrics
 from haproxy_ui.cluster_identity import accent_index
 from haproxy_ui.dashboard import observation_label
@@ -137,12 +141,31 @@ def _version_view(value: Any, published_hash: str | None, rank: int) -> VersionV
         # version number's title.
         expected_commit=commit,
         date=_saved_at(entry.get("created_at")),
-        comment=_text(entry.get("comment"), "(no comment)"),
+        comment=shown_comment(_text(entry.get("comment"), "(no comment)")),
         published=bool(commit) and commit == published_hash,
         current=entry.get("current") is True,
         requested_by=_text(entry.get("requested_by")),
         page=rank // VERSIONS_PER_PAGE,
     )
+
+
+#
+# What the engine puts in front of a comment it was given, so `git log` says
+# which kind of publish made the commit. On this page it is the same words on
+# every row, ahead of the part a person wrote, so it is left out here and the
+# history itself keeps it (2026-10-01). Taken from the engine's own constants,
+# so a renamed prefix cannot quietly start showing again.
+#
+PUBLISH_PREFIXES = tuple(
+    f"{message}: " for message in (OBJECTS_MESSAGE, NETWORK_MESSAGE, SETTINGS_MESSAGE)
+)
+
+
+def shown_comment(comment: str) -> str:
+    for prefix in PUBLISH_PREFIXES:
+        if comment.startswith(prefix) and len(comment) > len(prefix):
+            return comment[len(prefix) :]
+    return comment
 
 
 def _empty(cluster: str, *, configured: bool) -> HistoryClusterView:

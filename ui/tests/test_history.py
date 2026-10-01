@@ -243,5 +243,23 @@ class RenderingTests(unittest.TestCase):
         self.assertTrue(overview(reading(truncated=True)).clusters[0].truncated)
 
 
+class CommentTests(unittest.TestCase):
+    def test_the_engine_s_publish_prefix_is_left_out_and_nothing_else(self) -> None:
+        from haproxy_ui.history import shown_comment
+
+        self.assertEqual(
+            shown_comment("Update proxy objects: Publish monitor-server_admin-web"),
+            "Publish monitor-server_admin-web",
+        )
+        self.assertEqual(shown_comment("Update network description: tls -1.3"), "tls -1.3")
+        self.assertEqual(
+            shown_comment("Update cluster settings: Logs & metrics: no external logs; metrics off"),
+            "Logs & metrics: no external logs; metrics off",
+        )
+        # Anything else is a person's own words and is shown as written.
+        self.assertEqual(shown_comment("Revert to v12"), "Revert to v12")
+        self.assertEqual(shown_comment("Update proxy objects: "), "Update proxy objects: ")
+
+
 if __name__ == "__main__":
     unittest.main()

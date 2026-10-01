@@ -16,6 +16,7 @@ comparing itself to a commit nobody is going to publish onto.
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -32,11 +33,17 @@ from haproxy_mgmt.helper_protocol import (
     write_document,
     write_failure,
 )
-from haproxy_mgmt.objects import ObjectsError, objects_result
+from haproxy_mgmt.objects import ObjectsError, fingerprint, objects_result, unchanged_result
 from haproxy_mgmt.repo_snapshot import PublishError, read_tree_files, resolve_head
 
 OPERATION = "objects"
-PARAMETERS: frozenset[str] = frozenset()
+#
+# `unchanged_since` (B222, 2026-10-01): the fingerprint of the listing the
+# caller already holds. When it still matches, the answer says so instead of
+# reading the tree and parsing every document again.
+#
+PARAMETERS: frozenset[str] = frozenset({"unchanged_since"})
+FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 EXIT_NOT_ROOT = 77
 
 type ReadTree = Callable[[Path, str], Mapping[str, bytes]]
@@ -70,6 +77,11 @@ def main(
             expected_operation=OPERATION,
             allowed_parameter_keys=PARAMETERS,
         )
+        known = request.parameters.get("unchanged_since")
+        if known is not None and (not isinstance(known, str) or not FINGERPRINT.match(known)):
+            raise HelperProtocolError(
+                "parameters.unchanged_since must be a listing fingerprint", exit_code=65
+            )
     except HelperProtocolError as exc:
         #
         # Deliberately stderr only, for the reason the inventory helper gives:
@@ -124,7 +136,10 @@ def main(
     repo = Path(cluster.config_path)
     try:
         _, head = head_resolver(repo)
-        result = objects_result(tree_reader(repo, head), head, network=network)
+        if known is not None and known == fingerprint(head, network):
+            result = unchanged_result(head, network)
+        else:
+            result = objects_result(tree_reader(repo, head), head, network=network)
     except PublishError as exc:
         return fail("objects_unavailable", str(exc), exc.exit_code)
     except GitError as exc:

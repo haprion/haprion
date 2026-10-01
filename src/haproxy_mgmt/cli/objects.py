@@ -28,15 +28,22 @@ USAGE = "Usage:\n  haproxy-objects -c <cluster> [--show <name> | --json]\n"
 type RunHelper = Callable[[str, str], subprocess.CompletedProcess[str]]
 
 
-def run_objects_helper(cluster_id: str, request_id: str) -> subprocess.CompletedProcess[str]:
-    """Ask the root helper for the stored objects of one cluster."""
+def run_objects_helper(
+    cluster_id: str, request_id: str, *, unchanged_since: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Ask the root helper for the stored objects of one cluster.
+
+    `unchanged_since` is the fingerprint of a listing the caller holds; the
+    helper then answers `unchanged` instead of the listing when it still
+    stands. This command never sends it - it always wants the objects.
+    """
 
     request = {
         "schema_version": 1,
         "operation": OPERATION,
         "cluster": cluster_id,
         "request_id": request_id,
-        "parameters": {},
+        "parameters": {} if unchanged_since is None else {"unchanged_since": unchanged_since},
     }
     return subprocess.run(  # noqa: S603 - fixed helper path, no caller argv
         [SUDO, "-n", HELPER],

@@ -19,9 +19,13 @@ separately whether this version can read it.
 
 from __future__ import annotations
 
+import dataclasses
+import functools
+import hashlib
+import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from haproxy_mgmt.config import ConfigError, Network
 from haproxy_mgmt.generate import GeneratorError, source_of, vip_of
@@ -33,6 +37,43 @@ PLACEHOLDER = ".gitkeep"
 
 class ObjectsError(ValueError):
     """A committed tree cannot be represented faithfully as a list of objects."""
+
+
+@functools.cache
+def _engine_digest() -> str:
+    """This engine's own source, as one digest.
+
+    Part of the fingerprint below because the answer depends on the code that
+    produced it as much as on the commit: a release that reads objects
+    differently must not be told its predecessor's answer still stands.
+    """
+
+    digest = hashlib.sha256()
+    package = Path(__file__).resolve().parent
+    for path in sorted(package.rglob("*.py")):
+        digest.update(path.relative_to(package).as_posix().encode() + b"\0" + path.read_bytes())
+    return digest.hexdigest()
+
+
+def fingerprint(commit: str | None, network: Network | None) -> str:
+    """What an objects listing depends on: the commit, the network and this engine (B222).
+
+    The poller sends back the fingerprint of the listing it holds, and an
+    unchanged one is answered without reading the tree or parsing a document -
+    which at ten thousand objects was twelve seconds of every pass.
+    """
+
+    described = (
+        None
+        if network is None
+        else {
+            "vips": {name: dataclasses.asdict(vip) for name, vip in sorted(network.vips.items())},
+            "default_vip": network.default_vip,
+            "sources": dict(sorted(network.sources.items())),
+        }
+    )
+    document = {"commit": commit, "network": described, "engine": _engine_digest()}
+    return hashlib.sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()
 
 
 def _document(raw: bytes, path: str) -> str:
@@ -169,6 +210,7 @@ def objects_result(
     result: dict[str, object] = {
         "commit": commit,
         "generated_at": timestamp.isoformat().replace("+00:00", "Z"),
+        "fingerprint": fingerprint(commit, network),
         "objects": [],
     }
     if commit is None:
@@ -194,3 +236,23 @@ def objects_result(
 
     result["objects"] = entries
     return result
+
+
+def unchanged_result(
+    commit: str | None, network: Network | None, *, generated_at: datetime | None = None
+) -> dict[str, object]:
+    """The answer to a caller whose listing is still the right one.
+
+    `objects` is empty and `unchanged` says why: the caller keeps what it has.
+    A reader that ignored `unchanged` would see no objects, which is why only
+    a caller that sent `unchanged_since` can ever receive this.
+    """
+
+    timestamp = generated_at or datetime.now(UTC)
+    return {
+        "commit": commit,
+        "generated_at": timestamp.isoformat().replace("+00:00", "Z"),
+        "fingerprint": fingerprint(commit, network),
+        "unchanged": True,
+        "objects": [],
+    }

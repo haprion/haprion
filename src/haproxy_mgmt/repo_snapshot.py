@@ -171,15 +171,42 @@ def read_tree_files(repo: Path, tree: str) -> dict[str, bytes]:
     """
 
     listing = _git(repo, "ls-tree", "-r", "-z", "--full-tree", tree).decode()
-    files: dict[str, bytes] = {}
+    blobs: list[tuple[str, str]] = []
     for entry in listing.split("\0"):
         if not entry:
             continue
         metadata, path = entry.split("\t", 1)
         _mode, kind, object_id = metadata.split()
-        if kind != "blob":
-            continue
-        files[path] = _git(repo, "cat-file", "blob", object_id)
+        if kind == "blob":
+            blobs.append((path, object_id))
+    if not blobs:
+        return {}
+    #
+    # One git for every file rather than one per file (B222, measured
+    # 2026-10-01): ten thousand objects took 6.5 s as ten thousand processes.
+    # `--batch` answers each requested ID with `<id> blob <size>`, the content
+    # and a newline, in the order asked; every header is checked against the ID
+    # it answers, so a missing object or a short read is an error rather than a
+    # file quietly holding its neighbour's bytes.
+    #
+    output = _git(
+        repo, "cat-file", "--batch", stdin="".join(f"{oid}\n" for _, oid in blobs).encode()
+    )
+    files: dict[str, bytes] = {}
+    position = 0
+    for path, object_id in blobs:
+        end = output.find(b"\n", position)
+        header = output[position:end].split() if end >= 0 else []
+        if len(header) != 3 or header[0] != object_id.encode() or header[1] != b"blob":
+            raise GitError(f"git cat-file could not read {path}")
+        start = end + 1
+        size = int(header[2])
+        if output[start + size : start + size + 1] != b"\n":
+            raise GitError(f"git cat-file returned a short read for {path}")
+        files[path] = output[start : start + size]
+        position = start + size + 1
+    if position != len(output):
+        raise GitError("git cat-file returned more than was asked for")
     return files
 
 

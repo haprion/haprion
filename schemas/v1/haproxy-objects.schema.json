@@ -238,6 +238,15 @@
           "items": {
             "$ref": "#/$defs/object"
           }
+        },
+        "fingerprint": {
+          "description": "What the listing depends on - commit, network description and engine - as one digest (B222). A caller sends it back as unchanged_since. Absent from an older release.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "unchanged": {
+          "description": "Present and true only when the caller sent unchanged_since and it still matches: objects is then empty and the caller keeps the listing it holds.",
+          "const": true
         }
       },
       "additionalProperties": true

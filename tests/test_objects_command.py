@@ -85,14 +85,16 @@ class ObjectsHelperTests(unittest.TestCase):
         policy_path.write_text(yaml.safe_dump(policy), encoding="utf-8")
         return policy_path
 
-    def run_helper(self, *, tree_reader=None, head_resolver=None, cluster: str = "alpha"):
+    def run_helper(
+        self, *, tree_reader=None, head_resolver=None, cluster: str = "alpha", parameters=None
+    ):
         out, err = io.StringIO(), io.StringIO()
         read = tree_reader or (lambda _repo, _commit: {"managed/proxies/shop.yaml": SHOP})
         resolve = head_resolver or (lambda _repo: ("refs/heads/main", HEAD))
         code = objects_helper.main(
             [],
             policy_path=self.runtime(),
-            input_stream=io.BytesIO(request(cluster=cluster)),
+            input_stream=io.BytesIO(request(cluster=cluster, parameters=parameters or {})),
             output_stream=out,
             error_stream=err,
             require_secure=False,
@@ -181,20 +183,49 @@ class ObjectsHelperTests(unittest.TestCase):
         self.assertEqual(code, 64)
         self.assertIn("no command-line arguments", err.getvalue())
 
+    # B222: a caller holding the current listing is told so, without a tree read.
+    def test_the_fingerprint_sent_back_is_answered_as_unchanged(self) -> None:
+        _, first, _ = self.run_helper()
+        known = json.loads(first)["result"]["fingerprint"]
+        reads: list[str] = []
 
-def answer(**result: object) -> subprocess.CompletedProcess[str]:
-    document = {
-        "schema_version": 1,
-        "ok": True,
-        "outcome": "done",
-        "operation": "objects",
-        "cluster": "alpha",
-        "request_id": REQUEST_ID,
-        "result": {"commit": HEAD, "generated_at": "2026-09-02T08:05:00Z", "objects": [], **result},
-        "warnings": [],
-        "error": None,
-    }
-    return subprocess.CompletedProcess([], 0, json.dumps(document), "")
+        def tree(_repo: Path, commit: str) -> dict[str, bytes]:
+            reads.append(commit)
+            return {"managed/proxies/shop.yaml": SHOP}
+
+        code, out, _ = self.run_helper(tree_reader=tree, parameters={"unchanged_since": known})
+
+        self.assertEqual(code, 0)
+        document = assert_contract("haproxy-objects", out)
+        self.assertIs(document["result"]["unchanged"], True)
+        self.assertEqual(document["result"]["objects"], [])
+        self.assertEqual(document["result"]["fingerprint"], known)
+        self.assertEqual(reads, [])
+
+    def test_a_new_commit_or_network_is_a_full_listing(self) -> None:
+        _, first, _ = self.run_helper()
+        known = json.loads(first)["result"]["fingerprint"]
+
+        moved = lambda _repo: ("refs/heads/main", "b" * 40)  # noqa: E731
+        _, out, _ = self.run_helper(head_resolver=moved, parameters={"unchanged_since": known})
+        self.assertNotIn("unchanged", json.loads(out)["result"])
+        self.assertEqual(json.loads(out)["result"]["objects"][0]["name"], "shop")
+
+        network = self.root / "config/alpha/managed/network.yaml"
+        network.parent.mkdir(parents=True)
+        network.write_text(
+            "vips:\n  internal:\n    address: 192.0.2.40\ndefault_vip: internal\n",
+            encoding="utf-8",
+        )
+        _, out, _ = self.run_helper(parameters={"unchanged_since": known})
+        self.assertNotIn("unchanged", json.loads(out)["result"])
+
+    def test_a_fingerprint_that_is_not_one_is_refused(self) -> None:
+        code, out, err = self.run_helper(parameters={"unchanged_since": "../../etc"})
+
+        self.assertEqual(code, 65)
+        self.assertEqual(out, "")
+        self.assertIn("unchanged_since", err)
 
     # B222: the helper reads the network description the generator reads.
 
@@ -221,6 +252,21 @@ def answer(**result: object) -> subprocess.CompletedProcess[str]:
         self.assertEqual(document["outcome"], "done")
         self.assertEqual([w["code"] for w in document["warnings"]], ["network_unreadable"])
         self.assertIsNone(document["result"]["objects"][0]["vip"])
+
+
+def answer(**result: object) -> subprocess.CompletedProcess[str]:
+    document = {
+        "schema_version": 1,
+        "ok": True,
+        "outcome": "done",
+        "operation": "objects",
+        "cluster": "alpha",
+        "request_id": REQUEST_ID,
+        "result": {"commit": HEAD, "generated_at": "2026-09-02T08:05:00Z", "objects": [], **result},
+        "warnings": [],
+        "error": None,
+    }
+    return subprocess.CompletedProcess([], 0, json.dumps(document), "")
 
 
 class ObjectsCommandTests(unittest.TestCase):

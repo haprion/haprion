@@ -161,6 +161,45 @@ class CandidateTreeTests(RepositoryFixture):
             self.assertEqual(files["manual/reservations.yaml"], RESERVATIONS)
 
 
+class ReadingATree(RepositoryFixture):
+    """One `git cat-file --batch` for the whole tree (B222), byte for byte what git stores."""
+
+    def test_every_file_reads_back_exactly_as_git_has_it(self) -> None:
+        awkward = {
+            "managed/empty.yaml": b"",
+            "managed/no-newline.yaml": b"name: shop",
+            "managed/binary.bin": bytes(range(256)) * 4,
+            "managed/looks-like-a-header.yaml": b"\n0123 blob 5\nhello\n\n",
+            "managed/space in name.yaml": b"x: 1\n",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self.repository(Path(directory))
+            for relative, content in awkward.items():
+                (repo / relative).write_bytes(content)
+            git(repo, "add", "-A")
+            git(repo, "commit", "-qm", "awkward files")
+
+            files = read_tree_files(repo, git(repo, "rev-parse", "HEAD^{tree}"))
+
+            for relative, content in awkward.items():
+                self.assertEqual(files[relative], content, relative)
+            self.assertEqual(files["core/haproxy.cfg"], HAPROXY_CFG)
+            self.assertEqual(len(files), 3 + len(awkward))
+
+    def test_an_empty_tree_reads_as_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self.repository(Path(directory))
+            empty = subprocess.run(
+                ["/usr/bin/git", "-C", str(repo), "mktree"],
+                input="",
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+
+            self.assertEqual(read_tree_files(repo, empty), {})
+
+
 class CommitTests(RepositoryFixture):
     def test_a_version_is_created_and_the_branch_moves(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

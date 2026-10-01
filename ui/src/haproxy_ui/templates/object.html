@@ -159,14 +159,15 @@
 {% if advanced_offered %}
 <dialog class="advanced-dialog" data-advanced-dialog aria-label="Advanced config">
   <form method="post" action="/proxies/{{ object.cluster }}/{{ object.name }}/advanced" data-advanced-form>
-    <div class="advanced-dialog-header"><h3>Advanced config</h3><button type="button" class="secondary-button" data-advanced-close>Close</button></div>
+    <div class="advanced-dialog-header"><h3>Advanced config</h3></div>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="expected_revision" value="{{ draft.revision if draft else '' }}">
     <textarea name="advanced" class="advanced-text" rows="18" spellcheck="false" aria-label="HAProxy configuration">
 {{ advanced.text }}</textarea>
     {% if advanced.one_pool %}<label class="check"><input type="checkbox" name="handwritten_pool"{% if advanced.handwritten %} checked{% endif %}> The text writes the pool</label>{% endif %}
     <div class="form-actions">
-      <button type="submit" name="action" value="check" class="secondary-button">Check</button>
+      <button type="button" class="secondary-button" data-advanced-close>Close</button>
+      <button type="submit" name="action" value="check" class="secondary-button">Validate the object</button>
       <button type="submit" name="action" value="save" class="secondary-button">Save as draft</button>
       <button type="submit" name="action" value="publish" class="primary-button">Save and publish</button>
     </div>

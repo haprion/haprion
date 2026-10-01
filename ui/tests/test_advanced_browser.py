@@ -133,28 +133,30 @@ class TheDialogInABrowser(DraftReading):
         self.assertEqual(fates, ["placed", "placed", "placed"])
         self.assertEqual(self.saved, [])
 
-    def test_giving_the_pool_back_shows_what_stops_counting_before_the_page_moves(self) -> None:
+    def test_save_goes_to_the_page_with_the_draft_as_the_editor_does(self) -> None:
         page = self.open_page()
         page.uncheck("input[name=handwritten_pool]")
 
         page.click("[data-advanced-form] button[value=save]")
-        page.wait_for_selector(".advanced-saved")
+        page.wait_for_url("**/proxies/edge-demo/public-web?saved=1")
 
         self.assertEqual(len(self.saved), 1)
         self.assertEqual(self.saved[0]["expected_revision"], 4)
-        fates = page.eval_on_selector_all(
-            "[data-advanced-answer] tbody tr td:nth-child(2)",
-            "cells => cells.map(c => c.innerText)",
-        )
-        self.assertEqual(fates, ["skipped", "skipped", "skipped"])
-        self.assertTrue(page.is_disabled("[data-advanced-form] button[value=save]"))
-        self.assertTrue(page.url.endswith("/proxies/edge-demo/public-web"))
-
-        page.click("[data-advanced-close]")
-        page.wait_for_url("**/proxies/edge-demo/public-web?saved=1")
         self.assertIn("Saved as a draft", page.inner_text("main"))
 
-    def test_save_and_publish_queues_the_publish_and_lands_on_the_listing(self) -> None:
+    def test_the_buttons_are_the_editors(self) -> None:
+        page = self.open_page()
+
+        labels = page.eval_on_selector_all(
+            "[data-advanced-form] .form-actions button", "buttons => buttons.map(b => b.innerText)"
+        )
+        self.assertEqual(
+            labels, ["Close", "Validate the object", "Save as draft", "Save and publish"]
+        )
+        page.click("[data-advanced-close]")
+        self.assertFalse(page.is_visible("[data-advanced-dialog]"))
+
+    def test_save_and_publish_lands_on_the_listing_as_the_editor_does(self) -> None:
         page = self.open_page()
         page.fill(
             "textarea[name=advanced]",
@@ -162,9 +164,6 @@ class TheDialogInABrowser(DraftReading):
         )
 
         page.click("[data-advanced-form] button[value=publish]")
-        page.wait_for_selector(".advanced-saved")
-
-        self.assertIn("Saved and sent to publish", page.inner_text(".advanced-saved"))
-        self.assertEqual([job["operation"] for job in self.queued], ["objects_publish"])
-        page.click("[data-advanced-close]")
         page.wait_for_url("**/proxies?published=public-web")
+
+        self.assertEqual([job["operation"] for job in self.queued], ["objects_publish"])

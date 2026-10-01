@@ -25,6 +25,7 @@ from haproxy_mgmt.traffic_collector import (
     _database_days,
     _ingest_part,
     _mirror_window,
+    forget_database_positions,
 )
 
 from haproxy_ui import auth, db, traffic_logs
@@ -462,6 +463,80 @@ class ARealDatabase(unittest.TestCase):
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute("select count(*) from traffic_log where host = 'copy.example.com'")
             self.assertEqual(cursor.fetchone(), (1,))
+
+    def test_a_database_restored_on_its_own_gets_back_what_staging_still_holds(self) -> None:
+        """Review 2026-09-30, R3, its acceptance case.
+
+        A is imported, the dump is taken, B is imported, and only the database
+        goes back to the dump - B's row is gone while staging and its position
+        still say B was imported. Replaying brings B back and A stays one row.
+        The restore is played by removing B's row as the owner, which is what
+        the database looks like afterwards; staging is the collector's own.
+        """
+
+        now = datetime.now(UTC).replace(microsecond=0)
+
+        def line(host: str, request: int) -> str:
+            return json.dumps(
+                {
+                    "schema": 1,
+                    "at": int(now.timestamp()),
+                    "request": request,
+                    "client": "192.0.2.21",
+                    "method": "GET",
+                    "host": host,
+                    "path": "/",
+                    "frontend": "mgd-main-http",
+                    "backend": "mgd-app-primary",
+                    "server": "s1",
+                    "status": 200,
+                    "request_time": 0,
+                    "queue_time": 0,
+                    "connect_time": 1,
+                    "response_time": 2,
+                    "total_time": 3,
+                    "bytes": 10,
+                },
+                separators=(",", ":"),
+            )
+
+        def count(host: str) -> int:
+            with (
+                self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection,
+                connection.cursor() as cursor,
+            ):
+                cursor.execute("select count(*) from traffic_log where host = %s", (host,))
+                row = cursor.fetchone()
+                return -1 if row is None else int(row[0])
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            part = root / f"alpha--node-r3--{now:%Y-%m-%d}.jsonl"
+            target = NodeTarget("alpha", "node-r3", "node-r3.example.com")
+            config = CollectorConfig(
+                "svc-logread", root / "key", root / "known_hosts", root, root, (target,)
+            )
+            part.write_text(line("a.restore.example.com", 1) + "\n")
+            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+                _ingest_part(config, connection, target, part)
+            with part.open("a") as stream:
+                stream.write(line("b.restore.example.com", 2) + "\n")
+            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+                _ingest_part(config, connection, target, part)
+            with self.connect() as connection, connection.cursor() as cursor:
+                cursor.execute("delete from traffic_log where host = 'b.restore.example.com'")
+            self.assertEqual(count("b.restore.example.com"), 0)
+
+            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+                _ingest_part(config, connection, target, part)
+            self.assertEqual(count("b.restore.example.com"), 0, "without the replay B stays lost")
+
+            self.assertEqual(forget_database_positions(config), 1)
+            with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+                _ingest_part(config, connection, target, part)
+
+        self.assertEqual(count("b.restore.example.com"), 1)
+        self.assertEqual(count("a.restore.example.com"), 1)
 
     def test_an_unusable_record_is_stepped_over_rather_than_wedging_the_stream(self) -> None:
         """One bad line must not stop the good ones, this run or any later one.

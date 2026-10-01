@@ -10,7 +10,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, date, datetime
 from io import StringIO
 from pathlib import Path
@@ -32,6 +32,7 @@ from haproxy_mgmt.traffic_collector import (
     _within_margin,
     collect,
     collect_node,
+    forget_database_positions,
     load_config,
 )
 
@@ -442,6 +443,38 @@ class TrafficCollectorTests(unittest.TestCase):
         loader.assert_called_once_with(Path("/etc/config.json"))
         collect_mock.assert_not_called()
         self.assertEqual(output.getvalue(), "parsed 1 node(s) as svc-logread\n")
+
+    def test_a_replay_drops_the_import_positions_and_nothing_else(self) -> None:
+        part = self.staging / f"alpha--node-a--{NOW.date()}.jsonl"
+        part.write_bytes(b'{"schema":1}\n')
+        position = self.staging / f".{part.name}.database-offset"
+        position.write_bytes(b"13\n")
+        closed = self.staging / f"alpha--node-a--{NOW.date() - date.resolution}.done"
+        closed.write_bytes(b"")
+
+        self.assertEqual(forget_database_positions(self.config), 1)
+
+        self.assertFalse(position.exists())
+        self.assertEqual(part.read_bytes(), b'{"schema":1}\n', "the day itself is kept")
+        self.assertTrue(closed.exists(), "how far a node was fetched is not touched")
+        self.assertEqual(forget_database_positions(self.config), 0)
+
+    def test_a_replay_refuses_a_position_that_is_not_a_plain_file(self) -> None:
+        (self.staging / ".x.jsonl.database-offset").symlink_to(self.staging / "elsewhere")
+        with self.assertRaises(CollectorError):
+            forget_database_positions(self.config)
+
+    def test_a_replay_without_a_database_is_refused(self) -> None:
+        errors = StringIO()
+        with (
+            patch.object(sys, "argv", ["collector", "--replay-database", "/etc/config.json"]),
+            patch("haproxy_mgmt.traffic_collector.load_config", return_value=self.config),
+            redirect_stderr(errors),
+            self.assertRaises(SystemExit) as stopped,
+        ):
+            _entry()
+        self.assertEqual(stopped.exception.code, 65)
+        self.assertIn("nothing to replay", errors.getvalue())
 
 
 if __name__ == "__main__":

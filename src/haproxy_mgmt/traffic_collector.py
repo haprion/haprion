@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -12,7 +13,7 @@ import stat
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -915,11 +916,10 @@ def _ingest_database(config: CollectorConfig) -> tuple[int, int]:
     return skipped, expired
 
 
-def collect(
-    config: CollectorConfig, *, now: datetime | None = None, fetch: Fetch | None = None
-) -> int:
-    _directory(config.mirror)
-    _directory(config.staging)
+@contextlib.contextmanager
+def _run_lock(config: CollectorConfig, *, wait: bool) -> Iterator[bool]:
+    """The collector's one lock; yields False when not waiting and another run holds it."""
+
     lock_path = config.staging / ".collector.lock"
     lock_flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
     lock_flags |= getattr(os, "O_NOFOLLOW", 0)
@@ -928,8 +928,46 @@ def collect(
         if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
             raise CollectorError("collector lock is not a regular file")
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
+            yield False
+            return
+        yield True
+
+
+def forget_database_positions(config: CollectorConfig) -> int:
+    """Make the next run import every staged day again; answer how many positions were dropped.
+
+    For a database restored on its own (review 2026-09-30, R3). Each day part's
+    import position is a file in staging, written after the batch committed,
+    and a dump from yesterday knows nothing of it: the next run would go on from
+    today's position and leave the records between the dump and the restore
+    missing, although every one of them is still here. Dropping the positions
+    replays the staged days whole; what the database already holds is passed
+    over by its own duplicate trigger, so nothing is counted twice. The fetch
+    cursors - how far each node's day has been copied - are not touched.
+
+    Waits for a run in progress rather than racing it: that run's import would
+    otherwise write a position back after it was dropped.
+    """
+
+    _directory(config.staging)
+    with _run_lock(config, wait=True):
+        dropped = 0
+        for checkpoint in config.staging.glob(".*.database-offset"):
+            _regular(checkpoint, maximum=32)
+            checkpoint.unlink()
+            dropped += 1
+        return dropped
+
+
+def collect(
+    config: CollectorConfig, *, now: datetime | None = None, fetch: Fetch | None = None
+) -> int:
+    _directory(config.mirror)
+    _directory(config.staging)
+    with _run_lock(config, wait=False) as held:
+        if not held:
             return 0
         attempted = now or datetime.now(UTC)
         window = _mirror_window(config, now=attempted)
@@ -987,9 +1025,11 @@ def collect(
 
 
 def _entry() -> None:
-    if len(sys.argv) != 3 or sys.argv[1] not in {"--check-config", "--config"}:
+    modes = {"--check-config", "--config", "--replay-database"}
+    if len(sys.argv) != 3 or sys.argv[1] not in modes:
         print(
-            "usage: haproxy-ui-traffic-collector (--check-config|--config) <path>",
+            "usage: haproxy-ui-traffic-collector "
+            "(--check-config|--config|--replay-database) <path>",
             file=sys.stderr,
         )
         raise SystemExit(64)
@@ -997,6 +1037,14 @@ def _entry() -> None:
         config = load_config(Path(sys.argv[2]))
         if sys.argv[1] == "--check-config":
             print(f"parsed {len(config.nodes)} node(s) as {config.user}")
+            code = 0
+        elif sys.argv[1] == "--replay-database":
+            if config.database is None:
+                raise CollectorError("this collector imports into no database; nothing to replay")
+            dropped = forget_database_positions(config)
+            print(
+                f"dropped {dropped} import position(s); the next run imports every staged day again"
+            )
             code = 0
         else:
             code = collect(config)

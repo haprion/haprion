@@ -3302,6 +3302,26 @@ crash-consistent rather than transactionally clean, and restoring a single table
 out of a machine image is not something anyone does under pressure. The dump is
 what makes "put that one table back" an ordinary afternoon.
 
+#### After restoring the database on its own: replay the traffic log
+
+Restoring the whole host puts the database and the collector's staging back together, and nothing
+more is needed. Restoring **only the database** from a dump does not: the collector keeps, per day
+file in staging, how far it has imported, and that position is newer than the dump. Its next run
+would go on from there and leave every request between the dump and the restore missing from the
+log page, although the records are still in staging (4.8b). After such a restore, run once, as the
+collector account (`COLLECTOR_USER`):
+
+```bash
+sudo -u <collector> /opt/haproxy-mgmt/current/bin/haproxy-ui-traffic-collector \
+  --replay-database /etc/haproxy-manager/traffic-collector.json
+```
+
+It waits for a run in progress, drops the import positions and nothing else — the day files and
+how far each node has been fetched stay — and the next run imports every staged day again. A
+record the database already holds is passed over by the table's own duplicate check, so nothing is
+counted twice. What staging no longer holds (older than the retention window plus one day) cannot
+be replayed.
+
 ### 4.8 Keeping jobs, sessions and metric history bounded
 
 `install/platform/11-platform-retention` installs `haproxy-ui-retention` and a

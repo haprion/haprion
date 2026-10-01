@@ -3424,15 +3424,16 @@ def build_router(config: Config) -> APIRouter:
                 "cluster_nodes": cluster_nodes.card_rows(
                     *read_source(request, config, STATUS_SOURCE)[:2], running=jobs.in_flight(recent)
                 ),
+                #
+                # Whether a switch is locked is asked of every switch, on or
+                # off: asked only of those that were on, an off switch read the
+                # previous one's answer, or none at all when it came first.
+                #
                 "features": [
-                    (
-                        feature,
-                        switches[feature.name].enabled
-                        and not (locked := _locked(request, feature.name)),
-                        locked,
-                    )
+                    (feature, switches[feature.name].enabled and not locked, locked)
                     for feature in features.FEATURES
                     if feature.name in switches
+                    for locked in (_locked(request, feature.name),)
                 ],
                 "problem": problem,
                 "done": done,

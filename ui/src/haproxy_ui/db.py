@@ -2651,22 +2651,82 @@ def read_cluster_backends(
         return [row[0] for row in cursor.fetchall()]
 
 
-def _backend_totals() -> sql.Composed:
-    """Aggregate cumulative counters before drawing resolution can touch them.
+#
+# The counters migration 0048 stores a difference for. A figure is only ever
+# summed from these; a test holds the card's and the dashboard's lists to it.
+#
+STORED_DELTAS = (
+    "req_tot",
+    "hrsp_2xx",
+    "hrsp_3xx",
+    "hrsp_4xx",
+    "hrsp_5xx",
+    "econ",
+    "wretr",
+    "bin",
+    "bout",
+)
 
-    The recent or not-yet-rolled-up half reads every raw sample. The completed
-    older half can only read the finest history that still exists, which is one
-    cumulative reading per hour. The two are split on `observed_at`, so the
-    boundary reading cannot occur in both halves.
+
+def _interval_aggregates(names: Sequence[str]) -> sql.Composed:
+    """The one aggregate both readers end in, over rows shaped as intervals.
+
+    Each row is one interval: `started_at`, `ended_at`, `restarted`,
+    `handed_over`, `span_sec` and `delta_<counter>`. The columns come out in the
+    order `_measurement` reads them.
     """
 
-    names = tuple(name for name, _label in metrics.CARD_COUNTERS)
-    columns = sql.SQL(", ").join(sql.Identifier(name) for name in names)
+    per_counter = sql.SQL(", ").join(
+        sql.SQL(
+            "coalesce(sum({delta}), 0)::bigint, "
+            "coalesce(sum(span_sec) filter ("
+            "    where {delta} is not null and not restarted and not handed_over"
+            "), 0)"
+        ).format(delta=sql.Identifier(f"delta_{name}"))
+        for name in names
+    )
+    return sql.SQL(
+        "select count(*)::bigint, min(started_at), max(ended_at), "
+        "       coalesce(bool_or(restarted), false), "
+        "       coalesce(bool_or(handed_over), false), "
+        "       coalesce(sum(span_sec) filter (where not restarted and not handed_over), 0), "
+        "       coalesce(sum(span_sec), 0), {per_counter} "
+    ).format(per_counter=per_counter)
+
+
+def _stored_intervals(names: Sequence[str]) -> sql.Composed:
+    """The interval columns of a raw row, read from what migration 0048 stored."""
+
+    return sql.SQL(
+        "previous_at as started_at, observed_at as ended_at, restarted, "
+        "false as handed_over, extract(epoch from observed_at - previous_at) as span_sec, {deltas}"
+    ).format(deltas=sql.SQL(", ").join(sql.Identifier(f"delta_{name}") for name in names))
+
+
+def _backend_totals() -> sql.Composed:
+    """One backend's figures, summed from the differences stored per sample.
+
+    Each raw sample carries what every counter did since the series' previous
+    sample on that node, decided when it was written (migration 0048) by the
+    rules this query used to apply on read. An interval belongs to the range
+    when it starts inside it, so the first sample in the range - which has
+    nothing in the range to pair with - adds nothing, as before.
+
+    The completed older half still comes from the hourly rollup, one reading
+    per hour, and is paired here as it always was: a few hundred rows. The
+    first raw sample after the boundary pairs with the last hour before it,
+    as it did when the two halves were one ordered list, so that one interval
+    is paired here too rather than read from storage.
+    """
+
+    names = metrics.CARD_COUNTERS
+    columns = sql.SQL(", ").join(sql.Identifier(name) for name, _label in names)
+    counters = [name for name, _label in names]
     previous = sql.SQL(", ").join(
         sql.SQL("lag({name}) over ordered as {before}").format(
             name=sql.Identifier(name), before=sql.Identifier(f"before_{name}")
         )
-        for name in names
+        for name in counters
     )
     deltas = sql.SQL(", ").join(
         sql.SQL(
@@ -2679,32 +2739,28 @@ def _backend_totals() -> sql.Composed:
             after=sql.Identifier(name),
             delta=sql.Identifier(f"delta_{name}"),
         )
-        for name in names
+        for name in counters
     )
-    aggregates = sql.SQL(", ").join(
-        sql.SQL(
-            "coalesce(sum({delta}), 0)::bigint, "
-            "coalesce(sum(span_sec) filter ("
-            "    where {delta} is not null and not restarted and not handed_over"
-            "), 0)"
-        ).format(delta=sql.Identifier(f"delta_{name}"))
-        for name in names
-    )
+    series = sql.SQL("cluster = %(cluster)s and backend = %(backend)s and member = %(member)s ")
     return sql.SQL(
         "with readings as ("
-        "    select observed_at, uptime_sec, uptime_sec as floor_uptime_sec, node, {columns} "
-        "      from metric_backend_member "
-        "     where cluster = %(cluster)s and backend = %(backend)s "
-        "       and member = %(member)s and observed_at >= %(since)s "
-        "       and observed_at >= %(raw_from)s and observed_at <= %(until)s "
-        "    union all "
         "    select observed_at, uptime_sec, floor_uptime_sec, node, {columns} "
         "      from metric_backend_hour "
-        "     where cluster = %(cluster)s and backend = %(backend)s "
-        "       and member = %(member)s "
+        "     where {series} "
         "       and bucket_at >= date_trunc('hour', %(since)s) "
         "       and bucket_at < %(raw_from)s and observed_at >= %(since)s "
         "       and observed_at < %(raw_from)s and observed_at <= %(until)s"
+        "    union all "
+        #
+        # The raw samples whose stored partner lies before the boundary: the
+        # first of each node after it, which pairs with the last hour instead.
+        #
+        "    select observed_at, uptime_sec, uptime_sec, node, {columns} "
+        "      from metric_backend_member "
+        "     where {series} "
+        "       and observed_at >= %(since)s and observed_at >= %(raw_from)s "
+        "       and observed_at <= %(until)s "
+        "       and (previous_at is null or previous_at < %(raw_from)s)"
         "), paired as ("
         "    select observed_at as ended_at, "
         "           lag(observed_at) over ordered as started_at, "
@@ -2720,104 +2776,55 @@ def _backend_totals() -> sql.Composed:
         "            and previous_node <> node) as handed_over, "
         "           extract(epoch from ended_at - started_at) as span_sec "
         "      from paired where started_at is not null"
-        "), differences as ("
-        "    select *, {deltas} from marked"
+        "), intervals as ("
+        "    select started_at, ended_at, restarted, handed_over, span_sec, {deltas} from marked"
+        "    union all "
+        "    select {stored} "
+        "      from metric_backend_member "
+        "     where {series} "
+        "       and observed_at >= %(since)s and observed_at >= %(raw_from)s "
+        "       and observed_at <= %(until)s "
+        "       and previous_at >= %(since)s and previous_at >= %(raw_from)s"
         ") "
-        "select count(*)::bigint, min(started_at), max(ended_at), "
-        "       coalesce(bool_or(restarted), false), "
-        "       coalesce(bool_or(handed_over), false), "
-        "       coalesce(sum(span_sec) filter (where not restarted and not handed_over), 0), "
-        "       coalesce(sum(span_sec), 0), {aggregates} "
-        "  from differences"
-    ).format(columns=columns, previous=previous, deltas=deltas, aggregates=aggregates)
+        "{aggregates} from intervals"
+    ).format(
+        columns=columns,
+        series=series,
+        previous=previous,
+        deltas=deltas,
+        stored=_stored_intervals(counters),
+        aggregates=_interval_aggregates(counters),
+    )
 
 
 def _frontend_totals(
     counters: tuple[tuple[str, str], ...] = metrics.CARD_COUNTERS, *, every_frontend: bool = False
 ) -> sql.Composed:
-    """One frontend's figures, differenced at stored resolution.
+    """One frontend's figures, summed from the differences stored per sample.
 
-    The same arithmetic `_backend_totals` performs, over one raw table instead of
-    a raw and a rolled-up half: there is no frontend rollup to meet at a
-    boundary, so there is no boundary to get wrong. The pairing is partitioned
-    by node here as well, so `handed_over` cannot arise; the expression is kept
-    identical rather than simplified away, so the two readers cannot drift into
-    two ideas of what a measurable interval is.
+    Only the samples on which a node held the address count, and each of them
+    stored its difference from that node's previous such sample (migration
+    0048) - which is how the readings were paired here before. There is no
+    frontend rollup, so there is no boundary.
 
     `every_frontend` sums every VIP frontend of the clusters in `%(clusters)s`
-    instead of one - the dashboard's traffic, counted the way each card on the
-    metrics page is. Each frontend is paired with its own readings only (the
-    partition carries cluster and frontend), so for one frontend the answer is
-    the same either way.
+    instead of one: the dashboard's traffic, counted the way each card on the
+    metrics page is.
     """
 
-    names = tuple(name for name, _label in counters)
-    columns = sql.SQL(", ").join(sql.Identifier(name) for name in names)
-    previous = sql.SQL(", ").join(
-        sql.SQL("lag({name}) over ordered as {before}").format(
-            name=sql.Identifier(name), before=sql.Identifier(f"before_{name}")
-        )
-        for name in names
-    )
-    deltas = sql.SQL(", ").join(
-        sql.SQL(
-            "case when handed_over or {before} is null or {after} is null then null "
-            "     when restarted then {after} "
-            "     when {after} < {before} then null "
-            "     else {after} - {before} end as {delta}"
-        ).format(
-            before=sql.Identifier(f"before_{name}"),
-            after=sql.Identifier(name),
-            delta=sql.Identifier(f"delta_{name}"),
-        )
-        for name in names
-    )
-    aggregates = sql.SQL(", ").join(
-        sql.SQL(
-            "coalesce(sum({delta}), 0)::bigint, "
-            "coalesce(sum(span_sec) filter ("
-            "    where {delta} is not null and not restarted and not handed_over"
-            "), 0)"
-        ).format(delta=sql.Identifier(f"delta_{name}"))
-        for name in names
-    )
+    names = [name for name, _label in counters]
     return sql.SQL(
-        "with readings as ("
-        "    select cluster, frontend, observed_at, uptime_sec, "
-        "           uptime_sec as floor_uptime_sec, node, {columns} "
+        "with intervals as ("
+        "    select {stored} "
         "      from metric_frontend "
         "     where {scope} "
-        "       and owns_vip and observed_at >= %(since)s "
-        "       and observed_at <= %(until)s"
-        "), paired as ("
-        "    select observed_at as ended_at, "
-        "           lag(observed_at) over ordered as started_at, "
-        "           uptime_sec, floor_uptime_sec, node, {columns}, "
-        "           lag(uptime_sec) over ordered as previous_uptime_sec, "
-        "           lag(node) over ordered as previous_node, {previous} "
-        "      from readings "
-        "    window ordered as (partition by cluster, frontend, node order by observed_at)"
-        "), marked as ("
-        "    select *, "
-        "           coalesce(floor_uptime_sec < previous_uptime_sec, false) as restarted, "
-        "           (previous_node is not null and node is not null "
-        "            and previous_node <> node) as handed_over, "
-        "           extract(epoch from ended_at - started_at) as span_sec "
-        "      from paired where started_at is not null"
-        "), differences as ("
-        "    select *, {deltas} from marked"
+        "       and owns_vip and observed_at >= %(since)s and observed_at <= %(until)s "
+        "       and previous_at >= %(since)s"
         ") "
-        "select count(*)::bigint, min(started_at), max(ended_at), "
-        "       coalesce(bool_or(restarted), false), "
-        "       coalesce(bool_or(handed_over), false), "
-        "       coalesce(sum(span_sec) filter (where not restarted and not handed_over), 0), "
-        "       coalesce(sum(span_sec), 0), {aggregates} "
-        "  from differences"
+        "{aggregates} from intervals"
     ).format(
-        columns=columns,
-        previous=previous,
-        deltas=deltas,
-        aggregates=aggregates,
+        stored=_stored_intervals(names),
+        aggregates=_interval_aggregates(names),
         scope=sql.SQL(
             "cluster = any(%(clusters)s)"
             if every_frontend

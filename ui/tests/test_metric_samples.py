@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from haproxy_ui import db
-from haproxy_ui.metrics import CARD_COUNTERS, METRIC_COUNTERS
+from haproxy_ui.metrics import CARD_COUNTERS, METRIC_COUNTERS, SUMMARY_COUNTERS
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATION = ROOT / "ui" / "migrations" / "versions" / "0018_metric_samples.py"
@@ -609,3 +609,25 @@ class TheListenerQueriesReadWhatTheyClaimTo(unittest.TestCase):
             backend.split(tail, 1)[1].split(" from differences", 1)[0],
             frontend.split(tail, 1)[1].split(" from differences", 1)[0],
         )
+
+
+class TheStoredDifferencesCoverEverySummedCounter(unittest.TestCase):
+    """Migration 0048 stores a difference per counter; a figure may only sum those."""
+
+    def test_the_cards_and_the_dashboard_sum_only_stored_counters(self) -> None:
+        summed = {name for name, _label in (*CARD_COUNTERS, *SUMMARY_COUNTERS)}
+
+        self.assertLessEqual(summed, set(db.STORED_DELTAS))
+
+    def test_the_reader_and_the_migration_name_the_same_counters(self) -> None:
+        import importlib.util
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "migrations/versions/0048_metric_deltas.py"
+        specification = importlib.util.spec_from_file_location("metric_deltas", path)
+        if specification is None or specification.loader is None:
+            self.fail("migration 0048 could not be loaded")
+        migration = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(migration)
+
+        self.assertEqual(tuple(migration.COUNTERS), db.STORED_DELTAS)

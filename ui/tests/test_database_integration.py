@@ -18,6 +18,7 @@ from unittest import mock
 from uuid import uuid4
 
 import psycopg
+import psycopg.sql
 from haproxy_mgmt.traffic_collector import (
     RETENTION_DAYS,
     CollectorConfig,
@@ -328,7 +329,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0047",))
+            self.assertEqual(cursor.fetchone(), ("0048",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -2950,3 +2951,293 @@ class AnUnchangedObjectsListing(unittest.TestCase):
 
         self.assertEqual(after.result, listing)
         self.assertGreater(after.observed_at, before.observed_at)
+
+
+@unittest.skipUnless(DSN, "run through ui/tools/test-database")
+class TheStoredDifferencesAnswerAsThePairingDid(unittest.TestCase):
+    """Migration 0048: the figures summed from stored differences, against the old pairing.
+
+    The old queries are kept verbatim in `metric_totals_reference`. Both run
+    over the same rows - a restart, a counter that goes backwards without one,
+    an unknown counter, a frontend whose holder moves and one whose ownership
+    is unknown, an hourly half before a raw half - and must agree exactly, for
+    ranges inside the raw half, across the boundary, and ending in the past.
+    """
+
+    MIGRATION = (
+        Path(__file__).resolve().parents[1] / "migrations" / "versions" / "0048_metric_deltas.py"
+    )
+    CLUSTER = "deltas"
+    BACKEND = "mgd-shop-web"
+    FRONTEND = "mgd-main-https"
+    now: datetime
+    start: datetime
+    raw_from: datetime
+
+    def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
+        return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.now = datetime.now(UTC).replace(microsecond=0)
+        cls.start = cls.now - timedelta(days=12)
+        cls.raw_from = cls.now - timedelta(days=6, minutes=17)
+        with psycopg.connect(
+            f"{DSN} user={os.environ['HAPROXY_UI_TEST_MIGRATION_ROLE']}"
+        ) as connection:
+            cursor = connection.cursor()
+            day = cls.start.date() - timedelta(days=1)
+            while day <= cls.now.date() + timedelta(days=1):
+                cursor.execute("select metric_partition('metric_backend_member', %s::date)", (day,))
+                cursor.execute("select metric_partition('metric_frontend', %s::date)", (day,))
+                cursor.execute(
+                    "select metric_month_partition('metric_backend_hour', %s::date)", (day,)
+                )
+                day += timedelta(days=1)
+            cls._backend(cursor)
+            cls._frontend(cursor)
+
+    @classmethod
+    def _readings(cls, node: str) -> list[tuple[datetime, int, int | None]]:
+        """Every 20 minutes for twelve days: (moment, uptime, req_tot).
+
+        Node b restarts on day 8 and again in the raw half; node a's counter
+        goes backwards on day 9 without a restart (a `clear counters`), and one
+        reading on each node reports no counter at all.
+        """
+
+        found = []
+        uptime, total = 1000, 0
+        at = cls.start + (timedelta(minutes=7) if node == "b" else timedelta())
+        index = 0
+        while at <= cls.now:
+            index += 1
+            uptime += 1200
+            total += 3 + index % 5
+            if node == "b" and index in (560, 790):
+                uptime, total = 300, 4
+            if node == "a" and index == 650:
+                total = 2
+            counter: int | None = None if index == 700 else total
+            found.append((at, uptime, counter))
+            at += timedelta(minutes=20)
+        return found
+
+    @classmethod
+    def _backend(cls, cursor: psycopg.Cursor[Any]) -> None:
+        for node in ("a", "b"):
+            hours: dict[datetime, tuple[datetime, int, int, int | None]] = {}
+            for at, uptime, total in cls._readings(node):
+                if at >= cls.raw_from - timedelta(hours=3):
+                    cursor.execute(
+                        "insert into metric_backend_member (cluster, node, backend, member, "
+                        "observed_at, uptime_sec, req_tot, hrsp_2xx, hrsp_5xx, econ) "
+                        "values (%s, %s, %s, 'BACKEND', %s, %s, %s, %s, %s, %s)",
+                        (
+                            cls.CLUSTER,
+                            node,
+                            cls.BACKEND,
+                            at,
+                            uptime,
+                            total,
+                            None if total is None else total - total // 7,
+                            None if total is None else total // 9,
+                            1,
+                        ),
+                    )
+                bucket = at.replace(minute=0, second=0)
+                if bucket < cls.raw_from:
+                    floor = min(uptime, hours[bucket][2]) if bucket in hours else uptime
+                    hours[bucket] = (at, uptime, floor, total)
+            for bucket, (at, uptime, floor, total) in hours.items():
+                cursor.execute(
+                    "insert into metric_backend_hour (cluster, node, backend, member, bucket_at, "
+                    "observed_at, uptime_sec, floor_uptime_sec, req_tot, hrsp_2xx, hrsp_5xx, econ) "
+                    "values (%s, %s, %s, 'BACKEND', %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        cls.CLUSTER,
+                        node,
+                        cls.BACKEND,
+                        bucket,
+                        at,
+                        uptime,
+                        floor,
+                        total,
+                        None if total is None else total - total // 7,
+                        None if total is None else total // 9,
+                        1,
+                    ),
+                )
+
+    @classmethod
+    def _frontend(cls, cursor: psycopg.Cursor[Any]) -> None:
+        for node in ("a", "b"):
+            for index, (at, uptime, total) in enumerate(cls._readings(node)):
+                if at < cls.now - timedelta(days=8):
+                    continue
+                #
+                # The address moves between the nodes every few hours, and for
+                # a while nobody can say who holds it.
+                #
+                held = (index // 9) % 2 == (0 if node == "a" else 1)
+                owns: bool | None = None if 300 <= index < 305 else held
+                cursor.execute(
+                    "insert into metric_frontend (cluster, node, frontend, observed_at, owns_vip, "
+                    "uptime_sec, req_tot, hrsp_2xx, bin, bout) "
+                    "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        cls.CLUSTER,
+                        node,
+                        cls.FRONTEND,
+                        at,
+                        owns,
+                        uptime,
+                        total,
+                        None if total is None else total // 2,
+                        None if total is None else total * 900,
+                        None if total is None else total * 5000,
+                    ),
+                )
+
+    def ranges(self) -> list[tuple[str, datetime, datetime, datetime]]:
+        """(name, since, until, raw_from) - inside the raw half, across it, in the past."""
+
+        now, raw_from = self.now, self.raw_from
+        return [
+            ("last day", now - timedelta(days=1), now, raw_from),
+            ("raw week", raw_from, now, raw_from),
+            ("thirty days", now - timedelta(days=30), now, raw_from),
+            (
+                "marked across the boundary",
+                now - timedelta(days=9),
+                now - timedelta(days=3),
+                raw_from,
+            ),
+            ("marked in the rollup", now - timedelta(days=11), now - timedelta(days=8), raw_from),
+            (
+                "marked over a restart",
+                now - timedelta(days=2, hours=5),
+                now - timedelta(days=1),
+                raw_from,
+            ),
+            (
+                "boundary moved back",
+                now - timedelta(days=10),
+                now,
+                now - timedelta(days=6, hours=2),
+            ),
+        ]
+
+    def test_a_backend_s_figures_are_the_same_as_the_pairing_gave(self) -> None:
+        from tests import metric_totals_reference as reference
+
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            for name, since, until, raw_from in self.ranges():
+                arguments = {
+                    "cluster": self.CLUSTER,
+                    "backend": self.BACKEND,
+                    "member": "BACKEND",
+                    "since": since,
+                    "until": until,
+                    "raw_from": raw_from,
+                }
+                with self.subTest(range=name):
+                    expected = connection.execute(reference.backend_totals(), arguments).fetchone()
+                    actual = connection.execute(db._backend_totals(), arguments).fetchone()
+                    self.assertEqual(actual, expected)
+                    self.assertGreater(
+                        expected[0] if expected else 0,
+                        0,
+                        "a range that measured nothing proves nothing",
+                    )
+
+    def test_a_frontend_s_figures_and_the_dashboard_s_are_the_same_as_the_pairing_gave(
+        self,
+    ) -> None:
+        from haproxy_ui import metrics
+        from tests import metric_totals_reference as reference
+
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            for name, since, until, _raw_from in self.ranges():
+                one = {
+                    "cluster": self.CLUSTER,
+                    "frontend": self.FRONTEND,
+                    "since": since,
+                    "until": until,
+                }
+                every = {"clusters": [self.CLUSTER], "since": since, "until": until}
+                with self.subTest(range=name):
+                    self.assertEqual(
+                        connection.execute(db._frontend_totals(), one).fetchone(),
+                        connection.execute(reference.frontend_totals(), one).fetchone(),
+                    )
+                    self.assertEqual(
+                        connection.execute(
+                            db._frontend_totals(metrics.SUMMARY_COUNTERS, every_frontend=True),
+                            every,
+                        ).fetchone(),
+                        connection.execute(
+                            reference.frontend_totals(
+                                metrics.SUMMARY_COUNTERS, every_frontend=True
+                            ),
+                            every,
+                        ).fetchone(),
+                    )
+
+    def test_the_rows_filled_in_by_the_migration_are_the_rows_the_trigger_writes(self) -> None:
+        specification = importlib.util.spec_from_file_location("metric_deltas", self.MIGRATION)
+        if specification is None or specification.loader is None:
+            self.fail("migration 0048 could not be loaded")
+        migration = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(migration)
+        names = ["previous_at", "restarted", *(f"delta_{name}" for name in migration.COUNTERS)]
+        stored = psycopg.sql.SQL(", ").join(psycopg.sql.Identifier(name) for name in names)
+        with self.connect() as connection:
+            for table, series, held in (
+                ("metric_backend_member", "cluster, node, backend, member", "true"),
+                ("metric_frontend", "cluster, node, frontend", "owns_vip"),
+            ):
+                with self.subTest(table=table):
+                    keys = psycopg.sql.SQL(", ").join(
+                        psycopg.sql.Identifier(name.strip()) for name in series.split(",")
+                    )
+                    order = psycopg.sql.SQL(
+                        "select {stored} from {table} where cluster = %s order by {keys}, observed_at"
+                    ).format(stored=stored, table=psycopg.sql.Identifier(table), keys=keys)
+                    written = connection.execute(order, (self.CLUSTER,)).fetchall()
+                    connection.execute(
+                        psycopg.sql.SQL("update {table} set {cleared} where cluster = %s").format(
+                            table=psycopg.sql.Identifier(table),
+                            cleared=psycopg.sql.SQL(", ").join(
+                                psycopg.sql.SQL("{} = null").format(psycopg.sql.Identifier(name))
+                                for name in names
+                            ),
+                        ),
+                        (self.CLUSTER,),
+                    )
+                    connection.execute(migration._backfill(table, series, held))
+                    self.assertEqual(connection.execute(order, (self.CLUSTER,)).fetchall(), written)
+                    self.assertTrue(any(row[0] is not None for row in written))
+            connection.rollback()
+
+    def test_the_poller_writes_a_sample_and_may_not_write_what_is_derived_from_it(self) -> None:
+        with self.connect("HAPROXY_UI_TEST_POLLER_ROLE") as connection:
+            connection.execute(
+                "insert into metric_backend_member (cluster, node, backend, member, uptime_sec, req_tot) "
+                "values (%s, 'a', %s, 'BACKEND', 10000000, 999999)",
+                (self.CLUSTER, self.BACKEND),
+            )
+            connection.commit()
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute(
+                    "insert into metric_backend_member (cluster, node, backend, member, delta_req_tot) "
+                    "values (%s, 'a', %s, 'BACKEND', 5)",
+                    (self.CLUSTER, self.BACKEND),
+                )
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection:
+            row = connection.execute(
+                "select previous_at is not null, restarted, delta_req_tot from metric_backend_member "
+                "where cluster = %s and req_tot = 999999",
+                (self.CLUSTER,),
+            ).fetchone()
+        self.assertEqual(row, (True, False, 999999 - self._readings("a")[-1][2]))  # type: ignore[operator]

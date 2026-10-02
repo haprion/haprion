@@ -699,6 +699,13 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
     request = value.get("request", 0)
     if not isinstance(request, int) or isinstance(request, bool) or request < 0:
         raise CollectorError("traffic record request is invalid")
+    #
+    # Tolerated rather than required, as `request` is: a record written before
+    # access rules existed has no field, and that means what an empty one does
+    # - no rule met the request (migration 0050, B227).
+    #
+    if "rule" not in value:
+        value["rule"] = ""
     identity = hashlib.sha256(cluster.encode() + b"\0" + node.encode() + b"\0" + line).digest()
     return (
         identity,
@@ -720,14 +727,21 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
         number("response_time"),
         number("total_time"),
         number("bytes", low=0),
+        text("rule", MAX_RULE_LENGTH),
     )
 
+
+#
+# The column's own bound (migration 0050). A longer value is no rule this
+# installation wrote.
+#
+MAX_RULE_LENGTH = 160
 
 _TRAFFIC_COPY = """
 copy traffic_log
     (event_id, cluster, node, occurred_at, request_number, client, method, host,
      path, frontend, backend, server, status, request_time, queue_time,
-     connect_time, response_time, total_time, bytes)
+     connect_time, response_time, total_time, bytes, rule)
 from stdin
 """
 

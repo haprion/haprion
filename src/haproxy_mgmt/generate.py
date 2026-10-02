@@ -200,7 +200,7 @@ HTTP_TRAFFIC_LOG_FORMAT = (
     '"%{+json}o %(schema)[int(1)] %(at)Ts %(request)rt %(client)ci %(method)HM '
     "%(host)[var(txn.traffic_host)] %(path)HPO %(frontend)f %(backend)b "
     "%(server)s %(status)ST %(request_time)TR %(queue_time)Tw "
-    '%(connect_time)Tc %(response_time)Tr %(total_time)Ta %(bytes)B"'
+    '%(connect_time)Tc %(response_time)Tr %(total_time)Ta %(bytes)B %(rule)[var(txn.rule)]"'
 )
 #
 # The same record for an external receiver, and which node wrote it. The
@@ -667,12 +667,17 @@ def _refuse_unknown_networks(
     """
 
     for proxy in proxies:
-        for name in proxy.allow_from:
+        named = [
+            *proxy.allow_from,
+            *(proxy.deny_from.sources if proxy.deny_from is not None else ()),
+            *(source for rule in proxy.deny_rules for source in rule.sources),
+        ]
+        for name in named:
             if is_range(name) or name in networks:
                 continue
             known = ", ".join(sorted(networks)) or "none"
             raise GeneratorError(
-                f"{proxy.name} is restricted to the group {name}, which this cluster does "
+                f"{proxy.name} names the group {name}, which this cluster does "
                 f"not define. Known groups: {known}"
             )
 
@@ -948,7 +953,9 @@ def _frontend_file(
             fallbacks.extend(_fallback(vip, protocol, unknown_host))
         body += envelope
         for _, proxy, role in members:
-            rules = _frontend_rules(proxy, role, networks, members=members)
+            rules = _frontend_rules(
+                proxy, role, networks, members=members, trusted=bool(trusted_proxies)
+            )
             body.extend(rules)
             _record(shared, proxy.name, listener=[*envelope, *tail], routing=rules)
         body += tail
@@ -1010,6 +1017,16 @@ def _tcp_frontend(
             # is all a raw protocol can be told.
             #
             f"    tcp-request connection reject unless {acl}",
+        ]
+    if proxy.deny_from is not None:
+        #
+        # Always `deny` here - the model refuses `log` on tcp, which has no
+        # traffic record for a logged match to appear on.
+        #
+        acl = _acl_name(proxy.name, "deny-from")
+        lines += [
+            f"    acl {acl} src {' '.join(_cidrs(proxy.deny_from.sources, networks))}",
+            f"    tcp-request connection reject if {acl}",
         ]
     if abuse_protection is not None and abuse_protection.max_new_connections is not None:
         window = abuse_protection.window
@@ -1251,7 +1268,9 @@ def _tls(members: Sequence[tuple[Vip, Proxy, str]], protocol: str, listing: str)
     return f" ssl crt-list ../{CRT_LIST_TARGET}/{listing} alpn {ALPN}{policy}"
 
 
-def _allow_rules(proxy: Proxy, networks: Mapping[str, Sequence[str]], host: str) -> list[str]:
+def _allow_rules(
+    proxy: Proxy, networks: Mapping[str, Sequence[str]], host: str, trusted: bool = False
+) -> list[str]:
     """Who gets an answer, when the answer is not for everybody.
 
     Written as a deny rather than as a condition on `use_backend`, so that a
@@ -1262,18 +1281,156 @@ def _allow_rules(proxy: Proxy, networks: Mapping[str, Sequence[str]], host: str)
 
     if not proxy.allow_from:
         return []
-    allowed = sorted(
-        {
-            cidr
-            for entry in proxy.allow_from
-            for cidr in ((entry,) if is_range(entry) else networks[entry])
-        }
-    )
+    allowed = _cidrs(proxy.allow_from, networks)
     acl = _acl_name(proxy.name, "allow")
     return [
-        f"    acl {acl} src {' '.join(allowed)}",
+        f"    acl {acl} {_client_fetch(trusted)} {' '.join(allowed)}",
         f"    http-request deny deny_status 403 if {host} !{acl}",
     ]
+
+
+def _cidrs(entries: Sequence[str], networks: Mapping[str, Sequence[str]]) -> list[str]:
+    """Group names resolved to the cluster's ranges, literal ranges kept."""
+
+    return sorted(
+        {cidr for entry in entries for cidr in ((entry,) if is_range(entry) else networks[entry])}
+    )
+
+
+def _uses_sources(proxy: Proxy) -> bool:
+    return bool(
+        proxy.allow_from
+        or proxy.deny_from is not None
+        or any(rule.sources for rule in proxy.deny_rules)
+    )
+
+
+def _client_fetch(trusted: bool) -> str:
+    """Where an address condition reads the visitor from (B227, question 1).
+
+    Without a trusted proxy that is the connection, as it always was, and the
+    generated text is unchanged. Behind one it is the address `_client_rules`
+    took from the last X-Forwarded-For element - the same reading the rate
+    limit counts - since the connection is then the proxy, and a list held
+    against it would admit or refuse every visitor at once.
+    """
+
+    return "var(txn.client) -m ip" if trusted else "src"
+
+
+def _client_rules(proxy: Proxy, host: str, trusted: bool) -> list[str]:
+    """The visitor's address, once per object that asks about addresses.
+
+    A request from a trusted proxy that carries no header gets no address at
+    all: an allowlist then refuses it and a denylist lets it pass, the same
+    answer the rate limit gives - there is no address to hold responsible.
+    """
+
+    if not trusted or not _uses_sources(proxy):
+        return []
+    return [
+        f"    http-request set-var(txn.client) req.hdr_ip(X-Forwarded-For,-1) "
+        f"if {host} {TRUSTED_ACL}",
+        f"    http-request set-var(txn.client) src if {host} !{TRUSTED_ACL}",
+    ]
+
+
+HEADER_MATCH_FLAGS = {"equals": "str", "prefix": "beg", "contains": "sub"}
+
+
+def _verdict(condition: str, name: str, mode: str) -> list[str]:
+    """What a matched rule does, and the name it leaves on the traffic record.
+
+    A logged match keeps the first rule that met the request, so the record
+    names the rule that would have refused it first; a refusal names itself
+    whatever was logged before, since that is the rule that answered.
+    """
+
+    if mode == "log":
+        return [
+            f"    http-request set-var(txn.rule) str({name}:log) "
+            f"if {condition} !{{ var(txn.rule) -m found }}"
+        ]
+    return [
+        f"    http-request set-var(txn.rule) str({name}:deny) if {condition}",
+        f"    http-request deny deny_status 403 if {condition}",
+    ]
+
+
+def _access_rules(
+    proxy: Proxy, networks: Mapping[str, Sequence[str]], host: str, trusted: bool
+) -> list[str]:
+    """`deny_from`, `deny_rules` and `max_request_body`, in that order (Fas 21).
+
+    After `allow_from` and before routing, as `_allow_rules` is: a refusal
+    has to come before any `use_backend` could send the request on.
+    """
+
+    lines: list[str] = []
+    fetch = _client_fetch(trusted)
+    if proxy.deny_from is not None:
+        acl = _acl_name(proxy.name, "deny-from")
+        lines.append(f"    acl {acl} {fetch} {' '.join(_cidrs(proxy.deny_from.sources, networks))}")
+        lines.extend(_verdict(f"{host} {acl}", "deny-from", proxy.deny_from.mode))
+    for index, rule in enumerate(proxy.deny_rules):
+        prefix = f"rule{index}"
+        condition = [host]
+        if rule.path is not None:
+            acl = _acl_name(proxy.name, f"{prefix}-path")
+            if rule.path == "/" and rule.path_match == "prefix":
+                #
+                # Every path, as for a route: the host alone says it.
+                #
+                pass
+            elif rule.path_match == "exact":
+                lines += [
+                    f"    acl {acl} path -m str {rule.path}",
+                    f"    acl {acl} path -m str {rule.path}/",
+                ]
+                condition.append(acl)
+            else:
+                lines += [
+                    f"    acl {acl} path -m str {rule.path}",
+                    f"    acl {acl} path -m beg {rule.path}/",
+                ]
+                condition.append(acl)
+        if rule.methods:
+            acl = _acl_name(proxy.name, f"{prefix}-method")
+            lines.append(f"    acl {acl} method {' '.join(rule.methods)}")
+            condition.append(acl)
+        if rule.header is not None:
+            acl = _acl_name(proxy.name, f"{prefix}-header")
+            #
+            # `req.fhdr`, not `req.hdr`: the latter splits a value at its
+            # commas, so `contains` would never see a value that has one.
+            #
+            flag = HEADER_MATCH_FLAGS[rule.header.match]
+            lines.append(
+                f"    acl {acl} req.fhdr({rule.header.name}) -m {flag} '{rule.header.value}'"
+            )
+            condition.append(acl)
+        if rule.sources:
+            acl = _acl_name(proxy.name, f"{prefix}-source")
+            lines.append(f"    acl {acl} {fetch} {' '.join(_cidrs(rule.sources, networks))}")
+            condition.append(acl)
+        lines.extend(_verdict(" ".join(condition), rule.name, rule.mode))
+    if proxy.max_request_body is not None:
+        #
+        # `req.body_size` is the declared length, or what has arrived of a
+        # chunked body - measured in 3.4.6: it holds every declared length and
+        # a chunked body that fits in the buffer, and nothing longer (B227).
+        # The longer chunked request is let through and marked, so the WAF
+        # page shows whether it happens before anyone refuses it.
+        #
+        size = f"{{ req.body_size gt {proxy.max_request_body} }}"
+        lines += [
+            f"    http-request set-var(txn.rule) str(body-limit:deny) if {host} {size}",
+            f"    http-request deny deny_status 413 if {host} {size}",
+            f"    http-request set-var(txn.rule) str(body-unbounded:log) if {host} "
+            f"{{ req.hdr(transfer-encoding) -m found }} !{{ req.hdr(content-length) -m found }} "
+            f"!{{ var(txn.rule) -m found }}",
+        ]
+    return lines
 
 
 def _message(proxy: Proxy, message: str) -> str:
@@ -1425,6 +1582,7 @@ def _frontend_rules(
     networks: Mapping[str, Sequence[str]] | None = None,
     *,
     members: Sequence[tuple[Vip, Proxy, str]] = (),
+    trusted: bool = False,
 ) -> list[str]:
     """One object's whole contribution to the shared frontend.
 
@@ -1438,7 +1596,8 @@ def _frontend_rules(
     host = _acl_name(proxy.name, "host")
     lines = ["", f"    # {proxy.name}", *_host_acl(proxy)]
 
-    allow = _allow_rules(proxy, networks or {}, host)
+    lines.extend(_client_rules(proxy, host, trusted))
+    allow = _allow_rules(proxy, networks or {}, host, trusted)
     lines.extend(allow)
 
     if role == "redirect":
@@ -1450,6 +1609,8 @@ def _frontend_rules(
         return [*lines, f"    redirect scheme https code 301 if {host}"]
 
     lines.extend(_tls_sni_guard(proxy, host, members))
+
+    lines.extend(_access_rules(proxy, networks or {}, host, trusted))
 
     lines.extend(_maintenance_rule(proxy, host))
 

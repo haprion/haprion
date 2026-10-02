@@ -2265,3 +2265,234 @@ class AdvancedConfigDoesWhatItsPlacementSays(unittest.TestCase):
                 answer = b""
 
         self.assertEqual(answer, b"")
+
+
+GUARDED = """
+schema: 1
+name: guarded
+hostnames: [guarded.example.com]
+listen:
+  protocol: http
+deny_from:
+  mode: deny
+  sources: [203.0.113.0/24]
+deny_rules:
+  - name: admin-post
+    mode: deny
+    path: /admin
+    methods: [POST]
+  - name: scanner
+    mode: log
+    header:
+      name: User-Agent
+      contains: sqlmap
+  - name: internal-office
+    mode: deny
+    path: /internal
+    source: [192.0.2.0/24]
+max_request_body: 64k
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
+OFFICE_ONLY = """
+schema: 1
+name: office
+hostnames: [office.example.com]
+listen:
+  protocol: http
+allow_from: [office]
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+
+
+def body_server(port: int) -> ThreadingHTTPServer:
+    """Answers any method with how many body bytes reached it."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def answer(self) -> None:
+            received = 0
+            if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+                while True:
+                    size = int(self.rfile.readline().strip(), 16)
+                    if size == 0:
+                        self.rfile.readline()
+                        break
+                    received += len(self.rfile.read(size))
+                    self.rfile.readline()
+            else:
+                received = len(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+            body = f"got {received}".encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        do_GET = do_POST = answer  # noqa: N815 - the names are the library's
+
+        def log_message(self, *_: object) -> None:
+            """Silence."""
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@unittest.skipUnless(shutil.which("haproxy"), "haproxy is not installed here")
+class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
+    """Fas 21 del A (B227), behind a trusted proxy - the case question 1 changed.
+
+    The test connects from 127.0.0.1 and names it the trusted proxy, so every
+    address condition is decided by the X-Forwarded-For the test writes. The
+    rule a request met is read back from `txn.rule` itself: the harness adds
+    one `http-after-response` line that copies it into a response header,
+    which is a window onto the variable the traffic record logs, not a change
+    to the rules under test.
+    """
+
+    servers: list[ThreadingHTTPServer]
+    haproxy: subprocess.Popen[bytes]
+    directory: tempfile.TemporaryDirectory[str]
+    port: int
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        web = free_port()
+        cls.servers = [body_server(web)]
+        wait_for(web)
+        cls.port = free_port()
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        layer = generate(
+            [
+                load_proxy("guarded", GUARDED.format(web=web).encode()),
+                load_proxy("office", OFFICE_ONLY.format(web=web).encode()),
+            ],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            networks={"office": ("198.51.100.0/24",)},
+            ports={"http": cls.port},
+            trusted_proxies=("127.0.0.1",),
+        )
+        window = "    option httplog\n    http-after-response set-header X-Rule %[var(txn.rule)]\n"
+        layer = GeneratedLayer(
+            configuration={
+                name: text.replace("    option httplog\n", window)
+                for name, text in layer.configuration.items()
+            },
+            certificate_lists=layer.certificate_lists,
+        )
+        arguments = write_release(root, layer)
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        cls.haproxy = start_haproxy(binary, arguments, cls.port)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.haproxy.terminate()
+        cls.haproxy.wait(timeout=5)
+        for server in cls.servers:
+            server.shutdown()
+        cls.directory.cleanup()
+
+    def ask(
+        self,
+        target: str = "/",
+        *,
+        host: str = "guarded.example.com",
+        visitor: str = "192.0.2.5",
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        body: bytes | None = None,
+        chunked: bool = False,
+    ) -> tuple[int, str]:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.putrequest(method, target, skip_host=True, skip_accept_encoding=True)
+            connection.putheader("Host", host)
+            connection.putheader("X-Forwarded-For", visitor)
+            for name, value in (headers or {}).items():
+                connection.putheader(name, value)
+            if body is not None and not chunked:
+                connection.putheader("Content-Length", str(len(body)))
+            if chunked:
+                connection.putheader("Transfer-Encoding", "chunked")
+            connection.endheaders()
+            if body is not None and chunked:
+                for start in range(0, len(body), 4096):
+                    piece = body[start : start + 4096]
+                    connection.send(f"{len(piece):x}\r\n".encode() + piece + b"\r\n")
+                connection.send(b"0\r\n\r\n")
+            elif body is not None:
+                connection.send(body)
+            response = connection.getresponse()
+            response.read()
+            return response.status, response.getheader("X-Rule") or ""
+        finally:
+            connection.close()
+
+    def test_a_visitor_no_rule_names_is_served_and_named_by_nothing(self) -> None:
+        self.assertEqual(self.ask(), (200, ""))
+
+    def test_deny_from_refuses_the_forwarded_address_not_the_proxy(self) -> None:
+        self.assertEqual(self.ask(visitor="203.0.113.9"), (403, "deny-from:deny"))
+
+    def test_every_condition_of_a_rule_must_hold(self) -> None:
+        self.assertEqual(self.ask("/admin", method="POST", body=b"x"), (403, "admin-post:deny"))
+        self.assertEqual(
+            self.ask("/admin/users", method="POST", body=b"x"), (403, "admin-post:deny")
+        )
+        self.assertEqual(self.ask("/admin"), (200, ""))
+        self.assertEqual(self.ask("/administrator", method="POST", body=b"x"), (200, ""))
+
+    def test_a_logged_rule_lets_the_request_through_and_names_itself(self) -> None:
+        self.assertEqual(
+            self.ask(headers={"User-Agent": "sqlmap/1.8, like curl"}), (200, "scanner:log")
+        )
+
+    def test_a_refusal_names_itself_over_an_earlier_logged_match(self) -> None:
+        self.assertEqual(
+            self.ask("/admin", method="POST", body=b"x", headers={"User-Agent": "sqlmap"}),
+            (403, "admin-post:deny"),
+        )
+
+    def test_a_rule_source_is_the_forwarded_address(self) -> None:
+        self.assertEqual(self.ask("/internal", visitor="192.0.2.7"), (403, "internal-office:deny"))
+        self.assertEqual(self.ask("/internal", visitor="198.51.100.7"), (200, ""))
+
+    def test_the_body_limit_holds_a_declared_length(self) -> None:
+        self.assertEqual(self.ask(method="POST", body=b"a" * 60_000), (200, ""))
+        self.assertEqual(self.ask(method="POST", body=b"a" * 70_000), (413, "body-limit:deny"))
+
+    def test_a_long_chunked_body_is_let_through_and_marked(self) -> None:
+        """A limit past the 16 kB buffer, so nothing a chunked body sends is held
+        against it. Below the buffer the first chunks can already exceed the
+        limit and the request is refused - which depends on what has arrived,
+        and is why this case is written with a limit the buffer cannot reach."""
+
+        self.assertEqual(
+            self.ask(method="POST", body=b"a" * 200_000, chunked=True), (200, "body-unbounded:log")
+        )
+
+    def test_allow_from_reads_the_forwarded_address_behind_a_trusted_proxy(self) -> None:
+        self.assertEqual(self.ask(host="office.example.com", visitor="198.51.100.7")[0], 200)
+        self.assertEqual(self.ask(host="office.example.com", visitor="192.0.2.5")[0], 403)

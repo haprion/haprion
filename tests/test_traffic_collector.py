@@ -97,7 +97,22 @@ class TrafficCollectorTests(unittest.TestCase):
         }
         row = _database_row("alpha", "node-a", json.dumps(base).encode())
         self.assertEqual(row[7], "a.example.test")
-        for change in ({"at": 2**62}, {"at": 10**12}, {"path": "/a\0b"}, {"host": "\0"}):
+        #
+        # `rule` (0050): absent and empty both mean no rule met the request.
+        #
+        self.assertEqual(row[-1], "")
+        self.assertEqual(
+            _database_row("alpha", "node-a", json.dumps(base | {"rule": "a:deny"}).encode())[-1],
+            "a:deny",
+        )
+        for change in (
+            {"at": 2**62},
+            {"at": 10**12},
+            {"path": "/a\0b"},
+            {"host": "\0"},
+            {"rule": "x" * 161},
+            {"rule": 7},
+        ):
             with self.subTest(change=change), self.assertRaises(CollectorError):
                 _database_row("alpha", "node-a", json.dumps(base | change).encode())
         self.assertEqual(

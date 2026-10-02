@@ -348,7 +348,7 @@ BACKEND_POLICY_NAMES = ("modern", "intermediate", "legacy")
 # its author writes first.
 #
 COMMON_KEYS = frozenset(
-    {"schema", "name", "listen", "backends", "allow_from", "rate_limit", "advanced"}
+    {"schema", "name", "listen", "backends", "allow_from", "deny_from", "rate_limit", "advanced"}
 )
 
 HTTP_ONLY_KEYS: Mapping[str, str] = MappingProxyType(
@@ -358,6 +358,8 @@ HTTP_ONLY_KEYS: Mapping[str, str] = MappingProxyType(
         "maintenance": "there is no way to answer a raw connection with a page",
         "unavailable": "there is no way to answer a raw connection with a message",
         "headers": "a raw connection carries no headers",
+        "deny_rules": "a raw connection carries no path, method or headers to refuse on",
+        "max_request_body": "a raw connection has no request body",
     }
 )
 
@@ -726,6 +728,51 @@ class RateLimit:
 
 
 @dataclass(frozen=True, slots=True)
+class HeaderCondition:
+    """One header an access rule asks about, and how its value must read."""
+
+    name: str
+    match: str
+    """`equals`, `prefix` or `contains` - never a pattern (B227)."""
+
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class AccessRule:
+    """A refusal on what a request asks for (Fas 21, B216 point 3, B227).
+
+    Every condition the rule names must hold; an object's rules are tried in
+    order and any one of them is enough. A rule names at least one condition,
+    because a rule with none would refuse everything the object serves.
+
+    `log` lets the request through and records the rule's name on its traffic
+    record, so that what a rule would refuse can be seen before it refuses it;
+    `deny` answers 403 and records the same.
+    """
+
+    name: str
+    mode: str
+    path: str | None = None
+    path_match: str = "prefix"
+    methods: tuple[str, ...] = ()
+    header: HeaderCondition | None = None
+    sources: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DenyFrom:
+    """Who gets no answer, by address - the counterpart of `allow_from`.
+
+    `log` exists for http objects only: a tcp object has no traffic record
+    for the match to appear on, so there it would be a rule nothing shows.
+    """
+
+    mode: str
+    sources: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Advanced:
     """The object's advanced config: the text as stored, and where each line goes.
 
@@ -824,6 +871,20 @@ class Proxy:
 
     advanced: Advanced | None = None
     """HAProxy text pasted onto the object (Fas 17, B223). None means none."""
+
+    deny_from: DenyFrom | None = None
+    """Who is refused by address. None means nobody is (Fas 21)."""
+
+    deny_rules: tuple[AccessRule, ...] = ()
+    """Refusals on path, method, header and source, in order (Fas 21)."""
+
+    max_request_body: int | None = None
+    """The largest declared request body in bytes. None means no limit (Fas 21).
+
+    Held against the declared length only: HAProxy cannot count a chunked body
+    past its buffer (measured in 3.4.6, 2026-10-02), so such a request is let
+    through and marked on its traffic record instead (B227, choice C).
+    """
 
 
 def _string(value: Mapping[str, Any], key: str, location: str, allowed: tuple[str, ...]) -> str:
@@ -1393,6 +1454,9 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     unavailable = _unavailable(data.get("unavailable"), f"{name}.unavailable")
     headers = _headers(data.get("headers"), f"{name}.headers")
     rate_limit = _rate_limit(data.get("rate_limit"), f"{name}.rate_limit", listen.protocol)
+    deny_from = _deny_from(data.get("deny_from"), f"{name}.deny_from", listen.protocol)
+    deny_rules = _deny_rules(data.get("deny_rules"), f"{name}.deny_rules")
+    max_request_body = _body_size(data.get("max_request_body"), f"{name}.max_request_body")
     handwritten = sorted(key for key, backend in backends.items() if backend.written_by_hand)
     advanced = _advanced(
         data.get("advanced"),
@@ -1417,6 +1481,9 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         backend=backend,
         rate_limit=rate_limit,
         advanced=advanced,
+        deny_from=deny_from,
+        deny_rules=deny_rules,
+        max_request_body=max_request_body,
     )
 
 
@@ -1758,34 +1825,203 @@ def is_range(entry: str) -> bool:
 
 
 def _allow_from(value: Any, name: str) -> tuple[str, ...]:
+    return _sources(value, f"{name}.allow_from", "allow")
+
+
+def _sources(value: Any, location: str, verb: str) -> tuple[str, ...]:
+    """Group names and literal ranges, as `allow_from`, `deny_from` and a rule's
+    `source` all take them - one reading, so the three cannot drift apart."""
+
     if not isinstance(value, list):
-        raise ModelError(f"{name}.allow_from must list group names, addresses or ranges")
+        raise ModelError(f"{location} must list group names, addresses or ranges")
 
     entries: list[str] = []
     for entry in value:
         if not isinstance(entry, str) or not entry:
-            raise ModelError(f"{name}.allow_from contains something that is not a name or range")
+            raise ModelError(f"{location} contains something that is not a name or range")
         if is_range(entry):
             network = ipaddress.ip_network(entry, strict=False)
             if network.prefixlen == 0:
                 #
                 # A range that means everywhere is an allowlist that allows
                 # everything, which is worse than none: it reads as a
-                # restriction and enforces nothing.
+                # restriction and enforces nothing. Refusing everywhere is
+                # no better - it is turning the site off by another name.
                 #
-                raise ModelError(f"{name}.allow_from may not allow an entire address family")
+                raise ModelError(f"{location} may not {verb} an entire address family")
             entries.append(str(network))
             continue
         if not NAME.match(entry):
             raise ModelError(
-                f"{name}.allow_from contains {entry!r}, which is neither a group name nor an "
+                f"{location} contains {entry!r}, which is neither a group name nor an "
                 f"address or range"
             )
         entries.append(entry)
 
     if len(set(entries)) != len(entries):
-        raise ModelError(f"{name}.allow_from names the same group or range twice")
+        raise ModelError(f"{location} names the same group or range twice")
     return tuple(entries)
+
+
+ACCESS_MODES = ("log", "deny")
+HEADER_MATCHES = ("equals", "prefix", "contains")
+HTTP_METHODS = ("CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE")
+#
+# Names the generator writes on a traffic record itself. A rule called the same
+# would be indistinguishable from them on the WAF page.
+#
+RESERVED_RULE_NAMES = ("deny-from", "body-limit", "body-unbounded")
+#
+# A rule list long enough to be a mistake rather than a policy, and short
+# enough that the shared frontend stays readable. Raised when someone needs it.
+#
+MAX_DENY_RULES = 50
+BODY_SIZE = re.compile(r"^([1-9][0-9]{0,9})([kmg]?)$")
+BODY_UNITS = {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3}
+#
+# A kilobyte at the least - below it a form with a name in it is refused - and
+# a hundred gigabytes at the most, past which the figure is a typing mistake.
+#
+MIN_BODY = 1024
+MAX_BODY = 100 * 1024**3
+
+
+def _mode(data: Mapping[str, Any], location: str) -> str:
+    mode = data.get("mode", "log")
+    if mode not in ACCESS_MODES:
+        raise ModelError(f"{location}.mode must be one of: {', '.join(ACCESS_MODES)}")
+    return str(mode)
+
+
+def _deny_from(value: Any, location: str, protocol: str) -> DenyFrom | None:
+    if value is None:
+        return None
+    data = _mapping(value, location)
+    _only_keys(data, {"mode", "sources"}, location)
+    #
+    # A new refusal starts by only looking (B227), so `log` is what an absent
+    # mode means - except on tcp, where nothing would show what it saw, and
+    # the honest default is to ask for `deny` rather than to pretend.
+    #
+    if protocol == "tcp":
+        if data.get("mode") != "deny":
+            raise ModelError(
+                f"{location}.mode must be deny on a tcp object: a raw connection has no "
+                f"traffic record for a logged match to appear on"
+            )
+        mode = "deny"
+    else:
+        mode = _mode(data, location)
+    sources = _sources(data.get("sources"), f"{location}.sources", "refuse")
+    if not sources:
+        raise ModelError(f"{location}.sources must name at least one group or range")
+    return DenyFrom(mode=mode, sources=sources)
+
+
+def _deny_rules(value: Any, location: str) -> tuple[AccessRule, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ModelError(f"{location} must be a list of rules")
+    if len(value) > MAX_DENY_RULES:
+        raise ModelError(f"{location} may hold at most {MAX_DENY_RULES} rules")
+    rules = tuple(_deny_rule(item, f"{location}[{index}]") for index, item in enumerate(value))
+    names = [rule.name for rule in rules]
+    if len(set(names)) != len(names):
+        raise ModelError(f"{location} names the same rule twice")
+    return rules
+
+
+def _deny_rule(value: Any, location: str) -> AccessRule:
+    data = _mapping(value, location)
+    _only_keys(data, {"name", "mode", "path", "match", "methods", "header", "source"}, location)
+    name = _required_string(data, "name", location)
+    if not NAME.match(name):
+        raise ModelError(
+            f"{location}.name must start with a letter and hold lowercase letters, digits, "
+            f"- and _, at most 40"
+        )
+    if name in RESERVED_RULE_NAMES:
+        raise ModelError(f"{location}.name {name} is written by the generator itself")
+    mode = _mode(data, location)
+
+    path = data.get("path")
+    match = data.get("match", "prefix")
+    if path is not None:
+        if not isinstance(path, str) or not ROUTE_PATH.match(path):
+            raise ModelError(f"{location}.path must be an absolute path")
+        path = path.rstrip("/") or "/"
+        if match not in MATCH_MODES:
+            raise ModelError(f"{location}.match must be one of: {', '.join(MATCH_MODES)}")
+    elif "match" in data:
+        raise ModelError(f"{location}.match says how a path matches, and the rule names none")
+
+    methods_raw = data.get("methods", [])
+    if not isinstance(methods_raw, list) or any(
+        method not in HTTP_METHODS for method in methods_raw
+    ):
+        raise ModelError(f"{location}.methods must list methods from: {', '.join(HTTP_METHODS)}")
+    if len(set(methods_raw)) != len(methods_raw):
+        raise ModelError(f"{location}.methods names the same method twice")
+
+    header = _header_condition(data.get("header"), f"{location}.header")
+    sources = _sources(data["source"], f"{location}.source", "refuse") if "source" in data else ()
+
+    if path is None and not methods_raw and header is None and not sources:
+        raise ModelError(
+            f"{location} names no condition: a rule without one would refuse everything "
+            f"the object serves"
+        )
+    return AccessRule(
+        name=name,
+        mode=mode,
+        path=path,
+        path_match=str(match),
+        methods=tuple(sorted(methods_raw)),
+        header=header,
+        sources=sources,
+    )
+
+
+def _header_condition(value: Any, location: str) -> HeaderCondition | None:
+    if value is None:
+        return None
+    data = _mapping(value, location)
+    _only_keys(data, {"name", *HEADER_MATCHES}, location)
+    name = data.get("name")
+    if not isinstance(name, str) or not HEADER_NAME.match(name):
+        raise ModelError(f"{location}.name must be a header name")
+    given = [match for match in HEADER_MATCHES if match in data]
+    if len(given) != 1:
+        raise ModelError(f"{location} must say exactly one of: {', '.join(HEADER_MATCHES)}")
+    match = given[0]
+    content = data[match]
+    if isinstance(content, bool):
+        raise ModelError(
+            f"{location}.{match} was read as a true/false value; quote it to make it text"
+        )
+    if not isinstance(content, (str, int)):
+        raise ModelError(f"{location}.{match} must be text")
+    text = str(content)
+    if not text or len(text) > MAX_HEADER_VALUE:
+        raise ModelError(f"{location}.{match} must be between 1 and {MAX_HEADER_VALUE} characters")
+    if any(character in text for character in FORBIDDEN_IN_VALUE):
+        raise ModelError(f"{location}.{match} may not contain line breaks, NUL or a single quote")
+    return HeaderCondition(name=name, match=match, value=text)
+
+
+def _body_size(value: Any, location: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ModelError(f"{location} must be a size such as 512k, 10m or 1g")
+    found = BODY_SIZE.fullmatch(str(value))
+    if found is None:
+        raise ModelError(f"{location} must be a size such as 512k, 10m or 1g")
+    size = int(found.group(1)) * BODY_UNITS[found.group(2)]
+    if not MIN_BODY <= size <= MAX_BODY:
+        raise ModelError(f"{location} must be between 1k and 100g")
+    return size
 
 
 def _listen(value: Any, location: str) -> Listen:

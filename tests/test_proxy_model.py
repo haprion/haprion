@@ -9,6 +9,7 @@ practically useless.
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 from haproxy_mgmt.proxy_model import (
     COMMON_KEYS,
@@ -432,6 +433,100 @@ class WhoMayReachAnObject(unittest.TestCase):
             self.allow("'Office Network'")
 
         self.assertIn("neither a group name nor an address", str(raised.exception))
+
+
+class WhoAndWhatAnObjectRefuses(unittest.TestCase):
+    """`deny_from`, `deny_rules` and `max_request_body` (Fas 21, B227)."""
+
+    def load(self, block: str) -> Any:
+        return load_proxy("shop", with_lines(("routes:", f"{block}\nroutes:")))
+
+    def refused(self, block: str) -> str:
+        with self.assertRaises(ModelError) as raised:
+            self.load(block)
+        return str(raised.exception)
+
+    def test_a_new_refusal_only_looks_until_told_to_deny(self) -> None:
+        proxy = self.load("deny_from:\n  sources: [office]\ndeny_rules:\n  - name: a\n    path: /x")
+        self.assertEqual(proxy.deny_from.mode, "log")
+        self.assertEqual(proxy.deny_rules[0].mode, "log")
+
+    def test_a_rule_reads_every_condition_it_names(self) -> None:
+        proxy = self.load(
+            "deny_rules:\n  - name: admin\n    mode: deny\n    path: /admin/\n"
+            "    match: exact\n    methods: [POST, DELETE]\n"
+            "    header: {name: User-Agent, contains: sqlmap}\n    source: [198.51.100.7]"
+        )
+        rule = proxy.deny_rules[0]
+        self.assertEqual(
+            (rule.path, rule.path_match, rule.methods, rule.sources),
+            ("/admin", "exact", ("DELETE", "POST"), ("198.51.100.7/32",)),
+        )
+        self.assertEqual(
+            (rule.header.name, rule.header.match, rule.header.value),
+            ("User-Agent", "contains", "sqlmap"),
+        )
+
+    def test_a_rule_without_a_condition_would_refuse_everything(self) -> None:
+        self.assertIn(
+            "names no condition", self.refused("deny_rules:\n  - name: all\n    mode: deny")
+        )
+
+    def test_the_names_the_generator_writes_are_not_a_rule_s(self) -> None:
+        for name in ("deny-from", "body-limit", "body-unbounded"):
+            with self.subTest(name):
+                self.assertIn(
+                    "generator itself", self.refused(f"deny_rules:\n  - name: {name}\n    path: /x")
+                )
+
+    def test_two_rules_may_not_share_a_name(self) -> None:
+        block = "deny_rules:\n  - name: a\n    path: /x\n  - name: a\n    path: /y"
+        self.assertIn("same rule twice", self.refused(block))
+
+    def test_a_header_value_is_text_without_a_single_quote(self) -> None:
+        self.assertIn(
+            "single quote",
+            self.refused('deny_rules:\n  - name: a\n    header: {name: X-A, equals: "it\'s"}'),
+        )
+        self.assertIn(
+            "exactly one",
+            self.refused("deny_rules:\n  - name: a\n    header: {name: X-A, equals: a, prefix: b}"),
+        )
+
+    def test_a_method_is_one_http_knows(self) -> None:
+        self.assertIn(
+            "methods must list", self.refused("deny_rules:\n  - name: a\n    methods: [get]")
+        )
+
+    def test_refusing_everywhere_is_turning_the_site_off(self) -> None:
+        self.assertIn(
+            "may not refuse an entire address family",
+            self.refused("deny_from:\n  mode: deny\n  sources: [0.0.0.0/0]"),
+        )
+
+    def test_a_body_size_reads_in_binary_units_within_bounds(self) -> None:
+        self.assertEqual(self.load("max_request_body: 10m").max_request_body, 10 * 1024**2)
+        self.assertEqual(self.load("max_request_body: 2048").max_request_body, 2048)
+        for wrong in ("512", "0k", "10M", "200g", "yes"):
+            with self.subTest(wrong):
+                self.assertIn("max_request_body", self.refused(f"max_request_body: {wrong}"))
+
+    def test_a_raw_port_refuses_by_address_only_and_only_for_real(self) -> None:
+        tcp = TCP.decode()
+        denied = load_proxy(
+            "db",
+            tcp.replace(
+                "backend: pool", "deny_from:\n  mode: deny\n  sources: [office]\nbackend: pool"
+            ).encode(),
+        )
+        self.assertEqual(denied.deny_from.mode, "deny")
+        for block in (
+            "deny_from:\n  sources: [office]",
+            "max_request_body: 1m",
+            "deny_rules:\n  - name: a\n    path: /x",
+        ):
+            with self.subTest(block), self.assertRaises(ModelError):
+                load_proxy("db", tcp.replace("backend: pool", f"{block}\nbackend: pool").encode())
 
 
 class HowMuchOneSourceMayAsk(unittest.TestCase):

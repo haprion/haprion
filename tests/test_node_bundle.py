@@ -196,6 +196,26 @@ class NodeBundleTransportContractTests(unittest.TestCase):
         self.assertLess(dry_run, backup)
         self.assertLess(dry_run, staging)
 
+    def test_a_package_is_verified_and_its_architecture_checked_before_any_write(self) -> None:
+        verify = self.script.index("sha256sum -c --quiet -")
+        arch = self.script.index("the package is built for")
+        dry_run = self.script.index('if [[ "$dry_run" == "yes" ]]')
+        backup = self.script.index('sudo "$STATE_BACKUP" -c "$cluster"')
+        # The architecture check is in the preflight, which a dry run also runs.
+        self.assertLess(verify, dry_run)
+        self.assertLess(arch, dry_run)
+        self.assertLess(dry_run, backup)
+        self.assertIn("^haproxy-manager-[a-z0-9-]+$", self.script)
+
+    def test_the_package_is_checked_again_on_the_node_and_installed_with_the_bundle(self) -> None:
+        self.assertIn(
+            "printf '%s  %s\\\\n' '$package_sha' package.deb | sha256sum -c -", self.script
+        )
+        self.assertLess(
+            self.script.index("${package_install}"),
+            self.script.index("sudo ./04-node-prepare"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

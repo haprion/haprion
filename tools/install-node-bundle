@@ -11,6 +11,8 @@ expected_sha=""
 answers=""
 node=""
 cluster=""
+package=""
+package_sha=""
 dry_run="no"
 #
 # The state backup archives both nodes of the bundle's cluster, so a bundle
@@ -26,7 +28,7 @@ backup_after="yes"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 usage() {
-    echo "usage: $(basename "$0") --bundle <tar.gz> --sha256 <digest> --answers <file> --node <host> --cluster <id> [--dry-run] [--skip-backup-before] [--skip-backup-after]"
+    echo "usage: $(basename "$0") --bundle <tar.gz> --sha256 <digest> --answers <file> --node <host> --cluster <id> [--package <deb> --package-sha256 <digest>] [--dry-run] [--skip-backup-before] [--skip-backup-after]"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -36,6 +38,8 @@ while [[ $# -gt 0 ]]; do
         --answers) answers="${2:-}"; shift 2 ;;
         --node) node="${2:-}"; shift 2 ;;
         --cluster) cluster="${2:-}"; shift 2 ;;
+        --package) package="${2:-}"; shift 2 ;;
+        --package-sha256) package_sha="${2:-}"; shift 2 ;;
         --dry-run) dry_run="yes"; shift ;;
         --skip-backup-before) backup_before="no"; shift ;;
         --skip-backup-after) backup_after="no"; shift ;;
@@ -53,6 +57,29 @@ done
 [[ "$node" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] || fail "invalid node hostname"
 [[ "$cluster" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]] || fail "invalid cluster id"
 bash -n "$answers" || fail "answers file is not valid shell"
+
+#
+# A package that travels with the bundle - the WAF engine (B229) - goes through
+# the same session, backups and checks rather than a loop of its own. Only the
+# project's own packages, verified here and again on the node, and only one
+# built for the node's architecture: the preflight compares the two before
+# anything is written, so a dry run answers the question too.
+#
+package_name=""
+package_arch=""
+if [[ -n "$package" || -n "$package_sha" ]]; then
+    [[ "$package" == /* && -f "$package" && ! -L "$package" ]] \
+        || fail "package must be an absolute regular non-symlink file"
+    [[ "$package_sha" =~ ^[0-9a-f]{64}$ ]] || fail "package SHA-256 must be 64 lowercase hexadecimal characters"
+    printf '%s  %s\n' "$package_sha" "$package" | sha256sum -c --quiet - \
+        || fail "package does not match its SHA-256"
+    package_name="$(dpkg-deb --field "$package" Package)"
+    package_arch="$(dpkg-deb --field "$package" Architecture)"
+    [[ "$package_name" =~ ^haproxy-manager-[a-z0-9-]+$ ]] \
+        || fail "only the project's own packages are installed this way"
+    [[ "$package_arch" =~ ^[a-z0-9]+$ ]] || fail "package declares an invalid architecture"
+    echo "package: ${package_name} $(dpkg-deb --field "$package" Version) ${package_arch}"
+fi
 
 verification="$(/usr/bin/python3 "$VERIFY" verify --bundle "$bundle" --sha256 "$expected_sha")" \
     || fail "node bundle verification failed"
@@ -90,6 +117,11 @@ preflight="
     sudo -v
     test -d /run/lock
     command -v rsyslogd >/dev/null
+    echo \"node architecture: \$(dpkg --print-architecture)\"
+    if [[ -n '${package_arch}' && '${package_arch}' != all ]]; then
+        [[ \"\$(dpkg --print-architecture)\" == '${package_arch}' ]] \
+            || { echo 'ERROR: the package is built for ${package_arch}, not for this node' >&2; exit 1; }
+    fi
     if sudo test -f /etc/haproxy-manager/node.conf; then
         sudo grep -Fqx 'CLUSTER=\"${cluster}\"' /etc/haproxy-manager/node.conf \
             || { echo 'ERROR: existing node belongs to another cluster' >&2; exit 1; }
@@ -123,11 +155,22 @@ remote_dir="${remote_dir//$'\r'/}"
 ssh "${ssh_opts[@]}" "$node" "chmod 700 '$remote_dir'"
 scp "${ssh_opts[@]}" "$bundle" "${node}:${remote_dir}/bundle.tar.gz" >/dev/null
 scp "${ssh_opts[@]}" "$answers" "${node}:${remote_dir}/answers.env" >/dev/null
+package_install=""
+if [[ -n "$package" ]]; then
+    scp "${ssh_opts[@]}" "$package" "${node}:${remote_dir}/package.deb" >/dev/null
+    package_install="
+    printf '%s  %s\\n' '$package_sha' package.deb | sha256sum -c -
+    chmod 644 package.deb
+    sudo apt-get install -y --no-install-recommends './package.deb'
+    dpkg-query -W -f='\${Package} \${Version} \${Status}\\n' '$package_name'
+    "
+fi
 
 remote_install="
     ${preflight}
     cd '$remote_dir'
     printf '%s  %s\n' '$expected_sha' bundle.tar.gz | sha256sum -c -
+    ${package_install}
     chmod 600 answers.env
     tar -xzf bundle.tar.gz
     cd '${release_root}/install'

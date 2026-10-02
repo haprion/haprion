@@ -34,6 +34,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from haproxy_mgmt import advanced as advanced_config
+from haproxy_mgmt import geo
 from haproxy_mgmt.check_policy import check_speaks_tls
 from haproxy_mgmt.cluster_settings import NOTHING as NO_SETTINGS
 from haproxy_mgmt.cluster_settings import ClusterSettings, LogTarget, Metrics
@@ -236,6 +237,9 @@ class GeneratedLayer:
     certificate_lists: dict[str, str]
     """`managed/crt-lists/`, and `crt-lists/` on the node. Bind lines name these."""
 
+    map_files: dict[str, str] = field(default_factory=dict)
+    """`managed/maps/`, and `maps/` on the node: one network list per country (B228)."""
+
     object_parts: dict[str, dict[str, str]] = field(default_factory=dict)
     """Per object, the four pieces its behaviour is spread across.
 
@@ -287,6 +291,7 @@ def generate(
     allow_certificate_mismatch: bool = False,
     traffic_logging: bool = False,
     settings: ClusterSettings = NO_SETTINGS,
+    countries: geo.Countries | None = None,
 ) -> GeneratedLayer:
     """Every file the generated layer consists of.
 
@@ -370,7 +375,12 @@ def generate(
         }
         for _, proxy in placed
     }
-    return GeneratedLayer(configuration=files, certificate_lists=listings, object_parts=parts)
+    return GeneratedLayer(
+        configuration=files,
+        certificate_lists=listings,
+        object_parts=parts,
+        map_files=_country_files(ordered, countries),
+    )
 
 
 def _ring_name(target: LogTarget) -> str:
@@ -673,7 +683,7 @@ def _refuse_unknown_networks(
             *(source for rule in proxy.deny_rules for source in rule.sources),
         ]
         for name in named:
-            if is_range(name) or name in networks:
+            if is_range(name) or geo.is_country(name) or name in networks:
                 continue
             known = ", ".join(sorted(networks)) or "none"
             raise GeneratorError(
@@ -1001,16 +1011,9 @@ def _tcp_frontend(
         f"    timeout client {TIMEOUT_CLIENT}",
     ]
     if proxy.allow_from:
-        allowed = sorted(
-            {
-                cidr
-                for entry in proxy.allow_from
-                for cidr in ((entry,) if is_range(entry) else networks[entry])
-            }
-        )
         acl = _acl_name(proxy.name, "allow")
         lines += [
-            f"    acl {acl} src {' '.join(allowed)}",
+            *_address_acl(acl, "src", proxy.allow_from, networks),
             #
             # Rejected at connection time rather than denied at request time:
             # there is no request. The client sees a closed connection, which
@@ -1025,7 +1028,7 @@ def _tcp_frontend(
         #
         acl = _acl_name(proxy.name, "deny-from")
         lines += [
-            f"    acl {acl} src {' '.join(_cidrs(proxy.deny_from.sources, networks))}",
+            *_address_acl(acl, "src", proxy.deny_from.sources, networks),
             f"    tcp-request connection reject if {acl}",
         ]
     if abuse_protection is not None and abuse_protection.max_new_connections is not None:
@@ -1281,19 +1284,90 @@ def _allow_rules(
 
     if not proxy.allow_from:
         return []
-    allowed = _cidrs(proxy.allow_from, networks)
     acl = _acl_name(proxy.name, "allow")
     return [
-        f"    acl {acl} {_client_fetch(trusted)} {' '.join(allowed)}",
+        *_address_acl(acl, _client_fetch(trusted), proxy.allow_from, networks),
         f"    http-request deny deny_status 403 if {host} !{acl}",
     ]
+
+
+MAPS_DIRECTORY = "/etc/haproxy/maps"
+
+
+def _address_acl(
+    acl: str, fetch: str, entries: Sequence[str], networks: Mapping[str, Sequence[str]]
+) -> list[str]:
+    """One address condition: groups and ranges inline, each country from its file.
+
+    Lines with one ACL name are read by HAProxy as an OR, so a list mixing
+    `office` and `country:SE` is one condition. The file is named by the
+    country alone; its networks are written by `_country_files`, and the
+    nodes' validation already points `/etc/haproxy/maps/` at the candidate's
+    own copy.
+    """
+
+    lines = []
+    cidrs = _cidrs(entries, networks)
+    if cidrs:
+        lines.append(f"    acl {acl} {fetch} {' '.join(cidrs)}")
+    for entry in sorted(entry for entry in entries if geo.is_country(entry)):
+        lines.append(f"    acl {acl} {fetch} -f {MAPS_DIRECTORY}/{geo.file_name(geo.code(entry))}")
+    return lines
+
+
+def countries_named(proxies: Sequence[Proxy]) -> frozenset[str]:
+    """Every country some object names, as the database spells it (`SE`)."""
+
+    return frozenset(
+        geo.code(entry)
+        for proxy in proxies
+        for entry in (
+            *proxy.allow_from,
+            *(proxy.deny_from.sources if proxy.deny_from is not None else ()),
+            *(source for rule in proxy.deny_rules for source in rule.sources),
+        )
+        if geo.is_country(entry)
+    )
+
+
+def _country_files(proxies: Sequence[Proxy], countries: geo.Countries | None) -> dict[str, str]:
+    """One file of networks per country named, headed by the database's date.
+
+    The date is what tells a reader - and the staleness check - which data a
+    cluster runs. A country named with no reader to answer for it is refused:
+    a rule that silently matched nobody would admit everyone it meant to
+    refuse, and refuse everyone it meant to admit.
+    """
+
+    named = countries_named(proxies)
+    if not named:
+        return {}
+    if countries is None:
+        raise GeneratorError(
+            f"objects name countries ({', '.join(sorted(named))}) and no location data was given"
+        )
+    missing = sorted(named - set(countries.networks))
+    if missing:
+        raise GeneratorError(f"no location data for: {', '.join(missing)}")
+    return {
+        geo.file_name(country): (
+            f"# IPFire Location {countries.stamp} (CC BY-SA 4.0) {country}\n"
+            + "".join(f"{network}\n" for network in countries.networks[country])
+        )
+        for country in sorted(named)
+    }
 
 
 def _cidrs(entries: Sequence[str], networks: Mapping[str, Sequence[str]]) -> list[str]:
     """Group names resolved to the cluster's ranges, literal ranges kept."""
 
     return sorted(
-        {cidr for entry in entries for cidr in ((entry,) if is_range(entry) else networks[entry])}
+        {
+            cidr
+            for entry in entries
+            if not geo.is_country(entry)
+            for cidr in ((entry,) if is_range(entry) else networks[entry])
+        }
     )
 
 
@@ -1370,7 +1444,7 @@ def _access_rules(
     fetch = _client_fetch(trusted)
     if proxy.deny_from is not None:
         acl = _acl_name(proxy.name, "deny-from")
-        lines.append(f"    acl {acl} {fetch} {' '.join(_cidrs(proxy.deny_from.sources, networks))}")
+        lines.extend(_address_acl(acl, fetch, proxy.deny_from.sources, networks))
         lines.extend(_verdict(f"{host} {acl}", "deny-from", proxy.deny_from.mode))
     for index, rule in enumerate(proxy.deny_rules):
         prefix = f"rule{index}"
@@ -1411,7 +1485,7 @@ def _access_rules(
             condition.append(acl)
         if rule.sources:
             acl = _acl_name(proxy.name, f"{prefix}-source")
-            lines.append(f"    acl {acl} {fetch} {' '.join(_cidrs(rule.sources, networks))}")
+            lines.extend(_address_acl(acl, fetch, rule.sources, networks))
             condition.append(f"!{acl}" if rule.source_negate else acl)
         lines.extend(_verdict(" ".join(condition), rule.name, rule.mode))
     if proxy.max_request_body is not None:

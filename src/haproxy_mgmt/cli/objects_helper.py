@@ -22,6 +22,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haproxy_mgmt import geo
 from haproxy_mgmt.config import DEFAULT_POLICY_PATH, ConfigError, load_policy, load_runtime_config
 from haproxy_mgmt.envelope import Message, envelope
 from haproxy_mgmt.git_command import GitError
@@ -134,12 +135,13 @@ def main(
         warnings = (Message(code="network_unreadable", message=str(exc)[:1024]),)
 
     repo = Path(cluster.config_path)
+    stamp = geo.database_stamp()
     try:
         _, head = head_resolver(repo)
-        if known is not None and known == fingerprint(head, network):
-            result = unchanged_result(head, network)
+        if known is not None and known == fingerprint(head, network, stamp):
+            result = unchanged_result(head, network, geo_stamp=stamp)
         else:
-            result = objects_result(tree_reader(repo, head), head, network=network)
+            result = objects_result(tree_reader(repo, head), head, network=network, geo_stamp=stamp)
     except PublishError as exc:
         return fail("objects_unavailable", str(exc), exc.exit_code)
     except GitError as exc:

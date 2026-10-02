@@ -35,6 +35,7 @@ from http.client import HTTPConnection, HTTPSConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from haproxy_mgmt import geo
 from haproxy_mgmt.config import AbuseProtection, Vip
 from haproxy_mgmt.generate import NODE_CERTIFICATE_DIR, GeneratedLayer, generate
 from haproxy_mgmt.proxy_model import load_proxy
@@ -276,6 +277,11 @@ def write_release(root: Path, layer: GeneratedLayer, certificates: Path | None =
     """
 
     def local(content: str) -> str:
+        #
+        # The node points `/etc/haproxy/maps/` at the candidate's own maps when
+        # it validates (`haproxy-pull-deploy`); this is that step.
+        #
+        content = content.replace("/etc/haproxy/maps/", f"{root}/maps/")
         return (
             content
             if certificates is None
@@ -290,6 +296,9 @@ def write_release(root: Path, layer: GeneratedLayer, certificates: Path | None =
         (root / "crt-lists").mkdir(exist_ok=True)
         for name, content in layer.certificate_lists.items():
             (root / "crt-lists" / name).write_text(local(content))
+    (root / "maps").mkdir(exist_ok=True)
+    for name, content in layer.map_files.items():
+        (root / "maps" / name).write_text(content)
     return ["-f", str(root / "haproxy.cfg"), "-f", str(root / "conf.d")]
 
 
@@ -2295,6 +2304,11 @@ deny_rules:
     path: /private
     source: [office]
     source_negate: true
+  - name: sweden-only
+    mode: deny
+    path: /se
+    source: [country:se]
+    source_negate: true
 max_request_body: 64k
 routes:
   - path: /
@@ -2397,6 +2411,14 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
             networks={"office": ("198.51.100.0/24",)},
             ports={"http": cls.port},
             trusted_proxies=("127.0.0.1",),
+            #
+            # Two invented countries over documentation ranges: the rule reads
+            # the file the generator writes, not the database.
+            #
+            countries=geo.Countries(
+                stamp="2026-10-01",
+                networks={"SE": ("198.51.100.0/25",), "XX": ("203.0.113.0/24",)},
+            ),
         )
         window = "    option httplog\n    http-after-response set-header X-Rule %[var(txn.rule)]\n"
         layer = GeneratedLayer(
@@ -2405,6 +2427,7 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
                 for name, text in layer.configuration.items()
             },
             certificate_lists=layer.certificate_lists,
+            map_files=layer.map_files,
         )
         arguments = write_release(root, layer)
         binary = shutil.which("haproxy")
@@ -2489,6 +2512,10 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
         self.assertEqual(
             self.ask("/private", visitor="192.0.2.5"), (403, "private-but-office:deny")
         )
+
+    def test_a_country_is_read_from_its_file(self) -> None:
+        self.assertEqual(self.ask("/se", visitor="198.51.100.7"), (200, ""))
+        self.assertEqual(self.ask("/se", visitor="198.51.100.200"), (403, "sweden-only:deny"))
 
     def test_the_body_limit_holds_a_declared_length(self) -> None:
         self.assertEqual(self.ask(method="POST", body=b"a" * 60_000), (200, ""))

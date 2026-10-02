@@ -41,8 +41,16 @@ CFG_LAYERS: tuple[tuple[str, str], ...] = (
 )
 MAP_LAYERS: tuple[tuple[str, str], ...] = (
     ("core/maps", "core"),
+    ("managed/maps", "managed"),
     ("manual/maps", "manual"),
 )
+#
+# The generated map layer (B228): one network list per country, written whole
+# on every publish. Held to the managed rule - one shape, one level - since it
+# is application output a person never edits.
+#
+MANAGED_MAPS = "managed/maps"
+MANAGED_MAP_NAME = re.compile(r"^geo-[a-z]{2}\.lst$")
 
 REQUIRED_FILES: tuple[str, ...] = ("core/haproxy.cfg", "manual/reservations.yaml")
 
@@ -283,6 +291,8 @@ def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:
         for relative, content in _children(files, prefix):
             if relative.rsplit("/", 1)[-1] == PLACEHOLDER:
                 continue
+            if prefix == MANAGED_MAPS and not MANAGED_MAP_NAME.match(relative):
+                raise LayoutError(f"file not allowed in {MANAGED_MAPS}: {relative}")
             target = f"maps/{relative}"
             if target in artifact:
                 raise LayoutError(

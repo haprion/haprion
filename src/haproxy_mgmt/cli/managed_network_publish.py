@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
+from haproxy_mgmt import geo
 from haproxy_mgmt.candidate_validation import (
     DEFAULT_RUN_ROOT,
     SandboxValidator,
@@ -113,6 +114,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                 network_document=network,
                 cluster=cluster,
                 certificate_sans=certificate_sans,
+                country_reader=geo.location_database(),
                 allow_certificate_mismatch=allow_certificate_mismatch,
             ),
         )

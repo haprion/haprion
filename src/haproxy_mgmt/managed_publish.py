@@ -14,9 +14,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 
-from haproxy_mgmt import cluster_settings
+from haproxy_mgmt import cluster_settings, geo
 from haproxy_mgmt.config import Cluster, ConfigError
-from haproxy_mgmt.generate import generate
+from haproxy_mgmt.generate import countries_named, generate
 from haproxy_mgmt.keepalived_fragment import NAME as KEEPALIVED_NAME
 from haproxy_mgmt.keepalived_fragment import render as keepalived_addresses
 from haproxy_mgmt.managed_network import load_document
@@ -42,6 +42,11 @@ GENERATED_PREFIX = "managed/generated/"
 #
 KEEPALIVED_PREFIX = "managed/keepalived/"
 CRT_LIST_PREFIX = "managed/crt-lists/"
+#
+# The countries objects name, one network list each (B228). The node's `maps/`,
+# which it already fetches and validates against.
+#
+MAPS_PREFIX = "managed/maps/"
 PLACEHOLDER = ".gitkeep"
 
 
@@ -98,6 +103,7 @@ def managed_files(
     certificate_sans: Mapping[str, Sequence[str]] | None = None,
     allow_certificate_mismatch: bool = False,
     settings_document: bytes | None = None,
+    country_reader: geo.CountryReader | None = None,
 ) -> dict[str, bytes]:
     """Return the complete managed snapshot created by one network document.
 
@@ -127,7 +133,7 @@ def managed_files(
     # object deleted in a later UI operation keep serving; carrying all of them
     # would leave source/VIP/group changes invisible.  Start over every time.
     for path in tuple(result):
-        if path.startswith((GENERATED_PREFIX, KEEPALIVED_PREFIX)):
+        if path.startswith((GENERATED_PREFIX, KEEPALIVED_PREFIX, MAPS_PREFIX)):
             del result[path]
 
     _apply_objects(result, objects or {})
@@ -138,8 +144,16 @@ def managed_files(
     # snapshot applied, and generating from the base would write configuration
     # for the version nobody asked to publish while storing the one they did.
     #
+    proxies = managed_proxies(result)
+    #
+    # Asked only for the countries the objects being published name, and only
+    # when they name any: the reader opens the location database, and a
+    # cluster without a country never needs it to exist (B228).
+    #
+    named = countries_named(proxies)
+    countries = country_reader(named) if named and country_reader is not None else None
     generated = generate(
-        managed_proxies(result),
+        proxies,
         vips=network.vips,
         default_vip=network.default_vip,
         certificates=cluster.certificate_ids,
@@ -160,6 +174,13 @@ def managed_files(
         certificate_sans=certificate_sans,
         allow_certificate_mismatch=allow_certificate_mismatch,
         settings=settings,
+        countries=countries,
+    )
+    result.update(
+        {
+            f"{MAPS_PREFIX}{name}": content.encode("utf-8")
+            for name, content in generated.map_files.items()
+        }
     )
     result.update(
         {

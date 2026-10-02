@@ -31,6 +31,7 @@ from typing import Any
 import yaml
 
 from haproxy_mgmt import advanced as advanced_config
+from haproxy_mgmt import geo
 from haproxy_mgmt.config import (
     ABUSE_WINDOW,
     DEFAULT_ABUSE_WINDOW,
@@ -1841,6 +1842,18 @@ def _sources(value: Any, location: str, verb: str) -> tuple[str, ...]:
     for entry in value:
         if not isinstance(entry, str) or not entry:
             raise ModelError(f"{location} contains something that is not a name or range")
+        if geo.is_country(entry.lower()):
+            #
+            # A country (B228). Upper case as the database spells it, so
+            # `country:se` and `country:SE` are one entry and one file.
+            #
+            country = geo.code(entry.lower()).upper()
+            if not geo.COUNTRY.match(country):
+                raise ModelError(
+                    f"{location} contains {entry!r}; a country is two letters, such as country:SE"
+                )
+            entries.append(f"{geo.PREFIX}{country}")
+            continue
         if is_range(entry):
             network = ipaddress.ip_network(entry, strict=False)
             if network.prefixlen == 0:

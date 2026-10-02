@@ -27,6 +27,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+from haproxy_mgmt import geo
 from haproxy_mgmt.config import ConfigError, Network
 from haproxy_mgmt.generate import GeneratorError, source_of, vip_of
 from haproxy_mgmt.proxy_model import MAX_MODEL_BYTES, ModelError, Proxy, load_proxy
@@ -55,7 +56,7 @@ def _engine_digest() -> str:
     return digest.hexdigest()
 
 
-def fingerprint(commit: str | None, network: Network | None) -> str:
+def fingerprint(commit: str | None, network: Network | None, geo_stamp: str | None = None) -> str:
     """What an objects listing depends on: the commit, the network and this engine (B222).
 
     The poller sends back the fingerprint of the listing it holds, and an
@@ -72,7 +73,16 @@ def fingerprint(commit: str | None, network: Network | None) -> str:
             "sources": dict(sorted(network.sources.items())),
         }
     )
-    document = {"commit": commit, "network": described, "engine": _engine_digest()}
+    #
+    # The location database's date (B228): a new database changes nothing in
+    # the tree, and a listing answered `unchanged` would keep saying the old one.
+    #
+    document = {
+        "commit": commit,
+        "network": described,
+        "engine": _engine_digest(),
+        "geo": geo_stamp,
+    }
     return hashlib.sha256(json.dumps(document, sort_keys=True).encode()).hexdigest()
 
 
@@ -205,6 +215,7 @@ def objects_result(
     *,
     network: Network | None = None,
     generated_at: datetime | None = None,
+    geo_stamp: str | None = None,
 ) -> dict[str, object]:
     """Every stored proxy object at one commit, keyed by the name it is filed under.
 
@@ -218,8 +229,14 @@ def objects_result(
     result: dict[str, object] = {
         "commit": commit,
         "generated_at": timestamp.isoformat().replace("+00:00", "Z"),
-        "fingerprint": fingerprint(commit, network),
+        "fingerprint": fingerprint(commit, network, geo_stamp),
         "objects": [],
+        #
+        # How fresh the cluster's country files are against the database
+        # (B228): new data reaches a cluster at its next publish, and this is
+        # what tells somebody one is due.
+        #
+        "geo": {"database": geo_stamp, "published": geo.published_stamp(files)},
     }
     if commit is None:
         return result
@@ -247,7 +264,11 @@ def objects_result(
 
 
 def unchanged_result(
-    commit: str | None, network: Network | None, *, generated_at: datetime | None = None
+    commit: str | None,
+    network: Network | None,
+    *,
+    generated_at: datetime | None = None,
+    geo_stamp: str | None = None,
 ) -> dict[str, object]:
     """The answer to a caller whose listing is still the right one.
 
@@ -260,7 +281,7 @@ def unchanged_result(
     return {
         "commit": commit,
         "generated_at": timestamp.isoformat().replace("+00:00", "Z"),
-        "fingerprint": fingerprint(commit, network),
+        "fingerprint": fingerprint(commit, network, geo_stamp),
         "unchanged": True,
         "objects": [],
     }

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from typing import Any
 
+from haproxy_mgmt import geo
 from haproxy_mgmt.config import Cluster, ConfigError, Node, UnknownHost
 from haproxy_mgmt.managed_publish import managed_files
 from haproxy_mgmt.object_manifest import REPOSITORY_PATH as MANIFEST_PATH
 from haproxy_mgmt.object_manifest import parse as parse_manifest
-from haproxy_mgmt.release_layout import build_node_artifact, build_release_index
+from haproxy_mgmt.release_layout import LayoutError, build_node_artifact, build_release_index
 
 
 def cluster() -> Cluster:
@@ -277,3 +279,67 @@ class ReservationsReachThePublishPath(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CountriesReachTheNodesAsMaps(unittest.TestCase):
+    """B228: a country an object names becomes `maps/geo-xx.lst` in the release."""
+
+    def publish(self, document: bytes, reader: Any, base: dict[str, bytes] | None = None) -> Any:
+        return managed_files(
+            {
+                "managed/network.yaml": NETWORK,
+                "managed/proxies/shop.yaml": document,
+                **(base or {}),
+            },
+            network_document=NETWORK,
+            cluster=cluster(),
+            country_reader=reader,
+        )
+
+    def test_the_reader_is_asked_for_exactly_the_countries_named(self) -> None:
+        asked: list[set[str]] = []
+
+        def reader(countries: Any) -> geo.Countries:
+            asked.append(set(countries))
+            return geo.Countries("2026-10-01", {"SE": ("192.0.2.0/25",), "NO": ("192.0.2.128/25",)})
+
+        document = PROXY.replace(
+            b"routes:", b"allow_from: [country:SE, office, country:no]\nroutes:"
+        )
+        files = self.publish(document, reader, {"managed/maps/geo-cn.lst": b"stale\n"})
+
+        self.assertEqual(asked, [{"SE", "NO"}])
+        self.assertEqual(
+            files["managed/maps/geo-se.lst"],
+            b"# IPFire Location 2026-10-01 (CC BY-SA 4.0) SE\n192.0.2.0/25\n",
+        )
+        self.assertNotIn("managed/maps/geo-cn.lst", files)
+        frontends = files["managed/generated/1000-frontends.cfg"].decode()
+        self.assertIn("acl mgd-shop-allow src 198.51.100.0/24", frontends)
+        self.assertIn("acl mgd-shop-allow src -f /etc/haproxy/maps/geo-se.lst", frontends)
+        artifact = build_node_artifact(
+            {**files, "core/haproxy.cfg": b"global\n", "manual/reservations.yaml": b"{}\n"}
+        )
+        self.assertIn("maps/geo-no.lst", artifact)
+
+    def test_a_cluster_without_countries_never_opens_the_database(self) -> None:
+        def reader(_countries: Any) -> geo.Countries:
+            raise AssertionError("asked for countries nobody named")
+
+        files = self.publish(PROXY, reader)
+
+        self.assertFalse([name for name in files if name.startswith("managed/maps/")])
+
+    def test_a_country_without_a_reader_is_refused(self) -> None:
+        document = PROXY.replace(b"routes:", b"allow_from: [country:SE]\nroutes:")
+
+        with self.assertRaises(ConfigError) as raised:
+            self.publish(document, None)
+
+        self.assertIn("SE", str(raised.exception))
+
+    def test_the_managed_map_layer_takes_country_lists_only(self) -> None:
+        base = {"core/haproxy.cfg": b"global\n", "manual/reservations.yaml": b"{}\n"}
+        for name in ("geo-se.txt", "other.lst", "geo-swe.lst", "sub/geo-se.lst"):
+            with self.subTest(name), self.assertRaises(LayoutError):
+                build_node_artifact({**base, f"managed/maps/{name}": b"192.0.2.0/24\n"})

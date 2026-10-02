@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haproxy_mgmt import cluster_settings
+from haproxy_mgmt import cluster_settings, geo
 from haproxy_mgmt.candidate_validation import (
     DEFAULT_RUN_ROOT,
     SandboxValidator,
@@ -102,6 +102,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                     # block every settings change.
                     #
                     certificate_sans=None,
+                    country_reader=geo.location_database(),
                     settings_document=canonical,
                 )
             except ConfigError as exc:

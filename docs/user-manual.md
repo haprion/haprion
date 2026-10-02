@@ -477,6 +477,29 @@ whose User-Agent contains `sqlmap`, from anyone outside `office`. A rule that na
 since it would refuse everything the object serves. Header values are matched
 as text, never as patterns.
 
+**Countries.** Wherever a group or a range may be named - `allow_from`,
+`deny_from` and a rule's `source` - a country may be too, as `country:SE`
+(two letters, as ISO 3166 spells them). Publishing reads the networks of each
+country an object names from the IPFire Location database on the management
+host and writes them to `managed/maps/geo-se.lst`; the nodes receive the file
+with the release, in `maps/`, as they receive every map file. A country the
+database does not know refuses the publish.
+
+The database is installed and kept current on the management host:
+
+```bash
+sudo apt install location python3-location
+sudo location update
+sudo systemctl enable --now location-update.timer
+```
+
+The timer fetches a new, signed database once a day. A cluster takes it up at
+its next publish, not on its own; *Settings → Location data* shows the
+database's date and, for each cluster that names a country, the date its
+published lists were made from. The data is IPFire Location, licensed under
+CC BY-SA 4.0 (https://location.ipfire.org); each generated file names it in
+its first line.
+
 **Look before refusing.** A new rule starts in `log`: the request is served,
 and the rule's name is written on its traffic record as `admin-post:log`. In
 `deny` the visitor gets 403 and the record says `admin-post:deny`. The first

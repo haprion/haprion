@@ -420,6 +420,12 @@ class WhoMayReachAnObject(unittest.TestCase):
     def test_a_single_address_is_a_range_of_one(self) -> None:
         self.assertEqual(self.allow("198.51.100.10"), ("198.51.100.10/32",))
 
+    def test_a_country_is_two_letters_in_upper_case(self) -> None:
+        self.assertEqual(self.allow("country:se, office"), ("country:SE", "office"))
+        with self.assertRaises(ModelError) as raised:
+            self.allow("country:SWE")
+        self.assertIn("two letters", str(raised.exception))
+
     def test_a_range_meaning_everywhere_is_refused(self) -> None:
         """It reads as a restriction and enforces nothing, which is worse than none."""
 

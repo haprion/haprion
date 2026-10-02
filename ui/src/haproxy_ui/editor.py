@@ -27,7 +27,7 @@ from typing import Annotated
 
 from haproxy_mgmt.config import AbuseProtection, Cluster, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, generate
-from haproxy_mgmt.proxy_model import BALANCE, ModelError, load_proxy
+from haproxy_mgmt.proxy_model import BALANCE, HTTP_METHODS, ModelError, load_proxy
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from haproxy_ui.advanced_dialog import MAX_TEXT
@@ -35,7 +35,9 @@ from haproxy_ui.certificates import CertificateClusterView
 from haproxy_ui.network import NetworkClusterView
 from haproxy_ui.preview import (
     CHECK_TYPES,
+    MAX_RULES,
     Preview,
+    access_rules,
     build_document,
     named_addresses,
     vip_sources,
@@ -126,6 +128,7 @@ def choices(cluster: EditorCluster) -> dict[str, object]:
         "networks": sorted(cluster.networks),
         "balances": BALANCE,
         "health_types": CHECK_TYPES,
+        "methods": sorted(HTTP_METHODS, key=METHOD_ORDER.index),
     }
 
 
@@ -246,6 +249,19 @@ def sequence(values: Sequence[str]) -> tuple[str, ...]:
 # the default is what makes it false; the alternative - a string compared to
 # "on" - is the same rule written out by hand at every use.
 #
+#
+# How the form lists the methods: the common ones first, as people read them.
+# The set is the engine's (`HTTP_METHODS`); a method missing here fails the
+# sort, so the two cannot drift apart unnoticed.
+#
+METHOD_ORDER = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "CONNECT", "TRACE")
+
+
+RuleList = Annotated[
+    list[Annotated[str, StringConstraints(max_length=64)]], Field(max_length=MAX_RULES)
+]
+
+
 class ObjectForm(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -305,6 +321,35 @@ class ObjectForm(BaseModel):
     allow_ranges: Annotated[str, StringConstraints(max_length=2048)] = ""
     rate_limit: Annotated[str, StringConstraints(max_length=8)] = ""
     rate_window: Annotated[str, StringConstraints(max_length=8)] = ""
+    #
+    # Access rules (Fas 21, B227). A rule is a row of parallel lists, one entry
+    # per rule in page order; the boxes a browser leaves out when unticked
+    # carry their row's index instead - `2:POST`, `2` - so a missing box
+    # cannot shift the next row's ticks onto this one.
+    #
+    deny_from: list[Annotated[str, StringConstraints(max_length=64)]] = Field(default_factory=list)
+    deny_ranges: Annotated[str, StringConstraints(max_length=2048)] = ""
+    deny_mode: Annotated[str, StringConstraints(max_length=8)] = "log"
+    max_request_body: Annotated[str, StringConstraints(max_length=16)] = ""
+    rule_index: RuleList = Field(default_factory=list)
+    rule_name: RuleList = Field(default_factory=list)
+    rule_mode: RuleList = Field(default_factory=list)
+    rule_path: Annotated[
+        list[Annotated[str, StringConstraints(max_length=1024)]], Field(max_length=MAX_RULES)
+    ] = Field(default_factory=list)
+    rule_match: RuleList = Field(default_factory=list)
+    rule_header: RuleList = Field(default_factory=list)
+    rule_header_match: RuleList = Field(default_factory=list)
+    rule_header_value: Annotated[
+        list[Annotated[str, StringConstraints(max_length=255)]], Field(max_length=MAX_RULES)
+    ] = Field(default_factory=list)
+    rule_source: Annotated[
+        list[Annotated[str, StringConstraints(max_length=1024)]], Field(max_length=MAX_RULES)
+    ] = Field(default_factory=list)
+    rule_methods: Annotated[
+        list[Annotated[str, StringConstraints(max_length=16)]], Field(max_length=MAX_RULES * 9)
+    ] = Field(default_factory=list)
+    rule_negate: RuleList = Field(default_factory=list)
     maintenance: bool = False
     maintenance_message: Annotated[str, StringConstraints(max_length=200)] = ""
     unavailable_message: Annotated[str, StringConstraints(max_length=200)] = ""
@@ -344,4 +389,6 @@ class ObjectForm(BaseModel):
         for key in ("action", "expected_revision", "csrf_token"):
             values.pop(key)
         values["allow_from"] = tuple(entry for entry in self.allow_from if entry)
+        values["deny_from"] = tuple(entry for entry in self.deny_from if entry)
+        values["deny_rules"] = access_rules(values)
         return values

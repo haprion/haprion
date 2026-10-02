@@ -33,6 +33,29 @@
 <input type="hidden" name="advanced" value="{{ form.advanced }}">
 {% if form.handwritten_pool %}<input type="hidden" name="handwritten_pool" value="on">{% endif %}
 
+{% macro rule_card(rule, open=False) %}
+<details class="rule-card"{% if open %} open{% endif %} data-rule>
+  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title">{{ rule.name or 'New rule' }}</span>{% if rule.mode == 'deny' %}<span class="status-badge status-badge-critical">Denying</span>{% else %}<span class="status-badge status-badge-warning">Logging</span>{% endif %}<span class="form-group-summary">{{ rule.summary }}</span></summary>
+  <input type="hidden" name="rule_index" value="{{ rule.index }}">
+  <div class="form-grid">
+    <label><span class="field-title">Name</span><input name="rule_name" value="{{ rule.name }}" placeholder="admin-post"></label>
+    <label><span class="field-title">Mode</span><select name="rule_mode">{% for mode in ('log', 'deny') %}<option{% if rule.mode == mode %} selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label>
+    <label><span class="field-title">Path <span class="optional">(optional)</span></span><input name="rule_path" value="{{ rule.path }}" placeholder="/admin"></label>
+    <label><span class="field-title">Path match</span><select name="rule_match">{% for match in ('prefix', 'exact') %}<option{% if rule.match == match %} selected{% endif %}>{{ match }}</option>{% endfor %}</select></label>
+  </div>
+  <div class="rule-row"><span class="field-title">Methods <span class="optional">(optional)</span></span><div class="form-checks">{% for method in choices.methods %}<label class="check"><input type="checkbox" name="rule_methods" value="{{ rule.index }}:{{ method }}"{% if method in rule.methods %} checked{% endif %}> {{ method }}</label>{% endfor %}</div></div>
+  <div class="form-grid">
+    <label><span class="field-title">Header <span class="optional">(optional)</span></span><input name="rule_header" value="{{ rule.header }}" placeholder="User-Agent"></label>
+    <label><span class="field-title">Header match</span><select name="rule_header_match">{% for match in ('equals', 'prefix', 'contains') %}<option{% if rule.header_match == match %} selected{% endif %}>{{ match }}</option>{% endfor %}</select></label>
+    <label><span class="field-title">Header value</span><input name="rule_header_value" value="{{ rule.header_value }}"></label>
+    <label><span class="field-title">Source <span class="optional">(optional)</span></span><input name="rule_source" value="{{ rule.source }}" placeholder="office, 198.51.100.0/24"></label>
+  </div>
+  <div class="rule-row rule-not"><div class="form-checks"><label class="check"><input type="checkbox" name="rule_negate" value="{{ rule.index }}"{% if rule.negate %} checked{% endif %}> Not from these sources</label></div></div>
+  <div class="rule-foot"><button type="button" class="secondary-button" data-remove-rule>Remove rule</button></div>
+</details>
+{% endmacro %}
+{% set new_rule = {'index': '__index__', 'name': '', 'mode': 'log', 'path': '', 'match': 'prefix', 'methods': [], 'header': '', 'header_match': 'equals', 'header_value': '', 'source': '', 'negate': False, 'summary': 'No condition'} %}
+
 {% macro group(state, shown='') %}
 <details class="form-group"{{ shown }}>
   <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title">{{ state.title }}</span><span class="form-group-summary" data-group-summary title="{{ state.summary }}">{{ state.summary }}</span></summary>
@@ -105,6 +128,22 @@
       <label><span class="field-title">Reachable from — addresses <span class="optional">(optional)</span></span><textarea name="allow_ranges" rows="5" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address or range per line.</small></label>
       <label><span class="field-title">Rate limit <span class="optional">(optional)</span></span><input name="rate_limit" value="{{ form.rate_limit }}" size="10" placeholder="100"><small>Per source address; new connections for TCP.</small></label>
       <label><span class="field-title">Rate window <span class="optional">(optional)</span></span><input name="rate_window" value="{{ form.rate_window }}" size="10" placeholder="{{ rate_window }}"><small>Such as <code>10s</code> or <code>1m</code>.</small></label>
+    </div>
+    <div class="form-grid form-grid-pair">
+      <label><span class="field-title">Denied — groups <span class="optional">(optional)</span></span>
+        <select name="deny_from" multiple size="5">
+          <option value="" {% if not form.deny_from %}selected{% endif %}>Nobody</option>
+          {% for network in choices.networks %}<option value="{{ network }}"{% if network in form.deny_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
+        </select>
+      </label>
+      <label><span class="field-title">Denied — addresses <span class="optional">(optional)</span></span><textarea name="deny_ranges" rows="5" placeholder="203.0.113.0/24">{{ form.deny_ranges }}</textarea><small>One address or range per line.</small></label>
+      <label><span class="field-title">Denied — mode</span><select name="deny_mode" class="single-select">{% for mode in ('log', 'deny') %}<option{% if form.deny_mode == mode %} selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label>
+      <label{{ when('protocol', 'http https') }}><span class="field-title">Max request body <span class="optional">(optional)</span></span><input name="max_request_body" value="{{ form.max_request_body }}" size="10" placeholder="10m"><small>Declared size; <code>k</code>, <code>m</code>, <code>g</code>.</small></label>
+    </div>
+    <div class="rule-list"{{ when('protocol', 'http https') }} data-rule-list>
+      <div class="rule-list-head"><span class="field-title">Deny rules <span class="optional">(optional)</span></span><button type="button" class="secondary-button" data-add-rule>Add rule</button></div>
+      {% for rule in form.deny_rules %}{{ rule_card(rule) }}{% endfor %}
+      <template data-rule-template>{{ rule_card(new_rule, open=True) }}</template>
     </div>
     {% endcall %}
 

@@ -7,6 +7,7 @@ environment without this package: the reader must import nothing from it.
 from __future__ import annotations
 
 import ipaddress
+from dataclasses import replace
 from typing import Any
 
 from haproxy_ui import sorting
@@ -53,7 +54,14 @@ TABLE = sorting.Table(
         sorting.Column("status", lambda row, _: row.status, descending_first=True),
         sorting.Column("destination", lambda row, _: _address(row.server)),
         sorting.Column("bytes", lambda row, _: row.bytes, descending_first=True),
+        sorting.Column("rule", lambda row, _: row.rule.casefold()),
     ),
     cookie="haproxy_ui_logs_sort",
     path="/logs",
 )
+
+#
+# The WAF page's own copy (Fas 21): its headings link back to `/waf`, and its
+# order is remembered apart from the traffic page's.
+#
+WAF_TABLE = replace(TABLE, cookie="haproxy_ui_waf_sort", path="/waf")

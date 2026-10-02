@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% import "_sort.html" as sort %}
-{% block title %}Traffic logs — HAProxy Manager{% endblock %}
+{% block title %}{{ "WAF" if waf_page else "Traffic logs" }} — HAProxy Manager{% endblock %}
 {% block head_extra %}<script defer src="{{ url_for('static', path='/logs.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
 {% macro date_time_picker(name, label, value, default) %}
@@ -18,7 +18,7 @@
 {% endmacro %}
 <div data-log-region>
 <section class="page-heading">
-  <div class="heading-title"><h1>Traffic logs</h1><p class="page-lede">Recent HTTP requests, mirrored from each node.</p></div>
+  <div class="heading-title">{% if waf_page %}<h1>WAF</h1><p class="page-lede">Requests an access rule logged or refused.</p>{% else %}<h1>Traffic logs</h1><p class="page-lede">Recent HTTP requests, mirrored from each node.</p>{% endif %}</div>
   <div class="heading-badges">
     {% if enabled and reading.entries %}<div class="log-export"><button class="secondary-button" type="button" data-log-export disabled>Export selected (.csv)</button><span data-log-selected-count>No rows selected</span></div>{% endif %}
     {% if enabled and (reading.unavailable or freshness_warnings or not reading.nodes) %}
@@ -53,19 +53,20 @@
 </section>
 
 {% if enabled %}
-<form class="log-filters" method="get" action="/logs" data-log-filters>
+<form class="log-filters{% if not waf_page %} log-filters-waf{% endif %}" method="get" action="{{ '/waf' if waf_page else '/logs' }}" data-log-filters>
   <label>Cluster<select name="cluster"><option value="">All clusters</option>{% for cluster in clusters %}<option value="{{ cluster }}"{% if cluster == selected_cluster %} selected{% endif %}>{{ cluster }}</option>{% endfor %}</select></label>
   <label>Status<select name="status"><option value="">All</option>{% for code in ['2xx', '3xx', '4xx', '5xx'] %}<option value="{{ code }}"{% if code == selected_status %} selected{% endif %}>{{ code }}</option>{% endfor %}</select></label>
+  {% if not waf_page %}<label>WAF<select name="waf">{% for value, label in [('', 'All'), ('hits', 'Rule hits'), ('none', 'No rule hits')] %}<option value="{{ value }}"{% if value == selected_waf %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>{% endif %}
   <label>Search<input name="q" value="{{ selected_query }}" maxlength="200" placeholder="host AND NOT /health" title="Use AND, OR, NOT, parentheses and quoted phrases. Operators are case-insensitive."></label>
   {{ date_time_picker('from', 'From', selected_from, time_min) }}
   {{ date_time_picker('to', 'To', selected_to, time_max) }}
-  <button class="secondary-button" type="submit">Filter</button><a class="text-link" href="/logs" data-log-clear-filters>Clear</a>
+  <button class="secondary-button" type="submit">Filter</button><a class="text-link" href="{{ '/waf' if waf_page else '/logs' }}" data-log-clear-filters>Clear</a>
 </form>
 
 {% if reading.filter_error %}<p class="notice notice-warning">{{ reading.filter_error }}</p>{% endif %}
 <div class="table-scroll log-table-wrap">
-  <table class="node-table log-table">
-    <thead><tr><th class="log-select"><input type="checkbox" data-log-select-all aria-label="Select all visible requests"></th>{{ sort.heading(log_sorts.time, 'Time') }}{{ sort.heading(log_sorts.node, 'Cluster / node') }}{{ sort.heading(log_sorts.client, 'Client') }}{{ sort.heading(log_sorts.request, 'Request') }}{{ sort.heading(log_sorts.status, 'Status') }}{{ sort.heading(log_sorts.destination, 'Destination') }}{{ sort.heading(log_sorts.bytes, 'Bytes') }}</tr></thead>
+  <table class="node-table log-table{% if waf_page %} waf-table{% endif %}">
+    <thead><tr><th class="log-select"><input type="checkbox" data-log-select-all aria-label="Select all visible requests"></th>{{ sort.heading(log_sorts.time, 'Time') }}{{ sort.heading(log_sorts.node, 'Cluster / node') }}{{ sort.heading(log_sorts.client, 'Client') }}{{ sort.heading(log_sorts.request, 'Request') }}{{ sort.heading(log_sorts.status, 'Status') }}{{ sort.heading(log_sorts.destination, 'Destination') }}{% if waf_page %}{{ sort.heading(log_sorts.rule, 'Rule') }}{% else %}{{ sort.heading(log_sorts.bytes, 'Bytes') }}{% endif %}</tr></thead>
     <tbody>{% for entry in reading.entries %}<tr data-log-row data-export-time="{{ entry.at | shown_at }}" data-export-cluster="{{ entry.cluster }}" data-export-node="{{ entry.node }}" data-export-client="{{ entry.client }}" data-export-method="{{ entry.method }}" data-export-host="{{ entry.host }}" data-export-path="{{ entry.path }}" data-export-status="{{ entry.status }}" data-export-destination="{{ entry.server or 'Destination unavailable' }}" data-export-bytes="{{ entry.bytes }}">
       <td class="log-select"><input type="checkbox" data-log-select aria-label="Select request at {{ entry.at | shown_at }}"></td>
       <td><time datetime="{{ entry.at.isoformat() }}">{{ entry.at | shown_at }}</time></td>
@@ -74,7 +75,7 @@
       <td class="log-request" title="{{ entry.method }} {{ entry.host }}{{ entry.path }}"><span class="log-request-content"><code>{{ entry.method }}</code> <strong>{{ entry.host }}</strong><code class="log-path">{{ entry.path }}</code></span></td>
       <td><span class="status-badge status-badge-{{ 'healthy' if entry.status < 400 else 'warning' if entry.status < 500 else 'critical' }}">{{ entry.status }}</span></td>
       <td><code title="{{ entry.server or 'Destination unavailable' }}">{{ entry.server or 'Destination unavailable' }}</code></td>
-      <td title="{{ entry.bytes }}">{{ entry.bytes }}</td>
+      {% if waf_page %}{% set rule, _, mode = entry.rule.partition(':') %}<td title="{{ rule }} — {{ 'denied' if mode == 'deny' else 'logged' }}"><span class="status-badge status-badge-{{ 'critical' if mode == 'deny' else 'warning' }}">{{ rule }}</span></td>{% else %}<td title="{{ entry.bytes }}">{{ entry.bytes }}</td>{% endif %}
     </tr>{% else %}<tr><td colspan="8"><div class="empty-state"><div><strong>No matching requests</strong><span>A filter searches the whole mirror; the view shows at most the {{ max_lines }} newest matches.</span></div></div></td></tr>{% endfor %}</tbody>
   </table>
 </div>

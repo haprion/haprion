@@ -519,6 +519,20 @@ class ARealDatabase(unittest.TestCase):
         with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
             cursor.execute("select rule from traffic_log where host = 'rule.example.com'")
             self.assertEqual(cursor.fetchall(), [("block-admin:deny",)])
+        #
+        # The WAF page's question and the traffic page's filter (Fas 21).
+        #
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection,
+        ):
+            hits = traffic_logs.read_database(connection, Path(temporary), ("alpha",), waf="hits")
+            none = traffic_logs.read_database(connection, Path(temporary), ("alpha",), waf="none")
+        self.assertIn(
+            ("rule.example.com", "block-admin:deny"), [(e.host, e.rule) for e in hits.entries]
+        )
+        self.assertTrue(all(entry.rule for entry in hits.entries))
+        self.assertTrue(all(not entry.rule for entry in none.entries))
         with self.connect() as connection:
             with connection.cursor() as cursor:
                 migration = _migration("0050_traffic_rule.py", cursor)

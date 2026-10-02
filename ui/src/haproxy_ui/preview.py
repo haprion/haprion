@@ -26,6 +26,7 @@ from haproxy_mgmt.config import AbuseProtection, Cluster, Node, UnknownHost, Vip
 from haproxy_mgmt.generate import GeneratorError, generate
 from haproxy_mgmt.proxy_model import (
     BALANCE,
+    MAX_DENY_RULES,
     STATUS_RANGE,
     ModelError,
     dump_document,
@@ -150,6 +151,21 @@ DEFAULTS = {
     "allow_ranges": "",
     "rate_limit": "",
     "rate_window": "",
+    "deny_from": (),
+    "deny_ranges": "",
+    "deny_mode": "log",
+    "max_request_body": "",
+    "rule_index": [],
+    "rule_name": [],
+    "rule_mode": [],
+    "rule_path": [],
+    "rule_match": [],
+    "rule_header": [],
+    "rule_header_match": [],
+    "rule_header_value": [],
+    "rule_source": [],
+    "rule_methods": [],
+    "rule_negate": [],
     "maintenance": False,
     "maintenance_message": "",
     "unavailable_message": "",
@@ -574,6 +590,21 @@ def build_document(form: dict[str, object]) -> str:
     # always be the wrong one for half the objects. The window is written only
     # when somebody wrote it, so an empty box keeps meaning the engine's default.
     #
+    denied = _listed(form.get("deny_from", ())) + _entries(text("deny_ranges"))
+    if denied:
+        document["deny_from"] = {"mode": text("deny_mode") or "log", "sources": denied}
+    #
+    # A raw port has no requests to refuse on; the fields are hidden for it,
+    # and a hidden field still posts, so the shape is decided here as it is for
+    # hostnames.
+    #
+    if protocol != "tcp":
+        rules = [_rule_document(rule) for rule in access_rules(form)]
+        if rules:
+            document["deny_rules"] = rules
+        if text("max_request_body"):
+            document["max_request_body"] = text("max_request_body")
+
     if text("rate_limit"):
         limit = text("rate_limit")
         if not limit.isdigit():
@@ -832,6 +863,143 @@ def _server_lines(servers: Any, backend_name: str) -> str:
     return "\n".join(lines)
 
 
+#
+# The most rules the form posts; the engine's own bound (`MAX_DENY_RULES`).
+#
+MAX_RULES = MAX_DENY_RULES
+RULE_FIELDS = (
+    "name",
+    "mode",
+    "path",
+    "match",
+    "header",
+    "header_match",
+    "header_value",
+    "source",
+)
+
+
+def _listed(selected: Any) -> list[str]:
+    if not isinstance(selected, (list, tuple)):
+        return []
+    return [str(name) for name in selected if str(name).strip()]
+
+
+def _entries(text: str) -> list[str]:
+    return [entry.strip() for entry in text.replace(",", "\n").split() if entry.strip()]
+
+
+def access_rules(form: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The form's deny rules as one mapping each, in page order (Fas 21).
+
+    Read from the parallel lists the page posts. A list shorter than the
+    index reads as empty for that rule rather than raising: the document built
+    from it is checked by the engine, which says what is missing.
+    """
+
+    def column(name: str) -> list[str]:
+        value = form.get(f"rule_{name}", ())
+        return [str(item) for item in value] if isinstance(value, (list, tuple)) else []
+
+    indexes = column("index")
+    columns = {name: column(name) for name in RULE_FIELDS}
+    methods = column("methods")
+    negated = set(column("negate"))
+    rules: list[dict[str, Any]] = []
+    for position, index in enumerate(indexes):
+        rule: dict[str, Any] = {
+            name: (values[position].strip() if position < len(values) else "")
+            for name, values in columns.items()
+        }
+        rule["index"] = index
+        rule["methods"] = [
+            entry.partition(":")[2] for entry in methods if entry.partition(":")[0] == index
+        ]
+        rule["negate"] = index in negated
+        rule["summary"] = _rule_summary(rule)
+        rules.append(rule)
+    return rules
+
+
+def _rule_summary(rule: Mapping[str, Any]) -> str:
+    """The line a folded rule shows: its conditions, in the order they are written."""
+
+    parts = []
+    if rule["path"]:
+        parts.append(f"{rule['path']}{' exactly' if rule['match'] == 'exact' else ''}")
+    if rule["methods"]:
+        parts.append(", ".join(rule["methods"]))
+    if rule["header"]:
+        parts.append(f"{rule['header']} {rule['header_match'] or 'equals'} {rule['header_value']}")
+    if rule["source"]:
+        parts.append(f"{'not ' if rule['negate'] else ''}from {rule['source']}")
+    return " · ".join(parts) or "No condition"
+
+
+def _rule_document(rule: Mapping[str, Any]) -> dict[str, Any]:
+    document: dict[str, Any] = {"name": rule["name"], "mode": rule["mode"] or "log"}
+    if rule["path"]:
+        document["path"] = rule["path"]
+        if rule["match"] == "exact":
+            document["match"] = "exact"
+    if rule["methods"]:
+        document["methods"] = sorted(rule["methods"])
+    if rule["header"] or rule["header_value"]:
+        document["header"] = {
+            "name": rule["header"],
+            rule["header_match"] or "equals": rule["header_value"],
+        }
+    sources = _entries(rule["source"])
+    if sources:
+        document["source"] = sources
+    if rule["negate"]:
+        document["source_negate"] = True
+    return document
+
+
+def _access_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str, Any]:
+    """`deny_from`, `deny_rules` and `max_request_body` as the form holds them."""
+
+    known = set(networks)
+    denied = _sub(data, "deny_from")
+    sources = denied.get("sources")
+    sources = [str(entry) for entry in sources] if isinstance(sources, list) else []
+    fields: dict[str, Any] = {
+        "deny_from": tuple(entry for entry in sources if entry in known),
+        "deny_ranges": "\n".join(entry for entry in sources if entry not in known),
+        "deny_mode": str(denied.get("mode", "log") or "log"),
+        "max_request_body": str(data.get("max_request_body", "") or ""),
+    }
+    columns: dict[str, list[str]] = {f"rule_{name}": [] for name in ("index", *RULE_FIELDS)}
+    methods: list[str] = []
+    negated: list[str] = []
+    rules = data.get("deny_rules")
+    for position, raw in enumerate(rules if isinstance(rules, list) else []):
+        rule = raw if isinstance(raw, Mapping) else {}
+        index = str(position)
+        header = _sub(rule, "header")
+        match = next((key for key in ("equals", "prefix", "contains") if key in header), "equals")
+        source = rule.get("source")
+        values = {
+            "index": index,
+            "name": str(rule.get("name", "") or ""),
+            "mode": str(rule.get("mode", "log") or "log"),
+            "path": str(rule.get("path", "") or ""),
+            "match": str(rule.get("match", "prefix") or "prefix"),
+            "header": str(header.get("name", "") or ""),
+            "header_match": match,
+            "header_value": str(header.get(match, "") or ""),
+            "source": ", ".join(str(entry) for entry in source) if isinstance(source, list) else "",
+        }
+        for name, value in values.items():
+            columns[f"rule_{name}"].append(value)
+        found = rule.get("methods")
+        methods += [f"{index}:{method}" for method in (found if isinstance(found, list) else [])]
+        if rule.get("source_negate") is True:
+            negated.append(index)
+    return {**fields, **columns, "rule_methods": methods, "rule_negate": negated}
+
+
 def _header_lines(edits: Any) -> str:
     """The three shapes written back in the order the form documents them."""
 
@@ -999,6 +1167,7 @@ def _form_fields(data: Mapping[str, Any], networks: Collection[str]) -> dict[str
             rate.get("max_new_connections" if protocol == "tcp" else "max_requests", "") or ""
         ),
         "rate_window": str(rate.get("window", "") or ""),
+        **_access_fields(data, networks),
         "maintenance": "maintenance" in data,
         "maintenance_message": str(_sub(data, "maintenance").get("message", "") or ""),
         "unavailable_message": str(_sub(data, "unavailable").get("message", "") or ""),

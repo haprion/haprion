@@ -77,10 +77,21 @@ def _access(form: Mapping[str, Any]) -> str:
         who = _joined([who, f"{ranges} address{'es' if ranges != 1 else ''}"], "")
     limit = _text(form, "rate_limit")
     window = _text(form, "rate_window") or DEFAULT_ABUSE_WINDOW
+    denied = len([name for name in form.get("deny_from", ()) or () if str(name).strip()])
+    denied += _lines(form, "deny_ranges")
+    rules = len(form.get("rule_index", ()) or ())
+    body = _text(form, "max_request_body")
     return _joined(
         [
             f"From {who}" if who else "From everywhere",
             f"at most {limit} per {window}" if limit else "no rate limit",
+            (
+                f"deny from {denied} ({'logging' if _text(form, 'deny_mode') != 'deny' else 'denying'})"
+                if denied
+                else ""
+            ),
+            f"{rules} rule{'s' if rules != 1 else ''}" if rules else "",
+            f"body ≤ {body}" if body else "",
         ],
         "",
     )
@@ -178,7 +189,29 @@ GROUPS: Mapping[str, FormGroup] = {
         _tls,
     ),
     "access": FormGroup(
-        "Access", ("allow_from", "allow_ranges", "rate_limit", "rate_window"), _access
+        "Access",
+        (
+            "allow_from",
+            "allow_ranges",
+            "rate_limit",
+            "rate_window",
+            "deny_from",
+            "deny_ranges",
+            "deny_mode",
+            "max_request_body",
+            "rule_index",
+            "rule_name",
+            "rule_mode",
+            "rule_path",
+            "rule_match",
+            "rule_methods",
+            "rule_header",
+            "rule_header_match",
+            "rule_header_value",
+            "rule_source",
+            "rule_negate",
+        ),
+        _access,
     ),
     "maintenance": FormGroup(
         "Maintenance", ("maintenance", "maintenance_message", "unavailable_message"), _maintenance

@@ -479,6 +479,7 @@ class TheTrafficLogPage(LoginTestCase):
         objects: tuple[ClusterObjects, ...] = (),
         query: str = "",
         now: datetime | None = None,
+        path: str = "/logs",
     ) -> str:
         """The page, optionally rendered as if the machine's clock read `now`.
 
@@ -516,7 +517,7 @@ class TheTrafficLogPage(LoginTestCase):
             patch("haproxy_ui.traffic_logs.read_database", side_effect=file_read),
             patch("haproxy_ui.views.datetime", Clock),
         ):
-            response = client.get(f"/logs{query}")
+            response = client.get(f"{path}{query}")
 
         self.assertEqual(response.status_code, 200)
         return response.text
@@ -535,6 +536,44 @@ class TheTrafficLogPage(LoginTestCase):
                 }
             )
         )
+
+    def test_the_waf_page_shows_only_rule_hits_with_the_rule(self) -> None:
+        """Fas 21: stored once in the traffic log, shown on a page of its own."""
+
+        self.healthy_meta()
+        with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
+            mirror.write(record(request=1, path="/plain"))
+            mirror.write(record(request=2, path="/admin", status=403, rule="admin-post:deny"))
+            mirror.write(record(request=3, path="/scan", rule="scanner:log"))
+
+        waf = self.page(path="/waf")
+
+        self.assertNotIn(">/plain<", waf)
+        self.assertIn(">/admin<", waf)
+        self.assertIn(">admin-post</span>", waf)
+        self.assertIn('status-badge-critical">admin-post', waf)
+        self.assertIn('status-badge-warning">scanner', waf)
+        self.assertIn('aria-current="page"><svg', waf.split(">WAF</a>")[0][-400:])
+        self.assertIn('href="/waf?sort=', waf)
+        self.assertNotIn('name="waf"', waf)
+
+    def test_the_traffic_page_filters_on_rule_hits_and_keeps_the_filter(self) -> None:
+        self.healthy_meta()
+        with (self.root / "alpha--node-a.jsonl").open("wb") as mirror:
+            mirror.write(record(request=1, path="/plain"))
+            mirror.write(record(request=2, path="/admin", rule="admin-post:deny"))
+
+        hits = self.page(query="?waf=hits")
+        none = self.page(query="?waf=none")
+        everything = self.page(query="?waf=nonsense")
+
+        self.assertIn(">/admin<", hits)
+        self.assertNotIn(">/plain<", hits)
+        self.assertIn(">/plain<", none)
+        self.assertNotIn(">/admin<", none)
+        self.assertIn(">/plain<", everything)
+        self.assertIn(">/admin<", everything)
+        self.assertIn('href="/logs?waf=hits&amp;sort=', hits)
 
     def test_a_heading_reorders_the_rows_and_keeps_the_filter(self) -> None:
         self.healthy_meta()

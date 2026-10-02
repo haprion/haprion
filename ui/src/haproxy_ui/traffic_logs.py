@@ -64,6 +64,8 @@ class Entry:
     response_time: int
     total_time: int
     bytes: int
+    rule: str = ""
+    """The access rule the request met, as `name:log` or `name:deny`; empty if none."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,6 +370,7 @@ def parse(line: bytes, cluster: str, node: str) -> Entry:
         response_time=_number(value.get("response_time")),
         total_time=_number(value.get("total_time")),
         bytes=_number(value.get("bytes"), low=0),
+        rule=_text(value.get("rule", ""), maximum=160),
     )
 
 
@@ -507,6 +510,7 @@ def read(
     from_at: datetime | None = None,
     to_at: datetime | None = None,
     server_addresses: Mapping[tuple[str, str, str], str] | None = None,
+    waf: str = "",
 ) -> Reading:
     wanted = (cluster,) if cluster else clusters
     if cluster and cluster not in clusters:
@@ -532,7 +536,7 @@ def read(
     # the newest records are in the newest bytes. Every other filter is a
     # question the whole mirror has to answer.
     #
-    searching = bool(status or substring or from_at is not None or to_at is not None)
+    searching = bool(status or substring or waf or from_at is not None or to_at is not None)
     targets, unavailable = _targets(directory, tuple(wanted))
     entries: list[Entry] = []
     nodes: list[Freshness] = []
@@ -577,6 +581,8 @@ def read(
                     continue
                 if status_class is not None and entry.status // 100 != status_class:
                     continue
+                if (waf == "hits" and not entry.rule) or (waf == "none" and entry.rule):
+                    continue
                 searchable = (
                     f"{entry.cluster} {entry.node} {entry.client} {entry.method} {entry.host} "
                     f"{entry.path} {entry.frontend} {entry.backend} {entry.server} "
@@ -613,8 +619,13 @@ def read_database(
     from_at: datetime | None = None,
     to_at: datetime | None = None,
     server_addresses: Mapping[tuple[str, str, str], str] | None = None,
+    waf: str = "",
 ) -> Reading:
-    """Read indexed rows while retaining the collector's per-node freshness files."""
+    """Read indexed rows while retaining the collector's per-node freshness files.
+
+    `waf` narrows to the requests an access rule met (`hits`) or did not
+    (`none`); empty is every request (Fas 21).
+    """
 
     wanted = (cluster,) if cluster else clusters
     if cluster and cluster not in clusters:
@@ -640,6 +651,10 @@ def read_database(
         parameters.extend((status_class * 100, status_class * 100 + 99))
     if substring:
         conditions.append(_search_sql(expression, parameters))
+    if waf == "hits":
+        conditions.append(sql.SQL("rule <> ''"))
+    elif waf == "none":
+        conditions.append(sql.SQL("rule = ''"))
     if from_at is not None:
         conditions.append(sql.SQL("occurred_at >= %s"))
         parameters.append(from_at)
@@ -650,7 +665,8 @@ def read_database(
     statement = sql.SQL("""
         select cluster, node, occurred_at as at, request_number as request,
                client, method, host, path, frontend, backend, server, status,
-               request_time, queue_time, connect_time, response_time, total_time, bytes
+               request_time, queue_time, connect_time, response_time, total_time, bytes,
+               rule
           from traffic_log
          where {}
          order by occurred_at desc, request_number desc

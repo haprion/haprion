@@ -1934,6 +1934,18 @@ def build_router(config: Config) -> APIRouter:
 
     @router.get("/logs", response_class=HTMLResponse)
     def traffic_log_page(request: Request) -> Response:
+        return _traffic_log_page(request, waf_page=False)
+
+    #
+    # The same reading narrowed to the requests an access rule met (Fas 21,
+    # B227): stored once, in the traffic log, and shown on a page of its own so
+    # that what the rules see is not mixed into the ordinary traffic.
+    #
+    @router.get("/waf", response_class=HTMLResponse)
+    def waf_page(request: Request) -> Response:
+        return _traffic_log_page(request, waf_page=True)
+
+    def _traffic_log_page(request: Request, *, waf_page: bool) -> Response:
         session = current_session(request)
         if session is None:
             return RedirectResponse("/login", status_code=303)
@@ -1943,6 +1955,9 @@ def build_router(config: Config) -> APIRouter:
         selected_query = request.query_params.get("q", "")[:200]
         selected_from = request.query_params.get("from", "")[:14]
         selected_to = request.query_params.get("to", "")[:14]
+        selected_waf = "hits" if waf_page else request.query_params.get("waf", "")[:4]
+        if selected_waf not in ("", "hits", "none"):
+            selected_waf = ""
         now = datetime.now(UTC)
         local_now = metrics.shown(now)
         local_earliest = metrics.wall(
@@ -2006,15 +2021,15 @@ def build_router(config: Config) -> APIRouter:
                     from_at=from_at,
                     to_at=to_at,
                     server_addresses=server_addresses,
+                    waf=selected_waf,
                 )
         else:
             reading = traffic_logs.Reading((), (), 0, False)
         if time_filter_error is not None:
             reading = replace(reading, entries=(), filter_error=time_filter_error)
-        sort, asked = traffic_log_table.TABLE.chosen(request)
-        reading = replace(
-            reading, entries=tuple(traffic_log_table.TABLE.ordered(reading.entries, sort))
-        )
+        table = traffic_log_table.WAF_TABLE if waf_page else traffic_log_table.TABLE
+        sort, asked = table.chosen(request)
+        reading = replace(reading, entries=tuple(table.ordered(reading.entries, sort)))
         #
         # A heading keeps the filter: sorting reorders the matches the filter
         # found, it does not start a new reading.
@@ -2027,6 +2042,7 @@ def build_router(config: Config) -> APIRouter:
                 ("q", selected_query),
                 ("from", selected_from),
                 ("to", selected_to),
+                ("waf", "" if waf_page else selected_waf),
             )
             if value
         }
@@ -2058,7 +2074,9 @@ def build_router(config: Config) -> APIRouter:
                 "username": session.username,
                 "role": session.role,
                 "csrf_token": auth.csrf_token(token),
-                "section": "logs",
+                "section": "waf" if waf_page else "logs",
+                "waf_page": waf_page,
+                "selected_waf": selected_waf,
                 "management_writes": config.management_writes,
                 "enabled": config.traffic_logs.enabled,
                 "reading": reading,
@@ -2073,11 +2091,11 @@ def build_router(config: Config) -> APIRouter:
                 "time_max": local_now.strftime("%y-%m-%d %H:%M"),
                 "calendar_days": calendar_days,
                 "max_lines": config.traffic_logs.max_lines,
-                "log_sorts": traffic_log_table.TABLE.links(sort, filters),
+                "log_sorts": table.links(sort, filters),
             },
         )
         if asked:
-            traffic_log_table.TABLE.remember(response, sort, secure=config.session.cookie_secure)
+            table.remember(response, sort, secure=config.session.cookie_secure)
         return response
 
     @router.get("/network", response_class=HTMLResponse)
@@ -7412,6 +7430,7 @@ def _form_defaults(fields: dict[str, Any]) -> dict[str, Any]:
 
     values = dict(fields)
     values["allow_from"] = list(values.get("allow_from") or ())
+    values["deny_from"] = list(values.get("deny_from") or ())
     return values
 
 

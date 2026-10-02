@@ -339,7 +339,37 @@
     });
   };
 
+  //
+  // Deny rules (Fas 21). A new rule is the template with an index no row on the
+  // page has, because the boxes a rule posts carry that index (`2:POST`) and
+  // two rows sharing one would pool their ticks. Removing a rule removes its
+  // row and nothing else; the page posts what is left, in order.
+  //
+  const wireRules = () => {
+    const list = document.querySelector("[data-rule-list]");
+    if (!list) return;
+    const template = list.querySelector("template[data-rule-template]");
+    const add = list.querySelector("[data-add-rule]");
+    let next = 0;
+    for (const input of list.querySelectorAll("input[name='rule_index']")) {
+      next = Math.max(next, Number(input.value) + 1 || 0);
+    }
+    list.addEventListener("click", (event) => {
+      const remove = event.target.closest("[data-remove-rule]");
+      if (remove) remove.closest("[data-rule]").remove();
+    });
+    if (!template || !add) return;
+    add.addEventListener("click", () => {
+      const html = template.innerHTML.replaceAll("__index__", String(next));
+      next += 1;
+      template.insertAdjacentHTML("beforebegin", html);
+      const added = template.previousElementSibling;
+      added.querySelector("input[name='rule_name']").focus();
+    });
+  };
+
   window.addEventListener("DOMContentLoaded", () => {
+    wireRules();
     wireRecheck();
     wireShownWhen();
     wireGroupSummaries();

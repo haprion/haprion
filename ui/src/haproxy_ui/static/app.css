@@ -2156,3 +2156,24 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .advanced-lines code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .advanced-lines small { display: block; color: var(--muted); }
 .advanced-lines .status-badge { min-height: 0; padding: 1px 8px; }
+
+/* Access rules (Fas 21): each deny rule a folded row inside the Access group. */
+.form-grid-pair select.single-select { height: auto; min-height: 0; }
+.rule-list { display: grid; gap: 8px; padding: 6px 0 12px; }
+.rule-list-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.rule-card { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0 14px; min-width: 0; }
+.rule-card > summary { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 0; cursor: pointer; list-style: none; }
+.rule-card > summary::-webkit-details-marker { display: none; }
+.rule-card > summary:hover .form-group-title { color: var(--text-strong); text-decoration-color: currentColor; }
+.rule-card[open] > summary .form-group-title { color: var(--text-strong); }
+.rule-card .form-grid { padding: 6px 0; }
+.rule-row { display: grid; gap: 6px; padding: 6px 0; }
+.rule-row .form-checks { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 0; }
+.rule-not .form-checks { justify-content: flex-end; }
+.rule-foot { display: flex; justify-content: flex-end; padding: 4px 0 12px; }
+
+/* The WAF page (Fas 21): the rule where the bytes were, wide enough for its name. */
+.waf-table th:nth-child(7), .waf-table td:nth-child(7) { width: 170px; }
+.waf-table th:nth-child(8), .waf-table td:nth-child(8) { width: 220px; }
+.log-filters.log-filters-waf { grid-template-columns: minmax(120px, .6fr) minmax(90px, .4fr) minmax(120px, .5fr) minmax(200px, 1.3fr) minmax(175px, .8fr) minmax(175px, .8fr) auto auto; }
+@media (max-width: 1000px) { .log-filters.log-filters-waf { grid-template-columns: 1fr 1fr; } }

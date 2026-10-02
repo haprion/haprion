@@ -16,19 +16,21 @@ during a publish rather than here.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from haproxy_mgmt import geo
 from haproxy_mgmt.advanced import normalise as normalise_advanced
 from haproxy_mgmt.config import AbuseProtection, Cluster, Node, UnknownHost, Vip
-from haproxy_mgmt.generate import GeneratorError, generate
+from haproxy_mgmt.generate import GeneratorError, countries_named, generate
 from haproxy_mgmt.proxy_model import (
     BALANCE,
     MAX_DENY_RULES,
     STATUS_RANGE,
     ModelError,
+    Proxy,
     dump_document,
     load_proxy,
     pool_written_by_hand,
@@ -776,11 +778,27 @@ def preview(form: dict[str, object], cluster: Cluster) -> Preview:
             trusted_proxies=cluster.trusted_proxy_cidrs,
             abuse_protection=cluster.abuse_protection,
             certificate_sans=PREVIEW_CERTIFICATE_SANS,
+            countries=unchecked_countries([proxy]),
         ).configuration
     except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))
 
     return Preview(document=document, files=files)
+
+
+def unchecked_countries(proxies: Sequence[Proxy]) -> geo.Countries:
+    """A stand-in for the countries the objects name (B228).
+
+    The interface has no location database - the engine reads it when it
+    publishes, and refuses a country it does not know there. The check and the
+    preview show the rules, which name each country's file; the file's networks
+    are never shown, so the placeholder only lets the generator write them.
+    """
+
+    return geo.Countries(
+        stamp="unchecked",
+        networks={country: ("192.0.2.0/32",) for country in countries_named(proxies)},
+    )
 
 
 def vip_sources(vips: Mapping[str, Any]) -> dict[str, str]:

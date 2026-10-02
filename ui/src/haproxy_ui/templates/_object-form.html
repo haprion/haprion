@@ -48,7 +48,7 @@
     <label><span class="field-title">Header <span class="optional">(optional)</span></span><input name="rule_header" value="{{ rule.header }}" placeholder="User-Agent"></label>
     <label><span class="field-title">Header match</span><select name="rule_header_match">{% for match in ('equals', 'prefix', 'contains') %}<option{% if rule.header_match == match %} selected{% endif %}>{{ match }}</option>{% endfor %}</select></label>
     <label><span class="field-title">Header value</span><input name="rule_header_value" value="{{ rule.header_value }}"></label>
-    <label><span class="field-title">Source <span class="optional">(optional)</span></span><input name="rule_source" value="{{ rule.source }}" placeholder="office, 198.51.100.0/24"></label>
+    <label><span class="field-title">Source <span class="optional">(optional)</span></span><input name="rule_source" value="{{ rule.source }}" placeholder="office, country:SE"></label>
   </div>
   <div class="rule-row rule-not"><div class="form-checks"><label class="check"><input type="checkbox" name="rule_negate" value="{{ rule.index }}"{% if rule.negate %} checked{% endif %}> Not from these sources</label></div></div>
   <div class="rule-foot"><button type="button" class="secondary-button" data-remove-rule>Remove rule</button></div>
@@ -125,7 +125,7 @@
         </label>
         <small>Defined on the <a href="/network">Network</a> page.</small>
       </div>
-      <label><span class="field-title">Reachable from — addresses <span class="optional">(optional)</span></span><textarea name="allow_ranges" rows="5" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address or range per line.</small></label>
+      <label><span class="field-title">Reachable from — addresses <span class="optional">(optional)</span></span><textarea name="allow_ranges" rows="5" placeholder="198.51.100.0/24&#10;203.0.113.10">{{ form.allow_ranges }}</textarea><small>One address, range or <code>country:SE</code> per line.</small></label>
       <label><span class="field-title">Rate limit <span class="optional">(optional)</span></span><input name="rate_limit" value="{{ form.rate_limit }}" size="10" placeholder="100"><small>Per source address; new connections for TCP.</small></label>
       <label><span class="field-title">Rate window <span class="optional">(optional)</span></span><input name="rate_window" value="{{ form.rate_window }}" size="10" placeholder="{{ rate_window }}"><small>Such as <code>10s</code> or <code>1m</code>.</small></label>
     </div>
@@ -136,7 +136,7 @@
           {% for network in choices.networks %}<option value="{{ network }}"{% if network in form.deny_from %} selected{% endif %}>{{ network }}</option>{% endfor %}
         </select>
       </label>
-      <label><span class="field-title">Denied — addresses <span class="optional">(optional)</span></span><textarea name="deny_ranges" rows="5" placeholder="203.0.113.0/24">{{ form.deny_ranges }}</textarea><small>One address or range per line.</small></label>
+      <label><span class="field-title">Denied — addresses <span class="optional">(optional)</span></span><textarea name="deny_ranges" rows="5" placeholder="203.0.113.0/24">{{ form.deny_ranges }}</textarea><small>One address, range or <code>country:SE</code> per line.</small></label>
       <label><span class="field-title">Denied — mode</span><select name="deny_mode" class="single-select">{% for mode in ('log', 'deny') %}<option{% if form.deny_mode == mode %} selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label>
       <label{{ when('protocol', 'http https') }}><span class="field-title">Max request body <span class="optional">(optional)</span></span><input name="max_request_body" value="{{ form.max_request_body }}" size="10" placeholder="10m"><small>Declared size; <code>k</code>, <code>m</code>, <code>g</code>.</small></label>
     </div>

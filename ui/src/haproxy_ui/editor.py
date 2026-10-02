@@ -40,6 +40,7 @@ from haproxy_ui.preview import (
     access_rules,
     build_document,
     named_addresses,
+    unchecked_countries,
     vip_sources,
 )
 
@@ -214,6 +215,7 @@ def check(
             trusted_proxies=VALIDATION_TRUSTED_PROXIES,
             abuse_protection=VALIDATION_ABUSE_PROTECTION,
             certificate_sans=cluster.certificate_sans,
+            countries=unchecked_countries([edited, *neighbours]),
         )
     except GeneratorError as exc:
         return Preview(document=document, problem=str(exc))

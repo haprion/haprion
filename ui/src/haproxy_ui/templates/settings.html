@@ -115,6 +115,19 @@
   </table></div>
 </section>
 {% endif %}
+{% if location_data %}
+<section class="cluster-card settings-card" id="location-data">
+  <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Location data</h3><p>{% if location_data.database %}IPFire Location {{ location_data.database }}{% else %}The location database could not be read.{% endif %}</p></div></div></header>
+  <div class="table-scroll"><table class="node-table settings-cluster-table">
+    <thead><tr><th>Cluster</th><th>Published with</th><th><span class="visually-hidden">State</span></th></tr></thead>
+    <tbody>
+      {% for row in location_data.rows %}
+      <tr><td data-label="Cluster"><strong>{{ row.cluster }}</strong></td><td data-label="Published with">{{ row.published }}</td><td data-label="">{% if row.current %}<span class="status-badge status-badge-healthy">Current</span>{% else %}<span class="status-badge status-badge-warning">Newer data · publish to update</span>{% endif %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
 {% if cluster_nodes %}
 <section class="cluster-card settings-card" id="nodes">
   <header class="cluster-header"><div class="cluster-identity"><div class="section-title"><h3>Nodes</h3></div></div><div class="cluster-state"><a class="secondary-button" href="/settings/new-cluster">Create cluster</a></div></header>

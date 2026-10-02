@@ -75,6 +75,7 @@ from haproxy_ui import (
     health,
     history,
     jobs,
+    location_data,
     metrics,
     ndes_profile_form,
     network,
@@ -3440,6 +3441,9 @@ def build_router(config: Config) -> APIRouter:
                 ),
                 "cluster_nodes": cluster_nodes.card_rows(
                     *read_source(request, config, STATUS_SOURCE)[:2]
+                ),
+                "location_data": location_data.card(
+                    read_source(request, config, OBJECTS_SOURCE)[1]
                 ),
                 #
                 # Whether a switch is locked is asked of every switch, on or

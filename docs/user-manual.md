@@ -467,10 +467,13 @@ deny_rules:                      # http only; tried in order, any one is enough
     methods: [POST, PUT]
     header: {name: User-Agent, contains: sqlmap}   # equals, prefix or contains
     source: [office]
+    source_negate: true          # all but these sources; needs source
 max_request_body: 10m            # http only; k, m and g are 1024-based
 ```
 
-Every condition a rule names must hold; a rule that names none is refused,
+Every condition a rule names must hold; `source_negate` turns the source into
+"from anywhere but these": the rule above refuses a POST or PUT under `/admin`
+whose User-Agent contains `sqlmap`, from anyone outside `office`. A rule that names no condition is refused,
 since it would refuse everything the object serves. Header values are matched
 as text, never as patterns.
 

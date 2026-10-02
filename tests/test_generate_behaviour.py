@@ -2290,6 +2290,11 @@ deny_rules:
     mode: deny
     path: /internal
     source: [192.0.2.0/24]
+  - name: private-but-office
+    mode: deny
+    path: /private
+    source: [office]
+    source_negate: true
 max_request_body: 64k
 routes:
   - path: /
@@ -2478,6 +2483,12 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
     def test_a_rule_source_is_the_forwarded_address(self) -> None:
         self.assertEqual(self.ask("/internal", visitor="192.0.2.7"), (403, "internal-office:deny"))
         self.assertEqual(self.ask("/internal", visitor="198.51.100.7"), (200, ""))
+
+    def test_all_but_these_sources_refuses_everyone_else(self) -> None:
+        self.assertEqual(self.ask("/private", visitor="198.51.100.7"), (200, ""))
+        self.assertEqual(
+            self.ask("/private", visitor="192.0.2.5"), (403, "private-but-office:deny")
+        )
 
     def test_the_body_limit_holds_a_declared_length(self) -> None:
         self.assertEqual(self.ask(method="POST", body=b"a" * 60_000), (200, ""))

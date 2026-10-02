@@ -467,6 +467,16 @@ class WhoAndWhatAnObjectRefuses(unittest.TestCase):
             ("User-Agent", "contains", "sqlmap"),
         )
 
+    def test_all_but_needs_the_sources_it_excepts(self) -> None:
+        self.assertIn(
+            "needs the sources",
+            self.refused("deny_rules:\n  - name: a\n    path: /x\n    source_negate: true"),
+        )
+        proxy = self.load(
+            "deny_rules:\n  - name: a\n    path: /x\n    source: [office]\n    source_negate: true"
+        )
+        self.assertTrue(proxy.deny_rules[0].source_negate)
+
     def test_a_rule_without_a_condition_would_refuse_everything(self) -> None:
         self.assertIn(
             "names no condition", self.refused("deny_rules:\n  - name: all\n    mode: deny")

@@ -758,6 +758,8 @@ class AccessRule:
     methods: tuple[str, ...] = ()
     header: HeaderCondition | None = None
     sources: tuple[str, ...] = ()
+    source_negate: bool = False
+    """The rule holds for visitors *outside* `sources` - "all but these"."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1934,7 +1936,11 @@ def _deny_rules(value: Any, location: str) -> tuple[AccessRule, ...]:
 
 def _deny_rule(value: Any, location: str) -> AccessRule:
     data = _mapping(value, location)
-    _only_keys(data, {"name", "mode", "path", "match", "methods", "header", "source"}, location)
+    _only_keys(
+        data,
+        {"name", "mode", "path", "match", "methods", "header", "source", "source_negate"},
+        location,
+    )
     name = _required_string(data, "name", location)
     if not NAME.match(name):
         raise ModelError(
@@ -1967,6 +1973,12 @@ def _deny_rule(value: Any, location: str) -> AccessRule:
     header = _header_condition(data.get("header"), f"{location}.header")
     sources = _sources(data["source"], f"{location}.source", "refuse") if "source" in data else ()
 
+    negate = data.get("source_negate", False)
+    if not isinstance(negate, bool):
+        raise ModelError(f"{location}.source_negate must be true or false")
+    if negate and not sources:
+        raise ModelError(f"{location}.source_negate needs the sources it excepts")
+
     if path is None and not methods_raw and header is None and not sources:
         raise ModelError(
             f"{location} names no condition: a rule without one would refuse everything "
@@ -1980,6 +1992,7 @@ def _deny_rule(value: Any, location: str) -> AccessRule:
         methods=tuple(sorted(methods_raw)),
         header=header,
         sources=sources,
+        source_negate=negate,
     )
 
 

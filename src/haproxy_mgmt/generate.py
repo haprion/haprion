@@ -1412,7 +1412,7 @@ def _access_rules(
         if rule.sources:
             acl = _acl_name(proxy.name, f"{prefix}-source")
             lines.append(f"    acl {acl} {fetch} {' '.join(_cidrs(rule.sources, networks))}")
-            condition.append(acl)
+            condition.append(f"!{acl}" if rule.source_negate else acl)
         lines.extend(_verdict(" ".join(condition), rule.name, rule.mode))
     if proxy.max_request_body is not None:
         #

@@ -2179,3 +2179,4 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 @media (max-width: 1000px) { .log-filters.log-filters-waf { grid-template-columns: 1fr 1fr; } }
 .log-table .log-rule { margin-right: 4px; }
 .form-group-badge { flex: none; }
+.location-data-table th:nth-child(3), .location-data-table td:nth-child(3) { width: 330px; text-align: right; }

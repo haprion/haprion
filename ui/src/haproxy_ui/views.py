@@ -3418,11 +3418,10 @@ def build_router(config: Config) -> APIRouter:
                 "sso_on": provider is not None and provider.enabled,
                 "cluster_settings": cluster_settings_page.card_views(
                     *read_source(request, config, SETTINGS_SOURCE)[:2],
-                    running=jobs.in_flight(recent),
                     waiting=network.awaiting_deploy(recent, operation="cluster_settings_publish"),
                 ),
                 "cluster_nodes": cluster_nodes.card_rows(
-                    *read_source(request, config, STATUS_SOURCE)[:2], running=jobs.in_flight(recent)
+                    *read_source(request, config, STATUS_SOURCE)[:2]
                 ),
                 #
                 # Whether a switch is locked is asked of every switch, on or

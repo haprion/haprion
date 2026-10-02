@@ -47,12 +47,12 @@ class ClusterSettingsView:
     logs_title: str = ""
     metrics_title: str = ""
     #
-    # Where the settings have got to, as the network page answers it for its
-    # one document per cluster: a publish still running, or one done since
-    # the last deploy - "Reconfigured · deploy to activate", the proxy listing's words. *Active* only
-    # when neither, so a published change is never shown as live.
+    # A publish done since the last deploy - "Reconfigured · deploy to
+    # activate", the proxy listing's words. *Active* only when there is none,
+    # so a published change is never shown as live. A job in flight is not
+    # shown here: the overview is text, and the queue's state belongs to the
+    # cluster's own page (2026-10-02).
     #
-    running: str = ""
     waiting: bool = False
 
 
@@ -123,7 +123,6 @@ def card_views(
     clusters: Sequence[str],
     rows: Iterable[Any],
     *,
-    running: Mapping[str, str] | None = None,
     waiting: Iterable[str] = (),
 ) -> list[ClusterSettingsView]:
     """One row per listed cluster, in the order the installation lists them."""
@@ -144,7 +143,6 @@ def card_views(
                 readable=readable,
                 logs=_logs(result) if isinstance(result, Mapping) else "Not read yet",
                 metrics=_metrics(result) if isinstance(result, Mapping) else "",
-                running=(running or {}).get(cluster, ""),
                 waiting=cluster in waiting,
                 logs_set=isinstance(result, Mapping) and bool(_targets(result)),
                 metrics_set=isinstance(result, Mapping)

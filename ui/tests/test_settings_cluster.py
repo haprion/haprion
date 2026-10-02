@@ -69,16 +69,14 @@ class WhereTheSettingsHaveGotTo(QueueRouteTestCase):
         # The network page's own question is unchanged.
         self.assertEqual(network.awaiting_deploy(newest_first), frozenset({"edge-demo"}))
 
-    def test_the_row_carries_what_is_running_and_what_is_owed(self) -> None:
+    def test_the_row_carries_what_is_owed(self) -> None:
         views = cluster_settings_page.card_views(
             ("edge-demo", "service-demo"),
             demo.settings_rows(NOW),
-            running={"service-demo": "Publishing settings"},
             waiting={"edge-demo"},
         )
         edge, service = views
-        self.assertEqual((edge.waiting, edge.running), (True, ""))
-        self.assertEqual((service.waiting, service.running), (False, "Publishing settings"))
+        self.assertEqual((edge.waiting, service.waiting), (True, False))
 
     def test_the_card_says_waiting_and_not_active(self) -> None:
         patch = mock.patch(

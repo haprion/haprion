@@ -38,7 +38,6 @@ class ClusterRow:
     cluster: str
     nodes: tuple[str, ...]
     href: str
-    running: str | None
 
 
 def _nodes(result: Mapping[str, Any] | None) -> list[NodeRow]:
@@ -67,16 +66,13 @@ def node_rows(status: Any | None) -> list[NodeRow]:
     return _nodes(status.result if status is not None else None)
 
 
-def card_rows(
-    clusters: Iterable[str], statuses: Iterable[Any], *, running: Mapping[str, str]
-) -> list[ClusterRow]:
+def card_rows(clusters: Iterable[str], statuses: Iterable[Any]) -> list[ClusterRow]:
     by_cluster = {row.cluster: row for row in statuses}
     return [
         ClusterRow(
             cluster=cluster,
             nodes=tuple(row.name for row in node_rows(by_cluster.get(cluster))),
             href=f"/settings/nodes/{cluster}",
-            running=running.get(cluster),
         )
         for cluster in sorted(clusters)
     ]

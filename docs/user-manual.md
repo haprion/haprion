@@ -449,6 +449,58 @@ prints the same answer as the dialog's *Check*):
   and the text must carry at least one `server` line. Unticking gives the pool
   back with the text's `server name host:port` lines as its servers.
 
+## Access rules
+
+An object can refuse visitors by address, by what a request asks for, and by
+the size of what it sends. The keys sit in the object's YAML beside
+`allow_from`; the generator writes them into the shared frontend after
+`allow_from` and before anything is routed.
+
+```yaml
+deny_from:                       # http and tcp
+  mode: log                      # log (the default) or deny; tcp takes deny only
+  sources: [scanners, 203.0.113.0/24]
+deny_rules:                      # http only; tried in order, any one is enough
+  - name: admin-post             # lowercase, shown on the traffic record
+    mode: deny
+    path: /admin                 # prefix by default; match: exact for one path
+    methods: [POST, PUT]
+    header: {name: User-Agent, contains: sqlmap}   # equals, prefix or contains
+    source: [office]
+max_request_body: 10m            # http only; k, m and g are 1024-based
+```
+
+Every condition a rule names must hold; a rule that names none is refused,
+since it would refuse everything the object serves. Header values are matched
+as text, never as patterns.
+
+**Look before refusing.** A new rule starts in `log`: the request is served,
+and the rule's name is written on its traffic record as `admin-post:log`. In
+`deny` the visitor gets 403 and the record says `admin-post:deny`. The first
+logged rule a request meets is the one recorded; a refusal always names
+itself. `deny_from` is recorded as `deny-from`. On a tcp object there is no
+traffic record for a logged match to appear on, so `deny_from` there must say
+`deny`.
+
+**Behind a trusted proxy** (the cluster's `trusted_proxies`), every address
+condition — `allow_from`, `deny_from` and a rule's `source` — reads the
+visitor from the last `X-Forwarded-For` element, as the rate limit counts it.
+Before engine API 10, `allow_from` read the connection, which behind a proxy is
+the proxy itself; an object restricted that way admitted everything that came
+through it, and now admits only the visitors it names. A request from the
+proxy with no header has no visitor address: `allow_from` refuses it and
+`deny_from` lets it pass.
+
+**The body limit holds the declared size.** A request that says how long its
+body is gets 413 (`body-limit:deny`) when that is more than the limit. A
+chunked request declares nothing, and HAProxy sees only what fits in its
+buffer (16 kB by default, `tune.bufsize`); such a body is refused if what has
+arrived is already over the limit, and otherwise let through and marked
+`body-unbounded:log`. Browsers send the length with forms and uploads; the
+mark shows whether anything else reaches the object. The hard limit for a
+chunked body is the backend server's own, such as nginx's
+`client_max_body_size`.
+
 Stick tables in the text have no `peers`: their counts start again when HAProxy
 reloads and when the address moves to the other node. A `haproxy -c` error in a
 generated file is reported as the object and the line of its text, and a

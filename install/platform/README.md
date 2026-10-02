@@ -91,7 +91,7 @@ sudo ./update-platform-release ../answers.env /path/to/source-tree
 ```
 
 **Which pieces a change releases at all, and in what order, is decided in
-[`docs/INSTALLATION.md` — Releasing a change](../../docs/INSTALLATION.md#releasing-a-change).**
+[`docs/user-manual.md` — Releasing a change](../../docs/user-manual.md#releasing-a-change).**
 Read it before running this command. In short: a commit that changes both the
 management engine and the UI releases the CLI wheel first — the platform check
 compares the independently installed CLI before it activates the UI candidate,
@@ -489,7 +489,7 @@ The same tool handles `reset`, `disable`, `enable`, `unlock`, `revoke`,
 cannot sign in again while its cookie keeps working has not been taken back
 from anyone.
 
-See [`docs/INSTALLATION.md`](../../docs/INSTALLATION.md) §4.6 for how a session
+See [Accounts and signing in](../../docs/user-manual.md#accounts-and-signing-in) for how a session
 and the sign-in throttle behave.
 
 ## Step 13 — the traffic collector
@@ -558,5 +558,5 @@ bundle and its distribution runtime libraries as root. Build the bundle with
 `tools/build-scep-client.py`; retain the matching package, complete source, license
 and build instructions. The installer refuses a different OS release or architecture
 and activates only three client programs, without installing a Certmonger service.
-See INSTALLATION.md §1.4.8 for root policy and provider configuration. This step is
+See user-manual.md, 'Preparing Microsoft AD CS / NDES for CSR enrollment', for root policy and provider configuration. This step is
 implemented in source; live installation and enrollment remain to be verified.

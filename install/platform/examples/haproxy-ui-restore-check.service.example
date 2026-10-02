@@ -2,7 +2,7 @@
 # Restores the newest dump into a scratch database and compares it with the live
 # one. A dump nobody has restored is a belief, not a backup.
 Description=Verify that the newest interface dump restores
-Documentation=file:///apps/haproxy-manager-dev/src/haproxy-manager/docs/INSTALLATION.md
+Documentation=file:///apps/haproxy-manager-dev/src/haproxy-manager/docs/user-manual.md
 After=postgresql.service
 Requires=postgresql.service
 

@@ -10,7 +10,7 @@
 # node's own unicast_src_ip and the peer's address - and the rest describe the
 # cluster and are identical on both.
 #
-# Why it looks like this is in docs/INSTALLATION.md, section 2.1. The short
+# Why it looks like this is in docs/user-manual.md, 'HAProxy and keepalived baseline'. The short
 # version: a rollout deploys the address owner last, so that a bad configuration
 # breaks on the node not carrying traffic. That protection only exists if the
 # management host can tell who the owner is - which is what the notify_ lines

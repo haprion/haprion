@@ -135,7 +135,7 @@ for cluster in $(each_cluster); do
                     echo "# Where traffic arrives, where it leaves from, and who may"
                     echo "# reach it. Owned by the application: edited through the same"
                     echo "# publish path as a proxy object, with the same lock, history"
-                    echo "# and revert. See docs/INSTALLATION.md section 1.4."
+                    echo "# and revert. See docs/user-manual.md, 'Cluster definitions'."
                     echo "#"
                     echo "# Adding a VIP or a source address here does half the job. The"
                     echo "# other half is keepalived on the nodes, and a source address"
@@ -166,7 +166,7 @@ for cluster in $(each_cluster); do
 # configuration is assembled behind this file and never edits it.
 #
 # BEFORE THE FIRST PUBLISH: add the ssl-default-bind-* lines from
-# docs/INSTALLATION.md, section 1.3. A publish is refused until they
+# docs/user-manual.md, 'Runtime policy'. A publish is refused until they
 # are here and agree with the lists the generator uses, and the refusal
 # prints them in full.
 #

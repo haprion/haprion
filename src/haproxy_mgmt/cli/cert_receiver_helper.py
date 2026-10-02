@@ -5,7 +5,7 @@ receiver and one of two actions: `add`, with the transport and either the
 public key text or the https allowlist, or `remove`. What each means - the
 account, the directory, the lock in `authorized_keys` or the nginx block -
 is `cert_receiver`'s, exactly as when the operator types
-`haproxy-cert-receiver` (INSTALLATION.md 1.4.9); this helper only carries
+`haproxy-cert-receiver` (user-manual.md, 'Registering a receiver'); this helper only carries
 the request across the privilege boundary and hands back the same layers
 and the same instructions.
 

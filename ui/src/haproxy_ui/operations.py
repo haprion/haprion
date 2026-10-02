@@ -267,7 +267,7 @@ ProfileLookup = Callable[[str], SealedProfileRow | None]
 # Which of the named certificates a draft still names, as certificate ID to
 # `cluster/object` rows. The web asks its own database and hands the answer
 # in when it queues; the worker does not, because the worker holds no grant
-# on `proxy_draft` (INSTALLATION.md: it publishes from the payload, never
+# on `proxy_draft` (user-manual.md: it publishes from the payload, never
 # from the table) - a run-time check from the worker was tried on
 # 2026-09-13 and took the whole process down with `InsufficientPrivilege`.
 # So the last look at the drafts is the moment of queueing, and a draft

@@ -6,7 +6,7 @@
 #
 # Built into an immutable release by tools/install-certbot-env.py. Bumped a few
 # times a year, in staging, with `certbot renew --dry-run --run-deploy-hooks`
-# as the gate; see docs/INSTALLATION.md 1.4.4.
+# as the gate; see docs/user-manual.md, 'The certbot environment'.
 #
 # Two tiers, and the order below is that grouping. `core` is certbot's own
 # plugins, pinned to the same version as certbot because they are released

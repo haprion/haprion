@@ -118,7 +118,7 @@ OBJECT_BAND = "1001"
 
 #
 # Where a node keeps the certificates it may serve. Part of the node-side
-# contract rather than a choice this generator makes - `docs/INSTALLATION.md`
+# contract rather than a choice this generator makes - `docs/user-manual.md`
 # describes the directory, and `candidate_validation` rewrites exactly this
 # prefix when it validates a candidate inside a sandbox that has no /etc.
 # Changing it here without changing that rewrite would make validation pass
@@ -624,7 +624,7 @@ def _refuse_uncovered_hostnames(
     Only checked where the caller supplied coverage data. A cluster whose
     installation has no certificate root configured cannot answer the question
     at all, and refusing every https object there would be worse than not
-    asking - see `docs/INSTALLATION.md`.
+    asking - see `docs/user-manual.md`.
 
     A certificate the caller has no entry for is not treated as covering
     nothing. `_refuse_unknown_certificates` has already held every name to the

@@ -26,7 +26,7 @@ The repository has complementary gates. No single scanner replaces the others.
 7. `install/platform/03-verify` checks the database privilege surface against the running database,
    in both directions. It is a deployment check rather than a repository one, so it is not part of
    `run-checks` — but it belongs to the same family, and the reason it checks both directions is in
-   [`INSTALLATION.md`](INSTALLATION.md#44-verifying-it).
+   [`user-manual.md`](user-manual.md#verifying-it).
 8. `install/platform/check-compatibility` reads the separately installed CLI, UI, schema, service
    processes, sudo rules and node bundle metadata as one result. It changes nothing and fails on an
    unknown compatibility level rather than assuming an older component is usable.
@@ -36,7 +36,7 @@ The repository has complementary gates. No single scanner replaces the others.
 
 A release wheel is installed only by `tools/install-release.py` with an explicitly supplied
 SHA-256 digest. The installer rejects path traversal, symlinks, special files and unexpected entry
-points before activating a root-owned, read-only release. See [`INSTALLATION.md`](INSTALLATION.md).
+points before activating a root-owned, read-only release. See [`install.md`](install.md).
 
 ### The scanner exists twice, deliberately
 

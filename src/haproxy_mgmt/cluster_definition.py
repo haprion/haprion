@@ -99,7 +99,7 @@ global
     default-path config
 
     # The TLS defaults the publish path checks this file against, written
-    # from the same source (docs/INSTALLATION.md, section 1.3).
+    # from the same source (docs/user-manual.md, 'Runtime policy').
 {tls}
 defaults
     log     global
@@ -126,7 +126,7 @@ RESERVATIONS = """# What the handwritten half of this cluster already uses, so t
 NETWORK = """# Where traffic arrives, where it leaves from, and who may
 # reach it. Owned by the application: edited through the same
 # publish path as a proxy object, with the same lock, history
-# and revert. See docs/INSTALLATION.md section 1.4.
+# and revert. See docs/user-manual.md, 'Cluster definitions'.
 #
 # Adding a VIP or a source address here does half the job. The
 # other half is keepalived on the nodes, and a source address
@@ -324,7 +324,7 @@ def sudoers_with(text: str, add: Sequence[str] = (), drop: Sequence[str] = ()) -
 
     The whole alias is written again rather than one line edited: the last entry
     carries no trailing comma, so removing a line can move that position and
-    leave the file unparseable (INSTALLATION.md 1.7).
+    leave the file unparseable (user-manual.md, 'Sudo rules').
     """
 
     lines = text.splitlines()

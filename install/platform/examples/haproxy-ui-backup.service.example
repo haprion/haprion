@@ -1,7 +1,7 @@
 [Unit]
 # Dumps the interface database. Rendered by 06-platform-backup.
 Description=Dump the HAProxy Manager interface database
-Documentation=file:///apps/haproxy-manager-dev/src/haproxy-manager/docs/INSTALLATION.md
+Documentation=file:///apps/haproxy-manager-dev/src/haproxy-manager/docs/user-manual.md
 After=postgresql.service
 Requires=postgresql.service
 

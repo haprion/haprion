@@ -61,7 +61,7 @@ def outcome_of(report: Report) -> tuple[Outcome, int]:
 
     A certificate whose registry entry, files and lineage are gone but whose
     node copies were kept is the normal shape of a deletion run before the
-    nodes carry the verb (INSTALLATION.md 1.4.6). Calling that `failed` was
+    nodes carry the verb (user-manual.md, 'Deleting a certificate'). Calling that `failed` was
     the first live run's mistake: three layers of four had gone, and the
     envelope said nothing had. `failed` is what is left when the first layer
     already would not go - a PEM that cannot be unlinked, a node that cannot

@@ -9,7 +9,7 @@
 #
 # It writes to stdout and touches nothing on the node. The archive contains
 # password hashes and private SSH keys, so it is stored root-only on the
-# management side - see docs/INSTALLATION.md.
+# management side - see docs/user-manual.md.
 #
 set -euo pipefail
 

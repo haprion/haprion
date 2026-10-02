@@ -60,7 +60,7 @@ from haproxy_mgmt.config import (
 HEADER = """\
 # The certificate registry (B135). Maintained by haproxy-cert-issue and the
 # registry helper; hand edits are kept but comments are not, since the file is
-# rewritten as a whole. See INSTALLATION.md 1.4.1 for the fields.
+# rewritten as a whole. See user-manual.md, 'The certificate registry', for the fields.
 """
 
 

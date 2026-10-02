@@ -71,7 +71,7 @@ fi
 step "Clusters"
 
 command -v haproxy-config-status >/dev/null \
-    || die "haproxy-config-status is not installed - do step 3 of docs/INSTALLATION.md first"
+    || die "haproxy-config-status is not installed - do step 2 of docs/install.md first"
 
 for cluster in $(each_cluster); do
     if out="$(haproxy-config-status -c "$cluster" 2>&1)"; then

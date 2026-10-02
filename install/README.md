@@ -8,13 +8,13 @@ that genuinely cannot be automated — pasting public keys onto machines the
 management host is not allowed to write to — and step 3 prints those lines ready
 to paste.
 
-[`../docs/INSTALLATION.md`](../docs/INSTALLATION.md) explains *why* each step
+[`../docs/user-manual.md`](../docs/user-manual.md) explains *why* each step
 looks the way it does. This file is what you follow.
 
 **This is a first installation.** Shipping a later change is a different
 question — which of the CLI engine, the web platform and the node scripts it
 touches, and in what order — and it is answered once in
-[Releasing a change](../docs/INSTALLATION.md#releasing-a-change).
+[Releasing a change](../docs/user-manual.md#releasing-a-change).
 
 ## Before you start
 
@@ -23,7 +23,7 @@ installed on the nodes. This project manages HAProxy; it does not install it.
 
 **But it does assume things about how they are configured**, and getting those
 wrong does not fail loudly — it quietly makes deploys unsafe. Read
-[section 2.1 of the guide](../docs/INSTALLATION.md#21-haproxy-and-keepalived-baseline)
+[the keepalived baseline in the manual](../docs/user-manual.md#haproxy-and-keepalived-baseline)
 before step 4: both nodes binding the virtual address, both keepalived instances
 as `BACKUP` with `nopreempt`, and the `notify_` lines that tell the management
 host who owns the address. There is a working starting point in
@@ -107,7 +107,7 @@ Repeat for every node.
 
 This direct directory-copy flow is for a first installation. Later node updates use the minimal,
 commit-bound bundle built by `tools/node-bundle.py` and installed one node at a time with
-`tools/install-node-bundle`; see `docs/INSTALLATION.md` section 2.5. Do not copy the complete
+`tools/install-node-bundle`; see `docs/user-manual.md`, 'Installing and changing node scripts'. Do not copy the complete
 `install/` tree for an update — it includes manager/platform material the node never uses.
 
 ## Step 5 — check
@@ -145,7 +145,7 @@ first. The scripts check before they change, and say `ok`, `fixed`, `created` or
 
 Steps 1–3 assume the management CLI is installed. It is a separate, versioned,
 hash-verified installation under `/opt/haproxy-mgmt`, described in
-[`../docs/INSTALLATION.md`](../docs/INSTALLATION.md#part-3--the-versioned-cli-release).
+[`../docs/user-manual.md`](../docs/user-manual.md#part-3--the-versioned-cli-release).
 
 One ordering rule from that section is worth repeating, because getting it
 backwards breaks every command rather than one: **install a release before adding

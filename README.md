@@ -128,4 +128,4 @@ PostgreSQL cluster with `ui/tools/test-database`; its accounts and isolation bou
 in [`docs/SECURITY-CHECKS.md`](docs/SECURITY-CHECKS.md#disposable-database-integration-gate).
 
 Versioned installation and rollback under `/opt/haproxy-mgmt` are described in
-[`docs/INSTALLATION.md`](docs/INSTALLATION.md).
+[`docs/install.md`](docs/install.md) and [`docs/user-manual.md`](docs/user-manual.md).

@@ -226,7 +226,7 @@ for script in "${SCRIPTS[@]}"; do
         missing=1
     fi
 done
-[[ $missing -eq 0 ]] || die "node scripts are missing - see docs/INSTALLATION.md, 'What is still missing'"
+[[ $missing -eq 0 ]] || die "node scripts are missing - see docs/user-manual.md, 'What is still missing'"
 
 for script in "${SCRIPTS[@]}"; do
     target="${SBIN}/${script}"
@@ -374,7 +374,7 @@ KA_CONF="/etc/keepalived/keepalived.conf"
 if [[ ! -f "$KA_CONF" ]]; then
     if [[ -n "$(cluster_value VIP "$CLUSTER")" ]]; then
         warn "cluster ${CLUSTER} has a virtual address but keepalived is not"
-        warn "  configured on this node. See docs/INSTALLATION.md section 2.1"
+        warn "  configured on this node. See docs/user-manual.md, 'HAProxy and keepalived baseline'"
         warn "  for the configuration this project assumes, and why."
     else
         log "  skipped  cluster ${CLUSTER} has no virtual address"

@@ -53,7 +53,7 @@ TRANSPORT_LABELS = {
 }
 
 # What the form says beside each choice - the sentence that decides between
-# them, in the words INSTALLATION.md 1.4.9 uses.
+# them, in the words user-manual.md, 'Registering a receiver', uses.
 TRANSPORT_HELP = {
     "rsync": "Linux hosts with rsync. The key is locked to one read-only directory.",
     "sftp": "Any host with an OpenSSH client, Windows included. Chrooted, read-only.",

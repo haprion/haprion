@@ -15,9 +15,9 @@ your own answer.
 
 | Piece | What it does | Reference |
 |---|---|---|
-| State backup | Archives each node of a cluster, validated before it gets its permanent name, root-only. On a schedule per cluster or on demand, from the terminal or the *Node backups* page. | [INSTALLATION.md 1.3](INSTALLATION.md#13-runtime-policy) |
-| Node restore | Puts an archive back as that node - onto an empty VM, or over the node itself - with a preview of every change before anything is written, and a test mode that never touches production addresses. | [INSTALLATION.md 2.6](INSTALLATION.md#26-restoring-a-node-onto-an-empty-vm) |
-| Platform backup | A daily dump of the interface's database and a weekly proof that it restores. | [INSTALLATION.md 4.7](INSTALLATION.md#47-backups-and-proving-they-restore) |
+| State backup | Archives each node of a cluster, validated before it gets its permanent name, root-only. On a schedule per cluster or on demand, from the terminal or the *Node backups* page. | [Runtime policy](user-manual.md#runtime-policy) |
+| Node restore | Puts an archive back as that node - onto an empty VM, or over the node itself - with a preview of every change before anything is written, and a test mode that never touches production addresses. | [Restoring a node](user-manual.md#restoring-a-node-onto-an-empty-vm) |
+| Platform backup | A daily dump of the interface's database and a weekly proof that it restores. | [Backups](user-manual.md#backups-and-proving-they-restore) |
 
 What a node archive holds: hostname and hosts, Netplan, keepalived and its address list,
 `node.conf`, the node's SSH host keys and pull keys, its accounts and password hashes, the service
@@ -52,8 +52,8 @@ keys, and a restore always puts them back - there is no option for fresh ones. A
 the attacker's knowledge of those keys to the new machine. Instead:
 
 1. Remove the node's lines from the management host's pull accounts (one line per node, see
-   [INSTALLATION.md 1.6](INSTALLATION.md#16-ssh-identities)), so its keys fetch nothing.
-2. Install the replacement as a new node ([Part 2](INSTALLATION.md#part-2--the-nodes)): new keys,
+   [SSH identities](user-manual.md#ssh-identities)), so its keys fetch nothing.
+2. Install the replacement as a new node ([Part 2](user-manual.md#part-2--the-nodes)): new keys,
    generated on it, and their public halves added on the management host.
 3. Replace the certificates the node carried. It held their private keys.
 4. Change the passwords of accounts that had one on the node; the archive and the node held their

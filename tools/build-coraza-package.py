@@ -1,0 +1,406 @@
+#!/usr/bin/env python3
+"""Build the WAF engine and rule set packages from pinned upstream sources.
+
+Two Debian packages, one tool (B229):
+
+    coraza  haproxy-manager-coraza-spoa  the Coraza SPOA engine, built from source
+                                         with a pinned Go; installed on the manager
+                                         (validation only) and on every node
+    crs     haproxy-manager-crs          the OWASP Core Rule Set files; installed on
+                                         the manager only - releases carry the rules
+                                         to the nodes (managed/waf)
+
+Every input is pinned by SHA-256 below, the Go toolchain by version, and the Go
+modules by the source's own go.sum. The same inputs give the same package bytes:
+file times are clamped to the newest time in the source archive, owners are
+root, and the Go build drops paths and build IDs. Build twice and compare.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import os
+import re
+import subprocess
+import tarfile
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+REVISION = "1"
+GO_VERSION = "go1.26.8"
+MAINTAINER = "haproxy-manager maintainers <maintainers@example.org>"
+MAX_SOURCE_BYTES = 64 * 1024 * 1024
+DIGEST = re.compile(r"[0-9a-f]{64}")
+UNIT = "coraza-spoa.service"
+
+
+@dataclass(frozen=True)
+class Source:
+    file: str
+    sha256: str
+    top: str
+    version: str
+    url: str
+
+
+CORAZA = Source(
+    file="coraza-spoa-0.9.0.tar.gz",
+    sha256="4cb1a39b0f6d8d44ef570b2668da060826206139d7c24d26442852cb99ac44fb",
+    top="coraza-spoa-0.9.0",
+    version="0.9.0",
+    url="https://github.com/corazawaf/coraza-spoa/archive/refs/tags/v0.9.0.tar.gz",
+)
+#
+# The LTS line (B227). The minimal archive is signed by the CRS release key,
+# fingerprint 3600 6F0E 0BA1 6783 2158 8211 38EE ACA1 AB8A 6E72; the signature
+# was checked once, when this digest was pinned.
+#
+CRS = Source(
+    file="coreruleset-4.25.1-minimal.tar.gz",
+    sha256="e314bc5b64a268ae4264822bc93db24eb93c5eb648ff80aed96b23f3fce2c701",
+    top="coreruleset-4.25.1",
+    version="4.25.1",
+    url="https://github.com/coreruleset/coreruleset/releases/download/v4.25.1/"
+    "coreruleset-4.25.1-minimal.tar.gz",
+)
+
+#
+# The engine reads a configuration only a release provides, so the unit stays
+# inert until one does; the node's deploy script enables and disables it with
+# the release (B230). DynamicUser gives the process an account systemd creates
+# at start and forgets at stop - nothing to add, nothing to clean up.
+#
+UNIT_FILE = """\
+[Unit]
+Description=Coraza SPOA web application firewall engine for HAProxy
+Documentation=https://github.com/corazawaf/coraza-spoa
+After=network.target
+ConditionPathExists=/etc/haproxy/waf/coraza.yaml
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/coraza-spoa -config /etc/haproxy/waf/coraza.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2s
+DynamicUser=yes
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+#
+# An upgrade replaces the binary under a running engine, which keeps the old
+# one until restarted: try-restart restarts it only if it runs. Removal stops
+# it; what HAProxy then does is the object's on_engine_error (B232).
+#
+POSTINST = f"""\
+#!/bin/sh
+set -e
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    if [ "$1" = configure ] && [ -n "$2" ]; then
+        systemctl try-restart {UNIT}
+    fi
+fi
+"""
+PRERM = f"""\
+#!/bin/sh
+set -e
+if [ -d /run/systemd/system ] && [ "$1" = remove ]; then
+    systemctl disable --now {UNIT} || true
+fi
+"""
+POSTRM = """\
+#!/bin/sh
+set -e
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+fi
+"""
+
+
+def verified(directory: Path, source: Source) -> Path:
+    """The source archive, refused unless its bytes are the pinned ones."""
+    path = directory / source.file
+    if DIGEST.fullmatch(source.sha256) is None:
+        raise ValueError("invalid pinned digest")
+    if path.stat().st_size > MAX_SOURCE_BYTES:
+        raise ValueError(f"{source.file} exceeds its size limit")
+    if hashlib.sha256(path.read_bytes()).hexdigest() != source.sha256:
+        raise ValueError(f"{source.file} does not match its pinned SHA-256")
+    return path
+
+
+def unpack(archive: Path, source: Source, into: Path) -> tuple[Path, int]:
+    """Unpack under the data filter; return the tree and its newest file time."""
+    with tarfile.open(archive) as tar:
+        members = tar.getmembers()
+        if not members or any(
+            not (m.name == source.top or m.name.startswith(source.top + "/")) for m in members
+        ):
+            raise ValueError(f"{source.file} must hold exactly one {source.top}/ tree")
+        epoch = max(int(m.mtime) for m in members)
+        tar.extractall(into, filter="data")
+    return into / source.top, epoch
+
+
+def go_build(tree: Path, go_root: Path, work: Path, version: str) -> Path:
+    """Build the engine statically with exactly the pinned Go."""
+    go_root = go_root.resolve()  # the build runs inside the source tree
+    go = go_root / "bin" / "go"
+    environment = {
+        "PATH": f"{go_root / 'bin'}:/usr/bin:/bin",
+        "HOME": str(work / "home"),
+        "GOROOT": str(go_root),
+        "GOPATH": str(work / "gopath"),
+        "GOCACHE": str(work / "gocache"),
+        "GOMODCACHE": str(work / "gomodcache"),
+        "GOTOOLCHAIN": "local",
+        "GOFLAGS": "-mod=readonly",
+        "GOOS": "linux",
+        "GOARCH": "amd64",
+        "CGO_ENABLED": "0",
+        "GOPROXY": "https://proxy.golang.org",
+        "GOSUMDB": "sum.golang.org",
+    }
+    toolchain = subprocess.run(  # noqa: S603 - pinned toolchain, fixed arguments
+        [str(go), "env", "GOVERSION"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=60,
+    ).stdout.strip()
+    if toolchain != GO_VERSION:
+        raise ValueError(f"Go is {toolchain or 'unknown'}, the package is pinned to {GO_VERSION}")
+    output = work / "coraza-spoa"
+    subprocess.run(  # noqa: S603 - pinned toolchain, fixed arguments
+        [
+            str(go),
+            "build",
+            "-trimpath",
+            "-buildvcs=false",
+            f"-ldflags=-buildid= -X main.version=v{version}",
+            "-o",
+            str(output),
+            ".",
+        ],
+        check=True,
+        cwd=tree,
+        env=environment,
+        timeout=1800,
+    )
+    if not output.read_bytes()[:4] == b"\x7fELF":
+        raise ValueError("the engine build did not produce an ELF binary")
+    return output
+
+
+def write(root: Path, relative: str, data: bytes, mode: int) -> None:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    path.chmod(mode)
+
+
+def control(fields: dict[str, str], root: Path) -> bytes:
+    size = sum(p.stat().st_size for p in root.rglob("*") if p.is_file() and "DEBIAN" not in p.parts)
+    fields = {**fields, "Maintainer": MAINTAINER, "Installed-Size": str(-(-size // 1024))}
+    order = [
+        "Package",
+        "Version",
+        "Architecture",
+        "Maintainer",
+        "Installed-Size",
+        "Section",
+        "Priority",
+        "Homepage",
+        "Description",
+    ]
+    return "".join(f"{name}: {fields[name]}\n" for name in order if name in fields).encode()
+
+
+def package(root: Path, fields: dict[str, str], output_dir: Path, epoch: int) -> Path:
+    """Normalise the tree and let dpkg-deb build it; same tree, same bytes."""
+    sums = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file() and "DEBIAN" not in p.parts):
+        relative = path.relative_to(root).as_posix()
+        sums.append(f"{hashlib.md5(path.read_bytes()).hexdigest()}  {relative}\n")  # noqa: S324 - dpkg's md5sums format
+    write(root, "DEBIAN/md5sums", "".join(sums).encode(), 0o644)
+    write(root, "DEBIAN/control", control(fields, root), 0o644)
+    for path in [root, *root.rglob("*")]:
+        if path.is_symlink():
+            raise ValueError("a package tree must not hold symlinks")
+        if path.is_dir():
+            path.chmod(0o755)
+        os.utime(path, (epoch, epoch))
+    name = f"{fields['Package']}_{fields['Version']}_{fields['Architecture']}.deb"
+    target = output_dir / name
+    if target.exists():
+        raise ValueError(f"{target} exists; move it aside first")
+    subprocess.run(  # noqa: S603 - fixed builder, generated tree
+        [
+            "/usr/bin/dpkg-deb",
+            "--root-owner-group",
+            "-Zxz",
+            "-z9",
+            "--build",
+            str(root),
+            str(target),
+        ],
+        check=True,
+        capture_output=True,
+        env={"PATH": "/usr/bin:/bin", "SOURCE_DATE_EPOCH": str(epoch), "LC_ALL": "C"},
+        timeout=300,
+    )
+    return target
+
+
+def build_coraza(
+    source_dir: Path,
+    go_root: Path,
+    output_dir: Path,
+    *,
+    source: Source = CORAZA,
+    built: Path | None = None,
+) -> Path:
+    """`built` skips the Go build - for tests, which have neither network nor Go."""
+    archive = verified(source_dir, source)
+    with tempfile.TemporaryDirectory(prefix="coraza-package-") as directory:
+        work = Path(directory)
+        tree, epoch = unpack(archive, source, work / "src")
+        binary = built or go_build(tree, go_root, work, source.version)
+        root = work / "root"
+        doc = "usr/share/doc/haproxy-manager-coraza-spoa"
+        write(root, "usr/sbin/coraza-spoa", binary.read_bytes(), 0o755)
+        write(root, f"usr/lib/systemd/system/{UNIT}", UNIT_FILE.encode(), 0o644)
+        write(root, f"{doc}/copyright", (tree / "LICENSE").read_bytes(), 0o644)
+        write(
+            root,
+            f"{doc}/BUILD",
+            (
+                f"source: {source.url}\nsource_sha256: {source.sha256}\ngo: {GO_VERSION}\n"
+                f"flags: CGO_ENABLED=0 -trimpath -buildvcs=false -ldflags='-buildid= -X main.version=v{source.version}'\n"
+                "rules: none - the embedded rule set is not used; releases carry the CRS\n"
+            ).encode(),
+            0o644,
+        )
+        for name, script in (("postinst", POSTINST), ("prerm", PRERM), ("postrm", POSTRM)):
+            write(root, f"DEBIAN/{name}", script.encode(), 0o755)
+        return package(
+            root,
+            {
+                "Package": "haproxy-manager-coraza-spoa",
+                "Version": f"{source.version}-{REVISION}",
+                "Architecture": "amd64",
+                "Section": "net",
+                "Priority": "optional",
+                "Homepage": "https://github.com/corazawaf/coraza-spoa",
+                "Description": "Coraza SPOA web application firewall engine for HAProxy\n"
+                " Built by haproxy-manager from the pinned upstream source. The rules\n"
+                " arrive with each published cluster release.",
+            },
+            output_dir,
+            epoch,
+        )
+
+
+def build_crs(source_dir: Path, output_dir: Path, *, source: Source = CRS) -> Path:
+    archive = verified(source_dir, source)
+    with tempfile.TemporaryDirectory(prefix="crs-package-") as directory:
+        work = Path(directory)
+        tree, epoch = unpack(archive, source, work / "src")
+        root = work / "root"
+        share = "usr/share/haproxy-manager/crs"
+        write(
+            root,
+            f"{share}/crs-setup.conf.example",
+            (tree / "crs-setup.conf.example").read_bytes(),
+            0o644,
+        )
+        rules = sorted(
+            p for p in (tree / "rules").iterdir() if p.suffix in {".conf", ".data", ".example"}
+        )
+        if not any(p.suffix == ".conf" for p in rules):
+            raise ValueError("the rule set holds no rules")
+        for path in rules:
+            if not path.is_file():
+                raise ValueError(f"{path.name} is not a regular file")
+            write(root, f"{share}/rules/{path.name}", path.read_bytes(), 0o644)
+        write(
+            root,
+            "usr/share/doc/haproxy-manager-crs/copyright",
+            (tree / "LICENSE").read_bytes(),
+            0o644,
+        )
+        write(root, f"{share}/VERSION", f"{source.version}\n".encode(), 0o644)
+        return package(
+            root,
+            {
+                "Package": "haproxy-manager-crs",
+                "Version": f"{source.version}-{REVISION}",
+                "Architecture": "all",
+                "Section": "net",
+                "Priority": "optional",
+                "Homepage": "https://coreruleset.org",
+                "Description": "OWASP Core Rule Set for haproxy-manager\n"
+                " The rule files the manager copies into each published cluster release.",
+            },
+            output_dir,
+            epoch,
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("package", choices=("coraza", "crs"))
+    parser.add_argument(
+        "--source-dir", type=Path, required=True, help="directory holding the pinned archive"
+    )
+    parser.add_argument("--go-root", type=Path, help=f"a {GO_VERSION} toolchain (coraza only)")
+    parser.add_argument("--output-dir", type=Path, required=True)
+    args = parser.parse_args()
+    try:
+        if args.package == "coraza":
+            if args.go_root is None:
+                parser.error("coraza needs --go-root")
+            target = build_coraza(args.source_dir, args.go_root, args.output_dir)
+        else:
+            target = build_crs(args.source_dir, args.output_dir)
+    except (ValueError, OSError, subprocess.SubprocessError, tarfile.TarError) as exc:
+        parser.exit(1, f"package build failed: {exc}\n")
+    print(f"{hashlib.sha256(target.read_bytes()).hexdigest()}  {target}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

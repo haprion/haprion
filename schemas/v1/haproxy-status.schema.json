@@ -222,6 +222,31 @@
           "type": "array",
           "items": { "$ref": "common.schema.json#/$defs/carried_certificate" }
         },
+        "architecture": {
+          "description": "The node's machine architecture, as the kernel names it (`x86_64`). Absent from nodes installed before it was reported.",
+          "type": "string"
+        },
+        "waf_engine": {
+          "description": "The WAF engine (B230, B231): the installed package's version, null when it is not installed, and whether a release with rules has started it. Absent from nodes installed before it was reported, which the interface treats as a node without the engine.",
+          "type": "object",
+          "required": [
+            "version",
+            "active"
+          ],
+          "properties": {
+            "version": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 64
+            },
+            "active": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
         "installation": {
           "description": "The node bundle's compatibility level and a digest check of every script installed with it. Absent from nodes installed before this measurement existed.",
           "type": "object",

@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, TextIO
 
-from haproxy_mgmt import cluster_settings, geo
+from haproxy_mgmt import cluster_settings, crs, geo
 from haproxy_mgmt.candidate_validation import (
     DEFAULT_RUN_ROOT,
     SandboxValidator,
@@ -103,6 +103,7 @@ def _read(parameters: Mapping[str, JsonValue]) -> Callable[[PathPolicy, Cluster]
                     #
                     certificate_sans=None,
                     country_reader=geo.location_database(),
+                    rule_set=crs.installed,
                     settings_document=canonical,
                 )
             except ConfigError as exc:

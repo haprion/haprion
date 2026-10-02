@@ -361,6 +361,7 @@ HTTP_ONLY_KEYS: Mapping[str, str] = MappingProxyType(
         "headers": "a raw connection carries no headers",
         "deny_rules": "a raw connection carries no path, method or headers to refuse on",
         "max_request_body": "a raw connection has no request body",
+        "waf": "the WAF engine inspects HTTP requests, and a raw connection is not one",
     }
 )
 
@@ -776,6 +777,26 @@ class DenyFrom:
 
 
 @dataclass(frozen=True, slots=True)
+class Waf:
+    """The WAF engine on this object (Fas 21 del B, B232).
+
+    Coraza with the OWASP Core Rule Set inspects every request; what the engine
+    finds is decided on in HAProxy. `log` lets the request through and marks
+    its traffic record `crs:log`, `block` answers 403 and marks it `crs:deny`.
+    A new object starts in `log`, so false alarms show before anything is
+    refused. `on_engine_error` is what happens when the engine does not answer:
+    `allow` lets the request through, `deny` answers 503. `paranoia` is the CRS
+    blocking paranoia level; `exclude_rules` the CRS rules this object turns
+    off, which is how a false alarm is taken away.
+    """
+
+    mode: str = "log"
+    on_engine_error: str = "allow"
+    paranoia: int = 1
+    exclude_rules: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Advanced:
     """The object's advanced config: the text as stored, and where each line goes.
 
@@ -880,6 +901,9 @@ class Proxy:
 
     deny_rules: tuple[AccessRule, ...] = ()
     """Refusals on path, method, header and source, in order (Fas 21)."""
+
+    waf: Waf | None = None
+    """The WAF engine's settings. None means the engine does not see this object."""
 
     max_request_body: int | None = None
     """The largest declared request body in bytes. None means no limit (Fas 21).
@@ -1460,6 +1484,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
     deny_from = _deny_from(data.get("deny_from"), f"{name}.deny_from", listen.protocol)
     deny_rules = _deny_rules(data.get("deny_rules"), f"{name}.deny_rules")
     max_request_body = _body_size(data.get("max_request_body"), f"{name}.max_request_body")
+    waf = _waf(data.get("waf"), f"{name}.waf")
     handwritten = sorted(key for key, backend in backends.items() if backend.written_by_hand)
     advanced = _advanced(
         data.get("advanced"),
@@ -1487,6 +1512,7 @@ def _load_proxy(name: str, document: bytes) -> Proxy:
         deny_from=deny_from,
         deny_rules=deny_rules,
         max_request_body=max_request_body,
+        waf=waf,
     )
 
 
@@ -1885,7 +1911,7 @@ HTTP_METHODS = ("CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", 
 # Names the generator writes on a traffic record itself. A rule called the same
 # would be indistinguishable from them on the WAF page.
 #
-RESERVED_RULE_NAMES = ("deny-from", "body-limit", "body-unbounded")
+RESERVED_RULE_NAMES = ("deny-from", "body-limit", "body-unbounded", "crs", "waf-engine")
 #
 # A rule list long enough to be a mistake rather than a policy, and short
 # enough that the shared frontend stays readable. Raised when someone needs it.
@@ -2048,6 +2074,52 @@ def _body_size(value: Any, location: str) -> int | None:
     if not MIN_BODY <= size <= MAX_BODY:
         raise ModelError(f"{location} must be between 1k and 100g")
     return size
+
+
+WAF_MODES = ("log", "block")
+WAF_ENGINE_ERRORS = ("allow", "deny")
+#
+# The CRS rule ranges an object may turn off: the attack rules the engine
+# reports (91xxxx-95xxxx), and the scoring and protocol rules around them.
+# Below 900000 are Coraza's own and the installation's; turning those off is
+# not a false alarm being taken away.
+#
+WAF_RULE_IDS = range(900000, 1000000)
+MAX_WAF_EXCLUSIONS = 200
+
+
+def _waf(value: Any, location: str) -> Waf | None:
+    if value is None:
+        return None
+    data = _mapping(value, location)
+    _only_keys(data, {"mode", "on_engine_error", "paranoia", "exclude_rules"}, location)
+    mode = data.get("mode", "log")
+    if mode not in WAF_MODES:
+        raise ModelError(f"{location}.mode must be one of: {', '.join(WAF_MODES)}")
+    on_error = data.get("on_engine_error", "allow")
+    if on_error not in WAF_ENGINE_ERRORS:
+        raise ModelError(
+            f"{location}.on_engine_error must be one of: {', '.join(WAF_ENGINE_ERRORS)}"
+        )
+    paranoia = data.get("paranoia", 1)
+    if isinstance(paranoia, bool) or paranoia not in (1, 2, 3, 4):
+        raise ModelError(f"{location}.paranoia must be 1, 2, 3 or 4")
+    excluded = data.get("exclude_rules", [])
+    if not isinstance(excluded, list) or len(excluded) > MAX_WAF_EXCLUSIONS:
+        raise ModelError(
+            f"{location}.exclude_rules must list at most {MAX_WAF_EXCLUSIONS} rule IDs"
+        )
+    for rule in excluded:
+        if isinstance(rule, bool) or not isinstance(rule, int) or rule not in WAF_RULE_IDS:
+            raise ModelError(f"{location}.exclude_rules must hold CRS rule IDs, 900000 to 999999")
+    if len(set(excluded)) != len(excluded):
+        raise ModelError(f"{location}.exclude_rules names the same rule twice")
+    return Waf(
+        mode=str(mode),
+        on_engine_error=str(on_error),
+        paranoia=int(paranoia),
+        exclude_rules=tuple(sorted(excluded)),
+    )
 
 
 def _listen(value: Any, location: str) -> Listen:

@@ -109,6 +109,19 @@ KEEPALIVED_ALLOWED_SUFFIX = ".conf"
 # release is fetched with `rsync -a --delete`, so a new directory arrives on its
 # own, and the bind line reaches it by a path relative to `conf.d`.
 #
+#
+# The WAF engine's layer (B229, B233), for the same reason again: nothing in it
+# is HAProxy configuration `-f` may load - the SPOE file is named by the
+# frontends' filter line, the rest is the engine's. One writer, generated whole
+# on every publish; held to its shapes like every managed layer.
+#
+WAF_LAYER = "managed/waf"
+WAF_TARGET = "waf"
+WAF_NAME = re.compile(
+    r"^(coraza\.yaml|spoe\.conf|crs/crs-setup\.conf|crs/VERSION"
+    r"|crs/rules/[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.(conf|data))$"
+)
+
 CRT_LIST_LAYER = "managed/crt-lists"
 CRT_LIST_TARGET = "crt-lists"
 CRT_LIST_ALLOWED_SUFFIX = ".list"
@@ -286,6 +299,14 @@ def build_node_artifact(files: Mapping[str, bytes]) -> dict[str, bytes]:
             raise LayoutError(f"file not allowed in {CRT_LIST_LAYER}: {relative}")
         artifact[f"{CRT_LIST_TARGET}/{relative}"] = content
         origin[f"{CRT_LIST_TARGET}/{relative}"] = GENERATED_LAYER
+
+    for relative, content in _children(files, WAF_LAYER):
+        if relative.rsplit("/", 1)[-1] == PLACEHOLDER:
+            continue
+        if not WAF_NAME.match(relative):
+            raise LayoutError(f"file not allowed in {WAF_LAYER}: {relative}")
+        artifact[f"{WAF_TARGET}/{relative}"] = content
+        origin[f"{WAF_TARGET}/{relative}"] = GENERATED_LAYER
 
     for prefix, layer in MAP_LAYERS:
         for relative, content in _children(files, prefix):

@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from haproxy_mgmt import candidate_validation
 from haproxy_mgmt.candidate_validation import (
@@ -120,6 +121,75 @@ class CandidateValidationTests(unittest.TestCase):
             self.assertIn(f"BindReadOnlyPaths={required}", joined)
         self.assertNotIn("/etc/haproxy/certs", joined)
         self.assertIn("BindReadOnlyPaths=/run/candidate:/candidate", joined)
+
+
+class TheWafLayerIsValidatedByTheEngine(unittest.TestCase):
+    """B230: the candidate's rules are compiled on the manager, in the same sandbox."""
+
+    FILES = {
+        "haproxy.cfg": "global\n",
+        "conf.d/1000-frontends.cfg": "filter spoe engine coraza config /etc/haproxy/waf/spoe.conf\n",
+        "waf/coraza.yaml": "      Include /etc/haproxy/waf/crs/rules/*.conf\n",
+        "waf/spoe.conf": "[coraza]\n",
+        "waf/crs/crs-setup.conf": "# setup\n",
+        "waf/crs/rules/REQUEST-901-INITIALIZATION.conf": "# rules\n",
+    }
+
+    def test_the_waf_shapes_cross_and_nothing_else_under_waf(self):
+        self.assertIn("waf/coraza.yaml", parse_candidate({"files": self.FILES}).files)
+        for path in ("waf/run.sh", "waf/crs/rules/x.sh", "waf/crs/x/y.conf", "waf/../haproxy.cfg"):
+            with self.subTest(path), self.assertRaises(HelperProtocolError):
+                parse_candidate({"files": {"haproxy.cfg": "x", path: "x"}})
+
+    def test_the_engine_and_the_frontend_read_the_candidate_s_own_rules(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw) / "candidate"
+            materialize_candidate(
+                parse_candidate({"files": self.FILES}),
+                root,
+                certificate_ids=(),
+                validation_certificate=b"",
+            )
+            self.assertIn(
+                b"/candidate/waf/spoe.conf", (root / "conf.d/1000-frontends.cfg").read_bytes()
+            )
+            self.assertIn(b"/candidate/waf/crs/rules", (root / "waf/coraza.yaml").read_bytes())
+
+    def test_the_engine_check_runs_in_the_same_sandbox_as_its_own_unit(self):
+        command = sandbox_command(
+            Path("/run/candidate"),
+            "11111111-1111-4111-8111-111111111111",
+            ("/usr/sbin/coraza-spoa", "-validate", "-config", "/candidate/waf/coraza.yaml"),
+        )
+        self.assertEqual(
+            command[-4:],
+            ["/usr/sbin/coraza-spoa", "-validate", "-config", "/candidate/waf/coraza.yaml"],
+        )
+        self.assertIn(
+            "--unit=haproxy-manager-validation-11111111111141118111111111111111-waf", command
+        )
+        self.assertIn("TemporaryFileSystem=/:ro", " ".join(command))
+        self.assertNotIn("/usr/sbin/haproxy", command)
+
+    def test_rules_without_the_engine_on_the_manager_are_refused(self):
+        calls = []
+
+        def ran(command, **_):
+            calls.append(command)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            (root / "waf").mkdir()
+            (root / "waf" / "coraza.yaml").write_text("x")
+            with (
+                mock.patch.object(candidate_validation.subprocess, "run", ran),
+                mock.patch.object(candidate_validation, "WAF_ENGINE", str(root / "absent")),
+            ):
+                result = candidate_validation.validate_in_sandbox(root, "1111")
+        self.assertFalse(result.valid)
+        self.assertIn("haproxy-manager-coraza-spoa", result.diagnostics)
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

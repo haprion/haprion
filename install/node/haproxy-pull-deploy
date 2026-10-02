@@ -174,7 +174,12 @@ waf_listening() {
     bind="$(sed -n 's/^bind:[[:space:]]*//p' "${CURRENT}/waf/coraza.yaml" | head -n 1)"
     port="${bind##*:}"
     [[ "$port" =~ ^[0-9]{1,5}$ ]] || return 1
-    ss -Hltn "sport = :${port}" | grep -q .
+    #
+    # The engine's own listener, not any: something else holding the port
+    # would read as an engine that started while the engine itself failed to
+    # bind. `-p` names the process, which needs root - as this script runs.
+    #
+    ss -Hltnp "sport = :${port}" | grep -q '"coraza-spoa"'
 }
 
 sync_waf_engine() {

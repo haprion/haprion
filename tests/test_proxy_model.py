@@ -545,6 +545,61 @@ class WhoAndWhatAnObjectRefuses(unittest.TestCase):
                 load_proxy("db", tcp.replace("backend: pool", f"{block}\nbackend: pool").encode())
 
 
+class TheWafEngineOnAnObject(unittest.TestCase):
+    """`waf` (Fas 21 del B, B232)."""
+
+    def load(self, block: str) -> Any:
+        return load_proxy("shop", with_lines(("routes:", f"{block}\nroutes:")))
+
+    def refused(self, block: str) -> str:
+        with self.assertRaises(ModelError) as raised:
+            self.load(block)
+        return str(raised.exception)
+
+    def test_an_object_without_the_key_is_not_seen_by_the_engine(self) -> None:
+        self.assertIsNone(load_proxy("shop", MINIMAL).waf)
+
+    def test_a_new_engine_only_looks_lets_through_on_error_and_starts_at_level_one(self) -> None:
+        waf = self.load("waf: {}").waf
+        self.assertEqual(
+            (waf.mode, waf.on_engine_error, waf.paranoia, waf.exclude_rules),
+            ("log", "allow", 1, ()),
+        )
+
+    def test_every_field_reads_and_exclusions_come_back_sorted(self) -> None:
+        waf = self.load(
+            "waf:\n  mode: block\n  on_engine_error: deny\n  paranoia: 2\n"
+            "  exclude_rules: [942100, 920350]"
+        ).waf
+        self.assertEqual(
+            (waf.mode, waf.on_engine_error, waf.paranoia, waf.exclude_rules),
+            ("block", "deny", 2, (920350, 942100)),
+        )
+
+    def test_values_outside_their_range_are_refused_by_name(self) -> None:
+        for block, field in (
+            ("waf: {mode: deny}", "mode"),
+            ("waf: {on_engine_error: block}", "on_engine_error"),
+            ("waf: {paranoia: 5}", "paranoia"),
+            ("waf: {paranoia: true}", "paranoia"),
+            ("waf: {exclude_rules: [200002]}", "exclude_rules"),
+            ("waf: {exclude_rules: ['942100']}", "exclude_rules"),
+            ("waf: {exclude_rules: [942100, 942100]}", "exclude_rules"),
+            ("waf: {level: 2}", "level"),
+        ):
+            with self.subTest(block):
+                self.assertIn(field, self.refused(block))
+
+    def test_crs_is_a_name_only_the_engine_writes_on_a_record(self) -> None:
+        self.assertIn("generator itself", self.refused("deny_rules:\n  - name: crs\n    path: /x"))
+
+    def test_a_raw_port_has_no_request_for_the_engine_to_read(self) -> None:
+        self.assertIn("waf", HTTP_ONLY_KEYS)
+        tcp = TCP.decode()
+        with self.assertRaises(ModelError):
+            load_proxy("db", tcp.replace("backend: pool", "waf: {}\nbackend: pool").encode())
+
+
 class HowMuchOneSourceMayAsk(unittest.TestCase):
     """`rate_limit`: requests for http, new connections for tcp, never both."""
 

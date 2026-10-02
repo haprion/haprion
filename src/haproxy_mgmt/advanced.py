@@ -666,6 +666,21 @@ def _stick_problem(tokens: Sequence[str], keyword: tuple[str, ...], name: str) -
     return ""
 
 
+def _waf_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
+    """The WAF engine's names, which only the generated lines may use (B232).
+
+    Its SPOE engine, and the `txn.coraza.*` variables its verdict is read
+    from: a line that set, cleared or sent them could make the engine's answer
+    say something it did not.
+    """
+
+    if keyword == ("filter",) and tokens[1:2] == ["spoe"] and "coraza" in tokens:
+        return "the coraza SPOE engine is the WAF engine's, set on the object's form"
+    if any("txn.coraza." in word or word == "coraza-req" for word in tokens):
+        return "the txn.coraza variables are the WAF engine's answer, set by the generator"
+    return ""
+
+
 def _server_problem(tokens: Sequence[str], keyword: tuple[str, ...]) -> str:
     if keyword not in (("server",), ("server-template",), ("default-server",)):
         return ""
@@ -807,8 +822,10 @@ def place(text: str, *, name: str, protocol: str, rate_limit: bool, handwritten:
                     else REFUSED[keyword]
                 )
             else:
-                problem = _server_problem(tokens, keyword) or _counter_problem(
-                    tokens, keyword, name, rate_limit, own_table=True
+                problem = (
+                    _server_problem(tokens, keyword)
+                    or _waf_problem(tokens, keyword)
+                    or _counter_problem(tokens, keyword, name, rate_limit, own_table=True)
                 )
             if problem:
                 record(REFUSED_FATE, where, problem)
@@ -842,6 +859,7 @@ def place(text: str, *, name: str, protocol: str, rate_limit: bool, handwritten:
             continue
         problem = (
             _server_problem(tokens, keyword)
+            or _waf_problem(tokens, keyword)
             or _counter_problem(tokens, keyword, name, rate_limit, own_table=False)
             or _stick_problem(tokens, keyword, name)
         )

@@ -100,11 +100,15 @@ class TrafficCollectorTests(unittest.TestCase):
         #
         # `rule` (0050): absent and empty both mean no rule met the request.
         #
-        self.assertEqual(row[-1], "")
+        self.assertEqual(row[-3], "")
         self.assertEqual(
-            _database_row("alpha", "node-a", json.dumps(base | {"rule": "a:deny"}).encode())[-1],
+            _database_row("alpha", "node-a", json.dumps(base | {"rule": "a:deny"}).encode())[-3],
             "a:deny",
         )
+        #
+        # The WAF engine's fields (0051): absent means nothing found.
+        #
+        self.assertEqual(row[-2:], ("", 0))
         for change in (
             {"at": 2**62},
             {"at": 10**12},
@@ -119,6 +123,47 @@ class TrafficCollectorTests(unittest.TestCase):
             _database_row("alpha", "node-a", json.dumps(base | {"at": 253402300799}).encode())[3],
             datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC),
         )
+
+    def test_what_the_waf_engine_said_is_kept_as_far_as_it_is_whole(self) -> None:
+        """B233: rule IDs and score as the engine reported them. HAProxy cuts
+        the list at the column's bound, and a record is never lost for an odd
+        value here - the request still happened."""
+
+        base = {
+            "schema": 1,
+            "at": 1_700_000_000,
+            "client": "192.0.2.1",
+            "method": "GET",
+            "host": "a.example.test",
+            "path": "/",
+            "frontend": "f",
+            "backend": "b",
+            "server": "s1",
+            "status": 403,
+            "request_time": 0,
+            "queue_time": 0,
+            "connect_time": 0,
+            "response_time": 0,
+            "total_time": 0,
+            "bytes": 0,
+            "rule": "crs:deny",
+        }
+
+        def waf(**fields: object) -> tuple[object, ...]:
+            return _database_row("alpha", "node-a", json.dumps(base | fields).encode())[-2:]
+
+        # As measured from HAProxy 3.4.6 and the engine (2026-10-02).
+        self.assertEqual(waf(waf_rules="942100,949110", waf_score=5), ("942100,949110", 5))
+        self.assertEqual(waf(waf_rules="", waf_score=0), ("", 0))
+        self.assertEqual(waf(waf_rules="", waf_score=""), ("", 0))
+        # Cut mid-ID, padded, or not IDs at all: the whole IDs survive.
+        self.assertEqual(waf(waf_rules="942100,94910", waf_score=5), ("942100", 5))
+        self.assertEqual(waf(waf_rules="x,942100,;", waf_score=-3), ("942100", 0))
+        self.assertEqual(waf(waf_rules=7, waf_score=True), ("", 0))
+        self.assertEqual(waf(waf_score=10**9)[1], 100000)
+        many = waf(waf_rules=",".join(["942100"] * 300))[0]
+        self.assertLessEqual(len(many), 1024)
+        self.assertRegex(many, r"^([0-9]{6})(,[0-9]{6})*$")
 
     def test_the_margin_day_is_not_reported_as_older_than_the_database_keeps(self) -> None:
         """The mirror keeps one day below the oldest partition on purpose

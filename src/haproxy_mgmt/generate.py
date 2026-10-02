@@ -118,6 +118,29 @@ METRICS_IDENTITY = "cluster-metrics"
 OBJECT_BAND = "1001"
 
 #
+# The WAF engine (Fas 21 del B, B229-B233). Coraza SPOA runs beside HAProxy on
+# every node, on loopback, and reads `coraza.yaml` from the release's `waf/`,
+# which the node links at /etc/haproxy/waf as it does `maps/`. The port is
+# part of the node-side contract like that directory: the node's deploy reads
+# it back out of `coraza.yaml` to confirm the engine listens.
+#
+WAF_FILE = "1000-waf.cfg"
+WAF_DIRECTORY = "/etc/haproxy/waf"
+WAF_ENGINE_PORT = 9520
+WAF_BACKEND = f"{PREFIX}-waf-engine"
+WAF_IDENTITY = "cluster-waf"
+WAF_SPOE_ENGINE = "coraza"
+WAF_SPOE_GROUP = "coraza-req"
+#
+# The engine's answer to a name it does not know. An object's application is
+# named after the object, which cannot begin with `_`; a HAProxy process still
+# finishing connections after a reload may name an object that has just been
+# removed, and the engine stops on an unknown name unless a default exists.
+# The default inspects nothing - the object it would have inspected is gone.
+#
+WAF_UNKNOWN_APPLICATION = "_unknown"
+
+#
 # Where a node keeps the certificates it may serve. Part of the node-side
 # contract rather than a choice this generator makes - `docs/user-manual.md`
 # describes the directory, and `candidate_validation` rewrites exactly this
@@ -201,7 +224,14 @@ HTTP_TRAFFIC_LOG_FORMAT = (
     '"%{+json}o %(schema)[int(1)] %(at)Ts %(request)rt %(client)ci %(method)HM '
     "%(host)[var(txn.traffic_host)] %(path)HPO %(frontend)f %(backend)b "
     "%(server)s %(status)ST %(request_time)TR %(queue_time)Tw "
-    '%(connect_time)Tc %(response_time)Tr %(total_time)Ta %(bytes)B %(rule)[var(txn.rule)]"'
+    "%(connect_time)Tc %(response_time)Tr %(total_time)Ta %(bytes)B %(rule)[var(txn.rule)] "
+    #
+    # What the WAF engine found (B233): the CRS rules it matched and the
+    # request's anomaly score, exactly as it reported them. Cut at the
+    # column's bound; the collector keeps whole rule IDs only.
+    #
+    "%(waf_rules)[var(txn.coraza.rule_ids),bytes(0,1024)] "
+    '%(waf_score)[var(txn.coraza.anomaly_score)]"'
 )
 #
 # The same record for an external receiver, and which node wrote it. The
@@ -239,6 +269,14 @@ class GeneratedLayer:
 
     map_files: dict[str, str] = field(default_factory=dict)
     """`managed/maps/`, and `maps/` on the node: one network list per country (B228)."""
+
+    waf_files: dict[str, str] = field(default_factory=dict)
+    """`managed/waf/`, and `waf/` on the node: the engine's and SPOE's configuration.
+
+    Empty when no object uses the engine - and then the release carries no
+    `waf/`, which is what turns the engine off on the nodes (B230). The rule
+    set itself is not generated; the publishing path copies it beside these.
+    """
 
     object_parts: dict[str, dict[str, str]] = field(default_factory=dict)
     """Per object, the four pieces its behaviour is spread across.
@@ -362,6 +400,10 @@ def generate(
     }
     if settings.log_targets or settings.metrics is not None:
         files[CLUSTER_FILE] = _cluster_file(settings)
+    guarded = [proxy for proxy in ordered if proxy.waf is not None]
+    if guarded:
+        _refuse_waf_port(settings, reservations)
+        files[WAF_FILE] = _waf_backend_file()
     for vip, proxy in placed:
         files[f"{OBJECT_BAND}-{proxy.name}.cfg"] = _object_file(
             proxy, source_of(proxy, vip, known_sources), resolvers, tuple(trusted_proxies)
@@ -380,6 +422,159 @@ def generate(
         certificate_lists=listings,
         object_parts=parts,
         map_files=_country_files(ordered, countries),
+        waf_files=_waf_files(guarded),
+    )
+
+
+def _refuse_waf_port(settings: ClusterSettings, reservations: Reservations) -> None:
+    """The engine's loopback port, which nothing else on the node may take.
+
+    The exporter binds its port on every address, loopback included, and a
+    reservation is a port the handwritten half binds; either on the engine's
+    port would leave one of the two unable to listen.
+    """
+
+    port = WAF_ENGINE_PORT
+    if settings.metrics is not None and settings.metrics.port == port:
+        raise GeneratorError(f"the metrics port {port} is the port the WAF engine listens on")
+    if port in reservations.tcp_ports or any(
+        reserved == port for _address, reserved in reservations.tcp_listeners
+    ):
+        raise GeneratorError(
+            f"port {port} is reserved in manual/reservations.yaml, and the WAF engine listens on it"
+        )
+
+
+def _waf_backend_file() -> str:
+    """Where HAProxy reaches the engine: one SPOP server on loopback.
+
+    Not health-checked, on purpose. A check marks the engine down until it has
+    answered twice - measured 2026-10-02: an engine started a moment after
+    HAProxy was refused for every request for seconds after it listened. On
+    loopback a refused connection is immediate, so without a check a request
+    to a stopped engine fails at once (and `on_engine_error` decides), and the
+    first request after it is back is inspected.
+    """
+
+    engine = Server(host="127.0.0.1", port=WAF_ENGINE_PORT)
+    return _lines(
+        HEADER,
+        [
+            "",
+            f"backend {WAF_BACKEND}",
+            f"    guid {backend_guid(WAF_IDENTITY, 'engine')}",
+            "    mode spop",
+            f"    server engine 127.0.0.1:{WAF_ENGINE_PORT}"
+            f" guid {server_guid(WAF_IDENTITY, 'engine', engine)}",
+        ],
+    )
+
+
+#
+# The engine's base settings, ahead of the rule set. Coraza's own
+# recommendations, less what does not apply here: the request body is read up
+# to what HAProxy hands over (its buffer) and a longer one is inspected as far
+# as it goes rather than refused; responses are not inspected; nothing is
+# written to an audit log. The two body processors make a JSON or XML body
+# something the rules can read. Coraza's own body-parse refusals are left out:
+# the CRS judges what a request carries, and a refusal outside its rule range
+# would leave no rule ID on the traffic record.
+#
+WAF_BASE = (
+    "SecRuleEngine On",
+    "SecRequestBodyAccess On",
+    "SecRequestBodyLimit 13107200",
+    "SecRequestBodyInMemoryLimit 131072",
+    "SecRequestBodyLimitAction ProcessPartial",
+    "SecRequestBodyJsonDepthLimit 1024",
+    "SecResponseBodyAccess Off",
+    "SecAuditEngine Off",
+    'SecRule REQUEST_HEADERS:Content-Type "^(?:application(?:/soap\\+|/)|text/)xml" '
+    '"id:200000,phase:1,t:none,t:lowercase,pass,nolog,ctl:requestBodyProcessor=XML"',
+    'SecRule REQUEST_HEADERS:Content-Type "^application/json" '
+    '"id:200001,phase:1,t:none,t:lowercase,pass,nolog,ctl:requestBodyProcessor=JSON"',
+    'SecRule REQUEST_HEADERS:Content-Type "^application/[a-z0-9.-]+[+]json" '
+    '"id:200006,phase:1,t:none,t:lowercase,pass,nolog,ctl:requestBodyProcessor=JSON"',
+)
+
+
+def _waf_files(guarded: Sequence[Proxy]) -> dict[str, str]:
+    """`coraza.yaml` - one application per object - and the SPOE configuration."""
+
+    if not guarded:
+        return {}
+    crs = f"{WAF_DIRECTORY}/crs"
+    applications = []
+    for proxy in guarded:
+        assert proxy.waf is not None  # noqa: S101 - `guarded` holds only these
+        directives = [
+            *WAF_BASE,
+            f"Include {crs}/crs-setup.conf",
+            #
+            # CRS reads the level from this variable if set before its
+            # initialisation; its own setup file leaves id 900000 to us.
+            #
+            f'SecAction "id:900000,phase:1,pass,t:none,nolog,'
+            f'setvar:tx.blocking_paranoia_level={proxy.waf.paranoia}"',
+            f"Include {crs}/rules/*.conf",
+            *(f"SecRuleRemoveById {rule}" for rule in proxy.waf.exclude_rules),
+        ]
+        applications.append(_waf_application(proxy.name, directives))
+    applications.append(_waf_application(WAF_UNKNOWN_APPLICATION, ["SecRuleEngine Off"]))
+    configuration = "\n".join(
+        [
+            *HEADER,
+            f"bind: 127.0.0.1:{WAF_ENGINE_PORT}",
+            "log_level: info",
+            "log_file: /dev/stdout",
+            "log_format: json",
+            f"default_application: {WAF_UNKNOWN_APPLICATION}",
+            "applications:",
+            *applications,
+        ]
+    )
+    spoe = _lines(
+        HEADER,
+        [
+            "",
+            f"[{WAF_SPOE_ENGINE}]",
+            f"spoe-agent {WAF_SPOE_ENGINE}-agent",
+            f"    groups {WAF_SPOE_GROUP}",
+            f"    option var-prefix {WAF_SPOE_ENGINE}",
+            "    option set-on-error error",
+            "    timeout hello 2s",
+            "    timeout idle 2m",
+            "    timeout processing 500ms",
+            f"    use-backend {WAF_BACKEND}",
+            "",
+            f"spoe-message {WAF_SPOE_GROUP}",
+            "    args app=var(txn.coraza.app) src-ip=src src-port=src_port dst-ip=dst "
+            "dst-port=dst_port method=method path=path query=query version=req.ver "
+            "headers=req.hdrs body=req.body exportRuleIDs=bool(true)",
+            "",
+            f"spoe-group {WAF_SPOE_GROUP}",
+            f"    messages {WAF_SPOE_GROUP}",
+        ],
+    )
+    return {"coraza.yaml": configuration + "\n", "spoe.conf": spoe}
+
+
+def _waf_application(name: str, directives: Sequence[str]) -> str:
+    """One application in `coraza.yaml`. The directives are a literal block:
+    nothing in them is YAML, and nothing in them comes from a person except
+    numbers the model has already held to their ranges."""
+
+    return "\n".join(
+        [
+            f"  - name: {name}",
+            "    directives: |",
+            *(f"      {line}" for line in directives),
+            "    response_check: false",
+            "    transaction_ttl_ms: 60000",
+            "    log_level: warn",
+            "    log_file: /dev/stdout",
+            "    log_format: json",
+        ]
     )
 
 
@@ -949,6 +1144,11 @@ def _frontend_file(
                 if structured
                 else ()
             ),
+            *(
+                (f"    filter spoe engine {WAF_SPOE_ENGINE} config {WAF_DIRECTORY}/spoe.conf",)
+                if any(proxy.waf is not None and role == "serve" for _, proxy, role in members)
+                else ()
+            ),
             f"    timeout client {TIMEOUT_CLIENT}",
             *_forwarded_rules(protocol, trusted_proxies),
             *_abuse_rules(abuse_protection, bool(trusted_proxies)),
@@ -1507,6 +1707,36 @@ def _access_rules(
     return lines
 
 
+def _waf_rules(proxy: Proxy, host: str) -> list[str]:
+    """Ask the engine about the request, then decide on its answer (B232).
+
+    After the access rules, so what they refuse never costs an inspection,
+    and before routing. The body is waited for - up to a second, and up to
+    the buffer - so the engine reads a form as well as a query. The engine
+    always judges as if it blocked; whether its verdict refuses is `mode`,
+    here, so changing it changes HAProxy's configuration and nothing else.
+    """
+
+    if proxy.waf is None:
+        return []
+    verdict = "{ var(txn.coraza.action) -m str deny }"
+    failed = "{ var(txn.coraza.error) -m found }"
+    lines = [
+        f"    http-request wait-for-body time 1s if {host}",
+        f"    http-request set-var(txn.coraza.app) str({proxy.name}) if {host}",
+        f"    http-request send-spoe-group {WAF_SPOE_ENGINE} {WAF_SPOE_GROUP} if {host}",
+        *_verdict(f"{host} {verdict}", "crs", "deny" if proxy.waf.mode == "block" else "log"),
+    ]
+    if proxy.waf.on_engine_error == "deny":
+        lines += [
+            f"    http-request set-var(txn.rule) str(waf-engine:deny) if {host} {failed}",
+            f"    http-request deny deny_status 503 if {host} {failed}",
+        ]
+    else:
+        lines += _verdict(f"{host} {failed}", "waf-engine", "log")
+    return lines
+
+
 def _message(proxy: Proxy, message: str) -> str:
     """One object's message with the site's name filled in.
 
@@ -1685,6 +1915,8 @@ def _frontend_rules(
     lines.extend(_tls_sni_guard(proxy, host, members))
 
     lines.extend(_access_rules(proxy, networks or {}, host, trusted))
+
+    lines.extend(_waf_rules(proxy, host))
 
     lines.extend(_maintenance_rule(proxy, host))
 

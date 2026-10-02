@@ -536,6 +536,48 @@ is refused here and what `haproxy -c` checks, what the text does is the author's
 responsibility: a valid line can still mean something else than intended, and
 the dialog's list of where each line went is the review before a publish.
 
+## The WAF engine
+
+An http or https object can have its requests inspected by a web application
+firewall: Coraza, with the OWASP Core Rule Set (CRS). The engine runs beside
+HAProxy on every node, on loopback, and HAProxy asks it about each request of an
+object that has `waf` - its query, headers and body, the body as far as
+HAProxy's buffer holds it.
+
+```yaml
+waf:
+  mode: log                # log (the default) or block
+  on_engine_error: allow   # allow (the default) or deny
+  paranoia: 1              # CRS paranoia level, 1 to 4
+  exclude_rules: [920350]  # CRS rule IDs turned off for this object
+```
+
+**Look before refusing.** In `log` a request the engine would refuse is served,
+and its traffic record says `crs:log` with the CRS rules it matched and its
+anomaly score; in `block` the visitor gets 403 and the record says `crs:deny`.
+The engine's checks come after the access rules, so a request those refuse is
+never inspected. *WAF logs* shows the records with a match and what each rule
+is. A rule that matches traffic the site is meant to receive is a false alarm:
+put its ID in `exclude_rules`, and the object can leave `log`. A higher
+`paranoia` matches more attacks and more false alarms.
+
+**When the engine does not answer** - stopped, restarting, or overloaded -
+`allow` serves the request uninspected and records `waf-engine:log`, and `deny`
+answers 503 and records `waf-engine:deny`. What a request matched is not kept
+beyond its rule IDs: the matched text, which is the attacker's own, stays in
+the engine's log on the node (`journalctl -u coraza-spoa`).
+
+**Installation.** The engine and the rule set are two packages built from
+pinned sources (see the installation guide). The engine package goes on the
+management host and on every node, the rule set on the management host only:
+publishing compiles the rules there before they leave it, and copies the rule
+set into the release's `waf/`, so a cluster runs the rule set it was published
+with. A node starts the engine when a release carries rules and stops it when
+one no longer does, and refuses a release with rules if the engine is not
+installed. The engine listens on `127.0.0.1:9520`; nothing else on a node may
+use that port. CRS is licensed under the Apache License 2.0
+(https://coreruleset.org), as is Coraza.
+
 ## Certificates
 
 Certificate tools, provider keys and trust are configured during installation. See

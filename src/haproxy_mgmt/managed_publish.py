@@ -11,10 +11,10 @@ YAML and HAProxy configuration disagree.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import PurePosixPath
 
-from haproxy_mgmt import cluster_settings, geo
+from haproxy_mgmt import cluster_settings, crs, geo
 from haproxy_mgmt.config import Cluster, ConfigError
 from haproxy_mgmt.generate import countries_named, generate
 from haproxy_mgmt.keepalived_fragment import NAME as KEEPALIVED_NAME
@@ -47,6 +47,12 @@ CRT_LIST_PREFIX = "managed/crt-lists/"
 # which it already fetches and validates against.
 #
 MAPS_PREFIX = "managed/maps/"
+#
+# The WAF engine's layer (B229, B233): its configuration, the SPOE file and the
+# rule set the manager has installed, all in the version a person can read and
+# revert. The node's `waf/`; absent when no object uses the engine.
+#
+WAF_PREFIX = "managed/waf/"
 PLACEHOLDER = ".gitkeep"
 
 
@@ -104,6 +110,7 @@ def managed_files(
     allow_certificate_mismatch: bool = False,
     settings_document: bytes | None = None,
     country_reader: geo.CountryReader | None = None,
+    rule_set: Callable[[], crs.RuleSet | None] | None = None,
 ) -> dict[str, bytes]:
     """Return the complete managed snapshot created by one network document.
 
@@ -133,7 +140,7 @@ def managed_files(
     # object deleted in a later UI operation keep serving; carrying all of them
     # would leave source/VIP/group changes invisible.  Start over every time.
     for path in tuple(result):
-        if path.startswith((GENERATED_PREFIX, KEEPALIVED_PREFIX, MAPS_PREFIX)):
+        if path.startswith((GENERATED_PREFIX, KEEPALIVED_PREFIX, MAPS_PREFIX, WAF_PREFIX)):
             del result[path]
 
     _apply_objects(result, objects or {})
@@ -182,6 +189,24 @@ def managed_files(
             for name, content in generated.map_files.items()
         }
     )
+    if generated.waf_files:
+        #
+        # Read only when an object uses the engine, as the location database
+        # is: a cluster without one never needs the package to exist.
+        #
+        rules = rule_set() if rule_set is not None else None
+        if rules is None:
+            raise ConfigError(
+                "objects use the WAF engine and the rule set is not installed on the manager: "
+                "install the haproxy-manager-crs package"
+            )
+        result.update(
+            {
+                f"{WAF_PREFIX}{name}": content.encode("utf-8")
+                for name, content in generated.waf_files.items()
+            }
+        )
+        result.update({f"{WAF_PREFIX}crs/{name}": content for name, content in rules.files.items()})
     result.update(
         {
             f"{GENERATED_PREFIX}{name}": content.encode("utf-8")

@@ -728,7 +728,51 @@ def _database_row(cluster: str, node: str, line: bytes) -> tuple[Any, ...]:
         number("total_time"),
         number("bytes", low=0),
         text("rule", MAX_RULE_LENGTH),
+        _waf_rules(value.get("waf_rules")),
+        _waf_score(value.get("waf_score")),
     )
+
+
+#
+# What the WAF engine found (migration 0051, B233). Read leniently, unlike the
+# fields above: a record is the traffic a site received, and an odd value in
+# what the engine said about it is no reason to lose the record. A field that
+# is absent - a record from before the engine, or from an object it does not
+# see - means nothing was found.
+#
+WAF_RULE_ID = re.compile(r"[0-9]{6}")
+MAX_WAF_RULES = 1024
+MAX_WAF_SCORE = 100000
+
+
+def _waf_rules(item: Any) -> str:
+    """Whole six-digit rule IDs only, within the column's bound.
+
+    HAProxy cuts the list at the bound, which can leave half an ID at its end;
+    that half, and anything else that is not an ID, is dropped rather than
+    stored as one.
+    """
+
+    if not isinstance(item, str):
+        return ""
+    kept: list[str] = []
+    length = 0
+    for rule in item.split(","):
+        if not WAF_RULE_ID.fullmatch(rule):
+            continue
+        length += len(rule) + (1 if kept else 0)
+        if length > MAX_WAF_RULES:
+            break
+        kept.append(rule)
+    return ",".join(kept)
+
+
+def _waf_score(item: Any) -> int:
+    """The anomaly score: a number when the engine answered, empty when it did not."""
+
+    if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+        return 0
+    return min(item, MAX_WAF_SCORE)
 
 
 #
@@ -741,7 +785,7 @@ _TRAFFIC_COPY = """
 copy traffic_log
     (event_id, cluster, node, occurred_at, request_number, client, method, host,
      path, frontend, backend, server, status, request_time, queue_time,
-     connect_time, response_time, total_time, bytes, rule)
+     connect_time, response_time, total_time, bytes, rule, waf_rules, waf_score)
 from stdin
 """
 

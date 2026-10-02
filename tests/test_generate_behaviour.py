@@ -36,6 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from haproxy_mgmt import geo
+from haproxy_mgmt.cluster_settings import ClusterSettings, Metrics
 from haproxy_mgmt.config import AbuseProtection, Vip
 from haproxy_mgmt.generate import NODE_CERTIFICATE_DIR, GeneratedLayer, generate
 from haproxy_mgmt.proxy_model import load_proxy
@@ -2534,3 +2535,237 @@ class AccessRulesAnswerAndNameThemselvesInTheRealHaproxy(unittest.TestCase):
     def test_allow_from_reads_the_forwarded_address_behind_a_trusted_proxy(self) -> None:
         self.assertEqual(self.ask(host="office.example.com", visitor="198.51.100.7")[0], 200)
         self.assertEqual(self.ask(host="office.example.com", visitor="192.0.2.5")[0], 403)
+
+
+WAF_ENGINE = Path("/usr/sbin/coraza-spoa")
+WAF_RULES = Path("/usr/share/haproxy-manager/crs")
+
+WAF_OBJECT = """
+schema: 1
+name: {name}
+hostnames: [{name}.example.com]
+listen:
+  protocol: http
+waf:
+{waf}
+routes:
+  - path: /
+    backend: web
+backends:
+  web:
+    balance: roundrobin
+    health:
+      type: disabled
+    servers:
+      - host: 127.0.0.1
+        port: {web}
+"""
+SQLI = "/?q=1'%20OR%201=1--"
+
+
+@unittest.skipUnless(
+    shutil.which("haproxy") and WAF_ENGINE.is_file() and WAF_RULES.is_dir(),
+    "haproxy, the WAF engine or the rule set is not installed here",
+)
+class WafEngineAnswersInTheRealHaproxy(unittest.TestCase):
+    """Fas 21 del B (B232, B233): the generated layer, the installed engine and CRS.
+
+    Three objects: one that only looks, one that blocks and has turned the
+    numeric-Host rule off, one that refuses when the engine does not answer.
+    What the engine said is read back through a response header, the same
+    window as the access-rule test; the second class stops nothing and
+    starts no engine at all, which is what a stopped engine looks like.
+    """
+
+    engine_running = True
+    servers: list[ThreadingHTTPServer]
+    haproxy: subprocess.Popen[bytes]
+    engine: subprocess.Popen[bytes] | None
+    directory: tempfile.TemporaryDirectory[str]
+    port: int
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        web = free_port()
+        cls.servers = [body_server(web)]
+        wait_for(web)
+        cls.port = free_port()
+        engine_port = free_port()
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        objects = {
+            "looks": "  mode: log",
+            "blocks": "  mode: block\n  exclude_rules: [920350]",
+            "closed": "  mode: block\n  on_engine_error: deny",
+        }
+        layer = generate(
+            [
+                load_proxy(name, WAF_OBJECT.format(name=name, waf=waf, web=web).encode())
+                for name, waf in objects.items()
+            ],
+            vips={"main": Vip(name="main", address="127.0.0.1")},
+            default_vip="main",
+            ports={"http": cls.port},
+        )
+        waf_files = layer.waf_files
+
+        def local(text: str) -> str:
+            return text.replace("/etc/haproxy/waf/", f"{root}/waf/").replace(
+                "127.0.0.1:9520", f"127.0.0.1:{engine_port}"
+            )
+
+        window = (
+            "    option httplog\n"
+            "    http-after-response set-header X-Rule %[var(txn.rule)]\n"
+            "    http-after-response set-header X-Waf %[var(txn.coraza.rule_ids)]\n"
+        )
+        layer = GeneratedLayer(
+            configuration={
+                name: local(text.replace("    option httplog\n", window))
+                for name, text in layer.configuration.items()
+            },
+            certificate_lists=layer.certificate_lists,
+        )
+        (root / "waf" / "crs").mkdir(parents=True)
+        for name, text in waf_files.items():
+            (root / "waf" / name).write_text(local(text))
+        shutil.copy(WAF_RULES / "crs-setup.conf.example", root / "waf" / "crs" / "crs-setup.conf")
+        shutil.copytree(WAF_RULES / "rules", root / "waf" / "crs" / "rules")
+        arguments = write_release(root, layer)
+        cls.engine = None
+        if cls.engine_running:
+            cls.engine = subprocess.Popen(
+                [str(WAF_ENGINE), "-config", str(root / "waf" / "coraza.yaml")],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                preexec_fn=spawned.die_with_the_test_run,
+            )
+            wait_for(engine_port)
+        binary = shutil.which("haproxy")
+        assert binary is not None
+        cls.haproxy = start_haproxy(binary, arguments, cls.port)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.haproxy.terminate()
+        cls.haproxy.wait(timeout=5)
+        if cls.engine is not None:
+            cls.engine.terminate()
+            cls.engine.wait(timeout=5)
+        for server in cls.servers:
+            server.shutdown()
+        cls.directory.cleanup()
+
+    def ask(self, target: str, *, name: str, body: bytes | None = None) -> tuple[int, str, str]:
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.putrequest(
+                "GET" if body is None else "POST", target, skip_host=True, skip_accept_encoding=True
+            )
+            connection.putheader("Host", f"{name}.example.com")
+            if body is not None:
+                connection.putheader("Content-Type", "application/x-www-form-urlencoded")
+                connection.putheader("Content-Length", str(len(body)))
+            connection.endheaders()
+            if body is not None:
+                connection.send(body)
+            response = connection.getresponse()
+            response.read()
+            return (
+                response.status,
+                response.getheader("X-Rule") or "",
+                response.getheader("X-Waf") or "",
+            )
+        finally:
+            connection.close()
+
+    def test_an_ordinary_request_is_served_and_named_by_nothing(self) -> None:
+        for name in ("looks", "blocks", "closed"):
+            with self.subTest(name):
+                self.assertEqual(self.ask("/?q=hello", name=name), (200, "", ""))
+
+    def test_a_looking_object_lets_an_attack_through_and_names_the_rules(self) -> None:
+        status, rule, rules = self.ask(SQLI, name="looks")
+        self.assertEqual((status, rule), (200, "crs:log"))
+        self.assertIn("942100", rules.split(","))
+
+    def test_a_blocking_object_refuses_an_attack_in_the_query_and_in_the_body(self) -> None:
+        self.assertEqual(self.ask(SQLI, name="blocks")[:2], (403, "crs:deny"))
+        status, rule, rules = self.ask(
+            "/form", name="blocks", body=b"name=x' UNION SELECT password FROM users--"
+        )
+        self.assertEqual((status, rule), (403, "crs:deny"))
+        self.assertIn("942100", rules.split(","))
+
+    def test_an_excluded_rule_no_longer_counts(self) -> None:
+        # A Host that is an address is CRS 920350; `blocks` has turned it off.
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=5)
+        connection.request("GET", "/", headers={"Host": "blocks.example.com"})
+        self.assertEqual(connection.getresponse().status, 200)
+        connection.close()
+
+
+class WafEngineThatDoesNotAnswer(WafEngineAnswersInTheRealHaproxy):
+    """The same layer with no engine: `on_engine_error` decides (B232)."""
+
+    engine_running = False
+
+    def test_an_ordinary_request_is_served_and_named_by_nothing(self) -> None:
+        self.assertEqual(self.ask("/?q=hello", name="looks"), (200, "waf-engine:log", ""))
+
+    def test_a_looking_object_lets_an_attack_through_and_names_the_rules(self) -> None:
+        self.skipTest("the engine is not running")
+
+    def test_a_blocking_object_refuses_an_attack_in_the_query_and_in_the_body(self) -> None:
+        self.skipTest("the engine is not running")
+
+    def test_an_excluded_rule_no_longer_counts(self) -> None:
+        self.skipTest("the engine is not running")
+
+    def test_open_lets_through_and_says_so_closed_refuses(self) -> None:
+        self.assertEqual(self.ask(SQLI, name="blocks"), (200, "waf-engine:log", ""))
+        self.assertEqual(self.ask(SQLI, name="closed"), (503, "waf-engine:deny", ""))
+
+
+class TheWafLayerIsWrittenOnlyWhereItIsUsed(unittest.TestCase):
+    """What the generator writes for the engine, without running it (B230, B232)."""
+
+    def layer(self, waf: str | None, **options: object) -> GeneratedLayer:
+        text = WAF_OBJECT.format(name="shop", waf=waf or "", web=8080)
+        if waf is None:
+            text = text.replace("waf:\n\n", "")
+        return generate(
+            [load_proxy("shop", text.encode())],
+            vips={"main": Vip(name="main", address="192.0.2.1")},
+            default_vip="main",
+            **options,  # type: ignore[arg-type]
+        )
+
+    def test_a_cluster_without_the_engine_gets_no_trace_of_it(self) -> None:
+        layer = self.layer(None)
+        self.assertEqual(layer.waf_files, {})
+        self.assertNotIn("1000-waf.cfg", layer.configuration)
+        self.assertNotIn("spoe", layer.configuration["1000-frontends.cfg"])
+
+    def test_each_object_is_an_application_and_an_unknown_name_inspects_nothing(self) -> None:
+        layer = self.layer("  paranoia: 3\n  exclude_rules: [942100, 920350]")
+        engine = layer.waf_files["coraza.yaml"]
+        self.assertIn("default_application: _unknown", engine)
+        self.assertIn("  - name: shop\n", engine)
+        self.assertIn("setvar:tx.blocking_paranoia_level=3", engine)
+        self.assertLess(
+            engine.index("Include /etc/haproxy/waf/crs/rules/*.conf"),
+            engine.index("SecRuleRemoveById 920350"),
+        )
+        self.assertIn("  - name: _unknown\n    directives: |\n      SecRuleEngine Off", engine)
+        self.assertIn("bind: 127.0.0.1:9520", engine)
+        self.assertIn(
+            "filter spoe engine coraza config /etc/haproxy/waf/spoe.conf",
+            layer.configuration["1000-frontends.cfg"],
+        )
+
+    def test_nothing_else_may_take_the_engine_s_port(self) -> None:
+        with self.assertRaisesRegex(Exception, "WAF engine"):
+            self.layer(
+                "  mode: log", settings=ClusterSettings(metrics=Metrics(9520, ("192.0.2.0/24",)))
+            )

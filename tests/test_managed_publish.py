@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from haproxy_mgmt import geo
+from haproxy_mgmt import crs, geo
 from haproxy_mgmt.config import Cluster, ConfigError, Node, UnknownHost
 from haproxy_mgmt.managed_publish import managed_files
 from haproxy_mgmt.object_manifest import REPOSITORY_PATH as MANIFEST_PATH
@@ -343,3 +343,64 @@ class CountriesReachTheNodesAsMaps(unittest.TestCase):
         for name in ("geo-se.txt", "other.lst", "geo-swe.lst", "sub/geo-se.lst"):
             with self.subTest(name), self.assertRaises(LayoutError):
                 build_node_artifact({**base, f"managed/maps/{name}": b"192.0.2.0/24\n"})
+
+
+class TheWafLayerTravelsWithTheRelease(unittest.TestCase):
+    """B229, B233: `managed/waf/` - configuration, SPOE file and the rule set - becomes `waf/`."""
+
+    RULES = crs.RuleSet(
+        version="9.9.9",
+        files={
+            "VERSION": b"9.9.9\n",
+            "crs-setup.conf": b"# setup\n",
+            "rules/REQUEST-901-INITIALIZATION.conf": b"# rules\n",
+        },
+    )
+
+    def publish(self, document: bytes, base: dict[str, bytes] | None = None, **options: Any) -> Any:
+        options.setdefault("rule_set", lambda: self.RULES)
+        return managed_files(
+            {
+                "managed/network.yaml": NETWORK,
+                "managed/proxies/shop.yaml": document,
+                **(base or {}),
+            },
+            network_document=NETWORK,
+            cluster=cluster(),
+            **options,
+        )
+
+    def test_an_object_with_the_engine_brings_its_configuration_and_the_rule_set(self) -> None:
+        files = self.publish(PROXY.replace(b"routes:", b"waf: {mode: block}\nroutes:"))
+
+        for name in ("coraza.yaml", "spoe.conf", "crs/VERSION", "crs/crs-setup.conf"):
+            self.assertIn(f"managed/waf/{name}", files)
+        self.assertIn("managed/waf/crs/rules/REQUEST-901-INITIALIZATION.conf", files)
+        self.assertIn(b"- name: shop", files["managed/waf/coraza.yaml"])
+        self.assertIn("managed/generated/1000-waf.cfg", files)
+        artifact = build_node_artifact(
+            {**files, "core/haproxy.cfg": b"global\n", "manual/reservations.yaml": b"{}\n"}
+        )
+        self.assertIn("waf/coraza.yaml", artifact)
+        self.assertIn("waf/crs/rules/REQUEST-901-INITIALIZATION.conf", artifact)
+
+    def test_without_the_engine_the_layer_is_gone_and_the_package_never_read(self) -> None:
+        def unread() -> crs.RuleSet:
+            raise AssertionError("read the rule set for a cluster that uses no engine")
+
+        files = self.publish(PROXY, {"managed/waf/coraza.yaml": b"stale\n"}, rule_set=unread)
+
+        self.assertFalse([name for name in files if name.startswith("managed/waf/")])
+        self.assertNotIn("managed/generated/1000-waf.cfg", files)
+
+    def test_an_engine_without_an_installed_rule_set_is_refused(self) -> None:
+        with self.assertRaises(ConfigError) as raised:
+            self.publish(PROXY.replace(b"routes:", b"waf: {}\nroutes:"), rule_set=lambda: None)
+
+        self.assertIn("haproxy-manager-crs", str(raised.exception))
+
+    def test_the_waf_layer_takes_its_shapes_only(self) -> None:
+        base = {"core/haproxy.cfg": b"global\n", "manual/reservations.yaml": b"{}\n"}
+        for name in ("run.sh", "crs/rules/x.sh", "crs/other/x.conf", "coraza.yml"):
+            with self.subTest(name), self.assertRaises(LayoutError):
+                build_node_artifact({**base, f"managed/waf/{name}": b"x\n"})

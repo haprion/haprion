@@ -189,6 +189,27 @@ class TheCountersBelongToWhoeverTracksThemFirst(unittest.TestCase):
         self.assertEqual(fate("stick-table type ip size 1k"), REFUSED_FATE)
 
 
+class TheWafEngineNamesAreTheGenerators(unittest.TestCase):
+    """B232: the engine's verdict is read from `txn.coraza.*`; nothing else writes it."""
+
+    def test_the_coraza_spoe_engine_is_refused(self) -> None:
+        self.assertEqual(
+            fate("filter spoe engine coraza config /etc/haproxy/waf/spoe.conf"), REFUSED_FATE
+        )
+
+    def test_the_engine_s_variables_and_group_are_refused_on_every_line(self) -> None:
+        for line in (
+            "http-request unset-var(txn.coraza.action)",
+            "http-request set-var(txn.coraza.app) str(other)",
+            "http-request send-spoe-group coraza coraza-req",
+        ):
+            with self.subTest(line):
+                self.assertEqual(fate(line), REFUSED_FATE)
+
+    def test_another_spoe_engine_is_the_text_s_own(self) -> None:
+        self.assertEqual(fate("filter spoe engine mine config /etc/haproxy/mine.conf"), PLACED)
+
+
 class SectionsTheTextAddsKeepTheirNames(unittest.TestCase):
     def test_a_backend_named_after_the_object_is_written_as_it_stands(self) -> None:
         placement = place(

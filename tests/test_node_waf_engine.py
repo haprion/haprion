@@ -44,7 +44,8 @@ cat "$JOURNAL" 2>/dev/null || true
 """
 SS = """#!/bin/bash
 echo "ss $*" >> "$RECORD"
-[[ "${LISTEN:-0}" == 1 ]] && echo "LISTEN 0 4096 127.0.0.1:12345 0.0.0.0:*"
+[[ "${LISTEN:-0}" == 1 ]] && echo "LISTEN 0 4096 127.0.0.1:12345 0.0.0.0:* users:((\\"coraza-spoa\\",pid=7,fd=3))"
+[[ "${LISTEN:-0}" == other ]] && echo "LISTEN 0 4096 127.0.0.1:12345 0.0.0.0:* users:((\\"python3\\",pid=8,fd=3))"
 exit 0
 """
 ENGINE = """#!/bin/bash
@@ -178,6 +179,14 @@ class TheWafEngineSteps(unittest.TestCase):
         self.assertIn("systemctl enable --now coraza-spoa.service", self.calls())
         self.assertIn("sport = :12345", self.calls())
         self.assertIn("engine listening", output)
+
+    def test_another_process_on_the_port_is_not_the_engine(self) -> None:
+        self.with_rules(self.current)
+
+        code, output = self.run_step("sync_waf_engine 1", LISTEN="other")
+
+        self.assertEqual(code, 1)
+        self.assertIn("did not start listening", output)
 
     def test_an_engine_that_never_listens_fails_the_deploy(self) -> None:
         self.with_rules(self.current)

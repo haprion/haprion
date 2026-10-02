@@ -16,6 +16,8 @@ from haproxy_mgmt.release_layout import (
     CRT_LIST_TARGET,
     KEEPALIVED_ALLOWED_SUFFIX,
     KEEPALIVED_TARGET,
+    WAF_NAME,
+    WAF_TARGET,
 )
 
 #
@@ -23,6 +25,12 @@ from haproxy_mgmt.release_layout import (
 # reading reports beside the nodes' (the manual: nodes first, this host last).
 #
 HAPROXY = "/usr/sbin/haproxy"
+#
+# The WAF engine, from its own package (B229, B230). The manager has it for
+# this one purpose: a rule the engine cannot compile is refused here, at
+# publication, rather than on a node.
+#
+WAF_ENGINE = "/usr/sbin/coraza-spoa"
 
 
 def validator_version(
@@ -113,6 +121,12 @@ def _allowed_path(raw: str) -> str:
         and path.suffix == CRT_LIST_ALLOWED_SUFFIX
     ):
         return raw
+    #
+    # The WAF engine's directory: its shapes, the release layout's own rule -
+    # not a free tree, for the same reason as the two above.
+    #
+    if path.parts[0] == WAF_TARGET and WAF_NAME.match(raw.removeprefix(f"{WAF_TARGET}/")):
+        return raw
     raise HelperProtocolError("candidate contains a path outside its allowlist", exit_code=65)
 
 
@@ -201,6 +215,14 @@ def materialize_candidate(
         if relative == "haproxy.cfg" or relative.startswith(("conf.d/", f"{CRT_LIST_TARGET}/")):
             content = content.replace(b"/etc/haproxy/maps/", b"/candidate/maps/")
             content = content.replace(b"/etc/haproxy/certs/", b"/candidate/certs/")
+        #
+        # The SPOE file a frontend names and the rules `coraza.yaml` includes,
+        # pointed at the candidate's own copies - the node does the same.
+        #
+        if relative == "haproxy.cfg" or relative.startswith("conf.d/"):
+            content = content.replace(b"/etc/haproxy/waf/", b"/candidate/waf/")
+        if relative == f"{WAF_TARGET}/coraza.yaml":
+            content = content.replace(b"/etc/haproxy/waf/", b"/candidate/waf/")
         descriptor = os.open(
             target,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -220,8 +242,17 @@ def materialize_candidate(
             output.write(validation_certificate)
 
 
-def sandbox_command(candidate_root: Path, request_id: str) -> list[str]:
-    unit = f"haproxy-manager-validation-{request_id.replace('-', '')}"
+def sandbox_command(
+    candidate_root: Path, request_id: str, program: Sequence[str] | None = None
+) -> list[str]:
+    """The sandboxed run of a parser over the candidate: `haproxy -c` unless told.
+
+    The WAF engine's check runs in the same sandbox, as a second unit: it reads
+    the same unreviewed candidate, and nothing about it needs more.
+    """
+
+    suffix = "" if program is None else "-waf"
+    unit = f"haproxy-manager-validation-{request_id.replace('-', '')}{suffix}"
     properties = (
         "NoNewPrivileges=yes",
         "PrivateDevices=yes",
@@ -324,6 +355,9 @@ def sandbox_command(candidate_root: Path, request_id: str) -> list[str]:
     ]
     for value in properties:
         command.extend(("--property", value))
+    if program is not None:
+        command.extend(program)
+        return command
     command.extend(
         (
             HAPROXY,
@@ -358,8 +392,30 @@ def sandbox_command(candidate_root: Path, request_id: str) -> list[str]:
 
 
 def validate_in_sandbox(candidate_root: Path, request_id: str) -> ValidationResult:
+    result = _sandboxed(sandbox_command(candidate_root, request_id))
+    if not result.valid or not (candidate_root / WAF_TARGET / "coraza.yaml").exists():
+        return result
+    if not Path(WAF_ENGINE).is_file():
+        return ValidationResult(
+            valid=False,
+            diagnostics="the candidate carries WAF rules, and the WAF engine is not installed "
+            "on the manager: install the haproxy-manager-coraza-spoa package",
+        )
+    engine = _sandboxed(
+        sandbox_command(
+            candidate_root,
+            request_id,
+            (WAF_ENGINE, "-validate", "-config", f"/candidate/{WAF_TARGET}/coraza.yaml"),
+        )
+    )
+    return ValidationResult(
+        valid=engine.valid, diagnostics=(result.diagnostics + engine.diagnostics)[:16384]
+    )
+
+
+def _sandboxed(command: list[str]) -> ValidationResult:
     completed = subprocess.run(  # noqa: S603 - argv is entirely constructed above
-        sandbox_command(candidate_root, request_id),
+        command,
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,

@@ -279,6 +279,24 @@ class Switched(LoginTestCase):
         self.assertEqual(self.flips, [])
 
 
+class SettingsOpensWithAnySwitchOff(Switched):
+    """The page asked whether a switch was locked only when it was on (2026-10-01).
+
+    With the first switch off, or every switch off as a new installation has
+    them, Settings answered 500.
+    """
+
+    def test_every_switch_off_still_draws_the_page(self) -> None:
+        for name in self.switches:
+            self.off(name)
+        self.switches[features.ADVANCED_CONFIG] = switch(features.ADVANCED_CONFIG, enabled=False)
+
+        page = self.admin().get("/settings")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Advanced config", page.text)
+
+
 class WhatOffStops(unittest.TestCase):
     def overview(self, *clusters: Any) -> Any:
         return SimpleNamespace(clusters=clusters)

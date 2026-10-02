@@ -329,7 +329,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0050",))
+            self.assertEqual(cursor.fetchone(), ("0051",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -467,6 +467,11 @@ class ARealDatabase(unittest.TestCase):
             # A collector that knows nothing of `rule` still writes "no rule" (0050).
             cursor.execute("select rule from traffic_log where host = 'service.example.com'")
             self.assertEqual(cursor.fetchall(), [("",)])
+            # ... and "nothing found" for the engine's fields (0051).
+            cursor.execute(
+                "select waf_rules, waf_score from traffic_log where host = 'service.example.com'"
+            )
+            self.assertEqual(cursor.fetchall(), [("", 0)])
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 cursor.execute(statement, values)
         with (
@@ -548,6 +553,56 @@ class ARealDatabase(unittest.TestCase):
                     (f"traffic_log_{suffix}_rule",),
                 )
                 self.assertEqual(cursor.fetchone(), (1,))
+            connection.rollback()
+
+    def test_waf_findings_are_bounded_and_downgrade_and_upgrade_cleanly(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        insert = (
+            "insert into traffic_log (event_id, cluster, node, occurred_at, "
+            "request_number, client, method, host, path, frontend, backend, server, "
+            "status, request_time, queue_time, connect_time, response_time, "
+            "total_time, bytes, rule, waf_rules, waf_score) values (%s, 'alpha', 'node-a', %s, 1, "
+            "'192.0.2.10', 'GET', %s, '/', 'f', 'b', 's', 403, "
+            "0, 0, 0, 0, 0, 0, 'crs:deny', %s, %s) on conflict do nothing"
+        )
+        with self.connect() as connection, connection.cursor() as cursor:
+            cursor.execute("select traffic_log_partition(%s::date)", (now.date(),))
+            connection.commit()
+        for rules, score in (
+            ("930120,", 5),  # a trailing comma
+            ("93012", 5),  # not six digits
+            ("930120;932160", 5),  # another separator
+            (",".join(["930120"] * 147), 5),  # beyond the bound
+            ("930120", -1),
+            ("930120", 100001),
+        ):
+            with (
+                self.subTest(rules=rules[:20], score=score),
+                self.connect() as connection,
+                self.assertRaises(psycopg.errors.CheckViolation),
+            ):
+                connection.execute(insert, (b"w" * 32, now, "waf.example.com", rules, score))
+        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            connection.execute(insert, (b"v" * 32, now, "waf.example.com", "930120,932160", 43))
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "select waf_rules, waf_score from traffic_log where host = 'waf.example.com'"
+            )
+            self.assertEqual(cursor.fetchall(), [("930120,932160", 43)])
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                migration = _migration("0051_waf_engine.py", cursor)
+                migration.downgrade()
+                cursor.execute(
+                    "select count(*) from information_schema.columns "
+                    "where table_name = 'traffic_log' and column_name like 'waf_%%'"
+                )
+                self.assertEqual(cursor.fetchone(), (0,))
+                migration.upgrade()
+                cursor.execute(
+                    "select waf_rules, waf_score from traffic_log where host = 'waf.example.com'"
+                )
+                self.assertEqual(cursor.fetchall(), [("", 0)])
             connection.rollback()
 
     def test_collector_copy_is_checkpointed_and_safe_to_repeat(self) -> None:
@@ -2132,7 +2187,7 @@ class AccountsFromTheWeb(unittest.TestCase):
 
 @unittest.skipUnless(DSN, "run through ui/tools/test-database")
 class FeatureSwitchesFromTheWeb(unittest.TestCase):
-    """Migrations 0040, 0042 and 0049: switches the web flips and nothing more (B193, B204, B224)."""
+    """Migrations 0040, 0042, 0049, 0051: switches the web flips and nothing more (B193, B204, B224, B231)."""
 
     def connect(self, role_variable: str = "HAPROXY_UI_TEST_MIGRATION_ROLE") -> psycopg.Connection:
         return psycopg.connect(f"{DSN} user={os.environ[role_variable]}")
@@ -2156,12 +2211,30 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
                 "node_backups": False,
                 "cluster_colours": True,
                 "advanced_config": False,
+                "waf_engine": False,
             },
         )
+
+    def test_the_waf_engine_switch_downgrades_and_upgrades_cleanly(self) -> None:
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                migration = _migration("0051_waf_engine.py", cursor)
+                migration.downgrade()
+                with self.assertRaises(psycopg.errors.CheckViolation):
+                    cursor.execute("insert into feature_switch (name) values ('waf_engine')")
+            connection.rollback()
+            with connection.cursor() as cursor:
+                migration = _migration("0051_waf_engine.py", cursor)
+                migration.downgrade()
+                migration.upgrade()
+                cursor.execute("select enabled from feature_switch where name = 'waf_engine'")
+                self.assertEqual(cursor.fetchone(), (False,))
+            connection.rollback()
 
     def test_the_advanced_config_switch_downgrades_and_upgrades_cleanly(self) -> None:
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                _migration("0051_waf_engine.py", cursor).downgrade()
                 migration = _migration("0049_advanced_config_switch.py", cursor)
                 migration.downgrade()
                 cursor.execute("select name from feature_switch order by name")
@@ -2173,6 +2246,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
                     cursor.execute("insert into feature_switch (name) values ('advanced_config')")
             connection.rollback()
             with connection.cursor() as cursor:
+                _migration("0051_waf_engine.py", cursor).downgrade()
                 migration = _migration("0049_advanced_config_switch.py", cursor)
                 migration.downgrade()
                 migration.upgrade()
@@ -2183,6 +2257,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
     def test_the_colours_switch_downgrades_and_upgrades_cleanly(self) -> None:
         with self.connect() as connection:
             with connection.cursor() as cursor:
+                _migration("0051_waf_engine.py", cursor).downgrade()
                 _migration("0049_advanced_config_switch.py", cursor).downgrade()
                 migration = _migration("0042_cluster_colours_switch.py", cursor)
                 migration.downgrade()
@@ -2192,6 +2267,7 @@ class FeatureSwitchesFromTheWeb(unittest.TestCase):
                     cursor.execute("insert into feature_switch (name) values ('cluster_colours')")
             connection.rollback()
             with connection.cursor() as cursor:
+                _migration("0051_waf_engine.py", cursor).downgrade()
                 _migration("0049_advanced_config_switch.py", cursor).downgrade()
                 migration = _migration("0042_cluster_colours_switch.py", cursor)
                 migration.downgrade()

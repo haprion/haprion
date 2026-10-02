@@ -553,7 +553,7 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertIn(">admin-post</span>", waf)
         self.assertIn('status-badge-critical">admin-post', waf)
         self.assertIn('status-badge-warning">scanner', waf)
-        self.assertIn('aria-current="page"><svg', waf.split(">WAF</a>")[0][-400:])
+        self.assertIn('aria-current="page"><svg', waf.split(">WAF logs</a>")[0][-400:])
         self.assertIn('href="/waf?sort=', waf)
         self.assertNotIn('name="waf"', waf)
 
@@ -573,6 +573,11 @@ class TheTrafficLogPage(LoginTestCase):
         self.assertNotIn(">/admin<", none)
         self.assertIn(">/plain<", everything)
         self.assertIn(">/admin<", everything)
+        #
+        # Without the filter a hit is still marked on its own row.
+        #
+        self.assertIn('status-badge-critical">admin-post</span>', everything)
+        self.assertEqual(everything.count("log-rule"), 1)
         self.assertIn('href="/logs?waf=hits&amp;sort=', hits)
 
     def test_a_heading_reorders_the_rows_and_keeps_the_filter(self) -> None:

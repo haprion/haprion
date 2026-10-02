@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 {% import "_sort.html" as sort %}
-{% block title %}{{ "WAF" if waf_page else "Traffic logs" }} — HAProxy Manager{% endblock %}
+{% block title %}{{ "WAF logs" if waf_page else "Traffic logs" }} — HAProxy Manager{% endblock %}
 {% block head_extra %}<script defer src="{{ url_for('static', path='/logs.js') }}?v={{ asset_token }}"></script>{% endblock %}
 {% block content %}
 {% macro date_time_picker(name, label, value, default) %}
@@ -18,7 +18,7 @@
 {% endmacro %}
 <div data-log-region>
 <section class="page-heading">
-  <div class="heading-title">{% if waf_page %}<h1>WAF</h1><p class="page-lede">Requests an access rule logged or refused.</p>{% else %}<h1>Traffic logs</h1><p class="page-lede">Recent HTTP requests, mirrored from each node.</p>{% endif %}</div>
+  <div class="heading-title">{% if waf_page %}<h1>WAF logs</h1><p class="page-lede">Requests an access rule logged or refused.</p>{% else %}<h1>Traffic logs</h1><p class="page-lede">Recent HTTP requests, mirrored from each node.</p>{% endif %}</div>
   <div class="heading-badges">
     {% if enabled and reading.entries %}<div class="log-export"><button class="secondary-button" type="button" data-log-export disabled>Export selected (.csv)</button><span data-log-selected-count>No rows selected</span></div>{% endif %}
     {% if enabled and (reading.unavailable or freshness_warnings or not reading.nodes) %}
@@ -72,7 +72,7 @@
       <td><time datetime="{{ entry.at.isoformat() }}">{{ entry.at | shown_at }}</time></td>
       <td title="{{ entry.cluster }} / {{ entry.node }}"><strong>{{ entry.cluster }}</strong><span> / {{ entry.node }}</span></td>
       <td><code title="{{ entry.client }}">{{ entry.client }}</code></td>
-      <td class="log-request" title="{{ entry.method }} {{ entry.host }}{{ entry.path }}"><span class="log-request-content"><code>{{ entry.method }}</code> <strong>{{ entry.host }}</strong><code class="log-path">{{ entry.path }}</code></span></td>
+      <td class="log-request" title="{% if entry.rule and not waf_page %}{{ entry.rule }} — {% endif %}{{ entry.method }} {{ entry.host }}{{ entry.path }}"><span class="log-request-content">{% if entry.rule and not waf_page %}<span class="status-badge log-rule status-badge-{{ 'critical' if entry.rule.endswith(':deny') else 'warning' }}">{{ entry.rule.partition(':')[0] }}</span> {% endif %}<code>{{ entry.method }}</code> <strong>{{ entry.host }}</strong><code class="log-path">{{ entry.path }}</code></span></td>
       <td><span class="status-badge status-badge-{{ 'healthy' if entry.status < 400 else 'warning' if entry.status < 500 else 'critical' }}">{{ entry.status }}</span></td>
       <td><code title="{{ entry.server or 'Destination unavailable' }}">{{ entry.server or 'Destination unavailable' }}</code></td>
       {% if waf_page %}{% set rule, _, mode = entry.rule.partition(':') %}<td title="{{ rule }} — {{ 'denied' if mode == 'deny' else 'logged' }}"><span class="status-badge status-badge-{{ 'critical' if mode == 'deny' else 'warning' }}">{{ rule }}</span></td>{% else %}<td title="{{ entry.bytes }}">{{ entry.bytes }}</td>{% endif %}

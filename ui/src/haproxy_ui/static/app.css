@@ -183,7 +183,7 @@ svg { fill: none; stroke: currentcolor; stroke-linecap: round; stroke-linejoin: 
   align-items: center;
   gap: 8px;
   min-height: 30px;
-  padding: 0 12px;
+  padding: 0 9px;
   color: var(--text-secondary);
   font-size: 14px;
   font-weight: 400;
@@ -2177,3 +2177,5 @@ summary:hover .disclosure-toggle { border-color: var(--muted); background: var(-
 .waf-table th:nth-child(8), .waf-table td:nth-child(8) { width: 220px; }
 .log-filters.log-filters-waf { grid-template-columns: minmax(120px, .6fr) minmax(90px, .4fr) minmax(120px, .5fr) minmax(200px, 1.3fr) minmax(175px, .8fr) minmax(175px, .8fr) auto auto; }
 @media (max-width: 1000px) { .log-filters.log-filters-waf { grid-template-columns: 1fr 1fr; } }
+.log-table .log-rule { margin-right: 4px; }
+.form-group-badge { flex: none; }

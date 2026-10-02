@@ -45,3 +45,24 @@ class TheClosedLineSaysWhatTheGroupHolds(unittest.TestCase):
 
         self.assertEqual(states["headers"].summary, "None")
         self.assertEqual(states["timing"].summary, "Defaults")
+
+
+class TheAccessGroupSaysWhatItsRulesDo(unittest.TestCase):
+    """Fas 21: yellow for what only looks, red for what refuses."""
+
+    def test_rules_and_the_deny_list_are_counted_by_mode(self) -> None:
+        state = form_groups(
+            {
+                "rule_mode": ["deny", "log"],
+                "deny_ranges": "203.0.113.0/24",
+                "deny_mode": "log",
+            }
+        )["access"]
+
+        self.assertEqual(
+            [(badge.text, badge.kind) for badge in state.badges],
+            [("2 logging", "warning"), ("1 denying", "critical")],
+        )
+
+    def test_an_object_without_rules_shows_no_badge(self) -> None:
+        self.assertEqual(form_groups({})["access"].badges, ())

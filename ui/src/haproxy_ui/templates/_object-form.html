@@ -58,7 +58,7 @@
 
 {% macro group(state, shown='') %}
 <details class="form-group"{{ shown }}>
-  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title">{{ state.title }}</span><span class="form-group-summary" data-group-summary title="{{ state.summary }}">{{ state.summary }}</span></summary>
+  <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title">{{ state.title }}</span><span class="form-group-summary" data-group-summary title="{{ state.summary }}">{{ state.summary }}</span>{% for badge in state.badges %}<span class="status-badge status-badge-{{ badge.kind }} form-group-badge">{{ badge.text }}</span>{% endfor %}</summary>
   {{ caller() }}
 </details>
 {% endmacro %}

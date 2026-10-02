@@ -27,12 +27,22 @@ class FormGroup:
     title: str
     fields: tuple[str, ...]
     summary: Callable[[Mapping[str, Any]], str]
+    badges: Callable[[Mapping[str, Any]], tuple[Badge, ...]] = lambda _form: ()
+
+
+@dataclass(frozen=True, slots=True)
+class Badge:
+    """A count beside a closed group's line, coloured by what it means."""
+
+    text: str
+    kind: str
 
 
 @dataclass(frozen=True, slots=True)
 class GroupState:
     title: str
     summary: str
+    badges: tuple[Badge, ...] = ()
 
 
 def _text(form: Mapping[str, Any], key: str) -> str:
@@ -77,23 +87,38 @@ def _access(form: Mapping[str, Any]) -> str:
         who = _joined([who, f"{ranges} address{'es' if ranges != 1 else ''}"], "")
     limit = _text(form, "rate_limit")
     window = _text(form, "rate_window") or DEFAULT_ABUSE_WINDOW
-    denied = len([name for name in form.get("deny_from", ()) or () if str(name).strip()])
-    denied += _lines(form, "deny_ranges")
-    rules = len(form.get("rule_index", ()) or ())
     body = _text(form, "max_request_body")
     return _joined(
         [
             f"From {who}" if who else "From everywhere",
             f"at most {limit} per {window}" if limit else "no rate limit",
-            (
-                f"deny from {denied} ({'logging' if _text(form, 'deny_mode') != 'deny' else 'denying'})"
-                if denied
-                else ""
-            ),
-            f"{rules} rule{'s' if rules != 1 else ''}" if rules else "",
             f"body ≤ {body}" if body else "",
         ],
         "",
+    )
+
+
+def _access_badges(form: Mapping[str, Any]) -> tuple[Badge, ...]:
+    """What the access rules do, in the colours the logs use (Fas 21).
+
+    Yellow counts what only looks - a rule or the deny list in `log` - and red
+    what refuses, so a closed group says whether anything on the object is
+    turning visitors away.
+    """
+
+    modes = [str(mode) for mode in form.get("rule_mode", ()) or ()]
+    denied = any(str(name).strip() for name in form.get("deny_from", ()) or ())
+    if denied or _lines(form, "deny_ranges"):
+        modes.append(_text(form, "deny_mode") or "log")
+    logging = sum(mode != "deny" for mode in modes)
+    denying = sum(mode == "deny" for mode in modes)
+    return tuple(
+        Badge(text, kind)
+        for text, kind, count in (
+            (f"{logging} logging", "warning", logging),
+            (f"{denying} denying", "critical", denying),
+        )
+        if count
     )
 
 
@@ -212,6 +237,7 @@ GROUPS: Mapping[str, FormGroup] = {
             "rule_negate",
         ),
         _access,
+        _access_badges,
     ),
     "maintenance": FormGroup(
         "Maintenance", ("maintenance", "maintenance_message", "unavailable_message"), _maintenance
@@ -284,6 +310,6 @@ def form_groups(form: Mapping[str, Any]) -> dict[str, GroupState]:
     """Each group's title and the line it shows while closed."""
 
     return {
-        key: GroupState(title=group.title, summary=group.summary(form))
+        key: GroupState(title=group.title, summary=group.summary(form), badges=group.badges(form))
         for key, group in GROUPS.items()
     }

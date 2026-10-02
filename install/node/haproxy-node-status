@@ -129,6 +129,26 @@ def service_active(name):
 
 
 #
+# The WAF engine is a package of its own, installed by a person (B229), and the
+# manager offers the engine on an object only when every node of its cluster
+# has it (B231). The package's version says which engine; `active` says whether
+# a release with rules has started it - off is the normal state without one.
+#
+WAF_PACKAGE = "haproxy-manager-coraza-spoa"
+WAF_UNIT = "coraza-spoa.service"
+
+
+def read_waf_engine():
+    r = run("/usr/bin/dpkg-query", "-W", "-f=${Status}\t${Version}", WAF_PACKAGE)
+    status, _, version = r.stdout.partition("\t")
+    installed = r.returncode == 0 and status.strip() == "install ok installed"
+    return {
+        "version": version.strip() if installed else None,
+        "active": service_active(WAF_UNIT),
+    }
+
+
+#
 # A directive and its argument, with the trailing comment keepalived allows.
 # The comment is why these are not `\s*$`: the configuration this project ships
 # writes `interface eth0  # CHANGE`, and a pattern that insists on the end of
@@ -711,6 +731,8 @@ result = {
     "servers": servers,
     "certificates": certificates,
     "installation": read_installation(),
+    "architecture": os.uname().machine,
+    "waf_engine": read_waf_engine(),
 }
 
 if args.json:
@@ -726,6 +748,11 @@ else:
     print(f"VIP owner:         {vip_owner}")
     print(f"ip_nonlocal_bind:  {ip_nonlocal_bind}")
     print(f"Runtime stats:     {'OK' if stats_ok else 'FAILED'}")
+    waf = result["waf_engine"]
+    print(
+        f"WAF engine:        {waf['version'] or 'NOT INSTALLED'}"
+        f"{' (ACTIVE)' if waf['active'] else ''}"
+    )
     #
     # Requests and 5xx per listener, because that is the pair that says whether
     # a request reached this node at all - the question the removed stats page

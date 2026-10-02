@@ -92,7 +92,8 @@ SCRIPTS=(
 # fleet incompatible for a feature none of them was asked to run. The same
 # holds for `cert-remove`: a node without the verb answers "unknown request"
 # and the manager reports the copy as kept, so an older node is behind, not
-# incompatible.
+# incompatible. And for the WAF engine (B231): a node whose status reports no
+# `waf_engine` is one the manager does not offer the engine on.
 NODE_API=1
 
 step "Service accounts"
@@ -216,6 +217,7 @@ link_into_current() {
 link_into_current haproxy.cfg
 link_into_current conf.d
 link_into_current maps
+link_into_current waf
 
 step "Node scripts"
 

@@ -130,6 +130,120 @@ sync_keepalived_addresses() {
     return 1
 }
 
+#
+# The WAF engine (Fas 21, B229-B232). It is a package a person installs, and it
+# reads rules only a release provides: a release with `waf/` turns it on, a
+# release without one turns it off. Coraza re-reads its rules on SIGHUP and,
+# when they do not compile, keeps the previous ones and says so only in its
+# log - so the candidate is compiled with -validate before anything changes,
+# and a reload counts only once the engine has said it took the new rules.
+#
+WAF_ENGINE="/usr/sbin/coraza-spoa"
+WAF_UNIT="coraza-spoa.service"
+WAF_WAIT_SECONDS=10
+
+validate_waf_candidate() {
+    local candidate="$1"
+
+    [[ -e "${candidate}/waf" ]] || return 0
+    if [[ ! -x "$WAF_ENGINE" ]]; then
+        #
+        # Refused rather than deployed without it: HAProxy would accept the
+        # configuration and then send every request to an engine that is not
+        # there, which is the object's on_engine_error for every request.
+        #
+        log "ERROR: the release carries WAF rules, but the WAF engine is not installed on this node."
+        log "ERROR: install the haproxy-manager-coraza-spoa package, then deploy again."
+        return 1
+    fi
+    log "Validating candidate WAF rules..."
+    if ! "$WAF_ENGINE" -validate -config "${candidate}/waf/coraza.yaml"; then
+        log "ERROR: the WAF engine rejected the candidate rules. The existing config is left untouched."
+        return 1
+    fi
+    log "Candidate WAF rules OK."
+}
+
+waf_listening() {
+    local bind port
+    #
+    # The generator writes `bind: 127.0.0.1:<port>` and nothing else on that
+    # line; a value this does not read as a port is a release this node
+    # cannot confirm, and is treated as not listening.
+    #
+    bind="$(sed -n 's/^bind:[[:space:]]*//p' "${CURRENT}/waf/coraza.yaml" | head -n 1)"
+    port="${bind##*:}"
+    [[ "$port" =~ ^[0-9]{1,5}$ ]] || return 1
+    ss -Hltn "sport = :${port}" | grep -q .
+}
+
+sync_waf_engine() {
+    local changed="$1" cursor lines waited
+
+    if [[ ! -f "${CURRENT}/waf/coraza.yaml" ]]; then
+        if systemctl is-enabled --quiet "$WAF_UNIT" 2>/dev/null \
+            || systemctl is-active --quiet "$WAF_UNIT" 2>/dev/null; then
+            log "WAF: the release carries no rules. Stopping the engine."
+            if ! systemctl disable --now "$WAF_UNIT"; then
+                log "ERROR: the WAF engine could not be stopped."
+                return 1
+            fi
+        fi
+        return 0
+    fi
+
+    if ! systemctl is-active --quiet "$WAF_UNIT"; then
+        log "WAF: starting the engine."
+        if ! systemctl enable --now "$WAF_UNIT"; then
+            log "ERROR: the WAF engine could not be started."
+            return 1
+        fi
+        for (( waited = 0; waited < WAF_WAIT_SECONDS * 5; waited++ )); do
+            if waf_listening; then
+                log "WAF: engine listening."
+                return 0
+            fi
+            sleep 0.2
+        done
+        log "ERROR: the WAF engine did not start listening within ${WAF_WAIT_SECONDS}s."
+        return 1
+    fi
+
+    # Running but not enabled is a node that would lose its engine at reboot.
+    systemctl is-enabled --quiet "$WAF_UNIT" || systemctl enable --quiet "$WAF_UNIT"
+    (( changed )) || return 0
+
+    #
+    # Only what the engine logs after this point counts: the cursor is the
+    # journal's own position, so an earlier reload's line - even one within
+    # the same second - is never read as this one's answer.
+    #
+    cursor="$(journalctl -u "$WAF_UNIT" -n 0 --show-cursor --no-pager | sed -n 's/^-- cursor: //p')"
+    log "WAF: reloading the engine's rules."
+    if ! systemctl reload "$WAF_UNIT"; then
+        log "ERROR: the WAF engine could not be signalled."
+        return 1
+    fi
+    for (( waited = 0; waited < WAF_WAIT_SECONDS * 5; waited++ )); do
+        if [[ -n "$cursor" ]]; then
+            lines="$(journalctl -u "$WAF_UNIT" --after-cursor "$cursor" -o cat --no-pager)"
+        else
+            lines="$(journalctl -u "$WAF_UNIT" -n 20 -o cat --no-pager)"
+        fi
+        if grep -q 'Configuration successfully reloaded' <<<"$lines"; then
+            log "WAF: engine took the new rules."
+            return 0
+        fi
+        if grep -q 'Failed to reload configuration' <<<"$lines"; then
+            log "ERROR: the WAF engine refused the new rules and kept the previous ones."
+            return 1
+        fi
+        sleep 0.2
+    done
+    log "ERROR: the WAF engine did not confirm the new rules within ${WAF_WAIT_SECONDS}s."
+    return 1
+}
+
 OLD_RELEASE="$(readlink -f "$CURRENT")"
 
 log "Fetching published configuration from ${MANAGER}..."
@@ -165,6 +279,8 @@ if diff -qr "$OLD_RELEASE" "$STAGE" >/dev/null; then
     # the one taken - so a node prepared for B57 would otherwise stay without
     # its addresses until the next unrelated configuration change.
     #
+    # And the engine, which a reboot or a person may have stopped.
+    sync_waf_engine 0 || exit 1
     sync_keepalived_addresses || exit 1
     exit 0
 fi
@@ -174,16 +290,20 @@ log "New configuration detected."
 #
 # Validate the candidate.
 #
-# The configuration uses absolute paths under /etc/haproxy/maps.
-# In the validation copy we therefore point those at the candidate's own maps.
+# The configuration uses absolute paths under /etc/haproxy/maps and
+# /etc/haproxy/waf - HAProxy's and the WAF engine's own. In the validation copy
+# we therefore point those at the candidate's own maps and rules.
 #
 cp -a "${STAGE}/." "${VALIDATE}/"
 
 while IFS= read -r -d '' file; do
-    sed -i "s#/etc/haproxy/maps/#${VALIDATE}/maps/#g" "$file"
+    sed -i \
+        -e "s#/etc/haproxy/maps/#${VALIDATE}/maps/#g" \
+        -e "s#/etc/haproxy/waf/#${VALIDATE}/waf/#g" \
+        "$file"
 done < <(
-    grep -RIlZ '/etc/haproxy/maps/' \
-        --include='*.cfg' \
+    grep -RIlZ -e '/etc/haproxy/maps/' -e '/etc/haproxy/waf/' \
+        --include='*.cfg' --include='*.yaml' --include='*.conf' \
         "$VALIDATE" || true
 )
 
@@ -198,6 +318,8 @@ then
 fi
 
 log "Candidate configuration OK."
+
+validate_waf_candidate "$VALIDATE" || exit 1
 
 #
 # Create a new immutable release
@@ -239,6 +361,23 @@ then
 fi
 
 #
+# The engine before HAProxy: HAProxy must never name an application the
+# engine does not know yet. If the engine does not take the rules, nothing has
+# been reloaded - put `current` back and return the engine to the old rules.
+#
+if ! sync_waf_engine 1; then
+    log "ERROR: the WAF engine did not take the new rules. Rolling back to ${OLD_RELEASE}."
+
+    rm -f "$NEW_LINK"
+    ln -s "$OLD_RELEASE" "$NEW_LINK"
+    mv -Tf "$NEW_LINK" "$CURRENT"
+
+    sync_waf_engine 1 || log "ERROR: the WAF engine could not be returned to the previous rules either."
+
+    exit 1
+fi
+
+#
 # Reload
 #
 log "Reloading HAProxy..."
@@ -265,6 +404,7 @@ else
 
     # Try to bring HAProxy back to the known-good config
     systemctl reload haproxy || true
+    sync_waf_engine 1 || true
 
     exit 1
 fi

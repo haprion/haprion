@@ -134,6 +134,24 @@ sudo ./16-platform-scep /path/to/bundle.zip <verified-bundle-sha256>
 See [install/platform/README.md](../install/platform/README.md) for each component's
 installation inputs and follow-up setup.
 
+The WAF engine (Coraza SPOA with the OWASP Core Rule Set) comes as two Debian packages,
+built from pinned upstream sources by `tools/build-coraza-package.py`; building the same
+version twice gives the same bytes. Install both on the manager, where publishing
+compiles the rules before they leave it, and the engine package on every node:
+
+```bash
+python3 tools/build-coraza-package.py crs --source-dir <dir> --output-dir <out>
+python3 tools/build-coraza-package.py coraza --source-dir <dir> --go-root <go> --output-dir <out>
+sudo apt install ./haproxy-manager-crs_<version>_all.deb ./haproxy-manager-coraza-spoa_<version>_amd64.deb  # manager
+sudo apt install ./haproxy-manager-coraza-spoa_<version>_amd64.deb                                      # each node
+```
+
+Installing the packages starts nothing. On a node, the deploy starts the engine when a
+release carries rules (`/etc/haproxy/waf`, a link into the release like `maps`) and stops
+it when one no longer does; a release with rules is refused on a node without the engine.
+The node status reports the engine's version, and the interface offers the engine on an
+object only when every node of its cluster has it.
+
 ## 6. Verify access
 
 Open `https://<SERVER_NAME>` and sign in with the administrator account created during

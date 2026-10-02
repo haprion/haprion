@@ -329,7 +329,7 @@ class ARealDatabase(unittest.TestCase):
     def test_every_migration_reaches_the_declared_head(self) -> None:
         with self.connect() as connection, connection.cursor() as cursor:
             cursor.execute("select version_num from alembic_version")
-            self.assertEqual(cursor.fetchone(), ("0049",))
+            self.assertEqual(cursor.fetchone(), ("0050",))
 
     def test_runtime_accounts_inherit_exactly_one_contract_role(self) -> None:
         expected = {
@@ -464,6 +464,9 @@ class ARealDatabase(unittest.TestCase):
                 "where cluster = 'alpha' and host = 'service.example.com'"
             )
             self.assertEqual(cursor.fetchall(), [("service.example.com", "/health", 200)])
+            # A collector that knows nothing of `rule` still writes "no rule" (0050).
+            cursor.execute("select rule from traffic_log where host = 'service.example.com'")
+            self.assertEqual(cursor.fetchall(), [("",)])
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 cursor.execute(statement, values)
         with (
@@ -484,6 +487,54 @@ class ARealDatabase(unittest.TestCase):
         self.assertNotIn(f"traffic_log_{suffix}_occurred_at", indexes)
         self.assertIn(f"traffic_log_{suffix}_pkey", indexes)
         self.assertIn(f"traffic_log_{suffix}_search", indexes)
+        self.assertIn(f"traffic_log_{suffix}_rule", indexes)
+
+    def test_traffic_rule_is_bounded_and_downgrades_and_upgrades_cleanly(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        suffix = f"{now:%Y%m%d}"
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("select traffic_log_partition(%s::date)", (now.date(),))
+                with self.assertRaises(psycopg.errors.CheckViolation):
+                    cursor.execute(
+                        "insert into traffic_log (event_id, cluster, node, occurred_at, "
+                        "request_number, client, method, host, path, frontend, backend, server, "
+                        "status, request_time, queue_time, connect_time, response_time, "
+                        "total_time, bytes, rule) values (%s, 'alpha', 'node-a', %s, 1, "
+                        "'192.0.2.10', 'GET', 'h.example.com', '/', 'f', 'b', 's', 200, "
+                        "0, 0, 0, 0, 0, 0, %s)",
+                        (b"r" * 32, now, "x" * 161),
+                    )
+            connection.rollback()
+        with self.connect("HAPROXY_UI_TEST_COLLECTOR_ROLE") as connection:
+            connection.execute(
+                "insert into traffic_log (event_id, cluster, node, occurred_at, "
+                "request_number, client, method, host, path, frontend, backend, server, "
+                "status, request_time, queue_time, connect_time, response_time, "
+                "total_time, bytes, rule) values (%s, 'alpha', 'node-a', %s, 1, "
+                "'192.0.2.10', 'GET', 'rule.example.com', '/admin', 'f', 'b', 's', 403, "
+                "0, 0, 0, 0, 0, 0, 'block-admin:deny') on conflict do nothing",
+                (b"q" * 32, now),
+            )
+        with self.connect("HAPROXY_UI_TEST_WEB_ROLE") as connection, connection.cursor() as cursor:
+            cursor.execute("select rule from traffic_log where host = 'rule.example.com'")
+            self.assertEqual(cursor.fetchall(), [("block-admin:deny",)])
+        with self.connect() as connection:
+            with connection.cursor() as cursor:
+                migration = _migration("0050_traffic_rule.py", cursor)
+                migration.downgrade()
+                cursor.execute(
+                    "select count(*) from information_schema.columns "
+                    "where table_name = 'traffic_log' and column_name = 'rule'"
+                )
+                self.assertEqual(cursor.fetchone(), (0,))
+                migration.upgrade()
+                cursor.execute(
+                    "select count(*) from pg_indexes where indexname = %s",
+                    (f"traffic_log_{suffix}_rule",),
+                )
+                self.assertEqual(cursor.fetchone(), (1,))
+            connection.rollback()
 
     def test_collector_copy_is_checkpointed_and_safe_to_repeat(self) -> None:
         now = datetime.now(UTC).replace(microsecond=0)

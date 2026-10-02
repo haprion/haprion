@@ -83,7 +83,7 @@ step "Column privileges"
 # rollback. They are listed until the schema change that drops them.
 #
 expected_grants=$(cat <<'EOF'
-app_collector	traffic_log	INSERT	backend, bytes, client, cluster, connect_time, event_id, frontend, host, method, node, occurred_at, path, queue_time, request_number, request_time, response_time, server, status, total_time
+app_collector	traffic_log	INSERT	backend, bytes, client, cluster, connect_time, event_id, frontend, host, method, node, occurred_at, path, queue_time, request_number, request_time, response_time, rule, server, status, total_time
 app_poller	cluster_backups	INSERT	cluster, error, outcome, poll_error, result, warnings
 app_poller	cluster_backups	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings
 app_poller	cluster_backups	UPDATE	error, outcome, poll_error, result, warnings
@@ -172,7 +172,7 @@ app_web	proxy_draft	INSERT	base_hash, base_version, cluster, deleted, object_id,
 app_web	proxy_draft	SELECT	base_hash, base_version, cluster, deleted, id, object_id, revision, updated_at, updated_by, yaml
 app_web	proxy_draft	UPDATE	base_hash, base_version, deleted, updated_by, yaml
 app_web	search_entry	SELECT	admin_only, cluster, href, kind, label, source, title, value
-app_web	traffic_log	SELECT	backend, bytes, client, cluster, connect_time, frontend, host, method, node, occurred_at, path, queue_time, request_number, request_time, response_time, server, status, total_time
+app_web	traffic_log	SELECT	backend, bytes, client, cluster, connect_time, frontend, host, method, node, occurred_at, path, queue_time, request_number, request_time, response_time, rule, server, status, total_time
 app_web	version_diff	SELECT	cluster, commit, diff, recorded_at
 app_worker	audit_event	INSERT	action, actor, cluster, detail, request_id
 app_worker	cluster_history	SELECT	cluster, error, observed_at, outcome, poll_error, result, warnings

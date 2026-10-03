@@ -1,3 +1,4 @@
+{% from "_waf-finding.html" import finding_what %}
 {#
   The object form, shared by the preview page and the editor.
 
@@ -57,8 +58,8 @@
 {% endmacro %}
 {% set new_rule = {'index': '__index__', 'name': '', 'mode': 'log', 'path': '', 'match': 'prefix', 'methods': [], 'header': '', 'header_match': 'equals', 'header_value': '', 'source': '', 'negate': False, 'summary': 'No condition'} %}
 
-{% macro group(state, shown='') %}
-<details class="form-group"{{ shown }}>
+{% macro group(state, shown='', expanded=false) %}
+<details class="form-group"{{ shown }}{% if expanded %} open{% endif %}>
   <summary><span class="disclosure-toggle" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"></path></svg></span><span class="form-group-title">{{ state.title }}</span><span class="form-group-summary" data-group-summary title="{{ state.summary }}">{{ state.summary }}</span>{% for badge in state.badges %}<span class="status-badge status-badge-{{ badge.kind }} form-group-badge">{{ badge.text }}</span>{% endfor %}</summary>
   {{ caller() }}
 </details>
@@ -156,7 +157,8 @@
     #}
     {% set waf_used = form.waf_mode != 'off' or form.waf_exceptions %}
     {% if waf_offered or waf_used %}
-    {% call group(groups.waf, when('protocol', 'http https')) %}
+    {#- Open when the WAF page sent the person here to publish an exception. -#}
+    {% call group(groups.waf, when('protocol', 'http https'), expanded=open_group == 'waf') %}
     {% if waf_unavailable %}<p class="form-group-note">{{ waf_unavailable }}</p>{% endif %}
     {#
       B231: locked with the sentence alone until the engine is everywhere. An
@@ -171,8 +173,26 @@
       <label><span class="field-title">Mode</span><select name="waf_mode" class="single-select">{% for mode in ('off', 'log', 'block') %}<option{% if form.waf_mode == mode %} selected{% endif %}>{{ mode }}</option>{% endfor %}</select></label>
       <label><span class="field-title">Engine not answering</span><select name="waf_engine_error" class="single-select">{% for value, label in (('allow', 'let through'), ('deny', 'refuse (503)')) %}<option value="{{ value }}"{% if form.waf_engine_error == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
       <label><span class="field-title">Strictness</span><select name="waf_paranoia" class="single-select">{% for value, label in (('1', '1 · fewest false alarms'), ('2', '2'), ('3', '3'), ('4', '4 · strictest')) %}<option value="{{ value }}"{% if form.waf_paranoia == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-      {% set count = waf_exception_count(form) %}
-      <p class="form-exceptions">{% if count %}{{ count }} exception{{ 's' if count != 1 }} · {% endif %}<a href="/waf?cluster={{ cluster }}">Findings and exceptions on the WAF page</a></p>
+      {#
+        What Save and publish would send, listed rather than counted, so a
+        person sees which false alarms they are letting through before they
+        publish them (26-10-03). Removing one is the WAF page's job.
+      #}
+      {% if waf_exceptions %}
+      <div class="table-scroll form-exceptions-table"><table class="node-table form-exception-table">
+        <thead><tr><th>Exception</th><th>Where</th><th>Added</th></tr></thead>
+        <tbody>
+          {% for row in waf_exceptions %}
+          <tr>
+            <td title="{{ row.message }}">{{ finding_what(row.kind, row.explanation, row.severity, row.message) }}</td>
+            <td title="{{ waf_where(row.exception, row.name) }}">{{ waf_where(row.exception, row.name) }}</td>
+            <td><span class="users-date">{% if row.exception.by %}{{ row.exception.by }}{% endif %}{% if row.exception.by and row.exception.at %} · {% endif %}{% if row.exception.at %}{{ row.exception.at[2:10] }} {{ row.exception.at[11:19] }}{% endif %}</span>{% if row.in_draft %} <span class="finding-draft">In draft</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+      {% endif %}
+      <p class="form-exceptions"><a href="/waf?cluster={{ cluster }}">Findings and exceptions on the WAF page</a></p>
     </div>
     {% endif %}
     {% endcall %}

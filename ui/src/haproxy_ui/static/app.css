@@ -1216,6 +1216,12 @@ a.login-sso { display: flex; align-items: center; justify-content: center; text-
 .form-group-note { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; }
 .form-exceptions { grid-column: 1 / -1; align-self: center; margin: 0; color: var(--text-secondary); font-size: 13px; }
 .form-exceptions a { color: var(--info); }
+.form-exceptions-table { grid-column: 1 / -1; }
+.form-exception-table { table-layout: fixed; }
+.form-exception-table td { padding-top: 7px; padding-bottom: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.form-exception-table th:nth-child(1), .form-exception-table td:nth-child(1) { width: auto; }
+.form-exception-table th:nth-child(2), .form-exception-table td:nth-child(2) { width: 240px; }
+.form-exception-table th:nth-child(3), .form-exception-table td:nth-child(3) { width: 290px; }
 .form-group { border-top: 1px solid var(--line); }
 /* A row whose every group the shape has hidden - no check, say - draws no rule either. */
 .form-groups:not(:has(> .form-group:not([hidden]))) { display: none; }

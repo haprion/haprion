@@ -8,6 +8,7 @@ with an exception that becomes a draft of the object.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -211,6 +212,12 @@ def object_exceptions(document: str) -> tuple[ObjectException, ...] | None:
     block = canonical_waf(data.get("waf"))
     if not isinstance(block, Mapping):
         return None
+    return _exceptions_from(block)
+
+
+def _exceptions_from(block: Mapping[str, Any]) -> tuple[ObjectException, ...]:
+    """The exceptions in an object's `waf` block, as one reader reads them everywhere."""
+
     found = []
     for item in block.get("exceptions", []) or []:
         if not isinstance(item, Mapping) or not isinstance(item.get("rule"), int):
@@ -409,6 +416,49 @@ def build_exceptions(
                     in_draft=exception not in published,
                 )
             )
+    return rows
+
+
+def form_exceptions(
+    cluster: str,
+    name: str,
+    carried: str,
+    published_document: str,
+    rules: Mapping[int, Any],
+) -> list[ExceptionRow]:
+    """The exceptions the editor is about to publish, as the WAF page shows them.
+
+    `carried` is the form's own field (JSON, as `preview` writes it), so the
+    list is what Save and publish would send - not what is stored. An exception
+    the published object lacks is marked, so the person sees what is new before
+    they publish it (26-10-03).
+    """
+
+    try:
+        listed = json.loads(carried or "[]")
+    except ValueError:
+        return []
+    if not isinstance(listed, list):
+        return []
+    published = object_exceptions(published_document) or ()
+    rows = []
+    for exception in _exceptions_from({"exceptions": listed}):
+        rule = rules.get(exception.rule)
+        kind_name, explanation = kind(exception.rule // 1000)
+        rows.append(
+            ExceptionRow(
+                cluster=cluster,
+                name=name,
+                exception=exception,
+                kind=kind_name,
+                explanation=explanation,
+                message=rule.message
+                if rule is not None and rule.message
+                else f"Rule {exception.rule}",
+                severity=rule.severity if rule is not None else "",
+                in_draft=exception not in published,
+            )
+        )
     return rows
 
 

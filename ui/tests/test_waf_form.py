@@ -208,8 +208,51 @@ class TheGroupOnTheEditor(EditorTestCase):
         self.switch_off()
         text = self.page(stored("waf:\n  mode: log\n  exceptions: [{rule: 920350}]\n"))
         self.assertIn('<select name="waf_mode"', text)
-        self.assertIn("1 exception ·", text)
+        self.assertIn('class="node-table form-exception-table"', text)
         self.assertIn("Findings and exceptions on the WAF page", text)
+
+    def test_the_exceptions_are_listed_and_the_unpublished_ones_marked(self) -> None:
+        # 26-10-03: see which exceptions Save and publish sends, not a count.
+        published = stored(yaml.safe_dump({"waf": {"mode": "log", "exceptions": [EXCEPTION]}}))
+        new = {"rule": 920273, "field": "ARGS:id", "by": "admin", "at": "2026-10-03T20:20:02Z"}
+        client = self.editor()
+        with (
+            mock.patch(
+                "haproxy_ui.db.cluster_objects", return_value=[objects_with(published, VERSIONS)]
+            ),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[STATUS]),
+        ):
+            text = self.submit(
+                client,
+                "/proxies/alpha/shop/edit",
+                action="check",
+                waf_mode="log",
+                waf_engine_error="allow",
+                waf_paranoia="1",
+                waf_exceptions=json.dumps([EXCEPTION, new]),
+            ).text
+        rows = text.split('class="node-table form-exception-table"', 1)[1].split("</table>", 1)[0]
+        self.assertIn("q on /search", rows)
+        self.assertIn("id, every path", rows)
+        self.assertEqual(rows.count("In draft"), 1, "only the exception not yet published")
+
+    def test_the_group_opens_when_the_waf_page_sent_the_person(self) -> None:
+        document = stored("waf:\n  mode: log\n")
+        with (
+            mock.patch(
+                "haproxy_ui.db.cluster_objects", return_value=[objects_with(document, VERSIONS)]
+            ),
+            mock.patch("haproxy_ui.db.cluster_statuses", return_value=[STATUS]),
+        ):
+            sent = self.editor().get("/proxies/alpha/shop/edit?open=waf").text
+            plain = self.editor().get("/proxies/alpha/shop/edit").text
+
+        def opened(text: str) -> bool:
+            head = text.split('<span class="form-group-title">WAF</span>', 1)[0]
+            return head.rsplit("<details", 1)[1].split(">", 1)[0].endswith(" open")
+
+        self.assertTrue(opened(sent))
+        self.assertFalse(opened(plain))
 
     def test_a_save_keeps_the_exceptions_the_page_carried(self) -> None:
         client = self.editor()

@@ -1,0 +1,2 @@
+{# One WAF finding in words: its kind, the rule's sentence, its severity. Shared by the WAF page and the object form. #}
+{% macro finding_what(kind, explanation, severity, message) %}<span class="finding-what"><span class="status-dot status-{{ 'critical' if severity in ('critical', 'error') else 'warning' if severity else 'unknown' }}"{% if severity %} title="{{ severity | capitalize }}"{% endif %}></span><span class="finding-kind"{% if explanation %} title="{{ explanation }}"{% endif %}>{{ kind }}</span><span>{{ message }}</span></span>{% endmacro %}

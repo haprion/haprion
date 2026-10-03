@@ -291,6 +291,11 @@ class ThePage(EditorTestCase):
         self.assertIn("<h1>WAF</h1>", answer.text)
         self.assertEqual(self.saved, [])
 
+    def test_the_saved_notice_leads_to_where_the_draft_is_published(self) -> None:
+        # 26-10-03: to the editor with Save and publish, WAF open, not the object page.
+        text = self.editor().get("/waf?saved=shop&in=alpha").text
+        self.assertIn('href="/proxies/alpha/shop/edit?open=waf">shop</a>', text)
+
     def test_a_reader_sees_findings_and_changes_nothing(self) -> None:
         self.account = replace(self.account, role="reader")
         client = self.editor()

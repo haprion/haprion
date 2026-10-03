@@ -162,6 +162,7 @@ TEMPLATES.env.globals["new_request_key"] = lambda: str(uuid4())
 TEMPLATES.env.globals["check_phrase"] = health.check_phrase
 TEMPLATES.env.globals["form_groups"] = form_groups
 TEMPLATES.env.globals["waf_exception_count"] = waf_exception_count
+TEMPLATES.env.globals["waf_where"] = waf.where
 TEMPLATES.env.globals["health_rows"] = health_rows
 TEMPLATES.env.globals["feature_on"] = features.is_on
 TEMPLATES.env.filters["accent_class"] = cluster_identity.accent_class
@@ -1157,6 +1158,7 @@ def build_router(config: Config) -> APIRouter:
             cluster,
             name,
             None,
+            open_group="waf" if request.query_params.get("open") == "waf" else "",
             notice=(
                 "Saved as a draft. It reaches no configuration until it is published."
                 if saved
@@ -7331,6 +7333,7 @@ def _editor_page(
     draft_revision: str = "",
     notice: str = "",
     probe_asked: bool = False,
+    open_group: str = "",
 ) -> Response:
     """Draw the editor, whether it was reached by a link or by a submission.
 
@@ -7480,6 +7483,14 @@ def _editor_page(
                 read_source(request, config, OBJECTS_SOURCE)[1], status_rows
             ).unavailable(cluster),
             "backend_health": backend,
+            "open_group": open_group,
+            "waf_exceptions": waf.form_exceptions(
+                cluster,
+                name,
+                str(fields.get("waf_exceptions", "") or ""),
+                stored.document if stored is not None else "",
+                crs.installed_catalog() if fields.get("waf_exceptions") else {},
+            ),
             "probe": report,
             "notice": notice,
             "action": action,
